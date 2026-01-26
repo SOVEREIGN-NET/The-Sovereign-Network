@@ -11,7 +11,7 @@ use tracing::{info, warn, error};
 
 // Import common Bluetooth utilities
 use crate::protocols::bluetooth::device::{BleDevice, CharacteristicInfo, BluetoothDeviceInfo};
-use crate::protocols::bluetooth::common::{parse_mac_address, format_mac_address, mac_to_dbus_path, zhtp_uuids};
+use crate::protocols::bluetooth::common::{parse_mac_address, format_mac_address, mac_to_dbus_path};
 use crate::protocols::bluetooth::gatt::{GattMessage, GattOperation, supports_operation, parse_characteristic_properties};
 
 /// Enhanced D-Bus XML parser for BlueZ GATT operations

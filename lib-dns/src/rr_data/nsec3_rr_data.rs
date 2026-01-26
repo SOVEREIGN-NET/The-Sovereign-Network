@@ -36,15 +36,28 @@ impl Default for NSec3RRData {
 impl RRData for NSec3RRData {
 
     fn from_bytes(buf: &[u8]) -> Result<Self, RRDataError> {
+        if buf.len() < 5 {
+            return Err(RRDataError("NSEC3 data too short".to_string()));
+        }
+
         let algorithm = buf[0];
         let flags = buf[1];
         let iterations = u16::from_be_bytes([buf[2], buf[3]]);
 
         let salt_length = buf[4] as usize;
+        if buf.len() < 5 + salt_length {
+            return Err(RRDataError("NSEC3 salt data truncated".to_string()));
+        }
         let salt = buf[5..5 + salt_length].to_vec();
 
         let mut i = 5+salt_length;
-        let next_hash_length = buf[i+1] as usize;
+        if i >= buf.len() {
+            return Err(RRDataError("NSEC3 hash length field missing".to_string()));
+        }
+        let next_hash_length = buf[i] as usize;
+        if i + 1 + next_hash_length > buf.len() {
+            return Err(RRDataError("NSEC3 hash data truncated".to_string()));
+        }
         let next_hash = buf[i+1..i+1+next_hash_length].to_vec();
         i += 1+next_hash_length;
 
@@ -93,6 +106,51 @@ impl RRData for NSec3RRData {
 
     fn to_bytes(&self) -> Result<Vec<u8>, RRDataError> {
         let mut buf = Vec::with_capacity(126);
+
+        // Write algorithm, flags, iterations
+        buf.push(self.algorithm);
+        buf.push(self.flags);
+        buf.extend_from_slice(&self.iterations.to_be_bytes());
+
+        // Write salt
+        buf.push(self.salt.len() as u8);
+        buf.extend_from_slice(&self.salt);
+
+        // Write hash
+        buf.push(self.next_hash.len() as u8);
+        buf.extend_from_slice(&self.next_hash);
+
+        // Write type windows (if any)
+        if !self.types.is_empty() {
+            // Group types by window number
+            let mut windows: std::collections::BTreeMap<u16, Vec<u16>> = std::collections::BTreeMap::new();
+            for typ in &self.types {
+                let type_num = *typ as u16;
+                let window = type_num / 256;
+                let offset = type_num % 256;
+                windows.entry(window).or_insert_with(Vec::new).push(offset);
+            }
+
+            // Write each window
+            for (window, offsets) in windows {
+                buf.push(window as u8);
+
+                // Find max offset to determine bitmap size
+                let max_offset = *offsets.iter().max().unwrap() as usize;
+                let bitmap_size = (max_offset / 8) + 1;
+
+                // Create bitmap
+                let mut bitmap = vec![0u8; bitmap_size];
+                for offset in offsets {
+                    let byte_idx = (offset as usize) / 8;
+                    let bit_idx = 7 - ((offset as usize) % 8);
+                    bitmap[byte_idx] |= 1 << bit_idx;
+                }
+
+                buf.push(bitmap.len() as u8);
+                buf.extend_from_slice(&bitmap);
+            }
+        }
 
         Ok(buf)
     }
@@ -289,7 +347,17 @@ impl fmt::Display for NSec3RRData {
 
 #[test]
 fn test() {
-    let buf = vec![ ];
+    // Empty buffer should return error
+    let buf_empty = vec![];
+    assert!(NSec3RRData::from_bytes(&buf_empty).is_err());
+
+    // Valid NSEC3 record with minimal data
+    // Parse flow: reads algo, flags, iterations (4 bytes),
+    // then salt_len at [4]=0, salt data (0 bytes),
+    // then hash_len at [5]=0, hash data (0 bytes),
+    // Then loops for type windows (none in this case)
+    // Must have at least 6 bytes before hash_len can be read at i+1
+    let buf = vec![0u8, 0u8, 0u8, 1u8, 0u8, 0u8];
     let record = NSec3RRData::from_bytes(&buf).unwrap();
     assert_eq!(buf, record.to_bytes().unwrap());
 }

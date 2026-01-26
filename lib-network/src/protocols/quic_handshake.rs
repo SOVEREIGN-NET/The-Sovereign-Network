@@ -62,16 +62,13 @@ use lib_crypto::kdf::hkdf::hkdf_sha3;
 use lib_crypto::post_quantum::kyber::{kyber512_keypair, kyber512_encapsulate, kyber512_decapsulate};
 use crate::handshake::{
     ClientHello, ServerHello, ClientFinish, HandshakeContext, HandshakeResult,
-    HandshakeCapabilities, NodeIdentity,
+    HandshakeCapabilities, PqcCapability, HandshakeSessionInfo,
 };
 use quinn::Connection;
 use tokio::time::{timeout, Duration};
 use serde::{Serialize, Deserialize};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use zeroize::Zeroize;
-
-// Use consistent message size limit
-use crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE;
 
 /// Maximum QUIC handshake message size (16 KB - more constrained than general UHP)
 /// QUIC handshake should be lean; 16KB is more than enough for identity + capabilities
@@ -83,6 +80,13 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Protocol version for QUIC+UHP+Kyber handshake
 /// Bump this when making breaking changes to the handshake protocol
 const QUIC_HANDSHAKE_VERSION: u8 = 1;
+
+fn export_quic_channel_binding(conn: &Connection) -> Result<Vec<u8>> {
+    let mut out = vec![0u8; 32];
+    conn.export_keying_material(&mut out, &[], b"zhtp-uhp-channel-binding")
+        .map_err(|_| anyhow!("Failed to export QUIC channel binding"))?;
+    Ok(out)
+}
 
 // ============================================================================
 // Kyber Exchange Messages
@@ -125,11 +129,8 @@ struct KyberResponse {
 /// Contains the verified peer identity and derived master key.
 #[derive(Debug, Clone)]
 pub struct QuicHandshakeResult {
-    /// Verified peer identity from UHP handshake
-    pub peer_identity: NodeIdentity,
-
-    /// Negotiated session capabilities
-    pub capabilities: crate::handshake::NegotiatedCapabilities,
+    /// Verified peer identity and negotiated capabilities
+    pub verified_peer: crate::handshake::VerifiedPeer,
 
     /// QUIC mesh master key derived from UHP + Kyber
     /// This is the ONLY key that should be used; intermediate keys are zeroized
@@ -189,6 +190,9 @@ pub async fn handshake_as_initiator(
     ctx: &HandshakeContext,
 ) -> Result<QuicHandshakeResult> {
     timeout(HANDSHAKE_TIMEOUT, async {
+        let channel_binding = export_quic_channel_binding(conn)?;
+        let ctx = ctx.for_client_with_transport(channel_binding, "quic");
+
         // Open dedicated bidirectional stream for handshake
         let (mut send, mut recv) = conn.open_bi().await
             .context("Failed to open handshake stream")?;
@@ -205,7 +209,7 @@ pub async fn handshake_as_initiator(
 
         // Step 1: Create and send ClientHello
         let capabilities = create_quic_capabilities();
-        let client_hello = ClientHello::new(identity, capabilities)
+        let client_hello = ClientHello::new(identity, capabilities, &ctx)
             .context("Failed to create ClientHello")?;
 
         let client_hello_bytes = bincode::serialize(&client_hello)
@@ -237,7 +241,7 @@ pub async fn handshake_as_initiator(
                 .ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
 
-        let client_finish = ClientFinish::new(&server_hello, &client_hello, &keypair, ctx)
+        let client_finish = ClientFinish::new(&server_hello, &client_hello, &keypair, &ctx)
             .context("Failed to create ClientFinish")?;
 
         // Server verified! Log the peer info
@@ -256,6 +260,9 @@ pub async fn handshake_as_initiator(
         debug!("QUIC handshake: ClientFinish sent, UHP authentication complete");
 
         // Compute UHP session key (for binding to Kyber)
+        let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
+            .context("Handshake session info mismatch")?;
+
         let mut uhp_session_key = HandshakeResult::new(
             server_hello.identity.clone(),
             server_hello.negotiated.clone(),
@@ -264,6 +271,7 @@ pub async fn handshake_as_initiator(
             &client_hello.identity.did,
             &server_hello.identity.did,
             client_hello.timestamp,
+            &session_info,
         ).context("Failed to derive UHP session key")?.session_key;
 
         // Compute UHP transcript hash for Kyber binding
@@ -361,8 +369,11 @@ pub async fn handshake_as_initiator(
         );
 
         Ok(QuicHandshakeResult {
-            peer_identity: server_hello.identity,
-            capabilities: server_hello.negotiated,
+            verified_peer: crate::handshake::VerifiedPeer::new(
+                server_hello.identity,
+                server_hello.negotiated,
+                session_info,
+            ),
             master_key,
             session_id,
             completed_at,
@@ -410,6 +421,9 @@ pub async fn handshake_as_responder(
     ctx: &HandshakeContext,
 ) -> Result<QuicHandshakeResult> {
     timeout(HANDSHAKE_TIMEOUT, async {
+        let channel_binding = export_quic_channel_binding(conn)?;
+        let ctx = ctx.for_server_with_transport(channel_binding, "quic");
+
         // Accept dedicated bidirectional stream for handshake
         let (mut send, mut recv) = conn.accept_bi().await
             .context("Failed to accept handshake stream")?;
@@ -437,7 +451,7 @@ pub async fn handshake_as_responder(
         );
 
         // CRITICAL: Verify client's signature
-        client_hello.verify_signature(ctx)
+        client_hello.verify_signature(&ctx)
             .context("Client signature verification failed - rejecting connection")?;
 
         info!(
@@ -448,7 +462,7 @@ pub async fn handshake_as_responder(
 
         // Step 2: Create and send ServerHello
         let capabilities = create_quic_capabilities();
-        let server_hello = ServerHello::new(identity, capabilities, &client_hello)
+        let server_hello = ServerHello::new(identity, capabilities, &client_hello, &ctx)
             .context("Failed to create ServerHello")?;
 
         let server_hello_bytes = bincode::serialize(&server_hello)
@@ -467,12 +481,19 @@ pub async fn handshake_as_responder(
             .context("Failed to deserialize ClientFinish")?;
 
         // CRITICAL: Verify client's signature on server nonce
-        client_finish.verify_signature(&server_hello.response_nonce, &client_hello.identity.public_key)
+        client_finish.verify_signature_with_context(
+            &server_hello.response_nonce,
+            &client_hello.identity.public_key,
+            &ctx,
+        )
             .context("ClientFinish signature verification failed")?;
 
         debug!("QUIC handshake: ClientFinish verified, UHP authentication complete");
 
         // Compute UHP session key (for binding to Kyber)
+        let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
+            .context("Handshake session info mismatch")?;
+
         let mut uhp_session_key = HandshakeResult::new(
             client_hello.identity.clone(),
             server_hello.negotiated.clone(),
@@ -481,6 +502,7 @@ pub async fn handshake_as_responder(
             &client_hello.identity.did,
             &server_hello.identity.did,
             client_hello.timestamp,
+            &session_info,
         ).context("Failed to derive UHP session key")?.session_key;
 
         // Compute UHP transcript hash for Kyber binding
@@ -587,8 +609,11 @@ pub async fn handshake_as_responder(
         );
 
         Ok(QuicHandshakeResult {
-            peer_identity: client_hello.identity,
-            capabilities: server_hello.negotiated,
+            verified_peer: crate::handshake::VerifiedPeer::new(
+                client_hello.identity,
+                server_hello.negotiated,
+                session_info,
+            ),
             master_key,
             session_id,
             completed_at,
@@ -694,55 +719,20 @@ fn compute_uhp_transcript_hash(
 
 /// Send a length-prefixed message over QUIC send stream
 ///
+/// Uses unified framing module for consistent message serialization.
 /// Wire format: [4-byte length (big-endian)][message bytes]
 async fn send_framed(send: &mut quinn::SendStream, data: &[u8]) -> Result<()> {
-    // Validate size
-    if data.len() > MAX_QUIC_HANDSHAKE_MSG {
-        return Err(anyhow!(
-            "Message too large: {} bytes (max: {})",
-            data.len(),
-            MAX_QUIC_HANDSHAKE_MSG
-        ));
-    }
-
-    // Send length prefix (4 bytes, big-endian / network byte order)
-    let len_bytes = (data.len() as u32).to_be_bytes();
-    send.write_all(&len_bytes).await
-        .context("Failed to write message length")?;
-
-    // Send message payload
-    send.write_all(data).await
-        .context("Failed to write message payload")?;
-
-    Ok(())
+    // Use unified framing module (supports QUIC streams via AsyncWrite trait)
+    crate::handshake::framing::send_framed(send, data).await
 }
 
 /// Receive a length-prefixed message from QUIC receive stream
 ///
+/// Uses unified framing module for consistent message deserialization.
 /// Wire format: [4-byte length (big-endian)][message bytes]
 async fn recv_framed(recv: &mut quinn::RecvStream) -> Result<Vec<u8>> {
-    // Read length prefix (4 bytes, big-endian)
-    let mut len_bytes = [0u8; 4];
-    recv.read_exact(&mut len_bytes).await
-        .context("Failed to read message length")?;
-
-    let len = u32::from_be_bytes(len_bytes) as usize;
-
-    // Validate size (DoS protection)
-    if len > MAX_QUIC_HANDSHAKE_MSG {
-        return Err(anyhow!(
-            "Message too large: {} bytes (max: {})",
-            len,
-            MAX_QUIC_HANDSHAKE_MSG
-        ));
-    }
-
-    // Read message bytes
-    let mut data = vec![0u8; len];
-    recv.read_exact(&mut data).await
-        .context("Failed to read message payload")?;
-
-    Ok(data)
+    // Use unified framing module (supports QUIC streams via AsyncRead trait)
+    crate::handshake::framing::recv_framed(recv).await
 }
 
 // ============================================================================
@@ -759,7 +749,7 @@ fn create_quic_capabilities() -> HandshakeCapabilities {
             "chacha20-poly1305".to_string(),
             "aes-256-gcm".to_string(),
         ],
-        pqc_support: true, // We're doing Kyber
+        pqc_capability: PqcCapability::Kyber1024Dilithium5, // Full PQC support
         dht_capable: true,
         relay_capable: true,
         storage_capacity: 0, // Negotiated separately
@@ -830,7 +820,7 @@ mod tests {
         let caps = create_quic_capabilities();
 
         assert!(caps.protocols.contains(&"quic".to_string()));
-        assert!(caps.pqc_support);
+        assert!(caps.pqc_capability.is_enabled());
         assert!(caps.custom_features.contains(&"quic-pqc-v1".to_string()));
     }
 
@@ -850,7 +840,7 @@ mod tests {
     // - Upgrade to Kyber1024 only if high-value long-term secrets are introduced.
     // ========================================================================
 
-    use crate::handshake::{ClientHello, NonceCache, HandshakeContext, HandshakeCapabilities};
+    use crate::handshake::{ClientHello, NonceCache, HandshakeContext, HandshakeCapabilities, HandshakeRole};
 
     /// Helper to create test identity
     fn create_test_identity(device_name: &str) -> lib_identity::ZhtpIdentity {
@@ -863,6 +853,18 @@ mod tests {
         ).expect("Failed to create test identity")
     }
 
+    fn test_ctx_pair() -> (HandshakeContext, HandshakeContext) {
+        let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let nonce_cache = NonceCache::new_test(300, 1000, epoch);
+        let base = HandshakeContext::new(nonce_cache)
+            .with_channel_binding(vec![1u8; 32])
+            .with_required_capabilities(vec!["quic".to_string()])
+            .with_channel_binding_required(true);
+        let client_ctx = base.with_roles(HandshakeRole::Client, HandshakeRole::Server);
+        let server_ctx = base.with_roles(HandshakeRole::Server, HandshakeRole::Client);
+        (client_ctx, server_ctx)
+    }
+
     /// Test: QUIC rejects ClientHello with corrupted NodeId
     ///
     /// CRITICAL SECURITY TEST
@@ -872,16 +874,14 @@ mod tests {
         let valid_identity = create_test_identity("quic-test-peer");
 
         // Create ClientHello with valid identity
-        let mut hello = ClientHello::new(&valid_identity, create_quic_capabilities()).unwrap();
+        let (client_ctx, server_ctx) = test_ctx_pair();
+        let mut hello = ClientHello::new(&valid_identity, create_quic_capabilities(), &client_ctx).unwrap();
 
         // Corrupt the NodeId (simulates collision attack or identity theft)
         hello.identity.node_id = lib_identity::NodeId::from_bytes([0xFF; 32]);
 
         // Verification MUST fail due to NodeId mismatch
-        let nonce_cache = NonceCache::new_test(300, 1000);
-        let ctx = HandshakeContext::new(nonce_cache);
-
-        let result = hello.verify_signature(&ctx);
+        let result = hello.verify_signature(&server_ctx);
         assert!(result.is_err(), "CRITICAL: QUIC must reject peer with invalid NodeId");
 
         println!("✓ QUIC correctly rejects invalid NodeId");
@@ -896,16 +896,14 @@ mod tests {
         let valid_identity = create_test_identity("quic-did-test");
 
         // Create ClientHello with valid identity
-        let mut hello = ClientHello::new(&valid_identity, create_quic_capabilities()).unwrap();
+        let (client_ctx, server_ctx) = test_ctx_pair();
+        let mut hello = ClientHello::new(&valid_identity, create_quic_capabilities(), &client_ctx).unwrap();
 
         // Tamper with DID (simulates identity theft attempt)
         hello.identity.did = "did:zhtp:attacker_fake_did_12345".to_string();
 
         // Verification MUST fail - signature won't match tampered DID
-        let nonce_cache = NonceCache::new_test(300, 1000);
-        let ctx = HandshakeContext::new(nonce_cache);
-
-        let result = hello.verify_signature(&ctx);
+        let result = hello.verify_signature(&server_ctx);
         assert!(result.is_err(), "CRITICAL: QUIC must reject peer with tampered DID");
 
         println!("✓ QUIC correctly rejects tampered DID");
@@ -920,16 +918,14 @@ mod tests {
         let valid_identity = create_test_identity("quic-sig-test");
 
         // Create ClientHello with valid identity
-        let mut hello = ClientHello::new(&valid_identity, create_quic_capabilities()).unwrap();
+        let (client_ctx, server_ctx) = test_ctx_pair();
+        let mut hello = ClientHello::new(&valid_identity, create_quic_capabilities(), &client_ctx).unwrap();
 
         // Zero out the signature (simulates no-auth attack)
         hello.signature.signature = vec![0u8; 64];
 
         // Verification MUST fail - signature is invalid
-        let nonce_cache = NonceCache::new_test(300, 1000);
-        let ctx = HandshakeContext::new(nonce_cache);
-
-        let result = hello.verify_signature(&ctx);
+        let result = hello.verify_signature(&server_ctx);
         assert!(result.is_err(), "CRITICAL: QUIC must reject peer with zeroed signature");
 
         println!("✓ QUIC correctly rejects zeroed signature");
@@ -944,17 +940,15 @@ mod tests {
         let valid_identity = create_test_identity("quic-random-sig-test");
 
         // Create ClientHello with valid identity
-        let mut hello = ClientHello::new(&valid_identity, create_quic_capabilities()).unwrap();
+        let (client_ctx, server_ctx) = test_ctx_pair();
+        let mut hello = ClientHello::new(&valid_identity, create_quic_capabilities(), &client_ctx).unwrap();
 
         // Replace with random garbage (simulates forged signature)
         let random_sig: Vec<u8> = (0..2420).map(|i| (i * 17 + 42) as u8).collect();
         hello.signature.signature = random_sig;
 
         // Verification MUST fail - signature is garbage
-        let nonce_cache = NonceCache::new_test(300, 1000);
-        let ctx = HandshakeContext::new(nonce_cache);
-
-        let result = hello.verify_signature(&ctx);
+        let result = hello.verify_signature(&server_ctx);
         assert!(result.is_err(), "CRITICAL: QUIC must reject peer with random garbage signature");
 
         println!("✓ QUIC correctly rejects random garbage signature");
@@ -970,16 +964,14 @@ mod tests {
         let attacker_identity = create_test_identity("attacker-identity");
 
         // Create ClientHello with valid identity
-        let mut hello = ClientHello::new(&valid_identity, create_quic_capabilities()).unwrap();
+        let (client_ctx, server_ctx) = test_ctx_pair();
+        let mut hello = ClientHello::new(&valid_identity, create_quic_capabilities(), &client_ctx).unwrap();
 
         // Substitute attacker's public key (signature won't match)
         hello.identity.public_key = attacker_identity.public_key.clone();
 
         // Verification MUST fail - signature was made with different key
-        let nonce_cache = NonceCache::new_test(300, 1000);
-        let ctx = HandshakeContext::new(nonce_cache);
-
-        let result = hello.verify_signature(&ctx);
+        let result = hello.verify_signature(&server_ctx);
         assert!(result.is_err(), "CRITICAL: QUIC must reject peer with wrong public key");
 
         println!("✓ QUIC correctly rejects wrong public key");
@@ -993,13 +985,11 @@ mod tests {
         let valid_identity = create_test_identity("quic-valid-test");
 
         // Create ClientHello with valid identity (no tampering)
-        let hello = ClientHello::new(&valid_identity, create_quic_capabilities()).unwrap();
+        let (client_ctx, server_ctx) = test_ctx_pair();
+        let hello = ClientHello::new(&valid_identity, create_quic_capabilities(), &client_ctx).unwrap();
 
         // Verification MUST pass
-        let nonce_cache = NonceCache::new_test(300, 1000);
-        let ctx = HandshakeContext::new(nonce_cache);
-
-        let result = hello.verify_signature(&ctx);
+        let result = hello.verify_signature(&server_ctx);
         assert!(result.is_ok(), "Valid ClientHello should pass verification: {:?}", result.err());
 
         println!("✓ QUIC correctly accepts valid ClientHello");

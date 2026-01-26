@@ -1,0 +1,114 @@
+[package]
+name = "zhtp-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sovereign Network Team"]
+description = "ZHTP Command-Line Interface - Distributed CLI for ZHTP network node management"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/SOVEREIGN-NET/The-Sovereign-Network"
+
+[[bin]]
+name = "zhtp-cli"
+path = "src/main.rs"
+
+[lib]
+name = "zhtp_cli"
+path = "src/lib.rs"
+
+[dependencies]
+# CLI framework and utilities
+clap = { version = "4.0", features = ["derive", "env"] }
+rpassword = "7.3"
+atty = "0.2"
+
+# Shell completion support
+clap_complete = "4.5"
+
+# Manual page generation
+clap_mangen = "0.2"
+
+# Configuration editing
+toml_edit = "0.22"
+
+# Async runtime and utilities (workspace shared)
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+reqwest = { version = "0.11", features = ["json"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
+regex = "1.10"
+walkdir = "2.4"
+mime_guess = "2.0"
+
+# Direct lib-* dependencies for CLI operations
+lib-identity = { path = "../lib-identity" }
+lib-crypto = { path = "../lib-crypto" }
+lib-economy = { path = "../lib-economy" }
+lib-network = { path = "../lib-network" }
+lib-blockchain = { path = "../lib-blockchain", features = ["contracts"], optional = true }
+lib-protocols = { path = "../lib-protocols" }
+lib-proofs = { path = "../lib-proofs" }
+
+# zhtp library as a dependency (core orchestrator)
+zhtp = { path = "../zhtp", default-features = false, features = ["full-blockchain"] }
+
+# Serialization and utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+hex = "0.4"
+base64 = "0.22"
+zeroize = "1.7"
+bincode = "1.3"
+semver = "1.0"
+
+# System information for diagnostics
+sysinfo = "0.31"
+
+# Home directory detection
+dirs = "5.0"
+
+# Self-update mechanism (conditionally for non-musl targets)
+[target.'cfg(not(target_env = "musl"))'.dependencies]
+self_update = { version = "0.39", features = ["archive-tar", "compression-flate2"] }
+
+# Windows service support
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.6"
+
+[build-dependencies]
+chrono = "0.4"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.8"
+clap_mangen = "0.2"
+
+[features]
+default = []
+
+# Output format support
+yaml = ["zhtp/yaml"]
+
+# Blockchain features that pass through to zhtp
+full-blockchain = ["zhtp/full-blockchain"]
+basic-blockchain = ["zhtp/basic-blockchain"]
+minimal-blockchain = ["zhtp/minimal-blockchain"]
+
+# Node type profiles
+validator = ["zhtp/validator"]
+relay = ["zhtp/relay"]
+edge = ["zhtp/edge"]
+rpi = ["zhtp/rpi"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug = true

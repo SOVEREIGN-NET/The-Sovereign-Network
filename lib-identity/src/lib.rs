@@ -15,6 +15,7 @@
 //! - Privacy-preserving credentials
 
 // Core modules
+pub mod constants;
 pub mod types;
 pub mod identity;
 pub mod credentials;
@@ -30,6 +31,9 @@ pub mod auth;
 pub mod economics;
 pub mod integration;
 pub mod verification;
+
+// Test utilities - shared helpers for integration tests across crates
+pub mod testing;
 
 // ============================================================================
 // PUBLIC API EXPORTS
@@ -56,21 +60,24 @@ pub use types::{
     IdentityType,        // ✓ Human, Agent, Contract, Organization, Device
     AccessLevel,         // ✓ FullCitizen, Visitor, Organization, Device, Restricted
     PrivateIdentityData, // ✓ Private data (never transmitted)
-    
+
     // Credential types
     CredentialType,      // ✓ Credential type enumeration
     AttestationType,     // ✓ Attestation types
-    
+
     // Proof parameters
     IdentityProofParams, // ✓ Zero-knowledge proof parameters
-    
+
     // Verification types
     IdentityVerification, // ✓ Verification results
     VerificationLevel,    // ✓ Verification level (None, Basic, Standard, Full)
     VerificationResult,   // ✓ Detailed verification result
-    
+
     // Node ID for DHT routing (32-byte deterministic identifier)
     NodeId,              // ✓ Derived from DID + device name
+
+    // Peer identity for DHT/network (unified across lib-storage and lib-network)
+    DhtPeerIdentity,     // ✓ Unified peer identity (NodeId + PublicKey + DID + device_id)
 };
 
 // Identity module - Core identity structures

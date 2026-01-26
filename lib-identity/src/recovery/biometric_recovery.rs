@@ -7,13 +7,11 @@ use aes_gcm::{
     Aes256Gcm,
     Nonce,
 };
-use argon2::{Algorithm, Argon2, Params, Version};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use tokio::time::{Duration, Instant};
+use std::time::{Duration, Instant};
 use anyhow::{Result as AnyhowResult, anyhow};
 use rand;
-use zeroize::Zeroize;
 
 const ENCRYPTION_VERSION_XOR: u32 = 1;
 const ENCRYPTION_VERSION_AES_GCM: u32 = 2;

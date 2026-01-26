@@ -1,6 +1,6 @@
 //! Configuration Aggregation from All ZHTP Packages
-//! 
-//! Combines configurations from crypto, zk, identity, storage, network, 
+//!
+//! Combines configurations from crypto, zk, identity, storage, network,
 //! blockchain, consensus, economics, protocols packages into unified NodeConfig
 
 use anyhow::Result;
@@ -8,6 +8,31 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::collections::HashMap;
 use super::{MeshMode, SecurityLevel, Environment, ConfigError, CliArgs};
+
+/// Partial configuration for simple TOML files with just [network] section
+/// This allows users to provide minimal config files like:
+/// ```toml
+/// [network]
+/// bootstrap_peers = ["192.168.1.1:9334"]
+/// ```
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialConfig {
+    #[serde(default)]
+    pub network: Option<PartialNetworkConfig>,
+}
+
+/// Partial network configuration (matches user-friendly [network] section)
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialNetworkConfig {
+    #[serde(default)]
+    pub bootstrap_peers: Vec<String>,
+    #[serde(default)]
+    pub mesh_port: Option<u16>,
+    #[serde(default)]
+    pub max_peers: Option<usize>,
+    #[serde(default)]
+    pub network_id: Option<String>,
+}
 
 /// Complete node configuration aggregating all packages
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +189,110 @@ pub struct ProtocolsConfig {
     pub api_port: u16,
     pub max_connections: usize,
     pub request_timeout_ms: u64,
+
+    /// QUIC port for mesh connections (default: 9334)
+    /// Can be overridden via ZHTP_QUIC_PORT environment variable
+    #[serde(default = "default_quic_port")]
+    pub quic_port: u16,
+
+    /// Legacy/unicast discovery port for peer announcements (default: 9333)
+    /// Note: multicast peer discovery uses fixed port 37775/UDP (see NETWORK_RULES.md)
+    /// Can be overridden via ZHTP_DISCOVERY_PORT environment variable
+    #[serde(default = "default_discovery_port")]
+    pub discovery_port: u16,
+
+    // Mesh protocol settings (authoritative config from config.toml)
+    /// Enable QUIC protocol (required, default: true)
+    /// QUIC is the mandatory transport for mesh bootstrap and is always enabled
+    #[serde(default = "default_enable_quic")]
+    pub enable_quic: bool,
+
+    /// Enable Bluetooth LE protocol (default: false)
+    /// When false, Bluetooth discovery is skipped (defensive guard prevents execution)
+    #[serde(default = "default_enable_bluetooth")]
+    pub enable_bluetooth: bool,
+
+    /// Enable mDNS discovery (reserved for future use, default: true)
+    /// Currently not integrated but available for mDNS-based peer discovery
+    #[serde(default = "default_enable_mdns")]
+    pub enable_mdns: bool,
+
+    /// QUIC protocol priority weight (reserved for future use, default: 1)
+    /// When multiple protocols are available, higher priority is preferred
+    /// Currently not used - future implementation for dynamic protocol selection
+    #[serde(default = "default_quic_priority")]
+    pub quic_priority: u8,
+}
+
+fn default_quic_port() -> u16 {
+    std::env::var("ZHTP_QUIC_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9334)
+}
+
+fn default_discovery_port() -> u16 {
+    std::env::var("ZHTP_DISCOVERY_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9333)
+}
+
+fn default_enable_quic() -> bool {
+    true
+}
+
+fn default_enable_bluetooth() -> bool {
+    false
+}
+
+fn default_enable_mdns() -> bool {
+    true
+}
+
+fn default_quic_priority() -> u8 {
+    1
+}
+
+impl ProtocolsConfig {
+    /// Filter mesh protocols based on config settings (AUTHORITATIVE CONFIG LAYER)
+    ///
+    /// This is the policy enforcement point. Disabled protocols must NEVER reach lib-network.
+    /// Configuration must be resolved at the zhtp boundary before lib-network is invoked.
+    pub fn filter_mesh_protocols(&self, requested: Vec<lib_network::protocols::NetworkProtocol>) -> Vec<lib_network::protocols::NetworkProtocol> {
+        use lib_network::protocols::NetworkProtocol;
+
+        requested
+            .into_iter()
+            .filter(|protocol| {
+                let allowed = match protocol {
+                    NetworkProtocol::BluetoothLE => {
+                        if !self.enable_bluetooth {
+                            tracing::info!("⊘ FILTERED: Bluetooth LE disabled by config (enable_bluetooth=false)");
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    NetworkProtocol::QUIC => {
+                        if !self.enable_quic {
+                            tracing::info!("⊘ FILTERED: QUIC disabled by config (enable_quic=false)");
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    // Add other protocol filters as needed
+                    _ => true,
+                };
+
+                if allowed {
+                    tracing::debug!("✓ Protocol allowed: {:?}", protocol);
+                }
+                allowed
+            })
+            .collect()
+    }
 }
 
 /// Automatic rewards configuration
@@ -396,11 +525,12 @@ impl Default for NodeConfig {
                     "bluetooth".to_string(),
                     "wifi_direct".to_string(),
                     "lorawan".to_string(),
+                    "quic".to_string(),
                     "tcp".to_string()
                 ],
                 bootstrap_peers: vec![
                     "127.0.0.1:9333".to_string(),
-                    "192.168.1.245:9333".to_string(),
+                    "127.0.0.1:9334".to_string(),
                 ],
                 long_range_relays: false,
                 bootstrap_validators: Vec::new(), // Gap 5: Empty by default
@@ -440,9 +570,15 @@ impl Default for NodeConfig {
             protocols_config: ProtocolsConfig {
                 lib_enabled: true,
                 zdns_enabled: true,
-                api_port: 9333,
+                api_port: 9333,  // Legacy port for API/HTTP traffic (distinct from QUIC mesh on 9334)
                 max_connections: 1000,
                 request_timeout_ms: 30000,
+                quic_port: default_quic_port(),
+                discovery_port: default_discovery_port(),
+                enable_quic: true,          // QUIC is required
+                enable_bluetooth: false,    // Bluetooth disabled by default
+                enable_mdns: true,          // mDNS enabled for peer discovery
+                quic_priority: 1,           // Default priority weight
             },
             
             rewards_config: RewardsConfig::default(),
@@ -550,9 +686,31 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
     // Try to load main node configuration file
     if config_path.exists() {
         let config_content = tokio::fs::read_to_string(config_path).await?;
+
+        // First try full NodeConfig parsing
         if let Ok(loaded_config) = toml::from_str::<NodeConfig>(&config_content) {
             config = loaded_config;
-            tracing::info!("Loaded main configuration file");
+            tracing::info!("Loaded main configuration file (full NodeConfig)");
+        } else if let Ok(partial) = toml::from_str::<PartialConfig>(&config_content) {
+            // Fall back to partial config parsing (for simple [network] section configs)
+            if let Some(network) = partial.network {
+                if !network.bootstrap_peers.is_empty() {
+                    tracing::info!("Loaded {} bootstrap peer(s) from config file", network.bootstrap_peers.len());
+                    config.network_config.bootstrap_peers = network.bootstrap_peers;
+                }
+                if let Some(mesh_port) = network.mesh_port {
+                    config.network_config.mesh_port = mesh_port;
+                }
+                if let Some(max_peers) = network.max_peers {
+                    config.network_config.max_peers = max_peers;
+                }
+                if let Some(network_id) = network.network_id {
+                    config.blockchain_config.network_id = network_id;
+                }
+                tracing::info!("Loaded partial configuration file ([network] section)");
+            }
+        } else {
+            tracing::warn!("Config file exists but could not be parsed - using defaults");
         }
     } else {
         tracing::info!("Using default configuration (no config file found)");
@@ -653,7 +811,7 @@ async fn load_package_config<T: for<'de> Deserialize<'de>>(
     package_name: &str,
 ) -> Result<T> {
     let config_file = config_dir.join(format!("{}.toml", package_name));
-    
+
     if config_file.exists() {
         let content = tokio::fs::read_to_string(&config_file).await?;
         let config: T = toml::from_str(&content)?;
@@ -662,5 +820,154 @@ async fn load_package_config<T: for<'de> Deserialize<'de>>(
         Err(ConfigError::PackageMissing {
             package: package_name.to_string()
         }.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lib_network::protocols::NetworkProtocol;
+
+    #[test]
+    fn test_protocol_filtering_bluetooth_disabled() {
+        // REGRESSION TEST: Verify that disabled protocols are filtered out
+        // This prevents accidental re-enablement of Bluetooth when disabled in config
+
+        let config = ProtocolsConfig {
+            lib_enabled: true,
+            zdns_enabled: true,
+            api_port: 8080,
+            max_connections: 100,
+            request_timeout_ms: 5000,
+            quic_port: 9334,
+            discovery_port: 9333,
+            enable_quic: true,
+            enable_bluetooth: false,  // POLICY: Bluetooth disabled
+            enable_mdns: true,
+            quic_priority: 1,
+        };
+
+        let requested = vec![
+            NetworkProtocol::BluetoothLE,
+            NetworkProtocol::QUIC,
+            NetworkProtocol::WiFiDirect,
+        ];
+
+        let filtered = config.filter_mesh_protocols(requested);
+
+        // ASSERTION: Bluetooth must NOT be in filtered list
+        assert!(
+            !filtered.contains(&NetworkProtocol::BluetoothLE),
+            "REGRESSION: Bluetooth LE should be filtered when enable_bluetooth=false"
+        );
+
+        // ASSERTION: QUIC must still be in filtered list
+        assert!(
+            filtered.contains(&NetworkProtocol::QUIC),
+            "QUIC should be allowed when enable_quic=true"
+        );
+
+        // ASSERTION: WiFiDirect should pass through (no explicit disable)
+        assert!(
+            filtered.contains(&NetworkProtocol::WiFiDirect),
+            "WiFiDirect should be allowed when not explicitly disabled"
+        );
+    }
+
+    #[test]
+    fn test_protocol_filtering_bluetooth_enabled() {
+        // NORMAL CASE: When Bluetooth is enabled, it should NOT be filtered
+
+        let config = ProtocolsConfig {
+            lib_enabled: true,
+            zdns_enabled: true,
+            api_port: 8080,
+            max_connections: 100,
+            request_timeout_ms: 5000,
+            quic_port: 9334,
+            discovery_port: 9333,
+            enable_quic: true,
+            enable_bluetooth: true,  // POLICY: Bluetooth enabled
+            enable_mdns: true,
+            quic_priority: 1,
+        };
+
+        let requested = vec![
+            NetworkProtocol::BluetoothLE,
+            NetworkProtocol::QUIC,
+        ];
+
+        let filtered = config.filter_mesh_protocols(requested);
+
+        // ASSERTION: Bluetooth must be in filtered list when enabled
+        assert!(
+            filtered.contains(&NetworkProtocol::BluetoothLE),
+            "Bluetooth LE should be allowed when enable_bluetooth=true"
+        );
+    }
+
+    #[test]
+    fn test_protocol_filtering_quic_disabled() {
+        // Edge case: QUIC disabled should be filtered
+
+        let config = ProtocolsConfig {
+            lib_enabled: true,
+            zdns_enabled: true,
+            api_port: 8080,
+            max_connections: 100,
+            request_timeout_ms: 5000,
+            quic_port: 9334,
+            discovery_port: 9333,
+            enable_quic: false,  // POLICY: QUIC disabled
+            enable_bluetooth: true,
+            enable_mdns: true,
+            quic_priority: 1,
+        };
+
+        let requested = vec![
+            NetworkProtocol::QUIC,
+            NetworkProtocol::BluetoothLE,
+        ];
+
+        let filtered = config.filter_mesh_protocols(requested);
+
+        // ASSERTION: QUIC must NOT be in filtered list
+        assert!(
+            !filtered.contains(&NetworkProtocol::QUIC),
+            "QUIC should be filtered when enable_quic=false"
+        );
+
+        // ASSERTION: Bluetooth must be in filtered list
+        assert!(
+            filtered.contains(&NetworkProtocol::BluetoothLE),
+            "Bluetooth should be allowed when enable_bluetooth=true"
+        );
+    }
+
+    #[test]
+    fn test_protocol_filtering_empty_list() {
+        // Edge case: Empty protocol list should remain empty
+
+        let config = ProtocolsConfig {
+            lib_enabled: true,
+            zdns_enabled: true,
+            api_port: 8080,
+            max_connections: 100,
+            request_timeout_ms: 5000,
+            quic_port: 9334,
+            discovery_port: 9333,
+            enable_quic: true,
+            enable_bluetooth: false,
+            enable_mdns: true,
+            quic_priority: 1,
+        };
+
+        let requested = vec![];
+        let filtered = config.filter_mesh_protocols(requested);
+
+        assert!(
+            filtered.is_empty(),
+            "Filtering empty list should return empty list"
+        );
     }
 }

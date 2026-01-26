@@ -135,14 +135,8 @@ impl ZhtpRequestWire {
     /// requests over UHP-authenticated connections.
     pub fn new(request: ZhtpRequest) -> Self {
         let mut request_id = [0u8; 16];
-        getrandom::getrandom(&mut request_id).unwrap_or_else(|_| {
-            // Fallback to timestamp-based ID if getrandom fails
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
-            request_id[..16].copy_from_slice(&ts.to_le_bytes());
-        });
+        getrandom::getrandom(&mut request_id)
+            .expect("Failed to generate secure request_id");
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -173,13 +167,8 @@ impl ZhtpRequestWire {
         session_key: &[u8; 32],
     ) -> Self {
         let mut request_id = [0u8; 16];
-        getrandom::getrandom(&mut request_id).unwrap_or_else(|_| {
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
-            request_id[..16].copy_from_slice(&ts.to_le_bytes());
-        });
+        getrandom::getrandom(&mut request_id)
+            .expect("Failed to generate secure request_id");
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -1,6 +1,7 @@
 //! Peer discovery implementation for bootstrap
 
 use anyhow::{Result, anyhow};
+use crate::types::node_address::NodeAddress;
 use lib_crypto::PublicKey;
 use lib_identity::{NodeId, ZhtpIdentity};
 use std::collections::HashMap;
@@ -186,7 +187,7 @@ async fn add_peer_to_registry(
         .addresses
         .iter()
         .map(|(protocol, address)| PeerEndpoint {
-            address: address.clone(),
+            address: NodeAddress::Domain(address.clone()),
             protocol: protocol.clone(),
             signal_strength: 1.0, // Bootstrap peers assumed to have good connectivity
             latency_ms: 50, // Default reasonable latency for bootstrap
@@ -461,13 +462,23 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
     let cache_path = cache_dir.join("nonce_cache.db");
     
     // Use the standard open_default method for secure nonce cache
-    let nonce_cache = crate::handshake::NonceCache::open_default(&cache_path, 300)
+    // Derive network epoch from genesis hash (uses environment-appropriate fallback)
+    let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
+    let nonce_cache = crate::handshake::NonceCache::open_default(&cache_path, 300, network_epoch)
         .map_err(|e| {
             tracing::warn!("Failed to open secure nonce cache, bootstrap may be vulnerable to replay attacks: {}", e);
             anyhow!("Nonce cache initialization failed: {}", e)
         })?;
     
-    let ctx = crate::handshake::HandshakeContext::new(nonce_cache);
+    let binding = crate::handshake::derive_channel_binding_from_addrs(
+        stream.local_addr()?,
+        stream.peer_addr()?,
+    );
+    let ctx = crate::handshake::HandshakeContext::new(nonce_cache)
+        .with_roles(crate::handshake::HandshakeRole::Client, crate::handshake::HandshakeRole::Server)
+        .with_channel_binding(binding)
+        .with_required_capabilities(vec!["tcp".to_string()])
+        .with_channel_binding_required(true);
 
     // Set up capabilities for bootstrap handshake
     // SECURITY: PQC enabled for post-quantum security (P1-2 fix)
@@ -476,7 +487,7 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
         max_throughput: 10_000_000, // 10 MB/s
         max_message_size: 1024 * 1024, // 1 MB
         encryption_methods: vec!["chacha20-poly1305".to_string()],
-        pqc_support: true, // Enable PQC for quantum resistance
+        pqc_capability: crate::handshake::PqcCapability::HybridEd25519Dilithium5, // Hybrid mode for quantum resistance
         dht_capable: true,
         relay_capable: false,
         storage_capacity: 0,

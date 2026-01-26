@@ -45,7 +45,7 @@ pub struct IdentityHandler {
     account_lockout: Arc<login_handlers::AccountLockout>,
     csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
     recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
-    storage_system: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+    storage_system: Arc<RwLock<lib_storage::PersistentStorageSystem>>,
 }
 
 impl IdentityHandler {
@@ -57,7 +57,7 @@ impl IdentityHandler {
         account_lockout: Arc<login_handlers::AccountLockout>,
         csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
         recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
-        storage_system: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+        storage_system: Arc<RwLock<lib_storage::PersistentStorageSystem>>,
     ) -> Self {
         Self {
             identity_manager,

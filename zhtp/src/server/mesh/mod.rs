@@ -28,3 +28,4 @@ pub mod authentication_wrapper;
 pub mod routing_integration;
 pub mod rate_limiting;
 pub mod identity_verification;
+pub mod routing_errors;

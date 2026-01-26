@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use tracing::{info, warn, error, debug};
-use crate::types::{Hash, Difficulty};
+use crate::types::{Hash, Difficulty, DifficultyConfig};
 use crate::transaction::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData};
 use crate::types::transaction_type::TransactionType;
 use crate::block::Block;
@@ -40,6 +40,8 @@ pub struct Blockchain {
     pub height: u64,
     /// Current mining difficulty
     pub difficulty: Difficulty,
+    /// Difficulty adjustment configuration (governance-controlled)
+    pub difficulty_config: DifficultyConfig,
     /// Total work done (cumulative difficulty)
     pub total_work: u128,
     /// UTXO set for transaction validation
@@ -99,6 +101,18 @@ pub struct Blockchain {
     /// Broadcast channel for real-time block/transaction propagation
     #[serde(skip)]
     pub broadcast_sender: Option<tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>>,
+    /// Track executed DAO proposals to prevent double-execution
+    pub executed_dao_proposals: HashSet<Hash>,
+    /// Transaction receipts for confirmation tracking (tx_hash -> receipt)
+    pub receipts: HashMap<Hash, crate::receipts::TransactionReceipt>,
+    /// Finality depth (number of confirmations required for finality)
+    pub finality_depth: u64,
+    /// Track finalized block heights to avoid reprocessing
+    pub finalized_blocks: HashSet<u64>,
+    /// Per-contract state storage (contract_id -> state bytes)
+    pub contract_states: HashMap<[u8; 32], Vec<u8>>,
+    /// Contract state snapshots per block height for historical queries
+    pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
 }
 
 /// Validator information stored on-chain
@@ -162,6 +176,7 @@ impl Blockchain {
             blocks: vec![genesis_block.clone()],
             height: 0,
             difficulty: Difficulty::from_bits(crate::INITIAL_DIFFICULTY),
+            difficulty_config: DifficultyConfig::default(),
             total_work: 0,
             utxo_set: HashMap::new(),
             nullifier_set: HashSet::new(),
@@ -189,6 +204,12 @@ impl Blockchain {
             auto_persist_enabled: true,
             blocks_since_last_persist: 0,
             broadcast_sender: None,
+            executed_dao_proposals: HashSet::new(),
+            receipts: HashMap::new(),
+            finality_depth: 12, // Default: 12 confirmations for finality
+            finalized_blocks: HashSet::new(),
+            contract_states: HashMap::new(),
+            contract_state_history: std::collections::BTreeMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -279,6 +300,8 @@ impl Blockchain {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
         
         // Add genesis transaction to genesis block
@@ -519,13 +542,7 @@ impl Blockchain {
         }
 
         // Check for double spends
-        for tx in &block.transactions {
-            for input in &tx.inputs {
-                if self.nullifier_set.contains(&input.nullifier) {
-                    return Err(anyhow::anyhow!("Double spend detected"));
-                }
-            }
-        }
+        self.check_double_spends(&block)?;
 
         // Update blockchain state
         self.blocks.push(block.clone());
@@ -536,15 +553,63 @@ impl Blockchain {
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
 
-        // Process identity transactions
+        // Process transactions by type
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
         self.process_contract_transactions(&block)?;
 
+        // Process non-critical features (log errors but don't fail)
+        self.process_non_critical_features(&block);
+
+        // Create transaction receipts
+        self.create_block_receipts(&block);
+
         // Update persistence counter
         self.blocks_since_last_persist += 1;
 
-        // Broadcast new block to mesh network (if channel configured)
+        // Broadcast to mesh network
+        self.broadcast_block(&block);
+
+        Ok(())
+    }
+
+    /// Check for double spends in block transactions
+    fn check_double_spends(&self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            for input in &tx.inputs {
+                if self.nullifier_set.contains(&input.nullifier) {
+                    return Err(anyhow::anyhow!("Double spend detected"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Process non-critical features that should not fail block processing
+    fn process_non_critical_features(&mut self, block: &Block) {
+        if let Err(e) = self.process_approved_governance_proposals() {
+            warn!("Error processing governance proposals at height {}: {}", self.height, e);
+        }
+        if let Err(e) = self.process_ubi_claim_transactions(block) {
+            warn!("Error processing UBI claims at height {}: {}", self.height, e);
+        }
+        if let Err(e) = self.process_profit_declarations(block) {
+            warn!("Error processing profit declarations at height {}: {}", self.height, e);
+        }
+    }
+
+    /// Create receipts for all transactions in block
+    fn create_block_receipts(&mut self, block: &Block) {
+        let block_hash = block.hash();
+        for (tx_index, tx) in block.transactions.iter().enumerate() {
+            if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
+                warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
+            }
+        }
+    }
+
+    /// Broadcast block to mesh network if configured
+    fn broadcast_block(&self, block: &Block) {
         if let Some(ref sender) = self.broadcast_sender {
             if let Err(e) = sender.send(BlockchainBroadcastMessage::NewBlock(block.clone())) {
                 warn!("Failed to broadcast new block to network: {}", e);
@@ -552,8 +617,6 @@ impl Blockchain {
                 debug!("Block {} broadcast to mesh network", block.height());
             }
         }
-
-        Ok(())
     }
 
     /// Add a block and generate recursive proof for blockchain sync
@@ -783,33 +846,180 @@ impl Blockchain {
         crate::types::hash::blake3_hash(&data)
     }
 
-    /// Adjust mining difficulty based on block times
+    /// Adjust blockchain difficulty based on block time targets.
+    ///
+    /// This method delegates to the consensus coordinator's DifficultyManager when available,
+    /// falling back to `self.difficulty_config` for backward compatibility.
+    /// The consensus engine owns the difficulty policy per architectural design.
+    ///
+    /// # Fallback Behavior
+    /// - If consensus coordinator is available:
+    ///   - Uses coordinator's `calculate_difficulty_adjustment()` for the calculation
+    ///   - If calculation fails: falls back to `calculate_difficulty_with_config()` using coordinator's config
+    ///   - If getting config fails: returns error without fallback (this indicates a consensus layer problem)
+    /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters directly
     fn adjust_difficulty(&mut self) -> Result<()> {
-        if self.height % crate::DIFFICULTY_ADJUSTMENT_INTERVAL != 0 {
-            return Ok(());
+        // Get adjustment parameters and calculate difficulty in a single lock acquisition
+        // to avoid race conditions between reading config and calculating adjustment
+        if let Some(coordinator) = &self.consensus_coordinator {
+            // Use a single tokio block_in_place to call async methods from sync context
+            // Acquire the coordinator read lock once to avoid race conditions and redundant locking
+            let result = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let coord = coordinator.read().await;
+                    let adjustment_interval = coord.get_difficulty_adjustment_interval().await;
+                    let config = coord.get_difficulty_config().await;
+                    
+                    // Check if we should adjust at this height
+                    if self.height % adjustment_interval != 0 {
+                        return Ok::<Option<(u32, lib_consensus::difficulty::DifficultyConfig)>, anyhow::Error>(None);
+                    }
+                    if self.height < adjustment_interval {
+                        return Ok(None);
+                    }
+                    
+                    let current_block = &self.blocks[self.height as usize];
+                    let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
+                    let interval_start_time = interval_start.timestamp();
+                    let interval_end_time = current_block.timestamp();
+                    
+                    // Calculate new difficulty
+                    match coord.calculate_difficulty_adjustment(
+                        self.height,
+                        self.difficulty.bits(),
+                        interval_start_time,
+                        interval_end_time,
+                    ).await {
+                        Ok(Some(new_bits)) => Ok(Some((new_bits, config))),
+                        Ok(None) => Ok(None),
+                        Err(e) => {
+                            tracing::warn!("Difficulty adjustment via coordinator failed: {}, using fallback with config", e);
+                            // Fallback to config-aware calculation
+                            let new_bits = self.calculate_difficulty_with_config(
+                                interval_start_time,
+                                interval_end_time,
+                                config.target_timespan,
+                                config.max_adjustment_factor,
+                                config.max_adjustment_factor,
+                            );
+                            Ok(Some((new_bits, config)))
+                        }
+                    }
+                })
+            });
+            
+            match result {
+                Ok(Some((new_bits, config))) => {
+                    let old_difficulty = self.difficulty.bits();
+                    self.difficulty = Difficulty::from_bits(new_bits);
+                    tracing::info!(
+                        "Difficulty adjusted from {} to {} at height {} \
+                         (config: target_timespan={}, adjustment_interval={}, max_adjustment={}x)",
+                        old_difficulty,
+                        new_bits,
+                        self.height,
+                        config.target_timespan,
+                        config.adjustment_interval,
+                        config.max_adjustment_factor,
+                    );
+                }
+                Ok(None) => {} // No adjustment needed
+                Err(e) => {
+                    tracing::error!(
+                        "Difficulty adjustment via coordinator failed: {}. \
+                         This indicates a consensus layer problem requiring attention.", e
+                    );
+                    return Err(e);
+                }
+            }
+        } else {
+            // Use self.difficulty_config instead of hardcoded constants
+            let adjustment_interval = self.difficulty_config.adjustment_interval;
+            let target_timespan = self.difficulty_config.target_timespan;
+            let max_increase = self.difficulty_config.max_difficulty_increase_factor;
+            let max_decrease = self.difficulty_config.max_difficulty_decrease_factor;
+            
+            // Check if we should adjust at this height
+            if self.height % adjustment_interval != 0 {
+                return Ok(());
+            }
+            if self.height < adjustment_interval {
+                return Ok(());
+            }
+            
+            let current_block = &self.blocks[self.height as usize];
+            let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
+            let interval_start_time = interval_start.timestamp();
+            let interval_end_time = current_block.timestamp();
+            
+            let new_difficulty_bits = self.calculate_difficulty_with_config(
+                interval_start_time,
+                interval_end_time,
+                target_timespan,
+                max_increase,
+                max_decrease,
+            );
+            let old_difficulty = self.difficulty.bits();
+            self.difficulty = Difficulty::from_bits(new_difficulty_bits);
+            
+            tracing::info!(
+                "Difficulty adjusted from {} to {} at height {} \
+                 (config: target_timespan={}, adjustment_interval={}, max_increase={}x, max_decrease={}x)",
+                old_difficulty,
+                new_difficulty_bits,
+                self.height,
+                target_timespan,
+                adjustment_interval,
+                max_increase,
+                max_decrease,
+            );
         }
-
-        if self.height < crate::DIFFICULTY_ADJUSTMENT_INTERVAL {
-            return Ok(());
-        }
-
-        let current_block = &self.blocks[self.height as usize];
-        let interval_start = &self.blocks[(self.height - crate::DIFFICULTY_ADJUSTMENT_INTERVAL) as usize];
         
-        let actual_timespan = current_block.timestamp() - interval_start.timestamp();
-        let actual_timespan = actual_timespan.max(crate::TARGET_TIMESPAN / 4).min(crate::TARGET_TIMESPAN * 4);
-
-        let new_difficulty_bits = (self.difficulty.bits() as u64 * crate::TARGET_TIMESPAN / actual_timespan) as u32;
-        self.difficulty = Difficulty::from_bits(new_difficulty_bits);
-
-        tracing::info!(
-            "Difficulty adjusted from {} to {} at height {}",
-            self.difficulty.bits(),
-            new_difficulty_bits,
-            self.height
-        );
-
         Ok(())
+    }
+    
+    /// Difficulty calculation using DifficultyConfig parameters.
+    /// Uses configurable clamping factors instead of hardcoded 4x.
+    fn calculate_difficulty_with_config(
+        &self,
+        interval_start_time: u64,
+        interval_end_time: u64,
+        target_timespan: u64,
+        max_increase_factor: u64,
+        max_decrease_factor: u64,
+    ) -> u32 {
+        // Defensive check: target_timespan should be validated to be non-zero upstream,
+        // but avoid panicking here if that validation is ever bypassed.
+        if target_timespan == 0 {
+            tracing::warn!(
+                "calculate_difficulty_with_config called with target_timespan = 0; \
+                 returning current difficulty without adjustment"
+            );
+            return self.difficulty.bits();
+        }
+        
+        let actual_timespan = interval_end_time.saturating_sub(interval_start_time);
+        
+        // Clamp using configurable factors instead of hardcoded 4x
+        // min_timespan prevents difficulty from increasing more than max_increase_factor
+        // max_timespan prevents difficulty from decreasing more than max_decrease_factor
+        let min_timespan = target_timespan / max_increase_factor.max(1);
+        let max_timespan = target_timespan.saturating_mul(max_decrease_factor);
+        let clamped_timespan = actual_timespan.clamp(min_timespan, max_timespan);
+        
+        // Additional defensive check in case clamping still results in zero
+        // (can happen if target_timespan / max_increase_factor == 0 due to integer division)
+        if clamped_timespan == 0 {
+            tracing::warn!(
+                "calculate_difficulty_with_config computed clamped_timespan = 0; \
+                 returning current difficulty without adjustment"
+            );
+            return self.difficulty.bits();
+        }
+        
+        // Calculate new difficulty and ensure it doesn't go to zero
+        let new_difficulty = (self.difficulty.bits() as u64 * target_timespan / clamped_timespan) as u32;
+        new_difficulty.max(1)
     }
 
     /// Get the latest block
@@ -828,6 +1038,33 @@ impl Blockchain {
     /// Get current blockchain height
     pub fn get_height(&self) -> u64 {
         self.height
+    }
+
+    /// Get the current difficulty configuration
+    pub fn get_difficulty_config(&self) -> &DifficultyConfig {
+        &self.difficulty_config
+    }
+
+    /// Update the difficulty configuration (for governance updates)
+    ///
+    /// This method validates the new configuration before applying it.
+    /// The `last_updated_at_height` field will be set to the current blockchain height.
+    ///
+    /// # Errors
+    /// Returns an error if the configuration parameters are invalid.
+    pub fn set_difficulty_config(&mut self, mut config: DifficultyConfig) -> Result<()> {
+        config.validate().map_err(|e| anyhow::anyhow!("Invalid difficulty config: {}", e))?;
+        config.last_updated_at_height = self.height;
+        info!(
+            "Updating difficulty config at height {}: target_timespan={}, adjustment_interval={}, max_decrease={}, max_increase={}",
+            self.height,
+            config.target_timespan,
+            config.adjustment_interval,
+            config.max_difficulty_decrease_factor,
+            config.max_difficulty_increase_factor
+        );
+        self.difficulty_config = config;
+        Ok(())
     }
 
     /// Check if a nullifier has been used
@@ -2275,6 +2512,233 @@ impl Blockchain {
         
         info!("✅ DAO proposal {:?} executed, transaction: {:?}", proposal_id, tx_hash);
         Ok(tx_hash)
+    }
+
+    // ============================================================================
+    // GOVERNANCE PARAMETER UPDATE METHODS
+    // ============================================================================
+
+    /// Apply a difficulty parameter update from a passed DAO proposal.
+    ///
+    /// This method:
+    /// 1. Verifies the proposal exists and has passed voting
+    /// 2. Extracts and validates the new difficulty parameters
+    /// 3. Updates the blockchain's difficulty_config
+    /// 4. Synchronizes changes with the consensus coordinator
+    /// 5. Logs all changes at info level
+    ///
+    /// # Arguments
+    /// * `proposal_id` - The hash ID of the passed difficulty parameter update proposal
+    ///
+    /// # Returns
+    /// * `Ok(())` on successful update
+    /// * `Err` if proposal doesn't exist, hasn't passed, or parameters are invalid
+    ///
+    /// # Errors
+    /// - Proposal not found (`InvalidProposal`)
+    /// - Proposal not passed (`InvalidProposal`)
+    /// - Wrong proposal type (`InvalidProposal`)
+    /// - New parameters fail validation (`ParameterValidationError`)
+    /// - Parameters were already applied at this proposal_id
+    pub fn apply_difficulty_parameter_update(&mut self, proposal_id: Hash) -> Result<()> {
+        // 0. Check if already executed (prevent double-execution)
+        if self.executed_dao_proposals.contains(&proposal_id) {
+            debug!(
+                "Difficulty proposal {:?} already executed, skipping",
+                proposal_id
+            );
+            return Ok(());
+        }
+
+        // 1. Verify proposal exists and get its quorum requirement
+        let proposal = self.get_dao_proposal(&proposal_id)
+            .ok_or_else(|| anyhow::anyhow!(
+                "InvalidProposal: Difficulty parameter update proposal {:?} not found",
+                proposal_id
+            ))?;
+
+        // 2. Verify proposal has passed using its configured quorum requirement
+        if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
+            return Err(anyhow::anyhow!(
+                "InvalidProposal: Proposal {:?} has not passed voting",
+                proposal_id
+            ));
+        }
+
+        // 3. Get the execution parameters from the proposal (already fetched above)
+        let execution_params_bytes = proposal.execution_params.clone()
+            .ok_or_else(|| anyhow::anyhow!(
+                "InvalidProposal: Proposal {:?} has no execution parameters",
+                proposal_id
+            ))?;
+
+        // 4. Decode execution parameters
+        let execution_params: lib_consensus::dao::dao_types::DaoExecutionParams = 
+            bincode::deserialize(&execution_params_bytes)
+                .map_err(|e| anyhow::anyhow!(
+                    "ParameterValidationError: Failed to decode execution params: {}",
+                    e
+                ))?;
+
+        // 5. Extract the governance parameter update
+        let update = match execution_params.action {
+            lib_consensus::dao::dao_types::DaoExecutionAction::GovernanceParameterUpdate(update) => {
+                update
+            }
+            _ => return Err(anyhow::anyhow!(
+                "InvalidProposal: Proposal {:?} is not a governance parameter update",
+                proposal_id
+            )),
+        };
+
+        // 6. Extract difficulty-specific parameters from the update vector
+        let mut new_target_timespan: Option<u64> = None;
+        let mut new_adjustment_interval: Option<u64> = None;
+
+        for param in &update.updates {
+            match param {
+                lib_consensus::dao::dao_types::GovernanceParameterValue::BlockchainTargetTimespan(v) => {
+                    new_target_timespan = Some(*v);
+                }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::BlockchainAdjustmentInterval(v) => {
+                    new_adjustment_interval = Some(*v);
+                }
+                _ => {
+                    // Other parameters are handled elsewhere
+                }
+            }
+        }
+
+        // 7. Validate that at least one difficulty parameter was provided
+        if new_target_timespan.is_none() && new_adjustment_interval.is_none() {
+            return Err(anyhow::anyhow!(
+                "ParameterValidationError: No difficulty parameters found in governance update"
+            ));
+        }
+
+        // 8. Validate parameters
+        if let Some(ts) = new_target_timespan {
+            if ts == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: target_timespan cannot be zero"
+                ));
+            }
+        }
+        if let Some(ai) = new_adjustment_interval {
+            if ai == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: adjustment_interval cannot be zero"
+                ));
+            }
+        }
+
+        // 9. Log the update
+        info!(
+            "📊 Applying difficulty parameter update from proposal {:?}",
+            proposal_id
+        );
+        if let Some(ts) = new_target_timespan {
+            info!(
+                "   target_timespan: {} → {}",
+                self.difficulty_config.target_timespan, ts
+            );
+        }
+        if let Some(ai) = new_adjustment_interval {
+            info!(
+                "   adjustment_interval: {} → {}",
+                self.difficulty_config.adjustment_interval, ai
+            );
+        }
+
+        // 10. Apply the update
+        if let Some(ts) = new_target_timespan {
+            self.difficulty_config.target_timespan = ts;
+        }
+        if let Some(ai) = new_adjustment_interval {
+            self.difficulty_config.adjustment_interval = ai;
+        }
+        self.difficulty_config.last_updated_at_height = self.height;
+
+        // Sync with consensus coordinator if available
+        if let Some(ref coordinator) = self.consensus_coordinator {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let coord = coordinator.write().await;
+                    coord.apply_difficulty_governance_update(
+                        None, // initial_difficulty not in DifficultyConfig
+                        new_adjustment_interval,
+                        new_target_timespan,
+                    ).await
+                })
+            })?;
+        }
+
+        // 11. Mark proposal as executed to prevent double-execution
+        self.executed_dao_proposals.insert(proposal_id);
+
+        Ok(())
+    }
+
+    /// Process all approved governance proposals that haven't been executed yet.
+    /// This is called during block processing to execute any passed proposals.
+    ///
+    /// Currently handles:
+    /// - DifficultyParameterUpdate proposals
+    ///
+    /// Future: Treasury allocations, protocol upgrades, etc.
+    pub fn process_approved_governance_proposals(&mut self) -> Result<()> {
+        // Get difficulty parameter update proposals with their quorum requirements
+        // Collect to avoid borrowing issues with self.has_proposal_passed()
+        let difficulty_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
+            .iter()
+            .filter(|p| p.proposal_type == "difficulty_parameter_update")
+            .map(|p| (p.proposal_id.clone(), p.quorum_required))
+            .collect();
+
+        for (proposal_id, quorum_required) in difficulty_proposals {
+            // Skip if already executed
+            if self.executed_dao_proposals.contains(&proposal_id) {
+                continue;
+            }
+
+            // Check if proposal has passed voting using its configured quorum requirement
+            match self.has_proposal_passed(&proposal_id, quorum_required as u32) {
+                Ok(true) => {
+                    // Proposal passed, try to execute it
+                    match self.apply_difficulty_parameter_update(proposal_id.clone()) {
+                        Ok(()) => {
+                            info!(
+                                "✅ Successfully executed difficulty parameter update proposal {:?}",
+                                proposal_id
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to execute difficulty parameter update proposal {:?}: {}",
+                                proposal_id, e
+                            );
+                            // Don't fail the whole block processing, just log the warning
+                        }
+                    }
+                }
+                Ok(false) => {
+                    // Proposal hasn't passed yet, skip
+                    debug!(
+                        "Difficulty proposal {:?} has not passed voting yet",
+                        proposal_id
+                    );
+                }
+                Err(e) => {
+                    // Error checking proposal status, skip
+                    debug!(
+                        "Error checking status of proposal {:?}: {}",
+                        proposal_id, e
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 
 
@@ -4596,6 +5060,293 @@ impl Blockchain {
     /// Check if auto-persist should trigger based on block count
     pub fn should_auto_persist(&self, interval: u64) -> bool {
         self.auto_persist_enabled && self.blocks_since_last_persist >= interval
+    }
+
+    // ========================================================================
+    // TRANSACTION RECEIPT AND FINALITY MANAGEMENT
+    // ========================================================================
+
+    /// Create a transaction receipt for a transaction included in a block
+    pub fn create_receipt(
+        &mut self,
+        tx: &Transaction,
+        block_hash: Hash,
+        block_height: u64,
+        tx_index: u32,
+    ) -> Result<()> {
+        let receipt = crate::receipts::TransactionReceipt::new(
+            tx.hash(),
+            block_hash,
+            block_height,
+            tx_index,
+            tx.fee,
+            chrono::Utc::now().timestamp() as u64,
+        );
+
+        self.receipts.insert(tx.hash(), receipt);
+        debug!(
+            "📋 Receipt created for tx {} at block {} (index {})",
+            hex::encode(tx.hash().as_bytes()),
+            block_height,
+            tx_index
+        );
+
+        Ok(())
+    }
+
+    /// Get transaction receipt by hash
+    pub fn get_receipt(&self, tx_hash: &Hash) -> Option<crate::receipts::TransactionReceipt> {
+        self.receipts.get(tx_hash).cloned()
+    }
+
+    /// Update confirmation counts for all receipts
+    pub fn update_confirmation_counts(&mut self) {
+        for receipt in self.receipts.values_mut() {
+            receipt.update_confirmations(self.height);
+            if receipt.is_finalized() && receipt.status != crate::receipts::TransactionStatus::Finalized {
+                receipt.finalize();
+            }
+        }
+    }
+
+    /// Get blocks that have reached finality (12+ confirmations)
+    pub fn get_finalized_blocks(&self, depth: u64) -> Vec<&Block> {
+        let current_height = self.height;
+        if current_height < depth {
+            return vec![];
+        }
+
+        let finality_height = current_height.saturating_sub(depth);
+        self.blocks
+            .iter()
+            .filter(|b| b.header.height <= finality_height)
+            .collect()
+    }
+
+    /// Check if a block has already been finalized
+    pub fn is_block_finalized(&self, block_height: u64) -> bool {
+        self.finalized_blocks.contains(&block_height)
+    }
+
+    /// Mark a block as finalized
+    pub fn mark_block_finalized(&mut self, block_height: u64) {
+        self.finalized_blocks.insert(block_height);
+    }
+
+    /// Trigger finalization for blocks that have reached 12+ confirmations
+    /// Returns number of blocks finalized
+    pub fn finalize_blocks(&mut self) -> Result<u64> {
+        self.update_confirmation_counts();
+
+        // Collect finalized block data before modifying self
+        let finalized_data: Vec<(u64, usize)> = {
+            let finalized = self.get_finalized_blocks(self.finality_depth);
+            finalized
+                .iter()
+                .filter(|b| !self.is_block_finalized(b.header.height))
+                .map(|b| (b.header.height, b.transactions.len()))
+                .collect()
+        };
+
+        let mut count = 0u64;
+
+        for (block_height, tx_count) in finalized_data {
+            // Collect transaction hashes for this block
+            let tx_hashes: Vec<Hash> = self.blocks
+                .iter()
+                .find(|b| b.header.height == block_height)
+                .map(|b| b.transactions.iter().map(|tx| tx.hash()).collect())
+                .unwrap_or_default();
+
+            // Mark all transactions as finalized
+            for tx_hash in tx_hashes {
+                if let Some(receipt) = self.receipts.get_mut(&tx_hash) {
+                    receipt.status = crate::receipts::TransactionStatus::Finalized;
+                }
+            }
+
+            // Mark block as finalized
+            self.mark_block_finalized(block_height);
+            count += 1;
+
+            info!(
+                "✅ Block {} finalized ({} transactions, {} confirmations)",
+                block_height,
+                tx_count,
+                self.height.saturating_sub(block_height)
+            );
+        }
+
+        if count > 0 {
+            info!("🎯 {} blocks finalized", count);
+        }
+
+        Ok(count)
+    }
+
+    // ========================================================================
+    // CONTRACT STATE MANAGEMENT
+    // ========================================================================
+
+    /// Update and persist contract state after execution
+    ///
+    /// # Arguments
+    /// * `contract_id` - 32-byte contract identifier
+    /// * `new_state` - Serialized contract state bytes
+    /// * `block_height` - Current block height for historical snapshots
+    pub fn update_contract_state(
+        &mut self,
+        contract_id: [u8; 32],
+        new_state: Vec<u8>,
+        block_height: u64,
+    ) -> Result<()> {
+        // Update current state
+        self.contract_states.insert(contract_id, new_state.clone());
+
+        // Save snapshot for this block height
+        let snapshot = self.contract_state_history
+            .entry(block_height)
+            .or_insert_with(HashMap::new);
+        snapshot.insert(contract_id, new_state);
+
+        debug!("💾 Contract state updated: {:?} at block {}", contract_id, block_height);
+        Ok(())
+    }
+
+    /// Get current contract state
+    pub fn get_contract_state(&self, contract_id: &[u8; 32]) -> Option<Vec<u8>> {
+        self.contract_states.get(contract_id).cloned()
+    }
+
+    /// Get contract state at a specific block height (for historical queries)
+    ///
+    /// # Arguments
+    /// * `contract_id` - 32-byte contract identifier
+    /// * `height` - Block height to query
+    ///
+    /// # Returns
+    /// State bytes at the specified height, or None if not found
+    pub fn get_contract_state_at_height(
+        &self,
+        contract_id: &[u8; 32],
+        height: u64,
+    ) -> Option<Vec<u8>> {
+        // Try to find snapshot at or before requested height
+        for h in (0..=height).rev() {
+            if let Some(snapshot) = self.contract_state_history.get(&h) {
+                if let Some(state) = snapshot.get(contract_id) {
+                    return Some(state.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Prune old contract state history to save memory
+    ///
+    /// Keeps snapshots for recent blocks and removes older ones.
+    /// # Arguments
+    /// * `keep_blocks` - Number of recent blocks to keep in history
+    pub fn prune_contract_history(&mut self, keep_blocks: u64) {
+        if self.height < keep_blocks {
+            return; // Not enough blocks to prune
+        }
+
+        let prune_before = self.height.saturating_sub(keep_blocks - 1);
+        let keys_to_remove: Vec<u64> = self.contract_state_history
+            .iter()
+            .filter(|(h, _)| **h < prune_before)
+            .map(|(h, _)| *h)
+            .collect();
+
+        for key in keys_to_remove {
+            self.contract_state_history.remove(&key);
+        }
+
+        debug!("🧹 Pruned contract history before block {}", prune_before);
+    }
+
+    // ========================================================================
+    // ECONOMIC FEATURE PROCESSING
+    // ========================================================================
+
+    /// Process UBI claim transactions
+    ///
+    /// Validates and tracks UBI claims to prevent double-claiming in same month.
+    /// This is a simplified implementation tracking claims on-chain.
+    pub fn process_ubi_claim_transactions(&mut self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if let Some(ubi_data) = &tx.ubi_claim_data {
+                // Create claim tracking key: (identity, month_index)
+                let claim_key = format!(
+                    "ubi_claim:{}:{}",
+                    ubi_data.claimant_identity, ubi_data.month_index
+                );
+
+                // Check if already claimed this month
+                if self.identity_blocks.contains_key(&claim_key) {
+                    warn!(
+                        "⚠️ Duplicate UBI claim attempt: {} for month {}",
+                        ubi_data.claimant_identity, ubi_data.month_index
+                    );
+                    return Err(anyhow::anyhow!(
+                        "UBI already claimed for this month: {}",
+                        ubi_data.claimant_identity
+                    ));
+                }
+
+                // Record claim
+                self.identity_blocks.insert(claim_key, block.header.height);
+
+                info!(
+                    "✅ UBI claim processed: identity={}, month={}, amount={}",
+                    ubi_data.claimant_identity, ubi_data.month_index, ubi_data.claim_amount
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Process profit declaration transactions
+    ///
+    /// Validates that tribute amount equals 20% of profit amount.
+    /// Enforces mandatory profit-to-nonprofit redistribution.
+    pub fn process_profit_declarations(&mut self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if let Some(profit_data) = &tx.profit_declaration_data {
+                // Validate tribute calculation (must be exactly 20%)
+                let expected_tribute = profit_data.profit_amount * 20 / 100;
+
+                if profit_data.tribute_amount != expected_tribute {
+                    error!(
+                        "❌ Invalid tribute amount: expected {}, got {}",
+                        expected_tribute, profit_data.tribute_amount
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Invalid tribute amount: expected {}, got {}",
+                        expected_tribute,
+                        profit_data.tribute_amount
+                    ));
+                }
+
+                // Record declaration
+                let declaration_key = format!(
+                    "profit_declaration:{}:{}",
+                    profit_data.declarant_identity, profit_data.fiscal_period
+                );
+                self.identity_blocks
+                    .insert(declaration_key, block.header.height);
+
+                info!(
+                    "💸 Profit declaration processed: entity={}, fiscal_period={}, profit={}, tribute={}",
+                    profit_data.declarant_identity,
+                    profit_data.fiscal_period,
+                    profit_data.profit_amount,
+                    profit_data.tribute_amount
+                );
+            }
+        }
+        Ok(())
     }
 }
 

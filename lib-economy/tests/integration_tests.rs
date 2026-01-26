@@ -4,7 +4,6 @@
 //! fee calculation, reward distribution, UBI mechanics, and  economics.
 
 use lib_economy::*;
-use lib_economy::testing::*;
 use lib_economy::incentives::{cost_savings::CostSavings, infrastructure_rewards::InfrastructureRewards};
 
 #[cfg(test)]
@@ -155,28 +154,38 @@ mod tests {
     #[test]
     fn test_treasury_allocation() {
         let mut treasury = DaoTreasury::new();
-        
+
         // Test initial state
         assert_eq!(treasury.treasury_balance, 0);
         assert_eq!(treasury.ubi_allocated, 0);
-        assert_eq!(treasury.welfare_allocated, 0);
-        
+        assert_eq!(treasury.sector_dao_allocated, 0);
+        assert_eq!(treasury.emergency_allocated, 0);
+        assert_eq!(treasury.dev_grants_allocated, 0);
+
         // Add DAO fees
-        treasury.add_dao_fees(1000).unwrap();
-        
-        // Check automatic allocation (60% UBI, 40% welfare)
+        treasury
+            .apply_fee_distribution(calculate_dao_fee_distribution(1000))
+            .unwrap();
+
+        // Check automatic allocation (45/30/15/10)
         assert_eq!(treasury.treasury_balance, 1000);
-        assert_eq!(treasury.ubi_allocated, 600); // 60% of 1000
-        assert_eq!(treasury.welfare_allocated, 400); // 40% of 1000
+        assert_eq!(treasury.ubi_allocated, 450); // 45% of 1000
+        assert_eq!(treasury.sector_dao_allocated, 300); // 30% of 1000
+        assert_eq!(treasury.emergency_allocated, 150); // 15% of 1000
+        assert_eq!(treasury.dev_grants_allocated, 100); // 10% of 1000
         assert_eq!(treasury.total_dao_fees_collected, 1000);
-        
+
         // Test UBI calculation
         let ubi_per_citizen = treasury.calculate_ubi_per_citizen(100); // 100 citizens
-        assert_eq!(ubi_per_citizen, 6); // 600 / 100
-        
-        // Test welfare funding
-        let welfare_available = treasury.calculate_welfare_funding_available();
-        assert_eq!(welfare_available, 400);
+        assert_eq!(ubi_per_citizen, 4); // 450 / 100 (changed from 6)
+
+        // Test non-UBI funding
+        let sector_available = treasury.calculate_sector_dao_funding_available();
+        let emergency_available = treasury.calculate_emergency_funding_available();
+        let dev_grants_available = treasury.calculate_dev_grants_funding_available();
+        assert_eq!(sector_available, 300);
+        assert_eq!(emergency_available, 150);
+        assert_eq!(dev_grants_available, 100);
     }
 
     #[test]
@@ -334,16 +343,23 @@ mod tests {
 
     #[test]
     fn test_economic_constants() {
-        // Verify all constants are set correctly
-        assert_eq!(DEFAULT_DAO_FEE_RATE, 200); // 2%
+        // Verify all constants are set correctly (aligned with financial projections)
+        assert_eq!(DEFAULT_DAO_FEE_RATE, 100); // 1% (changed from 200/2%)
+        assert_eq!(TRANSACTION_FEE_RATE, 100); // 1% in basis points
         assert_eq!(MINIMUM_DAO_FEE, 5);
-        assert_eq!(UBI_ALLOCATION_PERCENTAGE, 60);
-        assert_eq!(WELFARE_ALLOCATION_PERCENTAGE, 40);
+        assert_eq!(UBI_ALLOCATION_PERCENTAGE, 45); // Changed from 60%
+        assert_eq!(DAO_ALLOCATION_PERCENTAGE, 30); // New constant
+        assert_eq!(EMERGENCY_ALLOCATION_PERCENTAGE, 15); // New constant
+        assert_eq!(DEV_GRANT_ALLOCATION_PERCENTAGE, 10); // New constant
+        assert_eq!(WELFARE_ALLOCATION_PERCENTAGE, 40); // Phase 1 temporary
         assert_eq!(DEFAULT_ROUTING_RATE, 1);
         assert_eq!(DEFAULT_STORAGE_RATE, 10);
         assert_eq!(ISP_BYPASS_CONNECTIVITY_RATE, 100);
         assert_eq!(HIGH_UTILIZATION_THRESHOLD, 0.9);
         assert_eq!(LOW_UTILIZATION_THRESHOLD, 0.3);
+
+        // Verify allocation percentages sum to 100%
+        assert_eq!(UBI_ALLOCATION_PERCENTAGE + DAO_ALLOCATION_PERCENTAGE + EMERGENCY_ALLOCATION_PERCENTAGE + DEV_GRANT_ALLOCATION_PERCENTAGE, 100);
     }
 
     #[test]

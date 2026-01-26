@@ -158,7 +158,7 @@ impl AggregatedCircuitBuilder {
     }
 
     /// Add proof to aggregation batch
-    pub fn add_proof(&mut self, proof: Plonky2Proof, metadata: Option<ProofMetadata>) -> Result<()> {
+    pub(crate) fn add_proof(&mut self, proof: Plonky2Proof, metadata: Option<ProofMetadata>) -> Result<()> {
         if self.pending_proofs.len() >= 1000 { // Reasonable limit
             return Err(anyhow::anyhow!("Too many proofs in batch"));
         }

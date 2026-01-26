@@ -7,10 +7,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, Mutex};
 use tokio::time::{Duration, Instant};
-use std::path::PathBuf;
 use tracing::{info, warn, error, debug};
 
 use super::config::NodeConfig;
+use crate::runtime::node_identity::{
+    derive_node_id,
+    log_runtime_node_identity,
+    resolve_device_name,
+    set_runtime_node_identity,
+    RuntimeNodeIdentity,
+};
 // Removed ZK coordinator - using unified lib-proofs system directly
 
 /// Information about an existing network discovered during startup
@@ -28,6 +34,7 @@ pub mod services;
 pub mod shared_blockchain;
 pub mod shared_dht;
 pub mod blockchain_provider;
+pub mod storage_provider;  // Global access to storage for component sharing
 pub mod edge_state_provider;  // Global access to edge node state for header-only sync
 pub mod identity_manager_provider;
 pub mod network_blockchain_provider;
@@ -38,10 +45,18 @@ pub mod dht_indexing;
 pub mod routing_rewards;
 pub mod storage_rewards;
 pub mod reward_orchestrator;
+pub mod node_identity;
+pub mod node_runtime;
+pub mod node_runtime_orchestrator;
 #[cfg(test)]
 pub mod test_api_integration;
 
 pub use components::*;
+pub use node_runtime::{
+    NodeRuntime, DefaultNodeRuntime, NodeRole, NodeAction, PeerInfo, PeerState,
+    PeerStateChange, DiscoveryProtocol, SyncType, Tick,
+};
+pub use node_runtime_orchestrator::NodeRuntimeOrchestrator;
 pub use shared_blockchain::*;
 pub use shared_dht::*;
 pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_blockchain, is_global_blockchain_available};
@@ -427,8 +442,12 @@ impl RuntimeOrchestrator {
         if !is_registered(ComponentId::Protocols).await {
             let environment = self.config.environment;
             let api_port = self.config.protocols_config.api_port;
+            let quic_port = self.config.protocols_config.quic_port;
+            let discovery_port = self.config.protocols_config.discovery_port;
             let is_edge_node = *self.is_edge_node.read().await;
-            self.register_component(Arc::new(ProtocolsComponent::new_with_node_type(environment, api_port, is_edge_node))).await?;
+            self.register_component(Arc::new(ProtocolsComponent::new_with_node_type_and_ports(
+                environment, api_port, quic_port, discovery_port, is_edge_node
+            ))).await?;
         }
         
         if !is_registered(ComponentId::Api).await {
@@ -487,26 +506,53 @@ impl RuntimeOrchestrator {
         }
         
         // CRITICAL: Check if we're joining existing network - if so, DON'T create genesis!
+        // BUT: If the blockchain is empty after joining (sync failed), fall back to genesis creation
         let joined_existing = *self.joined_existing_network.read().await;
-        
+
         if joined_existing {
-            // Joining existing network - blockchain should already be initialized for sync
-            info!(" Joining existing network - skipping genesis creation");
-            info!("  User wallet will be added to synced blockchain after sync completes");
-            
-            // Just store the wallet for later use, don't create blockchain
-            // The blockchain will be synced from network peers
-            
-            // CRITICAL: Push wallet to BlockchainComponent if already registered
-            let components = self.components.read().await;
-            if let Some(component) = components.get(&ComponentId::Blockchain) {
-                if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
-                    blockchain_comp.set_user_wallet(wallet).await;
-                    info!(" User wallet propagated to BlockchainComponent for sync");
+            // Check if the global blockchain actually has data (sync may have failed)
+            let blockchain_has_data = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                Ok(blockchain_arc) => {
+                    let blockchain = blockchain_arc.read().await;
+                    let has_data = blockchain.height > 0 || !blockchain.utxo_set.is_empty();
+                    if has_data {
+                        info!(" Joined network has blockchain data (height: {}, UTXOs: {})",
+                              blockchain.height, blockchain.utxo_set.len());
+                    } else {
+                        warn!("⚠ Joined network but blockchain is empty - sync may have failed");
+                    }
+                    has_data
                 }
+                Err(_) => {
+                    warn!("⚠ No global blockchain initialized - will create genesis");
+                    false
+                }
+            };
+
+            if blockchain_has_data {
+                // Successfully joined network with synced data
+                info!(" Joining existing network - skipping genesis creation");
+                info!("  User wallet will be added to synced blockchain after sync completes");
+
+                // Just store the wallet for later use, don't create blockchain
+                // The blockchain will be synced from network peers
+
+                // CRITICAL: Push wallet to BlockchainComponent if already registered
+                let components = self.components.read().await;
+                if let Some(component) = components.get(&ComponentId::Blockchain) {
+                    if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
+                        blockchain_comp.set_user_wallet(wallet).await;
+                        info!(" User wallet propagated to BlockchainComponent for sync");
+                    }
+                }
+
+                return Ok(());
+            } else {
+                // Sync failed - fall back to genesis creation
+                warn!("⚠ Network sync failed or incomplete - falling back to genesis creation");
+                info!(" This node will create its own genesis and become a new network origin");
+                // Continue to genesis creation below...
             }
-            
-            return Ok(());
         }
         
         // Try to load existing blockchain from disk, or create new genesis
@@ -747,21 +793,60 @@ impl RuntimeOrchestrator {
             kyber_pk: keypair.public_key.kyber_pk.clone(),
             key_id: keypair.public_key.key_id.clone(),
         };
-        
+
+        // Create signing context for TLS certificate pinning (Issue #739)
+        // This requires the TLS certificate to exist (created by QUIC server)
+        let signing_ctx = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
+            .map(|tls_spki_sha256| {
+                lib_network::discovery::local_network::DiscoverySigningContext {
+                    dilithium_sk: keypair.private_key.dilithium_sk.clone(),
+                    dilithium_pk: keypair.public_key.dilithium_pk.clone(),
+                    tls_spki_sha256,
+                }
+            });
+
+        if signing_ctx.is_some() {
+            info!("TLS certificate pinning enabled for discovery announcements");
+        } else {
+            debug!("TLS certificate not yet available - discovery announcements will be unsigned");
+        }
+
         // Start local discovery service (runs in background)
         if let Err(e) = lib_network::discovery::start_local_discovery(
             node_uuid,
             mesh_port,
             public_key,
             None, // No callback needed for now
+            signing_ctx,
         ).await {
             warn!("Failed to start local discovery: {}", e);
         }
         
-        // For now, assume we're creating a new network
-        // TODO: Check DHT and bootstrap peers for existing networks
-        let joined_existing_network = false;
+        // Discover existing network using bootstrap peers and DHT
+        let is_edge_node = *self.is_edge_node.read().await;
+        let network_info = self.discover_network_with_retry(is_edge_node).await.ok().flatten();
+
+        let joined_existing_network = network_info.is_some();
         self.set_joined_existing_network(joined_existing_network).await;
+
+        if let Some(ref net_info) = network_info {
+            info!("✓ Found existing network with {} peers at height {}",
+                  net_info.peer_count, net_info.blockchain_height);
+
+            // Initialize blockchain provider for sync reception
+            // This allows ProtocolsComponent to start the unified server
+            let blockchain = lib_blockchain::Blockchain::new()?;
+            let blockchain_arc = Arc::new(RwLock::new(blockchain));
+            set_global_blockchain(blockchain_arc.clone()).await?;
+            info!("✓ Blockchain provider initialized for network sync");
+
+            // Store bootstrap peers for mesh sync
+            if !net_info.bootstrap_peers.is_empty() {
+                crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(
+                    net_info.bootstrap_peers.clone()
+                ).await?;
+            }
+        }
         
         // ========================================================================
         // PHASE 3: Identity/Wallet Setup
@@ -780,6 +865,18 @@ impl RuntimeOrchestrator {
         
         // Store wallet result for blockchain component
         self.set_user_wallet(wallet_result.clone()).await?;
+
+        // Derive deterministic NodeId from DID + device name and cache for runtime access
+        let device_name = resolve_device_name(Some(&wallet_result.node_identity.primary_device))
+            .context("Device name resolution failed (set ZHTP_DEVICE_NAME or configure device name)")?;
+        let node_id = derive_node_id(&wallet_result.node_identity.did, &device_name)
+            .context("Failed to derive NodeId from DID + device name")?;
+        set_runtime_node_identity(RuntimeNodeIdentity {
+            did: wallet_result.node_identity.did.clone(),
+            device_name,
+            node_id,
+        }).context("Failed to cache runtime NodeId")?;
+        log_runtime_node_identity();
         
         // Store user identity for blockchain registration in Phase 6
         self.set_pending_identity_registration(wallet_result.user_identity.clone()).await;
@@ -794,7 +891,16 @@ impl RuntimeOrchestrator {
         };
         
         self.register_component(Arc::new(ZKComponent::new())).await?;
-        self.register_component(Arc::new(IdentityComponent::new())).await?;
+
+        // CRITICAL: Pass genesis identities explicitly to IdentityComponent
+        // These were created in PHASE 3 and must be injected as a dependency
+        // This ensures deterministic initialization and prevents silent empty state
+        let genesis_ids = self.genesis_identities.read().await.clone();
+        let genesis_private = self.genesis_private_data.read().await.clone();
+        self.register_component(
+            Arc::new(IdentityComponent::new_with_identities_and_private_data(genesis_ids, genesis_private))
+        ).await?;
+
         self.register_component(Arc::new(StorageComponent::new())).await?;
         
         let user_wallet = self.get_user_wallet().await;
@@ -811,7 +917,12 @@ impl RuntimeOrchestrator {
         self.register_component(Arc::new(blockchain_component)).await?;
         
         self.register_component(Arc::new(ConsensusComponent::new(environment))).await?;
-        self.register_component(Arc::new(ProtocolsComponent::new(environment, self.config.protocols_config.api_port))).await?;
+        self.register_component(Arc::new(ProtocolsComponent::new_with_ports(
+            environment,
+            self.config.protocols_config.api_port,
+            self.config.protocols_config.quic_port,
+            self.config.protocols_config.discovery_port,
+        ))).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         
@@ -835,11 +946,12 @@ impl RuntimeOrchestrator {
         
         // Get pending identity from Phase 3
         if let Some(identity) = self.get_pending_identity_registration().await {
-            // Get blockchain component for registration
-            if let Ok(Some(shared_blockchain)) = self.get_shared_blockchain().await {
-                let mut blockchain = shared_blockchain.write().await;
-                
-                if let Some(blockchain_ref) = blockchain.as_mut() {
+            // Prefer the global blockchain provider for registration.
+            match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                Ok(blockchain_arc) => {
+                    let mut blockchain = blockchain_arc.write().await;
+                    let blockchain_ref = &mut *blockchain;
+
                     // Create identity transaction data for blockchain registration
                     let identity_data = lib_blockchain::transaction::IdentityTransactionData {
                         did: format!("did:zhtp:{}", hex::encode(&identity.id.0)),
@@ -898,11 +1010,10 @@ impl RuntimeOrchestrator {
                             }
                         }
                     }
-                } else {
-                    warn!("⚠️  Blockchain not initialized");
                 }
-            } else {
-                warn!("⚠️  Blockchain service not available for identity registration");
+                Err(e) => {
+                    warn!("⚠️  Blockchain service not available for identity registration: {}", e);
+                }
             }
         } else {
             info!("ℹ️  No pending identity registration (existing identity loaded)");
@@ -2087,8 +2198,8 @@ impl RuntimeOrchestrator {
         info!("   → Starting NetworkComponent...");
         self.start_component(ComponentId::Network).await?;
         
-        // Start multicast broadcasting directly (without full ProtocolsComponent)
-        info!("   → Starting UDP multicast peer discovery...");
+        // Start peer discovery (via lib-network DHT, mDNS, etc.)
+        info!("   → Starting peer discovery...");
         let node_uuid = uuid::Uuid::new_v4();
         let mesh_port = self.config.network_config.mesh_port;
         
@@ -2099,27 +2210,51 @@ impl RuntimeOrchestrator {
             kyber_pk: keypair.public_key.kyber_pk.clone(),
             key_id: keypair.public_key.key_id.clone(),
         };
-        
+
+        // Create signing context for TLS certificate pinning (Issue #739)
+        let signing_ctx = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
+            .map(|tls_spki_sha256| {
+                lib_network::discovery::local_network::DiscoverySigningContext {
+                    dilithium_sk: keypair.private_key.dilithium_sk.clone(),
+                    dilithium_pk: keypair.public_key.dilithium_pk.clone(),
+                    tls_spki_sha256,
+                }
+            });
+
         // Start local discovery service (broadcasts immediately, then every 30s)
         if let Err(e) = lib_network::discovery::local_network::start_local_discovery(
             node_uuid,
             mesh_port,
             public_key,
             None, // No callback needed for discovery phase
+            signing_ctx,
         ).await {
             warn!("      Failed to start local discovery: {}", e);
         } else {
-            info!("      ✓ Multicast broadcasting started (224.0.1.75:37775)");
+            let signed = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert().is_some();
+            info!("      ✓ Multicast broadcasting started (224.0.1.75:37775, TLS pinning: {})", signed);
         }
         
         Ok(())
     }
     
     /// Discover network with retry logic for edge nodes
-    pub async fn discover_network_with_retry(&mut self, is_edge_node: bool) -> Result<Option<ExistingNetworkInfo>> {
+    pub async fn discover_network_with_retry(&self, is_edge_node: bool) -> Result<Option<ExistingNetworkInfo>> {
         use crate::discovery_coordinator::DiscoveryCoordinator;
-        
-        let discovery = DiscoveryCoordinator::new();
+
+        let mut discovery_protocols = Self::discovery_protocols_from_config(
+            &self.config.network_config.protocols,
+        );
+        if discovery_protocols.is_empty() {
+            discovery_protocols = vec![crate::discovery_coordinator::DiscoveryProtocol::UdpMulticast];
+        }
+
+        let config = crate::discovery_coordinator::DiscoveryConfig::new(
+            self.config.network_config.bootstrap_peers.clone(),
+            self.config.protocols_config.api_port,
+            discovery_protocols,
+        );
+        let discovery = DiscoveryCoordinator::new(config);
         discovery.start_event_listener().await;
         
         if is_edge_node {
@@ -2159,6 +2294,37 @@ impl RuntimeOrchestrator {
                 }
             }
         }
+    }
+
+    fn discovery_protocols_from_config(
+        protocols: &[String],
+    ) -> Vec<crate::discovery_coordinator::DiscoveryProtocol> {
+        use crate::discovery_coordinator::DiscoveryProtocol;
+
+        let mut mapped = Vec::new();
+        for protocol in protocols {
+            let normalized = protocol.to_ascii_lowercase();
+            let discovery = match normalized.as_str() {
+                "mesh" | "udp_multicast" | "udp" => Some(DiscoveryProtocol::UdpMulticast),
+                "mdns" | "bonjour" => Some(DiscoveryProtocol::MDns),
+                "bluetooth" | "bluetooth_le" | "ble" => Some(DiscoveryProtocol::BluetoothLE),
+                "bluetooth_classic" => Some(DiscoveryProtocol::BluetoothClassic),
+                "wifi_direct" | "wifi" => Some(DiscoveryProtocol::WiFiDirect),
+                "dht" => Some(DiscoveryProtocol::DHT),
+                "port_scan" => Some(DiscoveryProtocol::PortScan),
+                "lorawan" => Some(DiscoveryProtocol::LoRaWAN),
+                "satellite" => Some(DiscoveryProtocol::Satellite),
+                _ => None,
+            };
+
+            if let Some(protocol) = discovery {
+                if !mapped.contains(&protocol) {
+                    mapped.push(protocol);
+                }
+            }
+        }
+
+        mapped
     }
     
     /// Graceful shutdown of the orchestrator
@@ -2231,77 +2397,27 @@ pub async fn create_or_load_node_identity(
         .join(".zhtp")
         .join("keystore");
 
-    let identity_file = keystore_path.join("node_identity.json");
+    // Allow explicit device name override to keep NodeId deterministic across restarts
+    let device_name = std::env::var("ZHTP_DEVICE_NAME")
+        .unwrap_or_else(|_| "zhtp-node".to_string());
 
-    // Try to load existing identity from keystore (requires private key)
-    let private_key_file = keystore_path.join("node_private_key.json");
-
-    if identity_file.exists() && private_key_file.exists() {
-        if let (Ok(identity_data), Ok(key_data)) = (
-            tokio::fs::read_to_string(&identity_file).await,
-            tokio::fs::read_to_string(&private_key_file).await,
-        ) {
-            // Parse private key
-            if let Ok(key_json) = serde_json::from_str::<serde_json::Value>(&key_data) {
-                if let (Some(dilithium), Some(kyber), Some(seed)) = (
-                    key_json.get("dilithium_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                    key_json.get("kyber_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                    key_json.get("master_seed").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                ) {
-                    let private_key = lib_crypto::PrivateKey {
-                        dilithium_sk: dilithium,
-                        kyber_sk: kyber,
-                        master_seed: seed,
-                    };
-
-                    match lib_identity::ZhtpIdentity::from_serialized(&identity_data, &private_key) {
-                        Ok(identity) => {
-                            info!("✓ Loaded existing node identity from keystore: {}", identity.did);
-                            return Ok(identity);
-                        }
-                        Err(e) => {
-                            // FATAL: Do NOT overwrite - require manual recovery
-                            return Err(anyhow::anyhow!(
-                                "FATAL: Failed to load node identity from keystore: {}\n\
-                                The keystore file may be corrupted. Manual recovery required.",
-                                e
-                            ));
-                        }
-                    }
-                }
-            }
-            // Private key parse failed - FATAL
-            return Err(anyhow::anyhow!(
-                "FATAL: Failed to parse node private key from keystore.\n\
-                The keystore may be corrupted. Manual recovery required."
-            ));
-        }
-    }
-
-    // Only create new identity if keystore doesn't exist at all
-    if identity_file.exists() {
-        return Err(anyhow::anyhow!(
-            "FATAL: Node identity file exists but private key is missing.\n\
-            Cannot load identity without private key. Manual recovery required."
-        ));
+    // Try to load an existing identity (with private key) from the keystore
+    if let Some(identity) = crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await? {
+        info!("Loaded existing node identity from keystore: {}", identity.did);
+        return Ok(identity);
     }
 
     // Create new identity using P1-7 architecture
-    info!("Creating new node identity (no existing keystore found)...");
+    info!("Creating new node identity (no existing keystore found)... device={}", device_name);
     let node_identity = lib_identity::ZhtpIdentity::new_unified(
         lib_identity::types::IdentityType::Device,
         None, // No age for device
         None, // No jurisdiction for device
-        "zhtp-node",
+        &device_name,
         None, // Random seed
     )?;
 
-    // Save identity to keystore
-    tokio::fs::create_dir_all(&keystore_path).await?;
-    let json = serde_json::to_string_pretty(&node_identity)?;
-    tokio::fs::write(&identity_file, json).await?;
-
-    info!("✓ Created and saved node identity to keystore");
+    crate::runtime::did_startup::persist_node_identity_to_keystore(&keystore_path, &node_identity).await?;
+    info!("Created and saved node identity to keystore at {:?}", keystore_path);
     Ok(node_identity)
 }
-

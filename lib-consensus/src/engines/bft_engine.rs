@@ -3,16 +3,17 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lib_crypto::{Hash, hash_blake3};
+use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 
+use crate::byzantine::ByzantineFaultDetector;
 use crate::types::{
-    ConsensusEvent, ConsensusRound, ConsensusStep, ConsensusProposal, ConsensusVote, 
-    VoteType, ConsensusConfig
+    ConsensusConfig, ConsensusEvent, ConsensusProposal, ConsensusRound, ConsensusStep,
+    ConsensusVote, VoteType,
 };
 use crate::validators::ValidatorManager;
-use crate::byzantine::ByzantineFaultDetector;
-use crate::{ConsensusResult, ConsensusError};
+use crate::engines::TransactionExecutor;
+use crate::{ConsensusError, ConsensusResult};
 
 /// Byzantine Fault Tolerance consensus engine
 #[derive(Debug)]
@@ -28,11 +29,14 @@ pub struct BftEngine {
     /// Vote pool by height and round
     vote_pool: HashMap<(u64, u32), HashMap<Hash, ConsensusVote>>,
     /// Round history
+    #[allow(dead_code)]
     round_history: VecDeque<ConsensusRound>,
     /// Byzantine fault detector
     byzantine_detector: ByzantineFaultDetector,
     /// Local validator identity
     validator_identity: Option<IdentityId>,
+    /// Transaction executor for block proposal
+    transaction_executor: TransactionExecutor,
 }
 
 impl BftEngine {
@@ -42,7 +46,10 @@ impl BftEngine {
             height: 0,
             round: 0,
             step: ConsensusStep::Propose,
-            start_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            start_time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             proposer: None,
             proposals: Vec::new(),
             votes: HashMap::new(),
@@ -60,9 +67,15 @@ impl BftEngine {
             round_history: VecDeque::new(),
             byzantine_detector: ByzantineFaultDetector::new(),
             validator_identity: None,
+            transaction_executor: TransactionExecutor::new(
+                256,                    // max_transactions_per_block
+                5_000_000,              // max_block_size_bytes (5MB)
+                10_000,                 // mempool_max_size
+                10_000,                 // mempool_max_age (blocks)
+            ),
         }
     }
-    
+
     /// Set local validator identity
     pub fn set_validator_identity(&mut self, identity: IdentityId) {
         self.validator_identity = Some(identity);
@@ -70,55 +83,70 @@ impl BftEngine {
 
     /// Handle consensus event (pure component method)
     /// This replaces the standalone start_consensus() loop pattern
-    pub async fn handle_consensus_event(&mut self, event: ConsensusEvent) -> ConsensusResult<Vec<ConsensusEvent>> {
+    pub async fn handle_consensus_event(
+        &mut self,
+        event: ConsensusEvent,
+    ) -> ConsensusResult<Vec<ConsensusEvent>> {
         match event {
             ConsensusEvent::StartRound { height, trigger } => {
-                tracing::info!(" BFT: Starting consensus round {} (trigger: {})", height, trigger);
-                
+                tracing::info!(
+                    " BFT: Starting consensus round {} (trigger: {})",
+                    height,
+                    trigger
+                );
+
                 // Handle BFT-specific trigger behavior
                 match trigger.as_str() {
                     "timeout" => {
                         tracing::warn!("⏰ BFT timeout - increasing round timeout");
                         self.increase_round_timeout().await?;
-                    },
+                    }
                     "new_transaction" => {
                         tracing::debug!("💳 BFT processing new transactions");
-                    },
+                    }
                     "validator_byzantine" => {
                         tracing::error!(" BFT triggered by Byzantine behavior detection");
                         self.handle_byzantine_trigger().await?;
-                    },
+                    }
                     _ => tracing::debug!("BFT trigger: {}", trigger),
                 }
-                
+
                 self.prepare_for_round(height).await?;
                 Ok(vec![ConsensusEvent::RoundPrepared { height }])
             }
-            ConsensusEvent::NewBlock { height, previous_hash } => {
+            ConsensusEvent::NewBlock {
+                height,
+                previous_hash,
+            } => {
                 match self.run_consensus_round(previous_hash).await {
                     Ok(Some(committed_hash)) => {
-                        tracing::info!("BFT block committed: {} at height {}", committed_hash, height);
-                        
+                        tracing::info!(
+                            "BFT block committed: {} at height {}",
+                            committed_hash,
+                            height
+                        );
+
                         // Record the committed hash for finality tracking
-                        self.record_committed_block(height, committed_hash.clone()).await?;
-                        
+                        self.record_committed_block(height, committed_hash.clone())
+                            .await?;
+
                         // Notify about successful commitment
-                        tracing::info!("BFT finality achieved for block {} at height {}", committed_hash, height);
-                        
+                        tracing::info!(
+                            "BFT finality achieved for block {} at height {}",
+                            committed_hash,
+                            height
+                        );
+
                         Ok(vec![ConsensusEvent::RoundCompleted { height }])
                     }
-                    Ok(None) => {
-                        Ok(vec![ConsensusEvent::RoundFailed { 
-                            height, 
-                            error: "No consensus reached".to_string() 
-                        }])
-                    }
-                    Err(e) => {
-                        Ok(vec![ConsensusEvent::RoundFailed { 
-                            height, 
-                            error: e.to_string() 
-                        }])
-                    }
+                    Ok(None) => Ok(vec![ConsensusEvent::RoundFailed {
+                        height,
+                        error: "No consensus reached".to_string(),
+                    }]),
+                    Err(e) => Ok(vec![ConsensusEvent::RoundFailed {
+                        height,
+                        error: e.to_string(),
+                    }]),
                 }
             }
             _ => {
@@ -134,8 +162,10 @@ impl BftEngine {
         self.current_round.height = height;
         self.current_round.round = 0;
         self.current_round.step = ConsensusStep::Propose;
-        self.current_round.start_time = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?.as_secs();
+        self.current_round.start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ConsensusError::TimeError(e))?
+            .as_secs();
         self.current_round.proposer = None;
         self.current_round.proposals.clear();
         self.current_round.votes.clear();
@@ -151,14 +181,17 @@ impl BftEngine {
     async fn run_consensus_round(&mut self, previous_hash: Hash) -> ConsensusResult<Option<Hash>> {
         tracing::info!(
             "Starting BFT round {} at height {}",
-            self.current_round.round, self.current_round.height
+            self.current_round.round,
+            self.current_round.height
         );
 
         // Detect any Byzantine faults from previous rounds
-        self.byzantine_detector.detect_faults(&self.validator_manager)?;
+        self.byzantine_detector
+            .detect_faults(&self.validator_manager)?;
 
         // Select proposer for this round
-        let proposer = self.validator_manager
+        let proposer = self
+            .validator_manager
             .select_proposer(self.current_round.height, self.current_round.round)
             .ok_or_else(|| ConsensusError::ValidatorError("No proposer available".to_string()))?;
 
@@ -193,7 +226,8 @@ impl BftEngine {
         }
 
         // Wait for proposals with timeout
-        self.wait_for_step_timeout(self.config.propose_timeout).await;
+        self.wait_for_step_timeout(self.config.propose_timeout)
+            .await;
 
         Ok(())
     }
@@ -211,7 +245,8 @@ impl BftEngine {
         }
 
         // Wait for prevotes
-        self.wait_for_step_timeout(self.config.prevote_timeout).await;
+        self.wait_for_step_timeout(self.config.prevote_timeout)
+            .await;
 
         // Check for prevote quorum
         if let Some(proposal_id) = self.check_prevote_quorum() {
@@ -228,20 +263,23 @@ impl BftEngine {
 
         // Precommit logic
         if let Some(proposal_id) = &self.current_round.valid_proposal {
-            self.cast_bft_vote(proposal_id.clone(), VoteType::PreCommit).await?;
+            self.cast_bft_vote(proposal_id.clone(), VoteType::PreCommit)
+                .await?;
         } else {
             // Vote nil if no valid proposal
             self.cast_nil_vote(VoteType::PreCommit).await?;
         }
 
         // Wait for precommits
-        self.wait_for_step_timeout(self.config.precommit_timeout).await;
+        self.wait_for_step_timeout(self.config.precommit_timeout)
+            .await;
 
         // Check for precommit quorum
         if let Some(proposal_id) = &self.current_round.valid_proposal {
             if self.has_precommit_quorum(proposal_id) {
                 // We have precommit quorum, move to commit
-                self.cast_bft_vote(proposal_id.clone(), VoteType::Commit).await?;
+                self.cast_bft_vote(proposal_id.clone(), VoteType::Commit)
+                    .await?;
             }
         }
 
@@ -249,31 +287,35 @@ impl BftEngine {
     }
 
     /// Create a BFT proposal
-    async fn create_bft_proposal(&self, previous_hash: Hash) -> ConsensusResult<ConsensusProposal> {
-        let validator_id = self.validator_identity.as_ref()
+    async fn create_bft_proposal(&mut self, previous_hash: Hash) -> ConsensusResult<ConsensusProposal> {
+        // Extract validator_id early to avoid borrow conflicts
+        let validator_id = self
+            .validator_identity
+            .clone()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
         // Collect transactions for the block
         let block_data = self.collect_block_transactions().await?;
 
         // Generate proposal ID
-        let proposal_id = Hash::from_bytes(&hash_blake3(&[
-            &self.current_round.height.to_le_bytes(),
-            &(self.current_round.round as u64).to_le_bytes(),
-            previous_hash.as_bytes(),
-            &block_data,
-            validator_id.as_bytes(),
-        ].concat()));
+        let proposal_id = Hash::from_bytes(&hash_blake3(
+            &[
+                &self.current_round.height.to_le_bytes(),
+                &(self.current_round.round as u64).to_le_bytes(),
+                previous_hash.as_bytes(),
+                &block_data,
+                validator_id.as_bytes(),
+            ]
+            .concat(),
+        ));
 
         // Create consensus proof
         let consensus_proof = self.create_bft_consensus_proof().await?;
 
         // Sign the proposal
-        let signature = self.sign_proposal_data(
-            &proposal_id,
-            validator_id,
-            &block_data,
-        ).await?;
+        let signature = self
+            .sign_proposal_data(&proposal_id, &validator_id, &block_data)
+            .await?;
 
         let proposal = ConsensusProposal {
             id: proposal_id,
@@ -281,41 +323,51 @@ impl BftEngine {
             height: self.current_round.height,
             previous_hash,
             block_data,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
             signature,
             consensus_proof,
         };
 
         tracing::info!(
             "Created BFT proposal {:?} for height {} round {}",
-            proposal.id, proposal.height, self.current_round.round
+            proposal.id,
+            proposal.height,
+            self.current_round.round
         );
 
         Ok(proposal)
     }
 
     /// Cast a BFT vote
-    async fn cast_bft_vote(&mut self, proposal_id: Hash, vote_type: VoteType) -> ConsensusResult<()> {
-        let validator_id = self.validator_identity.as_ref()
+    async fn cast_bft_vote(
+        &mut self,
+        proposal_id: Hash,
+        vote_type: VoteType,
+    ) -> ConsensusResult<()> {
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
         // Create vote ID
-        let vote_id = Hash::from_bytes(&hash_blake3(&[
-            proposal_id.as_bytes(),
-            validator_id.as_bytes(),
-            &(vote_type.clone() as u8).to_le_bytes(),
-            &self.current_round.height.to_le_bytes(),
-            &self.current_round.round.to_le_bytes(),
-        ].concat()));
+        let vote_id = Hash::from_bytes(&hash_blake3(
+            &[
+                proposal_id.as_bytes(),
+                validator_id.as_bytes(),
+                &(vote_type.clone() as u8).to_le_bytes(),
+                &self.current_round.height.to_le_bytes(),
+                &self.current_round.round.to_le_bytes(),
+            ]
+            .concat(),
+        ));
 
         // Sign the vote
-        let signature = self.sign_vote_data(
-            &vote_id,
-            validator_id,
-            &proposal_id,
-            &vote_type,
-        ).await?;
+        let signature = self
+            .sign_vote_data(&vote_id, validator_id, &proposal_id, &vote_type)
+            .await?;
 
         let vote = ConsensusVote {
             id: vote_id.clone(),
@@ -324,20 +376,24 @@ impl BftEngine {
             vote_type: vote_type.clone(),
             height: self.current_round.height,
             round: self.current_round.round,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
             signature,
         };
 
         // Store vote
         let round_key = (self.current_round.height, self.current_round.round);
-        self.vote_pool.entry(round_key)
+        self.vote_pool
+            .entry(round_key)
             .or_insert_with(HashMap::new)
             .insert(vote.id.clone(), vote);
 
         tracing::debug!(
             " Cast BFT {:?} vote on proposal {:?}",
-            vote_type, proposal_id
+            vote_type,
+            proposal_id
         );
 
         Ok(())
@@ -367,17 +423,18 @@ impl BftEngine {
 
         // Count prevotes for each proposal
         let mut prevote_counts: HashMap<Hash, u64> = HashMap::new();
-        
+
         for vote in votes.values() {
             if vote.vote_type == VoteType::PreVote {
                 let validator = self.validator_manager.get_validator(&vote.voter)?;
-                *prevote_counts.entry(vote.proposal_id.clone()).or_insert(0) += validator.voting_power;
+                *prevote_counts.entry(vote.proposal_id.clone()).or_insert(0) +=
+                    validator.voting_power;
             }
         }
 
         // Check if any proposal has 2/3+ prevotes
         let threshold = self.validator_manager.get_byzantine_threshold();
-        
+
         for (proposal_id, vote_power) in prevote_counts {
             if vote_power >= threshold && proposal_id != Hash([0u8; 32]) {
                 return Some(proposal_id);
@@ -396,7 +453,7 @@ impl BftEngine {
         };
 
         let mut precommit_power = 0u64;
-        
+
         for vote in votes.values() {
             if vote.vote_type == VoteType::PreCommit && &vote.proposal_id == proposal_id {
                 if let Some(validator) = self.validator_manager.get_validator(&vote.voter) {
@@ -418,7 +475,7 @@ impl BftEngine {
         };
 
         let mut commit_power = 0u64;
-        
+
         for vote in votes.values() {
             if vote.vote_type == VoteType::Commit && &vote.proposal_id == proposal_id {
                 if let Some(validator) = self.validator_manager.get_validator(&vote.voter) {
@@ -432,6 +489,7 @@ impl BftEngine {
     }
 
     /// Advance to next round
+    #[allow(dead_code)]
     async fn advance_to_next_round(&mut self) -> ConsensusResult<()> {
         // Save current round to history
         self.round_history.push_back(self.current_round.clone());
@@ -442,8 +500,10 @@ impl BftEngine {
         // Advance round
         self.current_round.round += 1;
         self.current_round.step = ConsensusStep::Propose;
-        self.current_round.start_time = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?.as_secs();
+        self.current_round.start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ConsensusError::TimeError(e))?
+            .as_secs();
         self.current_round.proposer = None;
         self.current_round.proposals.clear();
         self.current_round.votes.clear();
@@ -452,7 +512,8 @@ impl BftEngine {
 
         tracing::info!(
             " Advanced to BFT round {} at height {}",
-            self.current_round.round, self.current_round.height
+            self.current_round.round,
+            self.current_round.height
         );
 
         Ok(())
@@ -463,29 +524,54 @@ impl BftEngine {
         tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms)).await;
     }
 
-    /// Collect transactions for block
-    async fn collect_block_transactions(&self) -> ConsensusResult<Vec<u8>> {
-        // In production, this would collect transactions from mempool
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?.as_secs();
-        
-        let block_data = format!(
-            "bft_block_height:{},round:{},timestamp:{},validators:{}",
-            self.current_round.height,
-            self.current_round.round,
+    /// Collect transactions for block from mempool
+    async fn collect_block_transactions(&mut self) -> ConsensusResult<Vec<u8>> {
+        // Prepare transactions from mempool
+        let (tx_hashes, total_fees, total_size) =
+            self.transaction_executor.prepare_block_transactions(self.current_round.height);
+
+        // Create block metadata with transaction data
+        #[derive(serde::Serialize)]
+        struct BlockData {
+            height: u64,
+            round: u32,
+            timestamp: u64,
+            active_validators: usize,
+            transaction_count: usize,
+            total_fees: u64,
+            total_size: usize,
+            transaction_hashes: Vec<[u8; 32]>,
+        }
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ConsensusError::TimeError(e))?
+            .as_secs();
+
+        let block_data = BlockData {
+            height: self.current_round.height,
+            round: self.current_round.round,
             timestamp,
-            self.validator_manager.get_active_validators().len()
-        );
-        
-        Ok(block_data.into_bytes())
+            active_validators: self.validator_manager.get_active_validators().len(),
+            transaction_count: tx_hashes.len(),
+            total_fees,
+            total_size,
+            transaction_hashes: tx_hashes,
+        };
+
+        // Serialize block data using bincode
+        bincode::serialize(&block_data)
+            .map_err(|e| ConsensusError::CryptoError(anyhow::anyhow!("Block serialization failed: {}", e)))
     }
 
     /// Create BFT consensus proof
     async fn create_bft_consensus_proof(&self) -> ConsensusResult<crate::types::ConsensusProof> {
         use crate::types::{ConsensusProof, ConsensusType};
-        
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?.as_secs();
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ConsensusError::TimeError(e))?
+            .as_secs();
 
         Ok(ConsensusProof {
             consensus_type: ConsensusType::ByzantineFaultTolerance,
@@ -504,11 +590,7 @@ impl BftEngine {
         proposer: &IdentityId,
         block_data: &[u8],
     ) -> ConsensusResult<lib_crypto::PostQuantumSignature> {
-        let signature_data = [
-            proposal_id.as_bytes(),
-            proposer.as_bytes(),
-            block_data,
-        ].concat();
+        let signature_data = [proposal_id.as_bytes(), proposer.as_bytes(), block_data].concat();
 
         let signature_hash = hash_blake3(&signature_data);
 
@@ -520,8 +602,10 @@ impl BftEngine {
                 key_id: proposer.as_bytes().try_into().unwrap_or([0u8; 32]),
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
         })
     }
 
@@ -538,7 +622,8 @@ impl BftEngine {
             voter.as_bytes(),
             proposal_id.as_bytes(),
             &[vote_type.clone() as u8],
-        ].concat();
+        ]
+        .concat();
 
         let signature_hash = hash_blake3(&signature_data);
 
@@ -550,8 +635,10 @@ impl BftEngine {
                 key_id: voter.as_bytes().try_into().unwrap_or([0u8; 32]),
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
         })
     }
 
@@ -570,7 +657,10 @@ impl BftEngine {
         // Mark round as timed out and increase round number
         self.current_round.timed_out = true;
         self.current_round.round += 1;
-        tracing::warn!("⏰ BFT timeout - advanced to round {}", self.current_round.round);
+        tracing::warn!(
+            "⏰ BFT timeout - advanced to round {}",
+            self.current_round.round
+        );
         Ok(())
     }
 
@@ -584,18 +674,30 @@ impl BftEngine {
     }
 
     /// Record committed block for finality tracking
-    async fn record_committed_block(&mut self, height: u64, committed_hash: Hash) -> ConsensusResult<()> {
-        tracing::info!("Recording committed block {} at height {}", committed_hash, height);
-        
+    async fn record_committed_block(
+        &mut self,
+        height: u64,
+        committed_hash: Hash,
+    ) -> ConsensusResult<()> {
+        tracing::info!(
+            "Recording committed block {} at height {}",
+            committed_hash,
+            height
+        );
+
         // In a implementation, this would:
         // 1. Store the committed hash in persistent storage
         // 2. Update finality checkpoints
         // 3. Notify other components about finality
         // 4. Update the longest committed chain
-        
+
         // For now, we just log the commitment
-        tracing::info!("Block {} committed with BFT finality at height {}", committed_hash, height);
-        
+        tracing::info!(
+            "Block {} committed with BFT finality at height {}",
+            committed_hash,
+            height
+        );
+
         Ok(())
     }
 }

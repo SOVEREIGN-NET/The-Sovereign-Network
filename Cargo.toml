@@ -2,6 +2,7 @@
 resolver = "2"
 
 members = [
+    "lib-types",
     "lib-blockchain",
     "lib-consensus",
     "lib-crypto",
@@ -14,7 +15,9 @@ members = [
     "lib-protocols",
     "lib-storage",
     "zhtp",
+    "zhtp-cli",
     "tests/lib-identity/test-lib-identity-imports",
+    "tests/integration",
 ]
 
 [workspace.package]

@@ -42,3 +42,30 @@ reports/
 CLAUDE.md
 LOCAL_STORAGE_PATHS.md
 DEPLOY_TOKEN_SPEC.md
+.vscode/settings.json
+
+# Ansible deployment (local config)
+deploy/ansible/
+
+# Local documentation files
+docs/06_Financial_Projections_Tokenomics_Models*.docx
+docs/CORRECTED_SOV_TICKETS.md
+docs/SOV_TOKENOMICS_ANALYSIS.md
+OBSERVABILITY_IMPLEMENTATION_PLAN.md
+nonce_cache**
+docs/TICKET_1_14_INTEGRATION_GUIDE.md
+docs/BLOCKCHAIN_TECHNICAL_OVERVIEW.md
+docs/GOVERNMENT_BACKDOOR_ANALYSIS.md
+NEXT_STEPS_SERVER_REFACTOR.md
+REFACTORING_PROGRESS.md
+HTTP1_REMOVAL_PLAN.md
+SERVER_MOBILE_READINESS.md
+docs/SOV_TICKET_AUDIT.md
+docs/sov_final/NEXT_STEPS.md
+docs/sov_final/SOV_L0_IMPLEMENTATION_PLAN.md
+docs/sov_final/SOV_QUICK_REFERENCE.md
+docs/sov_final/SOV_TICKET_AUDIT.md
+docs/sov_final/SOV_TOKENOMICS_CORRECTED.md
+.serena/project.yml
+docs/sov_final/SOV_COMPREHENSIVE_REFERENCE.md
+docs/sov_final/SOV_UNIFIED_IMPLEMENTATION_GUIDE.md

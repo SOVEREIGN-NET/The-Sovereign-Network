@@ -39,21 +39,21 @@
 //! - Exposes node to potentially malicious services
 //! - Multicast discovery is the proper protocol-aware method
 
-use anyhow::{Result, Context, anyhow};
+use anyhow::{Result, anyhow, Context};
 use lib_crypto::PublicKey;
 use lib_identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::identity::unified_peer::UnifiedPeerId;
-use super::local_network::{HandshakeCapabilities, MeshHandshake, NodeAnnouncement};
+use super::local_network::NodeAnnouncement;
 
 /// Maximum addresses to store per peer (DoS protection)
 const MAX_ADDRESSES_PER_PEER: usize = 10;
@@ -534,8 +534,6 @@ pub struct DiscoveryResult {
     pub protocol: DiscoveryProtocol,
     /// Timestamp of discovery
     pub discovered_at: u64,
-    /// Protocol capabilities (if known)
-    pub capabilities: Option<HandshakeCapabilities>,
     /// Mesh/listening port
     pub mesh_port: u16,
     /// Optional DID (if peer has UnifiedPeerId)
@@ -561,7 +559,6 @@ impl DiscoveryResult {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            capabilities: None,
             mesh_port,
             did: None,
             device_id: None,
@@ -582,11 +579,6 @@ impl DiscoveryResult {
         // This merge only trusts keys from authenticated handshakes, not raw scans
         if self.public_key.is_none() && other.public_key.is_some() {
             self.public_key = other.public_key;
-        }
-
-        // Update capabilities if we didn't have them
-        if self.capabilities.is_none() && other.capabilities.is_some() {
-            self.capabilities = other.capabilities;
         }
 
         // Prefer higher priority protocol
@@ -618,7 +610,7 @@ impl DiscoveryResult {
     /// cryptographic handshakes. Should ONLY be called after successful handshake.
     ///
     /// # Arguments
-    /// * `verified_peer_id` - The peer ID from MeshHandshake after verification
+    /// * `verified_peer_id` - The peer ID from the verified handshake
     /// * `public_key` - The verified public key from handshake
     pub fn update_verified_identity(&mut self, verified_peer_id: Uuid, public_key: PublicKey) {
         self.peer_id = verified_peer_id;
@@ -636,34 +628,7 @@ impl From<NodeAnnouncement> for DiscoveryResult {
             public_key: None,
             protocol: DiscoveryProtocol::UdpMulticast,
             discovered_at: announcement.announced_at,
-            capabilities: None,
             mesh_port: announcement.mesh_port,
-            did: None,
-            device_id: None,
-        }
-    }
-}
-
-/// Conversion from MeshHandshake (after TCP connection established)
-impl From<MeshHandshake> for DiscoveryResult {
-    fn from(handshake: MeshHandshake) -> Self {
-        let protocol = match handshake.discovered_via {
-            0 => DiscoveryProtocol::UdpMulticast,
-            4 => DiscoveryProtocol::PortScan,
-            _ => DiscoveryProtocol::UdpMulticast, // Default
-        };
-
-        Self {
-            peer_id: handshake.node_id,
-            addresses: Vec::new(), // Will be filled by discovery service
-            public_key: Some(handshake.public_key),
-            protocol,
-            discovered_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            capabilities: Some(handshake.capabilities),
-            mesh_port: handshake.mesh_port,
             did: None,
             device_id: None,
         }
@@ -807,6 +772,7 @@ impl UnifiedDiscoveryService {
                 mesh_port,
                 public_key,
                 Some(peer_callback),
+                None, // TODO: Pass signing context for TLS pinning (Issue #739)
             )
             .await
             {
@@ -954,9 +920,11 @@ mod tests {
         let announcement = NodeAnnouncement {
             node_id: Uuid::new_v4(),
             mesh_port: 9333,
+            quic_port: 9334,
             local_ip: "192.168.1.50".parse().unwrap(),
             protocols: vec!["zhtp".to_string()],
             announced_at: 1234567890,
+            ..Default::default()
         };
 
         let result: DiscoveryResult = announcement.clone().into();

@@ -6,9 +6,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use lib_crypto::PostQuantumSignature;
-use lib_storage::types::ContentHash;
+use crate::storage_stub::ContentHash;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_economy::Priority;
+use crate::types::ZHTP_VERSION;
 
 /// ZHTP headers with Web4 extensions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,7 +89,7 @@ pub struct ZhtpHeaders {
     // Web4 Economic Extensions
     /// Network operation fee (covers bandwidth, storage, compute)
     pub network_fee: Option<u64>,
-    /// Mandatory DAO fee for Universal Basic Income and welfare (2% of transaction value)
+    /// Mandatory DAO fee for Universal Basic Income and welfare (1% of transaction value)
     pub dao_fee: u64,
     /// Total transaction fees (network_fee + dao_fee)
     pub total_fees: u64,
@@ -244,7 +245,7 @@ impl ZhtpHeaders {
             content_license: None,
 
             // Protocol extensions
-            lib_version: Some(crate::ZHTP_VERSION.to_string()),
+            lib_version: Some(ZHTP_VERSION.to_string()),
             required_features: None,
             protocol_upgrade: None,
             compatibility_mode: None,
@@ -423,7 +424,7 @@ impl ZhtpHeaders {
             "encryption" => self.encryption = Some("CRYSTALS-Kyber".to_string()), // Reset to default
             "dao-fee" => self.dao_fee = 0,
             "isp-bypass" => self.isp_bypass = Some(true), // Reset to default
-            "lib-version" => self.lib_version = Some(crate::ZHTP_VERSION.to_string()), // Reset to default
+            "lib-version" => self.lib_version = Some(ZHTP_VERSION.to_string()), // Reset to default
             _ => {
                 self.custom.remove(&name_lower);
             }

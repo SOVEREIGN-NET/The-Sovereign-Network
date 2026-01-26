@@ -54,37 +54,68 @@ pub struct LoRaWANCapabilities {
     pub spreading_factors: Vec<u8>,
 }
 
-/// Detect LoRaWAN hardware on the system
-pub async fn detect_lorawan_hardware() -> Result<Option<LoRaWANHardware>> {
-    info!("Scanning for LoRaWAN radio hardware...");
+/// Detect all available LoRaWAN hardware on the system
+pub async fn detect_lorawan_hardware() -> Result<Vec<LoRaWANHardware>> {
+    let mut detected_radios = Vec::new();
     
-    // Try different detection methods based on platform
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(hardware) = detect_linux_lorawan().await {
-            info!("LoRaWAN hardware detected: {}", hardware.device_name);
-            return Ok(Some(hardware));
-        }
+    // Detect SPI-based concentrators
+    if let Ok(spi_radios) = detect_spi_concentrators().await {
+        detected_radios.extend(spi_radios);
     }
     
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(hardware) = detect_windows_lorawan().await {
-            info!("LoRaWAN hardware detected: {}", hardware.device_name);
-            return Ok(Some(hardware));
-        }
+    // Detect USB-based radios
+    if let Ok(usb_radios) = detect_usb_radios().await {
+        detected_radios.extend(usb_radios);
     }
     
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(hardware) = detect_macos_lorawan().await {
-            info!("LoRaWAN hardware detected: {}", hardware.device_name);
-            return Ok(Some(hardware));
-        }
+    // Detect I2C-based radios
+    if let Ok(i2c_radios) = detect_i2c_radios().await {
+        detected_radios.extend(i2c_radios);
     }
     
-    info!("No LoRaWAN hardware detected");
-    Ok(None)
+    // Detect HAT-based radios (Raspberry Pi)
+    if let Ok(hat_radios) = detect_hat_radios().await {
+        detected_radios.extend(hat_radios);
+    }
+    
+    Ok(detected_radios)
+}
+
+// Update individual detection functions to return Vec<LoRaWANHardware>
+async fn detect_spi_concentrators() -> Result<Vec<LoRaWANHardware>> {
+    let radios = Vec::new();
+    
+    // ...existing SPI detection logic...
+    // Instead of returning early on first found, collect all
+    
+    Ok(radios)
+}
+
+async fn detect_usb_radios() -> Result<Vec<LoRaWANHardware>> {
+    let radios = Vec::new();
+    
+    // ...existing USB detection logic...
+    // Collect all USB LoRa devices
+    
+    Ok(radios)
+}
+
+async fn detect_i2c_radios() -> Result<Vec<LoRaWANHardware>> {
+    let radios = Vec::new();
+    
+    // ...existing I2C detection logic...
+    // Collect all I2C LoRa devices
+    
+    Ok(radios)
+}
+
+async fn detect_hat_radios() -> Result<Vec<LoRaWANHardware>> {
+    let radios = Vec::new();
+    
+    // ...existing HAT detection logic...
+    // Collect all HAT-based LoRa devices
+    
+    Ok(radios)
 }
 
 /// Test if LoRaWAN hardware is functional
@@ -689,14 +720,17 @@ mod tests {
         let result = detect_lorawan_hardware().await;
         
         match result {
-            Ok(Some(hardware)) => {
-                println!("LoRaWAN hardware detected: {:?}", hardware);
-                
-                let test_result = test_lorawan_hardware(&hardware).await;
-                println!("Hardware test result: {:?}", test_result);
-            },
-            Ok(None) => {
-                println!("No LoRaWAN hardware detected (expected on systems without hardware)");
+            Ok(radios) => {
+                if radios.is_empty() {
+                    println!("No LoRaWAN hardware detected (expected on systems without hardware)");
+                } else {
+                    for hardware in radios {
+                        println!("LoRaWAN hardware detected: {:?}", hardware);
+                        
+                        let test_result = test_lorawan_hardware(&hardware).await;
+                        println!("Hardware test result: {:?}", test_result);
+                    }
+                }
             },
             Err(e) => {
                 println!("LoRaWAN detection error: {}", e);

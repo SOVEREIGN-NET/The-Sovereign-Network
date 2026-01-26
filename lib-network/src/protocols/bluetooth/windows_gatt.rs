@@ -29,7 +29,8 @@ use windows::{
 #[cfg(target_os = "windows")]
 use crate::protocols::bluetooth::device::{BleDevice, CharacteristicInfo, BluetoothDeviceInfo};
 #[cfg(all(target_os = "windows", feature = "windows-gatt"))]
-use crate::protocols::bluetooth::common::{parse_uuid_to_guid, format_mac_address, zhtp_uuids};
+use crate::protocols::bluetooth::common::{parse_uuid_to_guid, format_mac_address};
+use crate::constants::BLE_MESH_SERVICE_UUID;
 #[cfg(target_os = "windows")]
 use crate::protocols::bluetooth::gatt::{GattMessage, GattOperation, supports_operation, parse_characteristic_properties};
 
@@ -230,18 +231,19 @@ impl WindowsGattManager {
                                 // Extract Service UUIDs from advertisement
                                 let mut has_zhtp_service = false;
                                 
+                                let zhtp_uuid_clean = BLE_MESH_SERVICE_UUID.replace("-", "").to_uppercase();
+
                                 if let Ok(advertisement) = args.Advertisement() {
                                     if let Ok(service_uuids) = advertisement.ServiceUuids() {
                                         for i in 0..service_uuids.Size().unwrap_or(0) {
                                             if let Ok(uuid) = service_uuids.GetAt(i) {
                                                 let uuid_str = format!("{:?}", uuid).to_uppercase();
                                                 
-                                                // Check for ZHTP service UUID: 6ba7b810-9dad-11d1-80b4-00c04fd430c9
+                                                // Check for ZHTP service UUID
                                                 // Remove all formatting characters and compare the hex digits
                                                 let clean_uuid = uuid_str.replace("-", "").replace("{", "").replace("}", "");
-                                                let zhtp_uuid_clean = "6BA7B8109DAD11D180B400C04FD430CA";  // Fixed: uppercase C9
-                                                
-                                                if clean_uuid.contains(zhtp_uuid_clean) {
+
+                                                if clean_uuid.contains(&zhtp_uuid_clean) {
                                                     has_zhtp_service = true;
                                                     break;
                                                 }

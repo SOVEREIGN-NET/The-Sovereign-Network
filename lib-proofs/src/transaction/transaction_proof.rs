@@ -71,11 +71,11 @@ impl ZkTransactionProof {
     /// Generate a transaction proof (static method for compatibility)
     pub fn prove_transaction(
         sender_balance: u64,
-        receiver_balance: u64,
+        _receiver_balance: u64,
         amount: u64,
         fee: u64,
         sender_blinding: [u8; 32],
-        receiver_blinding: [u8; 32],
+        _receiver_blinding: [u8; 32],
         nullifier: [u8; 32],
     ) -> anyhow::Result<Self> {
         // Use ZK system to generate transaction proofs with correct parameter order

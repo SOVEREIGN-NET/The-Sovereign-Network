@@ -18,15 +18,44 @@ use std::collections::HashMap;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::{ZhtpIdentity, IdentityId};
 
+/// Manifest reference entry in version history
+/// CANONICAL: This is what appears in the manifest_index
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestRef {
+    /// Version number (monotonically increasing)
+    pub version: u64,
+    /// CANONICAL: The Web4Manifest CID (runtime truth)
+    /// Used for all domain resolution and runtime lookups
+    pub web4_manifest_cid: String,
+    /// AUDIT: The original DeployManifest CID (provenance)
+    /// Stored for audit trail and signature verification
+    #[serde(default)]
+    pub deploy_manifest_cid: Option<String>,
+    /// BLAKE3 hash of the build output
+    pub build_hash: String,
+    /// Deployment timestamp
+    pub created_at: u64,
+    /// Deployment message (optional)
+    pub message: Option<String>,
+}
+
 /// Web4 domain registration record (versioned pointer)
+///
+/// CANONICAL ARCHITECTURE:
+/// - current_web4_manifest_cid points to the RUNTIME truth (Web4Manifest)
+/// - All resolution uses web4_manifest_cid exclusively
+/// - deploy_manifest_cid is stored only in manifest_index for audit
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainRecord {
     /// Domain name (e.g., "myapp.zhtp")
     pub domain: String,
     /// Owner's identity
     pub owner: IdentityId,
-    /// Current manifest CID (content-addressed pointer)
-    pub current_manifest_cid: String,
+    /// CANONICAL: Current Web4Manifest CID (runtime truth for resolution)
+    /// This is the authoritative pointer used by all domain resolution logic
+    /// MIGRATION: serde alias allows loading old records with "current_manifest_cid"
+    #[serde(alias = "current_manifest_cid")]
+    pub current_web4_manifest_cid: String,
     /// Current version number (monotonically increasing)
     pub version: u64,
     /// Registration timestamp
@@ -43,6 +72,60 @@ pub struct DomainRecord {
     pub metadata: DomainMetadata,
     /// Transfer history
     pub transfer_history: Vec<DomainTransfer>,
+}
+
+/// Resolved name record derived from authoritative chain state or cached views.
+///
+/// This is a read-only view model for resolver clients and must not be treated
+/// as authoritative on its own.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedNameRecord {
+    /// Domain name (e.g., "myapp.zhtp")
+    pub domain: String,
+    /// Owner DID or identity
+    pub owner: IdentityId,
+    /// Current Web4Manifest CID (runtime truth)
+    pub current_web4_manifest_cid: String,
+    /// Current version number
+    pub version: u64,
+    /// Registration timestamp
+    pub registered_at: u64,
+    /// Last update timestamp
+    pub updated_at: u64,
+    /// Expiration timestamp
+    pub expires_at: u64,
+    /// Content mappings (path -> content_hash) - cached from current manifest
+    pub content_mappings: HashMap<String, String>,
+    /// Domain metadata
+    pub metadata: DomainMetadata,
+    /// Governance pointer (DAO ID or contract address)
+    pub governance_pointer: Option<String>,
+    /// Resolution source hint
+    pub source: NameResolutionSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum NameResolutionSource {
+    Chain,
+    Cache,
+}
+
+impl From<DomainRecord> for ResolvedNameRecord {
+    fn from(record: DomainRecord) -> Self {
+        Self {
+            domain: record.domain,
+            owner: record.owner,
+            current_web4_manifest_cid: record.current_web4_manifest_cid,
+            version: record.version,
+            registered_at: record.registered_at,
+            updated_at: record.updated_at,
+            expires_at: record.expires_at,
+            content_mappings: record.content_mappings,
+            metadata: record.metadata,
+            governance_pointer: None,
+            source: NameResolutionSource::Cache,
+        }
+    }
 }
 
 /// Web4 Manifest - Immutable, content-addressed deployment snapshot
@@ -171,8 +254,9 @@ pub struct DomainUpdateResponse {
 pub struct DomainVersionEntry {
     /// Version number
     pub version: u64,
-    /// Manifest CID for this version
-    pub manifest_cid: String,
+    /// CANONICAL: Web4Manifest CID for this version
+    /// This is what's used for runtime resolution
+    pub web4_manifest_cid: String,
     /// Creation timestamp
     pub created_at: u64,
     /// Creator DID
@@ -205,8 +289,8 @@ pub struct DomainStatusResponse {
     pub domain: String,
     /// Current version
     pub version: u64,
-    /// Current manifest CID
-    pub current_manifest_cid: String,
+    /// CANONICAL: Current Web4Manifest CID (runtime truth)
+    pub current_web4_manifest_cid: String,
     /// Owner DID
     pub owner_did: String,
     /// Last update timestamp
@@ -277,9 +361,10 @@ pub struct DomainRegistrationRequest {
     pub initial_content: HashMap<String, Vec<u8>>,
     /// Registration proof
     pub registration_proof: ZeroKnowledgeProof,
-    /// Manifest CID (if registering with pre-uploaded manifest)
+    /// CANONICAL: DeployManifest CID (if registering with pre-uploaded manifest)
+    /// This will be converted to web4_manifest_cid during registration
     #[serde(default)]
-    pub manifest_cid: Option<String>,
+    pub deploy_manifest_cid: Option<String>,
 }
 
 /// Domain registration response

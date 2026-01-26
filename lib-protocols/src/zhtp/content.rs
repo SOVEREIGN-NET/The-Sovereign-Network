@@ -12,7 +12,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use lib_storage::types::ContentHash;
 
 /// Content storage backend types
 #[derive(Debug, Clone, PartialEq)]
@@ -345,7 +344,7 @@ impl ZhtpContentManager {
         let content_id = Uuid::new_v4().to_string();
         
         // Calculate economic fees
-        let economic_assessment = self.calculate_storage_fees(content.len(), &metadata, request)?;
+        let _economic_assessment = self.calculate_storage_fees(content.len(), &metadata, request)?;
         
         // Process content (compression/encryption would be handled elsewhere if needed)
         let processed_content = content.to_vec();
@@ -473,14 +472,14 @@ impl ZhtpContentManager {
         }
         
         // Decrypt content if needed
-        let decrypted_content = if let Some(ref encryption_info) = metadata.metadata.encryption_info {
+        let decrypted_content = if let Some(ref _encryption_info) = metadata.metadata.encryption_info {
             self.decrypt_content(&content_data, &EncryptionType::PostQuantum).await?
         } else {
             content_data
         };
         
         // Decompress content if needed
-        let final_content = if let Some(ref compression_info) = metadata.metadata.compression_info {
+        let final_content = if let Some(ref _compression_info) = metadata.metadata.compression_info {
             self.decompress_content(&decrypted_content, &CompressionType::Gzip).await?
         } else {
             decrypted_content
@@ -553,7 +552,7 @@ impl ZhtpContentManager {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        updated_metadata.metadata.hash = ContentHash::from_bytes(&lib_crypto::hash_blake3(&new_content));
+        updated_metadata.metadata.hash = lib_crypto::hash_blake3(&new_content).to_vec();
         updated_metadata.metadata.size = new_content.len() as u64;
         
         self.metadata_store.insert(content_id.to_string(), updated_metadata);
@@ -564,7 +563,7 @@ impl ZhtpContentManager {
     }
     
     /// Delete content
-    pub async fn delete_content(&mut self, content_id: &str, request: &ZhtpRequest) -> ZhtpResult<bool> {
+    pub async fn delete_content(&mut self, content_id: &str, _request: &ZhtpRequest) -> ZhtpResult<bool> {
         // Check if content exists
         if !self.metadata_store.contains_key(content_id) {
             return Ok(false);
@@ -644,22 +643,22 @@ impl ZhtpContentManager {
     // - create_replicas
     // - matches_filter
     
-    async fn compress_content(&self, content: &[u8], compression: &CompressionType) -> ZhtpResult<Vec<u8>> {
+    async fn compress_content(&self, content: &[u8], _compression: &CompressionType) -> ZhtpResult<Vec<u8>> {
         // Simplified compression implementation
         Ok(content.to_vec())
     }
     
-    async fn decompress_content(&self, content: &[u8], compression: &CompressionType) -> ZhtpResult<Vec<u8>> {
+    async fn decompress_content(&self, content: &[u8], _compression: &CompressionType) -> ZhtpResult<Vec<u8>> {
         // Simplified decompression implementation
         Ok(content.to_vec())
     }
     
-    async fn encrypt_content(&self, content: &[u8], encryption: &EncryptionType) -> ZhtpResult<Vec<u8>> {
+    async fn encrypt_content(&self, content: &[u8], _encryption: &EncryptionType) -> ZhtpResult<Vec<u8>> {
         // Simplified encryption implementation
         Ok(content.to_vec())
     }
     
-    async fn decrypt_content(&self, content: &[u8], encryption: &EncryptionType) -> ZhtpResult<Vec<u8>> {
+    async fn decrypt_content(&self, content: &[u8], _encryption: &EncryptionType) -> ZhtpResult<Vec<u8>> {
         // Simplified decryption implementation
         Ok(content.to_vec())
     }
@@ -707,7 +706,7 @@ impl ZhtpContentManager {
         }
     }
     
-    fn calculate_storage_fees(&self, content_size: usize, metadata: &ContentMetadata, request: &ZhtpRequest) -> ZhtpResult<EconomicAssessment> {
+    fn calculate_storage_fees(&self, content_size: usize, metadata: &ContentMetadata, _request: &ZhtpRequest) -> ZhtpResult<EconomicAssessment> {
         let base_fee = (content_size as u64).saturating_mul(self.config.economic_incentives.storage_fee_per_byte_per_day);
         let dao_fees = (base_fee as f64 * self.config.economic_incentives.dao_governance_fee_percentage) as u64;
         let ubi_contribution = (base_fee as f64 * self.config.economic_incentives.ubi_content_percentage) as u64;
@@ -719,7 +718,7 @@ impl ZhtpContentManager {
         })
     }
     
-    fn calculate_retrieval_fees(&self, metadata: &ServerContent, request: &ZhtpRequest) -> ZhtpResult<EconomicAssessment> {
+    fn calculate_retrieval_fees(&self, metadata: &ServerContent, _request: &ZhtpRequest) -> ZhtpResult<EconomicAssessment> {
         let base_fee = metadata.metadata.size.saturating_mul(self.config.economic_incentives.retrieval_fee_per_byte);
         let dao_fees = (base_fee as f64 * self.config.economic_incentives.dao_governance_fee_percentage) as u64;
         let ubi_contribution = (base_fee as f64 * self.config.economic_incentives.ubi_content_percentage) as u64;
@@ -756,7 +755,7 @@ impl ZhtpContentManager {
         Ok(())
     }
     
-    fn matches_filter(&self, content: &ServerContent, filter: &ContentFilter) -> bool {
+    fn matches_filter(&self, _content: &ServerContent, _filter: &ContentFilter) -> bool {
         // Simplified filter matching
         true
     }
@@ -853,7 +852,7 @@ mod tests {
             popularity_metrics: None,
             economic_info: None,
             privacy_level: 100,
-            hash: lib_storage::types::ContentHash::from_bytes(&lib_crypto::hash_blake3(content)),
+            hash: lib_crypto::hash_blake3(content).to_vec(),
             encryption_info: None,
             compression_info: None,
             integrity_checksum: None,
@@ -943,7 +942,7 @@ mod tests {
             popularity_metrics: None,
             economic_info: None,
             privacy_level: 100,
-            hash: lib_storage::types::ContentHash::from_bytes(&lib_crypto::hash_blake3(&[0u8; CONTENT_SIZE])),
+            hash: lib_crypto::hash_blake3(&[0u8; CONTENT_SIZE]).to_vec(),
             encryption_info: None,
             compression_info: None,
             integrity_checksum: None,

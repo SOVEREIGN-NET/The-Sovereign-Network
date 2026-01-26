@@ -3,19 +3,19 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lib_crypto::{Hash, hash_blake3};
+use lib_crypto::{hash_blake3, Hash, KeyPair};
 use lib_identity::IdentityId;
 
+use crate::proofs::{StakeProof, StorageProofProvider};
 use crate::types::{
-    ConsensusEvent, ConsensusRound, ConsensusStep, ConsensusProposal, ConsensusVote, 
-    VoteType, ConsensusConfig, ConsensusType, ConsensusProof
+    ConsensusConfig, ConsensusEvent, ConsensusProof, ConsensusProposal, ConsensusRound,
+    ConsensusStep, ConsensusType, ConsensusVote, VoteType,
 };
 use crate::validators::ValidatorManager;
-use crate::proofs::StakeProof;
-use crate::{ConsensusResult, ConsensusError};
+use crate::{ConsensusError, ConsensusResult};
+use std::sync::Arc;
 
 /// Hybrid consensus engine combining Proof of Stake and Proof of Storage
-#[derive(Debug)]
 pub struct HybridEngine {
     /// Current consensus round
     current_round: ConsensusRound,
@@ -28,19 +28,42 @@ pub struct HybridEngine {
     /// Vote pool by height
     vote_pool: HashMap<u64, HashMap<Hash, ConsensusVote>>,
     /// Round history
+    #[allow(dead_code)]
     round_history: VecDeque<ConsensusRound>,
     /// Local validator identity
     validator_identity: Option<IdentityId>,
     /// Stake weight in hybrid calculation (0.0 to 1.0)
     stake_weight: f64,
-    /// Storage weight in hybrid calculation (0.0 to 1.0) 
+    /// Storage weight in hybrid calculation (0.0 to 1.0)
     storage_weight: f64,
+    /// Storage proof provider
+    storage_proof_provider: Option<Arc<dyn StorageProofProvider>>,
+    /// Local validator keypair
+    validator_keypair: Option<KeyPair>,
+}
+
+impl std::fmt::Debug for HybridEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HybridEngine")
+            .field("current_round", &self.current_round)
+            .field("config", &self.config)
+            .field("validator_manager", &self.validator_manager)
+            .field("pending_proposals", &self.pending_proposals)
+            .field("vote_pool", &self.vote_pool)
+            .field("round_history", &self.round_history)
+            .field("validator_identity", &self.validator_identity)
+            .field("stake_weight", &self.stake_weight)
+            .field("storage_weight", &self.storage_weight)
+            .field("storage_proof_provider", &"<dyn StorageProofProvider>")
+            .field("validator_keypair", &self.validator_keypair.is_some())
+            .finish()
+    }
 }
 
 impl HybridEngine {
     /// Create new hybrid engine
     pub fn new(
-        config: ConsensusConfig, 
+        config: ConsensusConfig,
         validator_manager: ValidatorManager,
         stake_weight: f64,
         storage_weight: f64,
@@ -49,7 +72,10 @@ impl HybridEngine {
             height: 0,
             round: 0,
             step: ConsensusStep::Propose,
-            start_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            start_time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             proposer: None,
             proposals: Vec::new(),
             votes: HashMap::new(),
@@ -68,63 +94,86 @@ impl HybridEngine {
             validator_identity: None,
             stake_weight: stake_weight.max(0.0).min(1.0),
             storage_weight: storage_weight.max(0.0).min(1.0),
+            storage_proof_provider: None,
+            validator_keypair: None,
         }
     }
-    
+
     /// Set local validator identity
     pub fn set_validator_identity(&mut self, identity: IdentityId) {
         self.validator_identity = Some(identity);
     }
 
+    /// Set storage proof provider for PoStorage attestations
+    pub fn set_storage_proof_provider(&mut self, provider: Arc<dyn StorageProofProvider>) {
+        self.storage_proof_provider = Some(provider);
+    }
+
+    /// Set validator keypair for signing storage attestations
+    pub fn set_validator_keypair(&mut self, keypair: KeyPair) {
+        self.validator_keypair = Some(keypair);
+    }
+
     /// Handle consensus event (pure component method)
     /// This replaces the standalone start_consensus() loop pattern
-    pub async fn handle_consensus_event(&mut self, event: ConsensusEvent) -> ConsensusResult<Vec<ConsensusEvent>> {
+    pub async fn handle_consensus_event(
+        &mut self,
+        event: ConsensusEvent,
+    ) -> ConsensusResult<Vec<ConsensusEvent>> {
         match event {
             ConsensusEvent::StartRound { height, trigger } => {
-                tracing::info!(" Hybrid: Starting consensus round {} (trigger: {})", height, trigger);
-                
+                tracing::info!(
+                    " Hybrid: Starting consensus round {} (trigger: {})",
+                    height,
+                    trigger
+                );
+
                 // Handle hybrid-specific triggers (PoW + BFT combination)
                 match trigger.as_str() {
                     "timeout" => {
                         tracing::warn!("⏰ Hybrid timeout - switching to BFT mode");
                         self.switch_to_bft_mode().await?;
-                    },
+                    }
                     "work_proof_found" => {
                         tracing::info!("⛏️ PoW solution found - validating work");
                         self.validate_work_proof().await?;
-                    },
+                    }
                     "difficulty_adjustment" => {
                         tracing::info!("Difficulty adjustment triggered hybrid round");
                         self.adjust_hybrid_parameters().await?;
-                    },
+                    }
                     _ => tracing::debug!("Hybrid trigger: {}", trigger),
                 }
-                
+
                 self.prepare_for_round(height).await?;
                 Ok(vec![ConsensusEvent::RoundPrepared { height }])
             }
-            ConsensusEvent::NewBlock { height, previous_hash } => {
+            ConsensusEvent::NewBlock {
+                height,
+                previous_hash,
+            } => {
                 match self.run_hybrid_round(previous_hash).await {
                     Ok(Some(committed_hash)) => {
-                        tracing::info!("Hybrid block committed: {} at height {}", committed_hash, height);
-                        
+                        tracing::info!(
+                            "Hybrid block committed: {} at height {}",
+                            committed_hash,
+                            height
+                        );
+
                         // Record committed hash for hybrid consensus tracking
-                        self.record_hybrid_commitment(height, committed_hash.clone()).await?;
-                        
+                        self.record_hybrid_commitment(height, committed_hash.clone())
+                            .await?;
+
                         Ok(vec![ConsensusEvent::RoundCompleted { height }])
                     }
-                    Ok(None) => {
-                        Ok(vec![ConsensusEvent::RoundFailed { 
-                            height, 
-                            error: "No consensus reached".to_string() 
-                        }])
-                    }
-                    Err(e) => {
-                        Ok(vec![ConsensusEvent::RoundFailed { 
-                            height, 
-                            error: e.to_string() 
-                        }])
-                    }
+                    Ok(None) => Ok(vec![ConsensusEvent::RoundFailed {
+                        height,
+                        error: "No consensus reached".to_string(),
+                    }]),
+                    Err(e) => Ok(vec![ConsensusEvent::RoundFailed {
+                        height,
+                        error: e.to_string(),
+                    }]),
                 }
             }
             _ => {
@@ -140,8 +189,10 @@ impl HybridEngine {
         self.current_round.height = height;
         self.current_round.round = 0;
         self.current_round.step = ConsensusStep::Propose;
-        self.current_round.start_time = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?.as_secs();
+        self.current_round.start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ConsensusError::TimeError(e))?
+            .as_secs();
 
         tracing::info!(" Prepared hybrid consensus for height {}", height);
         Ok(())
@@ -151,12 +202,15 @@ impl HybridEngine {
     async fn run_hybrid_round(&mut self, previous_hash: Hash) -> ConsensusResult<Option<Hash>> {
         tracing::info!(
             "Starting hybrid round {} at height {} (stake: {:.1}%, storage: {:.1}%)",
-            self.current_round.round, self.current_round.height,
-            self.stake_weight * 100.0, self.storage_weight * 100.0
+            self.current_round.round,
+            self.current_round.height,
+            self.stake_weight * 100.0,
+            self.storage_weight * 100.0
         );
 
         // Select proposer using hybrid criteria
-        let proposer = self.select_hybrid_proposer()
+        let proposer = self
+            .select_hybrid_proposer()
             .ok_or_else(|| ConsensusError::ValidatorError("No proposer available".to_string()))?;
 
         self.current_round.proposer = Some(proposer.identity.clone());
@@ -179,7 +233,7 @@ impl HybridEngine {
     /// Select proposer using hybrid criteria (stake + storage)
     fn select_hybrid_proposer(&self) -> Option<&crate::validators::Validator> {
         let active_validators = self.validator_manager.get_active_validators();
-        
+
         if active_validators.is_empty() {
             return None;
         }
@@ -189,9 +243,11 @@ impl HybridEngine {
             .into_iter()
             .map(|validator| {
                 let stake_score = (validator.stake as f64).sqrt() * self.stake_weight;
-                let storage_score = (validator.storage_provided as f64 / (1024.0 * 1024.0 * 1024.0)) * self.storage_weight;
+                let storage_score = (validator.storage_provided as f64
+                    / (1024.0 * 1024.0 * 1024.0))
+                    * self.storage_weight;
                 let reputation_bonus = (validator.reputation as f64) / 1000.0;
-                
+
                 let total_score = stake_score + storage_score + reputation_bonus;
                 (validator, total_score)
             })
@@ -201,7 +257,8 @@ impl HybridEngine {
         validator_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Use round-robin among top candidates to prevent centralization
-        let top_candidates = validator_scores.into_iter()
+        let top_candidates = validator_scores
+            .into_iter()
             .take(5) // Top 5 candidates
             .map(|(validator, _)| validator)
             .collect::<Vec<_>>();
@@ -210,7 +267,8 @@ impl HybridEngine {
             return None;
         }
 
-        let index = (self.current_round.height + self.current_round.round as u64) as usize % top_candidates.len();
+        let index = (self.current_round.height + self.current_round.round as u64) as usize
+            % top_candidates.len();
         Some(top_candidates[index])
     }
 
@@ -239,7 +297,8 @@ impl HybridEngine {
 
         // Vote for the best proposal based on hybrid criteria
         if let Some(proposal_id) = self.select_best_proposal() {
-            self.cast_hybrid_vote(proposal_id, VoteType::PreVote).await?;
+            self.cast_hybrid_vote(proposal_id, VoteType::PreVote)
+                .await?;
         }
 
         // Wait for votes
@@ -259,7 +318,8 @@ impl HybridEngine {
 
         // Commit if we have a valid proposal
         if let Some(proposal_id) = &self.current_round.valid_proposal {
-            self.cast_hybrid_vote(proposal_id.clone(), VoteType::Commit).await?;
+            self.cast_hybrid_vote(proposal_id.clone(), VoteType::Commit)
+                .await?;
         }
 
         // Wait for commits
@@ -269,32 +329,38 @@ impl HybridEngine {
     }
 
     /// Create a hybrid proposal
-    async fn create_hybrid_proposal(&self, previous_hash: Hash) -> ConsensusResult<ConsensusProposal> {
-        let validator_id = self.validator_identity.as_ref()
+    async fn create_hybrid_proposal(
+        &self,
+        previous_hash: Hash,
+    ) -> ConsensusResult<ConsensusProposal> {
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
         // Collect transactions
         let block_data = self.collect_block_transactions().await?;
 
         // Generate proposal ID
-        let proposal_id = Hash::from_bytes(&hash_blake3(&[
-            &self.current_round.height.to_le_bytes(),
-            &(self.current_round.round as u64).to_le_bytes(),
-            previous_hash.as_bytes(),
-            &block_data,
-            validator_id.as_bytes(),
-            b"hybrid",
-        ].concat()));
+        let proposal_id = Hash::from_bytes(&hash_blake3(
+            &[
+                &self.current_round.height.to_le_bytes(),
+                &(self.current_round.round as u64).to_le_bytes(),
+                previous_hash.as_bytes(),
+                &block_data,
+                validator_id.as_bytes(),
+                b"hybrid",
+            ]
+            .concat(),
+        ));
 
         // Create hybrid consensus proof
         let consensus_proof = self.create_hybrid_consensus_proof().await?;
 
         // Sign the proposal
-        let signature = self.sign_proposal_data(
-            &proposal_id,
-            validator_id,
-            &block_data,
-        ).await?;
+        let signature = self
+            .sign_proposal_data(&proposal_id, validator_id, &block_data)
+            .await?;
 
         let proposal = ConsensusProposal {
             id: proposal_id,
@@ -302,42 +368,51 @@ impl HybridEngine {
             height: self.current_round.height,
             previous_hash,
             block_data,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
             signature,
             consensus_proof,
         };
 
         tracing::info!(
             "Created hybrid proposal {:?} for height {} (stake+storage)",
-            proposal.id, proposal.height
+            proposal.id,
+            proposal.height
         );
 
         Ok(proposal)
     }
 
     /// Cast a hybrid vote
-    async fn cast_hybrid_vote(&mut self, proposal_id: Hash, vote_type: VoteType) -> ConsensusResult<()> {
-        let validator_id = self.validator_identity.as_ref()
+    async fn cast_hybrid_vote(
+        &mut self,
+        proposal_id: Hash,
+        vote_type: VoteType,
+    ) -> ConsensusResult<()> {
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
         // Create vote ID
-        let vote_id = Hash::from_bytes(&hash_blake3(&[
-            proposal_id.as_bytes(),
-            validator_id.as_bytes(),
-            &(vote_type.clone() as u8).to_le_bytes(),
-            &self.current_round.height.to_le_bytes(),
-            &self.current_round.round.to_le_bytes(),
-            b"hybrid",
-        ].concat()));
+        let vote_id = Hash::from_bytes(&hash_blake3(
+            &[
+                proposal_id.as_bytes(),
+                validator_id.as_bytes(),
+                &(vote_type.clone() as u8).to_le_bytes(),
+                &self.current_round.height.to_le_bytes(),
+                &self.current_round.round.to_le_bytes(),
+                b"hybrid",
+            ]
+            .concat(),
+        ));
 
         // Sign the vote
-        let signature = self.sign_vote_data(
-            &vote_id,
-            validator_id,
-            &proposal_id,
-            &vote_type,
-        ).await?;
+        let signature = self
+            .sign_vote_data(&vote_id, validator_id, &proposal_id, &vote_type)
+            .await?;
 
         let vote = ConsensusVote {
             id: vote_id.clone(),
@@ -346,19 +421,23 @@ impl HybridEngine {
             vote_type: vote_type.clone(),
             height: self.current_round.height,
             round: self.current_round.round,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
             signature,
         };
 
         // Store vote
-        self.vote_pool.entry(self.current_round.height)
+        self.vote_pool
+            .entry(self.current_round.height)
             .or_insert_with(HashMap::new)
             .insert(vote.id.clone(), vote);
 
         tracing::debug!(
             " Cast hybrid {:?} vote on proposal {:?}",
-            vote_type, proposal_id
+            vote_type,
+            proposal_id
         );
 
         Ok(())
@@ -378,12 +457,14 @@ impl HybridEngine {
 
         // Count hybrid voting power for each proposal
         let mut proposal_power: HashMap<Hash, f64> = HashMap::new();
-        
+
         for vote in votes.values() {
             if vote.vote_type == VoteType::PreVote {
                 if let Some(validator) = self.validator_manager.get_validator(&vote.voter) {
                     let hybrid_power = self.calculate_hybrid_voting_power(validator);
-                    *proposal_power.entry(vote.proposal_id.clone()).or_insert(0.0) += hybrid_power;
+                    *proposal_power
+                        .entry(vote.proposal_id.clone())
+                        .or_insert(0.0) += hybrid_power;
                 }
             }
         }
@@ -391,7 +472,7 @@ impl HybridEngine {
         // Check if any proposal has 2/3+ of hybrid voting power
         let total_hybrid_power = self.calculate_total_hybrid_power();
         let threshold = total_hybrid_power * 2.0 / 3.0;
-        
+
         for (proposal_id, power) in proposal_power {
             if power >= threshold {
                 return Some(proposal_id);
@@ -409,7 +490,7 @@ impl HybridEngine {
         };
 
         let mut commit_power = 0.0;
-        
+
         for vote in votes.values() {
             if vote.vote_type == VoteType::Commit && &vote.proposal_id == proposal_id {
                 if let Some(validator) = self.validator_manager.get_validator(&vote.voter) {
@@ -420,22 +501,24 @@ impl HybridEngine {
 
         let total_hybrid_power = self.calculate_total_hybrid_power();
         let threshold = total_hybrid_power * 2.0 / 3.0;
-        
+
         commit_power >= threshold
     }
 
     /// Calculate hybrid voting power for a validator
     fn calculate_hybrid_voting_power(&self, validator: &crate::validators::Validator) -> f64 {
         let stake_power = (validator.stake as f64).sqrt() * self.stake_weight;
-        let storage_power = (validator.storage_provided as f64 / (1024.0 * 1024.0 * 1024.0)) * self.storage_weight;
+        let storage_power =
+            (validator.storage_provided as f64 / (1024.0 * 1024.0 * 1024.0)) * self.storage_weight;
         let reputation_bonus = (validator.reputation as f64) / 1000.0;
-        
+
         stake_power + storage_power + reputation_bonus
     }
 
     /// Calculate total hybrid voting power in the network
     fn calculate_total_hybrid_power(&self) -> f64 {
-        self.validator_manager.get_active_validators()
+        self.validator_manager
+            .get_active_validators()
             .iter()
             .map(|validator| self.calculate_hybrid_voting_power(validator))
             .sum()
@@ -443,31 +526,54 @@ impl HybridEngine {
 
     /// Create hybrid consensus proof
     async fn create_hybrid_consensus_proof(&self) -> ConsensusResult<ConsensusProof> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
-        let validator = self.validator_manager.get_validator(validator_id)
+        let validator = self
+            .validator_manager
+            .get_validator(validator_id)
             .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
 
         // Create both stake and storage proofs for hybrid consensus
         let stake_proof = StakeProof::new(
             validator_id.clone(),
             validator.stake,
-            Hash::from_bytes(&hash_blake3(&[validator_id.as_bytes(), &validator.stake.to_le_bytes()].concat())),
+            Hash::from_bytes(&hash_blake3(
+                &[validator_id.as_bytes(), &validator.stake.to_le_bytes()].concat(),
+            )),
             self.current_round.height.saturating_sub(1),
             86400, // 1 day lock time
-        ).map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+        )
+        .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
 
-        let storage_proof = crate::proofs::StorageProof::new(
-            Hash::from_bytes(validator_id.as_bytes()),
-            validator.storage_provided,
-            80, // 80% utilization
-            Vec::new(), // Simplified challenges
-            vec![Hash::from_bytes(&hash_blake3(&[validator_id.as_bytes(), b"storage"].concat()))],
-        ).map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+        let provider = self
+            .storage_proof_provider
+            .as_ref()
+            .ok_or_else(|| {
+                ConsensusError::ProofVerificationFailed(
+                    "No storage proof provider configured".to_string(),
+                )
+            })?;
 
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?.as_secs();
+        let unsigned = provider
+            .capacity_attestation(&Hash::from_bytes(validator_id.as_bytes()))
+            .await
+            .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+
+        let keypair = self.validator_keypair.as_ref().ok_or_else(|| {
+            ConsensusError::ValidatorError("No validator keypair configured".to_string())
+        })?;
+
+        let storage_proof = unsigned
+            .sign(keypair)
+            .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ConsensusError::TimeError(e))?
+            .as_secs();
 
         Ok(ConsensusProof {
             consensus_type: ConsensusType::Hybrid,
@@ -480,6 +586,7 @@ impl HybridEngine {
     }
 
     /// Advance to next round
+    #[allow(dead_code)]
     async fn advance_to_next_round(&mut self) -> ConsensusResult<()> {
         // Save current round
         self.round_history.push_back(self.current_round.clone());
@@ -490,8 +597,10 @@ impl HybridEngine {
         // Advance round
         self.current_round.round += 1;
         self.current_round.step = ConsensusStep::Propose;
-        self.current_round.start_time = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?.as_secs();
+        self.current_round.start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ConsensusError::TimeError(e))?
+            .as_secs();
         self.current_round.proposer = None;
         self.current_round.proposals.clear();
         self.current_round.votes.clear();
@@ -499,7 +608,8 @@ impl HybridEngine {
 
         tracing::info!(
             " Advanced to hybrid round {} at height {}",
-            self.current_round.round, self.current_round.height
+            self.current_round.round,
+            self.current_round.height
         );
 
         Ok(())
@@ -512,9 +622,11 @@ impl HybridEngine {
 
     /// Collect block transactions
     async fn collect_block_transactions(&self) -> ConsensusResult<Vec<u8>> {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?.as_secs();
-        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ConsensusError::TimeError(e))?
+            .as_secs();
+
         let block_data = format!(
             "hybrid_block_height:{},round:{},timestamp:{},stake_weight:{:.2},storage_weight:{:.2}",
             self.current_round.height,
@@ -523,7 +635,7 @@ impl HybridEngine {
             self.stake_weight,
             self.storage_weight
         );
-        
+
         Ok(block_data.into_bytes())
     }
 
@@ -539,7 +651,8 @@ impl HybridEngine {
             proposer.as_bytes(),
             block_data,
             b"hybrid",
-        ].concat();
+        ]
+        .concat();
 
         let signature_hash = hash_blake3(&signature_data);
 
@@ -551,8 +664,10 @@ impl HybridEngine {
                 key_id: proposer.as_bytes().try_into().unwrap_or([0u8; 32]),
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
         })
     }
 
@@ -570,7 +685,8 @@ impl HybridEngine {
             proposal_id.as_bytes(),
             &[vote_type.clone() as u8],
             b"hybrid",
-        ].concat();
+        ]
+        .concat();
 
         let signature_hash = hash_blake3(&signature_data);
 
@@ -582,8 +698,10 @@ impl HybridEngine {
                 key_id: voter.as_bytes().try_into().unwrap_or([0u8; 32]),
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
         })
     }
 
@@ -591,10 +709,11 @@ impl HybridEngine {
     pub fn update_weights(&mut self, stake_weight: f64, storage_weight: f64) {
         self.stake_weight = stake_weight.max(0.0).min(1.0);
         self.storage_weight = storage_weight.max(0.0).min(1.0);
-        
+
         tracing::info!(
             "⚖️ Updated hybrid weights: stake {:.1}%, storage {:.1}%",
-            self.stake_weight * 100.0, self.storage_weight * 100.0
+            self.stake_weight * 100.0,
+            self.storage_weight * 100.0
         );
     }
 
@@ -636,15 +755,27 @@ impl HybridEngine {
     }
 
     /// Record hybrid commitment
-    async fn record_hybrid_commitment(&mut self, height: u64, committed_hash: Hash) -> ConsensusResult<()> {
-        tracing::info!("Recording hybrid commitment {} at height {}", committed_hash, height);
-        
+    async fn record_hybrid_commitment(
+        &mut self,
+        height: u64,
+        committed_hash: Hash,
+    ) -> ConsensusResult<()> {
+        tracing::info!(
+            "Recording hybrid commitment {} at height {}",
+            committed_hash,
+            height
+        );
+
         // In a implementation:
         // 1. Record both PoW and BFT components of the commitment
         // 2. Update hybrid chain state
         // 3. Adjust difficulty and stake requirements
-        
-        tracing::info!("Hybrid block {} committed at height {}", committed_hash, height);
+
+        tracing::info!(
+            "Hybrid block {} committed at height {}",
+            committed_hash,
+            height
+        );
         Ok(())
     }
 }
