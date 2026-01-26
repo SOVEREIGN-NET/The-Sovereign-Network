@@ -11,9 +11,11 @@
 pub mod entity_registry;
 pub mod governance;
 pub mod sunset;
+pub mod citizen_role;
 
 // Re-export key types
 pub use entity_registry::{EntityRegistry, EntityType, Role, EntityRegistryError};
+pub use citizen_role::{CitizenRole, CitizenRegistry, CitizenRoleError, RegistryStats};
 pub use governance::{
     Governance, Proposal, Vote,
     GovernanceError, ProposalStatus, VoteType, ProposalCategory,

@@ -56,6 +56,10 @@ pub struct TokenContract {
     pub allowances: HashMap<PublicKey, HashMap<PublicKey, u64>>,
     /// Token creator
     pub creator: PublicKey,
+    /// Kernel minting authority (for UBI distribution)
+    /// If set, only this kernel can mint tokens via mint_kernel_only()
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kernel_mint_authority: Option<PublicKey>,
 }
 
 impl TokenContract {
@@ -82,6 +86,7 @@ impl TokenContract {
             balances: HashMap::new(),
             allowances: HashMap::new(),
             creator,
+            kernel_mint_authority: None,
         }
     }
 
@@ -98,6 +103,29 @@ impl TokenContract {
             0,     // No burn rate for ZHTP
             creator,
         )
+    }
+
+    /// Create SOV token with kernel minting authority
+    ///
+    /// This is used for UBI distribution. The token is created with a kernel
+    /// authority, meaning only the Treasury Kernel can mint tokens via mint_kernel_only().
+    ///
+    /// # Arguments
+    /// * `kernel_authority` - The public key of the Treasury Kernel (only entity that can mint)
+    pub fn new_sov_with_kernel_authority(kernel_authority: PublicKey) -> Self {
+        let creator = PublicKey::new(vec![0u8; 1312]); // Mock creator for SOV
+        let mut token = Self::new(
+            crate::contracts::utils::generate_lib_token_id(),
+            "SOV Token".to_string(),
+            "SOV".to_string(),
+            8,
+            1_000_000_000 * 100_000_000, // 1B SOV with 8 decimals
+            false, // SOV is not deflationary
+            0,     // No burn rate for SOV
+            creator,
+        );
+        token.kernel_mint_authority = Some(kernel_authority);
+        token
     }
 
     /// Create a custom token (for dApps)
@@ -272,6 +300,48 @@ impl TokenContract {
             return Err("Would exceed maximum supply".to_string());
         }
 
+        let balance = self.balance_of(to);
+        self.balances.insert(to.clone(), balance + amount);
+        self.total_supply += amount;
+
+        Ok(())
+    }
+
+    /// Mint tokens with kernel authority (UBI distribution only)
+    ///
+    /// This method is used exclusively by the Treasury Kernel for UBI distribution.
+    /// Only the kernel specified at token creation can call this method.
+    ///
+    /// # Arguments
+    /// * `caller` - The entity attempting to mint (must match kernel_mint_authority)
+    /// * `to` - The recipient of the minted tokens
+    /// * `amount` - The amount to mint
+    ///
+    /// # Errors
+    /// * "Only Treasury Kernel can mint" - If caller is not the kernel authority
+    /// * "Minting disabled" - If kernel_mint_authority was not set
+    /// * "Would exceed maximum supply" - If amount would exceed max_supply
+    pub fn mint_kernel_only(
+        &mut self,
+        caller: &PublicKey,
+        to: &PublicKey,
+        amount: u64,
+    ) -> Result<(), String> {
+        // Check kernel authority
+        match &self.kernel_mint_authority {
+            Some(authority) if caller == authority => {
+                // Authorized - proceed with minting
+            }
+            Some(_) => return Err("Only Treasury Kernel can mint".to_string()),
+            None => return Err("Minting disabled".to_string()),
+        }
+
+        // Check supply limit
+        if self.total_supply + amount > self.max_supply {
+            return Err("Would exceed maximum supply".to_string());
+        }
+
+        // Mint tokens
         let balance = self.balance_of(to);
         self.balances.insert(to.clone(), balance + amount);
         self.total_supply += amount;
@@ -582,7 +652,7 @@ mod tests {
         );
         assert!(invalid_token.validate().is_err());
 
-        // Empty symbol should fail validation  
+        // Empty symbol should fail validation
         let invalid_token = TokenContract::new_custom(
             "Valid Name".to_string(),
             "".to_string(), // Empty symbol
@@ -590,5 +660,128 @@ mod tests {
             public_key.clone(),
         );
         assert!(invalid_token.validate().is_err());
+    }
+
+    #[test]
+    fn test_new_sov_with_kernel_authority() {
+        let kernel_addr = create_test_public_key(10);
+        let token = TokenContract::new_sov_with_kernel_authority(kernel_addr.clone());
+
+        assert_eq!(token.name, "SOV Token");
+        assert_eq!(token.symbol, "SOV");
+        assert_eq!(token.decimals, 8);
+        assert!(!token.is_deflationary);
+        assert_eq!(token.kernel_mint_authority, Some(kernel_addr));
+    }
+
+    #[test]
+    fn test_mint_kernel_only_authorized() {
+        let kernel_addr = create_test_public_key(10);
+        let recipient = create_test_public_key(20);
+        let mut token = TokenContract::new_sov_with_kernel_authority(kernel_addr.clone());
+
+        // Authorized minting should succeed
+        let result = token.mint_kernel_only(&kernel_addr, &recipient, 1000);
+        assert!(result.is_ok());
+        assert_eq!(token.balance_of(&recipient), 1000);
+        assert_eq!(token.total_supply, 1000);
+    }
+
+    #[test]
+    fn test_mint_kernel_only_unauthorized() {
+        let kernel_addr = create_test_public_key(10);
+        let unauthorized = create_test_public_key(15);
+        let recipient = create_test_public_key(20);
+        let mut token = TokenContract::new_sov_with_kernel_authority(kernel_addr);
+
+        // Unauthorized minting should fail
+        let result = token.mint_kernel_only(&unauthorized, &recipient, 1000);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Only Treasury Kernel can mint".to_string()
+        );
+        assert_eq!(token.balance_of(&recipient), 0);
+    }
+
+    #[test]
+    fn test_mint_kernel_only_no_authority() {
+        let regular_token = TokenContract::new_custom(
+            "Regular Token".to_string(),
+            "REG".to_string(),
+            1000,
+            create_test_public_key(1),
+        );
+        let mut token = regular_token;
+        let caller = create_test_public_key(10);
+        let recipient = create_test_public_key(20);
+
+        // Minting without authority should fail
+        let result = token.mint_kernel_only(&caller, &recipient, 1000);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Minting disabled".to_string());
+    }
+
+    #[test]
+    fn test_mint_kernel_only_exceeds_supply() {
+        let kernel_addr = create_test_public_key(10);
+        let recipient = create_test_public_key(20);
+
+        let mut token = TokenContract::new(
+            [1u8; 32],
+            "Limited Token".to_string(),
+            "LIM".to_string(),
+            8,
+            1000, // Only 1000 max supply
+            false,
+            0,
+            create_test_public_key(1),
+        );
+        token.kernel_mint_authority = Some(kernel_addr.clone());
+
+        // Minting within limit should succeed
+        assert!(token.mint_kernel_only(&kernel_addr, &recipient, 500).is_ok());
+
+        // Minting beyond limit should fail
+        let result = token.mint_kernel_only(&kernel_addr, &recipient, 600);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Would exceed maximum supply".to_string()
+        );
+    }
+
+    #[test]
+    fn test_mint_kernel_only_multiple_recipients() {
+        let kernel_addr = create_test_public_key(10);
+        let recipient1 = create_test_public_key(20);
+        let recipient2 = create_test_public_key(21);
+        let recipient3 = create_test_public_key(22);
+
+        let mut token = TokenContract::new_sov_with_kernel_authority(kernel_addr.clone());
+
+        // Mint to multiple recipients
+        assert!(token.mint_kernel_only(&kernel_addr, &recipient1, 1000).is_ok());
+        assert!(token.mint_kernel_only(&kernel_addr, &recipient2, 2000).is_ok());
+        assert!(token.mint_kernel_only(&kernel_addr, &recipient3, 3000).is_ok());
+
+        assert_eq!(token.balance_of(&recipient1), 1000);
+        assert_eq!(token.balance_of(&recipient2), 2000);
+        assert_eq!(token.balance_of(&recipient3), 3000);
+        assert_eq!(token.total_supply, 6000);
+    }
+
+    #[test]
+    fn test_kernel_authority_field_serialization() {
+        let kernel_addr = create_test_public_key(10);
+        let token = TokenContract::new_sov_with_kernel_authority(kernel_addr.clone());
+
+        // Test serialization and deserialization
+        let serialized = bincode::serialize(&token).expect("serialize");
+        let deserialized: TokenContract =
+            bincode::deserialize(&serialized).expect("deserialize");
+
+        assert_eq!(deserialized.kernel_mint_authority, Some(kernel_addr));
+        assert_eq!(deserialized.name, "SOV Token");
     }
 }
