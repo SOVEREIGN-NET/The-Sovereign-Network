@@ -255,6 +255,39 @@ pub struct UbiPoolStatus {
 }
 
 impl UbiPoolStatus {
+    /// Total pool capacity for a single epoch (in smallest token units).
+    pub const TOTAL_POOL_CAPACITY: u64 = 1_000_000;
+
+    /// Construct a new `UbiPoolStatus`, computing `remaining_capacity` from `total_distributed`.
+    ///
+    /// # Invariant
+    /// Ensures `remaining_capacity = TOTAL_POOL_CAPACITY - total_distributed`,
+    /// using saturating subtraction to avoid underflow if `total_distributed`
+    /// exceeds the configured pool capacity.
+    pub fn new(epoch: EpochIndex, citizens_eligible: u64, total_distributed: u64) -> Self {
+        let remaining_capacity =
+            Self::TOTAL_POOL_CAPACITY.saturating_sub(total_distributed);
+
+        UbiPoolStatus {
+            epoch,
+            citizens_eligible,
+            total_distributed,
+            remaining_capacity,
+        }
+    }
+
+    /// Validate that this instance satisfies the documented invariant.
+    ///
+    /// Returns `true` if `remaining_capacity` matches
+    /// `TOTAL_POOL_CAPACITY - total_distributed` (with saturating semantics),
+    /// otherwise `false`.
+    pub fn is_valid(&self) -> bool {
+        let expected =
+            Self::TOTAL_POOL_CAPACITY.saturating_sub(self.total_distributed);
+        self.remaining_capacity == expected
+    }
+}
+impl UbiPoolStatus {
     /// Hard pool cap per epoch (in smallest token units)
     /// 1,000,000 SOV with 8 decimals = 100_000_000_000_000 units
     pub const POOL_CAP_PER_EPOCH: u64 = 1_000_000;
