@@ -4,8 +4,40 @@
 //! - Mint new tokens (SOV)
 //! - Burn tokens
 //! - Lock tokens for vesting
-//! 
+//!
 //! Per ADR-0017: Economic law is enforced exclusively by the Treasury Kernel.
+//!
+//! # Architecture
+//!
+//! The Treasury Kernel implements the **Consensus-Critical Economic Enforcement** layer:
+//! ```text
+//! Intent Recording  → Storage Layer → Treasury Kernel → Economic Effects
+//!   (Contracts)        (#841)         (This Module)     (Mint/Burn/Lock)
+//! ```
+//!
+//! # Phase 1 Implementation: UBI Distribution Only
+//!
+//! Phase 1 provides minimal viable implementation focused on UBI (Universal Basic Income):
+//! - **Passive Client Pattern**: UBI contract records intent, Kernel executes validation/minting
+//! - **5-Check Validation**: Citizenship, revocation, eligibility, dedup, pool capacity
+//! - **Hard Pool Cap**: 1,000,000 SOV per epoch (deterministic, consensus-critical)
+//! - **Crash Recovery**: Dedup state prevents double-minting across failures
+//! - **Performance**: 1000 citizens processed in <5 seconds
+//!
+//! # Future Scope
+//! - Compensation engine (deterministic, mechanical payouts)
+//! - Metric book (prevent compensation without finalized work)
+//! - Vesting + time locks
+//! - Role registry + snapshots
+//!
+//! # Critical Invariants
+//!
+//! The Kernel maintains these consensus-critical invariants:
+//! - **Dedup Guarantee**: No citizen receives payment twice per epoch
+//! - **Pool Capacity**: Total distributed never exceeds 1,000,000 SOV per epoch
+//! - **Deterministic Execution**: Same inputs always produce identical outputs
+//! - **Crash Recovery**: Restarting always restores to exact same state
+//! - **Immutable Events**: All distributions/rejections recorded as audit trail
 //!
 //! ## Initial Scope
 //! Phase 1 implements UBI distribution only:
@@ -36,6 +68,28 @@ use crate::integration::crypto_integration::PublicKey;
 ///
 /// **Consensus-Critical**: All state must be persisted and recoverable.
 /// Kernel is a singleton - there is exactly one Kernel per blockchain.
+///
+/// # Thread Safety
+/// KernelState mutations are atomic and consensus-critical. All state changes
+/// must be persisted before the next block is processed.
+///
+/// # Storage Guarantee
+/// All KernelState mutations are immediately persisted using deterministic
+/// serialization. This guarantees crash recovery: restarting a node always
+/// recovers to the same state, preventing double-minting and ensuring
+/// consensus across validators.
+///
+/// # Example
+/// ```ignore
+/// let mut kernel = TreasuryKernel::new(
+///     governance_authority,
+///     kernel_address,
+///     60_480 // blocks per epoch (1 week)
+/// );
+///
+/// // At epoch boundary:
+/// kernel.process_ubi_distributions(block_height, executor)?;
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreasuryKernel {
     /// Kernel state (dedup, pool tracking, last processed epoch)

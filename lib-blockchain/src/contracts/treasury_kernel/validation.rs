@@ -1,11 +1,47 @@
 //! Validation Pipeline - 5-Check UBI Claim Validation
 //!
-//! Implements the core validation logic for UBI claims:
-//! 1. CitizenRegistry lookup
-//! 2. Revocation status check
-//! 3. Eligibility period check (citizenship_epoch)
-//! 4. Deduplication check
-//! 5. Pool capacity check
+//! Implements the core validation logic for UBI claims.
+//!
+//! # The 5-Check Validation Pipeline
+//!
+//! Every UBI claim passes through this deterministic validation sequence:
+//!
+//! 1. **Citizenship Check** (`NotACitizen`)
+//!    - Look up citizen in CitizenRegistry
+//!    - Fails if citizen is not registered
+//!    - Requirement: citizen must exist in registry
+//!
+//! 2. **Revocation Check** (`AlreadyRevoked`)
+//!    - Check `citizen.revoked` flag
+//!    - Fails if citizen has been revoked
+//!    - Irreversible: revocation is permanent within an epoch
+//!
+//! 3. **Eligibility Check** (`EligibilityNotMet`)
+//!    - Compare `current_epoch >= citizen.citizenship_epoch`
+//!    - Fails if claiming before becoming eligible
+//!    - Prevents retroactive claims from new citizens
+//!
+//! 4. **Deduplication Check** (`AlreadyClaimedEpoch`)
+//!    - Check `already_claimed[citizen_id][epoch]`
+//!    - Fails if citizen already claimed in this epoch
+//!    - Persisted across crashes: dedup map is serialized state
+//!
+//! 5. **Pool Capacity Check** (`PoolExhausted`)
+//!    - Check if `total_distributed[epoch] + amount <= 1,000,000`
+//!    - Fails if distribution would exceed epoch limit
+//!    - Hard cap enforced: no exceptions
+//!
+//! # Check Ordering
+//!
+//! Checks run in strict order. The first failure short-circuits and returns.
+//! This ordering prioritizes rejecting invalid/revoked citizens before
+//! checking dedup and capacity, reducing unnecessary state mutations.
+//!
+//! # Privacy
+//!
+//! Rejected claims are silent failures from the citizen's perspective.
+//! The citizen receives no feedback about which check failed.
+//! This prevents information leakage about governance decisions.
 
 use super::types::{KernelState, RejectionReason};
 use crate::contracts::governance::CitizenRegistry;
@@ -62,15 +98,6 @@ impl KernelState {
 mod tests {
     use super::*;
     use crate::contracts::governance::CitizenRole;
-    use crate::integration::crypto_integration::PublicKey;
-
-    fn test_public_key(id: u8) -> PublicKey {
-        PublicKey {
-            dilithium_pk: vec![id],
-            kyber_pk: vec![id],
-            key_id: [id; 32],
-        }
-    }
 
     fn create_test_claim(citizen_id: [u8; 32], epoch: u64, amount: u64) -> UbiClaimRecorded {
         UbiClaimRecorded {

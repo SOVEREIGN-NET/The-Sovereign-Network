@@ -1,13 +1,52 @@
 //! Treasury Kernel UBI Distribution Engine
 //!
-//! Main processing loop for UBI distribution:
-//! 1. Poll for UbiClaimRecorded events
-//! 2. Validate each claim (5 checks)
-//! 3. Mint or reject with reason code
-//! 4. Emit events (UbiDistributed, UbiClaimRejected, UbiPoolStatus)
-//! 5. Update kernel state
+//! Main processing loop for UBI distribution that executes at epoch boundaries.
+//!
+//! # Processing Pipeline
+//!
+//! The engine implements a deterministic pipeline that runs once per epoch:
+//!
+//! 1. **Poll for Claims**: Retrieve all UbiClaimRecorded events from UBI contract
+//! 2. **Validate Each Claim**: Run 5-check validation (delegation to validation module)
+//! 3. **Mint or Reject**:
+//!    - Success: Mark citizen as claimed, update pool, record success
+//!    - Failure: Record rejection with specific reason code
+//! 4. **Emit Events**:
+//!    - UbiDistributed (for successes)
+//!    - UbiClaimRejected (for failures with reason)
+//!    - UbiPoolStatus (epoch summary)
+//! 5. **Update State**: Persist dedup and pool tracking for crash recovery
+//!
+//! # Execution Frequency
+//!
+//! The engine runs at epoch boundaries (block height % 60_480 == 0):
+//! - **Weekly**: One execution per week (60,480 blocks ≈ 7 days)
+//! - **Deterministic**: Same block height always produces same epoch
+//! - **Idempotent**: Processing same epoch twice has no effect
+//!
+//! # Failure Handling
+//!
+//! ## Validation Failures (Expected)
+//! If validation returns `Err(reason)`, the engine:
+//! - Records the rejection with the reason code
+//! - Continues processing next claim
+//! - Does not mutate state
+//!
+//! ## Processing Failures (Rare)
+//! If minting or event emission fails, the engine stops immediately.
+//! The partially-updated state is persisted, and recovery picks up at restart.
+//!
+//! # Statistics
+//!
+//! The engine tracks:
+//! - `total_claims_processed`: Count of validated claims
+//! - `total_rejections`: Count of failed claims
+//! - `total_sov_distributed`: Total SOV minted
+//! - `rejections_by_reason`: Breakdown by rejection reason
+//!
+//! These are exposed via `get_processing_stats()` for governance monitoring.
 
-use super::types::{KernelState, RejectionReason};
+use super::types::KernelState;
 use crate::contracts::UbiClaimRecorded;
 use crate::contracts::governance::CitizenRegistry;
 
