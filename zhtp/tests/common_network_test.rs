@@ -150,3 +150,161 @@ pub async fn run_shared_multi_node_network_test() -> Result<()> {
     // TODO: Move multi-node network orchestration logic here
     Ok(())
 }
+
+// --- Shared Helper Functions ---
+
+/// Create test identities from a list of (device, seed) tuples
+pub fn create_test_identities<F>(
+    nodes: &[(&str, [u8; 64])],
+    identity_fn: F,
+) -> Vec<ZhtpIdentity>
+where
+    F: Fn(&str, [u8; 64]) -> Result<ZhtpIdentity>,
+{
+    nodes
+        .iter()
+        .filter_map(|(device, seed)| identity_fn(device, *seed).ok())
+        .collect()
+}
+
+/// Build mesh topology from identities
+pub fn build_mesh_topology(identities: &[ZhtpIdentity]) -> MeshTopology {
+    let mut topology = MeshTopology::new();
+    for identity in identities {
+        topology.add_node(identity.node_id.clone());
+    }
+    topology.connect_all_peers();
+    topology
+}
+
+/// Assert mesh is fully connected with expected peer count
+pub fn assert_fully_connected(topology: &MeshTopology, expected_peer_count: usize) {
+    assert!(topology.is_fully_connected(), "Mesh should be fully connected");
+    for (i, node) in topology.nodes.iter().enumerate() {
+        assert_eq!(
+            node.peer_count(),
+            expected_peer_count,
+            "Node {} should have {} peers",
+            i,
+            expected_peer_count
+        );
+    }
+}
+
+/// Build DHT states from identities
+pub fn build_dht_states(identities: &[ZhtpIdentity], convergence_cycle: u32) -> Vec<DhtRoutingState> {
+    identities
+        .iter()
+        .map(|id| {
+            let mut dht = DhtRoutingState::new(id.node_id.clone());
+            dht.set_convergence_cycle(convergence_cycle);
+            dht
+        })
+        .collect()
+}
+
+/// Populate DHT peers for all nodes
+pub fn populate_dht_peers(dht_states: &mut [DhtRoutingState], identities: &[ZhtpIdentity], cycle: u32) {
+    for i in 0..identities.len() {
+        for j in 0..identities.len() {
+            if i != j {
+                let peer_node_id = identities[j].node_id.clone();
+                if let Ok(peer_uuid) = Uuid::from_slice(&peer_node_id.as_bytes()[..16]) {
+                    dht_states[i].add_peer(peer_node_id, peer_uuid, cycle);
+                }
+            }
+        }
+    }
+}
+
+/// Assert all DHT states have expected peer count
+pub fn assert_dht_peer_counts(dht_states: &[DhtRoutingState], expected_count: usize) {
+    for (i, dht) in dht_states.iter().enumerate() {
+        assert_eq!(
+            dht.peer_count(),
+            expected_count,
+            "Node {} should have {} peers",
+            i,
+            expected_count
+        );
+    }
+}
+
+/// Assert node IDs are stable across restart
+pub fn assert_node_id_stability(before: &[ZhtpIdentity], after: &[ZhtpIdentity]) {
+    for (i, (b, a)) in before.iter().zip(after.iter()).enumerate() {
+        assert_eq!(
+            b.node_id, a.node_id,
+            "Node {} NodeId must survive restart",
+            i
+        );
+    }
+}
+
+/// Assert node IDs match baseline
+pub fn assert_node_ids_match(identities: &[ZhtpIdentity], baseline: &[NodeId], cycle: usize) {
+    for (i, identity) in identities.iter().enumerate() {
+        assert_eq!(
+            identity.node_id, baseline[i],
+            "Node {} NodeId must be consistent in cycle {}",
+            i,
+            cycle
+        );
+    }
+}
+
+/// Assert convergence cycle for all DHT states
+pub fn assert_convergence_cycle(dht_states: &[DhtRoutingState], expected_cycle: u32) {
+    for dht in dht_states {
+        assert_eq!(
+            dht.get_convergence_cycle(),
+            expected_cycle,
+            "All nodes should have convergence cycle {}",
+            expected_cycle
+        );
+    }
+}
+
+/// Assert convergence progressed between two DHT state snapshots
+pub fn assert_convergence_progressed(before: &[DhtRoutingState], after: &[DhtRoutingState]) {
+    for (b, a) in before.iter().zip(after.iter()) {
+        assert!(
+            a.get_convergence_cycle() > b.get_convergence_cycle(),
+            "Convergence cycle must progress"
+        );
+    }
+}
+
+/// Assert DHT routing table consistency
+pub fn assert_dht_consistency(
+    dht_states: &[DhtRoutingState],
+    stored_routing_tables: &[Vec<NodeId>],
+    cycle: usize,
+) {
+    for (i, dht) in dht_states.iter().enumerate() {
+        for peer_node_id in &stored_routing_tables[i] {
+            assert!(
+                dht.has_peer(peer_node_id),
+                "Node {} should have consistent peer entry in cycle {}",
+                i,
+                cycle
+            );
+        }
+    }
+}
+
+/// Assert mesh routing paths exist between all node pairs
+pub fn assert_mesh_routing_paths(topology: &MeshTopology) {
+    for i in 0..topology.nodes.len() {
+        for j in 0..topology.nodes.len() {
+            if i != j {
+                assert!(
+                    topology.nodes[i].has_peer(&topology.nodes[j].node_id),
+                    "Node {} should have direct route to Node {}",
+                    i,
+                    j
+                );
+            }
+        }
+    }
+}
