@@ -8,10 +8,40 @@
 //! 5. Emit pool status summary
 //! 6. Persist kernel state
 
-use crate::contracts::treasury_kernel::TreasuryKernel;
+use crate::contracts::treasury_kernel::{TreasuryKernel, UbiClaimRecorded};
 use crate::contracts::governance::CitizenRegistry;
 
 impl TreasuryKernel {
+    /// Poll for UbiClaimRecorded events from the UBI contract
+    ///
+    /// Retrieves all UBI claim intent events recorded during an epoch.
+    /// These claims are then validated and processed for minting.
+    ///
+    /// # Arguments
+    /// * `_epoch` - The epoch to poll claims for
+    ///
+    /// # Returns
+    /// A vector of UbiClaimRecorded events for the given epoch
+    ///
+    /// # Note
+    /// In Phase 5, this will be integrated with ContractExecutor.query_events()
+    pub fn poll_ubi_claims(
+        &self,
+        _epoch: u64,
+    ) -> Result<Vec<UbiClaimRecorded>, Box<dyn std::error::Error>> {
+        // TODO: Phase 5 - Integrate with ContractExecutor.query_events()
+        // For now, return empty vector (to be populated from event storage)
+        // let events = executor.query_events(epoch, "UbiClaimRecorded")?;
+        // let mut claims = Vec::new();
+        // for event_data in events {
+        //     let claim: UbiClaimRecorded = bincode::deserialize(&event_data)?;
+        //     claims.push(claim);
+        // }
+        // Ok(claims)
+
+        Ok(Vec::new()) // Stub for Phase 5
+    }
+
     /// Process all UBI distributions for the current epoch
     ///
     /// This is the main entry point called from ContractExecutor.finalize_block_state()
