@@ -98,7 +98,10 @@ impl CrossContractCall {
             return Err("Callee cannot be null address".to_string());
         }
 
-        // Check for self-calls (not allowed - would create logical errors and cycles)
+        // Check for self-calls (design: not allowed - enforces semantic clarity between
+        // intra-contract calls (direct) and cross-contract calls (via ABI validation).
+        // If a contract needs to delegate to its own methods, it should do so directly,
+        // not through the cross-contract call infrastructure.)
         if self.caller == self.callee {
             return Err("Caller and callee must be different contracts".to_string());
         }
