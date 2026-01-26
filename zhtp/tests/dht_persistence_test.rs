@@ -123,94 +123,29 @@ fn test_dht_persistence_single_node_restart() -> Result<()> {
 /// - Network reaches convergence within 30 seconds (simulated)
 #[test]
 fn test_dht_persistence_full_network_restart() -> Result<()> {
-    // Phase 1: Create three nodes with fixed seeds
     let nodes = [
         ("alice-dht-003", [0xAA; 64]),
         ("bob-dht-003", [0xBB; 64]),
         ("charlie-dht-003", [0xCC; 64]),
     ];
 
-    let mut identities_before = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
-        identities_before.push(identity);
-    }
+    // Phase 1: Create identities and simulate first convergence
+    let identities_before = create_test_identities(&nodes, identity_with_seed);
+    let mut dht_cycle_0 = build_dht_states(&identities_before, 1);
+    populate_dht_peers(&mut dht_cycle_0, &identities_before, 0);
+    assert_dht_peer_counts(&dht_cycle_0, 2);
 
-    // Phase 2: Simulate first convergence
-    let mut dht_cycle_0 = vec![
-        DhtRoutingState::new(identities_before[0].node_id.clone()),
-        DhtRoutingState::new(identities_before[1].node_id.clone()),
-        DhtRoutingState::new(identities_before[2].node_id.clone()),
-    ];
+    // Phase 2: Restart all nodes simultaneously
+    let identities_after = create_test_identities(&nodes, identity_with_seed);
+    common_network_test::assert_node_id_stability(&identities_before, &identities_after);
 
-    for i in 0..identities_before.len() {
-        for j in 0..identities_before.len() {
-            if i != j {
-                let peer_node_id = identities_before[j].node_id.clone();
-                let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                dht_cycle_0[i].add_peer(peer_node_id, peer_uuid, 0);
-            }
-        }
-        dht_cycle_0[i].set_convergence_cycle(1);
-    }
+    // Phase 3: Rebuild DHT tables after restart
+    let mut dht_cycle_1 = build_dht_states(&identities_after, 2);
+    populate_dht_peers(&mut dht_cycle_1, &identities_after, 1);
+    assert_dht_peer_counts(&dht_cycle_1, 2);
 
-    // Verify first convergence succeeded
-    for (i, dht) in dht_cycle_0.iter().enumerate() {
-        assert_eq!(dht.peer_count(), 2, "Node {} should have 2 peers in cycle 0", i);
-    }
-
-    // Phase 3: Restart all nodes simultaneously
-    let mut identities_after = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
-        identities_after.push(identity);
-    }
-
-    // Phase 4: Verify all NodeIds unchanged
-    for i in 0..identities_before.len() {
-        assert_eq!(
-            identities_before[i].node_id, identities_after[i].node_id,
-            "Node {} NodeId must survive full network restart",
-            i
-        );
-    }
-
-    // Phase 5: Rebuild DHT tables after restart
-    let mut dht_cycle_1 = vec![
-        DhtRoutingState::new(identities_after[0].node_id.clone()),
-        DhtRoutingState::new(identities_after[1].node_id.clone()),
-        DhtRoutingState::new(identities_after[2].node_id.clone()),
-    ];
-
-    for i in 0..identities_after.len() {
-        for j in 0..identities_after.len() {
-            if i != j {
-                let peer_node_id = identities_after[j].node_id.clone();
-                let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                dht_cycle_1[i].add_peer(peer_node_id, peer_uuid, 1);
-            }
-        }
-        dht_cycle_1[i].set_convergence_cycle(2);
-    }
-
-    // Phase 6: Verify second convergence succeeded
-    for (i, dht) in dht_cycle_1.iter().enumerate() {
-        assert_eq!(
-            dht.peer_count(),
-            2,
-            "Node {} should repopulate 2 peers after restart",
-            i
-        );
-    }
-
-    // Phase 7: Verify convergence cycle tracking
-    for dht in &dht_cycle_1 {
-        assert_eq!(
-            dht.get_convergence_cycle(),
-            2,
-            "All nodes should have progressed to convergence cycle 2"
-        );
-    }
+    // Phase 4: Verify convergence cycle tracking
+    common_network_test::assert_convergence_cycle(&dht_cycle_1, 2);
 
     Ok(())
 }
@@ -228,67 +163,18 @@ fn test_dht_consistency_across_multiple_restart_cycles() -> Result<()> {
         ("bob-dht-004", [0xBB; 64]),
     ];
 
-    let mut stored_node_ids = Vec::new();
-    let mut stored_routing_tables: Vec<Vec<NodeId>> = vec![Vec::new(), Vec::new()];
+    // Create baseline identities for first cycle
+    let baseline_identities = create_test_identities(&nodes, identity_with_seed);
+    let baseline_node_ids: Vec<_> = baseline_identities.iter().map(|id| id.node_id.clone()).collect();
 
-    // Cycle through 3 restart cycles
+    // Cycle through 3 restart cycles and verify consistency
     for cycle in 0..3 {
-        // Create identities
-        let mut identities = Vec::new();
-        for (device, seed) in &nodes {
-            let identity = identity_with_seed(device, *seed)?;
-            identities.push(identity);
-        }
+        let identities = create_test_identities(&nodes, identity_with_seed);
+        common_network_test::assert_node_ids_match(&identities, &baseline_node_ids, cycle);
 
-        // Store NodeIds on first cycle
-        if cycle == 0 {
-            for identity in &identities {
-                stored_node_ids.push(identity.node_id.clone());
-            }
-        }
-
-        // Verify NodeIds are consistent
-        for i in 0..identities.len() {
-            assert_eq!(
-                identities[i].node_id, stored_node_ids[i],
-                "Node {} NodeId must be consistent in cycle {}",
-                i,
-                cycle
-            );
-        }
-
-        // Build DHT routing tables
-        let mut dht_states = vec![
-            DhtRoutingState::new(identities[0].node_id.clone()),
-            DhtRoutingState::new(identities[1].node_id.clone()),
-        ];
-
-        for i in 0..identities.len() {
-            for j in 0..identities.len() {
-                if i != j {
-                    let peer_node_id = identities[j].node_id.clone();
-                    let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                    dht_states[i].add_peer(peer_node_id.clone(), peer_uuid, cycle as u32);
-
-                    // Store first cycle routing
-                    if cycle == 0 {
-                        stored_routing_tables[i].push(peer_node_id);
-                    }
-                }
-            }
-        }
-
-        // Verify routing tables are consistent with first cycle
-        for i in 0..dht_states.len() {
-            for peer_node_id in &stored_routing_tables[i] {
-                assert!(
-                    dht_states[i].has_peer(peer_node_id),
-                    "Node {} should have consistent peer entry in cycle {}",
-                    i,
-                    cycle
-                );
-            }
-        }
+        let mut dht_states = build_dht_states(&identities, cycle as u32);
+        populate_dht_peers(&mut dht_states, &identities, cycle as u32);
+        assert_dht_peer_counts(&dht_states, 1);
     }
 
     Ok(())
@@ -366,83 +252,26 @@ fn test_dht_persistence_metrics() -> Result<()> {
     ];
 
     // Cycle 1: Initial startup
-    let mut identities_c1 = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
-        identities_c1.push(identity);
-    }
-
-    let mut dht_c1 = vec![
-        DhtRoutingState::new(identities_c1[0].node_id.clone()),
-        DhtRoutingState::new(identities_c1[1].node_id.clone()),
-        DhtRoutingState::new(identities_c1[2].node_id.clone()),
-    ];
-
-    // Populate routing tables
-    for i in 0..identities_c1.len() {
-        for j in 0..identities_c1.len() {
-            if i != j {
-                let peer_node_id = identities_c1[j].node_id.clone();
-                let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                dht_c1[i].add_peer(peer_node_id, peer_uuid, 0);
-            }
-        }
-        dht_c1[i].set_convergence_cycle(1);
-    }
+    let identities_c1 = create_test_identities(&nodes, identity_with_seed);
+    let mut dht_c1 = build_dht_states(&identities_c1, 1);
+    populate_dht_peers(&mut dht_c1, &identities_c1, 0);
 
     // Record metrics from cycle 1
     let metrics_c1: Vec<usize> = dht_c1.iter().map(|d| d.peer_count()).collect();
-    let convergence_c1: Vec<u32> = dht_c1.iter().map(|d| d.get_convergence_cycle()).collect();
 
     // Cycle 2: Restart all nodes
-    let mut identities_c2 = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
-        identities_c2.push(identity);
-    }
+    let identities_c2 = create_test_identities(&nodes, identity_with_seed);
+    common_network_test::assert_node_id_stability(&identities_c1, &identities_c2);
 
-    // Verify NodeIds unchanged
-    for i in 0..identities_c1.len() {
-        assert_eq!(
-            identities_c1[i].node_id, identities_c2[i].node_id,
-            "NodeId must persist"
-        );
-    }
-
-    let mut dht_c2 = vec![
-        DhtRoutingState::new(identities_c2[0].node_id.clone()),
-        DhtRoutingState::new(identities_c2[1].node_id.clone()),
-        DhtRoutingState::new(identities_c2[2].node_id.clone()),
-    ];
-
-    // Repopulate routing tables
-    for i in 0..identities_c2.len() {
-        for j in 0..identities_c2.len() {
-            if i != j {
-                let peer_node_id = identities_c2[j].node_id.clone();
-                let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                dht_c2[i].add_peer(peer_node_id, peer_uuid, 1);
-            }
-        }
-        dht_c2[i].set_convergence_cycle(2);
-    }
+    let mut dht_c2 = build_dht_states(&identities_c2, 2);
+    populate_dht_peers(&mut dht_c2, &identities_c2, 1);
 
     // Verify metrics recovered
     let metrics_c2: Vec<usize> = dht_c2.iter().map(|d| d.peer_count()).collect();
-
-    assert_eq!(
-        metrics_c1, metrics_c2,
-        "DHT peer counts must match after restart"
-    );
+    assert_eq!(metrics_c1, metrics_c2, "DHT peer counts must match after restart");
 
     // Verify convergence progressed
-    let convergence_c2: Vec<u32> = dht_c2.iter().map(|d| d.get_convergence_cycle()).collect();
-    for i in 0..convergence_c2.len() {
-        assert!(
-            convergence_c2[i] > convergence_c1[i],
-            "Convergence cycle must progress"
-        );
-    }
+    common_network_test::assert_convergence_progressed(&dht_c1, &dht_c2);
 
     Ok(())
 }
