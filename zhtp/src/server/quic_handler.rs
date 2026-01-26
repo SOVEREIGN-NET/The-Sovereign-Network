@@ -326,7 +326,7 @@ impl QuicHandler {
     /// Set the mesh message handler for blockchain sync
     pub fn set_mesh_handler(&mut self, handler: Arc<RwLock<MeshMessageHandler>>) {
         let handler_clone = handler.clone();
-        *self.mesh_handler.write().unwrap() = Some(handler);
+        *self.mesh_handler.write().unwrap_or_else(|e| e.into_inner()) = Some(handler);
         info!("✅ MeshMessageHandler registered with QuicHandler (shared across all clones)");
 
         // Wire DHT payload sender if integration already registered one (Phase 4 relocation)
@@ -461,15 +461,35 @@ impl QuicHandler {
     /// Uses bidirectional streams so the receiver's accept_bi() loop picks them up.
     /// Returns (success_count, total_peers).
     pub async fn broadcast_to_pqc_peers(&self, message_bytes: &[u8]) -> (usize, usize) {
-        let mut connections = self.pqc_connections.write().await;
-        let total = connections.len();
-        let mut success = 0;
+        // Snapshot connection handles under a brief read lock (Connection is ref-counted, clone is cheap).
+        // Do NOT hold the lock across network I/O to avoid starving other operations.
+        let peers: Vec<(Vec<u8>, [u8; 32], Connection)> = {
+            let connections = self.pqc_connections.read().await;
+            connections.iter().filter_map(|(node_id, tracked)| {
+                let key = *tracked.connection.get_session_key_ref()?;
+                let conn = tracked.connection.get_connection().clone();
+                Some((node_id.clone(), key, conn))
+            }).collect()
+        };
 
-        for (node_id, tracked) in connections.iter_mut() {
-            match tracked.connection.send_encrypted_message_bi(message_bytes).await {
+        let total = peers.len();
+        let mut success = 0;
+        let mut succeeded_ids: Vec<Vec<u8>> = Vec::new();
+
+        for (node_id, session_key, quic_conn) in &peers {
+            // Encrypt + send without holding any lock
+            let result = async {
+                let encrypted = lib_crypto::symmetric::chacha20::encrypt_data(message_bytes, session_key)?;
+                let (mut send, _recv) = quic_conn.open_bi().await?;
+                send.write_all(&encrypted).await?;
+                send.finish()?;
+                Ok::<(), anyhow::Error>(())
+            }.await;
+
+            match result {
                 Ok(()) => {
-                    tracked.last_activity = Instant::now();
                     success += 1;
+                    succeeded_ids.push(node_id.clone());
                     tracing::info!(
                         "📤 Sent broadcast to PQC peer {}",
                         hex::encode(&node_id[..std::cmp::min(8, node_id.len())])
@@ -481,6 +501,17 @@ impl QuicHandler {
                         hex::encode(&node_id[..std::cmp::min(8, node_id.len())]),
                         e
                     );
+                }
+            }
+        }
+
+        // Update activity timestamps for successful sends (brief write lock)
+        if !succeeded_ids.is_empty() {
+            let mut connections = self.pqc_connections.write().await;
+            let now = Instant::now();
+            for node_id in &succeeded_ids {
+                if let Some(tracked) = connections.get_mut(node_id) {
+                    tracked.last_activity = now;
                 }
             }
         }
@@ -1431,7 +1462,7 @@ impl QuicHandler {
         // Handle via mesh handler — prefer QuicMeshProtocol's handler (always set during startup),
         // fall back to QuicHandler's own shared handler if available
         let handler_opt = self.quic_protocol.message_handler.clone()
-            .or_else(|| self.mesh_handler.read().unwrap().clone());
+            .or_else(|| self.mesh_handler.read().unwrap_or_else(|e| e.into_inner()).clone());
         if let Some(handler) = handler_opt {
             let peer_pk = PublicKey::new(peer_node_id.to_vec());
             handler.read().await.handle_mesh_message(message, peer_pk).await?;

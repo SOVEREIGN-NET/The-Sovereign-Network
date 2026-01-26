@@ -381,18 +381,21 @@ impl QuicMeshProtocol {
 
     /// Duplicate a PqcQuicConnection for a given node_id (#916).
     /// Used by QuicHandler to register outbound connections for stream acceptance.
+    /// Returns None if the node_id is unknown or if the session key is absent (handshake incomplete).
     pub async fn clone_pqc_connection(&self, node_id: &[u8]) -> Option<PqcQuicConnection> {
         let connections = self.connections.read().await;
-        connections.get(node_id).map(|conn| {
-            PqcQuicConnection::from_verified_peer(
-                conn.get_connection().clone(),
-                conn.peer_addr,
-                conn.verified_peer.clone(),
-                conn.get_session_key_ref().copied().unwrap_or([0u8; 32]),
-                conn.session_id().unwrap_or([0u8; 32]),
-                conn.bootstrap_mode,
-            )
-        })
+        let conn = connections.get(node_id)?;
+        // Require a valid session key — refuse to create a clone with a zeroed key
+        let session_key = *conn.get_session_key_ref()?;
+        let session_id = conn.session_id().unwrap_or([0u8; 32]);
+        Some(PqcQuicConnection::from_verified_peer(
+            conn.get_connection().clone(),
+            conn.peer_addr,
+            conn.verified_peer.clone(),
+            session_key,
+            session_id,
+            conn.bootstrap_mode,
+        ))
     }
     
     /// Connect to a peer using QUIC with UHP v2 handshake
