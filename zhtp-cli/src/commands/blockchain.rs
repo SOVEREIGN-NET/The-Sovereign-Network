@@ -75,48 +75,30 @@ async fn handle_blockchain_command_impl(
 
     match args.action {
         BlockchainAction::Status => {
-            fetch_and_display_blockchain_status(&client, &base_url, cli, output).await
+            output.print("Querying blockchain status...")?;
+            super::common::fetch_and_display(
+                &client,
+                &format!("{}/blockchain/status", base_url),
+                "blockchain/status",
+                "Blockchain Status",
+                &cli.format,
+                output,
+            ).await
         }
         BlockchainAction::Transaction { tx_hash } => {
             fetch_and_display_transaction(&client, &base_url, &tx_hash, cli, output).await
         }
         BlockchainAction::Stats => {
-            fetch_and_display_blockchain_stats(&client, &base_url, cli, output).await
+            output.print("Collecting blockchain statistics...")?;
+            super::common::fetch_and_display(
+                &client,
+                &format!("{}/blockchain/stats", base_url),
+                "blockchain/stats",
+                "Blockchain Statistics",
+                &cli.format,
+                output,
+            ).await
         }
-    }
-}
-
-/// Fetch blockchain status and display it
-async fn fetch_and_display_blockchain_status(
-    client: &reqwest::Client,
-    base_url: &str,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    output.print("Querying blockchain status...")?;
-
-    let response = client
-        .get(&format!("{}/blockchain/status", base_url))
-        .send()
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "blockchain/status".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        output.header("Blockchain Status")?;
-        output.print(&formatted)?;
-        Ok(())
-    } else {
-        Err(CliError::ApiCallFailed {
-            endpoint: "blockchain/status".to_string(),
-            status: response.status().as_u16(),
-            reason: format!("HTTP {}", response.status()),
-        })
     }
 }
 
@@ -128,73 +110,19 @@ async fn fetch_and_display_transaction(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    // Pure validation
     validate_tx_hash(tx_hash)?;
-
     output.print(&format!("Looking up transaction: {}", tx_hash))?;
-
-    // Pure request building
     let request_body = build_transaction_request(tx_hash);
 
-    // Imperative: HTTP call
-    let response = client
-        .post(&format!("{}/blockchain/transaction", base_url))
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "blockchain/transaction".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        output.header("Transaction Details")?;
-        output.print(&formatted)?;
-        Ok(())
-    } else {
-        Err(CliError::ApiCallFailed {
-            endpoint: "blockchain/transaction".to_string(),
-            status: response.status().as_u16(),
-            reason: format!("HTTP {}", response.status()),
-        })
-    }
-}
-
-/// Fetch blockchain statistics and display them
-async fn fetch_and_display_blockchain_stats(
-    client: &reqwest::Client,
-    base_url: &str,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    output.print("Collecting blockchain statistics...")?;
-
-    let response = client
-        .get(&format!("{}/blockchain/stats", base_url))
-        .send()
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "blockchain/stats".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        output.header("Blockchain Statistics")?;
-        output.print(&formatted)?;
-        Ok(())
-    } else {
-        Err(CliError::ApiCallFailed {
-            endpoint: "blockchain/stats".to_string(),
-            status: response.status().as_u16(),
-            reason: format!("HTTP {}", response.status()),
-        })
-    }
+    super::common::post_and_display(
+        client,
+        &format!("{}/blockchain/transaction", base_url),
+        request_body,
+        "blockchain/transaction",
+        "Transaction Details",
+        &cli.format,
+        output,
+    ).await
 }
 
 // ============================================================================
