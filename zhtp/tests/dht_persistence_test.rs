@@ -10,94 +10,19 @@
 //! - All nodes can communicate after restart
 
 use anyhow::Result;
-use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
-use lib_network::identity::UnifiedPeerId;
-use std::{collections::HashMap, time::Duration};
-use uuid::Uuid;
+use std::time::Duration;
+mod common;
+use common_network_test::{DhtEntry, DhtRoutingState, run_shared_dht_persistence_test};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(20);
 const CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
 
-// Shared helper - create test identity (also in multi_node_network_test)
-// Note: This function is duplicated in multi_node_network_test.rs
-// TODO(#62): Extract to shared module if lib-network test helpers can be imported
-fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Device,
-        None,
-        None,
-        device,
-        Some(seed),
-    )
+// ...existing code...
+
+#[tokio::test]
+async fn test_dht_persistence_shared() -> Result<()> {
+    run_shared_dht_persistence_test().await
 }
-
-/// Simulated DHT routing table entry
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct DhtEntry {
-    node_id: NodeId,
-    peer_uuid: Uuid,
-    discovered_at_cycle: u32,
-}
-
-impl DhtEntry {
-    fn new(node_id: NodeId, peer_uuid: Uuid, cycle: u32) -> Self {
-        Self {
-            node_id,
-            peer_uuid,
-            discovered_at_cycle: cycle,
-        }
-    }
-}
-
-/// Simulated DHT node state for testing persistence
-struct DhtRoutingState {
-    self_node_id: NodeId,
-    routing_table: HashMap<NodeId, DhtEntry>,
-    last_convergence_cycle: u32,
-}
-
-impl DhtRoutingState {
-    fn new(node_id: NodeId) -> Self {
-        Self {
-            self_node_id: node_id,
-            routing_table: HashMap::new(),
-            last_convergence_cycle: 0,
-        }
-    }
-
-    fn add_peer(&mut self, node_id: NodeId, peer_uuid: Uuid, cycle: u32) {
-        self.routing_table.insert(
-            node_id.clone(),
-            DhtEntry::new(node_id, peer_uuid, cycle),
-        );
-    }
-
-    fn has_peer(&self, node_id: &NodeId) -> bool {
-        self.routing_table.contains_key(node_id)
-    }
-
-    fn peer_count(&self) -> usize {
-        self.routing_table.len()
-    }
-
-    fn set_convergence_cycle(&mut self, cycle: u32) {
-        self.last_convergence_cycle = cycle;
-    }
-
-    fn get_convergence_cycle(&self) -> u32 {
-        self.last_convergence_cycle
-    }
-
-    /// Verify all peers are still in table after restart
-    fn verify_peers_persisted(&self, other_node_ids: &[NodeId]) -> bool {
-        other_node_ids.iter().all(|id| self.has_peer(id))
-    }
-}
-
-/// Test 1: Three-Node DHT Bootstrap and Routing Table Population
-///
-/// Scenario: Three nodes start and exchange routing information via DHT.
-/// Verify all nodes have entries for each other.
 #[test]
 fn test_three_node_dht_bootstrap() -> Result<()> {
     // Phase 1: Create three nodes with distinct seeds
