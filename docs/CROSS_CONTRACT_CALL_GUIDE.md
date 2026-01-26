@@ -61,9 +61,9 @@ let error = CrossContractError::validation_failed(
 ```rust
 // Example: Depth tracking
 let mut stack = CallStack::new();
-stack.push(contract_a, "method1")?;  // depth = 1
-stack.push(contract_b, "method2")?;  // depth = 2
-stack.push(contract_c, "method3")?;  // depth = 3
+stack.push(contract_a, "method1".to_string())?;  // depth = 1
+stack.push(contract_b, "method2".to_string())?;  // depth = 2
+stack.push(contract_c, "method3".to_string())?;  // depth = 3
 // If depth > 16: Error CallDepthExceeded
 ```
 

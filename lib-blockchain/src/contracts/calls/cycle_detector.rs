@@ -103,32 +103,32 @@ impl CycleDetector {
         cycles: &mut Vec<CallCycle>,
     ) {
         visited.insert(node);
-        rec_stack.push((node, "entry".to_string())); // Track entry point
+        // Add current node to recursion stack with placeholder method (we're entering from parent)
+        rec_stack.push((node, "visit".to_string()));
 
         if let Some(neighbors) = graph.get(&node) {
             for (neighbor, method) in neighbors {
-                if !visited.contains(neighbor) {
-                    // Continue DFS
-                    rec_stack.push((*neighbor, method.clone()));
-                    Self::dfs_find_cycles(*neighbor, graph, visited, rec_stack, cycles);
-                    rec_stack.pop();
-                } else if rec_stack.iter().any(|(c, _)| c == neighbor) {
-                    // Found a cycle
+                // Check if neighbor is in current recursion path (potential cycle)
+                if rec_stack.iter().any(|(c, _)| c == neighbor) {
+                    // Found a cycle - extract path from cycle start to current
                     let cycle_start = rec_stack
                         .iter()
                         .position(|(c, _)| c == neighbor)
                         .unwrap();
-                    let cycle_path = rec_stack[cycle_start..].to_vec();
+                    let mut cycle_path = rec_stack[cycle_start..].to_vec();
+                    cycle_path.push((*neighbor, method.clone()));
 
-                    // Only add if not already found
                     let cycle = CallCycle {
+                        cycle_length: cycle_path.len(),
                         cycle_path,
-                        cycle_length: rec_stack.len() - cycle_start,
                     };
 
                     if !cycles.contains(&cycle) {
                         cycles.push(cycle);
                     }
+                } else if !visited.contains(neighbor) {
+                    // Not visited yet - continue DFS
+                    Self::dfs_find_cycles(*neighbor, graph, visited, rec_stack, cycles);
                 }
             }
         }

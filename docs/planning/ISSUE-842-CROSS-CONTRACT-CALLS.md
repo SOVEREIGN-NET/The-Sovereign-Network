@@ -121,14 +121,15 @@ pub enum CalleeErrorCode {
 
 ```
 lib-blockchain/src/contracts/calls/
-├── mod.rs                    # Module root, exports
-├── call.rs                   # CrossContractCall struct
-├── validator.rs              # CallValidator (parameter type checking)
-├── executor.rs               # CallExecutor (safe execution)
-├── stack.rs                  # CallStack (recursion tracking)
-├── errors.rs                 # CrossContractError types
-├── intent.rs                 # CrossContractCallIntent event
-└── tests.rs                  # Integration tests
+├── mod.rs                         # Module root, exports
+├── call.rs                        # CrossContractCall struct + tests
+├── validator.rs                   # CallValidator (parameter type checking) + tests
+├── executor.rs                    # CallExecutor + CrossContractCallIntent + tests
+├── stack.rs                       # CallStack (recursion tracking) + tests
+├── errors.rs                      # CrossContractError types + tests
+├── type_validator.rs              # TypeValidator (type system) + tests
+├── serialization_validator.rs     # SerializationValidator (format detection) + tests
+└── cycle_detector.rs              # CycleDetector (cycle prevention) + tests
 ```
 
 ---

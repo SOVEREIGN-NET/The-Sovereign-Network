@@ -98,7 +98,7 @@ impl CrossContractCall {
             return Err("Callee cannot be null address".to_string());
         }
 
-        // Check for self-calls (may be allowed in some contexts, but flag as unusual)
+        // Check for self-calls (not allowed - would create logical errors and cycles)
         if self.caller == self.callee {
             return Err("Caller and callee must be different contracts".to_string());
         }
