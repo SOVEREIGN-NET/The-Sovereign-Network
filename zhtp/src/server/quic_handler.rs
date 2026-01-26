@@ -207,7 +207,9 @@ pub struct QuicHandler {
     quic_protocol: Arc<QuicMeshProtocol>,
 
     /// Mesh message handler for blockchain sync and peer messages
-    mesh_handler: Option<Arc<RwLock<MeshMessageHandler>>>,
+    /// Wrapped in std::sync::RwLock so all clones share the same slot —
+    /// set_mesh_handler() is called after accept_additional_streams() clones the handler (#916)
+    mesh_handler: Arc<std::sync::RwLock<Option<Arc<RwLock<MeshMessageHandler>>>>>,
 
     /// Active PQC connections with metadata (peer_node_id -> TrackedConnection)
     pqc_connections: Arc<RwLock<HashMap<Vec<u8>, TrackedConnection>>>,
@@ -217,6 +219,9 @@ pub struct QuicHandler {
 
     /// Identity manager for auto-registration of authenticated peers
     identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
+
+    /// Canonical peer registry shared with MeshRouter for broadcast routing (#916)
+    peer_registry: Option<Arc<RwLock<lib_network::peer_registry::PeerRegistry>>>,
 }
 
 impl QuicHandler {
@@ -225,14 +230,16 @@ impl QuicHandler {
         zhtp_router: Arc<RwLock<ZhtpRouter>>,
         quic_protocol: Arc<QuicMeshProtocol>,
         identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
+        peer_registry: Option<Arc<RwLock<lib_network::peer_registry::PeerRegistry>>>,
     ) -> Self {
         Self {
             zhtp_router,
             quic_protocol,
-            mesh_handler: None,
+            mesh_handler: Arc::new(std::sync::RwLock::new(None)),
             pqc_connections: Arc::new(RwLock::new(HashMap::new())),
             handshake_rate_limits: Arc::new(RwLock::new(HashMap::new())),
             identity_manager,
+            peer_registry,
         }
     }
 
@@ -318,15 +325,88 @@ impl QuicHandler {
 
     /// Set the mesh message handler for blockchain sync
     pub fn set_mesh_handler(&mut self, handler: Arc<RwLock<MeshMessageHandler>>) {
-        self.mesh_handler = Some(handler);
-        info!("✅ MeshMessageHandler registered with QuicHandler");
+        let handler_clone = handler.clone();
+        *self.mesh_handler.write().unwrap() = Some(handler);
+        info!("✅ MeshMessageHandler registered with QuicHandler (shared across all clones)");
 
         // Wire DHT payload sender if integration already registered one (Phase 4 relocation)
-        if let Some(handler) = self.mesh_handler.as_ref().cloned() {
-            tokio::spawn(async move {
-                let mut guard = handler.write().await;
-                crate::integration::wire_message_handler(&mut guard).await;
-            });
+        tokio::spawn(async move {
+            let mut guard = handler_clone.write().await;
+            crate::integration::wire_message_handler(&mut guard).await;
+        });
+    }
+
+    /// Register authenticated peer in the canonical PeerRegistry so broadcast_to_peers() can find it (#916)
+    async fn register_peer_in_registry(&self, identity: &lib_network::handshake::NodeIdentity, peer_addr: SocketAddr) {
+        let Some(registry) = &self.peer_registry else { return };
+
+        let core = lib_identity::types::peer_identity::DhtPeerIdentity {
+            node_id: identity.node_id.clone(),
+            public_key: identity.public_key.clone(),
+            did: identity.did.clone(),
+            device_id: identity.device_id.clone(),
+        };
+
+        let peer_id = lib_network::identity::unified_peer::UnifiedPeerId {
+            core,
+            display_name: identity.display_name.clone(),
+            created_at: identity.created_at,
+            bootstrap_mode: false,
+        };
+
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let endpoint = lib_network::peer_registry::PeerEndpoint::from_address(
+            lib_network::types::node_address::NodeAddress::Quic(peer_addr),
+        );
+
+        let entry = lib_network::peer_registry::PeerEntry::new(
+            peer_id,
+            vec![endpoint],
+            vec![lib_network::types::NetworkProtocol::QUIC],
+            lib_network::peer_registry::ConnectionMetrics {
+                signal_strength: 1.0,
+                bandwidth_capacity: 0,
+                latency_ms: 0,
+                stability_score: 1.0,
+                connected_at: now_ts,
+            },
+            true,  // authenticated
+            true,  // quantum_secure
+            None,  // next_hop (direct peer)
+            1,     // hop_count
+            1.0,   // route_quality
+            lib_network::peer_registry::NodeCapabilities {
+                protocols: vec![lib_network::types::NetworkProtocol::QUIC],
+                max_bandwidth: 0,
+                available_bandwidth: 0,
+                routing_capacity: 100,
+                energy_level: None,
+                availability_percent: 100.0,
+            },
+            None,  // location
+            1.0,   // reliability_score
+            None,  // dht_info
+            lib_network::peer_registry::DiscoveryMethod::Bootstrap,
+            now_ts,
+            now_ts,
+            lib_network::peer_registry::PeerTier::Tier2,
+            0.8,   // trust_score
+        );
+
+        match registry.write().await.upsert(entry).await {
+            Ok(()) => {
+                info!(
+                    peer_did = %identity.did,
+                    "Mesh peer registered in PeerRegistry for broadcast routing"
+                );
+            }
+            Err(e) => {
+                warn!("Failed to register mesh peer in PeerRegistry: {}", e);
+            }
         }
     }
 
@@ -334,6 +414,78 @@ impl QuicHandler {
     /// Returns wrapped connections with metadata (use carefully - prefer internal methods)
     pub fn get_pqc_connections(&self) -> Arc<RwLock<HashMap<Vec<u8>, TrackedConnection>>> {
         self.pqc_connections.clone()
+    }
+
+    /// Register an outbound PQC connection and start stream acceptance (#916).
+    ///
+    /// After QuicMeshProtocol::connect_to_peer() completes, the outbound connection
+    /// needs to be registered here so that:
+    /// 1. The peer's session key is available for decrypting incoming mesh messages
+    /// 2. accept_additional_streams() listens for bi streams opened by the remote peer
+    ///
+    /// Without this, blocks broadcast by the remote peer via send_encrypted_message_bi()
+    /// are never received because no accept_bi() loop runs on the outbound connection.
+    pub async fn register_outbound_connection(
+        &self,
+        node_id: Vec<u8>,
+        connection: Connection,
+        pqc_conn: PqcQuicConnection,
+    ) -> Result<()> {
+        let node_id_arr: [u8; 32] = node_id.as_slice().try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid node_id length for outbound connection"))?;
+
+        // Register peer in PeerRegistry for broadcast routing
+        if let Some(identity) = pqc_conn.peer_identity() {
+            let peer_addr = pqc_conn.peer_address();
+            self.register_peer_in_registry(identity, peer_addr).await;
+        }
+
+        // Store in pqc_connections (for session key lookup during message decryption)
+        self.add_pqc_connection(node_id.clone(), pqc_conn).await?;
+
+        // Start accept_bi() loop so we receive streams the remote peer opens on this connection
+        self.accept_additional_streams(connection, Some(node_id_arr));
+
+        info!(
+            peer_node_id = %hex::encode(&node_id[..8.min(node_id.len())]),
+            "📡 Outbound PQC connection registered for receive-side stream acceptance (#916)"
+        );
+
+        Ok(())
+    }
+
+    /// Broadcast a serialized mesh message to all active PQC connections (#916).
+    ///
+    /// Bypasses the lib-network routing layer (which requires a TransportManager
+    /// that is not yet wired) and sends directly over authenticated QUIC streams.
+    /// Uses bidirectional streams so the receiver's accept_bi() loop picks them up.
+    /// Returns (success_count, total_peers).
+    pub async fn broadcast_to_pqc_peers(&self, message_bytes: &[u8]) -> (usize, usize) {
+        let mut connections = self.pqc_connections.write().await;
+        let total = connections.len();
+        let mut success = 0;
+
+        for (node_id, tracked) in connections.iter_mut() {
+            match tracked.connection.send_encrypted_message_bi(message_bytes).await {
+                Ok(()) => {
+                    tracked.last_activity = Instant::now();
+                    success += 1;
+                    tracing::info!(
+                        "📤 Sent broadcast to PQC peer {}",
+                        hex::encode(&node_id[..std::cmp::min(8, node_id.len())])
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to broadcast to PQC peer {}: {}",
+                        hex::encode(&node_id[..std::cmp::min(8, node_id.len())]),
+                        e
+                    );
+                }
+            }
+        }
+
+        (success, total)
     }
 
     /// Accept and handle incoming QUIC connections from endpoint
@@ -920,6 +1072,9 @@ impl QuicHandler {
             peer_addr
         );
 
+        // Capture identity before verified_peer is moved (#916)
+        let peer_identity = handshake_result.verified_peer.identity.clone();
+
         // Create PqcQuicConnection from handshake result
         let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection.clone(),
@@ -932,6 +1087,9 @@ impl QuicHandler {
 
         // Store connection
         self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
+
+        // Register in canonical PeerRegistry for broadcast routing (#916)
+        self.register_peer_in_registry(&peer_identity, peer_addr).await;
 
         // Continue accepting mesh streams
         self.accept_additional_streams(connection, Some(node_id_arr));
@@ -1185,6 +1343,9 @@ impl QuicHandler {
             peer_addr
         );
 
+        // Capture identity before verified_peer is moved (#916)
+        let peer_identity = handshake_result.verified_peer.identity.clone();
+
         // Create PqcQuicConnection from handshake result
         let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection.clone(),
@@ -1197,6 +1358,9 @@ impl QuicHandler {
 
         // Store connection
         self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
+
+        // Register in canonical PeerRegistry for broadcast routing (#916)
+        self.register_peer_in_registry(&peer_identity, peer_addr).await;
 
         // Continue accepting streams
         self.accept_additional_streams(connection, Some(node_id_arr));
@@ -1264,12 +1428,15 @@ impl QuicHandler {
         let message: ZhtpMeshMessage = bincode::deserialize(&decrypted)
             .context("Failed to deserialize mesh message")?;
 
-        // Handle via mesh handler
-        if let Some(ref handler) = self.mesh_handler {
+        // Handle via mesh handler — prefer QuicMeshProtocol's handler (always set during startup),
+        // fall back to QuicHandler's own shared handler if available
+        let handler_opt = self.quic_protocol.message_handler.clone()
+            .or_else(|| self.mesh_handler.read().unwrap().clone());
+        if let Some(handler) = handler_opt {
             let peer_pk = PublicKey::new(peer_node_id.to_vec());
             handler.read().await.handle_mesh_message(message, peer_pk).await?;
         } else {
-            warn!("No mesh handler configured");
+            warn!("No mesh handler configured on either QuicMeshProtocol or QuicHandler");
         }
 
         Ok(())
@@ -1372,6 +1539,7 @@ impl Clone for QuicHandler {
             pqc_connections: self.pqc_connections.clone(),
             handshake_rate_limits: self.handshake_rate_limits.clone(),
             identity_manager: self.identity_manager.clone(),
+            peer_registry: self.peer_registry.clone(),
         }
     }
 }

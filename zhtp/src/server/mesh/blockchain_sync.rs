@@ -177,6 +177,11 @@ impl MeshRouter {
         info!("⛓️ Blockchain provider configured for edge node sync");
     }
     
+    /// Get canonical peer registry (for wiring into QuicHandler) (#916)
+    pub fn get_peer_registry(&self) -> Arc<tokio::sync::RwLock<lib_network::peer_registry::PeerRegistry>> {
+        self.connections.clone()
+    }
+
     /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
     pub async fn set_blockchain_event_receiver(
         &self,
@@ -295,32 +300,43 @@ impl MeshRouter {
     }
     
     /// Broadcast message to all connected peers
-    /// ✅ TICKET 2.6: Routes through send_with_routing with proper error classification
+    ///
+    /// #916: Uses direct PQC QUIC broadcast when QuicHandler is available,
+    /// bypassing the lib-network routing layer whose TransportManager is not wired.
+    /// Falls back to send_with_routing if QuicHandler is not set.
     pub async fn broadcast_to_peers(&self, message: ZhtpMeshMessage) -> Result<usize> {
+        let serialized = bincode::serialize(&message)
+            .context("Failed to serialize message")?;
 
-        // CRITICAL: Sender identity must be available
+        // #916: Try direct PQC broadcast first (bypasses uninitialized TransportManager)
+        let quic_broadcaster = self.quic_broadcaster.read().await;
+        if let Some(ref handler) = *quic_broadcaster {
+            let (success, total) = handler.broadcast_to_pqc_peers(&serialized).await;
+            self.track_bytes_sent((serialized.len() * success) as u64).await;
+            info!(
+                "📤 Broadcast complete: {}/{} peers reached via direct PQC QUIC",
+                success, total
+            );
+            return Ok(success);
+        }
+        drop(quic_broadcaster);
+
+        // Fallback: route through MeshRouter (requires TransportManager)
         let our_pubkey = match self.get_sender_public_key().await {
             Ok(pk) => pk,
             Err(e) => {
-                error!("BROADCAST FAILED: Local sender identity not available - this is a fatal configuration error");
+                error!("BROADCAST FAILED: Local sender identity not available");
                 return Err(anyhow::anyhow!(
-                    "Broadcast aborted: sender identity not initialized. \
-                     This indicates identity_manager was not set up before routing was attempted. \
-                     Error: {}", e
+                    "Broadcast aborted: sender identity not initialized: {}", e
                 ));
             }
         };
-
-        let serialized = bincode::serialize(&message)
-            .context("Failed to serialize message")?;
 
         let connections = self.connections.read().await;
         let mut success_count = 0;
         let mut identity_violations_count = 0;
 
-        // Route each message through MeshRouter instead of direct protocol calls
         for peer_entry in connections.all_peers() {
-            // Skip peers without routing-capable protocols (QUIC or mesh-compatible)
             if !peer_entry.active_protocols.iter().any(|p| matches!(p, NetworkProtocol::QUIC)) {
                 debug!(
                     "Skipping peer {:?} - no QUIC protocol support for broadcast",
@@ -336,24 +352,21 @@ impl MeshRouter {
                     success_count += 1;
                 }
                 Err(err) => {
-                    // Structured error classification - no string parsing
                     match err.class {
                         crate::server::mesh::routing_errors::RoutingErrorClass::IdentityViolation => {
                             warn!(
-                                "⚠️ IDENTITY VIOLATION: Peer {:?} failed verification - permanently skipping: {}",
+                                "⚠️ IDENTITY VIOLATION: Peer {:?} failed verification: {}",
                                 &peer_pubkey.key_id[..8], err.message
                             );
                             identity_violations_count += 1;
                         }
                         crate::server::mesh::routing_errors::RoutingErrorClass::Transient => {
-                            // Transient error - continue with other peers
                             debug!(
-                                "Transient error routing to peer {:?}: {} (continuing with other peers)",
+                                "Transient error routing to peer {:?}: {}",
                                 &peer_pubkey.key_id[..8], err.message
                             );
                         }
                         crate::server::mesh::routing_errors::RoutingErrorClass::Configuration => {
-                            // Configuration error - log warning and continue
                             warn!(
                                 "Configuration error routing to peer {:?}: {}",
                                 &peer_pubkey.key_id[..8], err.message

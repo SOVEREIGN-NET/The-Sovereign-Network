@@ -378,6 +378,22 @@ impl QuicMeshProtocol {
     pub fn get_endpoint(&self) -> Arc<Endpoint> {
         Arc::new(self.endpoint.clone())
     }
+
+    /// Duplicate a PqcQuicConnection for a given node_id (#916).
+    /// Used by QuicHandler to register outbound connections for stream acceptance.
+    pub async fn clone_pqc_connection(&self, node_id: &[u8]) -> Option<PqcQuicConnection> {
+        let connections = self.connections.read().await;
+        connections.get(node_id).map(|conn| {
+            PqcQuicConnection::from_verified_peer(
+                conn.get_connection().clone(),
+                conn.peer_addr,
+                conn.verified_peer.clone(),
+                conn.get_session_key_ref().copied().unwrap_or([0u8; 32]),
+                conn.session_id().unwrap_or([0u8; 32]),
+                conn.bootstrap_mode,
+            )
+        })
+    }
     
     /// Connect to a peer using QUIC with UHP v2 handshake
     ///
@@ -390,7 +406,10 @@ impl QuicMeshProtocol {
     /// 4. Master key derivation for symmetric encryption
     ///
     /// The peer's identity is cryptographically verified before any data exchange.
-    pub async fn connect_to_peer(&self, peer_addr: SocketAddr) -> Result<()> {
+    /// Connect to a peer and return (node_id, Connection) for stream acceptance setup.
+    /// The caller should pass these to QuicHandler::register_outbound_connection() so
+    /// the receive side can handle streams opened by the remote peer (#916).
+    pub async fn connect_to_peer(&self, peer_addr: SocketAddr) -> Result<(Vec<u8>, Connection)> {
         info!("🔐 Connecting to peer at {} via QUIC+UHP v2", peer_addr);
 
         // Configure client with PinnedCertVerifier
@@ -465,6 +484,10 @@ impl QuicMeshProtocol {
             }
         }
 
+        // Clone connection for caller to set up stream acceptance (#916)
+        let connection_for_streams = connection.clone();
+        let node_id_vec = peer_node_id.to_vec();
+
         // Create PqcQuicConnection from verified peer
         let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection,
@@ -483,7 +506,7 @@ impl QuicMeshProtocol {
 
         self.connections.write().await.insert(peer_key, pqc_conn);
 
-        Ok(())
+        Ok((node_id_vec, connection_for_streams))
     }
 
     /// Connect to a bootstrap peer for blockchain sync
@@ -1194,6 +1217,11 @@ impl PqcQuicConnection {
         Some(self.verified_peer.identity.did.as_str())
     }
 
+    /// Get peer socket address
+    pub fn peer_address(&self) -> SocketAddr {
+        self.peer_addr
+    }
+
     /// Get session ID for logging/tracking
     pub fn session_id(&self) -> Option<[u8; 32]> {
         self.session_id
@@ -1216,13 +1244,16 @@ impl PqcQuicConnection {
         self.session_key.as_ref()
     }
 
-    /// Send encrypted message using session key (UHP v2 derived)
+    /// Send encrypted message using session key (UHP v2 derived) via unidirectional stream.
     ///
     /// # Security
     ///
     /// Message is encrypted with ChaCha20-Poly1305 using the session key
     /// derived from UHP v2 handshake.
     /// QUIC provides additional TLS 1.3 encryption underneath.
+    ///
+    /// NOTE: Uses open_uni() — receiver must accept_uni(). For mesh broadcast
+    /// where receiver uses accept_bi(), use send_encrypted_message_bi() instead.
     pub async fn send_encrypted_message(&mut self, message: &[u8]) -> Result<()> {
         let session_key = self.session_key
             .ok_or_else(|| anyhow!("UHP v2 handshake not complete"))?;
@@ -1237,6 +1268,28 @@ impl PqcQuicConnection {
         stream.finish()?;
 
         debug!("📤 Sent {} bytes (double-encrypted: UHP v2 + TLS 1.3)", message.len());
+        Ok(())
+    }
+
+    /// Send encrypted message via **bidirectional** stream (#916).
+    ///
+    /// Same encryption as send_encrypted_message() but uses open_bi() so the
+    /// receiver's accept_bi() loop in QuicHandler::accept_additional_streams()
+    /// will pick up the stream. The receiver reads from the recv half and
+    /// routes through detect_protocol_buffered() → handle_mesh_message_stream().
+    pub async fn send_encrypted_message_bi(&mut self, message: &[u8]) -> Result<()> {
+        let session_key = self.session_key
+            .ok_or_else(|| anyhow!("UHP v2 handshake not complete"))?;
+
+        // Encrypt with session key (ChaCha20-Poly1305)
+        let encrypted = encrypt_data(message, &session_key)?;
+
+        // Open bidirectional stream (receiver uses accept_bi())
+        let (mut send, _recv) = self.quic_conn.open_bi().await?;
+        send.write_all(&encrypted).await?;
+        send.finish()?;
+
+        debug!("📤 Sent {} bytes via bi-stream (double-encrypted: UHP v2 + TLS 1.3)", message.len());
         Ok(())
     }
 

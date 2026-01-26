@@ -461,8 +461,13 @@ impl ZhtpUnifiedServer {
             Arc::new(RwLock::new((*zhtp_router_arc).clone())),  // Native ZhtpRouter wrapped in RwLock
             quic_arc.clone(),                    // QuicMeshProtocol for transport
             identity_manager.clone(),            // Identity manager for auto-registration
+            Some(mesh_router_arc.get_peer_registry()),  // PeerRegistry for broadcast routing (#916)
         ));
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
+
+        // #916: Wire QuicHandler into MeshRouter for direct PQC broadcast
+        mesh_router_arc.set_quic_broadcaster(quic_handler.clone()).await;
+        info!(" QuicHandler wired to MeshRouter for direct PQC broadcast (#916)");
 
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
         mesh_router_arc.set_zhtp_router(zhtp_router_arc.clone()).await;
@@ -858,7 +863,7 @@ impl ZhtpUnifiedServer {
                               hex::encode(&peer.key_id[..8]), protocol);
                         if let Some(addr_str) = address {
                             if let Ok(addr) = addr_str.parse::<std::net::SocketAddr>() {
-                                if let Err(e) = quic_mesh_for_actions.connect_to_peer(addr).await {
+                                if let Err(e) = quic_mesh_for_actions.connect_to_peer(addr).await.map(|_| ()) {
                                     warn!("  Failed to connect to peer: {}", e);
                                 }
                             }
@@ -874,7 +879,7 @@ impl ZhtpUnifiedServer {
                                     peer_addr.set_port(quic_port);
                                     info!("Port mapping: {} → {} (discovery → QUIC)", discovery_port, quic_port);
                                 }
-                                if let Err(e) = quic_mesh_for_actions.connect_to_peer(peer_addr).await {
+                                if let Err(e) = quic_mesh_for_actions.connect_to_peer(peer_addr).await.map(|_| ()) {
                                     warn!("  Failed to bootstrap from {}: {}", peer_addr, e);
                                 }
                             }
@@ -1316,8 +1321,26 @@ impl ZhtpUnifiedServer {
                     
                     // Establish QUIC mesh connection
                     match self.quic_mesh.connect_to_peer(peer_addr).await {
-                        Ok(()) => {
-                            info!("   ✓ Connected to bootstrap peer {} via QUIC", peer_addr);
+                        Ok((node_id, connection)) => {
+                            info!("   ✓ Connected to bootstrap peer {} via QUIC (node_id len={})",
+                                  peer_addr, node_id.len());
+
+                            // #916: Register outbound connection in QuicHandler so
+                            // accept_additional_streams() runs and we receive blocks broadcast by the peer
+                            info!("   📡 Cloning PQC connection for outbound stream acceptance (#916)...");
+                            if let Some(pqc_conn) = self.quic_mesh.clone_pqc_connection(&node_id).await {
+                                info!("   📡 PQC connection cloned, registering in QuicHandler...");
+                                if let Err(e) = self.quic_handler.register_outbound_connection(
+                                    node_id, connection, pqc_conn,
+                                ).await {
+                                    warn!("   Failed to register outbound connection for stream acceptance: {}", e);
+                                } else {
+                                    info!("   ✅ Outbound connection registered for receive-side stream acceptance (#916)");
+                                }
+                            } else {
+                                warn!("   Could not clone PQC connection for stream acceptance (node_id={})",
+                                      hex::encode(&node_id[..node_id.len().min(8)]));
+                            }
                         }
                         Err(e) => {
                             warn!("   Failed to connect to bootstrap peer {}: {}", peer_addr, e);

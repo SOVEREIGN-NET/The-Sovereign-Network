@@ -172,7 +172,7 @@ pub async fn handle_tcp_mesh(
             
             if let Some(ref quic) = *quic_protocol.read().await {
                 match quic.connect_to_peer(addr).await {
-                    Ok(()) => {
+                    Ok(_) => {
                         info!("✅ QUIC connection established (TLS 1.3 + Kyber PQC)");
                         let mut conns = connections.write().await;
                         if let Some(conn) = conns.get_mut(&peer_pubkey) {
