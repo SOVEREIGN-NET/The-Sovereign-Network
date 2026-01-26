@@ -39,7 +39,7 @@ impl TreasuryKernel {
         }
 
         // CHECK 3: Eligibility check (citizenship_epoch must be <= current_epoch)
-        if current_epoch < citizen.citizenship_epoch {
+        if current_epoch < citizen.citizenship_epoch() {
             return Err(RejectionReason::EligibilityNotMet);
         }
 
@@ -80,14 +80,7 @@ mod tests {
         let mut registry = create_test_registry();
 
         let citizen_id = [1u8; 32];
-        let citizen = CitizenRole {
-            citizen_id,
-            role_type: 0, // citizen
-            citizenship_epoch: 100,
-            verified_at: 100,
-            revoked: false,
-            revoked_epoch: None,
-        };
+        let citizen = CitizenRole::new(citizen_id, 100, 100);
 
         registry.register(citizen).expect("register citizen");
 
@@ -122,14 +115,8 @@ mod tests {
         let mut registry = create_test_registry();
 
         let citizen_id = [1u8; 32];
-        let citizen = CitizenRole {
-            citizen_id,
-            role_type: 0,
-            citizenship_epoch: 100,
-            verified_at: 100,
-            revoked: true,
-            revoked_epoch: Some(100),
-        };
+        let mut citizen = CitizenRole::new(citizen_id, 100, 100);
+        citizen.revoke(100).expect("revocation should succeed");
 
         registry.register(citizen).expect("register citizen");
 
@@ -149,14 +136,7 @@ mod tests {
         let mut registry = create_test_registry();
 
         let citizen_id = [1u8; 32];
-        let citizen = CitizenRole {
-            citizen_id,
-            role_type: 0,
-            citizenship_epoch: 150, // Becomes citizen at epoch 150
-            verified_at: 150,
-            revoked: false,
-            revoked_epoch: None,
-        };
+        let citizen = CitizenRole::new(citizen_id, 150, 150); // Becomes citizen at epoch 150
 
         registry.register(citizen).expect("register citizen");
 
@@ -176,14 +156,7 @@ mod tests {
         let mut registry = create_test_registry();
 
         let citizen_id = [1u8; 32];
-        let citizen = CitizenRole {
-            citizen_id,
-            role_type: 0,
-            citizenship_epoch: 100,
-            verified_at: 100,
-            revoked: false,
-            revoked_epoch: None,
-        };
+        let citizen = CitizenRole::new(citizen_id, 100, 100);
 
         registry.register(citizen).expect("register citizen");
 
@@ -206,14 +179,7 @@ mod tests {
         let mut registry = create_test_registry();
 
         let citizen_id = [1u8; 32];
-        let citizen = CitizenRole {
-            citizen_id,
-            role_type: 0,
-            citizenship_epoch: 100,
-            verified_at: 100,
-            revoked: false,
-            revoked_epoch: None,
-        };
+        let citizen = CitizenRole::new(citizen_id, 100, 100);
 
         registry.register(citizen).expect("register citizen");
 
@@ -239,14 +205,8 @@ mod tests {
         let mut registry = create_test_registry();
 
         let citizen_id = [1u8; 32];
-        let citizen = CitizenRole {
-            citizen_id,
-            role_type: 0,
-            citizenship_epoch: 100,
-            verified_at: 100,
-            revoked: true, // Revoked but claim is before citizenship epoch
-            revoked_epoch: Some(100),
-        };
+        let mut citizen = CitizenRole::new(citizen_id, 100, 100);
+        citizen.revoke(100).expect("revocation should succeed"); // Revoked but claim is before citizenship epoch
 
         registry.register(citizen).expect("register citizen");
 

@@ -30,25 +30,27 @@ pub struct CitizenRole {
     /// Unique citizen identifier (linked to identity proof)
     /// - 32 bytes to match blockchain address format
     /// - Deterministic from identity verification
-    pub citizen_id: [u8; 32],
+    /// - **IMMUTABLE after registration** (enforced via private field + getter)
+    citizen_id: [u8; 32],
 
     /// Role type discriminator (always "citizen" for this struct)
     /// - Enables future role variants (e.g., "verified_citizen", "institutional_citizen")
     /// - Used for Role Registry queries: filter by role_type
     /// - Note: This is conceptual; could be enum in future versions
-    pub role_type: u8, // 0 = "citizen", future: 1 = "verified", 2 = "institutional"
+    /// - **IMMUTABLE after registration** (enforced via private field + getter)
+    role_type: u8, // 0 = "citizen", future: 1 = "verified", 2 = "institutional"
 
     /// Block epoch when citizen verification was completed
     /// - Determines earliest UBI claim eligibility
     /// - Used by Treasury Kernel: citizenship_epoch <= current_epoch required for payouts
-    /// - Immutable after registration (no backdating)
-    pub citizenship_epoch: u64,
+    /// - **IMMUTABLE after registration** (enforced via private field + getter)
+    citizenship_epoch: u64,
 
     /// Block height when citizenship was first verified
     /// - Audit trail: when identity proof was accepted
     /// - Used for governance queries: "how long has this citizen been verified?"
-    /// - Immutable after registration
-    pub verified_at: u64,
+    /// - **IMMUTABLE after registration** (enforced via private field + getter)
+    verified_at: u64,
 
     /// Revocation status
     /// - true = citizenship revoked (cannot claim UBI anymore)
@@ -84,6 +86,44 @@ impl CitizenRole {
         }
     }
 
+    /// Get the citizen ID (immutable)
+    ///
+    /// # Returns
+    /// The unique citizen identifier linked to identity proof
+    #[inline]
+    pub fn citizen_id(&self) -> [u8; 32] {
+        self.citizen_id
+    }
+
+    /// Get the role type (immutable)
+    ///
+    /// # Returns
+    /// The role type discriminator (0 = "citizen", future: 1, 2, etc.)
+    #[inline]
+    pub fn role_type(&self) -> u8 {
+        self.role_type
+    }
+
+    /// Get the citizenship epoch (immutable)
+    ///
+    /// # Returns
+    /// Block epoch when citizen verification was completed
+    /// Treasury Kernel requires: citizenship_epoch <= current_epoch for UBI eligibility
+    #[inline]
+    pub fn citizenship_epoch(&self) -> u64 {
+        self.citizenship_epoch
+    }
+
+    /// Get the verification timestamp (immutable)
+    ///
+    /// # Returns
+    /// Block height when citizenship was first verified
+    /// Used for audit trail and governance queries
+    #[inline]
+    pub fn verified_at(&self) -> u64 {
+        self.verified_at
+    }
+
     /// Revoke this citizen (immutable - cannot be undone)
     ///
     /// # Parameters
@@ -115,7 +155,7 @@ impl CitizenRole {
     /// - Duplicate claim prevention
     /// - Economic parameter validation
     pub fn is_eligible_for_ubi(&self, current_epoch: u64) -> bool {
-        !self.revoked && self.citizenship_epoch <= current_epoch
+        !self.revoked && self.citizenship_epoch() <= current_epoch
     }
 
     /// Get the role type name for queries and logging
@@ -206,12 +246,12 @@ impl CitizenRegistry {
     /// - citizen_id must not already exist in registry
     /// - citizenship_epoch should not be in future (governance should validate)
     pub fn register(&mut self, role: CitizenRole) -> Result<(), CitizenRoleError> {
-        if self.citizens.contains_key(&role.citizen_id) {
+        if self.citizens.contains_key(&role.citizen_id()) {
             return Err(CitizenRoleError::AlreadyExists);
         }
 
-        self.citizen_list.push(role.citizen_id);
-        self.citizens.insert(role.citizen_id, role);
+        self.citizen_list.push(role.citizen_id());
+        self.citizens.insert(role.citizen_id(), role);
         self.total_registered += 1;
         self.active_count += 1;
 
@@ -321,9 +361,9 @@ mod tests {
         let citizen_id = [1u8; 32];
         let role = CitizenRole::new(citizen_id, 100, 50);
 
-        assert_eq!(role.citizen_id, citizen_id);
-        assert_eq!(role.citizenship_epoch, 100);
-        assert_eq!(role.verified_at, 50);
+        assert_eq!(role.citizen_id(), citizen_id);
+        assert_eq!(role.citizenship_epoch(), 100);
+        assert_eq!(role.verified_at(), 50);
         assert!(!role.revoked);
         assert_eq!(role.revoked_epoch, None);
         assert_eq!(role.role_type_name(), "citizen");
