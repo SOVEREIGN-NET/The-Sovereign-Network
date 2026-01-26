@@ -254,6 +254,53 @@ pub struct UbiPoolStatus {
     pub remaining_capacity: u64,
 }
 
+impl UbiPoolStatus {
+    /// Hard pool cap per epoch (in smallest token units)
+    /// 1,000,000 SOV with 8 decimals = 100_000_000_000_000 units
+    pub const POOL_CAP_PER_EPOCH: u64 = 1_000_000;
+
+    /// Create a new UbiPoolStatus with automatic remaining_capacity calculation
+    ///
+    /// # Design
+    /// This constructor enforces the invariant: remaining_capacity = 1_000_000 - total_distributed
+    /// Prevents inconsistent state by calculating remaining_capacity automatically.
+    ///
+    /// # Arguments
+    /// - `epoch`: Which epoch this status is for
+    /// - `citizens_eligible`: How many citizens were eligible to claim
+    /// - `total_distributed`: Total amount actually distributed
+    ///
+    /// # Returns
+    /// UbiPoolStatus with remaining_capacity automatically calculated
+    ///
+    /// # Panics
+    /// If total_distributed > 1_000_000 (should never happen, but indicates a bug in distribution)
+    pub fn new(epoch: EpochIndex, citizens_eligible: u64, total_distributed: u64) -> Self {
+        let remaining_capacity = Self::POOL_CAP_PER_EPOCH
+            .checked_sub(total_distributed)
+            .expect("total_distributed should never exceed pool cap; this indicates a distribution logic bug");
+
+        UbiPoolStatus {
+            epoch,
+            citizens_eligible,
+            total_distributed,
+            remaining_capacity,
+        }
+    }
+
+    /// Verify the pool status invariant is maintained
+    ///
+    /// # Returns
+    /// true if: remaining_capacity + total_distributed == 1_000_000
+    /// false if invariant is violated (indicates corrupted state)
+    pub fn invariant_holds(&self) -> bool {
+        self.remaining_capacity
+            .checked_add(self.total_distributed)
+            .map(|sum| sum == Self::POOL_CAP_PER_EPOCH)
+            .unwrap_or(false) // Overflow indicates corruption
+    }
+}
+
 impl fmt::Display for UbiPoolStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -357,7 +404,55 @@ mod event_tests {
     }
 
     #[test]
-    fn test_ubi_pool_status_creation() {
+    fn test_ubi_pool_status_constructor() {
+        // Test: Pool partially used - constructor calculates remaining_capacity automatically
+        let status = UbiPoolStatus::new(5, 950, 950_000);
+
+        assert_eq!(status.epoch, 5);
+        assert_eq!(status.citizens_eligible, 950);
+        assert_eq!(status.total_distributed, 950_000);
+        assert_eq!(status.remaining_capacity, 50_000);
+        assert!(status.invariant_holds());
+    }
+
+    #[test]
+    fn test_ubi_pool_status_full_pool() {
+        // Test: Pool fully utilized
+        let status = UbiPoolStatus::new(1, 1000, 1_000_000);
+
+        assert_eq!(status.total_distributed, 1_000_000);
+        assert_eq!(status.remaining_capacity, 0);
+        assert!(status.invariant_holds());
+    }
+
+    #[test]
+    fn test_ubi_pool_status_empty_pool() {
+        // Test: Nothing distributed yet
+        let status = UbiPoolStatus::new(1, 1000, 0);
+
+        assert_eq!(status.total_distributed, 0);
+        assert_eq!(status.remaining_capacity, 1_000_000);
+        assert!(status.invariant_holds());
+    }
+
+    #[test]
+    fn test_ubi_pool_status_invariant_verification() {
+        // Invariant: remaining_capacity + total_distributed == 1_000_000
+        for total_distributed in [0, 500_000, 999_999, 1_000_000] {
+            let status = UbiPoolStatus::new(1, 100, total_distributed);
+            assert!(status.invariant_holds(),
+                "invariant should hold for total_distributed={}", total_distributed);
+            assert_eq!(
+                status.remaining_capacity + status.total_distributed,
+                1_000_000,
+                "invariant equation failed for total_distributed={}", total_distributed
+            );
+        }
+    }
+
+    #[test]
+    fn test_ubi_pool_status_direct_construction_still_works() {
+        // Old-style direct construction still works (for deserialization, etc.)
         let status = UbiPoolStatus {
             epoch: 5,
             citizens_eligible: 950,
@@ -369,6 +464,14 @@ mod event_tests {
         assert_eq!(status.citizens_eligible, 950);
         assert_eq!(status.total_distributed, 950_000);
         assert_eq!(status.remaining_capacity, 50_000);
+        assert!(status.invariant_holds());
+    }
+
+    #[test]
+    #[should_panic(expected = "total_distributed should never exceed pool cap")]
+    fn test_ubi_pool_status_constructor_panic_on_overflow() {
+        // Constructor should panic if total_distributed > 1_000_000 (indicates logic bug)
+        let _status = UbiPoolStatus::new(1, 1000, 1_000_001);
     }
 
     #[test]
@@ -403,25 +506,33 @@ mod event_tests {
     }
 
     #[test]
-    fn test_pool_status_calculations() {
-        // Test: Pool partially used
-        let status = UbiPoolStatus {
-            epoch: 1,
-            citizens_eligible: 1000,
-            total_distributed: 500_000,
-            remaining_capacity: 500_000,
-        };
+    fn test_pool_capacity_calculations() {
+        // Test various pool utilization scenarios
+        let scenarios = vec![
+            (0, "empty pool"),
+            (250_000, "25% utilized"),
+            (500_000, "50% utilized"),
+            (750_000, "75% utilized"),
+            (1_000_000, "fully utilized"),
+        ];
 
-        assert_eq!(status.total_distributed + status.remaining_capacity, 1_000_000);
+        for (total_distributed, desc) in scenarios {
+            let status = UbiPoolStatus::new(1, 1000, total_distributed);
 
-        // Test: Pool fully used
-        let full_status = UbiPoolStatus {
-            epoch: 2,
-            citizens_eligible: 1000,
-            total_distributed: 1_000_000,
-            remaining_capacity: 0,
-        };
+            // Verify invariant holds
+            assert!(status.invariant_holds(), "invariant failed for {}", desc);
 
-        assert_eq!(full_status.remaining_capacity, 0);
+            // Verify calculation
+            assert_eq!(
+                status.total_distributed + status.remaining_capacity,
+                1_000_000,
+                "calculation failed for {}", desc
+            );
+
+            // Verify individual values
+            let expected_remaining = 1_000_000 - total_distributed;
+            assert_eq!(status.remaining_capacity, expected_remaining,
+                "remaining capacity wrong for {}", desc);
+        }
     }
 }
