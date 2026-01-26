@@ -27,7 +27,6 @@ pub fn extract_client_ip(request: &ZhtpRequest) -> String {
     request
         .headers
         .get("X-Real-IP")
-        .cloned()
         .or_else(|| {
             request
                 .headers
@@ -42,7 +41,6 @@ pub fn extract_user_agent(request: &ZhtpRequest) -> String {
     request
         .headers
         .get("User-Agent")
-        .cloned()
         .unwrap_or_else(|| "unknown".to_string())
 }
 
