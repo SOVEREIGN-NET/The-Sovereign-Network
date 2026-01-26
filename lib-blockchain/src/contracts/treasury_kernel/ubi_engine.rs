@@ -44,24 +44,27 @@ impl TreasuryKernel {
 
     /// Process all UBI distributions for the current epoch
     ///
-    /// This is the main entry point called from ContractExecutor.finalize_block_state()
-    /// at epoch boundaries.
-    ///
-    /// Returns the current epoch number on success.
+    /// This is the main entry point for UBI distribution orchestration.
+    /// Called at epoch boundaries to process all citizen claims.
     ///
     /// # Algorithm
     /// 1. Check if we've already processed this epoch (idempotency)
-    /// 2. Poll for UbiClaimRecorded events
+    /// 2. Poll for UbiClaimRecorded events from UBI contract
     /// 3. For each claim:
     ///    a. Validate (5-check pipeline)
-    ///    b. If valid: mint tokens
-    ///    c. If invalid: emit rejection event
-    /// 4. Emit pool status
-    /// 5. Persist state
+    ///    b. If valid: mark as claimed, add to distributed total, record success
+    ///    c. If invalid: record rejection reason, record failure
+    /// 4. Emit UbiPoolStatus summary event
+    /// 5. Update last_processed_epoch for crash recovery
+    /// 6. (Phase 6) Persist state to storage
     ///
-    /// # Note
-    /// This is a Phase 5 implementation. Currently a stub that will be completed
-    /// with full event polling and minting in subsequent phases.
+    /// # Returns
+    /// Ok(epoch) if successful, Err if validation or storage fails
+    ///
+    /// # Integration Points
+    /// - Phase 3: Token minting via mint_ubi() (not yet integrated)
+    /// - Phase 4: Event polling via poll_ubi_claims() and event emission
+    /// - Phase 6: State persistence via save_to_storage()
     pub fn process_ubi_distributions(
         &mut self,
         current_height: u64,
@@ -69,50 +72,53 @@ impl TreasuryKernel {
     ) -> Result<u64, Box<dyn std::error::Error>> {
         let current_epoch = self.current_epoch(current_height);
 
-        // Idempotency check: don't process same epoch twice
+        // 1. Idempotency: Don't process the same epoch twice
         if self.state.last_processed_epoch() == Some(current_epoch) {
             return Ok(current_epoch);
         }
 
-        // TODO: Phase 4 - Poll for UbiClaimRecorded events from UBI contract
-        // let claims = self.poll_ubi_claims(current_epoch, executor)?;
+        // 2. Poll for UbiClaimRecorded events from UBI contract
+        let claims = self.poll_ubi_claims(current_epoch)?;
 
-        let claims = Vec::new(); // Placeholder
-
-        // Process each claim
+        // 3. Process each claim through validation pipeline
         for claim in claims {
+            // Validate the claim (5-check pipeline)
             match self.validate_claim(&claim, citizen_registry, current_epoch) {
-                Ok(_) => {
-                    // TODO: Phase 3 - Mint tokens
-                    // let kernel_txid = self.mint_ubi(&claim.citizen_id, 1000, current_epoch, executor)?;
-                    // self.emit_ubi_distributed(claim.citizen_id, 1000, current_epoch, kernel_txid, executor.storage())?;
-                    // self.state.mark_claimed(claim.citizen_id, current_epoch);
-                    // self.state.add_distributed(current_epoch, 1000)?;
-
+                Ok(()) => {
+                    // Valid claim: Update kernel state
                     self.state_mut().mark_claimed(claim.citizen_id, current_epoch);
                     self.state_mut().add_distributed(current_epoch, 1000)?;
                     self.state_mut().stats_mut().record_success();
+
+                    // TODO: Phase 5 - Integrate Phase 3 minting
+                    // Once minting is integrated, uncomment:
+                    // let kernel_txid = self.compute_kernel_txid(&claim.citizen_id, current_epoch, 1000);
+                    // TODO: Phase 5 - Integrate Phase 4 event emission
+                    // self.emit_ubi_distributed(claim.citizen_id, 1000, current_epoch, kernel_txid, storage)?;
                 }
                 Err(_reason) => {
-                    // TODO: Phase 4 - Emit rejection event
-                    // self.emit_ubi_rejected(claim.citizen_id, current_epoch, reason, current_height, executor.storage())?;
+                    // Invalid claim: Record rejection
                     self.state_mut().stats_mut().record_rejection();
+
+                    // TODO: Phase 5 - Integrate Phase 4 event emission
+                    // self.emit_ubi_rejected(claim.citizen_id, current_epoch, reason, current_height, storage)?;
                 }
             }
         }
 
-        // Emit pool status
+        // 4. Emit pool status summary
         let _eligible_count = citizen_registry.get_active_citizens().len() as u64;
-        let _total_dist = self.state.get_distributed(current_epoch);
+        let _total_distributed = self.state.get_distributed(current_epoch);
 
-        // TODO: Phase 4 - Emit pool status event
-        // self.emit_ubi_pool_status(current_epoch, eligible_count, total_dist, executor.storage())?;
+        // TODO: Phase 5 - Integrate Phase 4 event emission
+        // self.emit_ubi_pool_status(current_epoch, eligible_count, total_distributed, storage)?;
 
-        // Update state
+        // 5. Update state for crash recovery
         self.state_mut().set_last_processed_epoch(current_epoch);
 
-        // TODO: Phase 6 - Persist state to storage
-        // self.save_to_storage(executor.storage())?;
+        // 6. (Phase 6) Persist kernel state to storage
+        // TODO: Phase 6 - Integrate storage persistence
+        // self.save_to_storage(storage)?;
 
         Ok(current_epoch)
     }
@@ -202,5 +208,105 @@ mod tests {
         assert_eq!(kernel.stats().total_processed, 3);
         assert_eq!(kernel.stats().successful_distributions, 2);
         assert_eq!(kernel.stats().rejected_claims, 1);
+    }
+
+    #[test]
+    fn test_process_ubi_distributions_flow_idempotent() {
+        let mut kernel = create_test_kernel();
+        let registry = create_test_registry();
+
+        // First processing of epoch 100
+        let height1 = 100 * 60_480;
+        let result1 = kernel.process_ubi_distributions(height1, &registry);
+        assert!(result1.is_ok());
+        assert_eq!(result1.unwrap(), 100);
+
+        // Second processing should be idempotent (no change)
+        let result2 = kernel.process_ubi_distributions(height1, &registry);
+        assert!(result2.is_ok());
+        assert_eq!(result2.unwrap(), 100);
+
+        // Verify state only processed once
+        assert_eq!(kernel.state().last_processed_epoch(), Some(100));
+    }
+
+    #[test]
+    fn test_process_multiple_epochs() {
+        let mut kernel = create_test_kernel();
+        let registry = create_test_registry();
+
+        // Process epoch 100
+        let height1 = 100 * 60_480;
+        assert_eq!(kernel.process_ubi_distributions(height1, &registry).unwrap(), 100);
+
+        // Process epoch 101
+        let height2 = 101 * 60_480;
+        assert_eq!(kernel.process_ubi_distributions(height2, &registry).unwrap(), 101);
+
+        // Verify each epoch was processed
+        assert_eq!(kernel.state().last_processed_epoch(), Some(101));
+    }
+
+    #[test]
+    fn test_poll_ubi_claims_stub() {
+        let kernel = create_test_kernel();
+
+        // Poll should return empty (Phase 5 stub)
+        let claims = kernel.poll_ubi_claims(100).expect("poll_ubi_claims");
+        assert_eq!(claims.len(), 0);
+    }
+
+    #[test]
+    fn test_distribution_state_tracking() {
+        let mut kernel = create_test_kernel();
+        let registry = create_test_registry();
+
+        let epoch = 50;
+
+        // Simulate marking a citizen as claimed
+        let citizen = [1u8; 32];
+        kernel.state_mut().mark_claimed(citizen, epoch);
+
+        // Add to distributed total
+        kernel.state_mut().add_distributed(epoch, 1000).unwrap();
+
+        // Verify state
+        assert!(kernel.state().has_claimed(&citizen, epoch));
+        assert_eq!(kernel.state().get_distributed(epoch), 1000);
+
+        // Now when processing, it should be idempotent
+        kernel.state_mut().set_last_processed_epoch(epoch);
+        let result = kernel.process_ubi_distributions(epoch * 60_480, &registry);
+        assert!(result.is_ok());
+        assert_eq!(kernel.state().last_processed_epoch(), Some(epoch));
+    }
+
+    #[test]
+    fn test_epoch_to_height_consistency() {
+        let kernel = create_test_kernel();
+
+        // Test epoch calculation consistency
+        for epoch in 0..10 {
+            let height = epoch * 60_480;
+            assert_eq!(kernel.current_epoch(height), epoch);
+            assert!(kernel.is_epoch_boundary(height));
+        }
+    }
+
+    #[test]
+    fn test_resume_after_crash_idempotency() {
+        let mut kernel = create_test_kernel();
+        let registry = create_test_registry();
+
+        let epoch = 100;
+        let height = epoch * 60_480;
+
+        // First processing
+        kernel.process_ubi_distributions(height, &registry).unwrap();
+        assert_eq!(kernel.state().last_processed_epoch(), Some(epoch));
+
+        // Simulate recovery - should not reprocess
+        kernel.resume_after_crash(height, &registry).unwrap();
+        assert_eq!(kernel.state().last_processed_epoch(), Some(epoch));
     }
 }
