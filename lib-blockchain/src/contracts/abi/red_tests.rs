@@ -276,8 +276,10 @@ mod red_tests {
     ///
     /// ASSUMPTION: One contract calling another is validated against caller's ABI.
     /// This prevents ABI mismatches that would cause failures.
+    ///
+    /// STATUS: ENABLED - Cross-contract call infrastructure is now implemented
+    /// in lib-blockchain/src/contracts/calls/ (Phase 1-3 complete).
     #[test]
-    #[ignore] // Remove when cross-contract calls are implemented
     fn red_cross_contract_calls_type_checked() {
         // GIVEN contract A wants to call contract B
         let contract_b = ContractAbi::new("B", "1.0.0").with_method(

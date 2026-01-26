@@ -51,6 +51,8 @@ pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod abi;
 #[cfg(feature = "contracts")]
+pub mod calls;
+#[cfg(feature = "contracts")]
 pub mod web4;
 #[cfg(feature = "contracts")]
 pub mod approval_verifier;
