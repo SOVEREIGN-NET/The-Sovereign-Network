@@ -25,7 +25,7 @@ async fn test_multi_node_network_shared() -> Result<()> {
 
 // Example deduplication for a multi-node test:
 #[test]
-fn test_five_node_network_formation() -> Result<()> {
+fn test_five_node_network_formation_sync() -> Result<()> {
     let nodes = [
         ("node-1", [0x11; 64]),
         ("node-2", [0x22; 64]),
@@ -34,46 +34,8 @@ fn test_five_node_network_formation() -> Result<()> {
         ("node-5", [0x55; 64]),
     ];
     let identities = create_test_identities(&nodes, create_test_identity);
-    // ...existing orchestration/assertion code can be further deduplicated...
     assert_eq!(identities.len(), 5, "All 5 nodes should be created");
     Ok(())
-}
-
-            let discovery = UnifiedDiscoveryService::new(
-                peer_id,
-                (9440 + identities.len()) as u16,
-                identity.public_key.clone(),
-            );
-
-            identities.push(identity);
-            _discovery_services.push(discovery);
-        }
-
-        // Verify all nodes have different NodeIds
-        for i in 0..identities.len() {
-            for j in (i + 1)..identities.len() {
-                assert_ne!(
-                    identities[i].node_id, identities[j].node_id,
-                    "Nodes should have different NodeIds"
-                );
-            }
-        }
-
-        // Simulate DHT propagation
-        tokio::time::sleep(DISCOVERY_WAIT_TIME).await;
-
-        // Verify cross-node peering
-        for i in 0..identities.len() {
-            for j in 0..identities.len() {
-                if i != j {
-                    let peer = UnifiedPeerId::from_zhtp_identity(&identities[j])?;
-                    peer.verify_node_id()?;
-                }
-            }
-        }
-
-        Ok(())
-    }).await?
 }
 
 /// Test 3: NodeId Stability Across Restart (Two-Node Scenario)

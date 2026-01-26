@@ -1,3 +1,8 @@
+//! DHT Persistence Test (Issue #70)
+//!
+//! Goal: Verify DHT routing tables rebuild correctly after network restart
+//! with deterministic NodeIds.
+
 use anyhow::Result;
 use std::time::Duration;
 mod common;
@@ -22,63 +27,6 @@ fn test_three_node_dht_bootstrap() -> Result<()> {
     let mut dht_states = build_dht_states(&identities, 0);
     populate_dht_peers(&mut dht_states, &identities, 0);
     assert_dht_peer_counts(&dht_states, 2);
-    Ok(())
-}
-#[test]
-fn test_three_node_dht_bootstrap() -> Result<()> {
-    // Phase 1: Create three nodes with distinct seeds
-    let nodes = [
-        ("alice-dht-001", [0xAA; 64]),
-        ("bob-dht-001", [0xBB; 64]),
-        ("charlie-dht-001", [0xCC; 64]),
-    ];
-
-    let mut identities = Vec::new();
-    let mut dht_states = Vec::new();
-
-    for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
-        let mut dht = DhtRoutingState::new(identity.node_id.clone());
-        dht.set_convergence_cycle(0);
-        identities.push(identity);
-        dht_states.push(dht);
-    }
-
-    // Phase 2: Simulate DHT peer discovery
-    for i in 0..identities.len() {
-        for j in 0..identities.len() {
-            if i != j {
-                let peer_node_id = identities[j].node_id.clone();
-                let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                dht_states[i].add_peer(peer_node_id, peer_uuid, 0);
-            }
-        }
-    }
-
-    // Phase 3: Verify DHT tables populated
-    for (i, dht) in dht_states.iter().enumerate() {
-        assert_eq!(
-            dht.peer_count(),
-            2,
-            "Node {} should have 2 peers (other 2 nodes)",
-            i
-        );
-    }
-
-    // Phase 4: Verify all nodes can see each other
-    for i in 0..identities.len() {
-        for j in 0..identities.len() {
-            if i != j {
-                assert!(
-                    dht_states[i].has_peer(&identities[j].node_id),
-                    "Node {} should know about Node {}",
-                    i,
-                    j
-                );
-            }
-        }
-    }
-
     Ok(())
 }
 

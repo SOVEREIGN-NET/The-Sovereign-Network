@@ -1,3 +1,7 @@
+//! Mesh Network Formation Test (Issue #71)
+//!
+//! Goal: Verify mesh network topology forms and remains stable
+//! under various conditions including node restarts.
 
 use anyhow::Result;
 use std::time::Duration;
@@ -10,44 +14,6 @@ const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 #[tokio::test]
 async fn test_mesh_formation_shared() -> Result<()> {
     run_shared_mesh_formation_test().await
-}
-
-    fn peer_count(&self, index: usize) -> usize {
-        self.nodes[index].peer_count()
-    }
-
-    fn get_active_node_count(&self) -> usize {
-        self.nodes.iter().filter(|n| n.is_active).count()
-    }
-
-    fn deactivate_node(&mut self, index: usize) {
-        let node_id = self.nodes[index].node_id.clone();
-        self.nodes[index].deactivate();
-        // Remove from all other nodes' peer lists
-        for i in 0..self.nodes.len() {
-            if i != index {
-                self.nodes[i].remove_peer(&node_id);
-            }
-        }
-    }
-
-    fn reactivate_node(&mut self, index: usize) {
-        self.cycle += 1;
-        self.nodes[index].reactivate(self.cycle);
-        // Reestablish connections
-        let node_id_to_add = self.nodes[index].node_id.clone();
-        for j in 0..self.nodes.len() {
-            if j != index && self.nodes[j].is_active {
-                let peer_id = self.nodes[j].node_id.clone();
-                self.nodes[index].add_peer(peer_id);
-                self.nodes[j].add_peer(node_id_to_add.clone());
-            }
-        }
-    }
-
-    fn advance_cycle(&mut self) {
-        self.cycle += 1;
-    }
 }
 
 /// Test 1: Five-Node Mesh Network Formation via Multicast
