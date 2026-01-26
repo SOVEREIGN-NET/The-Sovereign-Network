@@ -39,7 +39,7 @@ pricing_tier = "hot"  # Fast storage for validators
 [network_config]
 mesh_port = 33446  # Mainnet mesh port
 max_peers = 200    # Higher peer count for mainnet
-protocols = ["tcp", "bluetooth", "wifi_direct"]
+protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = [
     "mainnet-seed1.sovereign.net:9333",
     "mainnet-seed2.sovereign.net:9333"

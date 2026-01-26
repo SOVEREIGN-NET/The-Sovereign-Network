@@ -11,10 +11,10 @@ path = "src/lib.rs"
 
 [dependencies]
 # ZHTP Package Dependencies
+lib-types = { path = "../lib-types" }
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
-# lib-network removed - circular dependency (Ticket #148)
 
 # Production Dependencies for Storage System
 tokio = { version = "1.0", features = ["full"] }
@@ -25,6 +25,7 @@ blake3 = "1.5"
 bincode = "1.3"
 reed-solomon-erasure = "6.0"
 anyhow = "1.0"
+thiserror = "1.0"
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.8"
@@ -34,6 +35,12 @@ lz4_flex = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 tracing = "0.1"
+humantime-serde = "1.1"
+parking_lot = "0.12" # DB-010: Thread-safe locking for backend implementations
+sled = "0.34" # DB-010: Persistent storage backend (also used in DB-008)
+
+# [DB-009] SQLite backend for structured data
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"], optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -41,3 +48,5 @@ tokio-test = "0.4"
 [features]
 default = []
 testing = []
+# [DB-009] Enable SQLite backend for structured queryable data
+sqlite = ["sqlx"]

@@ -164,7 +164,9 @@ async fn main() -> Result<()> {
         println!("Treasury:");
         println!("   Current treasury: {} ZHTP", treasury_stats.current_treasury_balance);
         println!("   UBI fund: {} ZHTP", treasury_stats.ubi_fund_balance);
-        println!("   Welfare fund: {} ZHTP", treasury_stats.welfare_fund_balance);
+        println!("   Sector DAO fund: {} ZHTP", treasury_stats.sector_dao_fund_balance);
+        println!("   Emergency fund: {} ZHTP", treasury_stats.emergency_fund_balance);
+        println!("   Dev grants fund: {} ZHTP", treasury_stats.dev_grants_fund_balance);
     }
 
     // 11. Demonstrate transaction creation and processing

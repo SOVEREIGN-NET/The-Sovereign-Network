@@ -13,40 +13,24 @@
 //! - MIME type resolution
 //! - Cache header generation
 
+pub mod trust;
+
+// Web4 system - always compiled with protocol-only design
+// Uses trait-based UnifiedStorage from lib-network, never depends on lib-storage directly
 pub mod domain_registry;
+pub mod name_resolver;
 pub mod content_publisher;
 pub mod content_service;
 pub mod types;
 pub mod client;
-pub mod trust;
 
 pub use domain_registry::*;
+pub use name_resolver::NameResolver;
 pub use content_publisher::*;
 pub use content_service::*;
 pub use types::*;
 pub use client::Web4Client;
 pub use trust::{TrustConfig, TrustDb, TrustAnchor, TrustPolicy, TrustAuditEntry, ZhtpTrustVerifier};
 
-use anyhow::Result;
-use crate::dht::ZkDHTIntegration;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-/// Initialize the Web4 system with DHT backend
-pub async fn initialize_web4_system() -> Result<Web4Manager> {
-    initialize_web4_system_with_dht(None).await
-}
-
-/// Initialize the Web4 system with existing storage system to avoid creating duplicates
-pub async fn initialize_web4_system_with_storage(storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>) -> Result<Web4Manager> {
-    let manager = Web4Manager::new_with_storage(storage).await?;
-    tracing::info!("Web4 domain registry and content publishing system initialized with existing storage");
-    Ok(manager)
-}
-
-/// Initialize the Web4 system with optional existing DHT client to avoid creating duplicates
-pub async fn initialize_web4_system_with_dht(dht_client: Option<ZkDHTIntegration>) -> Result<Web4Manager> {
-    let manager = Web4Manager::new_with_dht(dht_client).await?;
-    tracing::info!("Web4 domain registry and content publishing system initialized");
-    Ok(manager)
-}
+// NOTE: initialization helpers removed - zhtp is the composition root
+// zhtp wires DomainRegistry + ContentPublisher -> Web4Manager directly

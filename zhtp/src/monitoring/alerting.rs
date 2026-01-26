@@ -8,7 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::Duration;
-use tracing::{info, warn, error, debug};
+use tracing::{info, error, debug};
 
 use crate::monitoring::metrics::SystemMetrics;
 
@@ -276,7 +276,7 @@ impl NotificationChannel for WebhookNotificationChannel {
 
         // webhook implementation using reqwest
         use serde_json::json;
-        
+
         let payload = json!({
             "alert_id": alert.id,
             "title": alert.title,
@@ -289,7 +289,7 @@ impl NotificationChannel for WebhookNotificationChannel {
 
         // Attempt to send webhook with timeout
         let client = reqwest::Client::new();
-        let response = tokio::time::timeout(self.timeout, 
+        let response = tokio::time::timeout(self.timeout,
             client.post(&self.webhook_url)
                 .json(&payload)
                 .send()
@@ -298,19 +298,24 @@ impl NotificationChannel for WebhookNotificationChannel {
         match response {
             Ok(Ok(resp)) if resp.status().is_success() => {
                 info!("Webhook notification sent successfully to {} for alert: {}", self.webhook_url, alert.id);
+                Ok(())
             }
             Ok(Ok(resp)) => {
-                warn!("Webhook responded with error status {}: {}", resp.status(), self.webhook_url);
+                let error_msg = format!("Webhook responded with error status {}: {}", resp.status(), self.webhook_url);
+                error!("{}", error_msg);
+                Err(anyhow::anyhow!(error_msg))
             }
             Ok(Err(e)) => {
-                warn!("Webhook request failed to {}: {}", self.webhook_url, e);
+                let error_msg = format!("Webhook request failed to {}: {}", self.webhook_url, e);
+                error!("{}", error_msg);
+                Err(anyhow::anyhow!(error_msg))
             }
             Err(_) => {
-                warn!("Webhook request timed out to {}", self.webhook_url);
+                let error_msg = format!("Webhook request timed out to {}", self.webhook_url);
+                error!("{}", error_msg);
+                Err(anyhow::anyhow!(error_msg))
             }
         }
-        
-        Ok(())
     }
 
     fn name(&self) -> &str {

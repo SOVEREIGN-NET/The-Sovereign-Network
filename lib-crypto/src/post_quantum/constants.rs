@@ -2,10 +2,15 @@
 //! 
 //! constants from crypto.rs, lines 69-75
 
-/// CRYSTALS-Kyber512 constants (NIST post-quantum standard)
+/// CRYSTALS-Kyber512 constants (NIST post-quantum standard - Level 1)
 pub const KYBER512_CIPHERTEXT_BYTES: usize = 768;
 pub const KYBER512_PUBLICKEY_BYTES: usize = 800;
 pub const KYBER512_SECRETKEY_BYTES: usize = 1632;
+
+/// CRYSTALS-Kyber1024 constants (NIST post-quantum standard - Level 5, highest security)
+pub const KYBER1024_CIPHERTEXT_BYTES: usize = 1568;
+pub const KYBER1024_PUBLICKEY_BYTES: usize = 1568;
+pub const KYBER1024_SECRETKEY_BYTES: usize = 3168;
 
 /// CRYSTALS-Dilithium2 constants (NIST post-quantum standard)
 pub const DILITHIUM2_PUBLICKEY_BYTES: usize = 1312;

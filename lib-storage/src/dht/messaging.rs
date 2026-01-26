@@ -8,6 +8,7 @@ use anyhow::{Result, anyhow};
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use tokio::sync::mpsc;
+use tracing::trace;
 
 /// Message queue entry
 #[derive(Debug, Clone)]
@@ -19,6 +20,23 @@ pub struct QueuedMessage {
 }
 
 /// DHT message router and queue manager
+///
+/// ## Sequence Counter Behavior
+///
+/// The sequence counter starts at 0 on every node initialization and increments monotonically
+/// with each outgoing message. This provides replay protection for the current session.
+///
+/// **Important**: After a node restart, the sequence counter resets to 0. This means:
+/// - Messages from a restarted node will have low sequence numbers
+/// - Remote peers that still have high last_sequence values will reject these messages
+/// - The wraparound window (1024) provides some tolerance for this scenario
+/// - If a node frequently restarts, legitimate messages may be rejected as replays
+///
+/// **Mitigation strategies** (not yet implemented):
+/// 1. Persist sequence counters across restarts
+/// 2. Add a connection reset protocol to signal sequence counter reset
+/// 3. Use timestamp-based validation in addition to sequence numbers
+/// 4. Implement session tokens that change on restart
 #[derive(Debug)]
 pub struct DhtMessaging {
     /// Outgoing message queue
@@ -30,6 +48,8 @@ pub struct DhtMessaging {
     retry_delay: Duration,
     /// Local node ID
     local_node_id: NodeId,
+    /// Monotonic sequence counter for outgoing messages
+    sequence_counter: u64,
 }
 
 impl DhtMessaging {
@@ -41,6 +61,7 @@ impl DhtMessaging {
             max_retries: 3,
             retry_delay: Duration::from_secs(2),
             local_node_id,
+            sequence_counter: 0,
         }
     }
     
@@ -151,13 +172,21 @@ impl DhtMessaging {
         // For now, we'll use a simple correlation based on message type and sender
         Some(message.message_id.clone())
     }
+
+    /// Get next sequence number for outgoing messages
+    fn next_sequence(&mut self) -> u64 {
+        let sequence = self.sequence_counter;
+        self.sequence_counter = self.sequence_counter.wrapping_add(1);
+        sequence
+    }
     
     /// Create PONG response
     ///
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
-    fn create_pong_response(&self, ping: &DhtMessage) -> Result<DhtMessage> {
+    /// - Caller should sign message before sending (Issue #676)
+    fn create_pong_response(&mut self, ping: &DhtMessage) -> Result<DhtMessage> {
         Ok(DhtMessage {
             message_id: generate_response_id(&ping.message_id),
             message_type: DhtMessageType::Pong,
@@ -169,7 +198,7 @@ impl DhtMessaging {
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers
+            sequence_number: self.next_sequence(),
             signature: None, // TODO (HIGH-5): Sign message
         })
     }
@@ -179,7 +208,8 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
-    fn create_find_node_response(&self, find_node: &DhtMessage) -> Result<DhtMessage> {
+    /// - Caller should sign message before sending (Issue #676)
+    fn create_find_node_response(&mut self, find_node: &DhtMessage) -> Result<DhtMessage> {
         // In a implementation, this would query the routing table
         // For now, return empty node list
         Ok(DhtMessage {
@@ -193,7 +223,7 @@ impl DhtMessaging {
             nodes: Some(Vec::new()),
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers
+            sequence_number: self.next_sequence(),
             signature: None, // TODO (HIGH-5): Sign message
         })
     }
@@ -203,7 +233,8 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
-    fn create_find_value_response(&self, find_value: &DhtMessage) -> Result<DhtMessage> {
+    /// - Caller should sign message before sending (Issue #676)
+    fn create_find_value_response(&mut self, find_value: &DhtMessage) -> Result<DhtMessage> {
         // In a implementation, this would check local storage
         Ok(DhtMessage {
             message_id: generate_response_id(&find_value.message_id),
@@ -216,7 +247,7 @@ impl DhtMessaging {
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers
+            sequence_number: self.next_sequence(),
             signature: None, // TODO (HIGH-5): Sign message
         })
     }
@@ -226,7 +257,8 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
-    fn create_store_response(&self, store: &DhtMessage) -> Result<DhtMessage> {
+    /// - Caller should sign message before sending (Issue #676)
+    fn create_store_response(&mut self, store: &DhtMessage) -> Result<DhtMessage> {
         Ok(DhtMessage {
             message_id: generate_response_id(&store.message_id),
             message_type: DhtMessageType::StoreResponse,
@@ -238,7 +270,7 @@ impl DhtMessaging {
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers
+            sequence_number: self.next_sequence(),
             signature: None, // TODO (HIGH-5): Sign message
         })
     }
@@ -272,9 +304,7 @@ impl DhtMessaging {
         });
         
         // Log cleanup activity
-        if self.pending_responses.len() > 100 {
-            println!(" Cleaned up expired responses, {} remaining", self.pending_responses.len());
-        }
+        trace!(remaining = self.pending_responses.len(), "Cleaned up expired responses");
     }
 }
 
@@ -291,29 +321,13 @@ fn generate_response_id(original_id: &str) -> String {
 }
 
 /// Generate a cryptographically secure random nonce
+///
+/// Uses a cryptographically secure random number generator (CSPRNG)
+/// to generate nonces suitable for replay protection.
 fn generate_nonce() -> [u8; 32] {
-    use std::hash::{Hash, Hasher};
-    use std::collections::hash_map::DefaultHasher;
-
+    use rand::RngCore;
     let mut nonce = [0u8; 32];
-    let now = SystemTime::now();
-    let mut hasher = DefaultHasher::new();
-    now.hash(&mut hasher);
-    std::process::id().hash(&mut hasher);
-    std::thread::current().id().hash(&mut hasher);
-    let h1 = hasher.finish().to_le_bytes();
-    nonce[0..8].copy_from_slice(&h1);
-
-    let mut hasher2 = DefaultHasher::new();
-    now.hash(&mut hasher2);
-    hasher2.write_u64(0xDEADBEEF_CAFEBABE);
-    let h2 = hasher2.finish().to_le_bytes();
-    nonce[8..16].copy_from_slice(&h2);
-
-    let nanos = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-    nonce[16..24].copy_from_slice(&(nanos as u64).to_le_bytes());
-    nonce[24..32].copy_from_slice(&((nanos >> 64) as u64).to_le_bytes());
-
+    rand::thread_rng().fill_bytes(&mut nonce);
     nonce
 }
 
@@ -321,7 +335,7 @@ fn generate_nonce() -> [u8; 32] {
 mod tests {
     use super::*;
     use lib_identity::{ZhtpIdentity, IdentityType};
-    use crate::types::dht_types::DhtPeerIdentity;
+    use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
 
     fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
         let identity = ZhtpIdentity::new_unified(
@@ -332,12 +346,12 @@ mod tests {
             None,
         ).expect("Failed to create test identity");
         
-        DhtPeerIdentity {
-            node_id: identity.node_id.clone(),
-            public_key: identity.public_key.clone(),
-            did: identity.did.clone(),
-            device_id: device_name.to_string(),
-        }
+        build_peer_identity(
+            identity.node_id.clone(),
+            identity.public_key.clone(),
+            identity.did.clone(),
+            device_name.to_string(),
+        )
     }
 
     fn dummy_pq_signature() -> lib_crypto::PostQuantumSignature {

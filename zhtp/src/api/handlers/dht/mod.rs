@@ -14,7 +14,7 @@ use uuid;
 
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus};
-use lib_network::ZkDHTIntegration;
+use lib_network::dht::ZkDHTIntegration;
 // Removed unused ZhtpHeaders, NetworkStatus
 use lib_identity::ZhtpIdentity;
 
@@ -188,7 +188,7 @@ pub struct DhtHandler {
     /// Handler statistics
     stats: Arc<RwLock<DhtHandlerStats>>,
     /// Storage system (where Web4 content is actually stored)
-    storage_system: Arc<RwLock<Option<Arc<RwLock<lib_storage::UnifiedStorageSystem>>>>>,
+    storage_system: Arc<RwLock<Option<Arc<RwLock<lib_storage::PersistentStorageSystem>>>>>,
 }
 
 /// DHT handler internal statistics
@@ -222,7 +222,7 @@ impl DhtHandler {
     }
     
     /// Create a new DHT handler with storage system access (for fetching Web4 content)
-    pub fn new_with_storage(_mesh_router: Arc<MeshRouter>, storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>) -> Self {
+    pub fn new_with_storage(_mesh_router: Arc<MeshRouter>, storage: Arc<RwLock<lib_storage::PersistentStorageSystem>>) -> Self {
         Self {
             dht_client: Arc::new(RwLock::new(None)),
             stats: Arc::new(RwLock::new(DhtHandlerStats::default())),
@@ -333,7 +333,7 @@ impl DhtHandler {
             }
         };
 
-        let mut dht = client.write().await;
+        let dht = client.write().await;
         match dht.connect_to_peer(&connect_request.peer_address).await {
             Ok(()) => {
                 let response = serde_json::json!({
@@ -1030,7 +1030,7 @@ impl DhtHandler {
     /// - "SYSTEM_CONTRACT_DEPLOYER" as public key (not real)
     /// 
     /// This would be REJECTED by blockchain validation.
-    async fn deploy_smart_contract_to_blockchain(&self, contract_id: String, operation: &str) -> Result<String, anyhow::Error> {
+    async fn deploy_smart_contract_to_blockchain(&self, _contract_id: String, _operation: &str) -> Result<String, anyhow::Error> {
         Err(anyhow::anyhow!(
             "Smart contract deployment via DHT disabled: requires proper deployer identity and signature. \
              Contract deployment should use proper TransactionBuilder with deployer's private key, \

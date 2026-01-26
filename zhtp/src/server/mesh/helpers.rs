@@ -99,7 +99,7 @@ pub async fn handle_tcp_mesh(
         debug!("TCP mesh data: {} bytes", bytes_read);
         
         // Try to parse as binary mesh handshake (from local discovery)
-        if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&buffer[..bytes_read]) {
+        if let Ok(handshake) = bincode::deserialize::<lib_network::protocols::bluetooth::MeshHandshake>(&buffer[..bytes_read]) {
             info!("🤝 Received binary mesh handshake from peer: {}", handshake.node_id);
             info!("   Version: {}, Port: {}, Protocols: {:?}", 
                 handshake.version, handshake.mesh_port, handshake.protocols);

@@ -36,28 +36,28 @@ pub async fn should_mine_block(
     // Check if there are any active validators
     if active_validators.is_empty() {
         // No validators yet - any node can mine (bootstrap phase)
-        warn!("⛏️ BOOTSTRAP MODE: No validators registered in consensus, mining without coordination");
+        warn!(
+            "⛏️ BOOTSTRAP MODE: No validators registered in consensus, mining without coordination"
+        );
         warn!("   → This means validator sync from blockchain failed!");
         return Ok(true);
     }
 
     // Select proposer using consensus
-    info!("CONSENSUS ACTIVE: {} validators registered", active_validators.len());
+    info!(
+        "CONSENSUS ACTIVE: {} validators registered",
+        active_validators.len()
+    );
     let next_height = current_height + 1;
 
     if let Some(proposer) = validator_manager.select_proposer(next_height, consensus_round) {
         // Check if this node is the selected proposer
-        let is_proposer = check_if_proposer(
-            node_identity,
-            &proposer.identity,
-            identity_registry,
-        )?;
+        let is_proposer = check_if_proposer(node_identity, &proposer.identity, identity_registry)?;
 
         if is_proposer {
             info!(
                 "CONSENSUS: This node selected as block proposer for height {} (round {})",
-                next_height,
-                consensus_round
+                next_height, consensus_round
             );
             Ok(true)
         } else {
@@ -111,7 +111,7 @@ fn check_if_proposer(
             } else {
                 did_string
             };
-            
+
             info!(
                 "FOUND MATCHING USER: This node is controlled by {}",
                 did_preview
@@ -124,7 +124,7 @@ fn check_if_proposer(
                         warn!("Identity bytes too short: {} bytes", identity_bytes.len());
                         continue;
                     }
-                    
+
                     let user_identity_hash = Hash::from_bytes(&identity_bytes[..32]);
 
                     info!(
@@ -134,8 +134,14 @@ fn check_if_proposer(
 
                     // Compare original identity Hash with proposer's identity
                     if user_identity_hash == *proposer_identity {
-                        info!("Node owner is proposer: {}", &did_string[..32.min(did_string.len())]);
-                        info!("  Node device ID: {}", &node_id_hex[..32.min(node_id_hex.len())]);
+                        info!(
+                            "Node owner is proposer: {}",
+                            &did_string[..32.min(did_string.len())]
+                        );
+                        info!(
+                            "  Node device ID: {}",
+                            &node_id_hex[..32.min(node_id_hex.len())]
+                        );
                         return Ok(true);
                     } else {
                         info!("User identity does NOT match proposer");
@@ -154,7 +160,7 @@ fn check_if_proposer(
 }
 
 /// Identity data structure for mining coordination
-/// 
+///
 /// This is a simplified view of blockchain's IdentityTransactionData,
 /// containing only the fields needed for mining coordination.
 #[derive(Debug, Clone)]
@@ -168,7 +174,7 @@ impl IdentityData {
     pub fn new(controlled_nodes: Vec<String>) -> Self {
         Self { controlled_nodes }
     }
-    
+
     /// Create from blockchain's IdentityTransactionData controlled_nodes field
     pub fn from_controlled_nodes(controlled_nodes: Vec<String>) -> Self {
         Self { controlled_nodes }

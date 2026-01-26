@@ -9,10 +9,10 @@ use tokio::time::{Duration, Instant};
 use tracing::{info, warn, debug};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
-use crate::runtime::components::identity::create_default_storage_config;
-use crate::server::https_gateway::{HttpsGateway, GatewayTlsConfig, TlsMode};
+// Removed: create_default_storage_config - now using global storage provider
+use crate::server::https_gateway::{HttpsGateway, GatewayTlsConfig};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
-use lib_network::{ZdnsResolver, ZdnsConfig, ZdnsTransportServer, ZdnsServerConfig};
+use crate::web4_stub::{ZdnsResolver, ZdnsTransportServer, ZdnsServerConfig};
 
 /// Protocols component - thin wrapper for unified server
 pub struct ProtocolsComponent {
@@ -25,6 +25,11 @@ pub struct ProtocolsComponent {
     lib_integration: Arc<RwLock<Option<ZhtpIntegration>>>,
     environment: crate::config::environment::Environment,
     api_port: u16,
+    /// QUIC port for mesh connections (default: 9334)
+    quic_port: u16,
+    /// Legacy/unicast discovery port for peer announcements (default: 9333).
+    /// Note: multicast peer discovery uses fixed port 37775/UDP (see NETWORK_RULES.md).
+    discovery_port: u16,
     is_edge_node: bool,
     /// Enable ZDNS transport server (UDP/TCP DNS on port 53)
     enable_zdns_transport: bool,
@@ -52,6 +57,15 @@ impl std::fmt::Debug for ProtocolsComponent {
 
 impl ProtocolsComponent {
     pub fn new(environment: crate::config::environment::Environment, api_port: u16) -> Self {
+        Self::new_with_ports(environment, api_port, 9334, 9333)
+    }
+
+    pub fn new_with_ports(
+        environment: crate::config::environment::Environment,
+        api_port: u16,
+        quic_port: u16,
+        discovery_port: u16,
+    ) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -62,6 +76,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
+            quic_port,
+            discovery_port,
             is_edge_node: false,
             enable_zdns_transport: false, // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
@@ -73,6 +89,16 @@ impl ProtocolsComponent {
     }
 
     pub fn new_with_node_type(environment: crate::config::environment::Environment, api_port: u16, is_edge_node: bool) -> Self {
+        Self::new_with_node_type_and_ports(environment, api_port, 9334, 9333, is_edge_node)
+    }
+
+    pub fn new_with_node_type_and_ports(
+        environment: crate::config::environment::Environment,
+        api_port: u16,
+        quic_port: u16,
+        discovery_port: u16,
+        is_edge_node: bool,
+    ) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -83,6 +109,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
+            quic_port,
+            discovery_port,
             is_edge_node,
             enable_zdns_transport: false, // Disabled by default
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
@@ -110,6 +138,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
+            quic_port: 9334,
+            discovery_port: 9333,
             is_edge_node: false,
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
@@ -138,6 +168,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
+            quic_port: 9334,
+            discovery_port: 9333,
             is_edge_node: false,
             enable_zdns_transport: false,
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
@@ -165,6 +197,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
+            quic_port: 9334,
+            discovery_port: 9333,
             is_edge_node: false,
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
@@ -200,11 +234,11 @@ impl Component for ProtocolsComponent {
     async fn start(&self) -> Result<()> {
         info!("Starting protocols component with ZHTP Unified Server...");
         *self.status.write().await = ComponentStatus::Starting;
-        
+
         lib_protocols::initialize().await?;
-        
+
         info!("Initializing backend components for unified server...");
-        
+
         // Use existing global blockchain (already initialized and syncing in Phase 2)
         info!(" Using existing global blockchain instance...");
         let blockchain = match crate::runtime::blockchain_provider::get_global_blockchain().await {
@@ -228,7 +262,19 @@ impl Component for ProtocolsComponent {
                 }
             }
         };
-        
+
+        // Initialize network genesis hash for QUIC protocol (CRITICAL: must be before unified server creation)
+        {
+            let blockchain_read = blockchain.read().await;
+            if !blockchain_read.blocks.is_empty() {
+                let genesis_hash = blockchain_read.blocks[0].header.block_hash.as_array();
+                lib_identity::types::node_id::set_network_genesis(genesis_hash);
+                info!(" ✓ Network genesis initialized for QUIC protocol");
+            } else {
+                return Err(anyhow::anyhow!("Blockchain has no genesis block"));
+            }
+        }
+
         // Get shared IdentityManager
         info!(" Getting shared IdentityManager...");
         let identity_manager = match crate::runtime::get_global_identity_manager().await {
@@ -248,15 +294,41 @@ impl Component for ProtocolsComponent {
                 }
             }
         };
-        
-        // Initialize economic model and storage
+
+        // Initialize economic model
+        info!(" Initializing economic model...");
         let economic_model = Arc::new(RwLock::new(lib_economy::EconomicModel::new()));
-        let storage_config = create_default_storage_config()?;
-        let storage = Arc::new(RwLock::new(lib_storage::UnifiedStorageSystem::new(storage_config).await?));
-        
+
+        // Get storage from global provider (initialized by StorageComponent)
+        info!(" Getting shared storage from global provider...");
+        let storage = match crate::runtime::storage_provider::get_global_storage().await {
+            Ok(storage) => {
+                info!(" ✓ Using shared storage instance from StorageComponent");
+                storage
+            }
+            Err(_) => {
+                // Fallback: wait for StorageComponent to initialize
+                info!("⏳ Waiting for StorageComponent to initialize storage...");
+                let mut attempts = 0;
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    attempts += 1;
+                    if let Ok(storage) = crate::runtime::storage_provider::get_global_storage().await {
+                        info!(" ✓ Storage became available after {} attempts", attempts);
+                        break storage;
+                    }
+                    if attempts >= 30 {
+                        return Err(anyhow::anyhow!("Timeout waiting for StorageComponent to initialize storage"));
+                    }
+                }
+            }
+        };
+
         info!("Creating ZHTP Unified Server...");
         let (peer_discovery_tx, _peer_discovery_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-        
+
+        info!("Creating unified server with ports: API={}, QUIC={}, Discovery={}",
+              self.api_port, self.quic_port, self.discovery_port);
         let mut unified_server = crate::unified_server::ZhtpUnifiedServer::new_with_peer_notification(
             blockchain.clone(),
             storage.clone(),
@@ -264,18 +336,22 @@ impl Component for ProtocolsComponent {
             economic_model.clone(),
             self.api_port,
             Some(peer_discovery_tx),
-        ).await?;
+            Some(self.discovery_port),  // discovery_port from config
+            Some(self.quic_port),       // quic_port from config
+            None,  // protocols_config - will use defaults (Bluetooth disabled by default)
+            None,  // bootstrap_peers - will use defaults
+        ).await
+            .map_err(|e| anyhow::anyhow!("Failed to create unified server: {}", e))?;
         
         // Initialize blockchain provider
         info!(" Setting up blockchain provider...");
         let blockchain_provider = Arc::new(crate::runtime::network_blockchain_provider::ZhtpBlockchainProvider::new());
         unified_server.set_blockchain_provider(blockchain_provider).await;
         
-        // Initialize edge sync manager if needed
+        // Configure sync mode based on node type
         if self.is_edge_node {
-            info!(" Initializing Edge Node sync manager...");
-            let edge_sync_manager = Arc::new(lib_network::EdgeNodeSyncManager::new(500));
-            unified_server.set_edge_sync_manager(edge_sync_manager.clone()).await;
+            info!("📱 Configuring Edge Node sync mode (headers + ZK proofs only)...");
+            unified_server.set_edge_sync_mode(500).await;
         }
         
         // Initialize auth manager
@@ -300,10 +376,7 @@ impl Component for ProtocolsComponent {
         // Initialize ZDNS resolver with caching, using the canonical domain registry
         info!(" Initializing ZDNS resolver with canonical domain registry...");
         let domain_registry = unified_server.get_domain_registry();
-        let zdns_resolver = Arc::new(ZdnsResolver::new(
-            domain_registry.clone(),
-            ZdnsConfig::default(),
-        ));
+        let zdns_resolver = Arc::new(ZdnsResolver::new());
         *self.zdns_resolver.write().await = Some(zdns_resolver.clone());
         info!(" ✓ ZDNS resolver initialized with LRU cache (size: 10000, TTL: up to 1hr)");
 
@@ -319,7 +392,7 @@ impl Component for ProtocolsComponent {
             ));
 
             // Start the transport server in a background task
-            let transport_clone = Arc::clone(&transport_server);
+            let transport_clone: Arc<ZdnsTransportServer> = Arc::clone(&transport_server);
             tokio::spawn(async move {
                 if let Err(e) = transport_clone.start().await {
                     warn!("ZDNS transport server error: {}", e);

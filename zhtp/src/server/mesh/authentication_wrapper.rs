@@ -16,13 +16,12 @@
 //! 4. Failed auth = peer never added (no race window)
 
 use std::net::SocketAddr;
-use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
 use anyhow::{Result, Context};
 use tracing::{debug, info, warn, error};
 use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use lib_crypto::PublicKey;
-use lib_network::discovery::local_network::MeshHandshake;
+use lib_network::protocols::bluetooth::MeshHandshake;
 use lib_network::protocols::zhtp_auth::ZhtpAuthResponse;
 
 use super::core::MeshRouter;
@@ -57,8 +56,15 @@ impl MeshRouter {
     /// 1. Check per-IP rate limit BEFORE processing handshake
     /// 2. Block if too many connection attempts from same IP
     /// 3. Exponential backoff for repeat offenders
-    pub async fn handle_tcp_mesh(&self, mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
-        info!("🔌 Processing TCP mesh connection from: {}", addr);
+    /// ⚠️ DEPRECATED: This method is for TCP connections (no longer supported).
+    /// The system is QUIC-only. This method should not be called.
+    ///
+    /// Kept for API compatibility but marked deprecated.
+    #[deprecated(note = "QUIC is the only supported transport. TCP connections are not accepted.")]
+    pub async fn handle_tcp_mesh(&self, stream: TcpStream, addr: SocketAddr) -> Result<()> {
+        error!("❌ TCP connections are no longer supported - QUIC is required");
+        error!("   Connection from {} rejected", addr);
+        return Err(anyhow::anyhow!("TCP is not supported - use QUIC"));
 
         // HIGH-4 FIX: Check rate limit BEFORE processing handshake
         if let Err(block_duration) = self.connection_rate_limiter.check_ip(addr.ip()).await {
@@ -170,9 +176,9 @@ impl MeshRouter {
                     // Ticket #149: Use peer_registry upsert instead of connections.insert
                     // connections is already a write guard, use it directly
                     let peer_entry = lib_network::peer_registry::PeerEntry::new(
-                        peer_key,
+                        peer_key.clone(),
                         vec![lib_network::peer_registry::PeerEndpoint {
-                            address: String::new(), // TODO: Add actual address
+                            address: lib_network::NodeAddress::Tcp(addr),
                             protocol: connection.protocol.clone(),
                             signal_strength: 0.8,
                             latency_ms: 50,
@@ -221,6 +227,12 @@ impl MeshRouter {
                     
                     info!("✅ Peer {} added to mesh network in {:?} state ({} total peers)",
                         handshake.node_id, final_state, connections.all_peers().count());
+                    
+                    // SECURITY: Register authenticated peer for blockchain sync
+                    if authenticated {
+                        self.sync_manager.register_authenticated_peer(&peer_pubkey).await;
+                        info!("🔐 Peer {} registered for secure blockchain sync", handshake.node_id);
+                    }
                 }
 
                 // Establish QUIC connection if available (after peer is in connections)
@@ -291,7 +303,7 @@ impl MeshRouter {
     /// - Err(_) if critical error
     async fn authenticate_peer_only(
         &self,
-        peer_pubkey: &PublicKey,
+        _peer_pubkey: &PublicKey,
         handshake: &MeshHandshake,
         stream: &mut TcpStream,
     ) -> Result<Option<(f64, Vec<u8>)>> {

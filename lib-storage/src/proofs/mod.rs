@@ -7,17 +7,26 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use lib_crypto::hashing::hash_blake3;
-use lib_proofs::merkle::tree::ZkMerkleTree;
+use lib_proofs::merkle::tree::{hash_merkle_pair, ZkMerkleTree};
 use crate::types::ContentHash;
 
 pub mod challenge;
 pub mod verification;
 pub mod manager;
+pub mod attestation;
+pub mod provider;
 
 // Re-export key types
 pub use challenge::{StorageChallenge, ChallengeType};
 pub use verification::{ProofVerifier, VerificationResult};
 pub use manager::ProofManager;
+pub use attestation::{
+    StorageCapacityAttestation,
+    StorageProofProvider,
+    StorageProofSummary,
+    ChallengeResult,
+};
+pub use provider::InMemoryStorageProofProvider;
 
 /// Proof of storage using Merkle tree verification
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,29 +246,37 @@ fn calculate_tree_height(leaf_count: usize) -> u8 {
 
 /// Generate Merkle path for a leaf index
 fn generate_merkle_path(tree: &ZkMerkleTree, leaf_index: usize) -> Result<Vec<[u8; 32]>> {
-    // For now, return a placeholder implementation
-    // In a full implementation, this would traverse the tree and collect sibling nodes
-    let mut path = Vec::new();
+    if leaf_index >= tree.leaf_count() {
+        return Err(anyhow!("Leaf index out of range"));
+    }
+
+    let mut path = Vec::with_capacity(tree.height as usize);
     let mut current_index = leaf_index;
-    
+    let mut level = tree.leaves.clone();
+
     for _ in 0..tree.height {
-        // Get sibling index
         let sibling_index = if current_index % 2 == 0 {
             current_index + 1
         } else {
             current_index - 1
         };
-        
-        // Get sibling hash (placeholder - would need tree internals)
-        if let Some(leaf) = tree.get_leaf(sibling_index) {
-            path.push(leaf);
-        } else {
-            path.push([0u8; 32]); // Empty node
+
+        let sibling = level.get(sibling_index).copied().unwrap_or([0u8; 32]);
+        path.push(sibling);
+
+        let mut next_level = Vec::with_capacity((level.len() + 1) / 2);
+        for chunk in level.chunks(2) {
+            let hash = if chunk.len() == 2 {
+                hash_merkle_pair(chunk[0], chunk[1])
+            } else {
+                hash_merkle_pair(chunk[0], [0u8; 32])
+            };
+            next_level.push(hash);
         }
-        
+        level = next_level;
         current_index /= 2;
     }
-    
+
     Ok(path)
 }
 

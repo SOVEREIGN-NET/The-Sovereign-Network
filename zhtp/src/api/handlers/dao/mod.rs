@@ -25,36 +25,8 @@ use lib_crypto::Hash;
 
 use crate::session_manager::SessionManager;
 
-/// Helper function to create JSON responses correctly
-fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
-    let json_response = serde_json::to_vec(&data)?;
-    Ok(ZhtpResponse::success_with_content_type(
-        json_response,
-        "application/json".to_string(),
-        None,
-    ))
-}
-
-fn create_error_response(status: ZhtpStatus, message: String) -> ZhtpResponse {
-    ZhtpResponse::error(status, message)
-}
-
-/// Helper to extract client IP from request
-fn extract_client_ip(request: &ZhtpRequest) -> String {
-    request
-        .headers
-        .get("X-Real-IP")
-        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| f.split(',').next().map(|s| s.trim().to_string())))
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// Helper to extract user agent from request
-fn extract_user_agent(request: &ZhtpRequest) -> String {
-    request
-        .headers
-        .get("User-Agent")
-        .unwrap_or_else(|| "unknown".to_string())
-}
+// Import shared helpers from common module
+use super::common::{create_json_response, create_error_response, extract_client_ip, extract_user_agent, validate_did_format};
 
 /// Input validation helpers
 fn validate_delegate_name(name: &str) -> Result<()> {
@@ -73,16 +45,6 @@ fn validate_delegate_name(name: &str) -> Result<()> {
 fn validate_delegate_bio(bio: &str) -> Result<()> {
     if bio.len() > 500 {
         return Err(anyhow::anyhow!("Bio must be 500 characters or less"));
-    }
-    Ok(())
-}
-
-fn validate_did_format(did: &str) -> Result<()> {
-    if !did.starts_with("did:zhtp:") && !did.starts_with("did:") {
-        return Err(anyhow::anyhow!("Invalid DID format"));
-    }
-    if did.len() < 10 || did.len() > 200 {
-        return Err(anyhow::anyhow!("DID length must be between 10 and 200 characters"));
     }
     Ok(())
 }
@@ -211,6 +173,7 @@ impl DaoHandler {
             "emergency" => Ok(DaoProposalType::Emergency),
             "community_funding" => Ok(DaoProposalType::CommunityFunding),
             "research_grants" => Ok(DaoProposalType::ResearchGrants),
+            "difficulty_parameter_update" => Ok(DaoProposalType::DifficultyParameterUpdate),
             _ => Err(anyhow::anyhow!("Invalid proposal type: {}", type_str)),
         }
     }
@@ -383,14 +346,14 @@ impl DaoHandler {
                 _ => None,
             };
             if let Some(status) = target_status {
-                filtered_proposals.retain(|p| p.status == status);
+                filtered_proposals.retain(|p| p.status() == &status);
             }
         }
 
         // Filter by proposal type if provided
         if let Some(type_filter) = &query.proposal_type {
             if let Ok(proposal_type) = Self::parse_proposal_type(type_filter) {
-                filtered_proposals.retain(|p| p.proposal_type == proposal_type);
+                filtered_proposals.retain(|p| p.proposal_type() == &proposal_type);
             }
         }
 
@@ -400,23 +363,23 @@ impl DaoHandler {
             .skip(offset)
             .take(limit)
             .map(|proposal| json!({
-                "id": Self::hash_to_string(&proposal.id),
-                "title": proposal.title,
-                "description": proposal.description,
-                "proposer": Self::hash_to_string(&proposal.proposer),
-                "proposal_type": format!("{:?}", proposal.proposal_type),
-                "status": format!("{:?}", proposal.status),
-                "voting_start_time": proposal.voting_start_time,
-                "voting_end_time": proposal.voting_end_time,
-                "quorum_required": proposal.quorum_required,
-                "created_at": proposal.created_at,
+                "id": Self::hash_to_string(proposal.id()),
+                "title": proposal.title(),
+                "description": proposal.description(),
+                "proposer": Self::hash_to_string(proposal.proposer()),
+                "proposal_type": format!("{:?}", proposal.proposal_type()),
+                "status": format!("{:?}", proposal.status()),
+                "voting_start_time": proposal.voting_start_time(),
+                "voting_end_time": proposal.voting_end_time(),
+                "quorum_required": proposal.quorum_required(),
+                "created_at": proposal.created_at(),
                 "vote_tally": {
-                    "total_votes": proposal.vote_tally.total_votes,
-                    "yes_votes": proposal.vote_tally.yes_votes,
-                    "no_votes": proposal.vote_tally.no_votes,
-                    "abstain_votes": proposal.vote_tally.abstain_votes,
-                    "approval_percentage": proposal.vote_tally.approval_percentage(),
-                    "quorum_percentage": proposal.vote_tally.quorum_percentage()
+                    "total_votes": proposal.vote_tally().total_votes(),
+                    "yes_votes": proposal.vote_tally().yes_votes(),
+                    "no_votes": proposal.vote_tally().no_votes(),
+                    "abstain_votes": proposal.vote_tally().abstain_votes(),
+                    "approval_percentage": proposal.vote_tally().approval_percentage(),
+                    "quorum_percentage": proposal.vote_tally().quorum_percentage()
                 }
             }))
             .collect();
@@ -450,29 +413,29 @@ impl DaoHandler {
                 let response = json!({
                     "status": "success",
                     "proposal": {
-                        "id": Self::hash_to_string(&proposal.id),
-                        "title": proposal.title,
-                        "description": proposal.description,
-                        "proposer": Self::hash_to_string(&proposal.proposer),
-                        "proposal_type": format!("{:?}", proposal.proposal_type),
-                        "status": format!("{:?}", proposal.status),
-                        "voting_start_time": proposal.voting_start_time,
-                        "voting_end_time": proposal.voting_end_time,
-                        "quorum_required": proposal.quorum_required,
-                        "created_at": proposal.created_at,
-                        "created_at_height": proposal.created_at_height,
+                        "id": Self::hash_to_string(proposal.id()),
+                        "title": proposal.title(),
+                        "description": proposal.description(),
+                        "proposer": Self::hash_to_string(proposal.proposer()),
+                        "proposal_type": format!("{:?}", proposal.proposal_type()),
+                        "status": format!("{:?}", proposal.status()),
+                        "voting_start_time": proposal.voting_start_time(),
+                        "voting_end_time": proposal.voting_end_time(),
+                        "quorum_required": proposal.quorum_required(),
+                        "created_at": proposal.created_at(),
+                        "created_at_height": proposal.created_at_height(),
                         "vote_tally": {
-                            "total_votes": proposal.vote_tally.total_votes,
-                            "yes_votes": proposal.vote_tally.yes_votes,
-                            "no_votes": proposal.vote_tally.no_votes,
-                            "abstain_votes": proposal.vote_tally.abstain_votes,
-                            "total_eligible_power": proposal.vote_tally.total_eligible_power,
-                            "weighted_yes": proposal.vote_tally.weighted_yes,
-                            "weighted_no": proposal.vote_tally.weighted_no,
-                            "weighted_abstain": proposal.vote_tally.weighted_abstain,
-                            "approval_percentage": proposal.vote_tally.approval_percentage(),
-                            "quorum_percentage": proposal.vote_tally.quorum_percentage(),
-                            "weighted_approval_percentage": proposal.vote_tally.weighted_approval_percentage()
+                            "total_votes": proposal.vote_tally().total_votes(),
+                            "yes_votes": proposal.vote_tally().yes_votes(),
+                            "no_votes": proposal.vote_tally().no_votes(),
+                            "abstain_votes": proposal.vote_tally().abstain_votes(),
+                            "total_eligible_power": proposal.vote_tally().total_eligible_power(),
+                            "weighted_yes": proposal.vote_tally().weighted_yes(),
+                            "weighted_no": proposal.vote_tally().weighted_no(),
+                            "weighted_abstain": proposal.vote_tally().weighted_abstain(),
+                            "approval_percentage": proposal.vote_tally().approval_percentage(),
+                            "quorum_percentage": proposal.vote_tally().quorum_percentage(),
+                            "weighted_approval_percentage": proposal.vote_tally().weighted_approval_percentage()
                         }
                     }
                 });
@@ -606,12 +569,12 @@ impl DaoHandler {
             "status": "success",
             "proposal_id": proposal_id_str,
             "vote_summary": {
-                "total_votes": proposal.vote_tally.total_votes,
-                "yes_votes": proposal.vote_tally.yes_votes,
-                "no_votes": proposal.vote_tally.no_votes,
-                "abstain_votes": proposal.vote_tally.abstain_votes,
-                "approval_percentage": proposal.vote_tally.approval_percentage(),
-                "quorum_percentage": proposal.vote_tally.quorum_percentage()
+                "total_votes": proposal.vote_tally().total_votes(),
+                "yes_votes": proposal.vote_tally().yes_votes(),
+                "no_votes": proposal.vote_tally().no_votes(),
+                "abstain_votes": proposal.vote_tally().abstain_votes(),
+                "approval_percentage": proposal.vote_tally().approval_percentage(),
+                "quorum_percentage": proposal.vote_tally().quorum_percentage()
             },
             "message": "Vote details retrieved successfully"
         });
@@ -669,7 +632,7 @@ impl DaoHandler {
         let total_members = delegates.len();
         let total_proposals = proposals.len();
         let treasury_balance = treasury.total_balance;
-        let active_proposals = proposals.iter().filter(|p| p.status == DaoProposalStatus::Active).count();
+        let active_proposals = proposals.iter().filter(|p| p.status() == &DaoProposalStatus::Active).count();
 
         let response = json!({
             "total_members": total_members,
@@ -928,11 +891,11 @@ impl DaoHandler {
 
         // Calculate statistics
         let total_proposals = proposals.len();
-        let active_proposals = proposals.iter().filter(|p| p.status == DaoProposalStatus::Active).count();
-        let passed_proposals = proposals.iter().filter(|p| p.status == DaoProposalStatus::Passed).count();
-        let executed_proposals = proposals.iter().filter(|p| p.status == DaoProposalStatus::Executed).count();
+        let active_proposals = proposals.iter().filter(|p| p.status() == &DaoProposalStatus::Active).count();
+        let passed_proposals = proposals.iter().filter(|p| p.status() == &DaoProposalStatus::Passed).count();
+        let executed_proposals = proposals.iter().filter(|p| p.status() == &DaoProposalStatus::Executed).count();
 
-        let total_votes: u64 = proposals.iter().map(|p| p.vote_tally.total_votes).sum();
+        let total_votes: u64 = proposals.iter().map(|p| p.vote_tally().total_votes()).sum();
         let avg_participation = if total_proposals > 0 {
             total_votes as f64 / total_proposals as f64
         } else {

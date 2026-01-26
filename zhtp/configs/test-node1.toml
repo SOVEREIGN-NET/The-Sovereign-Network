@@ -35,10 +35,10 @@ erasure_coding = false  # Simpler for local testing
 pricing_tier = "hot"
 
 [network_config]
-mesh_port = 9001
+mesh_port = 9334
 max_peers = 50
-protocols = ["tcp", "bluetooth", "wifi_direct"]
-bootstrap_peers = ["127.0.0.1:9002", "localhost:9002"]  # Node 2 on same machine
+protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
+bootstrap_peers = ["127.0.0.1:9335", "localhost:9335"]  # Node 2 on same machine
 long_range_relays = false
 
 [blockchain_config]

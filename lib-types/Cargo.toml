@@ -1,0 +1,10 @@
+[package]
+name = "lib-types"
+version = "0.1.0"
+edition = "2021"
+description = "Sovereign Network primitives and protocol-neutral data shapes"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+blake3 = "1.5"
+hex = "0.4"

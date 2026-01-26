@@ -1,0 +1,16 @@
+[Unit]
+Description=ZHTP Node
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={{ zhtp_dir }}/zhtp node start --network {{ zhtp_network }} --config {{ zhtp_dir }}/config.toml
+WorkingDirectory={{ zhtp_dir }}
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

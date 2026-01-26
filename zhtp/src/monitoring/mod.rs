@@ -1,5 +1,5 @@
 //! Monitoring and Metrics Collection
-//! 
+//!
 //! Provides comprehensive monitoring, logging, and metrics for all ZHTP components
 
 pub mod metrics;
@@ -9,14 +9,79 @@ pub mod dashboard;
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tracing::info;
-// Removed unused: RwLock, warn, error
 
 pub use metrics::*;
 pub use health_check::*;
 pub use alerting::*;
 pub use dashboard::*;
+
+// **Restart-safe global alert manager**
+//
+// Using RwLock<Option<>> instead of OnceCell allows:
+// 1. Clearing the global after stop() (prevents stale manager reuse)
+// 2. Replacing with a fresh instance on restart (idempotent start())
+// 3. Safe concurrent access without deadlock risk
+//
+// Invariants:
+// - After stop(), global is None
+// - Each start() atomically replaces the global with a fresh Arc
+// - Producers can safely check and emit without blocking the writer
+static GLOBAL_ALERT_MANAGER: RwLock<Option<Arc<AlertManager>>> = RwLock::new(None);
+
+/// Set the global alert manager (replaces any existing instance)
+///
+/// Called during MonitoringSystem::start() to install a fresh manager.
+/// This is not idempotent by design: every start() replaces the global,
+/// preventing restart from using a stale stopped instance.
+///
+/// If the RwLock is poisoned (another thread panicked while holding it),
+/// this function will attempt recovery by clearing the poisoned state.
+pub fn set_global_alert_manager(manager: Arc<AlertManager>) {
+    match GLOBAL_ALERT_MANAGER.write() {
+        Ok(mut g) => *g = Some(manager),
+        Err(poisoned) => {
+            // RwLock poisoned - recover by clearing and setting fresh
+            let mut g = poisoned.into_inner();
+            *g = Some(manager);
+        }
+    }
+}
+
+/// Clear the global alert manager
+///
+/// Called during MonitoringSystem::stop() to prevent subsequent operations
+/// from using a stopped manager. Callers attempting to emit after this
+/// will get None and must handle degraded mode.
+///
+/// If the RwLock is poisoned, this function will still clear it (no-op if already None).
+pub fn clear_global_alert_manager() {
+    match GLOBAL_ALERT_MANAGER.write() {
+        Ok(mut g) => *g = None,
+        Err(poisoned) => {
+            // RwLock poisoned - recover by clearing
+            let mut g = poisoned.into_inner();
+            *g = None;
+        }
+    }
+}
+
+/// Get the global alert manager
+///
+/// Returns None if monitoring has not been started or has been stopped.
+/// Safe to call from any thread/task.
+///
+/// If the RwLock is poisoned, this function returns None (safe fallback).
+pub fn get_global_alert_manager() -> Option<Arc<AlertManager>> {
+    match GLOBAL_ALERT_MANAGER.read() {
+        Ok(g) => g.clone(),
+        Err(poisoned) => {
+            // RwLock poisoned - treat as "no manager available" (safe fallback)
+            (*poisoned.into_inner()).clone()
+        }
+    }
+}
 
 /// Central monitoring system for ZHTP node
 #[derive(Clone)]
@@ -31,8 +96,12 @@ impl MonitoringSystem {
     /// Create a new monitoring system
     pub async fn new() -> Result<Self> {
         let metrics_collector = Arc::new(MetricsCollector::new().await?);
-        let health_monitor = Arc::new(HealthMonitor::new().await?);
-        let alert_manager = Arc::new(AlertManager::new().await?);
+        let alert_manager = Arc::new(
+            AlertManager::with_thresholds(alerting::AlertThresholds::default()).await?,
+        );
+        let mut health_monitor = HealthMonitor::new().await?;
+        health_monitor.set_alert_manager(alert_manager.clone());
+        let health_monitor = Arc::new(health_monitor);
         
         Ok(Self {
             metrics_collector,
@@ -43,20 +112,31 @@ impl MonitoringSystem {
     }
 
     /// Start the monitoring system
+    ///
+    /// **Restart-safe**: Always creates a fresh alert manager and replaces the global.
+    /// Previous monitoring instance (if any) is discarded.
     pub async fn start(&mut self) -> Result<()> {
         info!("Starting monitoring system...");
 
         // Start metrics collection
         self.metrics_collector.start().await?;
-        
+
         // Start health monitoring
         self.health_monitor.start().await?;
-        
+
         // Start alert manager
         self.alert_manager.start().await?;
-        
+        // CRITICAL: Atomically replace the global with the fresh manager
+        // This ensures restarts use a new instance, not a stale stopped one
+        set_global_alert_manager(self.alert_manager.clone());
+
         // Start dashboard server if enabled
-        if let Ok(dashboard) = DashboardServer::new(8081).await {
+        if let Ok(mut dashboard) = DashboardServer::new(8081).await {
+            dashboard.set_monitors(
+                self.metrics_collector.clone(),
+                self.health_monitor.clone(),
+                self.alert_manager.clone(),
+            );
             let dashboard_arc = Arc::new(dashboard);
             dashboard_arc.start().await?;
             self.dashboard_server = Some(dashboard_arc);
@@ -67,6 +147,9 @@ impl MonitoringSystem {
     }
 
     /// Stop the monitoring system
+    ///
+    /// **Restart-safe**: Clears the global alert manager after stopping it.
+    /// This prevents subsequent operations from using a stale stopped instance.
     pub async fn stop(&self) -> Result<()> {
         info!("Stopping monitoring system...");
 
@@ -79,6 +162,10 @@ impl MonitoringSystem {
         self.alert_manager.stop().await?;
         self.health_monitor.stop().await?;
         self.metrics_collector.stop().await?;
+
+        // CRITICAL: Clear the global to prevent restart from using this stopped instance
+        // Order matters: stop the manager first, THEN clear the global reference
+        clear_global_alert_manager();
 
         info!("Monitoring system stopped");
         Ok(())

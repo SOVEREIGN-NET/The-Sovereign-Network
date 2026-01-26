@@ -1,12 +1,21 @@
 //! Core types for ZHTP consensus system
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use async_trait::async_trait;
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_identity::IdentityId;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // Re-export proof types from proofs module
-pub use crate::proofs::{StakeProof, StorageProof, WorkProof, ProofOfUsefulWork, StorageChallenge};
+pub use crate::proofs::{
+    ProofOfUsefulWork,
+    StakeProof,
+    StorageCapacityAttestation,
+    WorkProof,
+};
+
+// Re-export heartbeat types from validator protocol module
+pub use crate::validators::validator_protocol::HeartbeatMessage;
 
 /// Consensus mechanism types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -52,7 +61,7 @@ pub enum ValidatorStatus {
 }
 
 /// Vote types for consensus
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum VoteType {
     /// Pre-vote for a proposal
@@ -66,7 +75,7 @@ pub enum VoteType {
 }
 
 /// Consensus step in the BFT protocol
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
 pub enum ConsensusStep {
     /// Propose step - validator proposes a block
     Propose,
@@ -78,6 +87,31 @@ pub enum ConsensusStep {
     Commit,
     /// New round initialization
     NewRound,
+}
+
+impl ConsensusStep {
+    /// Convert step to ordinal value for comparison and serialization
+    pub fn as_ordinal(&self) -> u8 {
+        match self {
+            ConsensusStep::Propose => 0,
+            ConsensusStep::PreVote => 1,
+            ConsensusStep::PreCommit => 2,
+            ConsensusStep::Commit => 3,
+            ConsensusStep::NewRound => 4,
+        }
+    }
+
+    /// Convert ordinal value back to ConsensusStep
+    pub fn from_ordinal(ordinal: u8) -> Option<Self> {
+        match ordinal {
+            0 => Some(ConsensusStep::Propose),
+            1 => Some(ConsensusStep::PreVote),
+            2 => Some(ConsensusStep::PreCommit),
+            3 => Some(ConsensusStep::Commit),
+            4 => Some(ConsensusStep::NewRound),
+            _ => None,
+        }
+    }
 }
 
 /// Consensus round information
@@ -101,7 +135,7 @@ pub struct ConsensusRound {
     pub timed_out: bool,
     /// Locked proposal (if any)
     pub locked_proposal: Option<Hash>,
-    /// Valid proposal (if any) 
+    /// Valid proposal (if any)
     pub valid_proposal: Option<Hash>,
 }
 
@@ -155,7 +189,7 @@ pub struct ConsensusProof {
     /// Stake proof (for PoS)
     pub stake_proof: Option<StakeProof>,
     /// Storage proof (for PoStorage)
-    pub storage_proof: Option<StorageProof>,
+    pub storage_proof: Option<StorageCapacityAttestation>,
     /// Useful work proof (for PoUW)
     pub work_proof: Option<WorkProof>,
     /// ZK-DID proof for validator identity
@@ -204,6 +238,8 @@ pub struct ConsensusConfig {
     pub max_validators: u32,
     /// Target block time in seconds
     pub block_time: u64,
+    /// Epoch length in blocks for validator set updates
+    pub epoch_length_blocks: u64,
     /// Proposal timeout in milliseconds
     pub propose_timeout: u64,
     /// Prevote timeout in milliseconds
@@ -230,20 +266,21 @@ impl Default for ConsensusConfig {
     fn default() -> Self {
         Self {
             consensus_type: ConsensusType::Hybrid,
-            min_stake: 1000 * 1_000_000, // 1000 ZHTP tokens
+            min_stake: 1000 * 1_000_000,           // 1000 ZHTP tokens
             min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
             max_validators: 100,
-            block_time: 10, // 10 seconds
-            propose_timeout: 3000, // 3 seconds
-            prevote_timeout: 1000, // 1 second
+            block_time: 10,          // 10 seconds
+            epoch_length_blocks: 100,
+            propose_timeout: 3000,   // 3 seconds
+            prevote_timeout: 1000,   // 1 second
             precommit_timeout: 1000, // 1 second
             max_transactions_per_block: 1000,
             max_difficulty: 0x00000000FFFFFFFF,
             target_difficulty: 0x00000FFF,
             byzantine_threshold: 1.0 / 3.0, // 1/3 Byzantine tolerance
-            slash_double_sign: 5, // 5% slash for double signing
-            slash_liveness: 1, // 1% slash for liveness violation
-            development_mode: false, // Production mode by default
+            slash_double_sign: 5,           // 5% slash for double signing
+            slash_liveness: 1,              // 1% slash for liveness violation
+            development_mode: false,        // Production mode by default
         }
     }
 }
@@ -290,4 +327,124 @@ pub enum ConsensusEvent {
     ProposalReceived { proposal: ConsensusProposal },
     /// Vote received
     VoteReceived { vote: ConsensusVote },
+    /// Consensus stalled due to validator timeouts
+    ConsensusStalled {
+        height: u64,
+        round: u32,
+        timed_out_validators: Vec<IdentityId>,
+        total_validators: usize,
+        timestamp: u64,
+    },
+    /// Consensus recovered from stall
+    ConsensusRecovered {
+        height: u64,
+        round: u32,
+        timestamp: u64,
+    },
+}
+
+/// Block metadata for fee tracking and statistics
+///
+/// Tracks fees and other metadata for each finalized block.
+/// Used for fee collection integration with consensus layer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockMetadata {
+    /// Block height
+    pub height: u64,
+    /// Block timestamp (Unix seconds)
+    pub timestamp: i64,
+    /// Number of transactions in block
+    pub transaction_count: u32,
+    /// Total fees collected in this block
+    pub total_fees_collected: u64,
+    /// Block proposer
+    pub proposer: IdentityId,
+}
+
+impl BlockMetadata {
+    /// Create new block metadata
+    pub fn new(height: u64, proposer: IdentityId) -> Self {
+        Self {
+            height,
+            timestamp: chrono::Utc::now().timestamp(),
+            transaction_count: 0,
+            total_fees_collected: 0,
+            proposer,
+        }
+    }
+
+    /// Create block metadata with all fields
+    pub fn with_fees(height: u64, proposer: IdentityId, total_fees: u64) -> Self {
+        Self {
+            height,
+            timestamp: chrono::Utc::now().timestamp(),
+            transaction_count: 0,
+            total_fees_collected: total_fees,
+            proposer,
+        }
+    }
+}
+
+/// Canonical validator message for network broadcast
+///
+/// Invariant CE-ENG-2: ConsensusEngine broadcasts only signed, canonical ValidatorMessages.
+/// It never broadcasts raw Vote, Proposal, or internal structs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ValidatorMessage {
+    /// Proposal message for new block
+    Propose {
+        proposal: ConsensusProposal,
+    },
+    /// Vote message (PreVote, PreCommit, or Commit votes)
+    Vote {
+        vote: ConsensusVote,
+    },
+    /// Heartbeat message for validator liveness detection
+    Heartbeat {
+        message: HeartbeatMessage,
+    },
+}
+
+/// Message broadcaster trait for network distribution
+///
+/// This trait handles peer-to-peer message distribution.
+/// The consensus engine dependency-injects this and calls it as a side effect
+/// after state transitions, treating it as best-effort telemetry.
+///
+/// **Invariant CE-ENG-1**: The consensus engine never constructs, configures, or inspects
+/// the broadcaster. It only calls it.
+///
+/// **Invariant CE-ENG-2**: ConsensusEngine broadcasts only signed, canonical ValidatorMessages.
+/// It never broadcasts raw Vote, Proposal, or internal structs.
+///
+/// **Invariant CE-ENG-3**: Broadcast is a side-effect of a completed consensus step, never a prerequisite.
+/// This preserves determinism and replayability.
+///
+/// **Invariant CE-ENG-4**: Consensus correctness MUST NOT depend on broadcast success, failure,
+/// or reachability. No retries. No quorum checks. No "if delivered < X then…".
+/// All liveness logic belongs elsewhere (timeouts, view change).
+///
+/// **Invariant CE-ENG-5**: ConsensusEngine never queries network state to determine "who to send to".
+/// The network delivers; consensus decides authority. Validator set is passed explicitly.
+///
+/// **Invariant CE-ENG-6**: Side-effect isolation. Broadcasting is the only external side-effect
+/// ConsensusEngine performs. Everything else stays in memory or storage.
+///
+/// **Invariant CE-ENG-7**: Deterministic emission. Given the same inputs, ConsensusEngine must emit
+/// the same sequence of ValidatorMessages, regardless of network behavior. This is what makes
+/// simulation and replay possible.
+#[async_trait]
+pub trait MessageBroadcaster: Send + Sync {
+    /// Broadcast message to all validators in the given validator set
+    ///
+    /// Invariant CE-ENG-5: ConsensusEngine passes validator set explicitly.
+    /// It never queries network state to determine "who to send to".
+    ///
+    /// Invariant CE-ENG-4: Consensus correctness MUST NOT depend on broadcast success,
+    /// failure, or reachability. This is best-effort telemetry only.
+    async fn broadcast_to_validators(
+        &self,
+        message: ValidatorMessage,
+        validator_ids: &[IdentityId],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }

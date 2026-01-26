@@ -120,10 +120,9 @@ pub fn get_system_bluetooth_mac() -> Result<[u8; 6]> {
 fn generate_fallback_mac() -> Result<[u8; 6]> {
     use sha2::{Sha256, Digest};
     
-    // Get system identifier
-    let system_id = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .or_else(|_| std::env::var("HOST"))
+    // Get system identifier using proper hostname API
+    let system_id = hostname::get()
+        .map(|h| h.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "UNKNOWN_HOST".to_string());
     
     // Hash to generate deterministic MAC
@@ -162,7 +161,7 @@ pub fn mac_to_dbus_path(mac: &[u8; 6]) -> String {
 /// 
 /// Converts standard UUID format (8-4-4-4-12) to Windows GUID structure
 /// Example: "6ba7b810-9dad-11d1-80b4-00c04fd430ca"
-#[cfg(all(target_os = "windows", feature = "windows-gatt"))]
+#[cfg(target_os = "windows")]
 pub fn parse_uuid_to_guid(uuid_str: &str) -> Result<windows::core::GUID> {
     use windows::core::GUID;
     
@@ -183,24 +182,6 @@ pub fn parse_uuid_to_guid(uuid_str: &str) -> Result<windows::core::GUID> {
     }
     
     Ok(GUID::from_values(data1, data2, data3, data4))
-}
-
-/// Standard ZHTP Service UUIDs
-pub mod zhtp_uuids {
-    /// ZHTP Mesh Service UUID (v3 - changed last digit from c9 to ca to bypass macOS Core Bluetooth cache)
-    pub const ZHTP_MESH_SERVICE: &str = "6ba7b810-9dad-11d1-80b4-00c04fd430ca";
-    
-    /// ZK Authentication characteristic
-    pub const ZK_AUTH_CHAR: &str = "6ba7b811-9dad-11d1-80b4-00c04fd430ca";
-    
-    /// Quantum-resistant routing characteristic
-    pub const QUANTUM_ROUTING_CHAR: &str = "6ba7b812-9dad-11d1-80b4-00c04fd430ca";
-    
-    /// Mesh data transfer characteristic
-    pub const MESH_DATA_CHAR: &str = "6ba7b813-9dad-11d1-80b4-00c04fd430ca";
-    
-    /// Mesh coordination characteristic
-    pub const MESH_COORD_CHAR: &str = "6ba7b814-9dad-11d1-80b4-00c04fd430ca";
 }
 
 #[cfg(test)]

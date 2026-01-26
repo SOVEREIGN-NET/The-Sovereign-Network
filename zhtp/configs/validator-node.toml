@@ -39,7 +39,7 @@ pricing_tier = "hot"  # High performance storage
 [network_config]
 mesh_port = 33444
 max_peers = 200  # Higher peer count for validators
-protocols = ["tcp", "bluetooth", "wifi_direct"]
+protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = ["100.94.204.6:9333", "bootstrap.sovereign.net:9333", "validator.sovereign.net:9333"]
 long_range_relays = true  # Validators may need relay access
 

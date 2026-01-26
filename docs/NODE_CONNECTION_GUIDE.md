@@ -4,7 +4,7 @@
 
 When you connect to a ZHTP node, the following happens automatically:
 1. **Peer Discovery** - Find other nodes on the network
-2. **Handshake** - Exchange identities and capabilities
+2. **Handshake** - Exchange identities and capabilities (UHP/2.0)
 3. **Blockchain Sync** - Download and verify the chain
 4. **Continuous Sync** - Stay updated with new blocks
 
@@ -26,6 +26,11 @@ That's it! With `IP:PORT` you can connect.
 | Node ID (UUID) | Peer announcement | Unique identifier |
 | Public Key | Handshake | Cryptographic identity |
 | Supported Protocols | Handshake | `["tcp", "bluetooth", "wifi_direct"]` |
+| Declared Role | Handshake | Role binding (client/server/router/etc.) |
+| Network + Protocol IDs | Handshake | Domain separation (no cross-network replay) |
+| Purpose String | Handshake | Signature scoping (`"zhtp-node-handshake"`) |
+| Channel Binding | Handshake | Bind identity proof to QUIC/TLS session |
+| Nonce / Timestamp | Handshake | Anti-replay |
 | Blockchain Height | Sync request | Determine who has newer chain |
 | Chain State Proof | Sync response | Verify chain is valid |
 
@@ -44,7 +49,8 @@ zhtp.exe node start --port 9001 --dev
 **How it works:**
 - Broadcasts on multicast address `224.0.1.75:37775`
 - Other nodes hear the broadcast and respond
-- No configuration needed!
+- No configuration needed
+- Discovery is hint-only; it never grants trust or mutates state
 
 ### Method 2: Bootstrap Peers (Remote/Internet)
 For connecting to known nodes across the internet.
@@ -81,8 +87,8 @@ Node A                          Node B
   |------ PeerAnnouncement ------>|  (UDP multicast or direct)
   |<----- PeerAnnouncement -------|
   |                               |
-  |------ Mesh Handshake -------->|  (Exchange public keys)
-  |<----- Mesh Handshake ---------|
+  |------ UHP/2.0 Handshake ------>|  (UHP v2: identity + role + domain + binding)
+  |<----- UHP/2.0 Handshake -------|
   |                               |
 ```
 
@@ -198,6 +204,26 @@ Different protocols have different MTU (max transmission unit):
 |----------|------------|----------|
 | Bluetooth LE | 200 bytes | Phone connectivity |
 | Bluetooth Classic | 1000 bytes | Desktop/laptop |
+
+---
+
+## Trust Boundary and Discovery Rules
+
+### Transport and Pre-Handshake
+- QUIC/TLS provides confidentiality and integrity only.
+- Before handshake completes, peers are anonymous and hostile.
+- No trust is inferred from IP, port, ALPN, SNI, or timing.
+
+### Handshake (UHP/2.0) Requirements
+- Signature must cover network id, protocol id/version, role, purpose, nonce, and channel binding.
+- Handshake is bound to the exact QUIC/TLS session using a TLS exporter.
+- Capabilities are trusted only if asserted inside the handshake.
+- Missing required capabilities (e.g., `quic`) is a hard failure.
+
+### Discovery Integration
+- Discovery records are hints only.
+- Discovery does not mutate routing tables, scoring, or storage.
+- Any authority grant happens only after the handshake returns a verified peer.
 | WiFi Direct | 1400 bytes | High bandwidth |
 | TCP/UDP | 1400 bytes | Internet |
 

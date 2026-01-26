@@ -95,6 +95,18 @@ pub struct SessionContext {
     pub server_did: String,
     /// Handshake timestamp
     pub timestamp: u64,
+    /// Network identifier for domain separation
+    pub network_id: String,
+    /// Protocol identifier for domain separation
+    pub protocol_id: String,
+    /// Purpose string for domain separation
+    pub purpose: String,
+    /// Declared client role (u8)
+    pub client_role: u8,
+    /// Declared server role (u8)
+    pub server_role: u8,
+    /// Channel binding token (raw bytes)
+    pub channel_binding: Vec<u8>,
 }
 
 /// Derive session key using HKDF per NIST SP 800-108
@@ -143,7 +155,19 @@ fn build_context_info(context: &SessionContext) -> Vec<u8> {
     info.push(0x00); // Separator
     info.extend_from_slice(&context.protocol_version.to_le_bytes());
     info.extend_from_slice(context.client_did.as_bytes());
+    info.push(0x00);
     info.extend_from_slice(context.server_did.as_bytes());
+    info.push(0x00);
+    info.extend_from_slice(context.network_id.as_bytes());
+    info.push(0x00);
+    info.extend_from_slice(context.protocol_id.as_bytes());
+    info.push(0x00);
+    info.extend_from_slice(context.purpose.as_bytes());
+    info.push(0x00);
+    info.push(context.client_role);
+    info.push(context.server_role);
+    info.push(0x00);
+    info.extend_from_slice(context.channel_binding.as_slice());
     info.extend_from_slice(&context.timestamp.to_le_bytes());
     info
 }
@@ -214,6 +238,12 @@ mod tests {
             client_did: "did:zhtp:test".into(),
             server_did: "did:zhtp:server".into(),
             timestamp: 1234567890,
+            network_id: "zhtp-mainnet".into(),
+            protocol_id: "uhp".into(),
+            purpose: "zhtp-node-handshake".into(),
+            client_role: 0,
+            server_role: 1,
+            channel_binding: vec![0u8; 32],
         };
 
         let key1 = derive_session_key_hkdf(&client_nonce, &server_nonce, &context).unwrap();
@@ -232,6 +262,12 @@ mod tests {
             client_did: "did:zhtp:client1".into(),
             server_did: "did:zhtp:server".into(),
             timestamp: 1234567890,
+            network_id: "zhtp-mainnet".into(),
+            protocol_id: "uhp".into(),
+            purpose: "zhtp-node-handshake".into(),
+            client_role: 0,
+            server_role: 1,
+            channel_binding: vec![0u8; 32],
         };
 
         let context2 = SessionContext {
@@ -239,6 +275,12 @@ mod tests {
             client_did: "did:zhtp:client2".into(),
             server_did: "did:zhtp:server".into(),
             timestamp: 1234567890,
+            network_id: "zhtp-mainnet".into(),
+            protocol_id: "uhp".into(),
+            purpose: "zhtp-node-handshake".into(),
+            client_role: 0,
+            server_role: 1,
+            channel_binding: vec![0u8; 32],
         };
 
         let key1 = derive_session_key_hkdf(&client_nonce, &server_nonce, &context1).unwrap();

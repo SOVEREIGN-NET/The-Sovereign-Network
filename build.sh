@@ -14,9 +14,9 @@ cargo build --release --workspace
 
 echo "✅ Build complete!"
 echo ""
-echo "Binary location: target/release/zhtp-orchestrator"
+echo "Binary location: target/release/zhtp"
 echo ""
 echo "To run a node:"
 echo "  ./run-node.sh"
 echo "  or"
-echo "  ./target/release/zhtp-orchestrator --config zhtp/configs/test-node1.toml"
+echo "  ./target/release/zhtp --config zhtp/configs/test-node1.toml"

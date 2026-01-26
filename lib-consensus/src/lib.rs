@@ -1,29 +1,40 @@
 //! ZHTP Consensus Package
-//! 
+//!
 //! Multi-layered consensus system combining Proof of Stake, Proof of Storage,
 //! Proof of Useful Work, and Byzantine Fault Tolerance for the ZHTP blockchain network.
 //!
 //! This package provides modular consensus mechanisms with integrated DAO governance,
 //! economic incentives, and post-quantum security.
 
-pub mod types;
-pub mod engines;
-pub mod validators;
-pub mod proofs;
+#[cfg(all(not(debug_assertions), feature = "dev-insecure"))]
+compile_error!("dev-insecure must not be enabled in release builds");
+
 pub mod byzantine;
-pub mod dao;
-pub mod rewards;
 pub mod chain_evaluation;
+pub mod dao;
+pub mod difficulty;
+pub mod engines;
+pub mod mempool;
 pub mod mining;
+pub mod network;
+pub mod proofs;
+pub mod rewards;
+pub mod testing;
+pub mod types;
+pub mod validators;
 
 // Re-export commonly used types
-pub use types::*;
+pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
+pub use difficulty::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
+pub use engines::enhanced_bft_engine::{ConsensusStatus, EnhancedBftEngine};
 pub use engines::ConsensusEngine;
-pub use engines::enhanced_bft_engine::{EnhancedBftEngine, ConsensusStatus};
-pub use validators::{Validator, ValidatorManager};
-pub use proofs::*;
-pub use chain_evaluation::{ChainEvaluator, ChainDecision, ChainMergeResult, ChainSummary};
+pub use mempool::{Mempool, MempoolTransaction, MempoolStats};
 pub use mining::{should_mine_block, IdentityData};
+pub use network::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
+pub use proofs::*;
+pub use testing::NoOpBroadcaster;
+pub use types::*;
+pub use validators::{Validator, ValidatorManager};
 
 #[cfg(feature = "dao")]
 pub use dao::*;
@@ -42,64 +53,90 @@ pub type ConsensusResult<T> = Result<T, ConsensusError>;
 pub enum ConsensusError {
     #[error("Invalid consensus type: {0}")]
     InvalidConsensusType(String),
-    
+
     #[error("Validator error: {0}")]
     ValidatorError(String),
-    
+
     #[error("Proof verification failed: {0}")]
     ProofVerificationFailed(String),
-    
+
     #[error("Byzantine fault detected: {0}")]
     ByzantineFault(String),
-    
+
     #[error("DAO governance error: {0}")]
     DaoError(String),
-    
+
     #[error("Reward calculation error: {0}")]
     RewardError(String),
-    
+
     #[error("Network state error: {0}")]
     NetworkStateError(String),
-    
+
     #[error("Crypto error: {0}")]
     CryptoError(#[from] anyhow::Error),
-    
+
     #[error("Identity error: {0}")]
     IdentityError(String),
-    
+
     // #[error("Storage error: {0}")]
     // StorageError(#[from] lib_storage::StorageError),  // TODO: Uncomment when storage is implemented
-    
     #[error("Network error: {0}")]
     NetworkError(String),
-    
+
     #[error("ZK proof error: {0}")]
     ZkError(String),
-    
+
     #[error("Invalid previous hash: {0}")]
     InvalidPreviousHash(String),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
-    
+
     #[error("System time error: {0}")]
     TimeError(#[from] std::time::SystemTimeError),
+
+    #[error("Fee collection failed: {0}")]
+    FeeCollectionFailed(String),
+
+    #[error("Fee distribution failed: {0}")]
+    FeeDistributionFailed(String),
 }
 
-/// Initialize the consensus system with configuration
-pub fn init_consensus(config: ConsensusConfig) -> ConsensusResult<ConsensusEngine> {
+/// Initialize the consensus system with configuration and message broadcaster
+///
+/// Invariant CE-ENG-1: The broadcaster is dependency-injected, not configured internally.
+/// No defaults. No globals. No feature flags.
+pub fn init_consensus(
+    config: ConsensusConfig,
+    broadcaster: std::sync::Arc<dyn MessageBroadcaster>,
+) -> ConsensusResult<ConsensusEngine> {
     tracing::info!(" Initializing ZHTP consensus system");
-    Ok(ConsensusEngine::new(config)?)
+    Ok(ConsensusEngine::new(config, broadcaster)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Simple mock broadcaster for testing
+    struct MockBroadcaster;
+
+    #[async_trait::async_trait]
+    impl MessageBroadcaster for MockBroadcaster {
+        async fn broadcast_to_validators(
+            &self,
+            _message: ValidatorMessage,
+            _validator_ids: &[lib_identity::IdentityId],
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn test_consensus_initialization() {
         let config = ConsensusConfig::default();
-        let result = init_consensus(config);
+        let broadcaster = std::sync::Arc::new(MockBroadcaster);
+        let result = init_consensus(config, broadcaster);
         assert!(result.is_ok());
     }
 }

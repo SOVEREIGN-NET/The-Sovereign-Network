@@ -9,6 +9,10 @@ pub mod hash;
 pub mod difficulty;
 pub mod mining;
 
+// DAO and SOV economy types
+pub mod dao;
+pub mod sector;
+
 // Contract types (available when contracts feature is enabled)
 #[cfg(feature = "contracts")]
 pub mod contract_call;
@@ -26,8 +30,17 @@ pub mod message_type;
 // Re-export blockchain core types
 pub use transaction_type::*;
 pub use hash::*;
-pub use difficulty::*;
+pub use difficulty::{Difficulty, DifficultyConfig, calculate_target, meets_difficulty, target_to_difficulty, max_target, min_target, adjust_difficulty, adjust_difficulty_with_config, difficulty_to_work};
 pub use mining::*;
+
+// Re-export DAO and SOV economy types
+pub use dao::{DAOType, TokenClass, DAOMetadata, TreasuryAllocation, SectorDao, DifficultyParameterUpdateData};
+
+// Re-export canonical welfare sector types (Issue #658)
+pub use sector::{
+    WelfareSectorId, SectorVerificationFloor, VerificationLevel as SectorVerificationLevel,
+    default_sector_floors, get_sector_floor, effective_verification_level,
+};
 
 // Re-export contract types when contracts feature is enabled
 #[cfg(feature = "contracts")]

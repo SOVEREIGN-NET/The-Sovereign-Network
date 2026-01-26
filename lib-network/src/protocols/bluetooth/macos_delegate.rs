@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "macos", allow(deprecated, unused_variables))]
 // Objective-C delegate implementation for Core Bluetooth on macOS
 // Creates custom NSObject subclasses that conform to Core Bluetooth protocols
 

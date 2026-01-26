@@ -6,6 +6,7 @@
 use lib_blockchain::*;
 use lib_blockchain::integration::*;
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
+use lib_blockchain::types::mining::get_mining_config_from_env;
 use anyhow::Result;
 
 // Helper function to create a simple valid transaction for testing
@@ -39,6 +40,7 @@ fn create_test_transaction(memo: &str) -> Result<Transaction> {
 
 // Helper function to create a mined block that meets difficulty
 fn create_mined_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -> Result<Block> {
+    let mining_config = get_mining_config_from_env();
     let merkle_root = if transactions.is_empty() {
         Hash::default()
     } else {
@@ -50,11 +52,11 @@ fn create_mined_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -
         blockchain.latest_block().unwrap().hash(),
         merkle_root,
         blockchain.latest_block().unwrap().timestamp() + 10,
-        Difficulty::from_bits(0x1fffffff), // Very easy difficulty for testing
+        mining_config.difficulty,
         blockchain.height + 1,
         transactions.len() as u32,
         transactions.iter().map(|tx| tx.size()).sum::<usize>() as u32,
-        Difficulty::from_bits(0x1fffffff),
+        mining_config.difficulty,
     );
     
     // Set nonce to 0 for easy difficulty
@@ -212,10 +214,10 @@ fn test_identity_revocation() -> Result<()> {
 #[test]
 fn test_difficulty_adjustment() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
-    let initial_difficulty = blockchain.difficulty;
+    let _initial_difficulty = blockchain.difficulty;
     
     // Add enough blocks to trigger difficulty adjustment
-    for i in 1..=crate::DIFFICULTY_ADJUSTMENT_INTERVAL {
+    for _i in 1..=crate::DIFFICULTY_ADJUSTMENT_INTERVAL {
         let block = create_mined_block(&blockchain, Vec::new())?;
         blockchain.add_block(block)?;
     }
@@ -265,6 +267,7 @@ fn test_pending_transactions() -> Result<()> {
 #[test]
 fn test_block_verification() -> Result<()> {
     let blockchain = Blockchain::new()?;
+    let mining_config = get_mining_config_from_env();
     
     // Create a valid block
     let valid_header = BlockHeader::new(
@@ -272,11 +275,11 @@ fn test_block_verification() -> Result<()> {
         blockchain.latest_block().unwrap().hash(),
         Hash::default(),
         blockchain.latest_block().unwrap().timestamp() + 10,
-        Difficulty::from_bits(0x1fffffff), // Easy difficulty for testing
+        mining_config.difficulty,
         1,
         0,
         0,
-        Difficulty::from_bits(0x1fffffff),
+        mining_config.difficulty,
     );
     
     let valid_block = Block::new(valid_header, Vec::new());
@@ -290,11 +293,11 @@ fn test_block_verification() -> Result<()> {
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?, // Wrong previous hash
         Hash::default(),
         blockchain.latest_block().unwrap().timestamp() + 10,
-        Difficulty::from_bits(0x1fffffff),
+        mining_config.difficulty,
         1,
         0,
         0,
-        Difficulty::from_bits(0x1fffffff),
+        mining_config.difficulty,
     );
     
     let invalid_block = Block::new(invalid_header, Vec::new());

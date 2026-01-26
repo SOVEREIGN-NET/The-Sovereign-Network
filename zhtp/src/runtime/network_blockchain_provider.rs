@@ -1,8 +1,7 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use lib_blockchain::BlockHeader;
 use lib_network::blockchain_sync::BlockchainProvider as NetworkBlockchainProvider;
-use lib_proofs::ChainRecursiveProof;
+use lib_network::blockchain_sync::{BlockHeader, ChainProof};
 use tracing::{debug, warn};
 
 use super::blockchain_provider::{get_global_blockchain, is_global_blockchain_available};
@@ -51,8 +50,10 @@ impl NetworkBlockchainProvider for ZhtpBlockchainProvider {
         for height in start_height..=end_height {
             match blockchain_lock.get_block(height) {
                 Some(block) => {
-                    // Use the block's header directly
-                    headers.push(block.header.clone());
+                    // Serialize the header into bytes to match the data-only interface
+                    let encoded = bincode::serialize(&block.header)
+                        .map_err(|e| anyhow!("Failed to serialize block header: {}", e))?;
+                    headers.push(encoded);
                 }
                 None => {
                     warn!("Block at height {} not found", height);
@@ -79,7 +80,7 @@ impl NetworkBlockchainProvider for ZhtpBlockchainProvider {
         Ok(serialized)
     }
 
-    async fn get_chain_proof(&self, up_to_height: u64) -> Result<ChainRecursiveProof> {
+    async fn get_chain_proof(&self, up_to_height: u64) -> Result<ChainProof> {
         debug!("Network layer requesting chain proof up to height {}", up_to_height);
         
         let blockchain = get_global_blockchain().await?;
@@ -92,7 +93,11 @@ impl NetworkBlockchainProvider for ZhtpBlockchainProvider {
         // Try to get the cached recursive proof at the requested height
         if let Some(cached_proof) = aggregator_lock.get_recursive_proof(up_to_height) {
             debug!("Found cached chain proof at height {}", up_to_height);
-            return Ok(cached_proof.clone());
+            return Ok(ChainProof {
+                chain_tip_height: up_to_height,
+                proof: bincode::serialize(&cached_proof)
+                    .map_err(|e| anyhow!("Failed to serialize cached chain proof: {}", e))?,
+            });
         }
         
         // If no proof at exact height, find the most recent proof <= up_to_height
@@ -104,7 +109,11 @@ impl NetworkBlockchainProvider for ZhtpBlockchainProvider {
             let check_height = up_to_height - offset;
             if let Some(cached_proof) = aggregator_lock.get_recursive_proof(check_height) {
                 debug!("Found cached chain proof at height {} (requested {})", check_height, up_to_height);
-                return Ok(cached_proof.clone());
+                return Ok(ChainProof {
+                    chain_tip_height: check_height,
+                    proof: bincode::serialize(&cached_proof)
+                        .map_err(|e| anyhow!("Failed to serialize cached chain proof: {}", e))?,
+                });
             }
         }
         

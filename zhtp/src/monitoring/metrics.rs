@@ -10,36 +10,8 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant, interval};
 use tracing::{info, warn, error, debug};
 
-/// Helper function to create default storage configuration
-fn create_default_storage_config() -> Result<lib_storage::UnifiedStorageConfig> {
-    use lib_storage::{UnifiedStorageConfig, StorageConfig, ErasureConfig};
-    use lib_storage::StorageTier;
-    use lib_identity::NodeId;
-
-    // Set up persistence path under ~/.zhtp/storage/
-    let zhtp_dir = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".zhtp")
-        .join("storage");
-    let dht_persist_path = zhtp_dir.join("dht_storage.bin");
-
-    Ok(UnifiedStorageConfig {
-        node_id: NodeId::from_bytes([1u8; 32]),
-        addresses: vec!["127.0.0.1:8080".to_string()],
-        economic_config: Default::default(), // Use default for EconomicManagerConfig
-        storage_config: StorageConfig {
-            max_storage_size: 1024 * 1024 * 1024, // 1GB
-            default_tier: StorageTier::Hot, // Use available variant
-            enable_compression: true,
-            enable_encryption: true,
-            dht_persist_path: Some(dht_persist_path),
-        },
-        erasure_config: ErasureConfig {
-            data_shards: 4,
-            parity_shards: 2,
-        },
-    })
-}
+// Import shared storage configuration from canonical location
+use crate::runtime::components::create_default_storage_config;
 
 /// Metrics collector for ZHTP components
 pub struct MetricsCollector {
@@ -428,7 +400,22 @@ impl MetricsCollector {
     async fn collect_storage_metrics(metrics: &mut SystemMetrics) -> Result<()> {
         // Get storage metrics from lib-storage package with proper config
         if let Ok(config) = create_default_storage_config() {
-            if let Ok(mut storage) = lib_storage::UnifiedStorageSystem::new(config).await {
+            let db_path = config.storage_config.dht_persist_path.clone()
+                .unwrap_or_else(|| {
+                    dirs::home_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join(".zhtp")
+                        .join("storage")
+                        .join("dht_db")
+                });
+
+            if let Some(parent) = db_path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    warn!("Failed to create storage directory {:?}: {}", parent, e);
+                }
+            }
+
+            if let Ok(mut storage) = lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path).await {
                 // Try to get storage statistics
                 match storage.get_statistics().await {
                     Ok(stats) => {

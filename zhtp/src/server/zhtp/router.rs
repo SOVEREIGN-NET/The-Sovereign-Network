@@ -49,7 +49,7 @@ impl ZhtpRouter {
     pub async fn handle_zhtp_stream(
         &self,
         mut recv: RecvStream,
-        mut send: SendStream,
+        send: SendStream,
     ) -> Result<()> {
         debug!("📨 Processing native ZHTP request over QUIC");
 

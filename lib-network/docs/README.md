@@ -187,6 +187,45 @@ let peers = dht.discover_peers(10, bootstrap_peer).await?;
 println!("Found {} mesh peers", peers.len());
 ```
 
+### ZHTP Client Configuration (v1.1.0+)
+
+The ZHTP client requires explicit configuration for secure operation:
+
+```rust
+use lib_network::client::{ZhtpClient, ZhtpClientConfig};
+use lib_network::web4::client::{Web4Client, Web4ClientConfig};
+use lib_identity::ZhtpIdentity;
+
+// Configure ZHTP client with bootstrap mode (development only)
+let config = ZhtpClientConfig {
+    allow_bootstrap: true,  // Accept any TLS certificate (INSECURE - dev only)
+};
+let mut client = ZhtpClient::new_bootstrap_with_config(identity, config).await?;
+client.connect("127.0.0.1:443").await?;
+
+// Configure Web4 client with custom cache directory
+let web4_config = Web4ClientConfig {
+    allow_bootstrap: true,
+    cache_dir: Some(PathBuf::from("/custom/cache")),
+    session_id: None,  // Uses UUID if None
+};
+let mut web4 = Web4Client::new_bootstrap_with_config(identity, web4_config).await?;
+web4.connect("127.0.0.1:443").await?;
+```
+
+**Why Configuration Injection?**
+- ✅ No environment variable dependencies
+- ✅ Works in containerized environments
+- ✅ WASM compatible
+- ✅ Explicit and type-safe
+- ✅ Testable without OS-level setup
+
+**For Tests:**
+Enable network integration tests with the feature flag:
+```bash
+cargo test --features allow-net-tests
+```
+
 ##  Security Model
 
 ### Wallet-Based Authentication
@@ -198,6 +237,16 @@ println!("Found {} mesh peers", peers.len());
 ### Cryptographic Protection
 - **Dilithium2 Signatures**: Post-quantum digital signatures for all operations
 - **Kyber Encryption**: Post-quantum key exchange for secure communication
+
+## Handshake
+
+UHP/2.0 defines the trust boundary between transport and verified identity.
+See `lib-network/docs/handshake/README.md`.
+
+## Option B Plan (QUIC-Only Payloads)
+
+We are actively executing the QUIC-only transport plan.
+See `docs/option-b/README.md`.
 - **Blake3 Hashing**: High-performance content addressing
 - **Replay Protection**: Timestamp and nonce validation
 

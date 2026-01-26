@@ -6,7 +6,7 @@ pub mod config;
 pub mod runtime;
 pub mod monitoring;
 pub mod integration;
-pub mod cli;
+// CLI module moved to separate zhtp-cli crate
 pub mod api;
 pub mod server;
 pub mod unified_server;
@@ -14,13 +14,17 @@ pub mod session_manager;
 pub mod security;
 pub mod discovery_coordinator;
 pub mod utils;
+pub mod network_output_dispatcher;
+pub mod storage_network_integration;
+pub mod web4_stub;
+pub mod web4_manifest;
+pub mod keystore_names;
 
 // Re-export key types for external use
 pub use config::{NodeConfig, CliArgs, Environment, MeshMode, SecurityLevel};
 pub use runtime::{RuntimeOrchestrator, ComponentStatus, ComponentId, Component};
 pub use monitoring::{MonitoringSystem, SystemMetrics, HealthStatus as MonitoringHealth};
 pub use integration::{IntegrationManager, ServiceContainer, EventBus};
-pub use cli::{ZhtpCli, ZhtpCommand, run_cli, format_output};
 pub use api::{ZhtpServer, IdentityHandler, BlockchainHandler, StorageHandler, ProtocolHandler, MiddlewareStack};
 pub use unified_server::ZhtpUnifiedServer;
 pub use server::IncomingProtocol;

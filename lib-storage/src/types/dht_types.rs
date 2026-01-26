@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use std::collections::HashMap;
 
+// Re-export DhtPeerIdentity from lib-identity for convenience
+pub use lib_identity::DhtPeerIdentity;
+
 /// Smart contract data for DHT operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractDhtData {
@@ -203,118 +206,37 @@ pub struct StorageCapabilities {
     pub uptime: f64,
 }
 
-/// Unified Peer Identity for DHT operations
+/// Unified Peer Identity for DHT operations.
 ///
-/// **MIGRATION (Ticket #145):** Consolidates NodeId, PublicKey, and DID
-/// into a single structure for complete peer identification.
+/// Create a placeholder peer identity when only a NodeId is available.
 ///
-/// # Note
-///
-/// This is a storage-local version to avoid circular dependencies with lib-network.
-/// The full `UnifiedPeerId` from lib-network can be converted to this type.
-///
-/// # Technical Debt (HIGH-4)
-///
-/// **TODO:** This struct duplicates `UnifiedPeerId` from lib-network to avoid
-/// circular dependencies. This creates maintenance burden and potential drift.
-///
-/// **Preferred solution:** Create `lib-types` crate containing shared types:
-/// - Move `UnifiedPeerId`, `NodeId`, `DhtKey` to lib-types
-/// - Have both lib-storage and lib-network depend on lib-types
-/// - Remove this duplicate struct
-///
-/// **Why not done now:** Requires significant refactoring across multiple crates.
-/// Tracked in: https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/145
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct DhtPeerIdentity {
-    /// Canonical node identifier from lib-identity
-    /// Used for Kademlia distance calculations
-    pub node_id: NodeId,
-    
-    /// Cryptographic public key for signature verification
-    pub public_key: lib_crypto::PublicKey,
-    
-    /// Decentralized Identifier (DID)
-    /// Format: "did:zhtp:<hash>"
-    pub did: String,
-    
-    /// Device identifier (e.g., "laptop", "phone")
-    pub device_id: String,
+/// This is intended for bootstrap/testing paths where full identity material
+/// is not yet available. The resulting peer is marked as bootstrap-mode.
+pub fn placeholder_peer_identity(node_id: NodeId) -> DhtPeerIdentity {
+    DhtPeerIdentity {
+        node_id,
+        public_key: lib_crypto::PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0u8; 32],
+        },
+        did: String::from("did:zhtp:placeholder"),
+        device_id: String::from("default"),
+    }
 }
 
-impl DhtPeerIdentity {
-    /// Create from ZhtpIdentity
-    ///
-    /// # Security (MED-7)
-    ///
-    /// **WARNING:** This method accepts only a NodeId and creates a placeholder identity.
-    /// The resulting DhtPeerIdentity will have an EMPTY public key and placeholder DID,
-    /// which means signature verification will FAIL.
-    ///
-    /// **PREFERRED:** Use `from_zhtp_identity_full()` or construct DhtPeerIdentity directly
-    /// with valid cryptographic material.
-    ///
-    /// This method is retained for backwards compatibility but should be avoided in
-    /// security-critical code paths.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use from_zhtp_identity_full() or construct DhtPeerIdentity with valid public key"
-    )]
-    pub fn from_zhtp_identity(identity: &crate::types::NodeId) -> Result<Self, anyhow::Error> {
-        // SECURITY: Log warning about insecure usage
-        tracing::warn!(
-            "from_zhtp_identity() creates placeholder identity without valid public key. \
-             Use from_zhtp_identity_full() for security-critical operations."
-        );
-
-        Ok(Self {
-            node_id: identity.clone(),
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
-                key_id: [0u8; 32],
-            },
-            did: String::from("did:zhtp:placeholder"),
-            device_id: String::from("default"),
-        })
-    }
-
-    /// Create from full ZhtpIdentity with all cryptographic material
-    ///
-    /// # Arguments
-    ///
-    /// * `identity` - Full ZhtpIdentity with valid cryptographic keys
-    ///
-    /// # Returns
-    ///
-    /// DhtPeerIdentity with valid public key for signature verification
-    pub fn from_zhtp_identity_full(identity: &lib_identity::ZhtpIdentity) -> Self {
-        Self {
-            node_id: identity.node_id.clone(),
-            public_key: identity.public_key.clone(),
-            did: identity.did.clone(),
-            device_id: identity.primary_device.clone(),
-        }
-    }
-    
-    /// Get NodeId reference (for Kademlia routing)
-    pub fn node_id(&self) -> &NodeId {
-        &self.node_id
-    }
-    
-    /// Get PublicKey reference (for signature verification)
-    pub fn public_key(&self) -> &lib_crypto::PublicKey {
-        &self.public_key
-    }
-    
-    /// Get DID reference (for identity validation)
-    pub fn did(&self) -> &str {
-        &self.did
-    }
-    
-    /// Get device ID reference
-    pub fn device_id(&self) -> &str {
-        &self.device_id
+/// Build a peer identity from explicit fields.
+pub fn build_peer_identity(
+    node_id: NodeId,
+    public_key: lib_crypto::PublicKey,
+    did: String,
+    device_id: String,
+) -> DhtPeerIdentity {
+    DhtPeerIdentity {
+        node_id,
+        public_key,
+        did,
+        device_id,
     }
 }
 
@@ -487,9 +409,13 @@ impl DhtMessage {
     }
 
     /// Get the data that should be signed for this message
+    ///
+    /// Includes all fields except the signature itself to prevent tampering.
+    /// Returns empty Vec if serialization fails (should never happen for valid messages).
     pub fn signable_data(&self) -> Vec<u8> {
         use bincode;
         // Create a version without signature for signing
+        // SECURITY: All fields except signature must be included to prevent tampering
         let signable = SignableMessage {
             message_id: &self.message_id,
             message_type: &self.message_type,
@@ -497,15 +423,23 @@ impl DhtMessage {
             target_id: &self.target_id,
             key: &self.key,
             value: &self.value,
+            nodes: &self.nodes,
+            contract_data: &self.contract_data,
             timestamp: self.timestamp,
             nonce: &self.nonce,
             sequence_number: self.sequence_number,
         };
-        bincode::serialize(&signable).unwrap_or_default()
+        // Note: serialization should never fail for valid Rust types
+        // If it does, return empty vec which will cause signature verification to fail
+        bincode::serialize(&signable).unwrap_or_else(|e| {
+            tracing::error!("Failed to serialize signable message: {}", e);
+            Vec::new()
+        })
     }
 }
 
 /// Helper struct for creating signable message data
+/// SECURITY: All message fields except signature must be included here
 #[derive(Serialize)]
 struct SignableMessage<'a> {
     message_id: &'a str,
@@ -514,6 +448,8 @@ struct SignableMessage<'a> {
     target_id: &'a Option<NodeId>,
     key: &'a Option<String>,
     value: &'a Option<Vec<u8>>,
+    nodes: &'a Option<Vec<DhtNode>>,
+    contract_data: &'a Option<ContractDhtData>,
     timestamp: u64,
     nonce: &'a [u8; 32],
     sequence_number: u64,

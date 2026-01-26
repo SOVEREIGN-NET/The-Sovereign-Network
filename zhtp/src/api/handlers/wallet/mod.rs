@@ -21,19 +21,8 @@ use lib_identity::{IdentityManager, identity::ZhtpIdentity as Identity};
 use lib_crypto::Hash;
 use lib_blockchain::Blockchain;
 
-/// Helper function to create JSON responses correctly
-fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
-    let json_response = serde_json::to_vec(&data)?;
-    Ok(ZhtpResponse::success_with_content_type(
-        json_response,
-        "application/json".to_string(),
-        None,
-    ))
-}
-
-fn create_error_response(status: ZhtpStatus, message: String) -> ZhtpResponse {
-    ZhtpResponse::error(status, message)
-}
+// Import shared helpers from common module
+use super::common::{create_json_response, create_error_response};
 
 /// Complete wallet handler using MultiWalletManager
 pub struct WalletHandler {

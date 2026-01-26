@@ -1,85 +1,115 @@
-//! ZHTP Network Node - Complete Internet Replacement System
-//! 
-//! This is the main orchestrator binary that coordinates all ZHTP packages
-//! into a unified network node capable of:
-//! 
-//! - Complete ISP replacement through mesh networking
-//! - Zero-knowledge privacy for all communications  
-//! - Universal Basic Income through network participation
-//! - Quantum-resistant cryptographic security
-//! - Decentralized governance through DAO integration
-//! - Web4 protocol stack
-//! 
-//! The ZHTP node can operate in two modes:
-//! - Pure Mesh: Complete  using only mesh protocols
-//! - Hybrid: Mesh networking with TCP/IP fallback for transition
+//! ZHTP Network Node
+//!
+//! Main entry point for the ZHTP orchestrator node.
+//! Starts the unified server and manages the network node lifecycle.
 
-use anyhow::Result;
-use tracing::info;
-
-// Import new orchestrator modules
-use zhtp::{
-    cli::run_cli,
-    // api::{start_api_server, ApiConfig}, // TODO: Re-enable when API handlers are implemented
-};
+use zhtp::config::{CliArgs, load_configuration, Environment};
+use zhtp::runtime::RuntimeOrchestrator;
+use tracing_subscriber;
+use std::env;
+use std::path::PathBuf;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // Install rustls crypto provider before any TLS/QUIC operations
-    // This MUST be done before any rustls usage to avoid panic
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
-    // Initialize logging system with INFO level by default.
-    // Add explicit filter directives to silence noisy third-party targets
-    // (mdns_sd) and to suppress firewall rule WARNs from network_isolation.
-    let mut filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-
-    // Silence mdns-sd internal noisy messages (these are harmless channel-close warnings)
-    filter = filter.add_directive("mdns_sd=error".parse().expect("invalid directive"));
-    filter = filter.add_directive("mdns_sd::service_daemon=error".parse().expect("invalid directive"));
-
-    // Suppress firewall-rule failure warnings coming from network isolation on Windows
-    filter = filter.add_directive("zhtp::config::network_isolation=error".parse().expect("invalid directive"));
+async fn main() -> anyhow::Result<()> {
+    // Initialize logging
+    let filter = env::var("RUST_LOG")
+        .unwrap_or_else(|_| "info".to_string());
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .init();
 
-    info!(" ZHTP Orchestrator v{}", env!("CARGO_PKG_VERSION"));
-    info!("Level 1 Orchestrator - Coordinates protocols, blockchain, network");
+    // Parse command-line arguments
+    let args = parse_cli_args();
 
-    // Check if this is a special server mode
-    let args: Vec<String> = std::env::args().collect();
-    
-    if args.len() > 1 && args[1] == "--server" {
-        info!("ZHTP Orchestrator Server mode not yet implemented");
-        info!("Falling back to CLI mode");
-        // TODO: Re-enable when API handlers are implemented
-        // let config = ApiConfig::default();
-        // start_api_server(config).await?;
-        run_cli().await?;
-    } else {
-        // Default: Use the full CLI structure with all subcommands
-        info!("Starting ZHTP Orchestrator CLI");
-        run_cli().await?;
+    // Load and validate configuration
+    let config = load_configuration(&args).await?;
+
+    // Create the orchestrator with the configuration
+    let orchestrator = RuntimeOrchestrator::new(config).await?;
+
+    // Start the node with full startup sequence (includes identity creation)
+    orchestrator.start_node().await?;
+
+    // Keep running indefinitely
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
     }
-
-    info!(" ZHTP Orchestrator shutdown complete");
-    Ok(())
 }
 
-// Note: The legacy run_node function and local modules have been replaced
-// with the new zhtp::cli and zhtp::api architecture.
-//
-// The new architecture properly implements:
-// Level 1: zhtp (orchestrator) - coordinates Level 2 components
-// Level 2: (protocols, blockchain, network) - manage Level 3 components  
-// Level 3: (consensus, storage, economy) - utilize Level 4 utilities
-// Level 4: (proofs, identity, crypto) - core utilities
-//
-// To actually run Level 2 components with implementations:
-// 1. Start lib-protocols server on port 8001
-// 2. Start lib-blockchain server on port 8002  
-// 3. Start lib-network server on port 8003
-// 4. ZHTP orchestrator coordinates them via HTTP calls
+/// Parse command-line arguments
+fn parse_cli_args() -> CliArgs {
+    let args: Vec<String> = env::args().collect();
+
+    let mut config = PathBuf::from("zhtp/configs/test-node1.toml");
+    let mut environment = Environment::Development;
+    let mut log_level = "info".to_string();
+    let mut data_dir = dirs::home_dir()
+        .map(|d| d.join(".zhtp"))
+        .unwrap_or_else(|| PathBuf::from(".zhtp"));
+    let mut mesh_port = None;
+    let mut pure_mesh = false;
+
+    // Simple argument parser
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--config" | "-c" => {
+                if i + 1 < args.len() {
+                    config = PathBuf::from(&args[i + 1]);
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--testnet" => {
+                environment = Environment::Testnet;
+                i += 1;
+            }
+            "--mainnet" => {
+                environment = Environment::Mainnet;
+                i += 1;
+            }
+            "--data-dir" => {
+                if i + 1 < args.len() {
+                    data_dir = PathBuf::from(&args[i + 1]);
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--mesh-port" => {
+                if i + 1 < args.len() {
+                    if let Ok(port) = args[i + 1].parse() {
+                        mesh_port = Some(port);
+                    }
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--pure-mesh" => {
+                pure_mesh = true;
+                i += 1;
+            }
+            "--log-level" => {
+                if i + 1 < args.len() {
+                    log_level = args[i + 1].clone();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+
+    CliArgs {
+        config,
+        environment,
+        log_level,
+        data_dir,
+        mesh_port,
+        pure_mesh,
+    }
+}

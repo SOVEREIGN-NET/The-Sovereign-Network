@@ -24,7 +24,42 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::domain_registry::DomainRegistry;
+use super::name_resolver::NameResolver;
+
+// ZDNS types - available when storage-integration is enabled
+#[cfg(feature = "storage-integration")]
 use crate::zdns::{ZdnsResolver, Web4Record};
+
+// Stub types when ZDNS is not available
+#[cfg(not(feature = "storage-integration"))]
+struct ZdnsResolver;
+
+#[cfg(not(feature = "storage-integration"))]
+impl ZdnsResolver {
+    /// Stub method - ZDNS not available
+    pub async fn resolve_web4(&self, _domain: &str) -> Result<Web4Record, std::fmt::Error> {
+        Err(std::fmt::Error::default())
+    }
+
+    /// Stub method - ZDNS not available
+    pub async fn invalidate(&self, _domain: &str) {
+        // No-op
+    }
+}
+#[cfg(not(feature = "storage-integration"))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Web4Record {
+    pub domain: String,
+    pub owner: String,
+    pub content_mappings: HashMap<String, String>,
+    pub content_mode: Option<ContentMode>,
+    pub spa_entry: Option<String>,
+    pub asset_prefixes: Option<Vec<String>>,
+    pub capability: Option<Web4Capability>,
+    pub ttl: u32,
+    pub registered_at: u64,
+    pub expires_at: u64,
+}
 
 /// Content serving mode for a domain
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -120,6 +155,8 @@ pub struct ContentResult {
 pub struct Web4ContentService {
     /// Domain registry for lookups
     registry: Arc<DomainRegistry>,
+    /// Name resolver for read-only lookups
+    name_resolver: Arc<NameResolver>,
     /// Optional ZDNS resolver for cached domain lookups
     zdns_resolver: Option<Arc<ZdnsResolver>>,
     /// Service-level defaults
@@ -131,8 +168,10 @@ pub struct Web4ContentService {
 impl Web4ContentService {
     /// Create a new content service with default configuration
     pub fn new(registry: Arc<DomainRegistry>) -> Self {
+        let name_resolver = Arc::new(NameResolver::new(registry.clone()));
         Self {
             registry,
+            name_resolver,
             zdns_resolver: None,
             defaults: Web4ContentDefaults::default(),
             domain_configs: Arc::new(RwLock::new(HashMap::new())),
@@ -141,8 +180,10 @@ impl Web4ContentService {
 
     /// Create with custom defaults
     pub fn with_defaults(registry: Arc<DomainRegistry>, defaults: Web4ContentDefaults) -> Self {
+        let name_resolver = Arc::new(NameResolver::new(registry.clone()));
         Self {
             registry,
+            name_resolver,
             zdns_resolver: None,
             defaults,
             domain_configs: Arc::new(RwLock::new(HashMap::new())),
@@ -150,12 +191,15 @@ impl Web4ContentService {
     }
 
     /// Create with ZDNS resolver for cached domain lookups
+    #[cfg(feature = "storage-integration")]
     pub fn with_zdns(
         registry: Arc<DomainRegistry>,
         zdns_resolver: Arc<ZdnsResolver>,
     ) -> Self {
+        let name_resolver = Arc::new(NameResolver::new(registry.clone()));
         Self {
             registry,
+            name_resolver,
             zdns_resolver: Some(zdns_resolver),
             defaults: Web4ContentDefaults::default(),
             domain_configs: Arc::new(RwLock::new(HashMap::new())),
@@ -163,17 +207,39 @@ impl Web4ContentService {
     }
 
     /// Create with ZDNS resolver and custom defaults
+    #[cfg(feature = "storage-integration")]
     pub fn with_zdns_and_defaults(
         registry: Arc<DomainRegistry>,
         zdns_resolver: Arc<ZdnsResolver>,
         defaults: Web4ContentDefaults,
     ) -> Self {
+        let name_resolver = Arc::new(NameResolver::new(registry.clone()));
         Self {
             registry,
+            name_resolver,
             zdns_resolver: Some(zdns_resolver),
             defaults,
             domain_configs: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Disabled without storage-integration feature
+    #[cfg(not(feature = "storage-integration"))]
+    pub fn with_zdns(
+        registry: Arc<DomainRegistry>,
+        _zdns_resolver: Arc<ZdnsResolver>,
+    ) -> Self {
+        Self::new(registry)
+    }
+
+    /// Disabled without storage-integration feature
+    #[cfg(not(feature = "storage-integration"))]
+    pub fn with_zdns_and_defaults(
+        registry: Arc<DomainRegistry>,
+        _zdns_resolver: Arc<ZdnsResolver>,
+        defaults: Web4ContentDefaults,
+    ) -> Self {
+        Self::with_defaults(registry, defaults)
     }
 
     /// Get reference to ZDNS resolver (if configured)
@@ -190,33 +256,25 @@ impl Web4ContentService {
             resolver.resolve_web4(domain).await.map_err(|e| anyhow!("{}", e))
         } else {
             // Fall back to direct registry lookup
-            let lookup = self.registry.lookup_domain(domain).await?;
-            if lookup.found {
-                if let Some(record) = lookup.record {
-                    Ok(Web4Record {
-                        domain: record.domain,
-                        owner: hex::encode(&record.owner.0[..16]),
-                        content_mappings: record.content_mappings,
-                        content_mode: Some(ContentMode::Spa),
-                        spa_entry: Some("index.html".to_string()),
-                        asset_prefixes: Some(vec![
-                            "/assets/".to_string(),
-                            "/static/".to_string(),
-                            "/js/".to_string(),
-                            "/css/".to_string(),
-                            "/images/".to_string(),
-                        ]),
-                        capability: Some(Web4Capability::SpaServe),
-                        ttl: 300,
-                        registered_at: record.registered_at,
-                        expires_at: record.expires_at,
-                    })
-                } else {
-                    Err(anyhow!("Domain not found: {}", domain))
-                }
-            } else {
-                Err(anyhow!("Domain not found: {}", domain))
-            }
+            let record = self.name_resolver.resolve(domain).await?;
+            Ok(Web4Record {
+                domain: record.domain,
+                owner: hex::encode(&record.owner.0[..16]),
+                content_mappings: record.content_mappings,
+                content_mode: Some(ContentMode::Spa),
+                spa_entry: Some("index.html".to_string()),
+                asset_prefixes: Some(vec![
+                    "/assets/".to_string(),
+                    "/static/".to_string(),
+                    "/js/".to_string(),
+                    "/css/".to_string(),
+                    "/images/".to_string(),
+                ]),
+                capability: Some(Web4Capability::SpaServe),
+                ttl: 300,
+                registered_at: record.registered_at,
+                expires_at: record.expires_at,
+            })
         }
     }
 

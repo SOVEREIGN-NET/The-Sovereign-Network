@@ -1472,7 +1472,7 @@ impl ZhtpHandlers {
         }
 
         // Use TransactionVerifier for detailed verification
-        if let Ok(verifier) = TransactionVerifier::new() {
+        if let Ok(_verifier) = TransactionVerifier::new() {
             // Create a simple transaction proof from the request data
             let public_inputs = self.generate_zk_public_inputs(request);
             
@@ -1535,7 +1535,7 @@ impl ZhtpHandlers {
         let context_bytes = proof_context.to_string().into_bytes();
         
         // Try to use lib-proofs for proof generation
-        if let Ok(zk_system) = initialize_zk_system() {
+        if let Ok(_zk_system) = initialize_zk_system() {
             // Generate a simple validity proof using lib-proofs
             // Create some dummy transaction parameters for content validity proof
             let content_hash_bytes: [u8; 32] = hash_blake3(content_hash.as_bytes()).try_into().unwrap_or([0u8; 32]);
@@ -1703,10 +1703,11 @@ mod tests {
     async fn test_api_endpoint_routing() {
         let config = HandlerConfig::default();
         let handlers = ZhtpHandlers::new(config);
-        
-        let request = create_test_request(ZhtpMethod::Get, "/api/v1/protocol/info");
+
+        // Test that capabilities endpoint returns Ok
+        let request = create_test_request(ZhtpMethod::Get, "/.well-known/zhtp");
         let response = handlers.handle_get(request).await.unwrap();
-        
+
         assert_eq!(response.status, ZhtpStatus::Ok);
     }
 }

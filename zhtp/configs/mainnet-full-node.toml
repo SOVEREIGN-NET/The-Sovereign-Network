@@ -62,7 +62,7 @@ pricing_tier = "warm"        # Balanced storage tier
 [network_config]
 mesh_port = 33444            # Standard mainnet mesh port
 max_peers = 200              # High peer count for production
-protocols = ["tcp", "bluetooth", "wifi_direct"]
+protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = [
     "mainnet-seed1.sovereign.net:9333",
     "mainnet-seed2.sovereign.net:9333",

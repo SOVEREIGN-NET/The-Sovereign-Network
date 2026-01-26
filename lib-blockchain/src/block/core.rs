@@ -101,6 +101,37 @@ impl Block {
         self.transactions.iter().map(|tx| tx.fee).sum()
     }
 
+    /// Week 10 Phase 3: Get detailed fee information for block
+    ///
+    /// This method calculates comprehensive fee statistics for:
+    /// - Total fees collected
+    /// - Average fee per transaction
+    /// - Fee distribution to consensus/UBI/governance
+    ///
+    /// Used for fee distribution and audit logging.
+    pub fn fee_summary(&self) -> (u64, u64, u64, u64) {
+        let total_fees = self.total_fees();
+
+        // Fee distribution percentages (45% UBI, 30% Consensus, 15% Governance, 10% Treasury)
+        let ubi_fees = total_fees.saturating_mul(45) / 100;
+        let consensus_fees = total_fees.saturating_mul(30) / 100;
+        let governance_fees = total_fees.saturating_mul(15) / 100;
+        let treasury_fees = total_fees.saturating_mul(10) / 100;
+
+        (ubi_fees, consensus_fees, governance_fees, treasury_fees)
+    }
+
+    /// Get average transaction fee in the block
+    pub fn average_fee(&self) -> u64 {
+        let total_fees = self.total_fees();
+        let tx_count = self.transactions.len() as u64;
+        if tx_count > 0 {
+            total_fees / tx_count
+        } else {
+            0
+        }
+    }
+
     /// Verify the Merkle root of transactions
     pub fn verify_merkle_root(&self) -> bool {
         let calculated_root = crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);

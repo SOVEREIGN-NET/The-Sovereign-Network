@@ -7,6 +7,8 @@ pub mod geo_location;
 pub mod local_network;
 pub mod smart_routing;
 pub mod unified;
+pub mod pin_cache;
+pub mod pinned_verifier;
 
 pub use lorawan::*;
 pub use satellite::*;
@@ -15,6 +17,12 @@ pub use hardware::*;
 pub use lorawan_hardware::*;
 pub use geo_location::GeographicLocation;
 pub use local_network::*;
+pub use pin_cache::{TlsPinCache, PinCacheEntry, NodeIdKey, global_pin_cache};
+#[allow(deprecated)]
+pub use pinned_verifier::{
+    PinnedCertVerifier, PinnedVerifierConfig, SyncPinStore, VerificationResult,
+    init_global_verifier, global_verifier, is_verifier_initialized,
+};
 
 // Export unified discovery as the primary interface
 pub use unified::{

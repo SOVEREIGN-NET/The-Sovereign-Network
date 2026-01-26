@@ -16,9 +16,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
 use lib_crypto::PublicKey;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
@@ -60,9 +59,18 @@ impl BluetoothRouter {
         blockchain_provider: Option<Arc<dyn lib_network::blockchain_sync::BlockchainProvider>>,
         sync_coordinator: Arc<lib_network::blockchain_sync::SyncCoordinator>,
         mesh_router: Arc<MeshRouter>,
+        enable_bluetooth: bool,
     ) -> Result<()> {
+        // AUTHORITATIVE CONFIG LAYER: Check if Bluetooth should be enabled
+        // This is the policy enforcement point where config decisions are applied
+        if !enable_bluetooth {
+            info!("⊘ Bluetooth LE disabled by configuration (enable_bluetooth=false)");
+            info!("   Skipping Bluetooth initialization");
+            return Ok(());
+        }
+
         info!("📱 Initializing Bluetooth mesh protocol for phone connectivity...");
-        
+
         // Create Bluetooth mesh protocol instance
         let mut bluetooth_protocol = BluetoothMeshProtocol::new(self.node_id, our_public_key)?;
         
@@ -111,7 +119,7 @@ impl BluetoothRouter {
                         }
                         
                         // Try to parse as MeshHandshake first (initial connection)
-                        if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&data) {
+                        if let Ok(handshake) = bincode::deserialize::<lib_network::protocols::bluetooth::MeshHandshake>(&data) {
                             info!("🤝 GATT handshake from: {}", handshake.node_id);
                             
                             // Extract the real cryptographic public key from handshake
@@ -161,7 +169,7 @@ impl BluetoothRouter {
                             let peer_entry = lib_network::peer_registry::PeerEntry::new(
                                 peer_key,
                                 vec![lib_network::peer_registry::PeerEndpoint {
-                                    address: gatt_address.clone(),
+                                    address: lib_network::NodeAddress::BluetoothLE(gatt_address.clone()),
                                     protocol: connection.protocol.clone(),
                                     signal_strength: 0.8,
                                     latency_ms: 50,
@@ -277,12 +285,31 @@ impl BluetoothRouter {
                                                     headers: serialized_headers,
                                                     start_height: *start_height,
                                                 };
-                                                
-                                                // Send response back via BLE
-                                                if let Err(e) = mesh_router_for_gatt.send_to_peer(requester, response).await {
-                                                    warn!("Failed to send HeadersResponse via GATT: {}", e);
-                                                } else {
-                                                    info!("✅ GATT: HeadersResponse sent successfully");
+
+                                                // ✅ TICKET 2.6 FIX: Route through MeshRouter with CORRECT sender identity
+                                                // CRITICAL CORRECTNESS: Sender MUST always be the local node, never the requester
+                                                // This ensures:
+                                                // - Identity verification is meaningful
+                                                // - Logs accurately reflect message provenance
+                                                // - Signatures and accountability are valid
+                                                match mesh_router_for_gatt.get_sender_public_key().await {
+                                                    Ok(our_pubkey) => {
+                                                        match mesh_router_for_gatt.send_with_routing(
+                                                            response,
+                                                            requester,
+                                                            &our_pubkey,
+                                                        ).await {
+                                                            Ok(msg_id) => {
+                                                                info!("✅ GATT: HeadersResponse routed successfully (ID: {}, destination verified)", msg_id);
+                                                            }
+                                                            Err(e) => {
+                                                                warn!("Failed to route HeadersResponse via MeshRouter: {}", e);
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        error!("FATAL: Cannot send HeadersResponse - local identity not available: {}", e);
+                                                    }
                                                 }
                                             }
                                             Err(e) => {
@@ -409,7 +436,7 @@ impl BluetoothRouter {
             debug!("Bluetooth data received: {} bytes", bytes_read);
             
             // Try to parse as binary mesh handshake (same as TCP!)
-            if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&buffer[..bytes_read]) {
+            if let Ok(handshake) = bincode::deserialize::<lib_network::protocols::bluetooth::MeshHandshake>(&buffer[..bytes_read]) {
                 info!("🤝 Received Bluetooth mesh handshake from peer: {}", handshake.node_id);
                 info!("   Version: {}, Port: {}, Protocols: {:?}", 
                     handshake.version, handshake.mesh_port, handshake.protocols);
@@ -453,7 +480,7 @@ impl BluetoothRouter {
                     let peer_entry = lib_network::peer_registry::PeerEntry::new(
                         peer_key,
                         vec![lib_network::peer_registry::PeerEndpoint {
-                            address: String::new(), // TODO: Add actual address
+                            address: lib_network::NodeAddress::BluetoothLE(String::new()), // TODO: Get actual BLE address
                             protocol: connection.protocol.clone(),
                             signal_strength: 0.8,
                             latency_ms: 50,

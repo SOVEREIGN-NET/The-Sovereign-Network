@@ -10,11 +10,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use lib_identity::{ZhtpIdentity, IdentityId};
-use lib_identity::wallets::WalletId;
+use lib_identity::wallets::{WalletId, QuantumWallet, WalletType};
 use lib_identity::types::IdentityType;
 use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_crypto::{PrivateKey, Hash};
 use serde::{Serialize, Deserialize};
+use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME, WALLET_DATA_FILENAME};
+use tracing::info;
 // Core wallet functionality with mesh network integration
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -62,6 +64,12 @@ struct PersistedWalletData {
     wallet_address: String,
     node_wallet_id: Vec<u8>,
     node_identity_id: Vec<u8>,
+    #[serde(default = "default_genesis_balance")]
+    balance: u64,
+}
+
+fn default_genesis_balance() -> u64 {
+    5000 // Default genesis wallet balance
 }
 
 /// Get the default keystore path (~/.zhtp/keystore)
@@ -83,11 +91,11 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
         return Err(KeystoreError::NotFound(keystore_path.to_path_buf()));
     }
 
-    let user_identity_file = keystore_path.join("user_identity.json");
-    let node_identity_file = keystore_path.join("node_identity.json");
-    let user_private_key_file = keystore_path.join("user_private_key.json");
-    let node_private_key_file = keystore_path.join("node_private_key.json");
-    let wallet_data_file = keystore_path.join("wallet_data.json");
+    let user_identity_file = keystore_path.join(USER_IDENTITY_FILENAME);
+    let node_identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
+    let user_private_key_file = keystore_path.join(USER_PRIVATE_KEY_FILENAME);
+    let node_private_key_file = keystore_path.join(NODE_PRIVATE_KEY_FILENAME);
+    let wallet_data_file = keystore_path.join(WALLET_DATA_FILENAME);
 
     // Check all required files exist
     for file in [&user_identity_file, &node_identity_file, &user_private_key_file, &node_private_key_file, &wallet_data_file] {
@@ -118,7 +126,7 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
         master_seed: user_keystore_key.master_seed.clone(),
     };
 
-    let user_identity = ZhtpIdentity::from_serialized(&user_identity_data, &user_private_key)
+    let mut user_identity = ZhtpIdentity::from_serialized(&user_identity_data, &user_private_key)
         .map_err(|e| KeystoreError::Corrupt(user_identity_file.clone(), e.to_string()))?;
 
     // Load node identity
@@ -147,19 +155,52 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
     let wallet_data: PersistedWalletData = serde_json::from_str(&wallet_data_str)
         .map_err(|e| KeystoreError::Corrupt(wallet_data_file.clone(), e.to_string()))?;
 
-    // Reconstruct PrivateIdentityData for user
+    // CRITICAL: Restore wallet into user_identity's wallet_manager
+    // When identity is deserialized, wallet_manager is empty - we must repopulate it
+    // Create a basic QuantumWallet from the persisted metadata
+    let wallet_id = lib_crypto::Hash(
+        wallet_data.node_wallet_id.clone().try_into()
+            .map_err(|_| KeystoreError::Corrupt(wallet_data_file.clone(), "Invalid wallet_id length".to_string()))?
+    );
+
+    // Create wallet with restored identity's public key (seed phrase not preserved for security)
+    let mut restored_wallet = QuantumWallet::new(
+        WalletType::Primary,
+        wallet_data.wallet_name.clone(),
+        None, // No alias
+        Some(user_identity.id.clone()),
+        user_identity.public_key.dilithium_pk.clone(), // Use actual public key from restored identity
+    );
+
+    // Override the auto-generated wallet_id with the saved one
+    restored_wallet.id = wallet_id.clone();
+
+    // CRITICAL: Restore the wallet balance from persisted data
+    // Without this, restored wallets would have 0 balance
+    restored_wallet.balance = wallet_data.balance;
+
+    // Insert wallet into the wallet_manager
+    user_identity.wallet_manager.wallets.insert(wallet_id.clone(), restored_wallet);
+    info!("Wallet restoration: restored {} wallet (ID: {}) into user_identity {}",
+        wallet_data.wallet_name,
+        hex::encode(&wallet_id.0[..8]),
+        hex::encode(&user_identity.id.0[..8])
+    );
+    info!("Wallet count: {}, Balance: {} ZHTP",
+        user_identity.wallet_manager.wallets.len(),
+        wallet_data.balance);
+
+    // Reconstruct PrivateIdentityData for user (recovery data only, no seed field)
     let user_private_data = lib_identity::identity::PrivateIdentityData::new(
         user_keystore_key.dilithium_sk,
         user_identity.public_key.dilithium_pk.clone(),
-        user_keystore_key.master_seed.clone().try_into().unwrap_or([0u8; 32]),
         vec![], // Recovery phrases not stored for security
     );
 
-    // Reconstruct PrivateIdentityData for node
+    // Reconstruct PrivateIdentityData for node (recovery data only, no seed field)
     let node_private_data = lib_identity::identity::PrivateIdentityData::new(
         node_keystore_key.dilithium_sk,
         node_identity.public_key.dilithium_pk.clone(),
-        node_keystore_key.master_seed.clone().try_into().unwrap_or([0u8; 32]),
         vec![],
     );
 
@@ -200,11 +241,11 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
             }
         })?;
 
-    let user_identity_file = keystore_path.join("user_identity.json");
-    let node_identity_file = keystore_path.join("node_identity.json");
-    let user_private_key_file = keystore_path.join("user_private_key.json");
-    let node_private_key_file = keystore_path.join("node_private_key.json");
-    let wallet_data_file = keystore_path.join("wallet_data.json");
+    let user_identity_file = keystore_path.join(USER_IDENTITY_FILENAME);
+    let node_identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
+    let user_private_key_file = keystore_path.join(USER_PRIVATE_KEY_FILENAME);
+    let node_private_key_file = keystore_path.join(NODE_PRIVATE_KEY_FILENAME);
+    let wallet_data_file = keystore_path.join(WALLET_DATA_FILENAME);
 
     // Extract and save user private key
     let user_private_key = result.user_identity.private_key.as_ref()
@@ -249,11 +290,18 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
     write_file_with_permissions(&node_identity_file, &node_identity_json)?;
 
     // Save wallet data
+    // Extract primary wallet balance from user_identity
+    let primary_balance = result.user_identity.wallet_manager.wallets.values()
+        .find(|w| w.wallet_type == lib_identity::WalletType::Primary)
+        .map(|w| w.balance)
+        .unwrap_or(5000); // Default to genesis balance if not found
+
     let wallet_data = PersistedWalletData {
         wallet_name: result.wallet_name.clone(),
         wallet_address: result.wallet_address.clone(),
         node_wallet_id: result.node_wallet_id.0.to_vec(),
         node_identity_id: result.node_identity_id.0.to_vec(),
+        balance: primary_balance,
     };
 
     let wallet_data_json = serde_json::to_string_pretty(&wallet_data)
@@ -282,6 +330,85 @@ fn write_file_with_permissions(path: &Path, content: &str) -> std::result::Resul
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| KeystoreError::IoError(path.to_path_buf(), e))?;
     }
+
+    Ok(())
+}
+
+/// Load only the node identity from keystore (non-interactive).
+///
+/// Returns Ok(None) when the node identity and private key files are absent.
+/// Returns an error for partial/corrupt keystores to avoid silent identity drift.
+pub async fn load_node_identity_from_keystore(keystore_path: &Path) -> Result<Option<ZhtpIdentity>> {
+    let identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
+    let key_file = keystore_path.join(NODE_PRIVATE_KEY_FILENAME);
+
+    if !identity_file.exists() && !key_file.exists() {
+        return Ok(None);
+    }
+
+    if identity_file.exists() ^ key_file.exists() {
+        return Err(anyhow!(
+            "Node keystore is incomplete: identity file present = {}, private key file present = {}",
+            identity_file.exists(),
+            key_file.exists()
+        ));
+    }
+
+    let identity_data = tokio::fs::read_to_string(&identity_file)
+        .await
+        .map_err(|e| anyhow!("Failed to read node identity {:?}: {}", identity_file, e))?;
+
+    let key_data = tokio::fs::read_to_string(&key_file)
+        .await
+        .map_err(|e| anyhow!("Failed to read node private key {:?}: {}", key_file, e))?;
+
+    let keystore_key: KeystorePrivateKey = serde_json::from_str(&key_data)
+        .map_err(|e| anyhow!("Failed to parse node private key: {}", e))?;
+
+    let private_key = PrivateKey {
+        dilithium_sk: keystore_key.dilithium_sk,
+        kyber_sk: keystore_key.kyber_sk,
+        master_seed: keystore_key.master_seed,
+    };
+
+    let identity = ZhtpIdentity::from_serialized(&identity_data, &private_key)
+        .map_err(|e| anyhow!("Failed to deserialize node identity: {}", e))?;
+
+    Ok(Some(identity))
+}
+
+/// Persist node identity and private key to the standard keystore paths.
+pub async fn persist_node_identity_to_keystore(
+    keystore_path: &Path,
+    identity: &ZhtpIdentity,
+) -> Result<()> {
+    tokio::fs::create_dir_all(keystore_path)
+        .await
+        .map_err(|e| anyhow!("Failed to create keystore directory {:?}: {}", keystore_path, e))?;
+
+    let identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
+    let key_file = keystore_path.join(NODE_PRIVATE_KEY_FILENAME);
+
+    let private_key = identity
+        .private_key
+        .as_ref()
+        .ok_or_else(|| anyhow!("Node identity missing private key (cannot persist)"))?;
+
+    let key_payload = KeystorePrivateKey {
+        dilithium_sk: private_key.dilithium_sk.clone(),
+        kyber_sk: private_key.kyber_sk.clone(),
+        master_seed: private_key.master_seed.clone(),
+    };
+
+    let identity_json = serde_json::to_string_pretty(identity)
+        .map_err(|e| anyhow!("Failed to serialize node identity: {}", e))?;
+    let key_json = serde_json::to_string_pretty(&key_payload)
+        .map_err(|e| anyhow!("Failed to serialize node private key: {}", e))?;
+
+    write_file_with_permissions(&identity_file, &identity_json)
+        .map_err(|e| anyhow!("Failed to write node identity {:?}: {}", identity_file, e))?;
+    write_file_with_permissions(&key_file, &key_json)
+        .map_err(|e| anyhow!("Failed to write node private key {:?}: {}", key_file, e))?;
 
     Ok(())
 }
@@ -1251,7 +1378,7 @@ impl WalletStartupManager {
         match serde_json::from_slice::<serde_json::Value>(data) {
             Ok(wallet_info) => {
                 // Extract seed phrase if available
-                if let Some(seed_phrase) = wallet_info.get("seed_phrase").and_then(|s| s.as_str()) {
+                if let Some(_seed_phrase) = wallet_info.get("seed_phrase").and_then(|s| s.as_str()) {
                     println!("Recovering identity and wallet from seed phrase...");
                     
                     // Create user identity with wallet recovery - NOW capturing private_data
@@ -1340,7 +1467,7 @@ impl WalletStartupManager {
     }
 
     /// Set password for a wallet
-    async fn set_wallet_password(wallet_id: &WalletId, password: &str) -> Result<()> {
+    async fn set_wallet_password(_wallet_id: &WalletId, password: &str) -> Result<()> {
         // Note: WalletPasswordManager was merged into IdentityWallets (Step 6 refactoring)
         // Wallet password functionality is now available through IdentityWallets methods:
         // - set_wallet_password()
@@ -1400,7 +1527,6 @@ async fn create_user_identity_with_wallet(
     let private_data = lib_identity::identity::PrivateIdentityData::new(
         private_key.dilithium_sk.clone(),
         identity.public_key.dilithium_pk.clone(),
-        [0u8; 32], // TODO: Extract actual seed from identity if available
         vec![seed_phrase.clone()],
     );
 
@@ -1435,7 +1561,6 @@ async fn create_node_device_identity(
     let private_data = lib_identity::identity::PrivateIdentityData::new(
         private_key.dilithium_sk.clone(),
         identity.public_key.dilithium_pk.clone(),
-        [0u8; 32], // TODO: Extract actual seed from identity if available
         vec![],
     );
 

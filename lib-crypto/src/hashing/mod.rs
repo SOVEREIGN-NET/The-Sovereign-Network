@@ -1,8 +1,11 @@
 //! Hashing module for ZHTP cryptography
-//! 
-//! Provides Blake3 hashing functionality used throughout the system
+//!
+//! Provides Blake3 and SHA3-256 hashing functionality used throughout the system
 
 use blake3;
+pub mod sha3;
+
+pub use sha3::hash_sha3_256;
 
 /// Blake3 hash function - primary hash function for ZHTP
 pub fn hash_blake3(data: &[u8]) -> [u8; 32] {

@@ -1,21 +1,25 @@
 //! Integration Module
-//! 
+//!
 //! Provides integration utilities to coordinate and orchestrate interactions
 //! Between all ZHTP protocol components,
 //! external packages, and third-party systems.
 
 use crate::{ProtocolError, Result};
 use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
-use lib_storage::types::ContentHash;
 // use lib_blockchain::get_shared_blockchain; // Removed - use zhtp::runtime::blockchain_provider instead
 
 use serde::{Serialize, Deserialize};
+use std::sync::Arc;
 
 use crate::crypto::ZhtpCrypto;
 use crate::economics::ZhtpEconomics;
-use crate::storage::StorageIntegration;
+#[cfg(feature = "storage")]
+use crate::storage::{StorageIntegration, StorageConfig};
+#[cfg(not(feature = "storage"))]
+use crate::storage_stub::{StorageIntegration, StorageConfig};
 use crate::identity::{ProtocolIdentityService, IdentityServiceConfig};
 use std::collections::HashMap;
+use lib_consensus::NoOpBroadcaster;
 
 /// Integration configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +77,7 @@ impl ZhtpIntegration {
         let crypto = ZhtpCrypto::new()?;
         let economics = ZhtpEconomics::new(crate::economics::EconomicConfig::default())?;
         
-        let storage = StorageIntegration::new(crate::storage::StorageConfig::default()).await?;
+        let storage = StorageIntegration::new(StorageConfig::default())?;
         
         // Initialize identity manager and service
         let identity_manager = lib_identity::IdentityManager::new();
@@ -226,7 +230,7 @@ impl ZhtpIntegration {
     }
 
     /// Process mesh routing
-    async fn process_mesh_routing(&mut self, request: &ZhtpRequest) -> Result<()> {
+    async fn process_mesh_routing(&mut self, _request: &ZhtpRequest) -> Result<()> {
         // Check if mesh routing is needed based on request headers
         // For now, mesh routing is handled by external lib-network package
         if self.config.mesh_enabled {
@@ -244,7 +248,7 @@ impl ZhtpIntegration {
             ZhtpMethod::Post | ZhtpMethod::Put => {
                 // Store content
                 if !request.body.is_empty() {
-                    let metadata = crate::types::ContentMetadata {
+                    let _metadata = crate::types::ContentMetadata {
                         content_type: request.headers.get("Content-Type")
                                 .unwrap_or_else(|| "application/octet-stream".to_string()),
                         encoding: None,
@@ -264,7 +268,7 @@ impl ZhtpIntegration {
                         popularity_metrics: None,
                         economic_info: None,
                         privacy_level: 50, // Default privacy level
-                        hash: ContentHash::from_bytes(&lib_crypto::hash_blake3(&request.body)),
+                        hash: lib_crypto::hash_blake3(&request.body).to_vec(),
                         encryption_info: None,
                         compression_info: None,
                         integrity_checksum: Some(lib_crypto::hash_blake3(&request.body).to_vec()),
@@ -272,15 +276,6 @@ impl ZhtpIntegration {
                         source_attribution: None,
                         geographic_origin: None,
                         expires_at: None,
-                    };
-
-                    let storage_request = crate::storage::ZhtpStorageRequest {
-                        content: request.body.clone(),
-                        metadata: metadata.clone(),
-                        replication: Some(3),
-                        duration_days: 30,
-                        max_cost: Some(10000),
-                        preferred_regions: vec!["global".to_string()],
                     };
 
                     // Create uploader identity from request context
@@ -310,7 +305,7 @@ impl ZhtpIntegration {
                     let mut device_node_ids = std::collections::HashMap::new();
                     device_node_ids.insert("uploader-device".to_string(), uploader_node_id);
 
-                    let uploader = lib_identity::ZhtpIdentity {
+                    let _uploader = lib_identity::ZhtpIdentity {
                         id: uploader_id.clone(),
                         identity_type: lib_identity::IdentityType::Human,
                         did: uploader_did,
@@ -358,9 +353,16 @@ impl ZhtpIntegration {
                         jurisdiction: None,
                     };
 
-                    match self.storage.store_content(&request.body, metadata, uploader, request).await {
-                        Ok(content_id) => StorageResult::Stored(content_id),
-                        Err(e) => StorageResult::Error(e.to_string()),
+                    #[cfg(feature = "storage")]
+                    {
+                        match self.storage.store_content(&request.body, metadata, uploader, request).await {
+                            Ok(content_id) => StorageResult::Stored(content_id),
+                            Err(e) => StorageResult::Error(e.to_string()),
+                        }
+                    }
+                    #[cfg(not(feature = "storage"))]
+                    {
+                        StorageResult::Error("Storage integration disabled".to_string())
                     }
                 } else {
                     StorageResult::NoAction
@@ -368,7 +370,7 @@ impl ZhtpIntegration {
             }
             ZhtpMethod::Get => {
                 // Retrieve content
-                let content_id = request.uri.trim_start_matches("/content/");
+                let _content_id = request.uri.trim_start_matches("/content/");
                 
                 // Authenticate request to get identity
                 let authenticated_identity = self.identity_service.authenticate_request(&request).await?;
@@ -432,10 +434,17 @@ impl ZhtpIntegration {
                             jurisdiction: None,
                         };
                         
-                        match self.storage.retrieve_content(content_id, requester, request).await {
-                            Ok(Some((content, _metadata))) => StorageResult::Retrieved(content),
-                            Ok(None) => StorageResult::NotFound,
-                            Err(e) => StorageResult::Error(e.to_string()),
+                        #[cfg(feature = "storage")]
+                        {
+                            match self.storage.retrieve_content(content_id, requester, request).await {
+                                Ok(Some((content, _metadata))) => StorageResult::Retrieved(content),
+                                Ok(None) => StorageResult::NotFound,
+                                Err(e) => StorageResult::Error(e.to_string()),
+                            }
+                        }
+                        #[cfg(not(feature = "storage"))]
+                        {
+                            StorageResult::Error("Storage integration disabled".to_string())
                         }
                     }
                     None => {
@@ -447,10 +456,17 @@ impl ZhtpIntegration {
             ZhtpMethod::Delete => {
                 // Delete content
                 let content_id = request.uri.trim_start_matches("/content/");
-                match self.storage.delete_content(content_id, request).await {
-                    Ok(true) => StorageResult::Deleted,
-                    Ok(false) => StorageResult::NotFound,
-                    Err(e) => StorageResult::Error(e.to_string()),
+                #[cfg(feature = "storage")]
+                {
+                    match self.storage.delete_content(content_id, request).await {
+                        Ok(true) => StorageResult::Deleted,
+                        Ok(false) => StorageResult::NotFound,
+                        Err(e) => StorageResult::Error(e.to_string()),
+                    }
+                }
+                #[cfg(not(feature = "storage"))]
+                {
+                    StorageResult::Error("Storage integration disabled".to_string())
                 }
             }
             _ => StorageResult::NoAction,
@@ -460,12 +476,13 @@ impl ZhtpIntegration {
     }
 
     /// Process blockchain integration
+    #[cfg(feature = "blockchain")]
     async fn process_blockchain_integration(&mut self, request: &ZhtpRequest) -> Result<()> {
         // integration with lib-blockchain package
         use lib_blockchain::Blockchain;
         
         // Initialize blockchain if not already done
-        let blockchain = Blockchain::new()
+        let _blockchain = Blockchain::new()
             .map_err(|e| ProtocolError::InternalError(format!("Failed to initialize blockchain: {}", e)))?;
         
         // Calculate economic assessment for transaction amount
@@ -543,7 +560,6 @@ impl ZhtpIntegration {
             .map_err(|e| ProtocolError::InternalError(format!("Failed to add transaction to mempool: {}", e)))?;
         
         // Trigger block mining if mempool has enough transactions
-        // Demo blockchain processing - simplified since we don't have access to internal fields
         let _demo_transaction_count = 5; // Simulate 5 pending transactions
         if _demo_transaction_count >= 5 {
             let _pending_transactions = mempool.get_transactions_for_block(100, 1024000);
@@ -558,6 +574,12 @@ impl ZhtpIntegration {
         tracing::info!("Blockchain transaction recorded: {} -> {}, amount: {}, DAO fee: {}", 
                       sender_hash, recipient_hash, economics_assessment.total_fee, economics_assessment.dao_fee);
         
+        Ok(())
+    }
+
+    #[cfg(not(feature = "blockchain"))]
+    async fn process_blockchain_integration(&mut self, _request: &ZhtpRequest) -> Result<()> {
+        tracing::info!("Blockchain integration skipped (blockchain feature disabled)");
         Ok(())
     }
 
@@ -600,14 +622,6 @@ impl ZhtpIntegration {
                     lib_identity::AccessLevel::Restricted => {
                         return Err(ProtocolError::AccessDenied(
                             "Restricted access level cannot perform this operation".to_string()
-                        ));
-                    }
-                    lib_identity::AccessLevel::Organization => {
-                        // Organizations have standard access
-                    }
-                    lib_identity::AccessLevel::Restricted => {
-                        return Err(ProtocolError::AccessDenied(
-                            "Restricted access level cannot perform any operations".to_string()
                         ));
                     }
                 }
@@ -749,6 +763,7 @@ pub mod packages {
     use super::*;
 
     /// Initialize integration with lib-blockchain package
+    #[cfg(feature = "blockchain")]
     pub async fn init_blockchain_integration() -> Result<()> {
         // Initialize blockchain directly without package integration module
         use lib_blockchain::Blockchain;
@@ -758,6 +773,11 @@ pub mod packages {
             .map_err(|e| ProtocolError::InternalError(format!("Failed to initialize blockchain: {}", e)))?;
         
         tracing::info!("lib-blockchain integration initialized successfully");
+        Ok(())
+    }
+    #[cfg(not(feature = "blockchain"))]
+    pub async fn init_blockchain_integration() -> Result<()> {
+        tracing::info!("lib-blockchain integration skipped (blockchain feature disabled)");
         Ok(())
     }
 
@@ -787,11 +807,12 @@ pub mod packages {
     pub async fn init_consensus_integration() -> Result<()> {
         // Use the consensus package's consensus engine directly
         use lib_consensus::ConsensusEngine;
-        
-        // Initialize consensus engine with default configuration
-        let _consensus_engine = ConsensusEngine::new(lib_consensus::ConsensusConfig::default())
+
+        // Initialize consensus engine with default configuration and no-op broadcaster
+        let broadcaster = Arc::new(NoOpBroadcaster);
+        let _consensus_engine = ConsensusEngine::new(lib_consensus::ConsensusConfig::default(), broadcaster)
             .map_err(|e| ProtocolError::InternalError(format!("Failed to create consensus engine: {}", e)))?;
-        
+
         tracing::info!("lib-consensus integration initialized successfully");
         Ok(())
     }
@@ -816,25 +837,40 @@ pub mod packages {
             crate::economics::ZhtpEconomics::new(crate::economics::EconomicConfig::default()).is_ok());
         
         // Test lib-storage health
-        health.insert("lib-storage".to_string(), 
-            crate::storage::StorageIntegration::new(crate::storage::StorageConfig::default()).await.is_ok());
+        #[cfg(feature = "storage")]
+        {
+            health.insert("lib-storage".to_string(), 
+                crate::storage::StorageIntegration::new(crate::storage::StorageConfig::default()).await.is_ok());
+        }
+        #[cfg(not(feature = "storage"))]
+        {
+            health.insert("lib-storage".to_string(), false);
+        }
         
         // Test lib-blockchain health
-        health.insert("lib-blockchain".to_string(), {
-            use lib_blockchain::Blockchain;
-            Blockchain::new().is_ok()
-        });
+        #[cfg(feature = "blockchain")]
+        {
+            health.insert("lib-blockchain".to_string(), {
+                use lib_blockchain::Blockchain;
+                Blockchain::new().is_ok()
+            });
+        }
+        #[cfg(not(feature = "blockchain"))]
+        {
+            health.insert("lib-blockchain".to_string(), false);
+        }
         
         // Test lib-identity health
         health.insert("lib-identity".to_string(), {
-            let identity_manager = lib_identity::IdentityManager::new();
+            let _identity_manager = lib_identity::IdentityManager::new();
             true // Identity manager creation always succeeds
         });
         
         // Test lib-consensus health
         health.insert("lib-consensus".to_string(), {
             use lib_consensus::ConsensusEngine;
-            ConsensusEngine::new(lib_consensus::ConsensusConfig::default()).is_ok()
+            let broadcaster = Arc::new(NoOpBroadcaster);
+            ConsensusEngine::new(lib_consensus::ConsensusConfig::default(), broadcaster).is_ok()
         });
         
         // Test lib-network health (simplified check)

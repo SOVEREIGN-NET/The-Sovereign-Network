@@ -285,10 +285,14 @@ impl EconomicTransactionProcessor {
         Ok(TreasuryStats {
             total_dao_fees_collected: stats["total_dao_fees_collected"].as_u64().unwrap_or(0),
             total_ubi_distributed: stats["total_ubi_distributed"].as_u64().unwrap_or(0),
-            total_welfare_distributed: stats["total_welfare_distributed"].as_u64().unwrap_or(0),
+            total_sector_dao_distributed: stats["total_sector_dao_distributed"].as_u64().unwrap_or(0),
+            total_emergency_distributed: stats["total_emergency_distributed"].as_u64().unwrap_or(0),
+            total_dev_grants_distributed: stats["total_dev_grants_distributed"].as_u64().unwrap_or(0),
             current_treasury_balance: stats["treasury_balance"].as_u64().unwrap_or(0),
             ubi_fund_balance: stats["ubi_allocated"].as_u64().unwrap_or(0),
-            welfare_fund_balance: stats["welfare_allocated"].as_u64().unwrap_or(0),
+            sector_dao_fund_balance: stats["sector_dao_allocated"].as_u64().unwrap_or(0),
+            emergency_fund_balance: stats["emergency_allocated"].as_u64().unwrap_or(0),
+            dev_grants_fund_balance: stats["dev_grants_allocated"].as_u64().unwrap_or(0),
         })
     }
 
@@ -437,6 +441,8 @@ impl EconomicTransactionProcessor {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         })
     }
 
@@ -471,6 +477,8 @@ impl EconomicTransactionProcessor {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
 
         // Create signing hash
@@ -584,10 +592,14 @@ impl Default for EconomicTransactionProcessor {
 pub struct TreasuryStats {
     pub total_dao_fees_collected: u64,
     pub total_ubi_distributed: u64,
-    pub total_welfare_distributed: u64,
+    pub total_sector_dao_distributed: u64,
+    pub total_emergency_distributed: u64,
+    pub total_dev_grants_distributed: u64,
     pub current_treasury_balance: u64,
     pub ubi_fund_balance: u64,
-    pub welfare_fund_balance: u64,
+    pub sector_dao_fund_balance: u64,
+    pub emergency_fund_balance: u64,
+    pub dev_grants_fund_balance: u64,
 }
 
 /// Create an economic transaction processor for blockchain integration

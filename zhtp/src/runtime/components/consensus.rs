@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{info, warn, debug};
+use tracing::{info, warn, debug, error};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
-use lib_consensus::{ConsensusEngine, ConsensusConfig, ValidatorManager};
+use lib_consensus::{ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorManager, NoOpBroadcaster};
+use crate::monitoring::{Alert, AlertLevel, AlertManager};
 use lib_blockchain::Blockchain;
 
 /// Adapter to make blockchain ValidatorInfo compatible with consensus ValidatorInfo trait
@@ -47,7 +48,6 @@ impl lib_consensus::validators::ValidatorInfo for BlockchainValidatorAdapter {
 }
 
 /// Consensus component implementation using lib-consensus package
-#[derive(Debug)]
 pub struct ConsensusComponent {
     status: Arc<RwLock<ComponentStatus>>,
     start_time: Arc<RwLock<Option<Instant>>>,
@@ -55,6 +55,20 @@ pub struct ConsensusComponent {
     validator_manager: Arc<RwLock<ValidatorManager>>,
     blockchain: Arc<RwLock<Option<Arc<RwLock<Blockchain>>>>>,
     environment: crate::config::Environment,
+}
+
+// Manual Debug implementation because ConsensusEngine doesn't derive Debug
+impl std::fmt::Debug for ConsensusComponent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConsensusComponent")
+            .field("status", &self.status)
+            .field("start_time", &self.start_time)
+            .field("consensus_engine", &"<ConsensusEngine>")
+            .field("validator_manager", &"<ValidatorManager>")
+            .field("blockchain", &"<Blockchain>")
+            .field("environment", &self.environment)
+            .finish()
+    }
 }
 
 impl ConsensusComponent {
@@ -128,6 +142,63 @@ impl ConsensusComponent {
     }
 }
 
+async fn handle_liveness_event(alert_manager: &AlertManager, event: ConsensusEvent) {
+    match event {
+        ConsensusEvent::ConsensusStalled {
+            height,
+            round,
+            timed_out_validators,
+            total_validators,
+            timestamp,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("height".to_string(), height.to_string());
+            metadata.insert("round".to_string(), round.to_string());
+            metadata.insert(
+                "timed_out_validators".to_string(),
+                timed_out_validators.len().to_string(),
+            );
+            metadata.insert("total_validators".to_string(), total_validators.to_string());
+
+            let alert = Alert {
+                id: format!("consensus-stalled-{}-{}", height, round),
+                level: AlertLevel::Critical,
+                title: "Consensus stalled".to_string(),
+                message: format!(
+                    "Consensus stalled at height {} round {} ({} of {} validators timed out)",
+                    height,
+                    round,
+                    timed_out_validators.len(),
+                    total_validators
+                ),
+                source: "consensus".to_string(),
+                timestamp,
+                metadata,
+            };
+
+            let _ = alert_manager.trigger_alert(alert).await;
+        }
+        ConsensusEvent::ConsensusRecovered { height, round, timestamp } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("height".to_string(), height.to_string());
+            metadata.insert("round".to_string(), round.to_string());
+
+            let alert = Alert {
+                id: format!("consensus-recovered-{}-{}", height, round),
+                level: AlertLevel::Info,
+                title: "Consensus recovered".to_string(),
+                message: format!("Consensus recovered at height {} round {}", height, round),
+                source: "consensus".to_string(),
+                timestamp,
+                metadata,
+            };
+
+            let _ = alert_manager.trigger_alert(alert).await;
+        }
+        _ => {}
+    }
+}
+
 #[async_trait::async_trait]
 impl Component for ConsensusComponent {
     fn id(&self) -> ComponentId {
@@ -155,8 +226,59 @@ impl Component for ConsensusComponent {
         
         // Note: Edge nodes will still initialize consensus component but won't participate in validation
         // Edge node check happens at validator registration (requires min stake + storage)
-        
-        let consensus_engine = lib_consensus::init_consensus(config)?;
+
+        let broadcaster = Arc::new(NoOpBroadcaster);
+        let mut consensus_engine = lib_consensus::init_consensus(config, broadcaster)?;
+        let (liveness_tx, mut liveness_rx) = tokio::sync::mpsc::unbounded_channel();
+        consensus_engine.set_liveness_event_sender(liveness_tx);
+
+        // **Start-order independent alert wiring**
+        //
+        // CRITICAL: Always spawn the alert receiver task, even if monitoring is not running yet.
+        // This prevents the problem where:
+        // 1. Consensus starts before monitoring
+        // 2. No global manager exists → receiver task is not spawned
+        // 3. Monitoring starts later
+        // 4. Liveness events are dropped silently (no receiver to deliver them)
+        //
+        // Solution: Always create the receiver. At each event, resolve the manager:
+        // - If monitoring is running: emit alert
+        // - If not: drop alert and log at ERROR level (not WARN - these are critical events)
+        //
+        // This makes alert delivery robust to start order and monitoring restarts.
+        tokio::spawn(async move {
+            let mut dropped_events = Vec::new();
+            let mut drop_warning_emitted = false;
+
+            while let Some(event) = liveness_rx.recv().await {
+                if let Some(alert_manager) = crate::monitoring::get_global_alert_manager() {
+                    // Manager exists now - emit alert (works even if monitoring restarted)
+                    // Also catch up on any previously dropped events
+                    if !dropped_events.is_empty() {
+                        error!(
+                            "Consensus recovery: {} liveness events were dropped while monitoring was unavailable",
+                            dropped_events.len()
+                        );
+                        dropped_events.clear();
+                        drop_warning_emitted = false;
+                    }
+
+                    handle_liveness_event(&alert_manager, event).await;
+                } else {
+                    // CRITICAL: No manager - this is a Byzantine fault event that cannot be delivered
+                    // Log at ERROR level because this is a consensus-critical failure
+                    dropped_events.push(event.clone());
+
+                    if !drop_warning_emitted {
+                        error!(
+                            "CRITICAL: Consensus liveness alert cannot be delivered - monitoring system not started. \
+                             Byzantine faults occurring now will not be reported to operators."
+                        );
+                        drop_warning_emitted = true;
+                    }
+                }
+            }
+        });
         
         info!("Consensus engine initialized with hybrid PoS");
         info!("Validator management ready");
@@ -219,5 +341,38 @@ impl Component for ConsensusComponent {
         metrics.insert("is_running".to_string(), if matches!(*self.status.read().await, ComponentStatus::Running) { 1.0 } else { 0.0 });
         
         Ok(metrics)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lib_crypto::Hash;
+
+    #[tokio::test]
+    async fn test_liveness_alert_bridge_stalled() {
+        let alert_manager = AlertManager::new()
+            .await
+            .expect("Failed to create alert manager");
+        alert_manager.start().await.expect("Failed to start alert manager");
+
+        let event = ConsensusEvent::ConsensusStalled {
+            height: 42,
+            round: 7,
+            timed_out_validators: vec![Hash::from_bytes(&[1u8; 32])],
+            total_validators: 4,
+            timestamp: chrono::Utc::now().timestamp() as u64,
+        };
+
+        handle_liveness_event(&alert_manager, event).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let alerts = alert_manager
+            .get_recent_alerts(1)
+            .await
+            .expect("Failed to fetch alerts");
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].title, "Consensus stalled");
+        assert_eq!(alerts[0].level, AlertLevel::Critical);
     }
 }
