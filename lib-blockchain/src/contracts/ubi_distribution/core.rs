@@ -553,13 +553,13 @@ impl UbiDistributor {
     /// UBI is a **passive** client: citizens record intent, Kernel executes validation/minting.
     ///
     /// This method is **intentionally minimal**:
-    /// - No validation beyond basic checks
-    /// - No state mutation
+    /// - Minimal validation (zero-amount check only)
+    /// - Records state: stores UbiClaimRecorded event in local claim_events HashMap
     /// - No minting (Kernel owns minting)
-    /// - Only records intent for Kernel to process
+    /// - Treasury Kernel will poll these stored events at epoch boundaries
     ///
     /// Treasury Kernel will later:
-    /// 1. Poll for all UbiClaimRecorded events
+    /// 1. Call query_ubi_claims() to retrieve all UbiClaimRecorded events
     /// 2. Validate each claim (5 gates)
     /// 3. Mint or reject with reason code
     /// 4. Emit UbiDistributed or UbiClaimRejected
@@ -573,7 +573,7 @@ impl UbiDistributor {
     /// - `ZeroAmount` if amount == 0
     ///
     /// # Returns
-    /// Ok(()) on successful recording (event emitted asynchronously)
+    /// Ok(()) on successful recording (claim stored and will be retrieved by Kernel)
     pub fn record_claim_intent(
         &mut self,
         citizen_id: [u8; 32],
