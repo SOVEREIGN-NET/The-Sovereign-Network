@@ -4,23 +4,12 @@
 //! across multiple discovery mechanisms (multicast, port scanning).
 
 use anyhow::Result;
-use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
+use lib_identity::{NodeId, ZhtpIdentity, testing::create_human_identity};
 use lib_network::discovery::{
     DiscoveryProtocol, DiscoveryResult, UnifiedDiscoveryService,
 };
 use std::net::SocketAddr;
 use uuid::Uuid;
-
-/// Helper to create test identity with optional fixed seed for determinism
-fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Human,
-        Some(25),
-        Some("US".to_string()),
-        device,
-        seed,
-    )
-}
 
 #[test]
 fn test_discovery_protocol_priority() {
@@ -74,7 +63,7 @@ fn test_discovery_result_merge_public_key() {
     
     // Create a test identity to get a public key
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed)).unwrap();
+    let identity = create_human_identity("laptop", Some(seed)).unwrap();
     let public_key = identity.public_key.clone();
 
     let mut result1 = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::PortScan, 9333);
@@ -126,7 +115,7 @@ fn test_discovery_result_merge_no_duplicate_addresses() {
 #[tokio::test]
 async fn test_unified_discovery_service_creation() -> Result<()> {
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed))?;
+    let identity = create_human_identity("laptop", Some(seed))?;
 
     let service = UnifiedDiscoveryService::new(
         Uuid::new_v4(),
@@ -143,7 +132,7 @@ async fn test_unified_discovery_service_creation() -> Result<()> {
 #[tokio::test]
 async fn test_unified_discovery_service_register_peer() -> Result<()> {
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed))?;
+    let identity = create_human_identity("laptop", Some(seed))?;
 
     let service = UnifiedDiscoveryService::new(
         Uuid::new_v4(),
@@ -171,7 +160,7 @@ async fn test_unified_discovery_service_register_peer() -> Result<()> {
 #[tokio::test]
 async fn test_unified_discovery_service_deduplication() -> Result<()> {
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed))?;
+    let identity = create_human_identity("laptop", Some(seed))?;
 
     let service = UnifiedDiscoveryService::new(
         Uuid::new_v4(),
@@ -208,7 +197,7 @@ async fn test_unified_discovery_service_deduplication() -> Result<()> {
 #[tokio::test]
 async fn test_unified_discovery_service_multiple_peers() -> Result<()> {
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed))?;
+    let identity = create_human_identity("laptop", Some(seed))?;
 
     let service = UnifiedDiscoveryService::new(
         Uuid::new_v4(),
@@ -257,7 +246,7 @@ async fn test_unified_discovery_service_multiple_peers() -> Result<()> {
 #[tokio::test]
 async fn test_unified_discovery_service_remove_peer() -> Result<()> {
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed))?;
+    let identity = create_human_identity("laptop", Some(seed))?;
 
     let service = UnifiedDiscoveryService::new(
         Uuid::new_v4(),
@@ -287,7 +276,7 @@ async fn test_unified_discovery_service_remove_peer() -> Result<()> {
 #[tokio::test]
 async fn test_unified_discovery_service_clear_peers() -> Result<()> {
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed))?;
+    let identity = create_human_identity("laptop", Some(seed))?;
 
     let service = UnifiedDiscoveryService::new(
         Uuid::new_v4(),
@@ -318,7 +307,7 @@ async fn test_unified_discovery_service_with_callback() -> Result<()> {
     use std::sync::Arc;
 
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed))?;
+    let identity = create_human_identity("laptop", Some(seed))?;
 
     let callback_count = Arc::new(AtomicUsize::new(0));
     let callback_count_clone = Arc::clone(&callback_count);
@@ -375,7 +364,7 @@ async fn test_unified_discovery_service_with_callback() -> Result<()> {
 fn test_discovery_result_to_unified_peer_id() -> Result<()> {
     let seed = [0x42u8; 64];
     // Use a unique device ID that meets entropy requirements
-    let identity = create_test_identity("my-laptop-abc123def456", Some(seed))?;
+    let identity = create_human_identity("my-laptop-abc123def456", Some(seed))?;
 
     let peer_id = Uuid::new_v4();
     let addr: SocketAddr = "192.168.1.100:9333".parse().unwrap();
@@ -399,7 +388,7 @@ fn test_discovery_result_to_unified_peer_id() -> Result<()> {
 #[test]
 fn test_discovery_result_node_id_derivation() -> Result<()> {
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed))?;
+    let identity = create_human_identity("laptop", Some(seed))?;
 
     // Verify NodeId is deterministically derived from DID + device
     let expected_node_id = NodeId::from_did_device(&identity.did, "laptop")?;
