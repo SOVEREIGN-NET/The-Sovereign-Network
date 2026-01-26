@@ -25,6 +25,7 @@ pub mod state;
 pub mod validation;
 pub mod authority;
 pub mod events;
+pub mod ubi_engine;
 
 pub use types::{KernelState, RejectionReason, KernelStats};
 
