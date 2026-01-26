@@ -457,11 +457,17 @@ impl ZhtpUnifiedServer {
 
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
         let zhtp_router_arc = Arc::new(zhtp_router);
-        let quic_handler = Arc::new(QuicHandler::new(
+        let mut quic_handler = QuicHandler::new(
             Arc::new(RwLock::new((*zhtp_router_arc).clone())),  // Native ZhtpRouter wrapped in RwLock
             quic_arc.clone(),                    // QuicMeshProtocol for transport
             identity_manager.clone(),            // Identity manager for auto-registration
-        ));
+        );
+
+        // Issue #907: QuicMeshProtocol is now the SINGLE canonical connection store.
+        // No need to link MeshRouter's PeerRegistry - broadcast_to_peers() now calls
+        // quic_protocol.broadcast_message() directly.
+
+        let quic_handler = Arc::new(quic_handler);
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
