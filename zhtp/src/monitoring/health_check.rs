@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tokio::sync::RwLock;
 use tokio::time::{Duration, interval};
-use tracing::{info, warn, error, debug};
+use tracing::{info, error, debug};
 
 use super::alerting::{Alert, AlertLevel, AlertManager};
 
@@ -762,7 +762,7 @@ impl HealthMonitor {
     }
 
     /// Get storage stats from the unified storage system
-    async fn stats_from_storage(storage: &mut lib_storage::UnifiedStorageSystem) -> Option<StorageStats> {
+    async fn stats_from_storage(storage: &mut lib_storage::UnifiedStorageSystem<lib_storage::dht::backend::SledBackend>) -> Option<StorageStats> {
         let (total, used) = match storage.get_statistics().await {
             Ok(stats) => (1024 * 1024 * 1024 * 100, stats.storage_stats.total_storage_used),
             Err(_) => (1024 * 1024 * 1024 * 100, std::fs::metadata("./").map(|m| m.len()).unwrap_or(1024 * 1024 * 500)),
@@ -783,6 +783,7 @@ impl HealthMonitor {
 
     /// Build StorageHealth from optional StorageStats
     fn build_storage_health(stats: Option<StorageStats>) -> StorageHealth {
+        let has_stats = stats.is_some();
         let (capacity, used, nodes, avail) = match stats {
             Some(s) => (s.total_storage, s.used_storage, s.dht_nodes, 0.999),
             None => (1024 * 1024 * 1024 * 1024, 1024 * 1024 * 1024 * 250, 0, 0.0),
@@ -793,7 +794,7 @@ impl HealthMonitor {
             dht_node_count: nodes,
             replication_health: ReplicationHealth {
                 replication_factor: 3.0,
-                under_replicated_files: if stats.is_some() { 0 } else { 50 },
+                under_replicated_files: if has_stats { 0 } else { 50 },
                 replication_efficiency: 0.95,
             },
             retrieval_health: RetrievalHealth {
