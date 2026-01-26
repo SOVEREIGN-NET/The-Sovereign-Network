@@ -1,9 +1,59 @@
 //! Treasury Kernel Event System
 //!
-//! Emits events for:
-//! - UbiDistributed: Kernel successfully minted SOV for citizen
-//! - UbiClaimRejected: Kernel rejected a claim with reason code
-//! - UbiPoolStatus: End-of-epoch pool summary
+//! Emits immutable events for all economic operations:
+//! - **UbiDistributed**: Kernel successfully minted SOV for citizen
+//! - **UbiClaimRejected**: Kernel rejected a claim with reason code
+//! - **UbiPoolStatus**: End-of-epoch pool summary
+//!
+//! # Event Guarantees
+//!
+//! Events provide a complete audit trail for economic operations:
+//! - **Immutability**: Events cannot be modified or deleted
+//! - **Completeness**: Every distribution or rejection generates an event
+//! - **Consensus**: Same inputs on all validators produce identical events
+//! - **Recovery**: Events guide crash recovery to prevent double-minting
+//!
+//! # Event Types
+//!
+//! ## UbiDistributed
+//! Emitted when Kernel successfully mints SOV for a citizen:
+//! - `citizen_id`: Recipient of the distribution
+//! - `amount`: SOV minted (typically 1,000)
+//! - `epoch`: Epoch in which distribution occurred
+//! - `kernel_txid`: Deterministic transaction ID
+//!
+//! ## UbiClaimRejected
+//! Emitted when a claim fails validation:
+//! - `citizen_id`: Citizen whose claim was rejected
+//! - `epoch`: Epoch of the rejected claim
+//! - `reason_code`: 1-5 (NotACitizen, AlreadyRevoked, AlreadyClaimedEpoch, PoolExhausted, EligibilityNotMet)
+//! - `timestamp`: Block height when rejected
+//!
+//! Citizens never see rejection reasons (silent failure for privacy).
+//! Reasons are recorded for governance monitoring only.
+//!
+//! ## UbiPoolStatus
+//! Emitted at end of epoch to summarize distribution:
+//! - `epoch`: Which epoch
+//! - `eligible_count`: Citizens eligible in this epoch
+//! - `total_distributed`: Total SOV minted this epoch
+//! - `remaining_capacity`: 1,000,000 - total_distributed
+//!
+//! Invariant: `remaining_capacity = 1,000,000 - total_distributed` (saturating)
+//!
+//! # Storage
+//!
+//! Events are persisted with keys:
+//! ```text
+//! kernel:events:UbiDistributed:{epoch}:{citizen_id}
+//! kernel:events:UbiClaimRejected:{epoch}:{citizen_id}
+//! kernel:events:UbiPoolStatus:{epoch}
+//! ```
+//!
+//! This enables:
+//! - Efficient epoch-based queries
+//! - Governance audit trails
+//! - Crash recovery validation
 
 use super::types::{KernelState, RejectionReason};
 

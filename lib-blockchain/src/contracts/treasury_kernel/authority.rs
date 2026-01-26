@@ -2,6 +2,41 @@
 //!
 //! Enforces that only the Treasury Kernel can mint tokens.
 //! No other contract can perform minting operations.
+//!
+//! # Security Model
+//!
+//! The minting authority model implements strict access control:
+//! - **Single Authority**: Only the Kernel's PublicKey can mint
+//! - **No Delegation**: Authority cannot be transferred or delegated
+//! - **Immutable**: Set at Kernel initialization, never changes
+//!
+//! This guarantees that no other contract, even malicious ones, can
+//! forge tokens or bypass validation.
+//!
+//! # Deterministic Transaction IDs
+//!
+//! Every minting operation produces a deterministic transaction ID based on:
+//! - Constant identifier: `b"KERNEL_MINT"`
+//! - Citizen ID (recipient)
+//! - Epoch number
+//! - Amount minted
+//!
+//! This enables:
+//! - **Idempotency**: Same claim always produces same transaction ID
+//! - **Auditability**: Every mint is traceable to a specific citizen/epoch/amount
+//! - **Recovery**: Replaying transactions produces identical results
+//!
+//! # Example
+//! ```ignore
+//! // Only the Kernel can mint
+//! KernelState::verify_minting_authority(&kernel_address, &kernel_address)?; // OK
+//! KernelState::verify_minting_authority(&attacker_address, &kernel_address)?; // ERROR
+//!
+//! // Transaction IDs are deterministic
+//! let txid1 = KernelState::compute_kernel_txid(&[1u8; 32], 100, 1000);
+//! let txid2 = KernelState::compute_kernel_txid(&[1u8; 32], 100, 1000);
+//! assert_eq!(txid1, txid2); // Same inputs → same output
+//! ```
 
 use super::types::KernelState;
 
