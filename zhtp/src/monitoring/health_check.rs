@@ -810,14 +810,36 @@ impl HealthMonitor {
                         retrieval_success_rate: 0.99,
                         cache_hit_rate: 0.85,
                     },
-                    availability: 0.0, // Unavailable
+                    availability: 0.0,
                 })
             }
         }
     }
 
+    /// Get storage statistics from lib-storage or fallback to system stats
+    async fn get_storage_stats() -> Option<StorageStats> {
+        let config = create_default_storage_config().ok()?;
+        let db_path = config.storage_config.dht_persist_path.clone()
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join(".zhtp")
+                    .join("storage")
+                    .join("dht_db")
+            });
+
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        match lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path).await {
+            Ok(mut storage) => Self::stats_from_storage(&mut storage).await,
+            Err(_) => Self::stats_from_system_disk(),
+        }
+    }
+
     /// Get storage stats from the unified storage system
-    async fn stats_from_storage(storage: &mut lib_storage::UnifiedStorageSystem<lib_storage::dht::backend::SledBackend>) -> Option<StorageStats> {
+    async fn stats_from_storage(storage: &mut lib_storage::UnifiedStorageSystem) -> Option<StorageStats> {
         let (total, used) = match storage.get_statistics().await {
             Ok(stats) => (1024 * 1024 * 1024 * 100, stats.storage_stats.total_storage_used),
             Err(_) => (1024 * 1024 * 1024 * 100, std::fs::metadata("./").map(|m| m.len()).unwrap_or(1024 * 1024 * 500)),

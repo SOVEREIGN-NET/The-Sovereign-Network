@@ -167,14 +167,68 @@ async fn execute_component_command<'a, F>(
     handler: F,
 ) where
     F: Fn(&'a reqwest::Client, &'a str, String, &'a ZhtpCli) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>,
+=======
+async fn execute_component_command<F, Fut>(
+    client: &reqwest::Client,
+    base_url: &str,
+    component: Option<String>,
+    usage_msg: &str,
+    cli: &ZhtpCli,
+    handler: F,
+) where
+    F: FnOnce(&reqwest::Client, &str, &str, &ZhtpCli) -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+>>>>>>> 3b7eb0d (refactor: Reduce cognitive complexity to pass SonarCloud)
 {
     match component {
         Some(comp) => {
             if let Err(e) = validate_component_name(&comp) {
                 println!("Error: {}", e);
-            } else if let Err(e) = handler(client, base_url, comp, cli).await {
+            } else if let Err(e) = handler(client, base_url, &comp, cli).await {
                 println!("Error: {}", e);
             }
+        }
+        None => println!("{}", usage_msg),
+    }
+}
+
+/// Execute a simple command and print error if it fails
+async fn execute_simple_command<F, Fut>(handler: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    if let Err(e) = handler().await {
+        println!("Error: {}", e);
+    }
+}
+
+/// Handle interactive command
+pub async fn handle_interactive_command(_args: InteractiveArgs, cli: &ZhtpCli) -> Result<()> {
+    println!("ZHTP Orchestrator Interactive Shell");
+    println!("======================================");
+    println!("Type 'help' for available commands, 'exit' to quit");
+    println!("Server: {}", cli.server);
+    println!("Format: {}", cli.format);
+    println!("");
+
+    let client = reqwest::Client::new();
+    let base_url = format!("http://{}/api/v1", cli.server);
+
+    loop {
+        print!("{}", get_prompt());
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            println!("Error reading input");
+            break;
+        }
+
+        let (command, component) = parse_command_input(&input);
+        let should_exit = dispatch_command(command, component, &client, &base_url, cli, &input).await;
+        if should_exit {
+            break;
         }
         None => println!("{}", usage_msg),
     }
