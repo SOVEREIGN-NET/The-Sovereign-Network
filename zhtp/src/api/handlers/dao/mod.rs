@@ -25,36 +25,8 @@ use lib_crypto::Hash;
 
 use crate::session_manager::SessionManager;
 
-/// Helper function to create JSON responses correctly
-fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
-    let json_response = serde_json::to_vec(&data)?;
-    Ok(ZhtpResponse::success_with_content_type(
-        json_response,
-        "application/json".to_string(),
-        None,
-    ))
-}
-
-fn create_error_response(status: ZhtpStatus, message: String) -> ZhtpResponse {
-    ZhtpResponse::error(status, message)
-}
-
-/// Helper to extract client IP from request
-fn extract_client_ip(request: &ZhtpRequest) -> String {
-    request
-        .headers
-        .get("X-Real-IP")
-        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| f.split(',').next().map(|s| s.trim().to_string())))
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// Helper to extract user agent from request
-fn extract_user_agent(request: &ZhtpRequest) -> String {
-    request
-        .headers
-        .get("User-Agent")
-        .unwrap_or_else(|| "unknown".to_string())
-}
+// Import shared helpers from common module
+use super::common::{create_json_response, create_error_response, extract_client_ip, extract_user_agent, validate_did_format};
 
 /// Input validation helpers
 fn validate_delegate_name(name: &str) -> Result<()> {
@@ -73,16 +45,6 @@ fn validate_delegate_name(name: &str) -> Result<()> {
 fn validate_delegate_bio(bio: &str) -> Result<()> {
     if bio.len() > 500 {
         return Err(anyhow::anyhow!("Bio must be 500 characters or less"));
-    }
-    Ok(())
-}
-
-fn validate_did_format(did: &str) -> Result<()> {
-    if !did.starts_with("did:zhtp:") && !did.starts_with("did:") {
-        return Err(anyhow::anyhow!("Invalid DID format"));
-    }
-    if did.len() < 10 || did.len() > 200 {
-        return Err(anyhow::anyhow!("DID length must be between 10 and 200 characters"));
     }
     Ok(())
 }
