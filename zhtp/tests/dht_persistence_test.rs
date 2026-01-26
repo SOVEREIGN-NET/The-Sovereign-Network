@@ -10,26 +10,13 @@
 //! - All nodes can communicate after restart
 
 use anyhow::Result;
-use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
+use lib_identity::{NodeId, ZhtpIdentity, testing::create_test_identity};
 use lib_network::identity::UnifiedPeerId;
 use std::{collections::HashMap, time::Duration};
 use uuid::Uuid;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(20);
 const CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
-
-// Shared helper - create test identity (also in multi_node_network_test)
-// Note: This function is duplicated in multi_node_network_test.rs
-// TODO(#62): Extract to shared module if lib-network test helpers can be imported
-fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Device,
-        None,
-        None,
-        device,
-        Some(seed),
-    )
-}
 
 /// Simulated DHT routing table entry
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -111,7 +98,7 @@ fn test_three_node_dht_bootstrap() -> Result<()> {
     let mut dht_states = Vec::new();
 
     for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
+        let identity = create_test_identity(device, *seed)?;
         let mut dht = DhtRoutingState::new(identity.node_id.clone());
         dht.set_convergence_cycle(0);
         identities.push(identity);
@@ -174,7 +161,7 @@ fn test_dht_persistence_single_node_restart() -> Result<()> {
 
     let mut identities_before = Vec::new();
     for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
+        let identity = create_test_identity(device, *seed)?;
         identities_before.push(identity);
     }
 
@@ -197,7 +184,7 @@ fn test_dht_persistence_single_node_restart() -> Result<()> {
     }
 
     // Phase 3: Restart Alice (recreate with same seed)
-    let alice_restarted = identity_with_seed("alice-dht-002", [0xAA; 64])?;
+    let alice_restarted = create_test_identity("alice-dht-002", [0xAA; 64])?;
 
     // Verify Alice's NodeId is unchanged
     assert_eq!(
@@ -256,7 +243,7 @@ fn test_dht_persistence_full_network_restart() -> Result<()> {
 
     let mut identities_before = Vec::new();
     for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
+        let identity = create_test_identity(device, *seed)?;
         identities_before.push(identity);
     }
 
@@ -286,7 +273,7 @@ fn test_dht_persistence_full_network_restart() -> Result<()> {
     // Phase 3: Restart all nodes simultaneously
     let mut identities_after = Vec::new();
     for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
+        let identity = create_test_identity(device, *seed)?;
         identities_after.push(identity);
     }
 
@@ -360,7 +347,7 @@ fn test_dht_consistency_across_multiple_restart_cycles() -> Result<()> {
         // Create identities
         let mut identities = Vec::new();
         for (device, seed) in &nodes {
-            let identity = identity_with_seed(device, *seed)?;
+            let identity = create_test_identity(device, *seed)?;
             identities.push(identity);
         }
 
@@ -433,7 +420,7 @@ fn test_dht_network_convergence_simulation() -> Result<()> {
 
     let mut identities = Vec::new();
     for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
+        let identity = create_test_identity(device, *seed)?;
         identities.push(identity);
     }
 
@@ -492,7 +479,7 @@ fn test_dht_persistence_metrics() -> Result<()> {
     // Cycle 1: Initial startup
     let mut identities_c1 = Vec::new();
     for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
+        let identity = create_test_identity(device, *seed)?;
         identities_c1.push(identity);
     }
 
@@ -521,7 +508,7 @@ fn test_dht_persistence_metrics() -> Result<()> {
     // Cycle 2: Restart all nodes
     let mut identities_c2 = Vec::new();
     for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
+        let identity = create_test_identity(device, *seed)?;
         identities_c2.push(identity);
     }
 
