@@ -104,7 +104,10 @@ pub use sov_swap::{
 #[cfg(feature = "contracts")]
 pub use staking::{SovDaoStaking, GlobalStakingGuardrails, PendingDao, StakingPosition, LaunchedDao};
 #[cfg(feature = "contracts")]
-pub use governance::{EntityRegistry, EntityType, Role, EntityRegistryError};
+pub use governance::{
+    EntityRegistry, EntityType, Role, EntityRegistryError,
+    CitizenRole, CitizenRegistry, CitizenRoleError, RegistryStats,
+};
 #[cfg(feature = "contracts")]
 pub use economics::{
     FeeRouter, FeeRouterError, FeeDistribution, DaoDistribution,
