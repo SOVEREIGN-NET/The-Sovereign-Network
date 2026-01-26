@@ -17,8 +17,10 @@ use std::{collections::HashSet, time::Duration};
 const TEST_TIMEOUT: Duration = Duration::from_secs(25);
 const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Helper function to create a ZhtpIdentity with a specific seed and device
-fn create_test_identity(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
+// Shared helper - create test identity (also in multi_node_network_test and dht_persistence_test)
+// Note: This function is duplicated in other test files
+// TODO(#62): Extract to shared module if lib-network test helpers can be imported
+fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
     ZhtpIdentity::new_unified(
         IdentityType::Device,
         None,
@@ -166,7 +168,7 @@ fn test_five_node_mesh_formation() -> Result<()> {
 
     let mut identities = Vec::new();
     for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
+        let identity = identity_with_seed(device, *seed)?;
         identities.push(identity);
     }
 
@@ -214,7 +216,7 @@ fn test_mesh_node_departure_and_rejoin() -> Result<()> {
 
     let mut identities = Vec::new();
     for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
+        let identity = identity_with_seed(device, *seed)?;
         identities.push(identity);
     }
 
@@ -246,7 +248,7 @@ fn test_mesh_node_departure_and_rejoin() -> Result<()> {
     }
 
     // Phase 4: Node B rejoins with same NodeId
-    let node_b_restarted = create_test_identity("mesh-stable-b", [0x2B; 64])?;
+    let node_b_restarted = identity_with_seed("mesh-stable-b", [0x2B; 64])?;
     assert_eq!(
         identities[1].node_id, node_b_restarted.node_id,
         "Node B must have same NodeId after restart"
@@ -281,7 +283,7 @@ fn test_mesh_network_stability_with_random_restarts() -> Result<()> {
 
     let mut identities = Vec::new();
     for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
+        let identity = identity_with_seed(device, *seed)?;
         identities.push(identity);
     }
 
@@ -350,7 +352,7 @@ fn test_mesh_node_routing_paths() -> Result<()> {
 
     let mut identities = Vec::new();
     for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
+        let identity = identity_with_seed(device, *seed)?;
         identities.push(identity);
     }
 
@@ -397,7 +399,7 @@ fn test_mesh_convergence_timeline() -> Result<()> {
 
     let mut identities = Vec::new();
     for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
+        let identity = identity_with_seed(device, *seed)?;
         identities.push(identity);
     }
 
@@ -455,7 +457,7 @@ fn test_mesh_network_partition_recovery() -> Result<()> {
 
     let mut identities = Vec::new();
     for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
+        let identity = identity_with_seed(device, *seed)?;
         identities.push(identity);
     }
 
@@ -510,7 +512,7 @@ fn test_mesh_stability_metrics() -> Result<()> {
 
     let mut identities = Vec::new();
     for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
+        let identity = identity_with_seed(device, *seed)?;
         identities.push(identity);
     }
 

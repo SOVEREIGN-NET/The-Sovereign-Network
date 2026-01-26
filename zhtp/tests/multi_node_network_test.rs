@@ -22,8 +22,10 @@ use uuid::Uuid;
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 const DISCOVERY_WAIT_TIME: Duration = Duration::from_secs(2);
 
-/// Helper function to create a ZhtpIdentity with a specific seed and device
-fn create_test_identity(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
+// Shared helper - create test identity (defined here, also in dht_persistence_test)
+// Note: This function is duplicated in dht_persistence_test.rs 
+// TODO(#62): Extract to shared module if lib-network test helpers can be imported
+fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
     ZhtpIdentity::new_unified(
         IdentityType::Device,
         None,
@@ -33,7 +35,6 @@ fn create_test_identity(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
     )
 }
 
-/// Helper function to derive PeerId from NodeId for network operations
 fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
     Uuid::from_slice(&node_id.as_bytes()[..16])
         .expect("NodeId::as_bytes() must return at least 16 bytes for UUID conversion")
@@ -50,12 +51,12 @@ async fn test_two_node_discovery_via_dht() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
         // Create Alice (device: alice-laptop-001)
         let alice_seed = [0xAA; 64];
-        let alice = create_test_identity("alice-laptop-001", alice_seed)?;
+        let alice = identity_with_seed("alice-laptop-001", alice_seed)?;
         let alice_peer_id = peer_id_from_node_id(&alice.node_id);
 
         // Create Bob (device: bob-desktop-001)
         let bob_seed = [0xBB; 64];
-        let bob = create_test_identity("bob-desktop-001", bob_seed)?;
+        let bob = identity_with_seed("bob-desktop-001", bob_seed)?;
         let bob_peer_id = peer_id_from_node_id(&bob.node_id);
 
         // Verify NodeIds are different
@@ -113,7 +114,7 @@ async fn test_three_node_dht_routing_population() -> Result<()> {
         let mut _discovery_services = Vec::new();
 
         for (device, seed) in &nodes {
-            let identity = create_test_identity(device, *seed)?;
+            let identity = identity_with_seed(device, *seed)?;
             let peer_id = peer_id_from_node_id(&identity.node_id);
 
             let discovery = UnifiedDiscoveryService::new(
@@ -166,15 +167,15 @@ async fn test_two_node_nodeid_stability_across_restart() -> Result<()> {
         let alice_seed = [0xAA; 64];
         let alice_device = "laptop";
 
-        let alice_before = create_test_identity(alice_device, alice_seed)?;
+        let alice_before = identity_with_seed(alice_device, alice_seed)?;
 
         // Create Bob
         let bob_seed = [0xBB; 64];
-        let bob = create_test_identity("desktop", bob_seed)?;
+        let bob = identity_with_seed("desktop", bob_seed)?;
 
         // Simulate restart: Create Alice again with same seed
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let alice_after = create_test_identity(alice_device, alice_seed)?;
+        let alice_after = identity_with_seed(alice_device, alice_seed)?;
 
         // Verify NodeIds are identical after restart
         assert_eq!(
@@ -187,7 +188,7 @@ async fn test_two_node_nodeid_stability_across_restart() -> Result<()> {
         );
 
         // Verify Bob's NodeId unchanged
-        let bob_again = create_test_identity("desktop", bob_seed)?;
+        let bob_again = identity_with_seed("desktop", bob_seed)?;
         assert_eq!(
             bob.node_id, bob_again.node_id,
             "Bob's NodeId must be stable"
@@ -217,7 +218,7 @@ async fn test_four_node_mesh_full_connectivity() -> Result<()> {
         let mut identities = Vec::new();
 
         for (device, seed) in &nodes {
-            let identity = create_test_identity(device, *seed)?;
+            let identity = identity_with_seed(device, *seed)?;
             identities.push(identity);
         }
 
@@ -263,7 +264,7 @@ async fn test_three_node_restart_with_reconnection() -> Result<()> {
         let identities_before: Vec<_> = seeds
             .iter()
             .zip(devices.iter())
-            .map(|(seed, device)| create_test_identity(device, *seed))
+            .map(|(seed, device)| identity_with_seed(device, *seed))
             .collect::<Result<_>>()?;
 
         // Simulate connection establishment
@@ -273,7 +274,7 @@ async fn test_three_node_restart_with_reconnection() -> Result<()> {
         let identities_after: Vec<_> = seeds
             .iter()
             .zip(devices.iter())
-            .map(|(seed, device)| create_test_identity(device, *seed))
+            .map(|(seed, device)| identity_with_seed(device, *seed))
             .collect::<Result<_>>()?;
 
         // Verify all NodeIds remained stable
@@ -319,7 +320,7 @@ fn test_node_id_determinism_across_five_cycles() -> Result<()> {
     let mut stored_node_id = None;
 
     for cycle in 1..=5 {
-        let identity = create_test_identity(device, seed)?;
+        let identity = identity_with_seed(device, seed)?;
 
         if let Some(prev_id) = stored_node_id {
             assert_eq!(
@@ -346,7 +347,7 @@ fn test_device_name_affects_node_id_multi_node() -> Result<()> {
 
     let mut identities = Vec::new();
     for device in &devices {
-        let identity = create_test_identity(device, seed)?;
+        let identity = identity_with_seed(device, seed)?;
         identities.push(identity);
     }
 
@@ -389,7 +390,7 @@ async fn test_five_node_network_formation() -> Result<()> {
         let mut identities = Vec::new();
 
         for (device, seed) in &nodes {
-            let identity = create_test_identity(device, *seed)?;
+            let identity = identity_with_seed(device, *seed)?;
             identities.push(identity);
 
             // Simulate network propagation time
@@ -424,7 +425,7 @@ mod helpers {
     #[test]
     fn test_peer_id_derivation_from_node_id() {
         let seed = [0xAA; 64];
-        let identity = create_test_identity("test-device", seed).unwrap();
+        let identity = identity_with_seed("test-device", seed).unwrap();
         
         let peer_id = peer_id_from_node_id(&identity.node_id);
         
