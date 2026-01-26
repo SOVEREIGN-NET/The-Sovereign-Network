@@ -1,154 +1,221 @@
-use serde::{Deserialize, Serialize};
-use std::fmt;
+//! Treasury Kernel Core Types
+//!
+//! Defines the fundamental data structures for the Treasury Kernel:
+//! - KernelState: Dedup maps, pool tracking, last processed epoch
+//! - RejectionReason: 5-check validation failure codes
+//! - KernelStats: Monitoring statistics
 
-/// Rejection reason codes for UBI claims
-/// These codes are used in rejection events to document why a claim was denied
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// Rejection reason codes for UBI claims (5 checks)
+///
+/// When a claim fails validation, the Kernel emits UbiClaimRejected with one of these codes.
+/// Citizens never see error details (silent failure for privacy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum RejectionReason {
-    /// Citizen not found in CitizenRegistry
+    /// Check 1 failed: Citizen not in registry
     NotACitizen = 1,
-    /// Citizen has been revoked
+
+    /// Check 2 failed: Citizen has been revoked
     AlreadyRevoked = 2,
-    /// Already claimed UBI for this epoch
+
+    /// Check 4 failed: Citizen already claimed this epoch
     AlreadyClaimedEpoch = 3,
-    /// Pool is exhausted for this epoch
+
+    /// Check 5 failed: Pool exhausted for this epoch
     PoolExhausted = 4,
-    /// Citizen not yet eligible (citizenship_epoch > current_epoch)
+
+    /// Check 3 failed: Citizenship epoch hasn't arrived yet
     EligibilityNotMet = 5,
 }
 
-impl fmt::Display for RejectionReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for RejectionReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RejectionReason::NotACitizen => write!(f, "Not a citizen"),
-            RejectionReason::AlreadyRevoked => write!(f, "Citizen revoked"),
-            RejectionReason::AlreadyClaimedEpoch => write!(f, "Already claimed this epoch"),
-            RejectionReason::PoolExhausted => write!(f, "Pool exhausted"),
-            RejectionReason::EligibilityNotMet => write!(f, "Not yet eligible"),
+            Self::NotACitizen => write!(f, "Not a citizen"),
+            Self::AlreadyRevoked => write!(f, "Citizen revoked"),
+            Self::AlreadyClaimedEpoch => write!(f, "Already claimed this epoch"),
+            Self::PoolExhausted => write!(f, "Pool exhausted"),
+            Self::EligibilityNotMet => write!(f, "Eligibility not met"),
         }
     }
 }
 
-impl RejectionReason {
-    /// Get the numeric code for this rejection reason
-    pub fn code(&self) -> u8 {
-        *self as u8
-    }
-
-    /// Convert a code back to RejectionReason
-    pub fn from_code(code: u8) -> Option<Self> {
-        match code {
-            1 => Some(RejectionReason::NotACitizen),
-            2 => Some(RejectionReason::AlreadyRevoked),
-            3 => Some(RejectionReason::AlreadyClaimedEpoch),
-            4 => Some(RejectionReason::PoolExhausted),
-            5 => Some(RejectionReason::EligibilityNotMet),
-            _ => None,
-        }
-    }
-}
-
-/// A UBI claim recorded by the UBI contract
+/// Kernel state tracking for UBI distribution
+///
+/// **Consensus-Critical**: All fields must be persisted for crash recovery.
+/// Dedup state prevents double-minting if Kernel crashes mid-distribution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UbiClaimRecorded {
-    /// Citizen ID (blake3 hash of public key)
-    pub citizen_id: [u8; 32],
-    /// The epoch in which the claim was recorded
-    pub epoch: u64,
-    /// Block height where the claim was recorded
-    pub block_height: u64,
+pub struct KernelState {
+    /// Deduplication tracking: citizen_id -> {epoch -> bool}
+    /// Prevents double-minting after crashes
+    /// Key: citizen_id [u8; 32]
+    /// Value: HashMap<epoch, claimed_flag>
+    pub already_claimed: HashMap<[u8; 32], HashMap<u64, bool>>,
+
+    /// Pool distribution tracking: epoch -> total_distributed
+    /// Enforces 1,000,000 SOV hard cap per epoch
+    /// Key: epoch
+    /// Value: cumulative SOV distributed in that epoch
+    pub total_distributed: HashMap<u64, u64>,
+
+    /// Last processed epoch (for idempotency and recovery)
+    /// If current_epoch == last_processed_epoch, skip distribution
+    pub last_processed_epoch: Option<u64>,
+
+    /// Monitoring statistics
+    pub stats: KernelStats,
 }
 
-/// Event emitted when UBI is successfully distributed
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UbiDistributed {
-    /// Citizen ID who received UBI
-    pub citizen_id: [u8; 32],
-    /// Amount minted (fixed 1,000 SOV)
-    pub amount: u64,
-    /// Epoch in which distribution occurred
-    pub epoch: u64,
-    /// Deterministic transaction ID (for auditability)
-    pub kernel_txid: [u8; 32],
-}
-
-/// Event emitted when a UBI claim is rejected
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UbiClaimRejected {
-    /// Citizen ID of the rejected claim
-    pub citizen_id: [u8; 32],
-    /// Epoch in which the claim was made
-    pub epoch: u64,
-    /// Numeric code for rejection reason
-    pub reason_code: u8,
-    /// Block height when rejection was recorded
-    pub timestamp: u64,
-}
-
-/// Summary event emitted after all claims for an epoch are processed
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UbiPoolStatus {
-    /// The epoch that was processed
-    pub epoch: u64,
-    /// Total eligible citizens in this epoch
-    pub eligible_count: u64,
-    /// Total amount distributed in this epoch
-    pub total_distributed: u64,
-    /// Remaining capacity in pool (1,000,000 - total_distributed)
-    pub remaining_capacity: u64,
-}
-
-/// Statistics tracked by the Kernel for monitoring
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Statistics for monitoring Kernel health
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KernelStats {
-    /// Total citizens processed (successful + rejected)
-    pub total_processed: u64,
-    /// Successful distributions
-    pub successful_distributions: u64,
-    /// Rejected claims
-    pub rejected_claims: u64,
-    /// Last update epoch
-    pub last_update_epoch: Option<u64>,
+    /// Total claims processed
+    pub total_claims_processed: u64,
+
+    /// Total rejections (any reason)
+    pub total_rejections: u64,
+
+    /// Total SOV distributed
+    pub total_sov_distributed: u64,
+
+    /// Rejections by reason code
+    pub rejections_by_reason: [u64; 5],
 }
 
-impl KernelStats {
-    /// Create new empty stats
+impl KernelState {
+    /// Create new empty kernel state
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            already_claimed: HashMap::new(),
+            total_distributed: HashMap::new(),
+            last_processed_epoch: None,
+            stats: KernelStats::default(),
+        }
+    }
+
+    /// Check if citizen has claimed in this epoch
+    ///
+    /// # Arguments
+    /// * `citizen_id` - Citizen identifier
+    /// * `epoch` - Epoch to check
+    ///
+    /// # Returns
+    /// true if citizen has already claimed in this epoch
+    pub fn has_claimed(&self, citizen_id: &[u8; 32], epoch: u64) -> bool {
+        self.already_claimed
+            .get(citizen_id)
+            .and_then(|epochs| epochs.get(&epoch))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Mark citizen as claimed in this epoch
+    ///
+    /// # Arguments
+    /// * `citizen_id` - Citizen identifier
+    /// * `epoch` - Epoch to mark
+    ///
+    /// # Panics
+    /// If citizen was already marked as claimed (indicates logic error)
+    pub fn mark_claimed(&mut self, citizen_id: [u8; 32], epoch: u64) {
+        let epochs = self
+            .already_claimed
+            .entry(citizen_id)
+            .or_insert_with(HashMap::new);
+
+        assert!(
+            !epochs.contains_key(&epoch),
+            "Citizen already marked claimed in epoch (logic error)"
+        );
+
+        epochs.insert(epoch, true);
+    }
+
+    /// Get total amount distributed in an epoch
+    ///
+    /// # Arguments
+    /// * `epoch` - Epoch to query
+    ///
+    /// # Returns
+    /// Total SOV distributed in this epoch (0 if none)
+    pub fn get_distributed(&self, epoch: u64) -> u64 {
+        self.total_distributed.get(&epoch).copied().unwrap_or(0)
+    }
+
+    /// Check if adding amount would exceed pool capacity
+    ///
+    /// # Arguments
+    /// * `epoch` - Epoch to check
+    /// * `amount` - Amount attempting to distribute
+    ///
+    /// # Returns
+    /// true if amount can be distributed (capacity available)
+    /// false if pool would be exceeded
+    pub fn check_pool_capacity(&self, epoch: u64, amount: u64) -> bool {
+        const POOL_CAP_PER_EPOCH: u64 = 1_000_000;
+        let current = self.get_distributed(epoch);
+
+        current
+            .checked_add(amount)
+            .map(|total| total <= POOL_CAP_PER_EPOCH)
+            .unwrap_or(false)
+    }
+
+    /// Add to distributed amount for an epoch
+    ///
+    /// # Arguments
+    /// * `epoch` - Epoch to update
+    /// * `amount` - Amount to add
+    ///
+    /// # Returns
+    /// Ok(()) if successful
+    /// Err if addition would overflow or exceed pool
+    pub fn add_distributed(&mut self, epoch: u64, amount: u64) -> Result<(), String> {
+        const POOL_CAP_PER_EPOCH: u64 = 1_000_000;
+
+        let current = self.get_distributed(epoch);
+        let new_total = current
+            .checked_add(amount)
+            .ok_or("Distribution overflow".to_string())?;
+
+        if new_total > POOL_CAP_PER_EPOCH {
+            return Err("Pool exhausted".to_string());
+        }
+
+        self.total_distributed.insert(epoch, new_total);
+        self.stats.total_sov_distributed = self
+            .stats
+            .total_sov_distributed
+            .checked_add(amount)
+            .ok_or("Stats overflow".to_string())?;
+
+        Ok(())
+    }
+
+    /// Record a rejection
+    ///
+    /// # Arguments
+    /// * `reason` - Rejection reason code
+    pub fn record_rejection(&mut self, reason: RejectionReason) {
+        self.stats.total_rejections += 1;
+        let reason_idx = (reason as u8) - 1; // Convert 1-5 to 0-4
+        if (reason_idx as usize) < self.stats.rejections_by_reason.len() {
+            self.stats.rejections_by_reason[reason_idx as usize] += 1;
+        }
     }
 
     /// Record a successful distribution
     pub fn record_success(&mut self) {
-        self.total_processed += 1;
-        self.successful_distributions += 1;
-    }
-
-    /// Record a rejected claim
-    pub fn record_rejection(&mut self) {
-        self.total_processed += 1;
-        self.rejected_claims += 1;
+        self.stats.total_claims_processed += 1;
     }
 }
 
-/// Kernel configuration parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KernelConfig {
-    /// Number of blocks per epoch (default: 60,480)
-    pub blocks_per_epoch: u64,
-    /// UBI amount per citizen per epoch (fixed: 1,000 SOV)
-    pub ubi_per_citizen: u64,
-    /// Hard pool cap per epoch (fixed: 1,000,000 SOV)
-    pub pool_cap_per_epoch: u64,
-}
-
-impl Default for KernelConfig {
+impl Default for KernelState {
     fn default() -> Self {
-        Self {
-            blocks_per_epoch: 60_480,
-            ubi_per_citizen: 1_000,
-            pool_cap_per_epoch: 1_000_000,
-        }
+        Self::new()
     }
 }
 
@@ -157,51 +224,137 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rejection_reason_codes() {
-        assert_eq!(RejectionReason::NotACitizen.code(), 1);
-        assert_eq!(RejectionReason::AlreadyRevoked.code(), 2);
-        assert_eq!(RejectionReason::AlreadyClaimedEpoch.code(), 3);
-        assert_eq!(RejectionReason::PoolExhausted.code(), 4);
-        assert_eq!(RejectionReason::EligibilityNotMet.code(), 5);
+    fn test_kernel_state_new() {
+        let state = KernelState::new();
+        assert_eq!(state.already_claimed.len(), 0);
+        assert_eq!(state.total_distributed.len(), 0);
+        assert_eq!(state.last_processed_epoch, None);
+        assert_eq!(state.stats.total_claims_processed, 0);
     }
 
     #[test]
-    fn test_rejection_reason_from_code() {
-        assert_eq!(RejectionReason::from_code(1), Some(RejectionReason::NotACitizen));
-        assert_eq!(RejectionReason::from_code(2), Some(RejectionReason::AlreadyRevoked));
-        assert_eq!(RejectionReason::from_code(3), Some(RejectionReason::AlreadyClaimedEpoch));
-        assert_eq!(RejectionReason::from_code(4), Some(RejectionReason::PoolExhausted));
-        assert_eq!(RejectionReason::from_code(5), Some(RejectionReason::EligibilityNotMet));
-        assert_eq!(RejectionReason::from_code(99), None);
+    fn test_has_claimed_empty_state() {
+        let state = KernelState::new();
+        let citizen_id = [1u8; 32];
+        assert!(!state.has_claimed(&citizen_id, 100));
+    }
+
+    #[test]
+    fn test_mark_claimed() {
+        let mut state = KernelState::new();
+        let citizen_id = [1u8; 32];
+
+        state.mark_claimed(citizen_id, 100);
+        assert!(state.has_claimed(&citizen_id, 100));
+    }
+
+    #[test]
+    fn test_mark_claimed_different_epochs() {
+        let mut state = KernelState::new();
+        let citizen_id = [1u8; 32];
+
+        state.mark_claimed(citizen_id, 100);
+        state.mark_claimed(citizen_id, 101);
+
+        assert!(state.has_claimed(&citizen_id, 100));
+        assert!(state.has_claimed(&citizen_id, 101));
+    }
+
+    #[test]
+    fn test_get_distributed_empty() {
+        let state = KernelState::new();
+        assert_eq!(state.get_distributed(100), 0);
+    }
+
+    #[test]
+    fn test_add_distributed_success() {
+        let mut state = KernelState::new();
+        let result = state.add_distributed(100, 500_000);
+        assert!(result.is_ok());
+        assert_eq!(state.get_distributed(100), 500_000);
+    }
+
+    #[test]
+    fn test_add_distributed_multiple_times() {
+        let mut state = KernelState::new();
+        state.add_distributed(100, 300_000).unwrap();
+        state.add_distributed(100, 700_000).unwrap();
+        assert_eq!(state.get_distributed(100), 1_000_000);
+    }
+
+    #[test]
+    fn test_add_distributed_exceeds_cap() {
+        let mut state = KernelState::new();
+        state.add_distributed(100, 900_000).unwrap();
+        let result = state.add_distributed(100, 200_000);
+        assert!(result.is_err());
+        assert_eq!(state.get_distributed(100), 900_000);
+    }
+
+    #[test]
+    fn test_check_pool_capacity_success() {
+        let mut state = KernelState::new();
+        state.add_distributed(100, 500_000).unwrap();
+        assert!(state.check_pool_capacity(100, 500_000));
+    }
+
+    #[test]
+    fn test_check_pool_capacity_at_limit() {
+        let mut state = KernelState::new();
+        state.add_distributed(100, 1_000_000).unwrap();
+        assert!(!state.check_pool_capacity(100, 1));
+    }
+
+    #[test]
+    fn test_check_pool_capacity_different_epochs() {
+        let mut state = KernelState::new();
+        state.add_distributed(100, 1_000_000).unwrap();
+        assert!(state.check_pool_capacity(101, 1_000_000));
+    }
+
+    #[test]
+    fn test_record_rejection() {
+        let mut state = KernelState::new();
+        state.record_rejection(RejectionReason::NotACitizen);
+        assert_eq!(state.stats.total_rejections, 1);
+        assert_eq!(state.stats.rejections_by_reason[0], 1);
+    }
+
+    #[test]
+    fn test_record_multiple_rejections() {
+        let mut state = KernelState::new();
+        state.record_rejection(RejectionReason::NotACitizen);
+        state.record_rejection(RejectionReason::AlreadyRevoked);
+        state.record_rejection(RejectionReason::PoolExhausted);
+        assert_eq!(state.stats.total_rejections, 3);
+    }
+
+    #[test]
+    fn test_record_success() {
+        let mut state = KernelState::new();
+        state.record_success();
+        assert_eq!(state.stats.total_claims_processed, 1);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_mark_claimed_duplicate_panics() {
+        let mut state = KernelState::new();
+        let citizen_id = [1u8; 32];
+        state.mark_claimed(citizen_id, 100);
+        state.mark_claimed(citizen_id, 100);
     }
 
     #[test]
     fn test_rejection_reason_display() {
         assert_eq!(RejectionReason::NotACitizen.to_string(), "Not a citizen");
-        assert_eq!(RejectionReason::AlreadyRevoked.to_string(), "Citizen revoked");
-    }
-
-    #[test]
-    fn test_kernel_stats_tracking() {
-        let mut stats = KernelStats::new();
-        assert_eq!(stats.total_processed, 0);
-        assert_eq!(stats.successful_distributions, 0);
-        assert_eq!(stats.rejected_claims, 0);
-
-        stats.record_success();
-        assert_eq!(stats.total_processed, 1);
-        assert_eq!(stats.successful_distributions, 1);
-
-        stats.record_rejection();
-        assert_eq!(stats.total_processed, 2);
-        assert_eq!(stats.rejected_claims, 1);
-    }
-
-    #[test]
-    fn test_kernel_config_defaults() {
-        let config = KernelConfig::default();
-        assert_eq!(config.blocks_per_epoch, 60_480);
-        assert_eq!(config.ubi_per_citizen, 1_000);
-        assert_eq!(config.pool_cap_per_epoch, 1_000_000);
+        assert_eq!(
+            RejectionReason::AlreadyRevoked.to_string(),
+            "Citizen revoked"
+        );
+        assert_eq!(
+            RejectionReason::EligibilityNotMet.to_string(),
+            "Eligibility not met"
+        );
     }
 }
