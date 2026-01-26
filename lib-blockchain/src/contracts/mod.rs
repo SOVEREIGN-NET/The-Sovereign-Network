@@ -43,6 +43,8 @@ pub mod staking;
 #[cfg(feature = "contracts")]
 pub mod governance;
 #[cfg(feature = "contracts")]
+pub mod treasury_kernel;
+#[cfg(feature = "contracts")]
 pub mod dao;
 #[cfg(feature = "contracts")]
 pub mod economics;
@@ -107,6 +109,11 @@ pub use staking::{SovDaoStaking, GlobalStakingGuardrails, PendingDao, StakingPos
 pub use governance::{
     EntityRegistry, EntityType, Role, EntityRegistryError,
     CitizenRole, CitizenRegistry, CitizenRoleError, RegistryStats,
+};
+#[cfg(feature = "contracts")]
+pub use treasury_kernel::{
+    TreasuryKernel, KernelState, RejectionReason, UbiClaimRecorded,
+    UbiDistributed, UbiClaimRejected, UbiPoolStatus, KernelStats, KernelConfig,
 };
 #[cfg(feature = "contracts")]
 pub use economics::{
