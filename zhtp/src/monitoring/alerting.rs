@@ -8,7 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::Duration;
-use tracing::{info, warn, error, debug};
+use tracing::{info, error, debug};
 
 use crate::monitoring::metrics::SystemMetrics;
 
