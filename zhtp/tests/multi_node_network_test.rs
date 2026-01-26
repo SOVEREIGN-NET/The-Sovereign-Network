@@ -11,93 +11,19 @@
 //! - Peer connections re-establish automatically
 
 use anyhow::Result;
-use lib_identity::{NodeId, ZhtpIdentity, testing::{create_test_identity, peer_id_from_node_id}};
-use lib_network::{
-    discovery::UnifiedDiscoveryService,
-    identity::UnifiedPeerId,
-};
-use std::{net::SocketAddr, time::Duration};
-use uuid::Uuid;
+use std::time::Duration;
+mod common;
+use common_network_test::run_shared_multi_node_network_test;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 const DISCOVERY_WAIT_TIME: Duration = Duration::from_secs(2);
 
+// ...existing code...
 
-
-/// Test 1: Two-Node Discovery via DHT
-///
-/// Scenario: Alice and Bob start simultaneously. Verify they discover each other
-/// via DHT/mDNS and both have routing information about the other.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_two_node_discovery_via_dht() -> Result<()> {
-    tokio::time::timeout(TEST_TIMEOUT, async {
-        // Create Alice (device: alice-laptop-001)
-        let alice_seed = [0xAA; 64];
-        let alice = create_test_identity("alice-laptop-001", alice_seed)?;
-        let alice_peer_id = peer_id_from_node_id(&alice.node_id);
-
-        // Create Bob (device: bob-desktop-001)
-        let bob_seed = [0xBB; 64];
-        let bob = create_test_identity("bob-desktop-001", bob_seed)?;
-        let bob_peer_id = peer_id_from_node_id(&bob.node_id);
-
-        // Verify NodeIds are different
-        assert_ne!(
-            alice.node_id, bob.node_id,
-            "Different devices should have different NodeIds"
-        );
-
-        // Create discovery services
-        let _alice_discovery = UnifiedDiscoveryService::new(
-            alice_peer_id,
-            9443,
-            alice.public_key.clone(),
-        );
-
-        let _bob_discovery = UnifiedDiscoveryService::new(
-            bob_peer_id,
-            9444,
-            bob.public_key.clone(),
-        );
-
-        // Simulate peer discovery: Alice learns about Bob's address
-        let _bob_addr: SocketAddr = "127.0.0.1:9444".parse()?;
-
-        // Wait for discovery propagation (simulated)
-        tokio::time::sleep(DISCOVERY_WAIT_TIME).await;
-
-        // Verify Alice has Bob's information
-        let alice_peer = UnifiedPeerId::from_zhtp_identity(&bob)?;
-        alice_peer.verify_node_id()?;
-
-        // Verify Bob has Alice's information
-        let bob_peer = UnifiedPeerId::from_zhtp_identity(&alice)?;
-        bob_peer.verify_node_id()?;
-
-        Ok(())
-    }).await?
+#[tokio::test]
+async fn test_multi_node_network_shared() -> Result<()> {
+    run_shared_multi_node_network_test().await
 }
-
-/// Test 2: Three-Node Network with DHT Routing Population
-///
-/// Scenario: Three nodes (Alice, Bob, Charlie) start and discover each other.
-/// Verify DHT routing tables are populated with all peers.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_three_node_dht_routing_population() -> Result<()> {
-    tokio::time::timeout(TEST_TIMEOUT, async {
-        // Create three nodes
-        let nodes = [
-            ("alice-node-001", [0xAA; 64]),
-            ("bob-node-001", [0xBB; 64]),
-            ("charlie-node-001", [0xCC; 64]),
-        ];
-
-        let mut identities = Vec::new();
-        let mut _discovery_services = Vec::new();
-
-        for (device, seed) in &nodes {
-            let identity = create_test_identity(device, *seed)?;
-            let peer_id = peer_id_from_node_id(&identity.node_id);
 
             let discovery = UnifiedDiscoveryService::new(
                 peer_id,

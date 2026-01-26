@@ -11,93 +11,18 @@
 //! - Network topology remains stable
 
 use anyhow::Result;
-use lib_identity::{NodeId, ZhtpIdentity, testing::create_test_identity};
-use std::{collections::HashSet, time::Duration};
+use std::time::Duration;
+mod common;
+use common_network_test::{MeshNode, MeshTopology, run_shared_mesh_formation_test};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(25);
 const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Simulated mesh node for topology testing
-#[derive(Debug, Clone)]
-struct MeshNode {
-    node_id: NodeId,
-    peers: HashSet<NodeId>,
-    is_active: bool,
-    join_cycle: u32,
-}
+// ...existing code...
 
-impl MeshNode {
-    fn new(node_id: NodeId, cycle: u32) -> Self {
-        Self {
-            node_id,
-            peers: HashSet::new(),
-            is_active: true,
-            join_cycle: cycle,
-        }
-    }
-
-    fn add_peer(&mut self, peer_id: NodeId) {
-        self.peers.insert(peer_id);
-    }
-
-    fn remove_peer(&mut self, peer_id: &NodeId) {
-        self.peers.remove(peer_id);
-    }
-
-    fn peer_count(&self) -> usize {
-        self.peers.len()
-    }
-
-    fn has_peer(&self, peer_id: &NodeId) -> bool {
-        self.peers.contains(peer_id)
-    }
-
-    fn deactivate(&mut self) {
-        self.is_active = false;
-    }
-
-    fn reactivate(&mut self, cycle: u32) {
-        self.is_active = true;
-        self.join_cycle = cycle;
-    }
-}
-
-/// Mesh network topology state
-struct MeshTopology {
-    nodes: Vec<MeshNode>,
-    cycle: u32,
-}
-
-impl MeshTopology {
-    fn new() -> Self {
-        Self {
-            nodes: Vec::new(),
-            cycle: 0,
-        }
-    }
-
-    fn add_node(&mut self, node_id: NodeId) {
-        let mesh_node = MeshNode::new(node_id, self.cycle);
-        self.nodes.push(mesh_node);
-    }
-
-    fn connect_all_peers(&mut self) {
-        // Each node discovers all other active nodes
-        for i in 0..self.nodes.len() {
-            for j in 0..self.nodes.len() {
-                if i != j && self.nodes[j].is_active {
-                    let peer_id = self.nodes[j].node_id.clone();
-                    self.nodes[i].add_peer(peer_id);
-                }
-            }
-        }
-    }
-
-    fn is_fully_connected(&self) -> bool {
-        let active_count = self.nodes.iter().filter(|n| n.is_active).count();
-        self.nodes.iter().all(|node| {
-            !node.is_active || node.peer_count() == active_count - 1
-        })
+#[tokio::test]
+async fn test_mesh_formation_shared() -> Result<()> {
+    run_shared_mesh_formation_test().await
     }
 
     fn peer_count(&self, index: usize) -> usize {
