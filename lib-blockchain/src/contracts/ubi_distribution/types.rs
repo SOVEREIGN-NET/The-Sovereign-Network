@@ -273,12 +273,15 @@ impl UbiPoolStatus {
     /// # Returns
     /// UbiPoolStatus with remaining_capacity automatically calculated
     ///
-    /// # Panics
-    /// If total_distributed > 1_000_000 (should never happen, but indicates a bug in distribution)
+    /// # Safety
+    /// Uses saturating subtraction to prevent panics in consensus-critical code.
+    /// If total_distributed exceeds the cap, remaining_capacity will be 0.
+    /// (This should never happen in normal operation, but defensive programming ensures
+    /// validator nodes don't crash if invariants are violated.)
     pub fn new(epoch: EpochIndex, citizens_eligible: u64, total_distributed: u64) -> Self {
-        let remaining_capacity = Self::POOL_CAP_PER_EPOCH
-            .checked_sub(total_distributed)
-            .expect("total_distributed should never exceed pool cap; this indicates a distribution logic bug");
+        // Use saturating_sub instead of checked_sub to prevent panics
+        // Consensus-critical code must not crash under any circumstances
+        let remaining_capacity = Self::POOL_CAP_PER_EPOCH.saturating_sub(total_distributed);
 
         UbiPoolStatus {
             epoch,
@@ -468,10 +471,15 @@ mod event_tests {
     }
 
     #[test]
-    #[should_panic(expected = "total_distributed should never exceed pool cap")]
-    fn test_ubi_pool_status_constructor_panic_on_overflow() {
-        // Constructor should panic if total_distributed > 1_000_000 (indicates logic bug)
-        let _status = UbiPoolStatus::new(1, 1000, 1_000_001);
+    fn test_ubi_pool_status_constructor_saturating_on_overflow() {
+        // Constructor uses saturating_sub to prevent panics in consensus-critical code
+        // If total_distributed > 1_000_000, remaining_capacity clamps to 0
+        let status = UbiPoolStatus::new(1, 1000, 1_000_001);
+
+        assert_eq!(status.epoch, 1);
+        assert_eq!(status.citizens_eligible, 1000);
+        assert_eq!(status.total_distributed, 1_000_001);
+        assert_eq!(status.remaining_capacity, 0); // Saturated to 0, not panic
     }
 
     #[test]
