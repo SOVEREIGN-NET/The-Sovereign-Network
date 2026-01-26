@@ -115,7 +115,7 @@ pub use governance::{
 };
 #[cfg(feature = "contracts")]
 pub use treasury_kernel::{
-    TreasuryKernel, KernelState, RejectionReason, KernelStats, KernelConfig,
+    TreasuryKernel, KernelState, RejectionReason, KernelStats,
 };
 #[cfg(feature = "contracts")]
 pub use economics::{

@@ -1412,6 +1412,45 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 ContractResult::with_return_data(&"Amount range set", contract_context.gas_used)
                     .map_err(|e| anyhow!("{:?}", e))
             },
+            // Phase C: Treasury Kernel Client Methods
+            "record_claim_intent" => {
+                let params: (Vec<u8>, u64, u64) = bincode::deserialize(&call.params)?;
+                let citizen_id: [u8; 32] = params.0.as_slice().try_into()
+                    .map_err(|_| anyhow!("Invalid citizen_id length"))?;
+                let amount = params.1;
+                let epoch = params.2;
+
+                ubi.record_claim_intent(citizen_id, amount, epoch)
+                    .map_err(|e| anyhow!("{:?}", e))?;
+
+                ContractResult::with_return_data(&"Claim intent recorded", contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            },
+            "query_ubi_claims" => {
+                let epoch: u64 = bincode::deserialize(&call.params)?;
+                let claims = ubi.query_ubi_claims(epoch);
+
+                ContractResult::with_return_data(&claims, contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            },
+            "has_claimed_this_epoch" => {
+                let params: (Vec<u8>, u64) = bincode::deserialize(&call.params)?;
+                let citizen_id: [u8; 32] = params.0.as_slice().try_into()
+                    .map_err(|_| anyhow!("Invalid citizen_id length"))?;
+                let epoch = params.1;
+
+                let has_claimed = ubi.has_claimed_this_epoch(citizen_id, epoch);
+
+                ContractResult::with_return_data(&has_claimed, contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            },
+            "get_pool_status" => {
+                let epoch: u64 = bincode::deserialize(&call.params)?;
+                let status = ubi.get_pool_status(epoch);
+
+                ContractResult::with_return_data(&status, contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            },
             _ => Err(anyhow!("Unknown UBI method: {}", call.method)),
         };
 

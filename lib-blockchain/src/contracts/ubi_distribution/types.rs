@@ -255,39 +255,6 @@ pub struct UbiPoolStatus {
 }
 
 impl UbiPoolStatus {
-    /// Total pool capacity for a single epoch (in smallest token units).
-    pub const TOTAL_POOL_CAPACITY: u64 = 1_000_000;
-
-    /// Construct a new `UbiPoolStatus`, computing `remaining_capacity` from `total_distributed`.
-    ///
-    /// # Invariant
-    /// Ensures `remaining_capacity = TOTAL_POOL_CAPACITY - total_distributed`,
-    /// using saturating subtraction to avoid underflow if `total_distributed`
-    /// exceeds the configured pool capacity.
-    pub fn new(epoch: EpochIndex, citizens_eligible: u64, total_distributed: u64) -> Self {
-        let remaining_capacity =
-            Self::TOTAL_POOL_CAPACITY.saturating_sub(total_distributed);
-
-        UbiPoolStatus {
-            epoch,
-            citizens_eligible,
-            total_distributed,
-            remaining_capacity,
-        }
-    }
-
-    /// Validate that this instance satisfies the documented invariant.
-    ///
-    /// Returns `true` if `remaining_capacity` matches
-    /// `TOTAL_POOL_CAPACITY - total_distributed` (with saturating semantics),
-    /// otherwise `false`.
-    pub fn is_valid(&self) -> bool {
-        let expected =
-            Self::TOTAL_POOL_CAPACITY.saturating_sub(self.total_distributed);
-        self.remaining_capacity == expected
-    }
-}
-impl UbiPoolStatus {
     /// Hard pool cap per epoch (in smallest token units)
     /// 1,000,000 SOV with 8 decimals = 100_000_000_000_000 units
     pub const POOL_CAP_PER_EPOCH: u64 = 1_000_000;
@@ -306,12 +273,15 @@ impl UbiPoolStatus {
     /// # Returns
     /// UbiPoolStatus with remaining_capacity automatically calculated
     ///
-    /// # Panics
-    /// If total_distributed > 1_000_000 (should never happen, but indicates a bug in distribution)
+    /// # Safety
+    /// Uses saturating subtraction to prevent panics in consensus-critical code.
+    /// If total_distributed exceeds the cap, remaining_capacity will be 0.
+    /// (This should never happen in normal operation, but defensive programming ensures
+    /// validator nodes don't crash if invariants are violated.)
     pub fn new(epoch: EpochIndex, citizens_eligible: u64, total_distributed: u64) -> Self {
-        let remaining_capacity = Self::POOL_CAP_PER_EPOCH
-            .checked_sub(total_distributed)
-            .expect("total_distributed should never exceed pool cap; this indicates a distribution logic bug");
+        // Use saturating_sub instead of checked_sub to prevent panics
+        // Consensus-critical code must not crash under any circumstances
+        let remaining_capacity = Self::POOL_CAP_PER_EPOCH.saturating_sub(total_distributed);
 
         UbiPoolStatus {
             epoch,
@@ -501,10 +471,15 @@ mod event_tests {
     }
 
     #[test]
-    #[should_panic(expected = "total_distributed should never exceed pool cap")]
-    fn test_ubi_pool_status_constructor_panic_on_overflow() {
-        // Constructor should panic if total_distributed > 1_000_000 (indicates logic bug)
-        let _status = UbiPoolStatus::new(1, 1000, 1_000_001);
+    fn test_ubi_pool_status_constructor_saturating_on_overflow() {
+        // Constructor uses saturating_sub to prevent panics in consensus-critical code
+        // If total_distributed > 1_000_000, remaining_capacity clamps to 0
+        let status = UbiPoolStatus::new(1, 1000, 1_000_001);
+
+        assert_eq!(status.epoch, 1);
+        assert_eq!(status.citizens_eligible, 1000);
+        assert_eq!(status.total_distributed, 1_000_001);
+        assert_eq!(status.remaining_capacity, 0); // Saturated to 0, not panic
     }
 
     #[test]

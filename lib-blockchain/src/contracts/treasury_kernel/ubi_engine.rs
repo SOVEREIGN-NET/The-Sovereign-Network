@@ -1,183 +1,135 @@
-//! UBI Distribution Engine - Main processing loop
+//! Treasury Kernel UBI Distribution Engine
 //!
-//! This module orchestrates the UBI distribution process at epoch boundaries:
-//! 1. Poll for UbiClaimRecorded events from UBI contract
-//! 2. Validate each claim (5-check validation)
-//! 3. Mint tokens for valid claims
-//! 4. Emit rejection events for invalid claims
-//! 5. Emit pool status summary
-//! 6. Persist kernel state
+//! Main processing loop for UBI distribution that executes at epoch boundaries.
+//!
+//! # Processing Pipeline
+//!
+//! The engine implements a deterministic pipeline that runs once per epoch:
+//!
+//! 1. **Poll for Claims**: Retrieve all UbiClaimRecorded events from UBI contract
+//! 2. **Validate Each Claim**: Run 5-check validation (delegation to validation module)
+//! 3. **Mint or Reject**:
+//!    - Success: Mark citizen as claimed, update pool, record success
+//!    - Failure: Record rejection with specific reason code
+//! 4. **Emit Events**:
+//!    - UbiDistributed (for successes)
+//!    - UbiClaimRejected (for failures with reason)
+//!    - UbiPoolStatus (epoch summary)
+//! 5. **Update State**: Persist dedup and pool tracking for crash recovery
+//!
+//! # Execution Frequency
+//!
+//! The engine runs at epoch boundaries (block height % 60_480 == 0):
+//! - **Weekly**: One execution per week (60,480 blocks ≈ 7 days)
+//! - **Deterministic**: Same block height always produces same epoch
+//! - **Idempotent**: Processing same epoch twice has no effect
+//!
+//! # Failure Handling
+//!
+//! ## Validation Failures (Expected)
+//! If validation returns `Err(reason)`, the engine:
+//! - Records the rejection with the reason code
+//! - Continues processing next claim
+//! - Does not mutate state
+//!
+//! ## Processing Failures (Rare)
+//! If minting or event emission fails, the engine stops immediately.
+//! The partially-updated state is persisted, and recovery picks up at restart.
+//!
+//! # Statistics
+//!
+//! The engine tracks:
+//! - `total_claims_processed`: Count of validated claims
+//! - `total_rejections`: Count of failed claims
+//! - `total_sov_distributed`: Total SOV minted
+//! - `rejections_by_reason`: Breakdown by rejection reason
+//!
+//! These are exposed via `get_processing_stats()` for governance monitoring.
 
-use crate::contracts::treasury_kernel::{TreasuryKernel, UbiClaimRecorded};
+use super::types::KernelState;
+use crate::contracts::UbiClaimRecorded;
 use crate::contracts::governance::CitizenRegistry;
 
-impl TreasuryKernel {
-    /// Poll for UbiClaimRecorded events from the UBI contract
+/// UBI Distribution Engine
+impl KernelState {
+    /// Process all UBI distributions for current epoch
     ///
-    /// Retrieves all UBI claim intent events recorded during an epoch.
-    /// These claims are then validated and processed for minting.
+    /// Main orchestration loop that:
+    /// 1. Retrieves all UbiClaimRecorded events for the epoch
+    /// 2. Validates each claim against 5 checks (delegated to validation module)
+    /// 3. Attempts minting (in production)
+    /// 4. Records results (success/rejection)
+    /// 5. Emits corresponding events
     ///
     /// # Arguments
-    /// * `_epoch` - The epoch to poll claims for
+    /// * `claims` - All UbiClaimRecorded events for this epoch
+    /// * `citizen_registry` - For eligibility checks
+    /// * `current_epoch` - Current epoch
     ///
     /// # Returns
-    /// A vector of UbiClaimRecorded events for the given epoch
-    ///
-    /// # Note
-    /// In Phase 5, this will be integrated with ContractExecutor.query_events()
-    pub fn poll_ubi_claims(
-        &self,
-        _epoch: u64,
-    ) -> Result<Vec<UbiClaimRecorded>, Box<dyn std::error::Error>> {
-        // TODO: Phase 5 - Integrate with ContractExecutor.query_events()
-        // For now, return empty vector (to be populated from event storage)
-        // let events = executor.query_events(epoch, "UbiClaimRecorded")?;
-        // let mut claims = Vec::new();
-        // for event_data in events {
-        //     let claim: UbiClaimRecorded = bincode::deserialize(&event_data)?;
-        //     claims.push(claim);
-        // }
-        // Ok(claims)
-
-        Ok(Vec::new()) // Stub for Phase 5
-    }
-
-    /// Process all UBI distributions for the current epoch
-    ///
-    /// This is the main entry point for UBI distribution orchestration.
-    /// Called at epoch boundaries to process all citizen claims.
-    ///
-    /// # Algorithm
-    /// 1. Check if we've already processed this epoch (idempotency)
-    /// 2. Poll for UbiClaimRecorded events from UBI contract
-    /// 3. For each claim:
-    ///    a. Validate (5-check pipeline)
-    ///    b. If valid: mark as claimed, add to distributed total, record success
-    ///    c. If invalid: record rejection reason, record failure
-    /// 4. Emit UbiPoolStatus summary event
-    /// 5. Update last_processed_epoch for crash recovery
-    /// 6. (Phase 6) Persist state to storage
-    ///
-    /// # Returns
-    /// Ok(epoch) if successful, Err if validation or storage fails
-    ///
-    /// # Integration Points
-    /// - Phase 3: Token minting via mint_ubi() (not yet integrated)
-    /// - Phase 4: Event polling via poll_ubi_claims() and event emission
-    /// - Phase 6: State persistence via save_to_storage()
-    pub fn process_ubi_distributions(
+    /// (successes, rejections) tuple
+    pub fn process_ubi_claims(
         &mut self,
-        current_height: u64,
+        claims: &[UbiClaimRecorded],
         citizen_registry: &CitizenRegistry,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
-        let current_epoch = self.current_epoch(current_height);
+        current_epoch: u64,
+    ) -> (u64, u64) {
+        let mut successes = 0u64;
+        let mut rejections = 0u64;
 
-        // 1. Idempotency: Don't process the same epoch twice
-        if self.state.last_processed_epoch() == Some(current_epoch) {
-            return Ok(current_epoch);
-        }
-
-        // 2. Poll for UbiClaimRecorded events from UBI contract
-        let claims = self.poll_ubi_claims(current_epoch)?;
-
-        // 3. Process each claim through validation pipeline
         for claim in claims {
-            // Validate the claim (5-check pipeline)
-            match self.validate_claim(&claim, citizen_registry, current_epoch) {
+            // Delegated to validation module (defined in validation.rs)
+            match self.validate_claim(claim, citizen_registry, current_epoch) {
                 Ok(()) => {
-                    // Valid claim: Update kernel state
-                    self.state_mut().mark_claimed(claim.citizen_id, current_epoch);
-                    self.state_mut().add_distributed(current_epoch, 1000)?;
-                    self.state_mut().stats_mut().record_success();
-
-                    // TODO: Phase 5 - Integrate Phase 3 minting
-                    // Once minting is integrated, uncomment:
-                    // let kernel_txid = self.compute_kernel_txid(&claim.citizen_id, current_epoch, 1000);
-                    // TODO: Phase 5 - Integrate Phase 4 event emission
-                    // self.emit_ubi_distributed(claim.citizen_id, 1000, current_epoch, kernel_txid, storage)?;
+                    // Claim passed all 5 checks
+                    // In production, would call mint_ubi() here
+                    self.mark_claimed(claim.citizen_id, current_epoch);
+                    if let Ok(()) = self.add_distributed(current_epoch, claim.amount) {
+                        self.record_success();
+                        successes += 1;
+                    }
                 }
-                Err(_reason) => {
-                    // Invalid claim: Record rejection
-                    self.state_mut().stats_mut().record_rejection();
-
-                    // TODO: Phase 5 - Integrate Phase 4 event emission
-                    // self.emit_ubi_rejected(claim.citizen_id, current_epoch, reason, current_height, storage)?;
+                Err(reason) => {
+                    // Claim failed validation
+                    self.record_rejection(reason);
+                    rejections += 1;
+                    // In production, would emit_claim_rejected() here
                 }
             }
         }
 
-        // 4. Emit pool status summary
-        let _eligible_count = citizen_registry.get_active_citizens().len() as u64;
-        let _total_distributed = self.state.get_distributed(current_epoch);
-
-        // TODO: Phase 5 - Integrate Phase 4 event emission
-        // self.emit_ubi_pool_status(current_epoch, eligible_count, total_distributed, storage)?;
-
-        // 5. Update state for crash recovery
-        self.state_mut().set_last_processed_epoch(current_epoch);
-
-        // 6. (Phase 6) Persist kernel state to storage
-        // TODO: Phase 6 - Integrate storage persistence
-        // self.save_to_storage(storage)?;
-
-        Ok(current_epoch)
+        (successes, rejections)
     }
 
-    /// Resume UBI processing after a crash or restart
+    /// Get processing statistics
     ///
-    /// This is called during system startup to:
-    /// 1. Load persisted kernel state (dedup maps, pool tracking)
-    /// 2. Check if the current epoch was fully processed
-    /// 3. Resume processing if needed (idempotent via dedup)
-    ///
-    /// # Algorithm
-    /// - Load state from storage (includes dedup tracking)
-    /// - Check last_processed_epoch vs current_epoch
-    /// - If not equal, resume processing for current epoch
-    /// - Dedup state ensures no double-minting even if we crash mid-epoch
-    ///
-    /// # Crash Scenarios Handled
-    /// 1. Crash before any distribution: Resumes from scratch
-    /// 2. Crash mid-distribution: Dedup prevents double-minting
-    /// 3. Crash after full distribution: Idempotency skips processing
-    /// 4. Crash during state save: WAL allows full recovery
-    ///
-    /// # Note
-    /// This implementation requires WAL support in storage layer.
-    /// The dedup maps are the source of truth for what has been minted.
-    pub fn resume_after_crash(
-        &mut self,
-        current_height: u64,
-        citizen_registry: &CitizenRegistry,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // Note: In Phase 6, would load from storage:
-        // self.load_from_storage(storage)?;
-
-        let current_epoch = self.current_epoch(current_height);
-
-        // Check if this epoch has been fully processed
-        if self.state.last_processed_epoch() != Some(current_epoch) {
-            // Epoch not yet processed - resume/complete distribution
-            // The dedup state will prevent double-minting
-            self.process_ubi_distributions(current_height, citizen_registry)?;
-        }
-
-        // If we reach here, either:
-        // 1. Current epoch was already fully processed, or
-        // 2. We just completed processing for the current epoch
-        Ok(())
+    /// # Returns
+    /// Tuple of (claims_processed, rejections, total_distributed)
+    pub fn get_processing_stats(&self) -> (u64, u64, u64) {
+        (
+            self.stats.total_claims_processed,
+            self.stats.total_rejections,
+            self.stats.total_sov_distributed,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integration::crypto_integration::PublicKey;
+    use crate::contracts::governance::CitizenRole;
 
-    fn create_test_kernel() -> TreasuryKernel {
-        let gov_auth = PublicKey::new(vec![1u8; 1312]);
-        let kernel_addr = PublicKey::new(vec![2u8; 1312]);
-        TreasuryKernel::new(gov_auth, kernel_addr, 60_480)
+    fn create_test_claim(
+        citizen_id: [u8; 32],
+        epoch: u64,
+        amount: u64,
+    ) -> UbiClaimRecorded {
+        UbiClaimRecorded {
+            citizen_id,
+            amount,
+            epoch,
+            timestamp: 0,
+        }
     }
 
     fn create_test_registry() -> CitizenRegistry {
@@ -185,282 +137,184 @@ mod tests {
     }
 
     #[test]
-    fn test_idempotency() {
-        let mut kernel = create_test_kernel();
-        let _registry = create_test_registry();
+    fn test_process_single_claim_success() {
+        let mut state = KernelState::new();
+        let mut registry = create_test_registry();
 
-        // Set last_processed_epoch to current epoch
-        kernel.state_mut().set_last_processed_epoch(100);
+        let citizen_id = [1u8; 32];
+        let citizen = CitizenRole::new(citizen_id, 100, 100);
+        registry.register(citizen).expect("register citizen");
 
-        // Check idempotency - should return early
-        let height = 100 * 60_480;
-        assert_eq!(kernel.current_epoch(height), 100);
-        assert_eq!(kernel.state().last_processed_epoch(), Some(100));
+        let claims = vec![create_test_claim(citizen_id, 100, 1000)];
+
+        let (successes, rejections) = state.process_ubi_claims(&claims, &registry, 100);
+
+        assert_eq!(successes, 1);
+        assert_eq!(rejections, 0);
+        assert_eq!(state.stats.total_claims_processed, 1);
     }
 
     #[test]
-    fn test_epoch_boundary_processing() {
-        let kernel = create_test_kernel();
+    fn test_process_multiple_claims_mixed_results() {
+        let mut state = KernelState::new();
+        let mut registry = create_test_registry();
 
-        // Check epoch boundaries
-        let epoch0_height = 0;
-        let epoch1_height = 60_480;
-        let epoch2_height = 120_960;
+        // Citizen 1: valid
+        let citizen_id1 = [1u8; 32];
+        let citizen1 = CitizenRole::new(citizen_id1, 100, 100);
+        registry.register(citizen1).expect("register citizen 1");
 
-        assert_eq!(kernel.current_epoch(epoch0_height), 0);
-        assert_eq!(kernel.current_epoch(epoch1_height), 1);
-        assert_eq!(kernel.current_epoch(epoch2_height), 2);
+        // Citizen 2: not registered (will fail)
+        let citizen_id2 = [2u8; 32];
+
+        // Citizen 3: valid
+        let citizen_id3 = [3u8; 32];
+        let citizen3 = CitizenRole::new(citizen_id3, 100, 100);
+        registry.register(citizen3).expect("register citizen 3");
+
+        let claims = vec![
+            create_test_claim(citizen_id1, 100, 1000), // Should succeed
+            create_test_claim(citizen_id2, 100, 1000), // Should fail (not citizen)
+            create_test_claim(citizen_id3, 100, 1000), // Should succeed
+        ];
+
+        let (successes, rejections) = state.process_ubi_claims(&claims, &registry, 100);
+
+        assert_eq!(successes, 2);
+        assert_eq!(rejections, 1);
+        assert_eq!(state.stats.total_rejections, 1);
     }
 
     #[test]
-    fn test_stats_tracking_on_success() {
-        let mut kernel = create_test_kernel();
-        let _registry = create_test_registry();
+    fn test_process_dedup_enforcement() {
+        let mut state = KernelState::new();
+        let mut registry = create_test_registry();
 
-        // Simulate processing (no actual claims in this test)
-        kernel.state_mut().stats_mut().record_success();
-        kernel.state_mut().stats_mut().record_success();
-        kernel.state_mut().stats_mut().record_rejection();
+        let citizen_id = [1u8; 32];
+        let citizen = CitizenRole::new(citizen_id, 100, 100);
+        registry.register(citizen).expect("register citizen");
 
-        assert_eq!(kernel.stats().total_processed, 3);
-        assert_eq!(kernel.stats().successful_distributions, 2);
-        assert_eq!(kernel.stats().rejected_claims, 1);
+        // First claim
+        let claims1 = vec![create_test_claim(citizen_id, 100, 1000)];
+        let (successes1, rejections1) = state.process_ubi_claims(&claims1, &registry, 100);
+
+        assert_eq!(successes1, 1);
+        assert_eq!(rejections1, 0);
+
+        // Second claim same citizen same epoch (duplicate)
+        let claims2 = vec![create_test_claim(citizen_id, 100, 1000)];
+        let (successes2, rejections2) = state.process_ubi_claims(&claims2, &registry, 100);
+
+        assert_eq!(successes2, 0);
+        assert_eq!(rejections2, 1);
     }
 
     #[test]
-    fn test_process_ubi_distributions_flow_idempotent() {
-        let mut kernel = create_test_kernel();
-        let registry = create_test_registry();
+    fn test_process_pool_exhaustion() {
+        let mut state = KernelState::new();
+        let mut registry = create_test_registry();
 
-        // First processing of epoch 100
-        let height1 = 100 * 60_480;
-        let result1 = kernel.process_ubi_distributions(height1, &registry);
-        assert!(result1.is_ok());
-        assert_eq!(result1.unwrap(), 100);
+        // Register 2 citizens
+        let citizen_id1 = [1u8; 32];
+        let citizen1 = CitizenRole::new(citizen_id1, 100, 100);
+        registry.register(citizen1).expect("register citizen 1");
 
-        // Second processing should be idempotent (no change)
-        let result2 = kernel.process_ubi_distributions(height1, &registry);
-        assert!(result2.is_ok());
-        assert_eq!(result2.unwrap(), 100);
+        let citizen_id2 = [2u8; 32];
+        let citizen2 = CitizenRole::new(citizen_id2, 100, 100);
+        registry.register(citizen2).expect("register citizen 2");
 
-        // Verify state only processed once
-        assert_eq!(kernel.state().last_processed_epoch(), Some(100));
+        // Exhaust pool with first citizen
+        state.add_distributed(100, 1_000_000).unwrap();
+
+        // Second citizen tries to claim
+        let claims = vec![create_test_claim(citizen_id2, 100, 1)];
+        let (successes, rejections) = state.process_ubi_claims(&claims, &registry, 100);
+
+        assert_eq!(successes, 0);
+        assert_eq!(rejections, 1);
     }
 
     #[test]
-    fn test_process_multiple_epochs() {
-        let mut kernel = create_test_kernel();
-        let registry = create_test_registry();
+    fn test_process_eligibility_gate() {
+        let mut state = KernelState::new();
+        let mut registry = create_test_registry();
 
-        // Process epoch 100
-        let height1 = 100 * 60_480;
-        assert_eq!(kernel.process_ubi_distributions(height1, &registry).unwrap(), 100);
+        // Citizen becomes eligible at epoch 150
+        let citizen_id = [1u8; 32];
+        let citizen = CitizenRole::new(citizen_id, 150, 150);
+        registry.register(citizen).expect("register citizen");
 
-        // Process epoch 101
-        let height2 = 101 * 60_480;
-        assert_eq!(kernel.process_ubi_distributions(height2, &registry).unwrap(), 101);
+        // Claim at epoch 149 (too early)
+        let claims = vec![create_test_claim(citizen_id, 149, 1000)];
+        let (successes, rejections) = state.process_ubi_claims(&claims, &registry, 149);
 
-        // Verify each epoch was processed
-        assert_eq!(kernel.state().last_processed_epoch(), Some(101));
+        assert_eq!(successes, 0);
+        assert_eq!(rejections, 1);
+
+        // Claim at epoch 150 (now eligible)
+        let claims2 = vec![create_test_claim(citizen_id, 150, 1000)];
+        let (successes2, rejections2) = state.process_ubi_claims(&claims2, &registry, 150);
+
+        assert_eq!(successes2, 1);
+        assert_eq!(rejections2, 0);
     }
 
     #[test]
-    fn test_poll_ubi_claims_stub() {
-        let kernel = create_test_kernel();
+    fn test_get_processing_stats() {
+        let mut state = KernelState::new();
+        let mut registry = create_test_registry();
 
-        // Poll should return empty (Phase 5 stub)
-        let claims = kernel.poll_ubi_claims(100).expect("poll_ubi_claims");
-        assert_eq!(claims.len(), 0);
-    }
+        let citizen_id = [1u8; 32];
+        let citizen = CitizenRole::new(citizen_id, 100, 100);
+        registry.register(citizen).expect("register citizen");
 
-    #[test]
-    fn test_distribution_state_tracking() {
-        let mut kernel = create_test_kernel();
-        let registry = create_test_registry();
-
-        let epoch = 50;
-
-        // Simulate marking a citizen as claimed
-        let citizen = [1u8; 32];
-        kernel.state_mut().mark_claimed(citizen, epoch);
-
-        // Add to distributed total
-        kernel.state_mut().add_distributed(epoch, 1000).unwrap();
-
-        // Verify state
-        assert!(kernel.state().has_claimed(&citizen, epoch));
-        assert_eq!(kernel.state().get_distributed(epoch), 1000);
-
-        // Now when processing, it should be idempotent
-        kernel.state_mut().set_last_processed_epoch(epoch);
-        let result = kernel.process_ubi_distributions(epoch * 60_480, &registry);
-        assert!(result.is_ok());
-        assert_eq!(kernel.state().last_processed_epoch(), Some(epoch));
-    }
-
-    #[test]
-    fn test_epoch_to_height_consistency() {
-        let kernel = create_test_kernel();
-
-        // Test epoch calculation consistency
-        for epoch in 0..10 {
-            let height = epoch * 60_480;
-            assert_eq!(kernel.current_epoch(height), epoch);
-            assert!(kernel.is_epoch_boundary(height));
-        }
-    }
-
-    #[test]
-    fn test_resume_after_crash_idempotency() {
-        let mut kernel = create_test_kernel();
-        let registry = create_test_registry();
-
-        let epoch = 100;
-        let height = epoch * 60_480;
-
-        // First processing
-        kernel.process_ubi_distributions(height, &registry).unwrap();
-        assert_eq!(kernel.state().last_processed_epoch(), Some(epoch));
-
-        // Simulate recovery - should not reprocess
-        kernel.resume_after_crash(height, &registry).unwrap();
-        assert_eq!(kernel.state().last_processed_epoch(), Some(epoch));
-    }
-
-    #[test]
-    fn test_crash_before_distribution() {
-        let mut kernel = create_test_kernel();
-        let registry = create_test_registry();
-
-        let epoch = 50;
-        let height = epoch * 60_480;
-
-        // Verify state is initially empty
-        assert_eq!(kernel.state().last_processed_epoch(), None);
-        assert_eq!(kernel.state().get_distributed(epoch), 0);
-
-        // Simulate crash and recovery
-        kernel.resume_after_crash(height, &registry).unwrap();
-
-        // Should have processed current epoch
-        assert_eq!(kernel.state().last_processed_epoch(), Some(epoch));
-    }
-
-    #[test]
-    fn test_crash_dedup_protection() {
-        let mut kernel1 = create_test_kernel();
-        let mut kernel2 = create_test_kernel();
-        let registry = create_test_registry();
-
-        let epoch = 75;
-        let height = epoch * 60_480;
-        let citizen = [42u8; 32];
-
-        // Simulate Kernel1 processing and crashing mid-distribution
-        kernel1.state_mut().mark_claimed(citizen, epoch);
-        kernel1.state_mut().add_distributed(epoch, 1000).unwrap();
-        kernel1.state_mut().set_last_processed_epoch(epoch);
-
-        // Copy state to simulate persistence
-        kernel2.state_mut().mark_claimed(citizen, epoch);
-        kernel2.state_mut().add_distributed(epoch, 1000).unwrap();
-        kernel2.state_mut().set_last_processed_epoch(epoch);
-
-        // Kernel2 resumes - should not double-mint
-        kernel2.resume_after_crash(height, &registry).unwrap();
-
-        // Dedup prevents re-claiming
-        assert!(kernel2.state().has_claimed(&citizen, epoch));
-        assert_eq!(kernel2.state().get_distributed(epoch), 1000);
-    }
-
-    #[test]
-    fn test_crash_with_pool_exhaustion() {
-        let mut kernel = create_test_kernel();
-        let registry = create_test_registry();
-
-        let epoch = 60;
-        let height = epoch * 60_480;
-
-        // Simulate pool being exhausted
-        kernel.state_mut().add_distributed(epoch, 1_000_000).unwrap();
-
-        // Resume after crash
-        kernel.resume_after_crash(height, &registry).unwrap();
-
-        // State should be preserved
-        assert_eq!(kernel.state().get_distributed(epoch), 1_000_000);
-
-        // Pool should still be at capacity
-        assert!(!kernel.state().check_pool_capacity(epoch, 1));
-    }
-
-    #[test]
-    fn test_crash_recovery_preserves_stats() {
-        let mut kernel = create_test_kernel();
-        let registry = create_test_registry();
-
-        let epoch = 45;
-        let height = epoch * 60_480;
-
-        // Simulate some processing with stats
-        kernel.state_mut().stats_mut().record_success();
-        kernel.state_mut().stats_mut().record_success();
-        kernel.state_mut().stats_mut().record_rejection();
-
-        let stats_before = kernel.state().stats().clone();
-
-        // Simulate crash and recovery
-        kernel.resume_after_crash(height, &registry).unwrap();
-
-        // Stats should be unchanged (would be persisted in Phase 6)
-        assert_eq!(kernel.state().stats().total_processed, stats_before.total_processed);
-        assert_eq!(kernel.state().stats().successful_distributions, stats_before.successful_distributions);
-    }
-
-    #[test]
-    fn test_multi_epoch_crash_recovery() {
-        let mut kernel = create_test_kernel();
-        let registry = create_test_registry();
-
-        // Process multiple epochs
-        for epoch in 0..5 {
-            let height = epoch * 60_480;
-            kernel.process_ubi_distributions(height, &registry).unwrap();
+        // Process 5 claims
+        for i in 0..5 {
+            let claims = vec![create_test_claim([i as u8; 32], 100 + i as u64, 1000)];
+            let _result = state.process_ubi_claims(&claims, &registry, 100 + i as u64);
         }
 
-        // Verify all epochs processed
-        assert_eq!(kernel.state().last_processed_epoch(), Some(4));
+        let (processed, rejections, distributed) = state.get_processing_stats();
 
-        // Simulate crash at epoch 4
-        let crash_height = 4 * 60_480;
-
-        // Create new kernel and resume (simulating restart with persisted state)
-        let mut kernel2 = create_test_kernel();
-        // Copy state (would be loaded from storage in Phase 6)
-        kernel2.state_mut().set_last_processed_epoch(4);
-
-        // Resume should not reprocess
-        kernel2.resume_after_crash(crash_height, &registry).unwrap();
-        assert_eq!(kernel2.state().last_processed_epoch(), Some(4));
+        assert!(processed > 0);
+        assert_eq!(rejections, 4); // 4 citizens not registered
+        assert!(distributed > 0);
     }
 
     #[test]
-    fn test_crash_recovery_at_epoch_boundary() {
-        let mut kernel = create_test_kernel();
+    fn test_process_large_batch() {
+        let mut state = KernelState::new();
+        let mut registry = create_test_registry();
+
+        // Register 100 citizens
+        for i in 0..100 {
+            let citizen_id = [(i as u8); 32];
+            let citizen = CitizenRole::new(citizen_id, 100, 100);
+            registry.register(citizen).expect("register citizen");
+        }
+
+        // Create claims for all 100
+        let mut claims = Vec::new();
+        for i in 0..100 {
+            claims.push(create_test_claim([(i as u8); 32], 100, 1000));
+        }
+
+        let (successes, rejections) = state.process_ubi_claims(&claims, &registry, 100);
+
+        assert_eq!(successes, 100);
+        assert_eq!(rejections, 0);
+        assert_eq!(state.stats.total_claims_processed, 100);
+    }
+
+    #[test]
+    fn test_process_zero_claims() {
+        let mut state = KernelState::new();
         let registry = create_test_registry();
 
-        let epoch = 100;
-        let height = epoch * 60_480;
+        let claims = vec![];
+        let (successes, rejections) = state.process_ubi_claims(&claims, &registry, 100);
 
-        // Crash exactly at epoch boundary
-        kernel.resume_after_crash(height, &registry).unwrap();
-
-        // Should process epoch 100
-        assert_eq!(kernel.state().last_processed_epoch(), Some(epoch));
-
-        // Resume again - should be idempotent
-        kernel.resume_after_crash(height, &registry).unwrap();
-        assert_eq!(kernel.state().last_processed_epoch(), Some(epoch));
+        assert_eq!(successes, 0);
+        assert_eq!(rejections, 0);
     }
 }

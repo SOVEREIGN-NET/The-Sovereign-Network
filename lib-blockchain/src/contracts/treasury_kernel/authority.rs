@@ -1,155 +1,216 @@
-//! Minting Authority - Kernel-only token minting
+//! Treasury Kernel Minting Authority
 //!
-//! This module implements the authority enforcement for UBI minting.
-//! Only the Treasury Kernel can mint tokens for UBI distribution.
+//! Enforces that only the Treasury Kernel can mint tokens.
+//! No other contract can perform minting operations.
 //!
-//! # Integration Points (Phase 5)
+//! # Security Model
 //!
-//! The mint_ubi() method will be integrated with ContractExecutor in Phase 5:
-//! 1. ContractExecutor.get_or_load_zhtp() - Load SOV token contract
-//! 2. token.mint_kernel_only(kernel_addr, citizen, 1000) - Kernel-authorized minting
-//! 3. Kernel tracks minting in state for deduplication and pool management
+//! The minting authority model implements strict access control:
+//! - **Single Authority**: Only the Kernel's PublicKey can mint
+//! - **No Delegation**: Authority cannot be transferred or delegated
+//! - **Immutable**: Set at Kernel initialization, never changes
+//!
+//! This guarantees that no other contract, even malicious ones, can
+//! forge tokens or bypass validation.
+//!
+//! # Deterministic Transaction IDs
+//!
+//! Every minting operation produces a deterministic transaction ID based on:
+//! - Constant identifier: `b"KERNEL_MINT"`
+//! - Citizen ID (recipient)
+//! - Epoch number
+//! - Amount minted
+//!
+//! This enables:
+//! - **Idempotency**: Same claim always produces same transaction ID
+//! - **Auditability**: Every mint is traceable to a specific citizen/epoch/amount
+//! - **Recovery**: Replaying transactions produces identical results
+//!
+//! # Example
+//! ```ignore
+//! // Only the Kernel can mint
+//! KernelState::verify_minting_authority(&kernel_address, &kernel_address)?; // OK
+//! KernelState::verify_minting_authority(&attacker_address, &kernel_address)?; // ERROR
+//!
+//! // Transaction IDs are deterministic
+//! let txid1 = KernelState::compute_kernel_txid(&[1u8; 32], 100, 1000);
+//! let txid2 = KernelState::compute_kernel_txid(&[1u8; 32], 100, 1000);
+//! assert_eq!(txid1, txid2); // Same inputs → same output
+//! ```
 
-use crate::contracts::treasury_kernel::TreasuryKernel;
+use super::types::KernelState;
 
-impl TreasuryKernel {
-    /// Compute a deterministic transaction ID for a kernel mint operation
+/// Minting authority enforcement for Treasury Kernel
+///
+/// The Kernel is the **only** contract authorized to mint tokens.
+/// This module provides the core logic for verifying minting authorization.
+impl KernelState {
+    /// Verify minting authority
     ///
-    /// The transaction ID is derived from:
-    /// - Kernel identifier
-    /// - Citizen ID
-    /// - Epoch
-    /// - Amount
+    /// # Arguments
+    /// * `caller` - The entity attempting to mint (must be kernel itself)
+    /// * `kernel_address` - The kernel's own address
     ///
-    /// This allows auditing to trace back which kernel operation created a mint.
-    /// Different citizens, epochs, or amounts produce different transaction IDs.
-    pub fn compute_kernel_txid(
-        &self,
-        citizen_id: &[u8; 32],
-        epoch: u64,
-        amount: u64,
-    ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"KERNEL_TX");
-        hasher.update(citizen_id);
-        hasher.update(&epoch.to_be_bytes());
-        hasher.update(&amount.to_be_bytes());
-        hasher.update(&self.kernel_address().key_id);
-        hasher.finalize().into()
+    /// # Returns
+    /// Ok(()) if caller is authorized (is the kernel)
+    /// Err if caller is not authorized
+    pub fn verify_minting_authority(
+        caller: &[u8; 32],
+        kernel_address: &[u8; 32],
+    ) -> Result<(), String> {
+        if caller == kernel_address {
+            Ok(())
+        } else {
+            Err("Only Treasury Kernel can mint tokens".to_string())
+        }
     }
 
-    /// Verify that a caller is the kernel (for external callers to check)
+    /// Compute deterministic transaction ID for minting
     ///
-    /// This is used to validate that only the kernel can perform certain operations.
-    pub fn verify_kernel_authority(&self, caller: &crate::integration::crypto_integration::PublicKey) -> bool {
-        caller == self.kernel_address()
-    }
+    /// # Arguments
+    /// * `citizen_id` - Recipient citizen ID
+    /// * `epoch` - Epoch for which distribution occurs
+    /// * `amount` - Amount being minted
+    ///
+    /// # Returns
+    /// Deterministic 32-byte transaction ID
+    pub fn compute_kernel_txid(citizen_id: &[u8; 32], epoch: u64, amount: u64) -> [u8; 32] {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
 
-    /// Get minting parameters for UBI
-    ///
-    /// Returns (per_citizen_amount, pool_cap_per_epoch)
-    pub fn get_ubi_parameters(&self) -> (u64, u64) {
-        let config = self.config();
-        (config.ubi_per_citizen, config.pool_cap_per_epoch)
+        let mut hasher = DefaultHasher::new();
+        b"KERNEL_MINT".hash(&mut hasher);
+        citizen_id.hash(&mut hasher);
+        epoch.hash(&mut hasher);
+        amount.hash(&mut hasher);
+
+        let hash = hasher.finish();
+        let mut result = [0u8; 32];
+        result[0..8].copy_from_slice(&hash.to_le_bytes());
+        // Fill rest with deterministic pattern
+        for i in 8..32 {
+            result[i] = ((i as u64 ^ hash) % 256) as u8;
+        }
+        result
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integration::crypto_integration::PublicKey;
 
-    fn create_test_kernel() -> TreasuryKernel {
-        let gov_auth = PublicKey::new(vec![1u8; 1312]);
-        let kernel_addr = PublicKey::new(vec![2u8; 1312]);
-        TreasuryKernel::new(gov_auth, kernel_addr, 60_480)
+    fn test_kernel_address() -> [u8; 32] {
+        [88u8; 32]
+    }
+
+    fn test_attacker_address() -> [u8; 32] {
+        [99u8; 32]
+    }
+
+    #[test]
+    fn test_verify_minting_authority_kernel() {
+        let kernel_addr = test_kernel_address();
+        let result = KernelState::verify_minting_authority(&kernel_addr, &kernel_addr);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_minting_authority_not_kernel() {
+        let kernel_addr = test_kernel_address();
+        let attacker_addr = test_attacker_address();
+        let result = KernelState::verify_minting_authority(&attacker_addr, &kernel_addr);
+        assert!(result.is_err());
+        assert_eq!(
+            result,
+            Err("Only Treasury Kernel can mint tokens".to_string())
+        );
     }
 
     #[test]
     fn test_compute_kernel_txid_deterministic() {
-        let kernel = create_test_kernel();
-        let citizen = [1u8; 32];
-        let epoch = 100;
-        let amount = 1000;
+        let citizen_id = [1u8; 32];
+        let epoch = 100u64;
+        let amount = 1000u64;
 
-        let txid1 = kernel.compute_kernel_txid(&citizen, epoch, amount);
-        let txid2 = kernel.compute_kernel_txid(&citizen, epoch, amount);
+        let txid1 = KernelState::compute_kernel_txid(&citizen_id, epoch, amount);
+        let txid2 = KernelState::compute_kernel_txid(&citizen_id, epoch, amount);
 
         assert_eq!(txid1, txid2);
     }
 
     #[test]
-    fn test_compute_kernel_txid_differs_by_citizen() {
-        let kernel = create_test_kernel();
-        let citizen1 = [1u8; 32];
-        let citizen2 = [2u8; 32];
+    fn test_compute_kernel_txid_different_citizen() {
+        let citizen_id1 = [1u8; 32];
+        let citizen_id2 = [2u8; 32];
+        let epoch = 100u64;
+        let amount = 1000u64;
 
-        let txid1 = kernel.compute_kernel_txid(&citizen1, 100, 1000);
-        let txid2 = kernel.compute_kernel_txid(&citizen2, 100, 1000);
-
-        assert_ne!(txid1, txid2);
-    }
-
-    #[test]
-    fn test_compute_kernel_txid_differs_by_epoch() {
-        let kernel = create_test_kernel();
-        let citizen = [1u8; 32];
-
-        let txid1 = kernel.compute_kernel_txid(&citizen, 100, 1000);
-        let txid2 = kernel.compute_kernel_txid(&citizen, 101, 1000);
+        let txid1 = KernelState::compute_kernel_txid(&citizen_id1, epoch, amount);
+        let txid2 = KernelState::compute_kernel_txid(&citizen_id2, epoch, amount);
 
         assert_ne!(txid1, txid2);
     }
 
     #[test]
-    fn test_compute_kernel_txid_differs_by_amount() {
-        let kernel = create_test_kernel();
-        let citizen = [1u8; 32];
+    fn test_compute_kernel_txid_different_epoch() {
+        let citizen_id = [1u8; 32];
+        let epoch1 = 100u64;
+        let epoch2 = 101u64;
+        let amount = 1000u64;
 
-        let txid1 = kernel.compute_kernel_txid(&citizen, 100, 1000);
-        let txid2 = kernel.compute_kernel_txid(&citizen, 100, 2000);
+        let txid1 = KernelState::compute_kernel_txid(&citizen_id, epoch1, amount);
+        let txid2 = KernelState::compute_kernel_txid(&citizen_id, epoch2, amount);
 
         assert_ne!(txid1, txid2);
     }
 
     #[test]
-    fn test_verify_kernel_authority_self() {
-        let kernel = create_test_kernel();
-        let kernel_addr = kernel.kernel_address().clone();
+    fn test_compute_kernel_txid_different_amount() {
+        let citizen_id = [1u8; 32];
+        let epoch = 100u64;
+        let amount1 = 1000u64;
+        let amount2 = 2000u64;
 
-        assert!(kernel.verify_kernel_authority(&kernel_addr));
+        let txid1 = KernelState::compute_kernel_txid(&citizen_id, epoch, amount1);
+        let txid2 = KernelState::compute_kernel_txid(&citizen_id, epoch, amount2);
+
+        assert_ne!(txid1, txid2);
     }
 
     #[test]
-    fn test_verify_kernel_authority_not_kernel() {
-        let kernel = create_test_kernel();
-        let other = PublicKey::new(vec![99u8; 1312]);
+    fn test_authorization_chain() {
+        // Verify that no other address can mint, even if modified
+        let kernel_addr = test_kernel_address();
 
-        assert!(!kernel.verify_kernel_authority(&other));
+        for i in 0..255 {
+            let addr = [i as u8; 32];
+            if addr == kernel_addr {
+                assert!(KernelState::verify_minting_authority(&addr, &kernel_addr).is_ok());
+            } else {
+                assert!(KernelState::verify_minting_authority(&addr, &kernel_addr).is_err());
+            }
+        }
     }
 
     #[test]
-    fn test_get_ubi_parameters() {
-        let kernel = create_test_kernel();
-        let (per_citizen, pool_cap) = kernel.get_ubi_parameters();
+    fn test_txid_uniqueness() {
+        let mut seen_txids = std::collections::HashSet::new();
 
-        assert_eq!(per_citizen, 1_000);
-        assert_eq!(pool_cap, 1_000_000);
-    }
+        // Generate 100 unique TxIDs and verify no collisions
+        for i in 0..100 {
+            let citizen_id = [(i % 256) as u8; 32];
+            let epoch = i as u64;
+            let amount = 1000 + i as u64;
 
-    #[test]
-    fn test_kernel_txid_formatting() {
-        let kernel = create_test_kernel();
-        let citizen = [42u8; 32];
-        let epoch = 12345;
-        let amount = 5000;
+            let txid = KernelState::compute_kernel_txid(&citizen_id, epoch, amount);
 
-        let txid = kernel.compute_kernel_txid(&citizen, epoch, amount);
-
-        // Verify it's a valid hash
-        assert_eq!(txid.len(), 32);
-
-        // Verify it's not all zeros
-        assert!(!txid.iter().all(|&b| b == 0));
+            assert!(
+                seen_txids.insert(txid),
+                "Collision detected for citizen_id={:?}, epoch={}, amount={}",
+                citizen_id,
+                epoch,
+                amount
+            );
+        }
     }
 }
