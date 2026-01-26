@@ -463,12 +463,12 @@ impl ZhtpUnifiedServer {
             identity_manager.clone(),            // Identity manager for auto-registration
         );
 
-        // Issue #907: Link MeshRouter's peer registry to QuicHandler for block broadcasting
-        // This enables QUIC mesh peers to receive block broadcasts via MeshRouter
-        quic_handler.set_mesh_peer_registry(mesh_router_arc.connections.clone());
+        // Issue #907: QuicMeshProtocol is now the SINGLE canonical connection store.
+        // No need to link MeshRouter's PeerRegistry - broadcast_to_peers() now calls
+        // quic_protocol.broadcast_message() directly.
 
         let quic_handler = Arc::new(quic_handler);
-        info!(" QUIC handler initialized for native ZHTP-over-QUIC (with mesh peer registry)");
+        info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
         mesh_router_arc.set_zhtp_router(zhtp_router_arc.clone()).await;
