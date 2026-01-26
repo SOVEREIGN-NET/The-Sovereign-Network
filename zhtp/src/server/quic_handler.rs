@@ -942,13 +942,26 @@ impl QuicHandler {
         let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection.clone(),
             peer_addr,
-            handshake_result.verified_peer,
+            handshake_result.verified_peer.clone(),
             handshake_result.session_key,
             handshake_result.session_id,
             false,
         );
 
-        // Store connection
+        // Issue #907: Also register in QuicMeshProtocol.connections for send_to_peer()
+        // Without this, broadcast_to_peers -> send_to_peer can't find the incoming peer
+        let quic_conn = PqcQuicConnection::from_verified_peer(
+            connection.clone(),
+            peer_addr,
+            handshake_result.verified_peer,
+            handshake_result.session_key,
+            handshake_result.session_id,
+            false,
+        );
+        self.quic_protocol.register_incoming_connection(node_id_arr.to_vec(), quic_conn).await;
+        info!("📡 Incoming mesh peer registered in QuicMeshProtocol for send_to_peer()");
+
+        // Store connection in QuicHandler's pqc_connections
         self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
 
         // Issue #907: Register peer in MeshRouter's PeerRegistry for block broadcasting

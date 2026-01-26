@@ -317,35 +317,19 @@ impl MeshRouter {
 
             let peer_pubkey = peer_entry.peer_id.public_key();
 
-            match self.send_with_routing(message.clone(), &peer_pubkey, &our_pubkey).await {
-                Ok(_msg_id) => {
+            // Issue #907: Use direct QUIC send instead of send_with_routing
+            // send_with_routing requires TransportManager which isn't configured in QUIC-only mode
+            // send_to_peer uses quic_protocol.send_to_peer() directly which works
+            match self.send_to_peer(&peer_pubkey, message.clone()).await {
+                Ok(()) => {
                     success_count += 1;
                 }
                 Err(err) => {
-                    // Structured error classification - no string parsing
-                    match err.class {
-                        crate::server::mesh::routing_errors::RoutingErrorClass::IdentityViolation => {
-                            warn!(
-                                "⚠️ IDENTITY VIOLATION: Peer {:?} failed verification - permanently skipping: {}",
-                                &peer_pubkey.key_id[..8], err.message
-                            );
-                            identity_violations_count += 1;
-                        }
-                        crate::server::mesh::routing_errors::RoutingErrorClass::Transient => {
-                            // Transient error - continue with other peers
-                            debug!(
-                                "Transient error routing to peer {:?}: {} (continuing with other peers)",
-                                &peer_pubkey.key_id[..8], err.message
-                            );
-                        }
-                        crate::server::mesh::routing_errors::RoutingErrorClass::Configuration => {
-                            // Configuration error - log warning and continue
-                            warn!(
-                                "Configuration error routing to peer {:?}: {}",
-                                &peer_pubkey.key_id[..8], err.message
-                            );
-                        }
-                    }
+                    // Log error and continue with other peers
+                    debug!(
+                        "Failed to send to peer {:?}: {} (continuing with other peers)",
+                        &peer_pubkey.key_id[..8], err
+                    );
                 }
             }
         }

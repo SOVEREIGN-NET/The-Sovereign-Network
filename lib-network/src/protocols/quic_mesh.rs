@@ -605,6 +605,14 @@ impl QuicMeshProtocol {
         Ok(())
     }
     
+    /// Register an incoming peer connection for message sending (Issue #907)
+    ///
+    /// When QuicHandler accepts an incoming mesh connection, the PqcQuicConnection
+    /// needs to be registered here so send_to_peer() can find it.
+    pub async fn register_incoming_connection(&self, peer_node_id: Vec<u8>, conn: PqcQuicConnection) {
+        self.connections.write().await.insert(peer_node_id, conn);
+    }
+
     /// Send encrypted ZHTP message to peer
     pub async fn send_to_peer(
         &self,
