@@ -60,6 +60,9 @@ hostname = "0.4"
 # CRITICAL FIX C3: Faster RwLock for atomic state updates
 parking_lot = "0.12"
 
+# Lock-free concurrent HashMap (Issue #907: canonical connection store)
+dashmap = "5.5"
+
 # CRITICAL FIX C1: BLAKE3 for proof-of-work
 blake3 = "1.5"
 

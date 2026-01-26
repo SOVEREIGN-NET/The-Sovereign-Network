@@ -37,7 +37,7 @@
 //!
 //! - `QuicHandler::clone()` creates a new handle to shared state
 //! - `zhtp_router` uses RwLock - multiple concurrent readers allowed
-//! - `pqc_connections` uses RwLock for concurrent peer connection tracking
+//! - `quic_protocol` uses DashMap for lock-free concurrent peer connection tracking
 
 use std::sync::Arc;
 use std::net::SocketAddr;
@@ -48,7 +48,7 @@ use tracing::{info, warn, debug, error};
 use quinn::{Connection, Incoming, RecvStream, SendStream};
 use tokio::sync::RwLock;
 
-use lib_network::protocols::quic_mesh::{QuicMeshProtocol, PqcQuicConnection};
+use lib_network::protocols::quic_mesh::{QuicMeshProtocol, PqcQuicConnection, PeerConnection};
 use lib_network::protocols::quic_handshake::{self};
 use lib_network::handshake::{HandshakeContext, NonceCache, ClientHello};
 use lib_network::messaging::message_handler::MeshMessageHandler;
@@ -85,13 +85,6 @@ const MAX_MESSAGE_SIZE: u64 = 1024 * 1024;
 /// Per-IP rate limit for PQC handshakes
 const MAX_HANDSHAKES_PER_IP: usize = 10;
 const HANDSHAKE_RATE_WINDOW: Duration = Duration::from_secs(60);
-
-/// Tracked PQC connection with metadata
-struct TrackedConnection {
-    connection: PqcQuicConnection,
-    created_at: Instant,
-    last_activity: Instant,
-}
 
 /// DEPRECATED: ControlPlaneSession replaced by V2Session in PR #816
 /// V2Session provides HMAC-SHA3-256 MAC verification with monotonic counter replay protection.
@@ -203,14 +196,14 @@ pub struct QuicHandler {
     /// ZHTP router for native API requests
     zhtp_router: Arc<RwLock<ZhtpRouter>>,
 
-    /// QUIC mesh protocol (for connection storage and PQC operations)
+    /// QUIC mesh protocol - CANONICAL connection store (Issue #907)
+    /// All peer connections are registered here via register_peer().
+    /// broadcast_message(), send_to_peer(), and per-peer UNI receive loops
+    /// all operate through this single store.
     quic_protocol: Arc<QuicMeshProtocol>,
 
     /// Mesh message handler for blockchain sync and peer messages
     mesh_handler: Option<Arc<RwLock<MeshMessageHandler>>>,
-
-    /// Active PQC connections with metadata (peer_node_id -> TrackedConnection)
-    pqc_connections: Arc<RwLock<HashMap<Vec<u8>, TrackedConnection>>>,
 
     /// Handshake rate limiting (IP -> (count, window_start))
     handshake_rate_limits: Arc<RwLock<HashMap<SocketAddr, (usize, Instant)>>>,
@@ -230,7 +223,6 @@ impl QuicHandler {
             zhtp_router,
             quic_protocol,
             mesh_handler: None,
-            pqc_connections: Arc::new(RwLock::new(HashMap::new())),
             handshake_rate_limits: Arc::new(RwLock::new(HashMap::new())),
             identity_manager,
         }
@@ -255,7 +247,7 @@ impl QuicHandler {
 
         // Check limit
         if entry.0 >= MAX_HANDSHAKES_PER_IP {
-            warn!("🚫 Rate limit exceeded for handshakes from {}", peer_addr);
+            warn!("Rate limit exceeded for handshakes from {}", peer_addr);
             return Err(anyhow!("Too many handshake attempts, please try again later"));
         }
 
@@ -264,62 +256,10 @@ impl QuicHandler {
         Ok(())
     }
 
-    /// Add PQC connection with bounds checking and LRU eviction
-    async fn add_pqc_connection(&self, node_id: Vec<u8>, conn: PqcQuicConnection) -> Result<()> {
-        let mut connections = self.pqc_connections.write().await;
-        let now = Instant::now();
-
-        // Check if we're at capacity
-        if connections.len() >= MAX_PQC_CONNECTIONS {
-            // Find oldest connection to evict (LRU)
-            if let Some(oldest_key) = connections
-                .iter()
-                .min_by_key(|(_, tracked)| tracked.last_activity)
-                .map(|(k, _)| k.clone())
-            {
-                connections.remove(&oldest_key);
-                warn!("♻️ Evicted oldest PQC connection (LRU) due to capacity limit");
-            }
-        }
-
-        // Add new connection
-        connections.insert(node_id, TrackedConnection {
-            connection: conn,
-            created_at: now,
-            last_activity: now,
-        });
-
-        debug!("📊 PQC connections: {}/{}", connections.len(), MAX_PQC_CONNECTIONS);
-        Ok(())
-    }
-
-    /// Update last activity time for a connection
-    async fn update_connection_activity(&self, node_id: &[u8]) {
-        if let Some(tracked) = self.pqc_connections.write().await.get_mut(node_id) {
-            tracked.last_activity = Instant::now();
-        }
-    }
-
-    /// Clean up expired connections
-    async fn cleanup_expired_connections(&self) {
-        let mut connections = self.pqc_connections.write().await;
-        let now = Instant::now();
-        let initial_count = connections.len();
-
-        connections.retain(|_, tracked| {
-            now.duration_since(tracked.created_at) < MAX_CONNECTION_AGE
-        });
-
-        let removed = initial_count - connections.len();
-        if removed > 0 {
-            info!("🧹 Cleaned up {} expired PQC connections", removed);
-        }
-    }
-
     /// Set the mesh message handler for blockchain sync
     pub fn set_mesh_handler(&mut self, handler: Arc<RwLock<MeshMessageHandler>>) {
         self.mesh_handler = Some(handler);
-        info!("✅ MeshMessageHandler registered with QuicHandler");
+        info!("MeshMessageHandler registered with QuicHandler");
 
         // Wire DHT payload sender if integration already registered one (Phase 4 relocation)
         if let Some(handler) = self.mesh_handler.as_ref().cloned() {
@@ -328,12 +268,6 @@ impl QuicHandler {
                 crate::integration::wire_message_handler(&mut guard).await;
             });
         }
-    }
-
-    /// Get reference to PQC connections for external access
-    /// Returns wrapped connections with metadata (use carefully - prefer internal methods)
-    pub fn get_pqc_connections(&self) -> Arc<RwLock<HashMap<Vec<u8>, TrackedConnection>>> {
-        self.pqc_connections.clone()
     }
 
     /// Accept and handle incoming QUIC connections from endpoint
@@ -899,8 +833,12 @@ impl QuicHandler {
     // See PR #816 for UHP v2 session authentication protocol upgrade.
 
     /// Handle mesh peer connection (node-to-node)
+    ///
+    /// Issue #907: Simplified to use QuicMeshProtocol as the single canonical connection store.
+    /// After UHP handshake, a PeerConnection is created and registered via register_peer(),
+    /// which also spawns a UNI receive loop for incoming mesh messages.
     async fn handle_mesh_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
-        info!("🔗 Mesh peer connection from {} - starting UHP handshake", peer_addr);
+        info!("Mesh peer connection from {} - starting UHP handshake", peer_addr);
 
         // Perform UHP+Kyber handshake with common setup (uses global nonce cache)
         let (_identity, handshake_result) = self.perform_uhp_handshake(
@@ -916,25 +854,38 @@ impl QuicHandler {
         info!(
             peer_did = %handshake_result.verified_peer.identity.did,
             session_id = ?handshake_result.session_id,
-            "✅ Mesh peer authenticated from {} (identity verified)",
+            "Mesh peer authenticated from {} (identity verified)",
             peer_addr
         );
 
-        // Create PqcQuicConnection from handshake result
-        let pqc_conn = PqcQuicConnection::from_verified_peer(
-            connection.clone(),
+        // Issue #907: Create PeerConnection and register in the SINGLE canonical store.
+        // This replaces the old triple-store pattern (pqc_connections + QuicMeshProtocol
+        // + MeshRouter PeerRegistry). The register_peer() call also spawns the UNI
+        // receive loop, fixing the UNI/BI stream mismatch bug.
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let peer_conn = PeerConnection {
+            quic_conn: connection.clone(),
+            session_key: Some(handshake_result.session_key),
+            verified_peer: handshake_result.verified_peer.clone(),
+            session_id: Some(handshake_result.session_id),
             peer_addr,
-            handshake_result.verified_peer,
-            handshake_result.session_key,
-            handshake_result.session_id,
-            false,
+            bootstrap_mode: false,
+            connected_at: std::time::Instant::now(),
+            last_activity: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_secs)),
+        };
+
+        self.quic_protocol.register_peer(node_id_arr.to_vec(), peer_conn);
+        info!(
+            peer_count = self.quic_protocol.peer_count(),
+            "Inbound mesh peer registered in canonical store"
         );
 
-        // Store connection
-        self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
-
-        // Continue accepting mesh streams
-        self.accept_additional_streams(connection, Some(node_id_arr));
+        // Auto-register peer identity for wallet/blockchain
+        self.auto_register_peer_identity(&handshake_result.verified_peer.identity).await;
 
         Ok(())
     }
@@ -1185,7 +1136,7 @@ impl QuicHandler {
             peer_addr
         );
 
-        // Create PqcQuicConnection from handshake result
+        // Issue #907: Register in canonical store via PeerConnection conversion
         let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection.clone(),
             peer_addr,
@@ -1194,11 +1145,9 @@ impl QuicHandler {
             handshake_result.session_id,
             false,
         );
+        self.quic_protocol.register_peer(node_id_arr.to_vec(), pqc_conn.into_peer_connection());
 
-        // Store connection
-        self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
-
-        // Continue accepting streams
+        // Continue accepting streams (BI streams for ZHTP API requests)
         self.accept_additional_streams(connection, Some(node_id_arr));
 
         Ok(())
@@ -1220,7 +1169,7 @@ impl QuicHandler {
         mut recv: RecvStream,
         peer_node_id: [u8; 32],
     ) -> Result<()> {
-        debug!("📨 Receiving mesh message from peer {}", hex::encode(&peer_node_id[..8]));
+        debug!("Receiving mesh message from peer {}", hex::encode(&peer_node_id[..8]));
 
         // Read full message with size limit (P1-4: Bincode size limits)
         let mut message_data = initial_data;
@@ -1228,33 +1177,15 @@ impl QuicHandler {
         message_data.extend_from_slice(&remaining);
 
         if message_data.len() > MAX_MESSAGE_SIZE as usize {
-            warn!("🚫 Mesh message too large from peer {}: {} bytes",
+            warn!("Mesh message too large from peer {}: {} bytes",
                   hex::encode(&peer_node_id[..8]), message_data.len());
             return Err(anyhow!("Message exceeds maximum size"));
         }
 
-        // Get connection and validate authentication (P1-3: Authentication checks before decryption)
-        let (session_key, _connection_age) = {
-            let connections = self.pqc_connections.read().await;
-            let tracked = connections.get(&peer_node_id.to_vec())
-                .ok_or_else(|| anyhow!("No PQC connection for peer - not authenticated"))?;
-
-            // Check connection age
-            let age = Instant::now().duration_since(tracked.created_at);
-            if age > MAX_CONNECTION_AGE {
-                warn!("🚫 Connection from peer {} too old: {:?}", hex::encode(&peer_node_id[..8]), age);
-                return Err(anyhow!("Connection expired - please re-authenticate"));
-            }
-
-            // Verify session key exists (from UHP+Kyber handshake)
-            let key = tracked.connection.get_session_key_ref()
-                .ok_or_else(|| anyhow!("No session key for peer - handshake incomplete"))?;
-
-            (*key, age)
-        };
-
-        // Update activity timestamp
-        self.update_connection_activity(&peer_node_id).await;
+        // Issue #907: Get session key from canonical store (QuicMeshProtocol.connections)
+        let session_key = self.quic_protocol.get_peer_session_key(&peer_node_id)
+            .ok_or_else(|| anyhow!("No session key for peer {} - not in canonical store",
+                                   hex::encode(&peer_node_id[..8])))?;
 
         // Decrypt with session key (derived from UHP+Kyber handshake)
         let decrypted = lib_crypto::symmetric::chacha20::decrypt_data(&message_data, &session_key)
@@ -1369,7 +1300,6 @@ impl Clone for QuicHandler {
             zhtp_router: self.zhtp_router.clone(),
             quic_protocol: self.quic_protocol.clone(),
             mesh_handler: self.mesh_handler.clone(),
-            pqc_connections: self.pqc_connections.clone(),
             handshake_rate_limits: self.handshake_rate_limits.clone(),
             identity_manager: self.identity_manager.clone(),
         }

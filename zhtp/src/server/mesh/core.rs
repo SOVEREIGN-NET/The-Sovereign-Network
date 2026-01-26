@@ -85,9 +85,14 @@ use super::super::monitoring::{
     MetricsHistory
 };
 
-/// UDP mesh protocol routing and handling
+/// Mesh routing, metadata tracking, and service orchestration.
+///
+/// NOTE (Issue #907): `connections` (PeerRegistry) is metadata/reputation ONLY.
+/// It is NOT used for transport decisions (send, broadcast, receive).
+/// The canonical transport store is `QuicMeshProtocol.connections` (DashMap).
 pub struct MeshRouter {
-    // Core connection management (Ticket #149: Use unified PeerRegistry)
+    /// Metadata-only peer registry. NOT used for transport.
+    /// See `QuicMeshProtocol.connections` for the canonical connection store.
     pub connections: Arc<RwLock<lib_network::peer_registry::PeerRegistry>>,
     pub server_id: Uuid,
     pub identity_manager: Option<Arc<RwLock<IdentityManager>>>,
