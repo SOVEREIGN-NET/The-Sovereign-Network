@@ -28,6 +28,9 @@ use lib_identity::IdentityManager;
 // Session management
 use crate::session_manager::SessionManager;
 
+// Import shared helpers from common module
+use crate::api::handlers::common::{extract_client_ip, extract_user_agent};
+
 // Rate limiting and CSRF protection via dependency injection
 use crate::api::middleware::{RateLimiter, CsrfProtection};
 
@@ -174,33 +177,6 @@ impl AuthAuditLog {
             );
         }
     }
-}
-
-/// Extract client IP from request headers
-fn extract_client_ip(request: &lib_protocols::types::ZhtpRequest) -> String {
-    // Try X-Real-IP first (from reverse proxy)
-    if let Some(ip) = request.headers.get("X-Real-IP") {
-        return ip;
-    }
-
-    // Try X-Forwarded-For (may contain multiple IPs, take first)
-    if let Some(forwarded) = request.headers.get("X-Forwarded-For") {
-        if let Some(first_ip) = forwarded.split(',').next() {
-            return first_ip.trim().to_string();
-        }
-    }
-
-    // Fallback to "unknown" if no IP headers found
-    // This should log a warning in production
-    tracing::warn!("No client IP found in request headers");
-    "unknown".to_string()
-}
-
-/// Extract User-Agent from request headers (P0-6)
-fn extract_user_agent(request: &lib_protocols::types::ZhtpRequest) -> String {
-    request.headers
-        .get("User-Agent")
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Check HTTPS enforcement for production (P0-5)

@@ -20,6 +20,9 @@ use lib_crypto::{PublicKey, PostQuantumSignature, SignatureAlgorithm};
 use crate::session_manager::SessionManager;
 use crate::api::middleware::RateLimiter;
 
+// Import shared helpers from common module
+use super::common::{extract_client_ip, extract_user_agent};
+
 /// Guardian HTTP Handler
 pub struct GuardianHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
@@ -951,27 +954,6 @@ async fn handle_pending_recoveries(
         serde_json::to_vec(&response)?,
         None,
     ))
-}
-
-// Helper functions
-
-fn extract_client_ip(request: &ZhtpRequest) -> String {
-    request
-        .headers
-        .get("X-Real-IP")
-        .or_else(|| {
-            request.headers.get("X-Forwarded-For").and_then(|f| {
-                f.split(',').next().map(|s| s.trim().to_string())
-            })
-        })
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn extract_user_agent(request: &ZhtpRequest) -> String {
-    request
-        .headers
-        .get("User-Agent")
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn extract_recovery_id(uri: &str) -> Result<String> {
