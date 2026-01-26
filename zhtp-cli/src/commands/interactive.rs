@@ -9,6 +9,8 @@
 
 use anyhow::Result;
 use std::io::{self, Write};
+use std::future::Future;
+use std::pin::Pin;
 use crate::argument_parsing::{InteractiveArgs, ZhtpCli, format_output};
 use crate::error::{CliResult, CliError};
 
@@ -185,22 +187,21 @@ pub fn get_prompt() -> &'static str {
 // ============================================================================
 
 /// Execute a component command with validation
-async fn execute_component_command<F, Fut>(
-    client: &reqwest::Client,
-    base_url: &str,
+async fn execute_component_command<'a, F>(
+    client: &'a reqwest::Client,
+    base_url: &'a str,
     component: Option<String>,
     usage_msg: &str,
-    cli: &ZhtpCli,
+    cli: &'a ZhtpCli,
     handler: F,
 ) where
-    F: FnOnce(&reqwest::Client, &str, &str, &ZhtpCli) -> Fut,
-    Fut: std::future::Future<Output = Result<()>>,
+    F: Fn(&'a reqwest::Client, &'a str, String, &'a ZhtpCli) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>,
 {
     match component {
         Some(comp) => {
             if let Err(e) = validate_component_name(&comp) {
                 println!("Error: {}", e);
-            } else if let Err(e) = handler(client, base_url, &comp, cli).await {
+            } else if let Err(e) = handler(client, base_url, comp, cli).await {
                 println!("Error: {}", e);
             }
         }
@@ -348,89 +349,95 @@ async fn handle_list_components(client: &reqwest::Client, base_url: &str, cli: &
 }
 
 /// Handle start component command
-async fn handle_start_component(
-    client: &reqwest::Client,
-    base_url: &str,
-    component: &str,
-    cli: &ZhtpCli,
-) -> Result<()> {
-    println!("▶️  Starting component: {}", component);
-    let url = format!("{}/component/start", base_url);
+fn handle_start_component<'a>(
+    client: &'a reqwest::Client,
+    base_url: &'a str,
+    component: String,
+    cli: &'a ZhtpCli,
+) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        println!("Starting component: {}", component);
+        let url = format!("{}/component/start", base_url);
 
-    let request_body = serde_json::json!({
-        "component": component,
-        "action": "start",
-        "orchestrated": true
-    });
+        let request_body = serde_json::json!({
+            "component": component,
+            "action": "start",
+            "orchestrated": true
+        });
 
-    let response = client.post(&url).json(&request_body).send().await?;
+        let response = client.post(&url).json(&request_body).send().await?;
 
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        println!("✓ Started:\n{}", formatted);
-    } else {
-        println!("❌ Failed to start component: {}", response.status());
-    }
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            let formatted = format_output(&result, &cli.format)?;
+            println!("Started:\n{}", formatted);
+        } else {
+            println!("Failed to start component: {}", response.status());
+        }
 
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Handle stop component command
-async fn handle_stop_component(
-    client: &reqwest::Client,
-    base_url: &str,
-    component: &str,
-    cli: &ZhtpCli,
-) -> Result<()> {
-    println!("⏹️  Stopping component: {}", component);
-    let url = format!("{}/component/stop", base_url);
+fn handle_stop_component<'a>(
+    client: &'a reqwest::Client,
+    base_url: &'a str,
+    component: String,
+    cli: &'a ZhtpCli,
+) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        println!("Stopping component: {}", component);
+        let url = format!("{}/component/stop", base_url);
 
-    let request_body = serde_json::json!({
-        "component": component,
-        "action": "stop",
-        "orchestrated": true
-    });
+        let request_body = serde_json::json!({
+            "component": component,
+            "action": "stop",
+            "orchestrated": true
+        });
 
-    let response = client.post(&url).json(&request_body).send().await?;
+        let response = client.post(&url).json(&request_body).send().await?;
 
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        println!("✓ Stopped:\n{}", formatted);
-    } else {
-        println!("❌ Failed to stop component: {}", response.status());
-    }
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            let formatted = format_output(&result, &cli.format)?;
+            println!("Stopped:\n{}", formatted);
+        } else {
+            println!("Failed to stop component: {}", response.status());
+        }
 
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Handle component info command
-async fn handle_component_info(
-    client: &reqwest::Client,
-    base_url: &str,
-    component: &str,
-    cli: &ZhtpCli,
-) -> Result<()> {
-    println!("ℹ️  Getting component info: {}", component);
-    let url = format!("{}/component/status", base_url);
+fn handle_component_info<'a>(
+    client: &'a reqwest::Client,
+    base_url: &'a str,
+    component: String,
+    cli: &'a ZhtpCli,
+) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        println!("Getting component info: {}", component);
+        let url = format!("{}/component/status", base_url);
 
-    let request_body = serde_json::json!({
-        "component": component,
-        "orchestrated": true
-    });
+        let request_body = serde_json::json!({
+            "component": component,
+            "orchestrated": true
+        });
 
-    let response = client.post(&url).json(&request_body).send().await?;
+        let response = client.post(&url).json(&request_body).send().await?;
 
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        println!("✓ Info:\n{}", formatted);
-    } else {
-        println!("❌ Failed to get component info: {}", response.status());
-    }
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            let formatted = format_output(&result, &cli.format)?;
+            println!("Info:\n{}", formatted);
+        } else {
+            println!("Failed to get component info: {}", response.status());
+        }
 
-    Ok(())
+        Ok(())
+    })
 }
 
 // ============================================================================
