@@ -177,6 +177,20 @@ impl MeshRouter {
         info!("⛓️ Blockchain provider configured for edge node sync");
     }
     
+    /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
+    pub async fn set_blockchain_event_receiver(
+        &self,
+        receiver: Arc<dyn lib_network::blockchain_sync::BlockchainEventReceiver>,
+    ) {
+        if let Some(quic) = self.quic_protocol.read().await.as_ref() {
+            if let Some(handler) = quic.message_handler.as_ref() {
+                let mut handler_lock = handler.write().await;
+                handler_lock.set_blockchain_event_receiver(receiver);
+                info!("Blockchain event receiver injected into QUIC MeshMessageHandler");
+            }
+        }
+    }
+
     /// Set mesh server for reward tracking (Phase 2.5)
     pub async fn set_mesh_server(&self, mesh_server: Arc<tokio::sync::RwLock<ZhtpMeshServer>>) {
         let mut router = self.mesh_message_router.write().await;

@@ -39,6 +39,7 @@ pub mod storage_provider;  // Global access to storage for component sharing
 pub mod edge_state_provider;  // Global access to edge node state for header-only sync
 pub mod identity_manager_provider;
 pub mod network_blockchain_provider;
+pub mod network_blockchain_event_receiver;
 pub mod mesh_router_provider;
 pub mod bootstrap_peers_provider;  // FIX: Global access to bootstrap peers for UnifiedServer
 pub mod did_startup;
