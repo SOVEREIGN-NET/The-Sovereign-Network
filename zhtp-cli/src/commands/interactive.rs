@@ -184,9 +184,44 @@ pub fn get_prompt() -> &'static str {
 // IMPERATIVE SHELL - All side effects here (I/O, HTTP requests)
 // ============================================================================
 
+/// Execute a component command with validation
+async fn execute_component_command<F, Fut>(
+    client: &reqwest::Client,
+    base_url: &str,
+    component: Option<String>,
+    usage_msg: &str,
+    cli: &ZhtpCli,
+    handler: F,
+) where
+    F: FnOnce(&reqwest::Client, &str, &str, &ZhtpCli) -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    match component {
+        Some(comp) => {
+            if let Err(e) = validate_component_name(&comp) {
+                println!("Error: {}", e);
+            } else if let Err(e) = handler(client, base_url, &comp, cli).await {
+                println!("Error: {}", e);
+            }
+        }
+        None => println!("{}", usage_msg),
+    }
+}
+
+/// Execute a simple command and print error if it fails
+async fn execute_simple_command<F, Fut>(handler: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    if let Err(e) = handler().await {
+        println!("Error: {}", e);
+    }
+}
+
 /// Handle interactive command
 pub async fn handle_interactive_command(_args: InteractiveArgs, cli: &ZhtpCli) -> Result<()> {
-    println!("🌐 ZHTP Orchestrator Interactive Shell");
+    println!("ZHTP Orchestrator Interactive Shell");
     println!("======================================");
     println!("Type 'help' for available commands, 'exit' to quit");
     println!("Server: {}", cli.server);
@@ -201,88 +236,61 @@ pub async fn handle_interactive_command(_args: InteractiveArgs, cli: &ZhtpCli) -
         io::stdout().flush()?;
 
         let mut input = String::new();
-        match io::stdin().read_line(&mut input) {
-            Ok(_) => {
-                let (command, component) = parse_command_input(&input);
+        if io::stdin().read_line(&mut input).is_err() {
+            println!("Error reading input");
+            break;
+        }
 
-                match command {
-                    InteractiveCommand::Exit => {
-                        println!("Goodbye!");
-                        break;
-                    }
-                    InteractiveCommand::Help => {
-                        println!("{}", get_help_message());
-                    }
-                    InteractiveCommand::Empty => {
-                        // Just show prompt again
-                    }
-                    InteractiveCommand::Unknown => {
-                        println!("Unknown command: {}", input.trim());
-                        println!("Type 'help' for available commands");
-                    }
-                    InteractiveCommand::Status => {
-                        if let Err(e) = handle_status(&client, &base_url, cli).await {
-                            println!("❌ Error: {}", e);
-                        }
-                    }
-                    InteractiveCommand::Health => {
-                        if let Err(e) = handle_health(&client, &base_url, cli).await {
-                            println!("❌ Error: {}", e);
-                        }
-                    }
-                    InteractiveCommand::Components => {
-                        if let Err(e) = handle_list_components(&client, &base_url, cli).await {
-                            println!("❌ Error: {}", e);
-                        }
-                    }
-                    InteractiveCommand::Start => {
-                        if let Some(comp) = component {
-                            if let Err(e) = validate_component_name(&comp) {
-                                println!("❌ Error: {}", e);
-                            } else if let Err(e) =
-                                handle_start_component(&client, &base_url, &comp, cli).await
-                            {
-                                println!("❌ Error: {}", e);
-                            }
-                        } else {
-                            println!("Usage: start <component-name>");
-                        }
-                    }
-                    InteractiveCommand::Stop => {
-                        if let Some(comp) = component {
-                            if let Err(e) = validate_component_name(&comp) {
-                                println!("❌ Error: {}", e);
-                            } else if let Err(e) =
-                                handle_stop_component(&client, &base_url, &comp, cli).await
-                            {
-                                println!("❌ Error: {}", e);
-                            }
-                        } else {
-                            println!("Usage: stop <component-name>");
-                        }
-                    }
-                    InteractiveCommand::Info => {
-                        if let Some(comp) = component {
-                            if let Err(e) = validate_component_name(&comp) {
-                                println!("❌ Error: {}", e);
-                            } else if let Err(e) = handle_component_info(&client, &base_url, &comp, cli).await
-                            {
-                                println!("❌ Error: {}", e);
-                            }
-                        } else {
-                            println!("Usage: info <component-name>");
-                        }
-                    }
-                }
-            }
-            Err(error) => {
-                println!("Error reading input: {}", error);
-                break;
-            }
+        let (command, component) = parse_command_input(&input);
+        let should_exit = dispatch_command(command, component, &client, &base_url, cli, &input).await;
+        if should_exit {
+            break;
         }
     }
 
     Ok(())
+}
+
+/// Dispatch command to appropriate handler. Returns true if should exit.
+async fn dispatch_command(
+    command: InteractiveCommand,
+    component: Option<String>,
+    client: &reqwest::Client,
+    base_url: &str,
+    cli: &ZhtpCli,
+    input: &str,
+) -> bool {
+    match command {
+        InteractiveCommand::Exit => {
+            println!("Goodbye!");
+            return true;
+        }
+        InteractiveCommand::Help => println!("{}", get_help_message()),
+        InteractiveCommand::Empty => {}
+        InteractiveCommand::Unknown => {
+            println!("Unknown command: {}", input.trim());
+            println!("Type 'help' for available commands");
+        }
+        InteractiveCommand::Status => {
+            execute_simple_command(|| handle_status(client, base_url, cli)).await;
+        }
+        InteractiveCommand::Health => {
+            execute_simple_command(|| handle_health(client, base_url, cli)).await;
+        }
+        InteractiveCommand::Components => {
+            execute_simple_command(|| handle_list_components(client, base_url, cli)).await;
+        }
+        InteractiveCommand::Start => {
+            execute_component_command(client, base_url, component, "Usage: start <component-name>", cli, handle_start_component).await;
+        }
+        InteractiveCommand::Stop => {
+            execute_component_command(client, base_url, component, "Usage: stop <component-name>", cli, handle_stop_component).await;
+        }
+        InteractiveCommand::Info => {
+            execute_component_command(client, base_url, component, "Usage: info <component-name>", cli, handle_component_info).await;
+        }
+    }
+    false
 }
 
 /// Handle status command

@@ -542,13 +542,7 @@ impl Blockchain {
         }
 
         // Check for double spends
-        for tx in &block.transactions {
-            for input in &tx.inputs {
-                if self.nullifier_set.contains(&input.nullifier) {
-                    return Err(anyhow::anyhow!("Double spend detected"));
-                }
-            }
-        }
+        self.check_double_spends(&block)?;
 
         // Update blockchain state
         self.blocks.push(block.clone());
@@ -559,42 +553,63 @@ impl Blockchain {
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
 
-        // Process identity transactions
+        // Process transactions by type
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
         self.process_contract_transactions(&block)?;
 
-        // Process approved governance proposals (e.g., difficulty parameter updates)
-        // This executes any proposals that have passed voting since the last block
-        if let Err(e) = self.process_approved_governance_proposals() {
-            warn!("Error processing governance proposals at height {}: {}", self.height, e);
-            // Don't fail block processing, governance is non-critical
-        }
+        // Process non-critical features (log errors but don't fail)
+        self.process_non_critical_features(&block);
 
-        // Process economic features (UBI claims and profit declarations)
-        if let Err(e) = self.process_ubi_claim_transactions(&block) {
-            warn!("Error processing UBI claims at height {}: {}", self.height, e);
-            // Don't fail block processing for UBI errors
-        }
-
-        if let Err(e) = self.process_profit_declarations(&block) {
-            warn!("Error processing profit declarations at height {}: {}", self.height, e);
-            // Don't fail block processing for profit declaration errors
-        }
-
-        // Create transaction receipts for all transactions in block
-        let block_hash = block.hash();
-        for (tx_index, tx) in block.transactions.iter().enumerate() {
-            if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
-                warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
-                // Continue processing even if receipt creation fails
-            }
-        }
+        // Create transaction receipts
+        self.create_block_receipts(&block);
 
         // Update persistence counter
         self.blocks_since_last_persist += 1;
 
-        // Broadcast new block to mesh network (if channel configured)
+        // Broadcast to mesh network
+        self.broadcast_block(&block);
+
+        Ok(())
+    }
+
+    /// Check for double spends in block transactions
+    fn check_double_spends(&self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            for input in &tx.inputs {
+                if self.nullifier_set.contains(&input.nullifier) {
+                    return Err(anyhow::anyhow!("Double spend detected"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Process non-critical features that should not fail block processing
+    fn process_non_critical_features(&mut self, block: &Block) {
+        if let Err(e) = self.process_approved_governance_proposals() {
+            warn!("Error processing governance proposals at height {}: {}", self.height, e);
+        }
+        if let Err(e) = self.process_ubi_claim_transactions(block) {
+            warn!("Error processing UBI claims at height {}: {}", self.height, e);
+        }
+        if let Err(e) = self.process_profit_declarations(block) {
+            warn!("Error processing profit declarations at height {}: {}", self.height, e);
+        }
+    }
+
+    /// Create receipts for all transactions in block
+    fn create_block_receipts(&mut self, block: &Block) {
+        let block_hash = block.hash();
+        for (tx_index, tx) in block.transactions.iter().enumerate() {
+            if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
+                warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
+            }
+        }
+    }
+
+    /// Broadcast block to mesh network if configured
+    fn broadcast_block(&self, block: &Block) {
         if let Some(ref sender) = self.broadcast_sender {
             if let Err(e) = sender.send(BlockchainBroadcastMessage::NewBlock(block.clone())) {
                 warn!("Failed to broadcast new block to network: {}", e);
@@ -602,8 +617,6 @@ impl Blockchain {
                 debug!("Block {} broadcast to mesh network", block.height());
             }
         }
-
-        Ok(())
     }
 
     /// Add a block and generate recursive proof for blockchain sync
