@@ -214,8 +214,8 @@ mod tests {
 
         // Add claims for epochs 100-104
         for epoch in 100..105 {
-            state.mark_claimed(citizen1, epoch);
-            state.mark_claimed(citizen2, epoch);
+            let _ = state.mark_claimed(citizen1, epoch);
+            let _ = state.mark_claimed(citizen2, epoch);
             state.add_distributed(epoch, 500_000).unwrap();
         }
 
@@ -248,11 +248,11 @@ mod tests {
         let citizen2 = [2u8; 32];
 
         // Citizen1 only has epoch 100 (will be fully pruned)
-        state.mark_claimed(citizen1, 100);
+        let _ = state.mark_claimed(citizen1, 100);
 
         // Citizen2 has epochs 100 and 102 (100 will be pruned, 102 remains)
-        state.mark_claimed(citizen2, 100);
-        state.mark_claimed(citizen2, 102);
+        let _ = state.mark_claimed(citizen2, 100);
+        let _ = state.mark_claimed(citizen2, 102);
 
         // Before pruning: both citizens have data
         assert_eq!(state.already_claimed.len(), 2);
@@ -437,7 +437,7 @@ mod tests {
         let mut state = KernelState::new();
 
         // First claim succeeded in prior run
-        state.mark_claimed([1u8; 32], 100);
+        let _ = state.mark_claimed([1u8; 32], 100);
         state.add_distributed(100, 1_000).unwrap();
         state.record_success();
         state.last_processed_epoch = Some(100);
@@ -456,7 +456,7 @@ mod tests {
 
         // Citizen claims in epoch 100, claim is processed
         let mut state_before_crash = KernelState::new();
-        state_before_crash.mark_claimed([1u8; 32], 100);
+        let _ = state_before_crash.mark_claimed([1u8; 32], 100);
         state_before_crash.add_distributed(100, 1_000).unwrap();
         state_before_crash.record_success();
 
@@ -519,7 +519,7 @@ mod tests {
         let mut state = KernelState::new();
 
         for epoch in 100..105 {
-            state.mark_claimed([(epoch % 256) as u8; 32], epoch);
+            let _ = state.mark_claimed([(epoch % 256) as u8; 32], epoch);
             state.add_distributed(epoch, 100_000).unwrap();
         }
         state.last_processed_epoch = Some(104);
@@ -563,7 +563,7 @@ mod tests {
         // (256 unique values for a single byte)
         for i in 0..256 {
             let citizen_id = [i as u8; 32];
-            state.mark_claimed(citizen_id, 100);
+            let _ = state.mark_claimed(citizen_id, 100);
             state.add_distributed(100, 1).unwrap();
         }
         state.stats.total_claims_processed = 256;

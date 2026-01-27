@@ -122,20 +122,30 @@ impl KernelState {
     /// * `citizen_id` - Citizen identifier
     /// * `epoch` - Epoch to mark
     ///
-    /// # Panics
-    /// If citizen was already marked as claimed (indicates logic error)
-    pub fn mark_claimed(&mut self, citizen_id: [u8; 32], epoch: u64) {
+    /// # Returns
+    /// Ok(()) if marked successfully
+    /// Err if citizen was already marked as claimed in this epoch
+    ///
+    /// # Design
+    /// Returns error instead of panicking to avoid crashing validators.
+    /// Consensus-critical code must not panic - errors should be handled
+    /// gracefully by callers. This allows validators to log and handle
+    /// duplicate marks without bringing down the node.
+    pub fn mark_claimed(&mut self, citizen_id: [u8; 32], epoch: u64) -> Result<(), String> {
         let epochs = self
             .already_claimed
             .entry(citizen_id)
             .or_insert_with(BTreeMap::new);
 
-        assert!(
-            !epochs.contains_key(&epoch),
-            "Citizen already marked claimed in epoch (logic error)"
-        );
+        if epochs.contains_key(&epoch) {
+            return Err(format!(
+                "Citizen {:?} already marked claimed in epoch {}",
+                citizen_id, epoch
+            ));
+        }
 
         epochs.insert(epoch, true);
+        Ok(())
     }
 
     /// Get total amount distributed in an epoch
@@ -248,7 +258,8 @@ mod tests {
         let mut state = KernelState::new();
         let citizen_id = [1u8; 32];
 
-        state.mark_claimed(citizen_id, 100);
+        let result = state.mark_claimed(citizen_id, 100);
+        assert!(result.is_ok());
         assert!(state.has_claimed(&citizen_id, 100));
     }
 
@@ -257,9 +268,11 @@ mod tests {
         let mut state = KernelState::new();
         let citizen_id = [1u8; 32];
 
-        state.mark_claimed(citizen_id, 100);
-        state.mark_claimed(citizen_id, 101);
+        let result1 = state.mark_claimed(citizen_id, 100);
+        let result2 = state.mark_claimed(citizen_id, 101);
 
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
         assert!(state.has_claimed(&citizen_id, 100));
         assert!(state.has_claimed(&citizen_id, 101));
     }
@@ -341,12 +354,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn test_mark_claimed_duplicate_panics() {
+    fn test_mark_claimed_duplicate_returns_error() {
         let mut state = KernelState::new();
         let citizen_id = [1u8; 32];
-        state.mark_claimed(citizen_id, 100);
-        state.mark_claimed(citizen_id, 100);
+
+        // First mark should succeed
+        let result1 = state.mark_claimed(citizen_id, 100);
+        assert!(result1.is_ok());
+
+        // Duplicate mark should return error (not panic)
+        let result2 = state.mark_claimed(citizen_id, 100);
+        assert!(result2.is_err());
+        assert!(result2.unwrap_err().contains("already marked claimed"));
     }
 
     #[test]
