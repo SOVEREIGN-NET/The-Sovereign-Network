@@ -6,12 +6,10 @@
 use anyhow::Result;
 use std::time::Duration;
 mod common;
-use common_network_test::{DhtEntry, DhtRoutingState, run_shared_dht_persistence_test};
+use common_network_test::{DhtEntry, DhtRoutingState, run_shared_dht_persistence_test, create_test_identities, build_dht_states, populate_dht_peers, assert_dht_peer_counts};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(20);
 const CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
-
-// ...existing code...
 
 #[tokio::test]
 async fn test_dht_persistence_shared() -> Result<()> {
@@ -193,11 +191,7 @@ fn test_dht_network_convergence_simulation() -> Result<()> {
         ("node-dht-3", [0x40; 64]),
     ];
 
-    let mut identities = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
-        identities.push(identity);
-    }
+    let identities = common_network_test::create_test_identities(&nodes, identity_with_seed);
 
     let mut dht_states = identities
         .iter()
