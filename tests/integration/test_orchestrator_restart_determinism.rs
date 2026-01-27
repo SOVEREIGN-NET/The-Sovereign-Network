@@ -17,6 +17,8 @@ const TEST_SEED: [u8; 64] = [42u8; 64];
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PrivateKeyDisk {
     dilithium_sk: Vec<u8>,
+    #[serde(default)]
+    dilithium_pk: Vec<u8>,  // Optional for backward compatibility
     kyber_sk: Vec<u8>,
     master_seed: Vec<u8>,
 }
@@ -28,6 +30,7 @@ fn write_identity_bundle(dir: &TempDir, identity: &ZhtpIdentity, private_key: &P
     to_writer_pretty(File::create(&identity_path)?, identity)?;
     let key_disk = PrivateKeyDisk {
         dilithium_sk: private_key.dilithium_sk.clone(),
+        dilithium_pk: private_key.dilithium_pk.clone(),
         kyber_sk: private_key.kyber_sk.clone(),
         master_seed: private_key.master_seed.clone(),
     };
@@ -42,6 +45,7 @@ fn reload_identity(identity_path: &PathBuf, key_path: &PathBuf) -> Result<ZhtpId
     let key_disk: PrivateKeyDisk = from_str(&key_data)?;
     let private_key = PrivateKey {
         dilithium_sk: key_disk.dilithium_sk,
+        dilithium_pk: key_disk.dilithium_pk,
         kyber_sk: key_disk.kyber_sk,
         master_seed: key_disk.master_seed,
     };
@@ -132,6 +136,7 @@ async fn test_identity_seed_persistence_across_restarts() -> Result<()> {
     let restored_key_disk: PrivateKeyDisk = from_str(&read_to_string(&key_path)?)?;
     let restored_key = PrivateKey {
         dilithium_sk: restored_key_disk.dilithium_sk,
+        dilithium_pk: restored_key_disk.dilithium_pk,
         kyber_sk: restored_key_disk.kyber_sk,
         master_seed: restored_key_disk.master_seed,
     };

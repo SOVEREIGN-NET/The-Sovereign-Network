@@ -548,6 +548,7 @@ mod tests {
         };
         let private_key = PrivateKey {
             dilithium_sk: vec![4, 5, 6],
+            dilithium_pk: vec![1, 2, 3],  // Matches public_key.dilithium_pk
             kyber_sk: vec![],
             master_seed: vec![7, 8, 9],
         };
