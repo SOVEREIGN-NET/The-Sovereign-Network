@@ -782,7 +782,63 @@ impl RuntimeOrchestrator {
             info!(" Bootstrap peers available for sync: {:?}", peers);
             crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(peers).await?;
         }
-        
+
+        // FIX(#916): Attempt QUIC-based blockchain sync from bootstrap peers BEFORE
+        // wait_for_initial_sync(). Without this, the node always creates its own genesis.
+        // Bootstrap peers are already QUIC addresses (e.g. 77.42.37.161:9334).
+        if !network_info.bootstrap_peers.is_empty() {
+            // Load node identity for QUIC client authentication
+            match crate::runtime::create_or_load_node_identity(&self.config.environment).await {
+                Ok(node_identity) => {
+                    use lib_network::client::{ZhtpClient, ZhtpClientConfig};
+                    use lib_network::web4::trust::TrustConfig;
+
+                    let client_config = ZhtpClientConfig { allow_bootstrap: true };
+                    match ZhtpClient::new_with_config(node_identity, TrustConfig::bootstrap(), client_config).await {
+                        Ok(mut client) => {
+                            for peer in &network_info.bootstrap_peers {
+                                info!("Attempting blockchain bootstrap sync from peer: {}", peer);
+                                match client.connect(peer).await {
+                                    Ok(()) => {
+                                        info!("QUIC connection established to {}", peer);
+                                        match crate::runtime::services::bootstrap_service::BootstrapService::try_bootstrap_blockchain_from_peer(
+                                            &blockchain_arc,
+                                            &client,
+                                            peer,
+                                        ).await {
+                                            Ok(synced_chain) => {
+                                                let synced_height = synced_chain.height;
+                                                if synced_height > 0 {
+                                                    *blockchain_arc.write().await = synced_chain;
+                                                    info!("Bootstrap sync success: height={} from {}", synced_height, peer);
+                                                    break; // Got data, stop trying peers
+                                                } else {
+                                                    info!("Peer {} has empty blockchain, trying next", peer);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("Bootstrap sync from {} failed: {}", peer, e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("QUIC connection to {} failed: {}", peer, e);
+                                    }
+                                }
+                            }
+                            client.close().await;
+                        }
+                        Err(e) => {
+                            warn!("Failed to create QUIC client for bootstrap sync: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to load node identity for bootstrap sync: {}", e);
+                }
+            }
+        }
+
         info!("✓ Blockchain ready to receive sync from network peers");
         Ok(())
     }

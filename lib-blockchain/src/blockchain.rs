@@ -4322,6 +4322,32 @@ impl Blockchain {
         let import: BlockchainImport = bincode::deserialize(&data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain: {}", e))?;
 
+        // Fast path: if local chain is empty (fresh node bootstrap), directly adopt
+        // the imported chain without verification against empty state.
+        // An empty blockchain has no state to validate transactions against,
+        // so verify_block() would reject valid genesis transactions.
+        // Check both is_empty() (no blocks at all) and height==0 (has placeholder genesis).
+        if self.blocks.is_empty() || self.height == 0 {
+            if import.blocks.is_empty() {
+                info!("Both local and imported chains are empty - nothing to merge");
+                return Ok(lib_consensus::ChainMergeResult::LocalKept);
+            }
+            let imported_height = import.blocks.len() as u64 - 1;
+            info!("Local chain is empty - directly adopting imported chain (height={}, identities={}, validators={})",
+                  imported_height, import.identity_registry.len(), import.validator_registry.len());
+            self.blocks = import.blocks;
+            self.height = imported_height;
+            self.utxo_set = import.utxo_set;
+            self.identity_registry = import.identity_registry;
+            self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
+            self.validator_registry = import.validator_registry;
+            self.token_contracts = import.token_contracts;
+            self.web4_contracts = import.web4_contracts;
+            self.contract_blocks = import.contract_blocks;
+            info!("Successfully adopted imported chain during bootstrap");
+            return Ok(lib_consensus::ChainMergeResult::ImportedAdopted);
+        }
+
         // Verify all blocks in sequence
         for (i, block) in import.blocks.iter().enumerate() {
             if i == 0 {
