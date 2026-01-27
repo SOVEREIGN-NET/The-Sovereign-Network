@@ -52,9 +52,12 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
             return Ok(());
         }
 
+        let block_hash = hex::encode(&block.header.hash().as_bytes()[..8]);
         match bc.add_block_from_network_with_persistence(block).await {
             Ok(()) => {
-                info!("Imported block {} from mesh peer", height);
+                let new_height = bc.get_height();
+                info!("Imported block {} (hash {}) from mesh peer — local height {} → {}",
+                      height, block_hash, local_height, new_height);
                 Ok(())
             }
             Err(e) => {

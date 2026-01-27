@@ -308,9 +308,26 @@ async fn bootstrap_identities_from_dht(
 
     info!("🔄 Starting DHT identity bootstrap...");
 
-    // Get unified storage
-    let storage = storage_provider::get_global_storage().await
-        .map_err(|e| anyhow::anyhow!("Storage not available: {}", e))?;
+    // Get unified storage (retry up to 10 times with 500ms delay — storage may
+    // not be ready immediately after StorageComponent starts)
+    let storage = match storage_provider::get_global_storage().await {
+        Ok(s) => s,
+        Err(_) => {
+            info!("⏳ Waiting for storage provider to become available...");
+            let mut attempts = 0;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                attempts += 1;
+                if let Ok(s) = storage_provider::get_global_storage().await {
+                    info!(" ✓ Storage became available after {} attempts", attempts);
+                    break s;
+                }
+                if attempts >= 10 {
+                    return Err(anyhow::anyhow!("Storage not available after {} attempts (5s timeout)", attempts));
+                }
+            }
+        }
+    };
 
     let mut identities_loaded = 0u32;
     let mut wallets_loaded = 0u32;
