@@ -286,40 +286,6 @@ impl UbiPoolStatus {
             Self::TOTAL_POOL_CAPACITY.saturating_sub(self.total_distributed);
         self.remaining_capacity == expected
     }
-}
-impl UbiPoolStatus {
-    /// Hard pool cap per epoch (in smallest token units)
-    /// 1,000,000 SOV with 8 decimals = 100_000_000_000_000 units
-    pub const POOL_CAP_PER_EPOCH: u64 = 1_000_000;
-
-    /// Create a new UbiPoolStatus with automatic remaining_capacity calculation
-    ///
-    /// # Design
-    /// This constructor enforces the invariant: remaining_capacity = 1_000_000 - total_distributed
-    /// Prevents inconsistent state by calculating remaining_capacity automatically.
-    ///
-    /// # Arguments
-    /// - `epoch`: Which epoch this status is for
-    /// - `citizens_eligible`: How many citizens were eligible to claim
-    /// - `total_distributed`: Total amount actually distributed
-    ///
-    /// # Returns
-    /// UbiPoolStatus with remaining_capacity automatically calculated
-    ///
-    /// # Panics
-    /// If total_distributed > 1_000_000 (should never happen, but indicates a bug in distribution)
-    pub fn new(epoch: EpochIndex, citizens_eligible: u64, total_distributed: u64) -> Self {
-        let remaining_capacity = Self::POOL_CAP_PER_EPOCH
-            .checked_sub(total_distributed)
-            .expect("total_distributed should never exceed pool cap; this indicates a distribution logic bug");
-
-        UbiPoolStatus {
-            epoch,
-            citizens_eligible,
-            total_distributed,
-            remaining_capacity,
-        }
-    }
 
     /// Verify the pool status invariant is maintained
     ///
@@ -329,7 +295,7 @@ impl UbiPoolStatus {
     pub fn invariant_holds(&self) -> bool {
         self.remaining_capacity
             .checked_add(self.total_distributed)
-            .map(|sum| sum == Self::POOL_CAP_PER_EPOCH)
+            .map(|sum| sum == Self::TOTAL_POOL_CAPACITY)
             .unwrap_or(false) // Overflow indicates corruption
     }
 }
