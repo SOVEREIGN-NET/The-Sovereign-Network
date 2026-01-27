@@ -132,11 +132,9 @@ fn create_persistent_storage(
         max_bytes: DHT_STORAGE_BYTES,
     });
 
-    Arc::new(Mutex::new(DhtStorage::new_with_persistence(
-        local_node_id,
-        DHT_STORAGE_BYTES,
-        dht_persist_path,
-    )))
+    // Initial in-memory placeholder; replaced by network-enabled storage in
+    // setup_mesh_dht_integration() once mesh transport is wired.
+    Arc::new(Mutex::new(DhtStorage::new(local_node_id, DHT_STORAGE_BYTES)))
 }
 
 fn derive_local_node_id(server_id: Uuid) -> lib_identity::NodeId {

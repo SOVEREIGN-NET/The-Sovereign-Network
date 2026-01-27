@@ -30,7 +30,13 @@ impl MeshRouter {
             while let Some(msg) = receiver.recv().await {
                 match msg {
                     lib_blockchain::BlockchainBroadcastMessage::NewBlock(block) => {
-                        info!("📡 Broadcasting new block {} to mesh network", block.height());
+                        let block_hash = hex::encode(&block.header.hash().as_bytes()[..8]);
+                        let peer_count = {
+                            let quic = self_arc.quic_protocol.read().await;
+                            quic.as_ref().map(|q| q.peer_count()).unwrap_or(0)
+                        };
+                        info!("📡 Broadcasting block {} (hash {}) to {} connected peers",
+                              block.height(), block_hash, peer_count);
 
                         // ✅ TICKET 2.6: Verify sender identity is available
                         let sender_pubkey = match self_arc.get_sender_public_key().await {

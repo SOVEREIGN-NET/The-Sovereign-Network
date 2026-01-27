@@ -192,9 +192,14 @@ pub fn get_or_init_global_nonce_cache(
     // We hold the mutex, safe to initialize
     let db_path = default_nonce_cache_path()?;
     let network_epoch = NetworkEpoch::from_global_or_fail()?;
-    info!("Initializing global NonceCache singleton");
+    info!("Initializing global NonceCache singleton at {:?} (epoch: 0x{:016x})",
+          db_path, network_epoch.value());
 
-    let cache = NonceCache::open(&db_path, ttl_secs, max_memory_size, network_epoch)?;
+    let cache = NonceCache::open(&db_path, ttl_secs, max_memory_size, network_epoch)
+        .map_err(|e| {
+            error!("Failed to open global NonceCache at {:?}: {}", db_path, e);
+            e
+        })?;
 
     // OnceLock::set is infallible here since we hold the mutex and double-checked
     let _ = GLOBAL_NONCE_CACHE.set(cache);
@@ -968,13 +973,22 @@ impl NonceCache {
                 };
 
                 if stored_epoch != expected_epoch {
-                    return Err(anyhow!(
-                        "Network epoch mismatch! DB belongs to different network.\n\
-                         Stored: 0x{:016x}, Expected: 0x{:016x}\n\
-                         This database was created for a different blockchain network.",
+                    warn!(
+                        "Network epoch mismatch (stored: 0x{:016x}, expected: 0x{:016x}). \
+                         Clearing stale nonces and updating epoch.",
                         stored_epoch.value(),
                         expected_epoch.value()
-                    ));
+                    );
+                    // Clear all nonce entries (they belong to the old network)
+                    db.clear()
+                        .map_err(|e| anyhow!("Failed to clear stale nonce DB: {}", e))?;
+                    // Store the correct epoch
+                    db.insert(Self::META_EPOCH_KEY, expected_epoch.to_bytes().as_slice())
+                        .map_err(|e| anyhow!("Failed to update network epoch: {}", e))?;
+                    db.flush()
+                        .map_err(|e| anyhow!("Failed to flush updated epoch: {}", e))?;
+                    info!("Epoch updated to 0x{:016x}, stale nonces cleared", expected_epoch.value());
+                    return Ok(());
                 }
                 info!("Verified network epoch: 0x{:016x}", stored_epoch.value());
             }

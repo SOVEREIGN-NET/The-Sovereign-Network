@@ -4095,7 +4095,7 @@ impl Blockchain {
                 created_at: wallet_ref.created_at,
                 registration_fee: wallet_ref.registration_fee,
                 capabilities: 0, // Default - will need DHT for real capabilities
-                initial_balance: 0, // Default - will need DHT for real balance
+                initial_balance: wallet_ref.initial_balance,
             };
             (id.clone(), wallet_data)
         }).collect()
@@ -4322,6 +4322,7 @@ impl Blockchain {
                     owner_identity_id: wallet_data.owner_identity_id,
                     created_at: wallet_data.created_at,
                     registration_fee: wallet_data.registration_fee,
+                    initial_balance: wallet_data.initial_balance,
                 };
                 (id.clone(), wallet_ref)
             })
