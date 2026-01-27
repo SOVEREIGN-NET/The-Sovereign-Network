@@ -6,7 +6,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use lib_network::blockchain_sync::BlockchainEventReceiver;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, debug};
 
 use super::blockchain_provider::get_global_blockchain;
 
@@ -14,9 +14,15 @@ use super::blockchain_provider::get_global_blockchain;
 /// into the local blockchain instance.
 pub struct ZhtpBlockchainEventReceiver;
 
+impl Default for ZhtpBlockchainEventReceiver {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl ZhtpBlockchainEventReceiver {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 }
 
@@ -29,22 +35,23 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
         _timestamp: u64,
         _sender_key: Vec<u8>,
     ) -> Result<()> {
+        // Deserialize before acquiring any lock (no shared state needed)
+        let block: lib_blockchain::Block = bincode::deserialize(&block_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize received block: {}", e))?;
+
         let blockchain = get_global_blockchain().await?;
-        let local_height = {
-            blockchain.read().await.get_height()
-        };
+
+        // Acquire write lock and perform height check + import atomically.
+        // This prevents a race where another thread imports the same block
+        // between a read-lock height check and a subsequent write-lock import.
+        let mut bc = blockchain.write().await;
+        let local_height = bc.get_height();
 
         if height <= local_height {
             debug!("Ignoring block {} (local height {})", height, local_height);
             return Ok(());
         }
 
-        // Deserialize the block
-        let block: lib_blockchain::Block = bincode::deserialize(&block_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize received block: {}", e))?;
-
-        // Verify and add to chain (with persistence, without re-broadcasting)
-        let mut bc = blockchain.write().await;
         match bc.add_block_from_network_with_persistence(block).await {
             Ok(()) => {
                 info!("Imported block {} from mesh peer", height);
@@ -102,6 +109,23 @@ mod tests {
         let _receiver = ZhtpBlockchainEventReceiver::new();
     }
 
+    /// Build a minimal valid serialized block for testing.
+    fn make_serialized_block(height: u64) -> Vec<u8> {
+        let header = lib_blockchain::BlockHeader::new(
+            1, // version
+            lib_blockchain::Hash::zero(),
+            lib_blockchain::Hash::zero(),
+            0, // timestamp
+            lib_blockchain::Difficulty::default(),
+            height,
+            0, // transaction_count
+            0, // block_size
+            lib_blockchain::Difficulty::default(),
+        );
+        let block = lib_blockchain::Block::new(header, vec![]);
+        bincode::serialize(&block).expect("Failed to serialize test block")
+    }
+
     // -- Block tests ----------------------------------------------------------
 
     #[tokio::test]
@@ -110,22 +134,20 @@ mod tests {
         let receiver = ZhtpBlockchainEventReceiver::new();
 
         // Local blockchain has height 0.
-        // Sending height 0 (== local) → silently ignored, Ok returned.
-        // Garbage bytes are never deserialized because the height check
-        // short-circuits before deserialization.
+        // Sending a valid block at height 0 (== local) → silently ignored.
+        let block_bytes = make_serialized_block(0);
         let result = receiver
-            .on_block_received(vec![0xDE, 0xAD], 0, 0, vec![])
+            .on_block_received(block_bytes, 0, 0, vec![])
             .await;
         assert!(result.is_ok(), "Stale block should be silently ignored");
     }
 
     #[tokio::test]
-    async fn test_on_block_received_invalid_bytes_at_future_height() {
+    async fn test_on_block_received_invalid_bytes() {
         ensure_global_blockchain().await;
         let receiver = ZhtpBlockchainEventReceiver::new();
 
-        // Height 999 > local 0 → passes height check, attempts deserialization.
-        // Garbage bytes → deserialization error.
+        // Garbage bytes → deserialization error (happens before any lock).
         let result = receiver
             .on_block_received(vec![0xDE, 0xAD], 999, 0, vec![])
             .await;
@@ -137,11 +159,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_on_block_received_empty_bytes_at_future_height() {
+    async fn test_on_block_received_empty_bytes() {
         ensure_global_blockchain().await;
         let receiver = ZhtpBlockchainEventReceiver::new();
 
-        // Empty bytes also fail deserialization.
+        // Empty bytes fail deserialization (before any lock).
         let result = receiver
             .on_block_received(vec![], 999, 0, vec![])
             .await;

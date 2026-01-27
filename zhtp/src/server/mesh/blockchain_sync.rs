@@ -159,6 +159,12 @@ impl MeshRouter {
     }
     
     /// Set blockchain provider for network layer access
+    ///
+    /// NOTE: Currently injects into QUIC only. BluetoothClassicProtocol also has
+    /// a message_handler field, but it is managed by BluetoothClassicRouter (not
+    /// held by MeshRouter). When Phase 3 implements NewBlock/NewTransaction
+    /// dispatch in classic.rs, injection must be wired through
+    /// BluetoothClassicRouter's initialization path.
     pub async fn set_blockchain_provider(
         &self,
         provider: Arc<dyn lib_network::blockchain_sync::BlockchainProvider>
@@ -188,6 +194,12 @@ impl MeshRouter {
     }
 
     /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
+    ///
+    /// NOTE: Currently injects into QUIC only. BluetoothClassicProtocol also has
+    /// a message_handler field, but it is managed by BluetoothClassicRouter (not
+    /// held by MeshRouter). When Phase 3 implements NewBlock/NewTransaction
+    /// dispatch in classic.rs, injection must be wired through
+    /// BluetoothClassicRouter's initialization path.
     pub async fn set_blockchain_event_receiver(
         &self,
         receiver: Arc<dyn lib_network::blockchain_sync::BlockchainEventReceiver>,
