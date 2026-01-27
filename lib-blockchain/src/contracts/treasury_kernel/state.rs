@@ -33,18 +33,34 @@ impl KernelState {
     }
 
     /// Clear old epoch data to save memory
-    /// 
-    /// Only call after epoch is fully processed and can be archived.
-    /// Keep last_processed_epoch for crash recovery.
-    /// 
+    ///
+    /// Removes data for epochs older than cutoff to prevent unbounded memory growth.
+    /// Safe to call because citizens cannot claim in past epochs:
+    /// - Validation checks: current_epoch >= citizenship_epoch
+    /// - Citizens advancing in time can never go backwards
+    /// - Stale dedup entries are never queried after their epoch passes
+    ///
+    /// # Design
+    /// - Prunes total_distributed: no longer needed for past epochs
+    /// - Prunes already_claimed: dedup entries cannot be reused in past epochs
+    /// - Keeps last_processed_epoch: needed for crash recovery
+    ///
+    /// Recommended: Call weekly or monthly to prune epochs older than 52 weeks
+    /// This keeps memory bounded while retaining historical audit trail length.
+    ///
     /// # Arguments
     /// * `cutoff_epoch` - Remove data for epochs < cutoff_epoch
     pub fn prune_old_epochs(&mut self, cutoff_epoch: u64) {
-        // Keep dedup data for recent epochs (don't clear)
-        // Citizens shouldn't claim twice across epochs anyway
-        
         // Remove old distribution data
         self.total_distributed.retain(|epoch, _| *epoch >= cutoff_epoch);
+
+        // Remove old dedup entries (safe because citizens can't claim in past epochs)
+        self.already_claimed.retain(|_citizen_id, epoch_map| {
+            // Keep epochs >= cutoff_epoch
+            epoch_map.retain(|epoch, _| *epoch >= cutoff_epoch);
+            // Remove citizen entry if all their epochs are pruned
+            !epoch_map.is_empty()
+        });
     }
 
     /// Get statistics snapshot
@@ -171,23 +187,87 @@ mod tests {
     #[test]
     fn test_prune_old_epochs() {
         let mut state = KernelState::new();
-        
+
         // Add distribution data for epochs 100-104
         for epoch in 100..105 {
             state.add_distributed(epoch, 500_000).unwrap();
         }
-        
+
         // Prune epochs before 102
         state.prune_old_epochs(102);
-        
+
         // Epochs 100-101 should be gone
         assert_eq!(state.get_distributed(100), 0);
         assert_eq!(state.get_distributed(101), 0);
-        
+
         // Epochs 102-104 should remain
         assert_eq!(state.get_distributed(102), 500_000);
         assert_eq!(state.get_distributed(103), 500_000);
         assert_eq!(state.get_distributed(104), 500_000);
+    }
+
+    #[test]
+    fn test_prune_old_epochs_also_prunes_dedup() {
+        let mut state = KernelState::new();
+        let citizen1 = [1u8; 32];
+        let citizen2 = [2u8; 32];
+
+        // Add claims for epochs 100-104
+        for epoch in 100..105 {
+            state.mark_claimed(citizen1, epoch);
+            state.mark_claimed(citizen2, epoch);
+            state.add_distributed(epoch, 500_000).unwrap();
+        }
+
+        // Verify claims are recorded
+        assert!(state.has_claimed(&citizen1, 100));
+        assert!(state.has_claimed(&citizen2, 102));
+
+        // Prune epochs before 102 (removes 100-101)
+        state.prune_old_epochs(102);
+
+        // Old epochs should be pruned
+        assert!(!state.has_claimed(&citizen1, 100));
+        assert!(!state.has_claimed(&citizen2, 101));
+
+        // Recent epochs should remain
+        assert!(state.has_claimed(&citizen1, 102));
+        assert!(state.has_claimed(&citizen1, 103));
+        assert!(state.has_claimed(&citizen2, 102));
+        assert!(state.has_claimed(&citizen2, 104));
+
+        // Distribution data also pruned
+        assert_eq!(state.get_distributed(100), 0);
+        assert_eq!(state.get_distributed(102), 500_000);
+    }
+
+    #[test]
+    fn test_prune_old_epochs_removes_empty_citizen_entries() {
+        let mut state = KernelState::new();
+        let citizen1 = [1u8; 32];
+        let citizen2 = [2u8; 32];
+
+        // Citizen1 only has epoch 100 (will be fully pruned)
+        state.mark_claimed(citizen1, 100);
+
+        // Citizen2 has epochs 100 and 102 (100 will be pruned, 102 remains)
+        state.mark_claimed(citizen2, 100);
+        state.mark_claimed(citizen2, 102);
+
+        // Before pruning: both citizens have data
+        assert_eq!(state.already_claimed.len(), 2);
+
+        // Prune epochs before 102
+        state.prune_old_epochs(102);
+
+        // After pruning: citizen1 should be completely removed (no epochs left)
+        // citizen2 should remain (has epoch 102)
+        assert!(!state.already_claimed.contains_key(&citizen1));
+        assert!(state.already_claimed.contains_key(&citizen2));
+        assert_eq!(state.already_claimed.len(), 1);
+
+        // Verify citizen2's epoch 102 is still there
+        assert!(state.has_claimed(&citizen2, 102));
     }
 
     #[test]
