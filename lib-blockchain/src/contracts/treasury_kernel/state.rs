@@ -411,9 +411,9 @@ mod tests {
     fn test_crash_recovery_scenario_2_crash_after_partial_mint() {
         // Scenario: Crashed after processing 3 of 5 claims
         let mut state = KernelState::new();
-        state.mark_claimed([1u8; 32], 100);
-        state.mark_claimed([2u8; 32], 100);
-        state.mark_claimed([3u8; 32], 100);
+        let _ = state.mark_claimed([1u8; 32], 100);
+        let _ = state.mark_claimed([2u8; 32], 100);
+        let _ = state.mark_claimed([3u8; 32], 100);
         state.add_distributed(100, 3_000).unwrap();
         state.stats.total_claims_processed = 3;
         state.last_processed_epoch = Some(99); // Was processing epoch 100, not yet marked complete
