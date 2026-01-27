@@ -6,7 +6,7 @@
 //! - KernelStats: Monitoring statistics
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Rejection reason codes for UBI claims (5 checks)
 ///
@@ -47,19 +47,23 @@ impl std::fmt::Display for RejectionReason {
 ///
 /// **Consensus-Critical**: All fields must be persisted for crash recovery.
 /// Dedup state prevents double-minting if Kernel crashes mid-distribution.
+///
+/// Uses BTreeMap (not HashMap) for deterministic serialization order.
+/// Consensus requires identical state hashes across all validators.
+/// HashMap iteration order is non-deterministic, which would cause validator forks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KernelState {
     /// Deduplication tracking: citizen_id -> {epoch -> bool}
     /// Prevents double-minting after crashes
     /// Key: citizen_id [u8; 32]
-    /// Value: HashMap<epoch, claimed_flag>
-    pub already_claimed: HashMap<[u8; 32], HashMap<u64, bool>>,
+    /// Value: BTreeMap<epoch, claimed_flag> (deterministic ordering)
+    pub already_claimed: BTreeMap<[u8; 32], BTreeMap<u64, bool>>,
 
     /// Pool distribution tracking: epoch -> total_distributed
     /// Enforces 1,000,000 SOV hard cap per epoch
-    /// Key: epoch
+    /// Key: epoch (BTreeMap for deterministic ordering)
     /// Value: cumulative SOV distributed in that epoch
-    pub total_distributed: HashMap<u64, u64>,
+    pub total_distributed: BTreeMap<u64, u64>,
 
     /// Last processed epoch (for idempotency and recovery)
     /// If current_epoch == last_processed_epoch, skip distribution
@@ -89,8 +93,8 @@ impl KernelState {
     /// Create new empty kernel state
     pub fn new() -> Self {
         Self {
-            already_claimed: HashMap::new(),
-            total_distributed: HashMap::new(),
+            already_claimed: BTreeMap::new(),
+            total_distributed: BTreeMap::new(),
             last_processed_epoch: None,
             stats: KernelStats::default(),
         }
@@ -124,7 +128,7 @@ impl KernelState {
         let epochs = self
             .already_claimed
             .entry(citizen_id)
-            .or_insert_with(HashMap::new);
+            .or_insert_with(BTreeMap::new);
 
         assert!(
             !epochs.contains_key(&epoch),
