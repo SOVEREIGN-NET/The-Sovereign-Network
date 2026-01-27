@@ -43,9 +43,9 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
         let block: lib_blockchain::Block = bincode::deserialize(&block_bytes)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize received block: {}", e))?;
 
-        // Verify and add to chain (with persistence)
+        // Verify and add to chain (with persistence, without re-broadcasting)
         let mut bc = blockchain.write().await;
-        match bc.add_block_with_persistence(block).await {
+        match bc.add_block_from_network_with_persistence(block).await {
             Ok(()) => {
                 info!("Imported block {} from mesh peer", height);
                 Ok(())
@@ -69,7 +69,7 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
 
         let blockchain = get_global_blockchain().await?;
         let mut bc = blockchain.write().await;
-        match bc.add_pending_transaction(tx) {
+        match bc.add_pending_transaction_from_network(tx) {
             Ok(()) => {
                 info!("Added transaction {} to mempool from mesh peer",
                       hex::encode(&tx_hash[..8]));

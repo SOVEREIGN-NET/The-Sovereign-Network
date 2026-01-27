@@ -783,7 +783,7 @@ impl MeshRouter {
             Ok(blockchain_arc) => {
                 let mut blockchain = blockchain_arc.write().await;
                 
-                match blockchain.add_pending_transaction(received_tx) {
+                match blockchain.add_pending_transaction_from_network(received_tx) {
                     Ok(()) => {
                         info!("✅ Transaction {:?} accepted to mempool", hex::encode(&tx_hash[0..8]));
                         
