@@ -374,25 +374,26 @@ impl QuicMeshProtocol {
         self.trust_mode = trust_mode;
     }
 
-    /// Configure bootstrap peers for TOFU (Trust On First Use)
+    /// Configure bootstrap peers with optional SPKI pins.
     ///
-    /// Bootstrap peers are allowed to connect without a cached pin.
-    /// Their certificate will be pinned on first contact.
+    /// Each peer is a `(SocketAddr, Option<[u8; 32]>)`:
+    /// - `None`: TOFU (Trust On First Use) — accept on first contact, then pin
+    /// - `Some(hash)`: Enforce SPKI SHA-256 pin — reject if mismatch
     ///
     /// # Security
     ///
-    /// Only configure trusted bootstrap peers here. These peers get special
-    /// TOFU treatment - their self-signed certificates will be accepted on
-    /// first contact and then pinned for future connections.
+    /// Only configure trusted bootstrap peers here. Peers with a configured pin
+    /// will have their TLS certificate SPKI strictly validated. Peers without a
+    /// pin get TOFU treatment.
     ///
     /// # Implementation Note
     ///
     /// This method updates the bootstrap peers on the existing verifier instance,
-    /// preserving any previously loaded pins in its internal pin store. This avoids
-    /// discarding cached state when bootstrap peers are reconfigured.
-    pub fn set_bootstrap_peers(&mut self, peers: Vec<SocketAddr>) {
-        self.verifier.update_bootstrap_peers(peers.clone());
-        info!("Configured {} bootstrap peers for TOFU", peers.len());
+    /// preserving any previously loaded pins in its internal pin store.
+    pub fn set_bootstrap_peers(&mut self, peers: Vec<(SocketAddr, Option<[u8; 32]>)>) {
+        let count = peers.len();
+        self.verifier.update_bootstrap_peers(peers);
+        info!("Configured {} bootstrap peers", count);
     }
 
     /// Get a reference to the certificate verifier
