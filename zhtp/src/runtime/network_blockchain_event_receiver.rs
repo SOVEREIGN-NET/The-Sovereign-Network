@@ -83,3 +83,94 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: ensure the global blockchain provider is initialized with a
+    /// fresh blockchain. Safe to call multiple times (OnceLock + Option swap).
+    async fn ensure_global_blockchain() {
+        let blockchain = lib_blockchain::Blockchain::new()
+            .expect("Failed to create test blockchain");
+        let bc_arc = std::sync::Arc::new(tokio::sync::RwLock::new(blockchain));
+        let _ = super::super::blockchain_provider::set_global_blockchain(bc_arc).await;
+    }
+
+    #[test]
+    fn test_new_creates_receiver() {
+        let _receiver = ZhtpBlockchainEventReceiver::new();
+    }
+
+    // -- Block tests ----------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_on_block_received_stale_height_is_ignored() {
+        ensure_global_blockchain().await;
+        let receiver = ZhtpBlockchainEventReceiver::new();
+
+        // Local blockchain has height 0.
+        // Sending height 0 (== local) → silently ignored, Ok returned.
+        // Garbage bytes are never deserialized because the height check
+        // short-circuits before deserialization.
+        let result = receiver
+            .on_block_received(vec![0xDE, 0xAD], 0, 0, vec![])
+            .await;
+        assert!(result.is_ok(), "Stale block should be silently ignored");
+    }
+
+    #[tokio::test]
+    async fn test_on_block_received_invalid_bytes_at_future_height() {
+        ensure_global_blockchain().await;
+        let receiver = ZhtpBlockchainEventReceiver::new();
+
+        // Height 999 > local 0 → passes height check, attempts deserialization.
+        // Garbage bytes → deserialization error.
+        let result = receiver
+            .on_block_received(vec![0xDE, 0xAD], 999, 0, vec![])
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("deserialize"),
+            "Expected deserialization error for garbage block bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_on_block_received_empty_bytes_at_future_height() {
+        ensure_global_blockchain().await;
+        let receiver = ZhtpBlockchainEventReceiver::new();
+
+        // Empty bytes also fail deserialization.
+        let result = receiver
+            .on_block_received(vec![], 999, 0, vec![])
+            .await;
+        assert!(result.is_err(), "Empty bytes should fail deserialization");
+    }
+
+    // -- Transaction tests ----------------------------------------------------
+
+    #[tokio::test]
+    async fn test_on_transaction_received_invalid_bytes() {
+        // Transaction path deserializes BEFORE looking up global blockchain,
+        // so this fails with a deserialization error regardless of global state.
+        let receiver = ZhtpBlockchainEventReceiver::new();
+        let result = receiver
+            .on_transaction_received(vec![0xDE, 0xAD], [0u8; 32], 0, vec![])
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("deserialize"),
+            "Expected deserialization error for garbage transaction bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_on_transaction_received_empty_bytes() {
+        let receiver = ZhtpBlockchainEventReceiver::new();
+        let result = receiver
+            .on_transaction_received(vec![], [0u8; 32], 0, vec![])
+            .await;
+        assert!(result.is_err(), "Empty bytes should fail deserialization");
+    }
+}
