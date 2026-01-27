@@ -288,12 +288,12 @@ mod tests {
     #[test]
     fn test_state_serialization_deterministic() {
         let mut state1 = KernelState::new();
-        state1.mark_claimed([1u8; 32], 100);
+        let _ = state1.mark_claimed([1u8; 32], 100);
         state1.add_distributed(100, 500_000).unwrap();
         state1.record_success();
 
         let mut state2 = KernelState::new();
-        state2.mark_claimed([1u8; 32], 100);
+        let _ = state2.mark_claimed([1u8; 32], 100);
         state2.add_distributed(100, 500_000).unwrap();
         state2.record_success();
 
@@ -307,7 +307,7 @@ mod tests {
     #[test]
     fn test_state_deserialization_recovery() {
         let mut original = KernelState::new();
-        original.mark_claimed([1u8; 32], 100);
+        let _ = original.mark_claimed([1u8; 32], 100);
         original.add_distributed(100, 500_000).unwrap();
         original.record_success();
         original.last_processed_epoch = Some(100);
