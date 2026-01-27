@@ -34,7 +34,10 @@ pub struct TransportManager {
     bluetooth: Option<Arc<RwLock<BluetoothClassicProtocol>>>,
     wifi: Option<Arc<RwLock<WiFiDirectMeshProtocol>>>,
     lora: Option<Arc<RwLock<LoRaWANMeshProtocol>>>,
-    quic: Option<Arc<RwLock<QuicMeshProtocol>>>,
+    /// QUIC handler is stored directly as Arc (Issue #167)
+    /// QuicMeshProtocol doesn't implement Clone, so we can't wrap it in RwLock.
+    /// It's safe to store as Arc<QuicMeshProtocol> because it's shared globally (Issue #907).
+    quic: Option<Arc<QuicMeshProtocol>>,
 }
 
 impl TransportManager {
@@ -53,7 +56,8 @@ impl TransportManager {
         self
     }
 
-    pub fn with_quic(mut self, handler: Arc<RwLock<QuicMeshProtocol>>) -> Self {
+    /// Set QUIC handler (stored as Arc<QuicMeshProtocol> - see struct comment)
+    pub fn with_quic(mut self, handler: Arc<QuicMeshProtocol>) -> Self {
         self.quic = Some(handler);
         self
     }
@@ -127,9 +131,9 @@ impl TransportManager {
                     .quic
                     .as_ref()
                     .ok_or_else(|| anyhow!("QUIC handler not available"))?;
+                // QUIC handler is Arc<QuicMeshProtocol> directly (not wrapped in RwLock)
+                // because QuicMeshProtocol doesn't implement Clone - it's stored globally (Issue #907)
                 handler
-                    .read()
-                    .await
                     .send_to_peer(peer.node_id().as_bytes(), message.clone())
                     .await
             }

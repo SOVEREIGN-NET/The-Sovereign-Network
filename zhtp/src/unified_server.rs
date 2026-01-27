@@ -416,6 +416,14 @@ impl ZhtpUnifiedServer {
         mesh_router_arc.set_quic_protocol(quic_arc.clone()).await;
         info!(" [UNIFIED_SERVER] QUIC protocol set on mesh_router");
 
+        // Issue #167: Wire protocol handlers to message router (Transport Manager)
+        // Create TransportManager with QUIC handler and set on mesh message router
+        info!(" [UNIFIED_SERVER] Creating TransportManager with QUIC handler (Issue #167)");
+        let transport_manager = lib_network::transport::TransportManager::default()
+            .with_quic(quic_arc.clone());
+        mesh_router_arc.set_transport_manager(transport_manager).await;
+        info!(" [UNIFIED_SERVER] TransportManager set on mesh message router (Issue #167)");
+
         // Create DHT handler for pure UDP mesh protocol and register it on mesh_router
         // This MUST happen before register_api_handlers to ensure the actual mesh_router instance gets the handler
         let dht_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
