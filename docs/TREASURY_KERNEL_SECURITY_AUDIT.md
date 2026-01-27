@@ -123,10 +123,18 @@ test_crash_recovery_state_validity_check ✓
 
 - ✅ No randomness in validation logic
 - ✅ No external dependencies (time, random)
-- ✅ Deterministic transaction IDs: `compute_kernel_txid()`
-- ✅ Serialization determinism: `bincode`
-- ✅ Hash consistency: `DefaultHasher` for TxID
+- ✅ Deterministic transaction IDs: `compute_kernel_txid()` using blake3
+- ✅ Serialization determinism: `bincode` with BTreeMap (not HashMap)
+- ✅ Cryptographic hash: `blake3::Hasher` for deterministic, collision-resistant TxID
 - ✅ Tested: TxID uniqueness and collision tests
+
+**Cryptographic Hash Rationale**:
+DefaultHasher is non-cryptographic and unstable across Rust versions/platforms.
+blake3 provides:
+- Deterministic output (same inputs → same hash, always)
+- Cryptographic collision resistance
+- Stable algorithm across all platforms and Rust versions
+- Already used throughout the codebase
 
 **Determinism Tests**:
 ```
@@ -326,11 +334,26 @@ Block N (height = epoch * 60,480):
 - Governance sees codes in events (audit trail)
 - Status: ✅ Mitigated
 
+### V9: Non-Deterministic Transaction IDs
+
+**Vulnerability**: Using non-cryptographic hashing for consensus-critical TxIDs
+- DefaultHasher is unstable across Rust versions/platforms
+- Different validators could compute different hashes for same inputs
+- Weak collision resistance allows hash manipulation
+- Breaks idempotency and audit guarantees
+
+**Mitigation**: Cryptographic hash function for TxID computation
+- `compute_kernel_txid()` uses `blake3::Hasher`
+- Deterministic: Same (citizen_id, epoch, amount) → same TxID, always
+- Cryptographic: Collision-resistant against attackers
+- Stable: Works identically across all platforms and Rust versions
+- Status: ✅ Mitigated
+
 ---
 
 ## Testing Summary
 
-### Unit Tests: 88 Total
+### Unit Tests: 90 Total
 
 | Phase | Tests | Status |
 |-------|-------|--------|
@@ -339,8 +362,8 @@ Block N (height = epoch * 60,480):
 | Phase 3 (Authority) | 8 | ✅ Passing |
 | Phase 4 (Events) | 11 | ✅ Passing |
 | Phase 5 (Processing) | 8 | ✅ Passing |
-| Phase 6 (Recovery) | 24 | ✅ Passing |
-| **Total** | **88** | **✅ ALL PASSING** |
+| Phase 6 (Recovery) | 26 | ✅ Passing (+2 pruning tests) |
+| **Total** | **90** | **✅ ALL PASSING** |
 
 ### Coverage by Security Property
 
@@ -350,11 +373,12 @@ Block N (height = epoch * 60,480):
 | Validation | 11 | ✅ Complete |
 | Double-Mint Prevention | 8 | ✅ Complete |
 | Pool Capacity | 6 | ✅ Complete |
-| Crash Recovery | 19 | ✅ Complete |
-| Determinism | 6 | ✅ Complete |
+| Crash Recovery | 21 | ✅ Complete (+pruning, panic handling) |
+| Determinism | 6 | ✅ Complete (blake3 hashing) |
 | Events | 11 | ✅ Complete |
+| Memory Management | 2 | ✅ Complete (dedup pruning) |
 | Performance | 5 | ✅ Complete |
-| **Total** | **74** | **✅ COMPREHENSIVE** |
+| **Total** | **78** | **✅ COMPREHENSIVE** |
 
 ---
 
@@ -372,17 +396,64 @@ Block N (height = epoch * 60,480):
 
 ---
 
+## Code Review Fixes Applied
+
+All identified security concerns have been addressed:
+
+### 1. Consensus Safety: Saturating Arithmetic
+**Issue**: `UbiPoolStatus::new()` panicked on pool overflow
+**Fix**: Changed to `saturating_sub()` - clamps to 0 instead of panicking
+**Impact**: Validators remain operational even on overflow conditions
+
+### 2. Deterministic Hashing: blake3 Instead of DefaultHasher
+**Issue**: DefaultHasher is non-cryptographic and varies between Rust versions/platforms
+**Fix**: `compute_kernel_txid()` now uses `blake3::Hasher`
+**Impact**: Deterministic TxID computation across all validators and platforms
+
+### 3. Deterministic Serialization: BTreeMap Instead of HashMap
+**Issue**: HashMap iteration order is non-deterministic
+**Fix**: Replaced `already_claimed` and `total_distributed` with BTreeMap
+**Impact**: State serialization determinism ensures validator agreement
+
+### 4. Memory Bounds: Dedup Pruning
+**Issue**: `already_claimed` grows indefinitely → unbounded memory
+**Fix**: `prune_old_epochs()` now removes old dedup entries
+**Impact**: Long-running validators maintain bounded memory usage
+
+### 5. No Panics in Consensus Code
+**Issue**: `mark_claimed()` panicked on duplicates, crashing validators
+**Fix**: Changed to `Result<(), String>` with graceful error handling
+**Impact**: Validators stay operational even on unexpected duplicates
+
+### 6. Documentation Accuracy
+**Issue**: `record_claim_intent()` docs claimed "no state mutation"
+**Fix**: Updated docs to reflect actual behavior (synchronous storage)
+**Impact**: Documentation now matches implementation
+
+### 7. Phase C Method Routing
+**Issue**: Phase C UBI methods not callable through executor
+**Fix**: Added 4 method routes to `execute_ubi_call` dispatcher
+**Impact**: Phase C methods accessible to Treasury Kernel
+
+---
+
 ## Recommendation
 
 **Status**: ✅ **APPROVED FOR PRODUCTION**
 
 The Treasury Kernel (Phase 1) meets all security requirements:
-- Comprehensive test coverage (88 tests)
+- Comprehensive test coverage (90 tests, 100% passing)
 - All critical invariants verified
 - Crash recovery guarantees proven
 - Performance requirements met
 - Privacy model sound
 - Code quality verified
+- Recent security hardening applied:
+  - ✅ Cryptographic blake3 hashing for deterministic TxIDs
+  - ✅ BTreeMap for deterministic state serialization
+  - ✅ Bounded memory with dedup pruning
+  - ✅ No panics in consensus-critical code
+  - ✅ Saturating arithmetic for overflow safety
 
 Ready for:
 - ✅ Mainnet deployment

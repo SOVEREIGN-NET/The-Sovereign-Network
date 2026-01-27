@@ -67,31 +67,32 @@ impl KernelState {
 
     /// Compute deterministic transaction ID for minting
     ///
+    /// Uses blake3 hasher for consensus-safe determinism across all platforms and Rust versions.
+    ///
     /// # Arguments
     /// * `citizen_id` - Recipient citizen ID
     /// * `epoch` - Epoch for which distribution occurs
     /// * `amount` - Amount being minted
     ///
     /// # Returns
-    /// Deterministic 32-byte transaction ID
+    /// Deterministic 32-byte transaction ID (blake3 hash)
+    ///
+    /// # Consensus Safety
+    /// This function produces identical results on all validators, regardless of:
+    /// - Platform (x86, ARM, RISC-V, etc.)
+    /// - Rust version
+    /// - Compiler optimizations
+    /// - Endianness
+    ///
+    /// Required for consensus-critical transaction tracking and crash recovery.
     pub fn compute_kernel_txid(citizen_id: &[u8; 32], epoch: u64, amount: u64) -> [u8; 32] {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"KERNEL_MINT");
+        hasher.update(citizen_id);
+        hasher.update(&epoch.to_le_bytes());
+        hasher.update(&amount.to_le_bytes());
 
-        let mut hasher = DefaultHasher::new();
-        b"KERNEL_MINT".hash(&mut hasher);
-        citizen_id.hash(&mut hasher);
-        epoch.hash(&mut hasher);
-        amount.hash(&mut hasher);
-
-        let hash = hasher.finish();
-        let mut result = [0u8; 32];
-        result[0..8].copy_from_slice(&hash.to_le_bytes());
-        // Fill rest with deterministic pattern
-        for i in 8..32 {
-            result[i] = ((i as u64 ^ hash) % 256) as u8;
-        }
-        result
+        hasher.finalize().into()
     }
 }
 
