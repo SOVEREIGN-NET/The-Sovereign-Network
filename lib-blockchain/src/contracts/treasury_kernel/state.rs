@@ -600,7 +600,7 @@ mod tests {
                 citizen_id[1] = (i / 256) as u8;
                 citizen_id[2] = (i % 256) as u8;
 
-                state.mark_claimed(citizen_id, epoch);
+                let _ = state.mark_claimed(citizen_id, epoch);
                 state.add_distributed(epoch, 1_000).unwrap();
                 state.record_success();
             }
@@ -637,7 +637,7 @@ mod tests {
             citizen_id[0] = (i / 65536) as u8;
             citizen_id[1] = (i / 256) as u8;
             citizen_id[2] = (i % 256) as u8;
-            state.mark_claimed(citizen_id, 100);
+            let _ = state.mark_claimed(citizen_id, 100);
             state.add_distributed(100, 1).unwrap();
         }
 
@@ -677,7 +677,7 @@ mod tests {
             citizen_id[0] = (i / 65536) as u8;
             citizen_id[1] = (i / 256) as u8;
             citizen_id[2] = (i % 256) as u8;
-            state.mark_claimed(citizen_id, 100);
+            let _ = state.mark_claimed(citizen_id, 100);
         }
 
         // Benchmark: Lookup each citizen 1000 times (1M total lookups)
@@ -750,7 +750,7 @@ mod tests {
                 let mut citizen_id = [0u8; 32];
                 citizen_id[0] = week as u8;
                 citizen_id[1] = citizen as u8;
-                state.mark_claimed(citizen_id, week);
+                let _ = state.mark_claimed(citizen_id, week);
                 state.add_distributed(week, 1_000).unwrap();
             }
         }
