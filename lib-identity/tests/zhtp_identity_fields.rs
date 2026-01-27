@@ -200,6 +200,7 @@ fn create_test_identity() -> ZhtpIdentity {
     };
     let private_key = PrivateKey {
         dilithium_sk: vec![1u8; 2560],   // Real Dilithium2 secret key size
+        dilithium_pk: vec![42u8; 1312],  // Same as public_key.dilithium_pk
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -262,6 +263,7 @@ fn test_deserialization_requires_rederive() {
     // SAFE PATH: Using from_serialized helper (enforces re-derivation)
     let private_key = PrivateKey {
         dilithium_sk: vec![1u8; 2560],
+        dilithium_pk: vec![2u8; 1312],  // Test placeholder
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -300,6 +302,7 @@ fn test_deterministic_derivation_golden_vector() {
     };
     let private_key_zeros = PrivateKey {
         dilithium_sk: vec![0u8; 2560],  // Real Dilithium2 SK size
+        dilithium_pk: vec![0u8; 1312],  // Matches public_key_zeros.dilithium_pk
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -384,6 +387,7 @@ fn test_deterministic_derivation_golden_vector() {
     };
     let private_key_pattern = PrivateKey {
         dilithium_sk: vec![0xEF; 2560],  // Pattern: 0xEF repeated
+        dilithium_pk: vec![0xAB; 1312],  // Matches public_key_pattern.dilithium_pk
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -447,6 +451,7 @@ fn test_dao_voting_power_rules() {
     };
     let private_key = PrivateKey {
         dilithium_sk: vec![1u8; 2560],
+        dilithium_pk: vec![42u8; 1312],  // Matches public_key.dilithium_pk
         kyber_sk: vec![],
         master_seed: vec![],
     };

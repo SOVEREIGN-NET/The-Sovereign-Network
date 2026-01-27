@@ -297,8 +297,8 @@ mod tests {
     fn create_test_private_key() -> PrivateKey {
         PrivateKey {
             dilithium_sk: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            dilithium_pk: vec![],
             kyber_sk: vec![9, 10, 11, 12],
-            ed25519_sk: vec![13, 14, 15, 16],
             master_seed: vec![17, 18, 19, 20, 21, 22, 23, 24],
         }
     }

@@ -385,6 +385,7 @@ async fn create_test_identity() -> identity::ZhtpIdentity {
     };
     let private_key = lib_crypto::PrivateKey {
         dilithium_sk: vec![1u8; 2560],   // Real Dilithium2 secret key size
+        dilithium_pk: vec![42u8; 1312],  // Matches public_key.dilithium_pk
         kyber_sk: vec![],
         master_seed: vec![],
     };
