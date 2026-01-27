@@ -467,10 +467,15 @@ mod event_tests {
     }
 
     #[test]
-    #[should_panic(expected = "total_distributed should never exceed pool cap")]
-    fn test_ubi_pool_status_constructor_panic_on_overflow() {
-        // Constructor should panic if total_distributed > 1_000_000 (indicates logic bug)
-        let _status = UbiPoolStatus::new(1, 1000, 1_000_001);
+    fn test_ubi_pool_status_constructor_saturating_overflow() {
+        // Constructor uses saturating_sub to prevent panics in consensus code
+        // If total_distributed > pool cap, remaining_capacity saturates to 0
+        let status = UbiPoolStatus::new(1, 1000, 1_000_001);
+        assert_eq!(status.total_distributed, 1_000_001);
+        assert_eq!(status.remaining_capacity, 0);  // Saturated, not negative
+
+        // Verify invariant still holds even with overflow
+        assert!(!status.invariant_holds());  // Invariant detects the overflow
     }
 
     #[test]
