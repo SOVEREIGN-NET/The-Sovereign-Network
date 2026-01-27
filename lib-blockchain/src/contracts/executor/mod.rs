@@ -1412,6 +1412,45 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 ContractResult::with_return_data(&"Amount range set", contract_context.gas_used)
                     .map_err(|e| anyhow!("{:?}", e))
             },
+            // Phase C: Treasury Kernel Client Methods
+            "record_claim_intent" => {
+                let params: (Vec<u8>, u64, u64) = bincode::deserialize(&call.params)?;
+                let citizen_id: [u8; 32] = params.0.as_slice().try_into()
+                    .map_err(|_| anyhow!("Invalid citizen_id length"))?;
+                let amount = params.1;
+                let epoch = params.2;
+
+                ubi.record_claim_intent(citizen_id, amount, epoch)
+                    .map_err(|e| anyhow!("{:?}", e))?;
+
+                ContractResult::with_return_data(&"Claim intent recorded", contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            },
+            "query_ubi_claims" => {
+                let epoch: u64 = bincode::deserialize(&call.params)?;
+                let claims = ubi.query_ubi_claims(epoch);
+
+                ContractResult::with_return_data(&claims, contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            },
+            "has_claimed_this_epoch" => {
+                let params: (Vec<u8>, u64) = bincode::deserialize(&call.params)?;
+                let citizen_id: [u8; 32] = params.0.as_slice().try_into()
+                    .map_err(|_| anyhow!("Invalid citizen_id length"))?;
+                let epoch = params.1;
+
+                let has_claimed = ubi.has_claimed_this_epoch(citizen_id, epoch);
+
+                ContractResult::with_return_data(&has_claimed, contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            },
+            "get_pool_status" => {
+                let epoch: u64 = bincode::deserialize(&call.params)?;
+                let status = ubi.get_pool_status(epoch);
+
+                ContractResult::with_return_data(&status, contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            },
             _ => Err(anyhow!("Unknown UBI method: {}", call.method)),
         };
 
@@ -1536,6 +1575,63 @@ impl<S: ContractStorage> ContractExecutor<S> {
     /// Clear logs
     pub fn clear_logs(&mut self) {
         self.logs.clear();
+    }
+
+    /// Query events by type and epoch (used for UBI claim polling)
+    ///
+    /// # Arguments
+    /// * `epoch` - The epoch to query events for
+    /// * `event_type` - The type of event to query (e.g., "UbiClaimRecorded")
+    ///
+    /// # Returns
+    /// A vector of event data for the given epoch and type
+    ///
+    /// # Note
+    /// Events are stored with keys in format: `events:{epoch}:{event_type}:{index}`
+    /// TODO: Phase 4 - Implement with storage layer prefix scanning
+    pub fn query_events(&self, epoch: u64, event_type: &str) -> Result<Vec<Vec<u8>>> {
+        let _prefix = format!("events:{}:{}:", epoch, event_type);
+        let events = Vec::new();
+
+        // Get all keys with this prefix by scanning storage
+        // Note: ContractStorage trait doesn't provide scan_prefix, so we use a workaround
+        // This will be enhanced in future iterations
+
+        // For now, return empty - to be implemented with storage layer support
+        Ok(events)
+    }
+
+    /// Emit an event to storage
+    ///
+    /// # Arguments
+    /// * `event_type` - Type of event (e.g., "UbiClaimRecorded")
+    /// * `event_data` - Serialized event data
+    /// * `epoch` - The epoch this event belongs to
+    ///
+    /// # Note
+    /// Events are stored with keys in format: `events:{epoch}:{event_type}:{index}`
+    pub fn emit_event(
+        &mut self,
+        event_type: &str,
+        event_data: &[u8],
+        epoch: u64,
+    ) -> Result<()> {
+        let index = self.get_next_event_index(epoch, event_type)?;
+        let key = format!("events:{}:{}:{}", epoch, event_type, index);
+        self.storage.set(key.as_bytes(), event_data)?;
+        Ok(())
+    }
+
+    /// Get the next event index for an epoch/type combination
+    fn get_next_event_index(&self, epoch: u64, event_type: &str) -> Result<u64> {
+        // For now, use a simple counter stored in storage
+        let counter_key = format!("event_index:{}:{}", epoch, event_type);
+        let current = if let Some(data) = self.storage.get(counter_key.as_bytes())? {
+            bincode::deserialize::<u64>(&data).unwrap_or(0)
+        } else {
+            0
+        };
+        Ok(current)
     }
 
     /// Get token contract

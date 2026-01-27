@@ -85,9 +85,14 @@ use super::super::monitoring::{
     MetricsHistory
 };
 
-/// UDP mesh protocol routing and handling
+/// Mesh routing, metadata tracking, and service orchestration.
+///
+/// NOTE (Issue #907): `connections` (PeerRegistry) is metadata/reputation ONLY.
+/// It is NOT used for transport decisions (send, broadcast, receive).
+/// The canonical transport store is `QuicMeshProtocol.connections` (DashMap).
 pub struct MeshRouter {
-    // Core connection management (Ticket #149: Use unified PeerRegistry)
+    /// Metadata-only peer registry. NOT used for transport.
+    /// See `QuicMeshProtocol.connections` for the canonical connection store.
     pub connections: Arc<RwLock<lib_network::peer_registry::PeerRegistry>>,
     pub server_id: Uuid,
     pub identity_manager: Option<Arc<RwLock<IdentityManager>>>,
@@ -155,9 +160,6 @@ pub struct MeshRouter {
 
     // MEDIUM-3 FIX: Identity verification cache for routing
     pub identity_verification_cache: Arc<IdentityVerificationCache>,
-
-    // #916: Direct QUIC broadcaster for bypassing uninitialized TransportManager
-    pub quic_broadcaster: Arc<RwLock<Option<Arc<crate::server::quic_handler::QuicHandler>>>>,
 }
 
 impl MeshRouter {
@@ -286,15 +288,7 @@ impl MeshRouter {
 
             // MEDIUM-3 FIX: Initialize identity verification cache
             identity_verification_cache: Arc::new(IdentityVerificationCache::new()),
-
-            // #916: Direct QUIC broadcaster (set after QuicHandler creation)
-            quic_broadcaster: Arc::new(RwLock::new(None)),
         }
-    }
-
-    /// Set the QuicHandler for direct PQC broadcast (#916)
-    pub async fn set_quic_broadcaster(&self, handler: Arc<crate::server::quic_handler::QuicHandler>) {
-        *self.quic_broadcaster.write().await = Some(handler);
     }
 
     /// Expose the shared DHT storage handle for consumers that need to index data.
@@ -472,7 +466,6 @@ impl Clone for MeshRouter {
             zhtp_rate_limits: self.zhtp_rate_limits.clone(),
             connection_rate_limiter: self.connection_rate_limiter.clone(),
             identity_verification_cache: self.identity_verification_cache.clone(),
-            quic_broadcaster: self.quic_broadcaster.clone(),
         }
     }
 }

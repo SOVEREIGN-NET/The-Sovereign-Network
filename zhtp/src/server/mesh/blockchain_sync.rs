@@ -8,7 +8,6 @@ use anyhow::{Result, Context};
 use tracing::{info, warn, error, debug};
 use lib_crypto::PublicKey;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
-use lib_network::protocols::NetworkProtocol;
 use lib_network::mesh::server::ZhtpMeshServer;
 use lib_identity::IdentityManager;
 
@@ -188,11 +187,6 @@ impl MeshRouter {
         info!("⛓️ Blockchain provider configured for edge node sync");
     }
     
-    /// Get canonical peer registry (for wiring into QuicHandler) (#916)
-    pub fn get_peer_registry(&self) -> Arc<tokio::sync::RwLock<lib_network::peer_registry::PeerRegistry>> {
-        self.connections.clone()
-    }
-
     /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
     ///
     /// NOTE: Currently injects into QUIC only. BluetoothClassicProtocol also has
@@ -252,169 +246,58 @@ impl MeshRouter {
         Err(anyhow::anyhow!("No identity available for sender public key"))
     }
     
-    /// Send a mesh message to a specific peer
+    /// Send a mesh message to a specific peer.
+    ///
+    /// Issue #907: Simplified to use QuicMeshProtocol's canonical connection store directly.
+    /// No more PeerRegistry lookup or protocol matching - QUIC is the only transport.
     pub async fn send_to_peer(&self, peer_id: &PublicKey, message: ZhtpMeshMessage) -> Result<()> {
-        info!("📤 Sending message directly to peer {:?}",
+        info!("Sending message directly to peer {:?}",
               hex::encode(&peer_id.key_id[0..8.min(peer_id.key_id.len())]));
 
-        // Ticket #146: Convert PublicKey to UnifiedPeerId for HashMap lookup
-        let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_id.clone());
+        let quic = self.quic_protocol.read().await;
+        let quic = quic.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("QUIC protocol not initialized"))?;
 
-        // Get peer's connection info (Ticket #149: Use PeerRegistry)
-        let connections = self.connections.read().await;
-        let peer_entry = connections.get(&unified_peer)
-            .ok_or_else(|| anyhow::anyhow!("Peer not found in connections"))?;
-        
-        let peer_address = peer_entry.endpoints.first()
-            .map(|endpoint| endpoint.address.to_address_string())
-            .ok_or_else(|| anyhow::anyhow!("Peer has no address"))?;
-        
-        // Serialize message
+        // Serialize for byte tracking
         let serialized = bincode::serialize(&message)
             .context("Failed to serialize message")?;
-        
-        // Track bytes sent for performance metrics
         self.track_bytes_sent(serialized.len() as u64).await;
-        
-        // Send based on protocol (Ticket #149: Use PeerRegistry)
-        // Use first protocol from active_protocols
-        if let Some(protocol) = peer_entry.active_protocols.first() {
-            match protocol {
-                NetworkProtocol::QUIC => {
-                    if let Some(quic) = self.quic_protocol.read().await.as_ref() {
-                        quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message).await
-                            .context("Failed to send QUIC message")?;
-                        info!("✅ Message sent via QUIC to peer {:?}", &peer_entry.peer_id.public_key().key_id[..8]);
-                    } else {
-                        return Err(anyhow::anyhow!("QUIC protocol not initialized"));
-                    }
-                }
-                NetworkProtocol::BluetoothLE => {
-                    warn!("Bluetooth LE protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("Bluetooth LE not supported"));
-                }
-                NetworkProtocol::BluetoothClassic => {
-                    warn!("Bluetooth Classic protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("Bluetooth Classic not supported"));
-                }
-                NetworkProtocol::WiFiDirect => {
-                    warn!("WiFi Direct protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("WiFi Direct not supported"));
-                }
-                NetworkProtocol::LoRaWAN => {
-                    warn!("LoRaWAN protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("LoRaWAN not supported"));
-                }
-                NetworkProtocol::Satellite => {
-                    warn!("Satellite protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("Satellite not supported"));
-                }
-                _ => {
-                    warn!("Protocol {:?} not supported for direct message sending", protocol);
-                    return Err(anyhow::anyhow!("Protocol not supported"));
-                }
-            }
-        } else {
-            return Err(anyhow::anyhow!("No active protocols found for peer"));
-        }
-        
+
+        // Send directly via canonical store
+        quic.send_to_peer(&peer_id.key_id, message).await
+            .context("Failed to send QUIC message")?;
+
+        info!("Message sent via QUIC to peer {:?}", &peer_id.key_id[..8.min(peer_id.key_id.len())]);
         Ok(())
     }
     
-    /// Broadcast message to all connected peers
+    /// Broadcast message to all connected peers.
     ///
-    /// #916: Uses direct PQC QUIC broadcast when QuicHandler is available,
-    /// bypassing the lib-network routing layer whose TransportManager is not wired.
-    /// Falls back to send_with_routing if QuicHandler is not set.
+    /// Issue #907: Rewired to use QuicMeshProtocol.broadcast_message() directly.
+    /// This bypasses MeshRouter's PeerRegistry (which was never populated for QUIC peers)
+    /// and sends to ALL peers in the canonical DashMap store.
     pub async fn broadcast_to_peers(&self, message: ZhtpMeshMessage) -> Result<usize> {
         let serialized = bincode::serialize(&message)
             .context("Failed to serialize message")?;
 
-        // #916: Try direct PQC broadcast first (bypasses uninitialized TransportManager)
-        let quic_broadcaster = self.quic_broadcaster.read().await;
-        if let Some(ref handler) = *quic_broadcaster {
-            let (success, total) = handler.broadcast_to_pqc_peers(&serialized).await;
-            self.track_bytes_sent((serialized.len() * success) as u64).await;
-            info!(
-                "📤 Broadcast complete: {}/{} peers reached via direct PQC QUIC",
-                success, total
-            );
-            return Ok(success);
-        }
-        drop(quic_broadcaster);
-
-        // Fallback: route through MeshRouter (requires TransportManager)
-        let our_pubkey = match self.get_sender_public_key().await {
-            Ok(pk) => pk,
-            Err(e) => {
-                error!("BROADCAST FAILED: Local sender identity not available");
-                return Err(anyhow::anyhow!(
-                    "Broadcast aborted: sender identity not initialized: {}", e
-                ));
+        let quic = self.quic_protocol.read().await;
+        let quic = match quic.as_ref() {
+            Some(q) => q,
+            None => {
+                error!("BROADCAST FAILED: QUIC protocol not initialized");
+                return Err(anyhow::anyhow!("QUIC protocol not initialized"));
             }
         };
 
-        let connections = self.connections.read().await;
-        let mut success_count = 0;
-        let mut identity_violations_count = 0;
-
-        for peer_entry in connections.all_peers() {
-            if !peer_entry.active_protocols.iter().any(|p| matches!(p, NetworkProtocol::QUIC)) {
-                debug!(
-                    "Skipping peer {:?} - no QUIC protocol support for broadcast",
-                    &peer_entry.peer_id.public_key().key_id[..8]
-                );
-                continue;
-            }
-
-            let peer_pubkey = peer_entry.peer_id.public_key();
-
-            match self.send_with_routing(message.clone(), &peer_pubkey, &our_pubkey).await {
-                Ok(_msg_id) => {
-                    success_count += 1;
-                }
-                Err(err) => {
-                    match err.class {
-                        crate::server::mesh::routing_errors::RoutingErrorClass::IdentityViolation => {
-                            warn!(
-                                "⚠️ IDENTITY VIOLATION: Peer {:?} failed verification: {}",
-                                &peer_pubkey.key_id[..8], err.message
-                            );
-                            identity_violations_count += 1;
-                        }
-                        crate::server::mesh::routing_errors::RoutingErrorClass::Transient => {
-                            debug!(
-                                "Transient error routing to peer {:?}: {}",
-                                &peer_pubkey.key_id[..8], err.message
-                            );
-                        }
-                        crate::server::mesh::routing_errors::RoutingErrorClass::Configuration => {
-                            warn!(
-                                "Configuration error routing to peer {:?}: {}",
-                                &peer_pubkey.key_id[..8], err.message
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        let success_count = quic.broadcast_message(&serialized).await?;
 
         self.track_bytes_sent((serialized.len() * success_count) as u64).await;
 
-        if identity_violations_count > 0 {
-            warn!(
-                "📤 Broadcast complete: {}/{} peers reached ({} failed identity verification)",
-                success_count,
-                connections.all_peers().count(),
-                identity_violations_count
-            );
-        } else {
-            info!(
-                "📤 Broadcast complete: {}/{} peers reached via MeshRouter",
-                success_count,
-                connections.all_peers().count()
-            );
-        }
+        info!(
+            success = success_count,
+            total_peers = quic.peer_count(),
+            "Broadcast complete via QuicMeshProtocol canonical store"
+        );
 
         Ok(success_count)
     }

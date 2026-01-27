@@ -240,7 +240,7 @@ impl MeshRouter {
 
                 if let Some(quic) = self.quic_protocol.read().await.as_ref() {
                     match quic.connect_to_peer(addr).await {
-                        Ok(_) => {
+                        Ok(()) => {
                             info!("✅ QUIC connection established (TLS 1.3 + Kyber PQC)");
                             // Ticket #149: Update peer protocol in peer_registry
                             let mut registry = self.connections.write().await;
