@@ -62,6 +62,7 @@ use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncrypt
 use lib_network::protocols::zhtp_auth::ZhtpAuthManager;
 use crate::web4_stub::ZhtpRelayProtocol;
 use lib_network::routing::message_routing::MeshMessageRouter;
+use lib_network::transport::TransportManager;
 use lib_blockchain::types::Hash;
 use lib_blockchain::BlockchainBroadcastMessage;
 use lib_identity::IdentityManager;
@@ -346,7 +347,15 @@ impl MeshRouter {
         *self.zhtp_router.write().await = Some(router);
         info!("🔀 ZHTP router registered for UDP endpoint routing");
     }
-    
+
+    /// Set transport manager on mesh message router for protocol handler selection (Issue #167)
+    pub async fn set_transport_manager(&self, manager: TransportManager) {
+        use tracing::info;
+        let mut router = self.mesh_message_router.write().await;
+        router.transport_manager = Some(manager);
+        info!("🚚 Transport manager registered for protocol handler selection (Issue #167)");
+    }
+
     /// List all peer reputations
     pub async fn list_peer_reputations(&self) -> Vec<PeerReputation> {
         self.peer_reputations.read().await.values().cloned().collect()
