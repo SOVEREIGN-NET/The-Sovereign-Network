@@ -273,6 +273,8 @@ pub struct WalletReference {
     pub created_at: u64,
     /// Registration fee paid
     pub registration_fee: u64,
+    /// Initial balance (source of truth for wallet balances in UTXO/Pedersen system)
+    pub initial_balance: u64,
 }
 
 /// Sensitive wallet data stored in encrypted DHT
