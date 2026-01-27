@@ -557,11 +557,12 @@ impl ZhtpUnifiedServer {
             let peer_addrs: Vec<(std::net::SocketAddr, Option<[u8; 32]>)> = bootstrap_peers
                 .iter()
                 .filter_map(|s| {
-                    // Parse the address (may already include a port)
-                    let addr = if let Ok(mut addr) = s.parse::<std::net::SocketAddr>() {
-                        addr.set_port(QUIC_PORT);
+                    // Parse the address, preserving the operator-specified port.
+                    // Only default to QUIC_PORT when no port is present.
+                    let addr = if let Ok(addr) = s.parse::<std::net::SocketAddr>() {
                         addr
                     } else {
+                        // No valid port in the string; append the default QUIC port
                         let addr_with_port = format!("{}:{}", s, QUIC_PORT);
                         addr_with_port.parse::<std::net::SocketAddr>().ok()?
                     };
