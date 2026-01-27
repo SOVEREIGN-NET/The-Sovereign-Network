@@ -158,24 +158,60 @@ impl MeshRouter {
     }
     
     /// Set blockchain provider for network layer access
+    ///
+    /// NOTE: Currently injects into QUIC only. BluetoothClassicProtocol also has
+    /// a message_handler field, but it is managed by BluetoothClassicRouter (not
+    /// held by MeshRouter). When Phase 3 implements NewBlock/NewTransaction
+    /// dispatch in classic.rs, injection must be wired through
+    /// BluetoothClassicRouter's initialization path.
     pub async fn set_blockchain_provider(
-        &self, 
+        &self,
         provider: Arc<dyn lib_network::blockchain_sync::BlockchainProvider>
     ) {
         *self.blockchain_provider.write().await = Some(provider.clone());
-        
+
         // Also inject into QUIC protocol's message handler
-        if let Some(quic) = self.quic_protocol.read().await.as_ref() {
+        let quic_guard = self.quic_protocol.read().await;
+        if let Some(quic) = quic_guard.as_ref() {
             if let Some(handler) = quic.message_handler.as_ref() {
                 let mut handler_lock = handler.write().await;
                 handler_lock.set_blockchain_provider(provider.clone());
                 info!("✅ Blockchain provider injected into QUIC MeshMessageHandler");
+            } else {
+                warn!("Blockchain provider stored locally but QUIC message handler not set — mesh sync unavailable");
             }
+        } else {
+            warn!("Blockchain provider stored locally but QUIC protocol not initialized — mesh sync unavailable");
         }
-        
+
         info!("⛓️ Blockchain provider configured for edge node sync");
     }
     
+    /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
+    ///
+    /// NOTE: Currently injects into QUIC only. BluetoothClassicProtocol also has
+    /// a message_handler field, but it is managed by BluetoothClassicRouter (not
+    /// held by MeshRouter). When Phase 3 implements NewBlock/NewTransaction
+    /// dispatch in classic.rs, injection must be wired through
+    /// BluetoothClassicRouter's initialization path.
+    pub async fn set_blockchain_event_receiver(
+        &self,
+        receiver: Arc<dyn lib_network::blockchain_sync::BlockchainEventReceiver>,
+    ) {
+        let quic_guard = self.quic_protocol.read().await;
+        let Some(quic) = quic_guard.as_ref() else {
+            warn!("Cannot inject blockchain event receiver: QUIC protocol not initialized");
+            return;
+        };
+        let Some(handler) = quic.message_handler.as_ref() else {
+            warn!("Cannot inject blockchain event receiver: QUIC message handler not set");
+            return;
+        };
+        let mut handler_lock = handler.write().await;
+        handler_lock.set_blockchain_event_receiver(receiver);
+        info!("Blockchain event receiver injected into QUIC MeshMessageHandler");
+    }
+
     /// Set mesh server for reward tracking (Phase 2.5)
     pub async fn set_mesh_server(&self, mesh_server: Arc<tokio::sync::RwLock<ZhtpMeshServer>>) {
         let mut router = self.mesh_message_router.write().await;

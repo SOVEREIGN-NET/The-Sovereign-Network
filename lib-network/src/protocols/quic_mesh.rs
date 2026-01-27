@@ -452,7 +452,7 @@ impl QuicMeshProtocol {
     pub fn get_endpoint(&self) -> Arc<Endpoint> {
         Arc::new(self.endpoint.clone())
     }
-    
+
     /// Connect to a peer using QUIC with UHP v2 handshake
     ///
     /// # Security
@@ -1508,13 +1508,16 @@ impl PqcQuicConnection {
         self.session_key.as_ref()
     }
 
-    /// Send encrypted message using session key (UHP v2 derived)
+    /// Send encrypted message using session key (UHP v2 derived) via unidirectional stream.
     ///
     /// # Security
     ///
     /// Message is encrypted with ChaCha20-Poly1305 using the session key
     /// derived from UHP v2 handshake.
     /// QUIC provides additional TLS 1.3 encryption underneath.
+    ///
+    /// NOTE: Uses open_uni() — receiver must accept_uni(). For mesh broadcast
+    /// where receiver uses accept_bi(), use send_encrypted_message_bi() instead.
     pub async fn send_encrypted_message(&mut self, message: &[u8]) -> Result<()> {
         let session_key = self.session_key
             .ok_or_else(|| anyhow!("UHP v2 handshake not complete"))?;
@@ -1531,6 +1534,7 @@ impl PqcQuicConnection {
         debug!("📤 Sent {} bytes (double-encrypted: UHP v2 + TLS 1.3)", message.len());
         Ok(())
     }
+
 
     /// Receive encrypted message using session key
     ///

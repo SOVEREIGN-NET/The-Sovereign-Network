@@ -359,6 +359,11 @@ impl Component for ProtocolsComponent {
         info!(" Setting up blockchain provider...");
         let blockchain_provider = Arc::new(crate::runtime::network_blockchain_provider::ZhtpBlockchainProvider::new());
         unified_server.set_blockchain_provider(blockchain_provider).await;
+
+        // Inject receive-side event receiver for mesh block/tx forwarding (#916)
+        let event_receiver = Arc::new(crate::runtime::network_blockchain_event_receiver::ZhtpBlockchainEventReceiver::new());
+        unified_server.set_blockchain_event_receiver(event_receiver).await;
+        info!("Blockchain event receiver injected for receive-side block/tx forwarding");
         
         // Configure sync mode based on node type
         if self.is_edge_node {
