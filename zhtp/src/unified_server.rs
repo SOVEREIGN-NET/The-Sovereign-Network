@@ -567,18 +567,27 @@ impl ZhtpUnifiedServer {
                         addr_with_port.parse::<std::net::SocketAddr>().ok()?
                     };
 
-                    // Look up SPKI pin for this peer address
-                    let pin = pin_map.get(s)
-                        .or_else(|| pin_map.get(&addr.to_string()))
-                        .and_then(|hex_str| {
-                            match crate::config::spki_pin::parse_spki_hex(hex_str) {
-                                Ok(hash) => Some(hash),
-                                Err(e) => {
-                                    error!("Invalid SPKI pin for bootstrap peer {}: {}", s, e);
-                                    None
-                                }
+                    // Look up SPKI pin for this peer address.
+                    // Config validation already rejected malformed hex at startup,
+                    // so a parse failure here indicates a bug — skip the peer entirely
+                    // rather than silently degrading to TOFU.
+                    let hex_pin = pin_map.get(s)
+                        .or_else(|| pin_map.get(&addr.to_string()));
+
+                    let pin = match hex_pin {
+                        Some(hex_str) => match crate::config::spki_pin::parse_spki_hex(hex_str) {
+                            Ok(hash) => Some(hash),
+                            Err(e) => {
+                                error!(
+                                    "BUG: SPKI pin for {} failed to parse after config validation passed: {}. \
+                                     Skipping peer to avoid silent TOFU downgrade.",
+                                    s, e
+                                );
+                                return None; // skip this peer entirely
                             }
-                        });
+                        },
+                        None => None,
+                    };
 
                     Some((addr, pin))
                 })
