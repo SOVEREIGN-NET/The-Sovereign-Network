@@ -48,6 +48,8 @@ pub struct MeshMessageHandler {
     /// Rate limiter for DHT messages per peer (Ticket #154)
     /// Key: hex-encoded peer key_id prefix, Value: (count, window_start)
     pub dht_rate_limits: Arc<RwLock<HashMap<String, (u32, u64)>>>,
+    /// Receive-side event sink for blocks/transactions from mesh peers (#916)
+    pub blockchain_event_receiver: Arc<dyn crate::blockchain_sync::BlockchainEventReceiver>,
 }
 
 /// DHT rate limit configuration
@@ -77,6 +79,7 @@ impl MeshMessageHandler {
             blockchain_provider: Arc::new(crate::blockchain_sync::NullBlockchainProvider),
             dht_payload_sender: None,
             dht_rate_limits: Arc::new(RwLock::new(HashMap::new())),
+            blockchain_event_receiver: Arc::new(crate::blockchain_sync::NullBlockchainEventReceiver),
         }
     }
 
@@ -109,6 +112,11 @@ impl MeshMessageHandler {
     /// Set blockchain provider (injected by application layer)
     pub fn set_blockchain_provider(&mut self, provider: Arc<dyn crate::blockchain_sync::BlockchainProvider>) {
         self.blockchain_provider = provider;
+    }
+
+    /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
+    pub fn set_blockchain_event_receiver(&mut self, receiver: Arc<dyn crate::blockchain_sync::BlockchainEventReceiver>) {
+        self.blockchain_event_receiver = receiver;
     }
     
     /// Handle incoming mesh message
@@ -802,8 +810,7 @@ impl MeshMessageHandler {
         Ok(())
     }
     
-    /// Handle new block announcement (NEW - Phase 3)
-    /// TODO: This requires lib-blockchain which would create a circular dependency
+    /// Handle new block announcement (#916: forwards to application layer via BlockchainEventReceiver)
     pub async fn handle_new_block(
         &self,
         block: Vec<u8>,
@@ -811,17 +818,14 @@ impl MeshMessageHandler {
         height: u64,
         timestamp: u64,
     ) -> Result<()> {
-        info!(" New block announcement: height {} from {:?} ({} bytes)", 
+        info!("New block announcement: height {} from {:?} ({} bytes)",
               height, hex::encode(&sender.key_id[0..4]), block.len());
-        
-        // TODO: Implement blockchain integration at application layer
-        warn!(" Blockchain integration not yet implemented (circular dependency issue)");
-        
-        Ok(())
+        self.blockchain_event_receiver
+            .on_block_received(block, height, timestamp, sender.key_id.to_vec())
+            .await
     }
     
-    /// Handle new transaction announcement (NEW - Phase 3)
-    /// TODO: This requires lib-blockchain which would create a circular dependency
+    /// Handle new transaction announcement (#916: forwards to application layer via BlockchainEventReceiver)
     pub async fn handle_new_transaction(
         &self,
         transaction: Vec<u8>,
@@ -829,15 +833,13 @@ impl MeshMessageHandler {
         tx_hash: [u8; 32],
         fee: u64,
     ) -> Result<()> {
-        info!(" New transaction from {:?}: hash={}, fee={}", 
-              hex::encode(&sender.key_id[0..4]), 
+        info!("New transaction from {:?}: hash={}, fee={}",
+              hex::encode(&sender.key_id[0..4]),
               hex::encode(&tx_hash[0..8]),
               fee);
-        
-        // TODO: Implement blockchain integration at application layer
-        warn!(" Blockchain integration not yet implemented (circular dependency issue)");
-        
-        Ok(())
+        self.blockchain_event_receiver
+            .on_transaction_received(transaction, tx_hash, fee, sender.key_id.to_vec())
+            .await
     }
 
     /// Handle bootstrap proof request from edge node

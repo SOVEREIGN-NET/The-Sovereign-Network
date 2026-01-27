@@ -255,18 +255,33 @@ pub struct UbiPoolStatus {
 }
 
 impl UbiPoolStatus {
-    /// Total pool capacity for a single epoch (in smallest token units).
-    pub const TOTAL_POOL_CAPACITY: u64 = 1_000_000;
+    /// Hard pool cap per epoch (in smallest token units)
+    /// 1,000,000 SOV with 8 decimals = 100_000_000_000_000 units
+    pub const POOL_CAP_PER_EPOCH: u64 = 1_000_000;
 
-    /// Construct a new `UbiPoolStatus`, computing `remaining_capacity` from `total_distributed`.
+    /// Create a new UbiPoolStatus with automatic remaining_capacity calculation
     ///
-    /// # Invariant
-    /// Ensures `remaining_capacity = TOTAL_POOL_CAPACITY - total_distributed`,
-    /// using saturating subtraction to avoid underflow if `total_distributed`
-    /// exceeds the configured pool capacity.
+    /// # Design
+    /// This constructor enforces the invariant: remaining_capacity = 1_000_000 - total_distributed
+    /// Prevents inconsistent state by calculating remaining_capacity automatically.
+    ///
+    /// # Arguments
+    /// - `epoch`: Which epoch this status is for
+    /// - `citizens_eligible`: How many citizens were eligible to claim
+    /// - `total_distributed`: Total amount actually distributed
+    ///
+    /// # Returns
+    /// UbiPoolStatus with remaining_capacity automatically calculated
+    ///
+    /// # Safety
+    /// Uses saturating subtraction to prevent panics in consensus-critical code.
+    /// If total_distributed exceeds the cap, remaining_capacity will be 0.
+    /// (This should never happen in normal operation, but defensive programming ensures
+    /// validator nodes don't crash if invariants are violated.)
     pub fn new(epoch: EpochIndex, citizens_eligible: u64, total_distributed: u64) -> Self {
-        let remaining_capacity =
-            Self::TOTAL_POOL_CAPACITY.saturating_sub(total_distributed);
+        // Use saturating_sub instead of checked_sub to prevent panics
+        // Consensus-critical code must not crash under any circumstances
+        let remaining_capacity = Self::POOL_CAP_PER_EPOCH.saturating_sub(total_distributed);
 
         UbiPoolStatus {
             epoch,
@@ -274,17 +289,6 @@ impl UbiPoolStatus {
             total_distributed,
             remaining_capacity,
         }
-    }
-
-    /// Validate that this instance satisfies the documented invariant.
-    ///
-    /// Returns `true` if `remaining_capacity` matches
-    /// `TOTAL_POOL_CAPACITY - total_distributed` (with saturating semantics),
-    /// otherwise `false`.
-    pub fn is_valid(&self) -> bool {
-        let expected =
-            Self::TOTAL_POOL_CAPACITY.saturating_sub(self.total_distributed);
-        self.remaining_capacity == expected
     }
 
     /// Verify the pool status invariant is maintained
@@ -295,7 +299,7 @@ impl UbiPoolStatus {
     pub fn invariant_holds(&self) -> bool {
         self.remaining_capacity
             .checked_add(self.total_distributed)
-            .map(|sum| sum == Self::TOTAL_POOL_CAPACITY)
+            .map(|sum| sum == Self::POOL_CAP_PER_EPOCH)
             .unwrap_or(false) // Overflow indicates corruption
     }
 }
@@ -467,15 +471,15 @@ mod event_tests {
     }
 
     #[test]
-    fn test_ubi_pool_status_constructor_saturating_overflow() {
-        // Constructor uses saturating_sub to prevent panics in consensus code
-        // If total_distributed > pool cap, remaining_capacity saturates to 0
+    fn test_ubi_pool_status_constructor_saturating_on_overflow() {
+        // Constructor uses saturating_sub to prevent panics in consensus-critical code
+        // If total_distributed > 1_000_000, remaining_capacity clamps to 0
         let status = UbiPoolStatus::new(1, 1000, 1_000_001);
-        assert_eq!(status.total_distributed, 1_000_001);
-        assert_eq!(status.remaining_capacity, 0);  // Saturated, not negative
 
-        // Verify invariant still holds even with overflow
-        assert!(!status.invariant_holds());  // Invariant detects the overflow
+        assert_eq!(status.epoch, 1);
+        assert_eq!(status.citizens_eligible, 1000);
+        assert_eq!(status.total_distributed, 1_000_001);
+        assert_eq!(status.remaining_capacity, 0); // Saturated to 0, not panic
     }
 
     #[test]

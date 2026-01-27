@@ -258,16 +258,15 @@ impl QuicHandler {
 
     /// Set the mesh message handler for blockchain sync
     pub fn set_mesh_handler(&mut self, handler: Arc<RwLock<MeshMessageHandler>>) {
+        let handler_clone = handler.clone();
         self.mesh_handler = Some(handler);
         info!("MeshMessageHandler registered with QuicHandler");
 
         // Wire DHT payload sender if integration already registered one (Phase 4 relocation)
-        if let Some(handler) = self.mesh_handler.as_ref().cloned() {
-            tokio::spawn(async move {
-                let mut guard = handler.write().await;
-                crate::integration::wire_message_handler(&mut guard).await;
-            });
-        }
+        tokio::spawn(async move {
+            let mut guard = handler_clone.write().await;
+            crate::integration::wire_message_handler(&mut guard).await;
+        });
     }
 
     /// Accept and handle incoming QUIC connections from endpoint
@@ -1200,7 +1199,7 @@ impl QuicHandler {
             let peer_pk = PublicKey::new(peer_node_id.to_vec());
             handler.read().await.handle_mesh_message(message, peer_pk).await?;
         } else {
-            warn!("No mesh handler configured");
+            warn!("No mesh handler configured on either QuicMeshProtocol or QuicHandler");
         }
 
         Ok(())

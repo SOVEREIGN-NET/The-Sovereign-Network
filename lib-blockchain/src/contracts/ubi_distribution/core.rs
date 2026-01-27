@@ -61,6 +61,15 @@ pub struct UbiDistributor {
     /// - Governance sets amounts for specific month indices
     /// - Examples: months 0-11 (year 1), 12-23 (year 2), 24-35 (year 3), etc.
     schedule: HashMap<MonthIndex, u64>,
+
+    /// Phase C: UBI claim intent events (epoch -> list of claims)
+    /// Records UbiClaimRecorded events for Treasury Kernel to process
+    /// Treasury Kernel will poll these events at epoch boundaries
+    ///
+    /// **Design:** Passive client pattern - just record intent, Kernel executes
+    /// - key: epoch (u64)
+    /// - value: Vec<UbiClaimRecorded> events for that epoch
+    claim_events: HashMap<u64, Vec<UbiClaimRecorded>>,
 }
 
 impl UbiDistributor {
@@ -89,6 +98,7 @@ impl UbiDistributor {
             registered: HashSet::new(),
             paid: HashMap::new(),
             schedule: HashMap::new(),
+            claim_events: HashMap::new(),
         })
     }
 
@@ -497,6 +507,7 @@ impl UbiDistributor {
             registered: HashSet::with_capacity(expected_citizens),
             paid: HashMap::new(),
             schedule: HashMap::new(),
+            claim_events: HashMap::new(),
         })
     }
 
@@ -528,6 +539,143 @@ impl UbiDistributor {
             }
         }
         count
+    }
+
+    // ========================================================================
+    // PHASE C: TREASURY KERNEL CLIENT METHODS (NEW)
+    // ========================================================================
+    // Per ADR-0017: UBI is a passive client of the Treasury Kernel.
+    // These methods enable the Kernel to validate and execute UBI claims.
+
+    /// Record citizen's intent to claim UBI (Phase C - NEW)
+    ///
+    /// # Design (Per ADR-0017)
+    /// UBI is a **passive** client: citizens record intent, Kernel executes validation/minting.
+    ///
+    /// This method is **intentionally minimal**:
+    /// - Minimal validation (zero-amount check only)
+    /// - Records state: stores UbiClaimRecorded event in local claim_events HashMap
+    /// - No minting (Kernel owns minting)
+    /// - Treasury Kernel will poll these stored events at epoch boundaries
+    ///
+    /// Treasury Kernel will later:
+    /// 1. Call query_ubi_claims() to retrieve all UbiClaimRecorded events
+    /// 2. Validate each claim (5 gates)
+    /// 3. Mint or reject with reason code
+    /// 4. Emit UbiDistributed or UbiClaimRejected
+    ///
+    /// # Arguments
+    /// * `citizen_id` - Verified citizen identifier [u8; 32]
+    /// * `amount` - Requested amount (typically 1000, but flexible)
+    /// * `epoch` - Epoch for which claim is made
+    ///
+    /// # Errors
+    /// - `ZeroAmount` if amount == 0
+    ///
+    /// # Returns
+    /// Ok(()) on successful recording (claim stored and will be retrieved by Kernel)
+    pub fn record_claim_intent(
+        &mut self,
+        citizen_id: [u8; 32],
+        amount: u64,
+        epoch: u64,
+    ) -> Result<(), Error> {
+        // Minimal validation: amount must be positive
+        if amount == 0 {
+            return Err(Error::ZeroAmount);
+        }
+
+        // Phase C: Emit UbiClaimRecorded event for Treasury Kernel to process
+        // Kernel will poll these events at epoch boundaries and validate/mint
+        // Note: timestamp will be set by executor when processing; set to 0 for now
+        let claim_event = UbiClaimRecorded {
+            citizen_id,
+            amount,
+            epoch,
+            timestamp: 0, // TODO: Will be set by ContractExecutor with actual block height
+        };
+
+        // Store event in our local event map (grouped by epoch)
+        self.claim_events
+            .entry(epoch)
+            .or_insert_with(Vec::new)
+            .push(claim_event);
+
+        Ok(())
+    }
+
+    /// Query if citizen has claimed in a specific epoch (Phase C - NEW)
+    ///
+    /// # Design
+    /// Convenience query for governance/UI.
+    /// Canonical dedup state is maintained by Treasury Kernel.
+    ///
+    /// # Arguments
+    /// * `citizen_id` - Verified citizen identifier
+    /// * `epoch` - Epoch to query
+    ///
+    /// # Returns
+    /// true if citizen has already claimed in this epoch, false otherwise
+    ///
+    /// # Note
+    /// This would query Kernel state in production implementation.
+    /// For now returns placeholder.
+    pub fn has_claimed_this_epoch(&self, citizen_id: [u8; 32], epoch: u64) -> bool {
+        // TODO: Query Treasury Kernel dedup state
+        // In production: kernel.state().has_claimed(citizen_id, epoch)
+        let _ = (citizen_id, epoch);
+        false // Placeholder
+    }
+
+    /// Get UBI pool status for an epoch (Phase C - NEW)
+    ///
+    /// # Design
+    /// Returns epoch-level distribution summary for governance monitoring.
+    /// Aggregates data from:
+    /// - CitizenRegistry: eligible citizen count
+    /// - Treasury Kernel state: total distributed this epoch
+    ///
+    /// # Arguments
+    /// * `epoch` - Epoch to query
+    ///
+    /// # Returns
+    /// UbiPoolStatus struct with: epoch, citizens_eligible, total_distributed, remaining_capacity
+    ///
+    /// # Note
+    /// Requires access to CitizenRegistry and Treasury Kernel state.
+    /// For now returns placeholder.
+    pub fn get_pool_status(&self, epoch: u64) -> UbiPoolStatus {
+        // TODO: Query CitizenRegistry for eligible count
+        // TODO: Query Treasury Kernel for total_distributed
+        // In production:
+        // let eligible = citizen_registry.get_active_citizens().len() as u64;
+        // let total = kernel.state.get_distributed(epoch);
+        // UbiPoolStatus::new(epoch, eligible, total)
+
+        UbiPoolStatus::new(epoch, 0, 0)  // Placeholder
+    }
+
+    /// Query all UBI claims recorded for an epoch (Phase C - NEW)
+    ///
+    /// # Design
+    /// Treasury Kernel calls this to retrieve all UbiClaimRecorded events for processing.
+    ///
+    /// # Arguments
+    /// * `epoch` - Epoch to retrieve claims for
+    ///
+    /// # Returns
+    /// Vector of UbiClaimRecorded events for this epoch
+    ///
+    /// # Note
+    /// Returns events from local storage. In full integration with executor,
+    /// these would come from the persistent event log.
+    pub fn query_ubi_claims(&self, epoch: u64) -> Vec<UbiClaimRecorded> {
+        // Phase C: Retrieve UbiClaimRecorded events from local storage
+        // Treasury Kernel uses this to get all claims for processing
+        self.claim_events
+            .get(&epoch)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -975,5 +1123,478 @@ mod tests {
         // Mint tiny balance to contract address - not enough for transfers
         let _ = token.mint(contract_address, 10);
         token
+    }
+
+    // ========================================================================
+    // PHASE C TESTS: TREASURY KERNEL CLIENT METHODS
+    // ========================================================================
+
+    #[test]
+    fn test_record_claim_intent_zero_amount_fails() {
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let citizen_id = [1u8; 32];
+        let epoch = 100u64;
+
+        let result = ubi.record_claim_intent(citizen_id, 0, epoch);
+        assert!(result.is_err());
+        assert_eq!(result, Err(Error::ZeroAmount));
+    }
+
+    #[test]
+    fn test_record_claim_intent_success() {
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let citizen_id = [1u8; 32];
+        let amount = 1000u64;
+        let epoch = 100u64;
+
+        let result = ubi.record_claim_intent(citizen_id, amount, epoch);
+        assert!(result.is_ok());
+
+        // Verify event was recorded
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].citizen_id, citizen_id);
+        assert_eq!(claims[0].amount, amount);
+        assert_eq!(claims[0].epoch, epoch);
+    }
+
+    #[test]
+    fn test_record_multiple_claims_same_epoch() {
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let epoch = 100u64;
+
+        // Record 3 different claims in same epoch
+        for i in 1..=3 {
+            let citizen_id = [i as u8; 32];
+            let amount = 1000u64;
+            let result = ubi.record_claim_intent(citizen_id, amount, epoch);
+            assert!(result.is_ok());
+        }
+
+        // Verify all 3 claims were recorded
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims.len(), 3);
+        for (i, claim) in claims.iter().enumerate() {
+            assert_eq!(claim.citizen_id, [(i + 1) as u8; 32]);
+            assert_eq!(claim.amount, 1000u64);
+        }
+    }
+
+    #[test]
+    fn test_record_claims_different_epochs() {
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let citizen_id = [1u8; 32];
+
+        // Record same citizen claiming in different epochs
+        for epoch in 100..105 {
+            let result = ubi.record_claim_intent(citizen_id, 1000, epoch);
+            assert!(result.is_ok());
+        }
+
+        // Verify claims in different epochs are separate
+        for epoch in 100..105 {
+            let claims = ubi.query_ubi_claims(epoch);
+            assert_eq!(claims.len(), 1);
+            assert_eq!(claims[0].epoch, epoch);
+        }
+    }
+
+    #[test]
+    fn test_record_claim_intent_large_amount() {
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let citizen_id = [1u8; 32];
+        let amount = u64::MAX / 2; // Very large amount
+        let epoch = 100u64;
+
+        let result = ubi.record_claim_intent(citizen_id, amount, epoch);
+        assert!(result.is_ok());
+
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].amount, amount);
+    }
+
+    // Query method tests (8+ scenarios)
+
+    #[test]
+    fn test_query_ubi_claims_empty_epoch() {
+        let ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let claims = ubi.query_ubi_claims(100);
+        assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn test_query_ubi_claims_returns_correct_epoch() {
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+
+        // Record claims in epochs 100, 101, 102
+        for epoch in 100..103 {
+            let citizen_id = [epoch as u8; 32];
+            let _ = ubi.record_claim_intent(citizen_id, 1000, epoch);
+        }
+
+        // Query should only return claims for requested epoch
+        let claims_100 = ubi.query_ubi_claims(100);
+        assert_eq!(claims_100.len(), 1);
+        assert_eq!(claims_100[0].citizen_id, [100u8; 32]);
+
+        let claims_101 = ubi.query_ubi_claims(101);
+        assert_eq!(claims_101.len(), 1);
+        assert_eq!(claims_101[0].citizen_id, [101u8; 32]);
+    }
+
+    #[test]
+    fn test_has_claimed_this_epoch_placeholder() {
+        let ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let citizen_id = [1u8; 32];
+
+        // For now, this is a placeholder that always returns false
+        // Once integrated with Treasury Kernel state, it will check actual dedup
+        assert!(!ubi.has_claimed_this_epoch(citizen_id, 100));
+    }
+
+    #[test]
+    fn test_get_pool_status_placeholder() {
+        let ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+
+        // For now, this returns placeholder values (0 eligible, 0 distributed)
+        // Once integrated with CitizenRegistry and Treasury Kernel, will return real values
+        let status = ubi.get_pool_status(100);
+        assert_eq!(status.epoch, 100);
+        assert_eq!(status.citizens_eligible, 0);
+        assert_eq!(status.total_distributed, 0);
+        assert_eq!(status.remaining_capacity, 1_000_000);
+    }
+
+    #[test]
+    fn test_query_ubi_claims_preserves_order() {
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let epoch = 100u64;
+
+        // Record 5 claims in specific order
+        let citizens: Vec<[u8; 32]> = (1..=5).map(|i| [i as u8; 32]).collect();
+        for (idx, citizen_id) in citizens.iter().enumerate() {
+            let _ = ubi.record_claim_intent(*citizen_id, 1000 + idx as u64, epoch);
+        }
+
+        // Query and verify order is preserved
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims.len(), 5);
+        for (idx, claim) in claims.iter().enumerate() {
+            assert_eq!(claim.citizen_id, citizens[idx]);
+            assert_eq!(claim.amount, 1000 + idx as u64);
+        }
+    }
+
+    #[test]
+    fn test_record_claim_intent_timestamp_is_zero() {
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let citizen_id = [1u8; 32];
+
+        let _ = ubi.record_claim_intent(citizen_id, 1000, 100);
+
+        let claims = ubi.query_ubi_claims(100);
+        assert_eq!(claims[0].timestamp, 0);
+        // TODO: Will be set to actual block height by executor
+    }
+
+    #[test]
+    fn test_multiple_claims_same_citizen_different_epochs() {
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let citizen_id = [1u8; 32];
+
+        // Same citizen claiming in 3 different epochs
+        for epoch in 100..103 {
+            let _ = ubi.record_claim_intent(citizen_id, 1000, epoch);
+        }
+
+        // Each epoch should have 1 claim from this citizen
+        for epoch in 100..103 {
+            let claims = ubi.query_ubi_claims(epoch);
+            assert_eq!(claims.len(), 1);
+            assert_eq!(claims[0].citizen_id, citizen_id);
+        }
+    }
+
+    // ========================================================================
+    // END-TO-END INTEGRATION TESTS (15+ scenarios)
+    // ========================================================================
+
+    #[test]
+    fn test_e2e_single_citizen_claim_intent_and_query() {
+        // Test: Single citizen records intent and Kernel queries for processing
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let citizen_id = [1u8; 32];
+        let epoch = 100u64;
+
+        // Citizen records intent
+        let result = ubi.record_claim_intent(citizen_id, 1000, epoch);
+        assert!(result.is_ok());
+
+        // Kernel queries for claims to process
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].citizen_id, citizen_id);
+        assert_eq!(claims[0].amount, 1000);
+        assert_eq!(claims[0].epoch, epoch);
+    }
+
+    #[test]
+    fn test_e2e_multiple_citizens_claim_same_epoch() {
+        // Test: Multiple citizens claim in same epoch, Kernel processes all
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let epoch = 100u64;
+        let num_citizens = 10;
+
+        // 10 citizens record intent in same epoch
+        for i in 1..=num_citizens {
+            let citizen_id = [i as u8; 32];
+            let _ = ubi.record_claim_intent(citizen_id, 1000, epoch);
+        }
+
+        // Kernel queries all claims for epoch
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims.len(), num_citizens);
+
+        // Verify all citizen IDs are present
+        let citizen_ids: Vec<[u8; 32]> = claims.iter().map(|c| c.citizen_id).collect();
+        for i in 1..=num_citizens {
+            assert!(citizen_ids.contains(&[i as u8; 32]));
+        }
+    }
+
+    #[test]
+    fn test_e2e_epoch_boundary_transitions() {
+        // Test: Citizens claim in multiple epoch boundaries sequentially
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+
+        // 5 epochs, 2 claims each
+        for epoch in 100..105 {
+            for claim_idx in 1..=2 {
+                let citizen_id = [((epoch * 10 + claim_idx) % 256) as u8; 32];
+                let _ = ubi.record_claim_intent(citizen_id, 1000, epoch);
+            }
+        }
+
+        // Verify each epoch has exactly 2 claims
+        for epoch in 100..105 {
+            let claims = ubi.query_ubi_claims(epoch);
+            assert_eq!(claims.len(), 2);
+            assert!(claims.iter().all(|c| c.epoch == epoch));
+        }
+    }
+
+    #[test]
+    fn test_e2e_claim_with_varying_amounts() {
+        // Test: Citizens can claim different amounts (flexible design)
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let epoch = 100u64;
+
+        // Citizens claim different amounts
+        let amounts = vec![500, 1000, 1500, 2000, 5000];
+        for (idx, &amount) in amounts.iter().enumerate() {
+            let citizen_id = [(idx + 1) as u8; 32];
+            let _ = ubi.record_claim_intent(citizen_id, amount, epoch);
+        }
+
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims.len(), amounts.len());
+
+        for (idx, claim) in claims.iter().enumerate() {
+            assert_eq!(claim.amount, amounts[idx]);
+        }
+    }
+
+    #[test]
+    fn test_e2e_empty_epoch_query() {
+        // Test: Query for epoch with no claims returns empty vector
+        let ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+
+        let claims = ubi.query_ubi_claims(999);
+        assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn test_e2e_skip_epochs_then_claim() {
+        // Test: Citizens skip some epochs, then claim in later epoch
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+
+        // No claims in epochs 100-104
+        for epoch in 100..105 {
+            let claims = ubi.query_ubi_claims(epoch);
+            assert!(claims.is_empty());
+        }
+
+        // Claims start at epoch 105
+        let citizen_id = [1u8; 32];
+        let _ = ubi.record_claim_intent(citizen_id, 1000, 105);
+
+        // Verify isolation
+        let claims_105 = ubi.query_ubi_claims(105);
+        assert_eq!(claims_105.len(), 1);
+
+        let claims_104 = ubi.query_ubi_claims(104);
+        assert!(claims_104.is_empty());
+    }
+
+    #[test]
+    fn test_e2e_rejected_claim_zero_amount() {
+        // Test: Treasury Kernel would reject zero-amount claims
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+
+        let result = ubi.record_claim_intent([1u8; 32], 0, 100);
+        assert_eq!(result, Err(Error::ZeroAmount));
+
+        // No event recorded
+        let claims = ubi.query_ubi_claims(100);
+        assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn test_e2e_concurrent_epochs_isolation() {
+        // Test: Claims in different epochs don't interfere
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+
+        // 5 citizens, each claiming in 3 different epochs
+        for citizen_idx in 1..=5 {
+            for epoch_offset in 0..3 {
+                let citizen_id = [citizen_idx as u8; 32];
+                let epoch = 100 + epoch_offset;
+                let _ = ubi.record_claim_intent(citizen_id, 1000, epoch);
+            }
+        }
+
+        // Verify each epoch has exactly 5 claims
+        for epoch_offset in 0..3 {
+            let epoch = 100 + epoch_offset;
+            let claims = ubi.query_ubi_claims(epoch);
+            assert_eq!(claims.len(), 5);
+            assert!(claims.iter().all(|c| c.epoch == epoch));
+        }
+    }
+
+    #[test]
+    fn test_e2e_max_epoch_boundary() {
+        // Test: Very large epoch numbers work correctly
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let max_epoch = u64::MAX - 1;
+
+        let citizen_id = [1u8; 32];
+        let _ = ubi.record_claim_intent(citizen_id, 1000, max_epoch);
+
+        let claims = ubi.query_ubi_claims(max_epoch);
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].epoch, max_epoch);
+    }
+
+    #[test]
+    fn test_e2e_claim_records_immutable_fields() {
+        // Test: Recorded claims preserve exact citizen_id, amount, epoch
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let citizen_id = [42u8; 32];
+        let amount = 5555u64;
+        let epoch = 123u64;
+
+        let _ = ubi.record_claim_intent(citizen_id, amount, epoch);
+
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims[0].citizen_id, citizen_id);
+        assert_eq!(claims[0].amount, amount);
+        assert_eq!(claims[0].epoch, epoch);
+    }
+
+    #[test]
+    fn test_e2e_duplicate_citizen_same_epoch() {
+        // Test: Same citizen can record multiple intents in same epoch
+        // (dedup is Kernel's responsibility, not UBI's)
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let citizen_id = [1u8; 32];
+        let epoch = 100u64;
+
+        // Same citizen records 3 times
+        for _ in 0..3 {
+            let _ = ubi.record_claim_intent(citizen_id, 1000, epoch);
+        }
+
+        // All 3 are recorded (UBI is passive)
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims.len(), 3);
+        assert!(claims.iter().all(|c| c.citizen_id == citizen_id));
+    }
+
+    #[test]
+    fn test_e2e_large_batch_claims() {
+        // Test: UBI can handle large batch of claims (scalability)
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let epoch = 100u64;
+        let num_claims = 1000;
+
+        // Record 1000 claims
+        for i in 0..num_claims {
+            let citizen_id = [(i % 256) as u8; 32];
+            let amount = 1000 + (i as u64);
+            let _ = ubi.record_claim_intent(citizen_id, amount, epoch);
+        }
+
+        // Query and verify count
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims.len(), num_claims);
+
+        // Verify first and last claims
+        assert_eq!(claims[0].amount, 1000);
+        assert_eq!(claims[num_claims - 1].amount, 1000 + (num_claims - 1) as u64);
+    }
+
+    #[test]
+    fn test_e2e_query_before_and_after_claims() {
+        // Test: Query returns nothing before claims, records after claims
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+        let epoch = 100u64;
+
+        // Query empty epoch
+        assert!(ubi.query_ubi_claims(epoch).is_empty());
+
+        // Record claims
+        for i in 1..=5 {
+            let _ = ubi.record_claim_intent([i as u8; 32], 1000, epoch);
+        }
+
+        // Query returns claims
+        let claims = ubi.query_ubi_claims(epoch);
+        assert_eq!(claims.len(), 5);
+    }
+
+    #[test]
+    fn test_e2e_sequential_epochs_independent_state() {
+        // Test: Each epoch maintains independent claim state
+        let mut ubi = UbiDistributor::new(test_governance(), 1000).expect("init failed");
+
+        // Epoch 100: 3 claims
+        for i in 1..=3 {
+            let _ = ubi.record_claim_intent([i as u8; 32], 1000, 100);
+        }
+
+        // Epoch 101: 5 claims (completely different)
+        for i in 4..=8 {
+            let _ = ubi.record_claim_intent([i as u8; 32], 2000, 101);
+        }
+
+        // Epoch 102: 2 claims (overlap with 100's citizens)
+        for i in 1..=2 {
+            let _ = ubi.record_claim_intent([i as u8; 32], 1500, 102);
+        }
+
+        // Verify each epoch has correct claims
+        let epoch_100 = ubi.query_ubi_claims(100);
+        assert_eq!(epoch_100.len(), 3);
+        assert!(epoch_100.iter().all(|c| c.amount == 1000));
+
+        let epoch_101 = ubi.query_ubi_claims(101);
+        assert_eq!(epoch_101.len(), 5);
+        assert!(epoch_101.iter().all(|c| c.amount == 2000));
+
+        let epoch_102 = ubi.query_ubi_claims(102);
+        assert_eq!(epoch_102.len(), 2);
+        assert!(epoch_102.iter().all(|c| c.amount == 1500));
     }
 }
