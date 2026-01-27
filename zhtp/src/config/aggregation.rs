@@ -41,6 +41,12 @@ pub struct PartialConfig {
 pub struct PartialNetworkConfig {
     #[serde(default)]
     pub bootstrap_peers: Vec<String>,
+    /// Optional SPKI SHA-256 pins for bootstrap peers (hex-encoded).
+    /// Key = "host:port", Value = 64-char hex SHA-256 hash.
+    /// When configured, the TLS certificate SPKI must match; TOFU is disabled for that peer.
+    /// Peers without a pin entry still use TOFU.
+    #[serde(default)]
+    pub bootstrap_peer_pins: HashMap<String, String>,
     #[serde(default)]
     pub mesh_port: Option<u16>,
     #[serde(default)]
@@ -198,7 +204,13 @@ pub struct NetworkConfig {
     pub protocols: Vec<String>, // bluetooth, wifi_direct, lorawan, tcp
     pub bootstrap_peers: Vec<String>,
     pub long_range_relays: bool,
-    
+
+    /// Optional SPKI SHA-256 pins for bootstrap peers (hex-encoded).
+    /// Key = "host:port", Value = 64-char hex SHA-256 hash.
+    /// When configured, the TLS certificate SPKI must match; TOFU is disabled for that peer.
+    #[serde(default)]
+    pub bootstrap_peer_pins: HashMap<String, String>,
+
     // Bootstrap validators for multi-node genesis (Gap 5)
     #[serde(default)]
     pub bootstrap_validators: Vec<BootstrapValidator>,
@@ -607,6 +619,7 @@ impl Default for NodeConfig {
                     "127.0.0.1:9334".to_string(),
                 ],
                 long_range_relays: false,
+                bootstrap_peer_pins: HashMap::new(),
                 bootstrap_validators: Vec::new(), // Gap 5: Empty by default
             },
             
@@ -825,6 +838,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                             tracing::info!("Loaded {} bootstrap peer(s) from [network] section", network.bootstrap_peers.len());
                             config.network_config.bootstrap_peers = network.bootstrap_peers;
                         }
+                        if !network.bootstrap_peer_pins.is_empty() {
+                            tracing::info!("Loaded {} bootstrap peer pin(s) from [network] section", network.bootstrap_peer_pins.len());
+                            config.network_config.bootstrap_peer_pins = network.bootstrap_peer_pins;
+                        }
                         if let Some(mesh_port) = network.mesh_port {
                             config.network_config.mesh_port = mesh_port;
                         }
@@ -841,6 +858,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                         if !network.bootstrap_peers.is_empty() {
                             tracing::info!("Loaded {} bootstrap peer(s) from [network_config] section", network.bootstrap_peers.len());
                             config.network_config.bootstrap_peers = network.bootstrap_peers;
+                        }
+                        if !network.bootstrap_peer_pins.is_empty() {
+                            tracing::info!("Loaded {} bootstrap peer pin(s) from [network_config] section", network.bootstrap_peer_pins.len());
+                            config.network_config.bootstrap_peer_pins = network.bootstrap_peer_pins;
                         }
                         if let Some(mesh_port) = network.mesh_port {
                             config.network_config.mesh_port = mesh_port;
@@ -1176,5 +1197,64 @@ mod tests {
             filtered.is_empty(),
             "Filtering empty list should return empty list"
         );
+    }
+
+    /// Test TOML parsing of bootstrap_peer_pins (Issue #922)
+    #[test]
+    fn test_partial_config_bootstrap_peer_pins() {
+        let toml_str = r#"
+[network_config]
+bootstrap_peers = ["77.42.37.161:9334"]
+
+[network_config.bootstrap_peer_pins]
+"77.42.37.161:9334" = "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8"
+"#;
+
+        let partial: PartialConfig = toml::from_str(toml_str)
+            .expect("Failed to parse TOML with bootstrap_peer_pins");
+
+        let network = partial.network_config.expect("network_config should be present");
+        assert_eq!(network.bootstrap_peers.len(), 1);
+        assert_eq!(network.bootstrap_peers[0], "77.42.37.161:9334");
+        assert_eq!(network.bootstrap_peer_pins.len(), 1);
+        assert_eq!(
+            network.bootstrap_peer_pins.get("77.42.37.161:9334").unwrap(),
+            "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8"
+        );
+    }
+
+    /// Test that missing bootstrap_peer_pins defaults to empty map
+    #[test]
+    fn test_partial_config_no_pins_defaults_empty() {
+        let toml_str = r#"
+[network_config]
+bootstrap_peers = ["10.0.0.1:9334"]
+"#;
+
+        let partial: PartialConfig = toml::from_str(toml_str)
+            .expect("Failed to parse TOML without bootstrap_peer_pins");
+
+        let network = partial.network_config.expect("network_config should be present");
+        assert_eq!(network.bootstrap_peers.len(), 1);
+        assert!(network.bootstrap_peer_pins.is_empty());
+    }
+
+    /// Test that multiple pins can be configured
+    #[test]
+    fn test_partial_config_multiple_pins() {
+        let toml_str = r#"
+[network_config]
+bootstrap_peers = ["10.0.0.1:9334", "10.0.0.2:9334"]
+
+[network_config.bootstrap_peer_pins]
+"10.0.0.1:9334" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+"10.0.0.2:9334" = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+"#;
+
+        let partial: PartialConfig = toml::from_str(toml_str)
+            .expect("Failed to parse TOML with multiple bootstrap_peer_pins");
+
+        let network = partial.network_config.expect("network_config should be present");
+        assert_eq!(network.bootstrap_peer_pins.len(), 2);
     }
 }

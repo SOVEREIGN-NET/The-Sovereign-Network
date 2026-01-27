@@ -547,30 +547,62 @@ impl ZhtpUnifiedServer {
             }
         };
 
-        // Configure bootstrap peers for TOFU (Trust On First Use)
-        // This enables connections to bootstrap peers with self-signed certificates
-        // After first contact, their certificates are pinned for future connections
+        // Configure bootstrap peers with optional SPKI pins for certificate verification.
+        // Peers with a configured pin enforce strict SPKI match; others use TOFU.
         if let Some(bootstrap_peers) = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers().await {
-            let peer_addrs: Vec<std::net::SocketAddr> = bootstrap_peers
+            // Load any configured SPKI pins from the bootstrap peers provider
+            let pin_map = crate::runtime::bootstrap_peers_provider::get_bootstrap_peer_pins().await
+                .unwrap_or_default();
+
+            let peer_addrs: Vec<(std::net::SocketAddr, Option<[u8; 32]>)> = bootstrap_peers
                 .iter()
                 .filter_map(|s| {
-                    // First, try to parse the address as-is (may already include a port)
-                    if let Ok(mut addr) = s.parse::<std::net::SocketAddr>() {
-                        // Always use the configured QUIC port
-                        addr.set_port(QUIC_PORT);
-                        Some(addr)
+                    // Parse the address, preserving the operator-specified port.
+                    // Only default to QUIC_PORT when no port is present.
+                    let addr = if let Ok(addr) = s.parse::<std::net::SocketAddr>() {
+                        addr
                     } else {
-                        // No valid port specified; append the QUIC port and parse
+                        // No valid port in the string; append the default QUIC port
                         let addr_with_port = format!("{}:{}", s, QUIC_PORT);
-                        addr_with_port.parse::<std::net::SocketAddr>().ok()
-                    }
+                        addr_with_port.parse::<std::net::SocketAddr>().ok()?
+                    };
+
+                    // Look up SPKI pin for this peer address.
+                    // Config validation already rejected malformed hex at startup,
+                    // so a parse failure here indicates a bug — skip the peer entirely
+                    // rather than silently degrading to TOFU.
+                    let hex_pin = pin_map.get(s)
+                        .or_else(|| pin_map.get(&addr.to_string()));
+
+                    let pin = match hex_pin {
+                        Some(hex_str) => match crate::config::spki_pin::parse_spki_hex(hex_str) {
+                            Ok(hash) => Some(hash),
+                            Err(e) => {
+                                error!(
+                                    "BUG: SPKI pin for {} failed to parse after config validation passed: {}. \
+                                     Skipping peer to avoid silent TOFU downgrade.",
+                                    s, e
+                                );
+                                return None; // skip this peer entirely
+                            }
+                        },
+                        None => None,
+                    };
+
+                    Some((addr, pin))
                 })
                 .collect();
 
             if !peer_addrs.is_empty() {
+                let pinned_count = peer_addrs.iter().filter(|(_, p)| p.is_some()).count();
+                let tofu_count = peer_addrs.len() - pinned_count;
                 quic_mesh.set_bootstrap_peers(peer_addrs.clone());
-                info!(" [QUIC] Configured {} bootstrap peer(s) for TOFU: {:?}", peer_addrs.len(), peer_addrs);
-                
+                info!(
+                    " [QUIC] Configured {} bootstrap peer(s) ({} pinned, {} TOFU): {:?}",
+                    peer_addrs.len(), pinned_count, tofu_count,
+                    peer_addrs.iter().map(|(a, _)| a).collect::<Vec<_>>()
+                );
+
                 // Sync existing pins from discovery cache to verifier
                 if let Err(e) = quic_mesh.sync_pins_from_cache().await {
                     warn!(" [QUIC] Failed to sync pins from discovery cache: {}", e);

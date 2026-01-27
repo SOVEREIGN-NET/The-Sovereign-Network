@@ -783,6 +783,15 @@ impl RuntimeOrchestrator {
             crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(peers).await?;
         }
 
+        // Store bootstrap peer SPKI pins in global provider (Issue #922)
+        if !self.config.network_config.bootstrap_peer_pins.is_empty() {
+            let pin_count = self.config.network_config.bootstrap_peer_pins.len();
+            info!(" Storing {} bootstrap peer SPKI pin(s) from config", pin_count);
+            crate::runtime::bootstrap_peers_provider::set_bootstrap_peer_pins(
+                self.config.network_config.bootstrap_peer_pins.clone()
+            ).await;
+        }
+
         // FIX(#916): Attempt QUIC-based blockchain sync from bootstrap peers BEFORE
         // wait_for_initial_sync(). Without this, the node always creates its own genesis.
         // Bootstrap peers are already QUIC addresses (e.g. 77.42.37.161:9334).
@@ -962,6 +971,13 @@ impl RuntimeOrchestrator {
                 crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(
                     net_info.bootstrap_peers.clone()
                 ).await?;
+            }
+
+            // Store bootstrap peer SPKI pins (Issue #922)
+            if !self.config.network_config.bootstrap_peer_pins.is_empty() {
+                crate::runtime::bootstrap_peers_provider::set_bootstrap_peer_pins(
+                    self.config.network_config.bootstrap_peer_pins.clone()
+                ).await;
             }
         }
         
