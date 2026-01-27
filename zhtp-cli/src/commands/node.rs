@@ -315,11 +315,14 @@ async fn start_node_impl(
         })?;
 
         output.info("Starting in guest mode - blockchain will sync")?;
-        WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path)
+        let wallet_result = WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path)
             .await
             .map_err(|e| {
                 CliError::IdentityError(format!("Failed to setup wallet: {}", e))
-            })?
+            })?;
+        orchestrator.set_user_wallet(wallet_result).await.map_err(|e| {
+            CliError::ConfigError(format!("Failed to store wallet: {}", e))
+        })?;
     } else {
         output.warning("No existing ZHTP network found")?;
 
@@ -334,11 +337,14 @@ async fn start_node_impl(
             CliError::ConfigError(format!("Failed to set network status: {}", e))
         })?;
 
-        WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path)
+        let wallet_result = WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path)
             .await
             .map_err(|e| {
                 CliError::IdentityError(format!("Failed to setup wallet: {}", e))
-            })?
+            })?;
+        orchestrator.set_user_wallet(wallet_result).await.map_err(|e| {
+            CliError::ConfigError(format!("Failed to store wallet: {}", e))
+        })?;
     };
 
     // PHASE 4: Register and start remaining components

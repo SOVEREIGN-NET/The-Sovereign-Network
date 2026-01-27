@@ -778,6 +778,29 @@ impl Blockchain {
 
     /// Add a new block to the chain
     pub async fn add_block(&mut self, block: Block) -> Result<()> {
+        self.process_and_commit_block(block.clone()).await?;
+
+        // Broadcast new block to mesh network (locally-originated blocks only)
+        if let Some(ref sender) = self.broadcast_sender {
+            if let Err(e) = sender.send(BlockchainBroadcastMessage::NewBlock(block.clone())) {
+                warn!("Failed to broadcast new block to network: {}", e);
+            } else {
+                debug!("Block {} broadcast to mesh network", block.height());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Add a block received from the network. Skips mesh broadcast to prevent
+    /// broadcast loops (block was already propagated by the sender).
+    pub async fn add_block_from_network(&mut self, block: Block) -> Result<()> {
+        self.process_and_commit_block(block).await
+    }
+
+    /// Core block processing: verify, commit to chain, update state, emit events.
+    /// Does NOT broadcast — callers decide whether to broadcast.
+    async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
         // Verify the block
         let previous_block = self.blocks.last();
         if !self.verify_block(&block, previous_block)? {
@@ -799,7 +822,7 @@ impl Blockchain {
         self.update_utxo_set(&block)?;
         self.save_utxo_snapshot(self.height)?;
         self.adjust_difficulty()?;
-        
+
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
 
@@ -843,15 +866,6 @@ impl Blockchain {
 
         // Update persistence counter
         self.blocks_since_last_persist += 1;
-
-        // Broadcast new block to mesh network (if channel configured)
-        if let Some(ref sender) = self.broadcast_sender {
-            if let Err(e) = sender.send(BlockchainBroadcastMessage::NewBlock(block.clone())) {
-                warn!("Failed to broadcast new block to network: {}", e);
-            } else {
-                debug!("Block {} broadcast to mesh network", block.height());
-            }
-        }
 
         // Emit BlockAdded event (Issue #11)
         let block_hash_bytes = block.hash();
@@ -976,11 +990,20 @@ impl Blockchain {
 
     /// Add a new block to the chain with automatic persistence (without proof generation - for syncing)
     pub async fn add_block_with_persistence(&mut self, block: Block) -> Result<()> {
-        // Just add block without generating proof (useful for network sync where blocks already have proofs)
         self.add_block(block.clone()).await?;
+        self.persist_block_state(&block).await
+    }
 
+    /// Add a network-received block with persistence. Skips mesh broadcast.
+    pub async fn add_block_from_network_with_persistence(&mut self, block: Block) -> Result<()> {
+        self.add_block_from_network(block.clone()).await?;
+        self.persist_block_state(&block).await
+    }
+
+    /// Persist block and UTXO state after a block has been committed.
+    async fn persist_block_state(&mut self, block: &Block) -> Result<()> {
         // Persist the block to storage if storage manager is available
-        if let Some(_) = self.persist_block(&block).await? {
+        if let Some(_) = self.persist_block(block).await? {
             info!(" Block {} persisted to storage", block.height());
         }
 
@@ -1393,14 +1416,9 @@ impl Blockchain {
 
     /// Add a transaction to the pending pool
     pub fn add_pending_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        // Verify transaction before adding to pool
-        if !self.verify_transaction(&transaction)? {
-            return Err(anyhow::anyhow!("Transaction verification failed"));
-        }
+        self.verify_and_enqueue_transaction(transaction.clone())?;
 
-        self.pending_transactions.push(transaction.clone());
-
-        // Broadcast new transaction to mesh network (if channel configured)
+        // Broadcast new transaction to mesh network (locally-originated only)
         if let Some(ref sender) = self.broadcast_sender {
             if let Err(e) = sender.send(BlockchainBroadcastMessage::NewTransaction(transaction.clone())) {
                 warn!("Failed to broadcast new transaction to network: {}", e);
@@ -1409,6 +1427,23 @@ impl Blockchain {
             }
         }
 
+        Ok(())
+    }
+
+    /// Add a transaction received from the network. Skips mesh broadcast to
+    /// prevent broadcast loops (transaction was already propagated by the sender).
+    pub fn add_pending_transaction_from_network(&mut self, transaction: Transaction) -> Result<()> {
+        self.verify_and_enqueue_transaction(transaction)
+    }
+
+    /// Core transaction processing: verify and add to pending pool.
+    /// Does NOT broadcast — callers decide whether to broadcast.
+    fn verify_and_enqueue_transaction(&mut self, transaction: Transaction) -> Result<()> {
+        if !self.verify_transaction(&transaction)? {
+            return Err(anyhow::anyhow!("Transaction verification failed"));
+        }
+
+        self.pending_transactions.push(transaction);
         Ok(())
     }
 
@@ -4321,6 +4356,32 @@ impl Blockchain {
     pub async fn evaluate_and_merge_chain(&mut self, data: Vec<u8>) -> Result<lib_consensus::ChainMergeResult> {
         let import: BlockchainImport = bincode::deserialize(&data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain: {}", e))?;
+
+        // Fast path: if local chain is empty (fresh node bootstrap), directly adopt
+        // the imported chain without verification against empty state.
+        // An empty blockchain has no state to validate transactions against,
+        // so verify_block() would reject valid genesis transactions.
+        // Check both is_empty() (no blocks at all) and height==0 (has placeholder genesis).
+        if self.blocks.is_empty() || self.height == 0 {
+            if import.blocks.is_empty() {
+                info!("Both local and imported chains are empty - nothing to merge");
+                return Ok(lib_consensus::ChainMergeResult::LocalKept);
+            }
+            let imported_height = import.blocks.len() as u64 - 1;
+            info!("Local chain is empty - directly adopting imported chain (height={}, identities={}, validators={})",
+                  imported_height, import.identity_registry.len(), import.validator_registry.len());
+            self.blocks = import.blocks;
+            self.height = imported_height;
+            self.utxo_set = import.utxo_set;
+            self.identity_registry = import.identity_registry;
+            self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
+            self.validator_registry = import.validator_registry;
+            self.token_contracts = import.token_contracts;
+            self.web4_contracts = import.web4_contracts;
+            self.contract_blocks = import.contract_blocks;
+            info!("Successfully adopted imported chain during bootstrap");
+            return Ok(lib_consensus::ChainMergeResult::ImportedAdopted);
+        }
 
         // Verify all blocks in sequence
         for (i, block) in import.blocks.iter().enumerate() {

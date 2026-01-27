@@ -97,6 +97,46 @@ pub trait BlockchainProvider: Send + Sync {
     async fn is_available(&self) -> bool;
 }
 
+/// Receive-side event sink for blocks and transactions arriving over the mesh.
+/// Implemented by the application layer (zhtp) and injected into MeshMessageHandler.
+/// lib-network emits facts; the application layer decides what to do with them.
+#[async_trait]
+pub trait BlockchainEventReceiver: Send + Sync {
+    /// A peer announced a new block over the mesh network.
+    async fn on_block_received(
+        &self,
+        block_bytes: Vec<u8>,
+        height: u64,
+        timestamp: u64,
+        sender_key: Vec<u8>,
+    ) -> Result<()>;
+
+    /// A peer announced a new transaction over the mesh network.
+    async fn on_transaction_received(
+        &self,
+        transaction_bytes: Vec<u8>,
+        tx_hash: [u8; 32],
+        fee: u64,
+        sender_key: Vec<u8>,
+    ) -> Result<()>;
+}
+
+/// No-op receiver for when blockchain integration is not wired
+#[derive(Clone, Default)]
+pub struct NullBlockchainEventReceiver;
+
+#[async_trait]
+impl BlockchainEventReceiver for NullBlockchainEventReceiver {
+    async fn on_block_received(&self, _: Vec<u8>, height: u64, _: u64, _: Vec<u8>) -> Result<()> {
+        tracing::warn!("Block {} received but no event receiver configured", height);
+        Ok(())
+    }
+    async fn on_transaction_received(&self, _: Vec<u8>, _: [u8; 32], _: u64, _: Vec<u8>) -> Result<()> {
+        tracing::warn!("Transaction received but no event receiver configured");
+        Ok(())
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct NullBlockchainProvider;
 

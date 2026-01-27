@@ -1412,6 +1412,11 @@ impl ZhtpUnifiedServer {
     pub async fn set_blockchain_provider(&mut self, provider: Arc<dyn lib_network::blockchain_sync::BlockchainProvider>) {
         self.mesh_router.set_blockchain_provider(provider).await;
     }
+
+    /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
+    pub async fn set_blockchain_event_receiver(&mut self, receiver: Arc<dyn lib_network::blockchain_sync::BlockchainEventReceiver>) {
+        self.mesh_router.set_blockchain_event_receiver(receiver).await;
+    }
     
     /// Configure sync manager for edge node mode (headers + ZK proofs only)
     pub async fn set_edge_sync_mode(&mut self, max_headers: usize) {
