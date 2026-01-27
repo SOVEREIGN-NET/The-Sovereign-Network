@@ -6,17 +6,15 @@
 use anyhow::Result;
 use std::time::Duration;
 mod common;
-use common_network_test::{MeshNode, MeshTopology, run_shared_mesh_formation_test};
+use common_network_test::{MeshNode, MeshTopology, run_shared_mesh_formation_test, create_test_identities, build_mesh_topology, assert_fully_connected};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(25);
 const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
-// ...existing code...
-
 #[tokio::test]
 async fn test_mesh_formation_shared() -> Result<()> {
     run_shared_mesh_formation_test().await
-    }
+}
 
 /// Test 1: Five-Node Mesh Network Formation via Multicast
 ///
@@ -24,7 +22,6 @@ async fn test_mesh_formation_shared() -> Result<()> {
 /// Verify they all discover each other and form fully connected mesh.
 #[test]
 fn test_five_node_mesh_formation() -> Result<()> {
-    // Phase 1: Create five nodes
     let nodes = [
         ("mesh-node-a", [0x11; 64]),
         ("mesh-node-b", [0x22; 64]),
@@ -32,38 +29,9 @@ fn test_five_node_mesh_formation() -> Result<()> {
         ("mesh-node-d", [0x44; 64]),
         ("mesh-node-e", [0x55; 64]),
     ];
-
-    let mut identities = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
-        identities.push(identity);
-    }
-
-    // Phase 2: Build mesh topology
-    let mut topology = MeshTopology::new();
-    for identity in &identities {
-        topology.add_node(identity.node_id.clone());
-    }
-
-    // Phase 3: Simulate multicast discovery
-    topology.connect_all_peers();
-
-    // Phase 4: Verify mesh is fully connected
-    assert!(
-        topology.is_fully_connected(),
-        "5-node mesh should be fully connected"
-    );
-
-    // Verify each node has 4 peers (all others)
-    for i in 0..identities.len() {
-        assert_eq!(
-            topology.peer_count(i),
-            4,
-            "Node {} should have 4 peers",
-            i
-        );
-    }
-
+    let identities = create_test_identities(&nodes, create_test_identity);
+    let topology = build_mesh_topology(&identities);
+    assert_fully_connected(&topology, 4);
     Ok(())
 }
 
