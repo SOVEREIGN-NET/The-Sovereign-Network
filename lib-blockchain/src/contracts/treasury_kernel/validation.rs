@@ -183,7 +183,7 @@ mod tests {
         registry.register(citizen).expect("register citizen");
 
         // Mark as already claimed
-        state.mark_claimed(citizen_id, 100);
+        let _ = state.mark_claimed(citizen_id, 100);
 
         let claim = create_test_claim(citizen_id, 100, 1000);
 

@@ -82,11 +82,21 @@ impl KernelState {
             match self.validate_claim(claim, citizen_registry, current_epoch) {
                 Ok(()) => {
                     // Claim passed all 5 checks
-                    // In production, would call mint_ubi() here
-                    self.mark_claimed(claim.citizen_id, current_epoch);
-                    if let Ok(()) = self.add_distributed(current_epoch, claim.amount) {
-                        self.record_success();
-                        successes += 1;
+                    // Mark claimed in dedup map (should always succeed after validation)
+                    match self.mark_claimed(claim.citizen_id, current_epoch) {
+                        Ok(()) => {
+                            // In production, would call mint_ubi() here
+                            if let Ok(()) = self.add_distributed(current_epoch, claim.amount) {
+                                self.record_success();
+                                successes += 1;
+                            }
+                        }
+                        Err(_) => {
+                            // Duplicate detected (shouldn't happen after validation passes)
+                            // Treat as rejection rather than panic
+                            self.record_rejection(crate::contracts::treasury_kernel::types::RejectionReason::AlreadyClaimedEpoch);
+                            rejections += 1;
+                        }
                     }
                 }
                 Err(reason) => {

@@ -6,7 +6,7 @@
 //! - KernelStats: Monitoring statistics
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Rejection reason codes for UBI claims (5 checks)
 ///
@@ -47,19 +47,23 @@ impl std::fmt::Display for RejectionReason {
 ///
 /// **Consensus-Critical**: All fields must be persisted for crash recovery.
 /// Dedup state prevents double-minting if Kernel crashes mid-distribution.
+///
+/// Uses BTreeMap (not HashMap) for deterministic serialization order.
+/// Consensus requires identical state hashes across all validators.
+/// HashMap iteration order is non-deterministic, which would cause validator forks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KernelState {
     /// Deduplication tracking: citizen_id -> {epoch -> bool}
     /// Prevents double-minting after crashes
     /// Key: citizen_id [u8; 32]
-    /// Value: HashMap<epoch, claimed_flag>
-    pub already_claimed: HashMap<[u8; 32], HashMap<u64, bool>>,
+    /// Value: BTreeMap<epoch, claimed_flag> (deterministic ordering)
+    pub already_claimed: BTreeMap<[u8; 32], BTreeMap<u64, bool>>,
 
     /// Pool distribution tracking: epoch -> total_distributed
     /// Enforces 1,000,000 SOV hard cap per epoch
-    /// Key: epoch
+    /// Key: epoch (BTreeMap for deterministic ordering)
     /// Value: cumulative SOV distributed in that epoch
-    pub total_distributed: HashMap<u64, u64>,
+    pub total_distributed: BTreeMap<u64, u64>,
 
     /// Last processed epoch (for idempotency and recovery)
     /// If current_epoch == last_processed_epoch, skip distribution
@@ -89,8 +93,8 @@ impl KernelState {
     /// Create new empty kernel state
     pub fn new() -> Self {
         Self {
-            already_claimed: HashMap::new(),
-            total_distributed: HashMap::new(),
+            already_claimed: BTreeMap::new(),
+            total_distributed: BTreeMap::new(),
             last_processed_epoch: None,
             stats: KernelStats::default(),
         }
@@ -118,20 +122,30 @@ impl KernelState {
     /// * `citizen_id` - Citizen identifier
     /// * `epoch` - Epoch to mark
     ///
-    /// # Panics
-    /// If citizen was already marked as claimed (indicates logic error)
-    pub fn mark_claimed(&mut self, citizen_id: [u8; 32], epoch: u64) {
+    /// # Returns
+    /// Ok(()) if marked successfully
+    /// Err if citizen was already marked as claimed in this epoch
+    ///
+    /// # Design
+    /// Returns error instead of panicking to avoid crashing validators.
+    /// Consensus-critical code must not panic - errors should be handled
+    /// gracefully by callers. This allows validators to log and handle
+    /// duplicate marks without bringing down the node.
+    pub fn mark_claimed(&mut self, citizen_id: [u8; 32], epoch: u64) -> Result<(), String> {
         let epochs = self
             .already_claimed
             .entry(citizen_id)
-            .or_insert_with(HashMap::new);
+            .or_insert_with(BTreeMap::new);
 
-        assert!(
-            !epochs.contains_key(&epoch),
-            "Citizen already marked claimed in epoch (logic error)"
-        );
+        if epochs.contains_key(&epoch) {
+            return Err(format!(
+                "Citizen {:?} already marked claimed in epoch {}",
+                citizen_id, epoch
+            ));
+        }
 
         epochs.insert(epoch, true);
+        Ok(())
     }
 
     /// Get total amount distributed in an epoch
@@ -244,7 +258,8 @@ mod tests {
         let mut state = KernelState::new();
         let citizen_id = [1u8; 32];
 
-        state.mark_claimed(citizen_id, 100);
+        let result = state.mark_claimed(citizen_id, 100);
+        assert!(result.is_ok());
         assert!(state.has_claimed(&citizen_id, 100));
     }
 
@@ -253,9 +268,11 @@ mod tests {
         let mut state = KernelState::new();
         let citizen_id = [1u8; 32];
 
-        state.mark_claimed(citizen_id, 100);
-        state.mark_claimed(citizen_id, 101);
+        let result1 = state.mark_claimed(citizen_id, 100);
+        let result2 = state.mark_claimed(citizen_id, 101);
 
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
         assert!(state.has_claimed(&citizen_id, 100));
         assert!(state.has_claimed(&citizen_id, 101));
     }
@@ -337,12 +354,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn test_mark_claimed_duplicate_panics() {
+    fn test_mark_claimed_duplicate_returns_error() {
         let mut state = KernelState::new();
         let citizen_id = [1u8; 32];
-        state.mark_claimed(citizen_id, 100);
-        state.mark_claimed(citizen_id, 100);
+
+        // First mark should succeed
+        let result1 = state.mark_claimed(citizen_id, 100);
+        assert!(result1.is_ok());
+
+        // Duplicate mark should return error (not panic)
+        let result2 = state.mark_claimed(citizen_id, 100);
+        assert!(result2.is_err());
+        assert!(result2.unwrap_err().contains("already marked claimed"));
     }
 
     #[test]
