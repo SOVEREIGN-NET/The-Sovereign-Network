@@ -24,6 +24,10 @@ pub fn approve_spending(
 }
 
 /// Mint new tokens
+///
+/// **Deprecated**: Use `mint_tokens_via_kernel()` or `TreasuryKernel::execute_authorized_mint()`
+/// instead. Direct minting bypasses governance authorization and audit trail.
+#[deprecated(since = "0.1.0", note = "Use mint_tokens_via_kernel() or TreasuryKernel::execute_authorized_mint() for governance-gated minting")]
 pub fn mint_tokens(
     contract: &mut TokenContract,
     to: &PublicKey,
@@ -33,6 +37,10 @@ pub fn mint_tokens(
 }
 
 /// Burn tokens from account
+///
+/// **Deprecated**: Use `burn_tokens_via_kernel()` or `TreasuryKernel::execute_authorized_burn()`
+/// instead. Direct burning bypasses governance authorization and audit trail.
+#[deprecated(since = "0.1.0", note = "Use burn_tokens_via_kernel() or TreasuryKernel::execute_authorized_burn() for governance-gated burning")]
 pub fn burn_tokens(
     contract: &mut TokenContract,
     from: &PublicKey,
@@ -256,6 +264,10 @@ impl Default for TokenDistributionStats {
 /// Advanced token operations for complex scenarios
 
 /// Execute a token swap between two tokens
+///
+/// **Note**: This function calls `mint()` and `burn()` directly on `TokenContract`.
+/// It will fail at runtime for tokens with `kernel_only_mode` enabled.
+/// A kernel-aware swap should route through the Treasury Kernel instead.
 pub fn token_swap(
     token_a: &mut TokenContract,
     token_b: &mut TokenContract,
