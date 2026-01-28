@@ -225,7 +225,9 @@ impl CompensationEngine {
 
     /// Hash computation inputs for verification/replay
     ///
-    /// Uses deterministic ordering (sorted by metric key).
+    /// Uses BLAKE3 for deterministic, platform-independent hashing.
+    /// Inputs are serialized in a canonical order to ensure identical
+    /// hashes across all nodes regardless of Rust version or platform.
     fn hash_computation(
         &self,
         metrics: &[MetricRecord],
@@ -233,43 +235,43 @@ impl CompensationEngine {
         assignment: &Assignment,
         epoch: u64,
     ) -> ComputationHash {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = blake3::Hasher::new();
 
         // Hash metrics in deterministic order (sorted by key)
         let mut sorted_metrics: Vec<_> = metrics.iter().collect();
         sorted_metrics.sort_by(|a, b| a.key.cmp(&b.key));
 
         for metric in sorted_metrics {
-            metric.key.epoch.hash(&mut hasher);
-            metric.key.assignment_id.hash(&mut hasher);
-            format!("{:?}", metric.key.metric_type).hash(&mut hasher);
-            metric.value.hash(&mut hasher);
+            // Use little-endian byte encoding for all integers (deterministic)
+            hasher.update(&metric.key.epoch.to_le_bytes());
+            hasher.update(&metric.key.assignment_id);
+            hasher.update(format!("{:?}", metric.key.metric_type).as_bytes());
+            hasher.update(&metric.value.to_le_bytes());
         }
 
         // Hash role
-        role.role_id.hash(&mut hasher);
-        role.annual_cap.hash(&mut hasher);
+        hasher.update(&role.role_id);
+        hasher.update(&role.annual_cap.to_le_bytes());
 
         // Hash assignment
-        assignment.assignment_id.hash(&mut hasher);
-        assignment.snap_annual_cap.hash(&mut hasher);
-        assignment.snap_lifetime_cap.hash(&mut hasher);
+        hasher.update(&assignment.assignment_id);
+        hasher.update(&assignment.snap_annual_cap.to_le_bytes());
+        // Handle Option<u64> deterministically
+        match assignment.snap_lifetime_cap {
+            Some(cap) => {
+                hasher.update(&[1u8]); // Present marker
+                hasher.update(&cap.to_le_bytes());
+            }
+            None => {
+                hasher.update(&[0u8]); // Absent marker
+            }
+        }
 
         // Hash epoch
-        epoch.hash(&mut hasher);
+        hasher.update(&epoch.to_le_bytes());
 
-        // Finalize hash
-        let hash = hasher.finish();
-        let mut result = [0u8; 32];
-        result[..8].copy_from_slice(&hash.to_le_bytes());
-        // Fill remaining bytes with secondary hash
-        result[8..16].copy_from_slice(&(hash.wrapping_mul(31)).to_le_bytes());
-        result[16..24].copy_from_slice(&(hash.wrapping_mul(37)).to_le_bytes());
-        result[24..32].copy_from_slice(&(hash.wrapping_mul(41)).to_le_bytes());
-        result
+        // BLAKE3 produces a 32-byte hash directly
+        *hasher.finalize().as_bytes()
     }
 
     /// Verify a computation matches expected hash
