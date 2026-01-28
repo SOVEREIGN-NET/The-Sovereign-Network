@@ -150,14 +150,14 @@ pub struct Assignment {
     pub role_id: RoleId,
 
     // ─── SNAPSHOTS - IMMUTABLE AFTER CREATION ───────────────────────────
-    /// Snapshotted annual cap at assignment time (private to enforce immutability)
-    snap_annual_cap: u64,
+    /// Snapshotted annual cap at assignment time
+    pub snap_annual_cap: u64,
 
-    /// Snapshotted lifetime cap at assignment time (private to enforce immutability)
-    snap_lifetime_cap: Option<u64>,
+    /// Snapshotted lifetime cap at assignment time
+    pub snap_lifetime_cap: Option<u64>,
 
-    /// Snapshotted per-epoch cap at assignment time (private to enforce immutability)
-    snap_per_epoch_cap: u64,
+    /// Snapshotted per-epoch cap at assignment time
+    pub snap_per_epoch_cap: u64,
 
     // ─── STATE TRACKING ─────────────────────────────────────────────────
     /// Total amount paid across all time
@@ -236,25 +236,6 @@ impl Assignment {
             terminated_at_epoch: None,
         }
     }
-
-    // ─── SNAPSHOT ACCESSORS (Read-Only) ────────────────────────────────────
-
-    /// Get snapshotted annual cap
-    pub fn snap_annual_cap(&self) -> u64 {
-        self.snap_annual_cap
-    }
-
-    /// Get snapshotted lifetime cap
-    pub fn snap_lifetime_cap(&self) -> Option<u64> {
-        self.snap_lifetime_cap
-    }
-
-    /// Get snapshotted per-epoch cap
-    pub fn snap_per_epoch_cap(&self) -> u64 {
-        self.snap_per_epoch_cap
-    }
-
-    // ─── STATE QUERY METHODS ───────────────────────────────────────────────
 
     /// Check if assignment can receive payment
     pub fn can_receive_payment(&self) -> bool {
@@ -545,9 +526,9 @@ mod tests {
         );
 
         // Verify caps are snapshotted
-        assert_eq!(assignment.snap_annual_cap(), 100_000);
-        assert_eq!(assignment.snap_lifetime_cap(), Some(500_000));
-        assert_eq!(assignment.snap_per_epoch_cap(), 10_000);
+        assert_eq!(assignment.snap_annual_cap, 100_000);
+        assert_eq!(assignment.snap_lifetime_cap, Some(500_000));
+        assert_eq!(assignment.snap_per_epoch_cap, 10_000);
 
         // Verify initial state
         assert_eq!(assignment.total_paid, 0);
@@ -699,7 +680,7 @@ mod tests {
 
         // Accrued entitlement preserved
         assert_eq!(assignment.total_paid, 5_000);
-        assert_eq!(assignment.snap_annual_cap(), 100_000);
+        assert_eq!(assignment.snap_annual_cap, 100_000);
 
         // Reactivate
         assert!(assignment.reactivate().is_ok());
