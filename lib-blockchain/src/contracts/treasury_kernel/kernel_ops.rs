@@ -183,6 +183,11 @@ impl TreasuryKernel {
         if self.consumed_authorizations.contains(&auth.proposal_id) {
             return Err(KernelOpError::AuthorizationConsumed);
         }
+        // Validate that executable_after_epoch respects the configured delay
+        let minimum_executable_epoch = auth.authorized_at_epoch + self.mint_delay_epochs;
+        if auth.executable_after_epoch < minimum_executable_epoch {
+            return Err(KernelOpError::DelayNotElapsed);
+        }
         self.pending_mint_authorizations.insert(auth.proposal_id, auth);
         Ok(())
     }
@@ -238,6 +243,11 @@ impl TreasuryKernel {
     ) -> Result<(), KernelOpError> {
         if self.consumed_authorizations.contains(&auth.proposal_id) {
             return Err(KernelOpError::AuthorizationConsumed);
+        }
+        // Validate that executable_after_epoch respects the configured delay
+        let minimum_executable_epoch = auth.authorized_at_epoch + self.mint_delay_epochs;
+        if auth.executable_after_epoch < minimum_executable_epoch {
+            return Err(KernelOpError::DelayNotElapsed);
         }
         self.pending_burn_authorizations.insert(auth.proposal_id, auth);
         Ok(())
@@ -876,5 +886,183 @@ mod tests {
     fn test_mint_delay_default() {
         let (kernel, _) = setup();
         assert_eq!(kernel.mint_delay_epochs(), 1);
+    }
+
+    #[test]
+    fn test_register_mint_authorization_enforces_delay() {
+        let (mut kernel, _) = setup();
+        
+        // Default delay is 1 epoch
+        assert_eq!(kernel.mint_delay_epochs(), 1);
+        
+        // Try to register authorization with executable_after_epoch < authorized_at_epoch + delay
+        let mut auth = test_mint_auth(10); // authorized_at_epoch = 10
+        auth.executable_after_epoch = 10; // Should be at least 11
+        
+        let result = kernel.register_mint_authorization(auth);
+        assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
+        
+        // Verify authorization was not registered
+        assert_eq!(kernel.pending_mint_authorizations().len(), 0);
+    }
+
+    #[test]
+    fn test_register_mint_authorization_respects_delay() {
+        let (mut kernel, _) = setup();
+        
+        // Default delay is 1 epoch
+        assert_eq!(kernel.mint_delay_epochs(), 1);
+        
+        // Register authorization with correct delay
+        let mut auth = test_mint_auth(10); // authorized_at_epoch = 10
+        auth.executable_after_epoch = 11; // authorized_at_epoch + delay
+        
+        let result = kernel.register_mint_authorization(auth);
+        assert!(result.is_ok());
+        
+        // Verify authorization was registered
+        assert_eq!(kernel.pending_mint_authorizations().len(), 1);
+    }
+
+    #[test]
+    fn test_register_burn_authorization_enforces_delay() {
+        let (mut kernel, _) = setup();
+        
+        // Default delay is 1 epoch
+        assert_eq!(kernel.mint_delay_epochs(), 1);
+        
+        // Try to register authorization with executable_after_epoch < authorized_at_epoch + delay
+        let mut auth = test_burn_auth(10); // authorized_at_epoch = 10
+        auth.executable_after_epoch = 10; // Should be at least 11
+        
+        let result = kernel.register_burn_authorization(auth);
+        assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
+        
+        // Verify authorization was not registered
+        assert_eq!(kernel.pending_burn_authorizations().len(), 0);
+    }
+
+    #[test]
+    fn test_register_burn_authorization_respects_delay() {
+        let (mut kernel, _) = setup();
+        
+        // Default delay is 1 epoch
+        assert_eq!(kernel.mint_delay_epochs(), 1);
+        
+        // Register authorization with correct delay
+        let mut auth = test_burn_auth(10); // authorized_at_epoch = 10
+        auth.executable_after_epoch = 11; // authorized_at_epoch + delay
+        
+        let result = kernel.register_burn_authorization(auth);
+        assert!(result.is_ok());
+        
+        // Verify authorization was registered
+        assert_eq!(kernel.pending_burn_authorizations().len(), 1);
+    }
+
+    #[test]
+    fn test_mint_delay_configuration_affects_registration() {
+        let (mut kernel, _) = setup();
+        let gov = test_governance();
+        
+        // Set delay to 3 epochs
+        kernel.set_mint_delay_epochs(&gov, 3).unwrap();
+        assert_eq!(kernel.mint_delay_epochs(), 3);
+        
+        // Try to register with 1-epoch delay (should fail)
+        let mut auth1 = test_mint_auth(10); // authorized_at_epoch = 10
+        auth1.executable_after_epoch = 11; // Only 1 epoch delay
+        let result = kernel.register_mint_authorization(auth1);
+        assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
+        
+        // Try to register with 2-epoch delay (should fail)
+        let mut auth2 = test_mint_auth(10);
+        auth2.proposal_id = [2u8; 32]; // Different proposal ID
+        auth2.executable_after_epoch = 12; // Only 2 epoch delay
+        let result = kernel.register_mint_authorization(auth2);
+        assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
+        
+        // Register with 3-epoch delay (should succeed)
+        let mut auth3 = test_mint_auth(10);
+        auth3.proposal_id = [3u8; 32]; // Different proposal ID
+        auth3.executable_after_epoch = 13; // Exactly 3 epoch delay
+        let result = kernel.register_mint_authorization(auth3);
+        assert!(result.is_ok());
+        
+        // Register with > 3-epoch delay (should succeed)
+        let mut auth4 = test_mint_auth(10);
+        auth4.proposal_id = [4u8; 32]; // Different proposal ID
+        auth4.executable_after_epoch = 15; // 5 epoch delay (more than required)
+        let result = kernel.register_mint_authorization(auth4);
+        assert!(result.is_ok());
+        
+        // Should have 2 authorizations registered
+        assert_eq!(kernel.pending_mint_authorizations().len(), 2);
+    }
+
+    #[test]
+    fn test_burn_delay_configuration_affects_registration() {
+        let (mut kernel, _) = setup();
+        let gov = test_governance();
+        
+        // Set delay to 2 epochs
+        kernel.set_mint_delay_epochs(&gov, 2).unwrap();
+        assert_eq!(kernel.mint_delay_epochs(), 2);
+        
+        // Try to register with insufficient delay (should fail)
+        let mut auth1 = test_burn_auth(5); // authorized_at_epoch = 5
+        auth1.executable_after_epoch = 6; // Only 1 epoch delay, needs 2
+        let result = kernel.register_burn_authorization(auth1);
+        assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
+        
+        // Register with correct delay (should succeed)
+        let mut auth2 = test_burn_auth(5);
+        auth2.proposal_id = [3u8; 32]; // Different proposal ID
+        auth2.executable_after_epoch = 7; // Exactly 2 epoch delay
+        let result = kernel.register_burn_authorization(auth2);
+        assert!(result.is_ok());
+        
+        assert_eq!(kernel.pending_burn_authorizations().len(), 1);
+    }
+
+    #[test]
+    fn test_zero_epoch_delay_allowed() {
+        let (mut kernel, _) = setup();
+        let gov = test_governance();
+        
+        // Set delay to 0 epochs (immediate execution allowed)
+        kernel.set_mint_delay_epochs(&gov, 0).unwrap();
+        assert_eq!(kernel.mint_delay_epochs(), 0);
+        
+        // Register authorization with same epoch for authorization and execution
+        let mut auth = test_mint_auth(10); // authorized_at_epoch = 10
+        auth.executable_after_epoch = 10; // Same epoch (0 delay)
+        
+        let result = kernel.register_mint_authorization(auth);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_delay_validation_with_large_epochs() {
+        let (mut kernel, _) = setup();
+        let gov = test_governance();
+        
+        // Set a large delay
+        kernel.set_mint_delay_epochs(&gov, 100).unwrap();
+        
+        // Register authorization at a large epoch number
+        let mut auth = test_mint_auth(1000); // authorized_at_epoch = 1000
+        auth.executable_after_epoch = 1100; // authorized_at_epoch + 100
+        
+        let result = kernel.register_mint_authorization(auth);
+        assert!(result.is_ok());
+        
+        // Try with insufficient delay
+        let mut auth2 = test_mint_auth(1000);
+        auth2.proposal_id = [5u8; 32];
+        auth2.executable_after_epoch = 1099; // Only 99 epochs delay
+        
+        let result = kernel.register_mint_authorization(auth2);
+        assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
     }
 }
