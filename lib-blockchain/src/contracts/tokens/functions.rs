@@ -1,6 +1,9 @@
 use super::core::{TokenContract, TokenInfo};
 use crate::integration::crypto_integration::PublicKey;
 use crate::contracts::utils;
+use crate::contracts::treasury_kernel::{
+    TreasuryKernel, KernelOpError, CreditReason, DebitReason,
+};
 use std::collections::HashMap;
 
 /// Token operation functions for contract system integration
@@ -21,6 +24,10 @@ pub fn approve_spending(
 }
 
 /// Mint new tokens
+///
+/// **Deprecated**: Use `mint_tokens_via_kernel()` or `TreasuryKernel::execute_authorized_mint()`
+/// instead. Direct minting bypasses governance authorization and audit trail.
+#[deprecated(since = "0.1.0", note = "Use mint_tokens_via_kernel() or TreasuryKernel::execute_authorized_mint() for governance-gated minting")]
 pub fn mint_tokens(
     contract: &mut TokenContract,
     to: &PublicKey,
@@ -30,12 +37,44 @@ pub fn mint_tokens(
 }
 
 /// Burn tokens from account
+///
+/// **Deprecated**: Use `burn_tokens_via_kernel()` or `TreasuryKernel::execute_authorized_burn()`
+/// instead. Direct burning bypasses governance authorization and audit trail.
+#[deprecated(since = "0.1.0", note = "Use burn_tokens_via_kernel() or TreasuryKernel::execute_authorized_burn() for governance-gated burning")]
 pub fn burn_tokens(
     contract: &mut TokenContract,
     from: &PublicKey,
     amount: u64,
 ) -> Result<(), String> {
     contract.burn(from, amount)
+}
+
+/// Mint new tokens via Treasury Kernel (preferred path)
+///
+/// Routes minting through the kernel's authorization layer.
+/// Use this instead of direct `mint_tokens()` when kernel is available.
+pub fn mint_tokens_via_kernel(
+    kernel: &mut TreasuryKernel,
+    contract: &mut TokenContract,
+    to: &PublicKey,
+    amount: u64,
+) -> Result<(), KernelOpError> {
+    let caller = kernel.kernel_address().clone();
+    kernel.credit(contract, &caller, to, amount, CreditReason::Mint)
+}
+
+/// Burn tokens via Treasury Kernel (preferred path)
+///
+/// Routes burning through the kernel's authorization layer.
+/// Use this instead of direct `burn_tokens()` when kernel is available.
+pub fn burn_tokens_via_kernel(
+    kernel: &mut TreasuryKernel,
+    contract: &mut TokenContract,
+    from: &PublicKey,
+    amount: u64,
+) -> Result<(), KernelOpError> {
+    let caller = kernel.kernel_address().clone();
+    kernel.debit(contract, &caller, from, amount, DebitReason::Burn)
 }
 
 /// Get account balance
@@ -225,6 +264,10 @@ impl Default for TokenDistributionStats {
 /// Advanced token operations for complex scenarios
 
 /// Execute a token swap between two tokens
+///
+/// **Note**: This function calls `mint()` and `burn()` directly on `TokenContract`.
+/// It will fail at runtime for tokens with `kernel_only_mode` enabled.
+/// A kernel-aware swap should route through the Treasury Kernel instead.
 pub fn token_swap(
     token_a: &mut TokenContract,
     token_b: &mut TokenContract,

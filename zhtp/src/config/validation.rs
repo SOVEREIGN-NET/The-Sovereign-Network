@@ -31,7 +31,10 @@ pub async fn validate_complete_configuration(config: &NodeConfig) -> Result<()> 
     
     // Validate cross-package integration
     validate_integration_settings(config)?;
-    
+
+    // Validate bootstrap peer SPKI pins (fail-fast on malformed hex)
+    validate_bootstrap_peer_pins(config)?;
+
     info!("Configuration validation completed successfully");
     Ok(())
 }
@@ -276,6 +279,38 @@ fn validate_integration_settings(config: &NodeConfig) -> Result<()> {
     }
     
     info!("Integration settings validated");
+    Ok(())
+}
+
+/// Validate that all configured bootstrap peer SPKI pins are well-formed hex (Issue #922).
+///
+/// This runs at startup during config validation so the node fails fast on
+/// malformed pins rather than silently degrading to TOFU at connection time.
+fn validate_bootstrap_peer_pins(config: &NodeConfig) -> Result<()> {
+    let pins = &config.network_config.bootstrap_peer_pins;
+    if pins.is_empty() {
+        return Ok(());
+    }
+
+    let mut errors: Vec<String> = Vec::new();
+
+    for (peer_addr, hex_pin) in pins {
+        if let Err(e) = super::spki_pin::parse_spki_hex(hex_pin) {
+            errors.push(format!("  peer \"{}\": {}", peer_addr, e));
+        }
+    }
+
+    if !errors.is_empty() {
+        let msg = format!(
+            "Invalid bootstrap_peer_pins in config ({} error(s)):\n{}",
+            errors.len(),
+            errors.join("\n")
+        );
+        error!("{}", msg);
+        return Err(anyhow::anyhow!(msg));
+    }
+
+    info!("Bootstrap peer SPKI pins validated ({} pin(s))", pins.len());
     Ok(())
 }
 

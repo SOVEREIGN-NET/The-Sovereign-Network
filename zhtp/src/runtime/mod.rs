@@ -39,6 +39,7 @@ pub mod storage_provider;  // Global access to storage for component sharing
 pub mod edge_state_provider;  // Global access to edge node state for header-only sync
 pub mod identity_manager_provider;
 pub mod network_blockchain_provider;
+pub mod network_blockchain_event_receiver;
 pub mod mesh_router_provider;
 pub mod bootstrap_peers_provider;  // FIX: Global access to bootstrap peers for UnifiedServer
 pub mod did_startup;
@@ -781,7 +782,72 @@ impl RuntimeOrchestrator {
             info!(" Bootstrap peers available for sync: {:?}", peers);
             crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(peers).await?;
         }
-        
+
+        // Store bootstrap peer SPKI pins in global provider (Issue #922)
+        if !self.config.network_config.bootstrap_peer_pins.is_empty() {
+            let pin_count = self.config.network_config.bootstrap_peer_pins.len();
+            info!(" Storing {} bootstrap peer SPKI pin(s) from config", pin_count);
+            crate::runtime::bootstrap_peers_provider::set_bootstrap_peer_pins(
+                self.config.network_config.bootstrap_peer_pins.clone()
+            ).await;
+        }
+
+        // FIX(#916): Attempt QUIC-based blockchain sync from bootstrap peers BEFORE
+        // wait_for_initial_sync(). Without this, the node always creates its own genesis.
+        // Bootstrap peers are already QUIC addresses (e.g. 77.42.37.161:9334).
+        if !network_info.bootstrap_peers.is_empty() {
+            // Load node identity for QUIC client authentication
+            match crate::runtime::create_or_load_node_identity(&self.config.environment).await {
+                Ok(node_identity) => {
+                    use lib_network::client::{ZhtpClient, ZhtpClientConfig};
+                    use lib_network::web4::trust::TrustConfig;
+
+                    let client_config = ZhtpClientConfig { allow_bootstrap: true };
+                    match ZhtpClient::new_with_config(node_identity, TrustConfig::bootstrap(), client_config).await {
+                        Ok(mut client) => {
+                            for peer in &network_info.bootstrap_peers {
+                                info!("Attempting blockchain bootstrap sync from peer: {}", peer);
+                                match client.connect(peer).await {
+                                    Ok(()) => {
+                                        info!("QUIC connection established to {}", peer);
+                                        match crate::runtime::services::bootstrap_service::BootstrapService::try_bootstrap_blockchain_from_peer(
+                                            &blockchain_arc,
+                                            &client,
+                                            peer,
+                                        ).await {
+                                            Ok(synced_chain) => {
+                                                let synced_height = synced_chain.height;
+                                                if synced_height > 0 {
+                                                    *blockchain_arc.write().await = synced_chain;
+                                                    info!("Bootstrap sync success: height={} from {}", synced_height, peer);
+                                                    break; // Got data, stop trying peers
+                                                } else {
+                                                    info!("Peer {} has empty blockchain, trying next", peer);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("Bootstrap sync from {} failed: {}", peer, e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("QUIC connection to {} failed: {}", peer, e);
+                                    }
+                                }
+                            }
+                            client.close().await;
+                        }
+                        Err(e) => {
+                            warn!("Failed to create QUIC client for bootstrap sync: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to load node identity for bootstrap sync: {}", e);
+                }
+            }
+        }
+
         info!("✓ Blockchain ready to receive sync from network peers");
         Ok(())
     }
@@ -905,6 +971,13 @@ impl RuntimeOrchestrator {
                 crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(
                     net_info.bootstrap_peers.clone()
                 ).await?;
+            }
+
+            // Store bootstrap peer SPKI pins (Issue #922)
+            if !self.config.network_config.bootstrap_peer_pins.is_empty() {
+                crate::runtime::bootstrap_peers_provider::set_bootstrap_peer_pins(
+                    self.config.network_config.bootstrap_peer_pins.clone()
+                ).await;
             }
         }
         
@@ -2840,12 +2913,24 @@ pub async fn create_or_load_node_identity(
         .join(".zhtp")
         .join("keystore");
 
-    // Allow explicit device name override to keep NodeId deterministic across restarts
-    let device_name = std::env::var("ZHTP_DEVICE_NAME")
-        .unwrap_or_else(|_| "zhtp-node".to_string());
+    // SECURITY REVIEW: ZHTP_DEVICE_NAME env var is checked inside resolve_device_name()
+    // to allow operators to configure deterministic NodeId across restarts and cluster
+    // deployments. The value is validated by normalize_device_name() which enforces:
+    // alphanumeric + .-_ only, max 64 chars, lowercased. Changing this value changes
+    // the node's network identity (NodeId), which affects peer discovery and mesh routing.
+    // An attacker with env var access could cause identity instability but cannot
+    // impersonate other nodes (requires private key for DID). This is a configuration
+    // integrity concern, not data exposure. See resolve_device_name_with_host() for
+    // audit logging when the env var is set.
+    let device_name = resolve_device_name(Some("zhtp-node"))
+        .context("Failed to resolve node device name")?;
+    info!("Using node device name: {}", device_name);
 
     // Try to load an existing identity (with private key) from the keystore
-    if let Some(identity) = crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await? {
+    if let Some(identity) = crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path)
+        .await
+        .context("Failed to load node identity from keystore")?
+    {
         info!("Loaded existing node identity from keystore: {}", identity.did);
         return Ok(identity);
     }
@@ -2858,9 +2943,12 @@ pub async fn create_or_load_node_identity(
         None, // No jurisdiction for device
         &device_name,
         None, // Random seed
-    )?;
+    )
+    .context("Failed to create new unified node identity")?;
 
-    crate::runtime::did_startup::persist_node_identity_to_keystore(&keystore_path, &node_identity).await?;
+    crate::runtime::did_startup::persist_node_identity_to_keystore(&keystore_path, &node_identity)
+        .await
+        .context("Failed to persist node identity to keystore")?;
     info!("Created and saved node identity to keystore at {:?}", keystore_path);
     Ok(node_identity)
 }

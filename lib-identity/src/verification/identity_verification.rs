@@ -684,6 +684,7 @@ mod tests {
         };
         let private_key = lib_crypto::PrivateKey {
             dilithium_sk: vec![1u8; 2560],   // Real Dilithium2 secret key size
+            dilithium_pk: vec![],
             kyber_sk: vec![],
             master_seed: vec![],
         };

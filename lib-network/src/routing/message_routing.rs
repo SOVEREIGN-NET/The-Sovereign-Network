@@ -432,8 +432,13 @@ impl MeshMessageRouter {
         }
         
         // Check for direct connection (Ticket #149: use peer_registry)
+        // #916: Fall back to find_by_public_key() when exact UnifiedPeerId match fails,
+        // because broadcast routing constructs a legacy UnifiedPeerId from PublicKey
+        // which has a synthetic DID that won't match the real handshake identity.
         let registry = self.peer_registry.read().await;
-        if let Some(peer_entry) = registry.get(destination) {
+        let peer_entry_opt = registry.get(destination)
+            .or_else(|| registry.find_by_public_key(&destination.public_key()));
+        if let Some(peer_entry) = peer_entry_opt {
             // Enforce secure routing only: authenticated + quantum secure
             if !peer_entry.authenticated || !peer_entry.quantum_secure {
                 return Err(anyhow::anyhow!(
@@ -446,7 +451,7 @@ impl MeshMessageRouter {
             let endpoint = peer_entry.endpoints.first()
                 .ok_or_else(|| anyhow::anyhow!("Peer has no endpoints"))?;
             return Ok(vec![RouteHop {
-                peer_id: destination.clone(),
+                peer_id: peer_entry.peer_id.clone(),
                 protocol: endpoint.protocol.clone(),
                 relay_id: None,
                 latency_ms: peer_entry.connection_metrics.latency_ms,

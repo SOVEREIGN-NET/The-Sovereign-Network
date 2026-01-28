@@ -43,11 +43,17 @@ pub mod staking;
 #[cfg(feature = "contracts")]
 pub mod governance;
 #[cfg(feature = "contracts")]
+pub mod treasury_kernel;
+#[cfg(feature = "contracts")]
 pub mod dao;
 #[cfg(feature = "contracts")]
 pub mod economics;
 #[cfg(feature = "contracts")]
 pub mod utils;
+#[cfg(feature = "contracts")]
+pub mod abi;
+#[cfg(feature = "contracts")]
+pub mod calls;
 #[cfg(feature = "contracts")]
 pub mod web4;
 #[cfg(feature = "contracts")]
@@ -91,7 +97,10 @@ pub use dao_registry::{DAORegistry, DAOEntry, derive_dao_id};
 #[cfg(feature = "contracts")]
 pub use dev_grants::{DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement, ProposalStatus, Error as DevGrantsError};
 #[cfg(feature = "contracts")]
-pub use ubi_distribution::{UbiDistributor, MonthIndex, Error as UbiError};
+pub use ubi_distribution::{
+    UbiDistributor, MonthIndex, EpochIndex, Error as UbiError,
+    UbiClaimRecorded, UbiDistributed, UbiPoolStatus, UbiClaimRejected,
+};
 #[cfg(feature = "contracts")]
 pub use sov_swap::{
     SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError,
@@ -100,7 +109,14 @@ pub use sov_swap::{
 #[cfg(feature = "contracts")]
 pub use staking::{SovDaoStaking, GlobalStakingGuardrails, PendingDao, StakingPosition, LaunchedDao};
 #[cfg(feature = "contracts")]
-pub use governance::{EntityRegistry, EntityType, Role, EntityRegistryError};
+pub use governance::{
+    EntityRegistry, EntityType, Role, EntityRegistryError,
+    CitizenRole, CitizenRegistry, CitizenRoleError, RegistryStats,
+};
+#[cfg(feature = "contracts")]
+pub use treasury_kernel::{
+    TreasuryKernel, KernelState, RejectionReason, KernelStats,
+};
 #[cfg(feature = "contracts")]
 pub use economics::{
     FeeRouter, FeeRouterError, FeeDistribution, DaoDistribution,

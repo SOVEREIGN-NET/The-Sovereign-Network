@@ -416,6 +416,14 @@ impl ZhtpUnifiedServer {
         mesh_router_arc.set_quic_protocol(quic_arc.clone()).await;
         info!(" [UNIFIED_SERVER] QUIC protocol set on mesh_router");
 
+        // Issue #167: Wire protocol handlers to message router (Transport Manager)
+        // Create TransportManager with QUIC handler and set on mesh message router
+        info!(" [UNIFIED_SERVER] Creating TransportManager with QUIC handler (Issue #167)");
+        let transport_manager = lib_network::transport::TransportManager::default()
+            .with_quic(quic_arc.clone());
+        mesh_router_arc.set_transport_manager(transport_manager).await;
+        info!(" [UNIFIED_SERVER] TransportManager set on mesh message router (Issue #167)");
+
         // Create DHT handler for pure UDP mesh protocol and register it on mesh_router
         // This MUST happen before register_api_handlers to ensure the actual mesh_router instance gets the handler
         let dht_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
@@ -457,11 +465,17 @@ impl ZhtpUnifiedServer {
 
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
         let zhtp_router_arc = Arc::new(zhtp_router);
-        let quic_handler = Arc::new(QuicHandler::new(
+        let mut quic_handler = QuicHandler::new(
             Arc::new(RwLock::new((*zhtp_router_arc).clone())),  // Native ZhtpRouter wrapped in RwLock
             quic_arc.clone(),                    // QuicMeshProtocol for transport
             identity_manager.clone(),            // Identity manager for auto-registration
-        ));
+        );
+
+        // Issue #907: QuicMeshProtocol is now the SINGLE canonical connection store.
+        // No need to link MeshRouter's PeerRegistry - broadcast_to_peers() now calls
+        // quic_protocol.broadcast_message() directly.
+
+        let quic_handler = Arc::new(quic_handler);
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
@@ -541,30 +555,62 @@ impl ZhtpUnifiedServer {
             }
         };
 
-        // Configure bootstrap peers for TOFU (Trust On First Use)
-        // This enables connections to bootstrap peers with self-signed certificates
-        // After first contact, their certificates are pinned for future connections
+        // Configure bootstrap peers with optional SPKI pins for certificate verification.
+        // Peers with a configured pin enforce strict SPKI match; others use TOFU.
         if let Some(bootstrap_peers) = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers().await {
-            let peer_addrs: Vec<std::net::SocketAddr> = bootstrap_peers
+            // Load any configured SPKI pins from the bootstrap peers provider
+            let pin_map = crate::runtime::bootstrap_peers_provider::get_bootstrap_peer_pins().await
+                .unwrap_or_default();
+
+            let peer_addrs: Vec<(std::net::SocketAddr, Option<[u8; 32]>)> = bootstrap_peers
                 .iter()
                 .filter_map(|s| {
-                    // First, try to parse the address as-is (may already include a port)
-                    if let Ok(mut addr) = s.parse::<std::net::SocketAddr>() {
-                        // Always use the configured QUIC port
-                        addr.set_port(QUIC_PORT);
-                        Some(addr)
+                    // Parse the address, preserving the operator-specified port.
+                    // Only default to QUIC_PORT when no port is present.
+                    let addr = if let Ok(addr) = s.parse::<std::net::SocketAddr>() {
+                        addr
                     } else {
-                        // No valid port specified; append the QUIC port and parse
+                        // No valid port in the string; append the default QUIC port
                         let addr_with_port = format!("{}:{}", s, QUIC_PORT);
-                        addr_with_port.parse::<std::net::SocketAddr>().ok()
-                    }
+                        addr_with_port.parse::<std::net::SocketAddr>().ok()?
+                    };
+
+                    // Look up SPKI pin for this peer address.
+                    // Config validation already rejected malformed hex at startup,
+                    // so a parse failure here indicates a bug — skip the peer entirely
+                    // rather than silently degrading to TOFU.
+                    let hex_pin = pin_map.get(s)
+                        .or_else(|| pin_map.get(&addr.to_string()));
+
+                    let pin = match hex_pin {
+                        Some(hex_str) => match crate::config::spki_pin::parse_spki_hex(hex_str) {
+                            Ok(hash) => Some(hash),
+                            Err(e) => {
+                                error!(
+                                    "BUG: SPKI pin for {} failed to parse after config validation passed: {}. \
+                                     Skipping peer to avoid silent TOFU downgrade.",
+                                    s, e
+                                );
+                                return None; // skip this peer entirely
+                            }
+                        },
+                        None => None,
+                    };
+
+                    Some((addr, pin))
                 })
                 .collect();
 
             if !peer_addrs.is_empty() {
+                let pinned_count = peer_addrs.iter().filter(|(_, p)| p.is_some()).count();
+                let tofu_count = peer_addrs.len() - pinned_count;
                 quic_mesh.set_bootstrap_peers(peer_addrs.clone());
-                info!(" [QUIC] Configured {} bootstrap peer(s) for TOFU: {:?}", peer_addrs.len(), peer_addrs);
-                
+                info!(
+                    " [QUIC] Configured {} bootstrap peer(s) ({} pinned, {} TOFU): {:?}",
+                    peer_addrs.len(), pinned_count, tofu_count,
+                    peer_addrs.iter().map(|(a, _)| a).collect::<Vec<_>>()
+                );
+
                 // Sync existing pins from discovery cache to verifier
                 if let Err(e) = quic_mesh.sync_pins_from_cache().await {
                     warn!(" [QUIC] Failed to sync pins from discovery cache: {}", e);
@@ -1405,6 +1451,11 @@ impl ZhtpUnifiedServer {
     /// Set blockchain provider for network layer (delegates to mesh router)
     pub async fn set_blockchain_provider(&mut self, provider: Arc<dyn lib_network::blockchain_sync::BlockchainProvider>) {
         self.mesh_router.set_blockchain_provider(provider).await;
+    }
+
+    /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
+    pub async fn set_blockchain_event_receiver(&mut self, receiver: Arc<dyn lib_network::blockchain_sync::BlockchainEventReceiver>) {
+        self.mesh_router.set_blockchain_event_receiver(receiver).await;
     }
     
     /// Configure sync manager for edge node mode (headers + ZK proofs only)
