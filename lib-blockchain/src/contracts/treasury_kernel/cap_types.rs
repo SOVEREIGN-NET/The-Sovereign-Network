@@ -73,8 +73,14 @@ impl RoleCap {
 
     /// Record consumption (after successful payout)
     pub fn record_consumption(&mut self, amount: u64) {
-        self.period_consumed = self.period_consumed.saturating_add(amount);
-        self.lifetime_consumed = self.lifetime_consumed.saturating_add(amount);
+        self.period_consumed = self
+            .period_consumed
+            .checked_add(amount)
+            .expect("RoleCap period_consumed overflow");
+        self.lifetime_consumed = self
+            .lifetime_consumed
+            .checked_add(amount)
+            .expect("RoleCap lifetime_consumed overflow");
     }
 }
 
@@ -145,8 +151,14 @@ impl AssignmentConsumption {
 
     /// Record consumption (after successful payout)
     pub fn record_consumption(&mut self, amount: u64) {
-        self.current_period_consumed = self.current_period_consumed.saturating_add(amount);
-        self.total_consumed = self.total_consumed.saturating_add(amount);
+        self.current_period_consumed = self
+            .current_period_consumed
+            .checked_add(amount)
+            .expect("AssignmentConsumption::record_consumption: current_period_consumed overflow");
+        self.total_consumed = self
+            .total_consumed
+            .checked_add(amount)
+            .expect("AssignmentConsumption::record_consumption: total_consumed overflow");
     }
 }
 
