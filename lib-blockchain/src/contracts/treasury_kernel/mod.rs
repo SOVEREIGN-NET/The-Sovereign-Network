@@ -24,10 +24,13 @@
 //! - **Crash Recovery**: Dedup state prevents double-minting across failures
 //! - **Performance**: 1000 citizens processed in <5 seconds
 //!
+//! # Implemented Features
+//! - UBI Distribution (Phase 1)
+//! - Vesting + time locks (Phase M3, Issue #853)
+//!
 //! # Future Scope
 //! - Compensation engine (deterministic, mechanical payouts)
 //! - Metric book (prevent compensation without finalized work)
-//! - Vesting + time locks
 //! - Role registry + snapshots
 //!
 //! # Critical Invariants
@@ -49,7 +52,6 @@
 //! ## Future Scope
 //! - Compensation engine (deterministic, mechanical payouts)
 //! - Metric book (prevent compensation without finalized work)
-//! - Vesting + time locks
 //! - Role registry + snapshots
 
 pub mod types;
@@ -60,12 +62,16 @@ pub mod events;
 pub mod ubi_engine;
 pub mod interface;
 pub mod kernel_ops;
+pub mod vesting_types;
+pub mod vesting;
 
 pub use types::{KernelState, RejectionReason, KernelStats};
 pub use interface::{
     KernelOpError, CreditReason, DebitReason, LockReason, ReleaseReason,
     MintAuthorization, BurnAuthorization, MintReason,
 };
+pub use vesting_types::{VestingId, VestingSchedule, VestingLock, VestingStatus};
+pub use vesting::VestingState;
 
 use serde::{Serialize, Deserialize};
 use std::collections::{BTreeMap, BTreeSet};
