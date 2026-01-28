@@ -98,6 +98,7 @@ impl CapLedger {
     /// Advance to a new period
     ///
     /// Resets period-based consumption counters while preserving lifetime totals.
+    /// Also purges stale reservations from prior periods.
     pub fn advance_period(&mut self, new_period: u64) {
         if new_period <= self.current_period {
             return;
@@ -124,6 +125,10 @@ impl CapLedger {
         for consumption in self.assignment_consumption.values_mut() {
             consumption.reset_period(new_period);
         }
+
+        // Purge stale reservations from prior periods to prevent unbounded growth
+        self.pending_reservations
+            .retain(|_, reservation| reservation.period >= self.current_period);
     }
 
     /// Get current period
@@ -198,10 +203,43 @@ impl CapLedger {
 
     // ─── Cap Checks ─────────────────────────────────────────────────────
 
-    /// Check global pool cap
+    /// Calculate total pending reservations globally
+    fn total_pending_global(&self) -> u64 {
+        self.pending_reservations
+            .values()
+            .filter(|r| r.period == self.current_period)
+            .map(|r| r.amount)
+            .sum()
+    }
+
+    /// Calculate total pending reservations for a role
+    fn total_pending_for_role(&self, role_id: &RoleId) -> u64 {
+        self.pending_reservations
+            .values()
+            .filter(|r| r.period == self.current_period && &r.role_id == role_id)
+            .map(|r| r.amount)
+            .sum()
+    }
+
+    /// Calculate total pending reservations for an assignment
+    fn total_pending_for_assignment(&self, assignment_id: &AssignmentId) -> u64 {
+        self.pending_reservations
+            .values()
+            .filter(|r| r.period == self.current_period && &r.assignment_id == assignment_id)
+            .map(|r| r.amount)
+            .sum()
+    }
+
+    /// Check global pool cap (including pending reservations)
     fn check_global_cap(&self, amount: u64) -> Result<(), CapError> {
-        let new_total = self
+        let pending = self.total_pending_global();
+        
+        let consumed_plus_pending = self
             .global_pool_consumed
+            .checked_add(pending)
+            .ok_or(CapError::Overflow)?;
+        
+        let new_total = consumed_plus_pending
             .checked_add(amount)
             .ok_or(CapError::Overflow)?;
 
@@ -215,16 +253,22 @@ impl CapLedger {
         Ok(())
     }
 
-    /// Check role caps (period and lifetime)
+    /// Check role caps (period and lifetime, including pending reservations)
     fn check_role_caps(&self, role_id: &RoleId, amount: u64) -> Result<(), CapError> {
         let role_cap = self
             .role_caps
             .get(role_id)
             .ok_or(CapError::RoleNotFound(*role_id))?;
 
+        let pending = self.total_pending_for_role(role_id);
+
         // Period cap
-        let new_period = role_cap
+        let consumed_plus_pending = role_cap
             .period_consumed
+            .checked_add(pending)
+            .ok_or(CapError::Overflow)?;
+        
+        let new_period = consumed_plus_pending
             .checked_add(amount)
             .ok_or(CapError::Overflow)?;
 
@@ -239,8 +283,12 @@ impl CapLedger {
 
         // Lifetime cap (if set)
         if let Some(lifetime_cap) = role_cap.lifetime_cap {
-            let new_lifetime = role_cap
+            let consumed_plus_pending = role_cap
                 .lifetime_consumed
+                .checked_add(pending)
+                .ok_or(CapError::Overflow)?;
+            
+            let new_lifetime = consumed_plus_pending
                 .checked_add(amount)
                 .ok_or(CapError::Overflow)?;
 
@@ -257,15 +305,21 @@ impl CapLedger {
         Ok(())
     }
 
-    /// Check assignment caps (annual and lifetime from snapshots)
+    /// Check assignment caps (annual and lifetime from snapshots, including pending reservations)
     fn check_assignment_caps(
         &self,
         consumption: &AssignmentConsumption,
         amount: u64,
     ) -> Result<(), CapError> {
+        let pending = self.total_pending_for_assignment(&consumption.assignment_id);
+
         // Annual cap (from snapshot)
-        let new_period = consumption
+        let consumed_plus_pending = consumption
             .current_period_consumed
+            .checked_add(pending)
+            .ok_or(CapError::Overflow)?;
+        
+        let new_period = consumed_plus_pending
             .checked_add(amount)
             .ok_or(CapError::Overflow)?;
 
@@ -280,8 +334,12 @@ impl CapLedger {
 
         // Lifetime cap (if set, from snapshot)
         if let Some(lifetime_cap) = consumption.snap_lifetime_cap {
-            let new_lifetime = consumption
+            let consumed_plus_pending = consumption
                 .total_consumed
+                .checked_add(pending)
+                .ok_or(CapError::Overflow)?;
+            
+            let new_lifetime = consumed_plus_pending
                 .checked_add(amount)
                 .ok_or(CapError::Overflow)?;
 
@@ -300,24 +358,15 @@ impl CapLedger {
 
     // ─── Reservation Pattern ────────────────────────────────────────────
 
-    /// Generate unique reservation ID
+    /// Generate unique reservation ID using Blake3 for consensus-critical determinism
     fn generate_reservation_id(&mut self, assignment_id: &AssignmentId) -> ReservationId {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        assignment_id.hash(&mut hasher);
-        self.next_reservation_counter.hash(&mut hasher);
-        self.current_period.hash(&mut hasher);
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(assignment_id);
+        hasher.update(&self.next_reservation_counter.to_le_bytes());
+        hasher.update(&self.current_period.to_le_bytes());
         self.next_reservation_counter += 1;
 
-        let hash = hasher.finish();
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        id[8..16].copy_from_slice(&self.next_reservation_counter.to_le_bytes());
-        id[16..24].copy_from_slice(&assignment_id[..8]);
-        id[24..32].copy_from_slice(&self.current_period.to_le_bytes());
-        id
+        (*hasher.finalize().as_bytes())
     }
 
     /// Reserve compensation
@@ -817,6 +866,54 @@ mod tests {
 
         // Role 2 still has full capacity
         let r2 = ledger.reserve_compensation(&test_assignment_id(11), 50_000, 101);
+        assert!(r2.is_ok());
+    }
+
+    #[test]
+    fn test_pending_reservations_prevent_cap_bypass() {
+        let mut ledger = setup_ledger();
+        setup_ledger_with_role(&mut ledger, test_role_id(), 200_000);
+        setup_ledger_with_assignment(&mut ledger, test_assignment_id(10), test_role_id(), 100_000, None);
+
+        // Reserve 60k (doesn't commit yet)
+        let r1 = ledger.reserve_compensation(&test_assignment_id(10), 60_000, 100).unwrap();
+
+        // Try to reserve 50k more - should fail because 60k + 50k > 100k cap
+        // This validates that pending reservations are counted
+        let result = ledger.reserve_compensation(&test_assignment_id(10), 50_000, 101);
+        assert!(matches!(
+            result,
+            Err(CapError::AssignmentAnnualCapExceeded { .. })
+        ));
+
+        // Commit first reservation
+        ledger.commit_reservation(&r1.id).unwrap();
+
+        // Now can only reserve 40k more (100k - 60k)
+        let r2 = ledger.reserve_compensation(&test_assignment_id(10), 40_000, 102);
+        assert!(r2.is_ok());
+    }
+
+    #[test]
+    fn test_period_advance_purges_stale_reservations() {
+        let mut ledger = setup_ledger();
+        setup_ledger_with_role(&mut ledger, test_role_id(), 200_000);
+        setup_ledger_with_assignment(&mut ledger, test_assignment_id(10), test_role_id(), 100_000, None);
+
+        // Create reservation in period 1
+        let r1 = ledger.reserve_compensation(&test_assignment_id(10), 60_000, 100).unwrap();
+        
+        // Verify reservation exists
+        assert!(ledger.get_pending_reservation(&r1.id).is_some());
+
+        // Advance to period 2 (should purge old reservations)
+        ledger.advance_period(2);
+
+        // Reservation should be gone
+        assert!(ledger.get_pending_reservation(&r1.id).is_none());
+
+        // Can now reserve full 100k again (new period, old reservation purged)
+        let r2 = ledger.reserve_compensation(&test_assignment_id(10), 100_000, 200);
         assert!(r2.is_ok());
     }
 }
