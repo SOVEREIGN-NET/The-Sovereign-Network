@@ -255,20 +255,26 @@ impl RoleRegistry {
 
     /// Generate unique assignment ID
     fn generate_assignment_id(&mut self, person_id: &IdentityId, role_id: &RoleId) -> AssignmentId {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use blake3::Hasher;
 
-        let mut hasher = DefaultHasher::new();
-        person_id.hash(&mut hasher);
-        role_id.hash(&mut hasher);
-        self.next_assignment_counter.hash(&mut hasher);
+        // Use Blake3 for deterministic, consensus-safe hashing
+        let mut hasher = Hasher::new();
+        hasher.update(person_id);
+        hasher.update(role_id);
+        hasher.update(&self.next_assignment_counter.to_le_bytes());
         self.next_assignment_counter += 1;
 
-        let hash = hasher.finish();
+        let hash = hasher.finalize();
+        let hash_bytes = hash.as_bytes();
+
         let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
+        // First 8 bytes from Blake3 hash
+        id[..8].copy_from_slice(&hash_bytes[..8]);
+        // Next 8 bytes: incremented counter for uniqueness
         id[8..16].copy_from_slice(&self.next_assignment_counter.to_le_bytes());
+        // Next 8 bytes: prefix of person_id for traceability
         id[16..24].copy_from_slice(&person_id[..8]);
+        // Last 8 bytes: prefix of role_id for traceability
         id[24..32].copy_from_slice(&role_id[..8]);
         id
     }

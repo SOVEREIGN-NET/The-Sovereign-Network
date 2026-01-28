@@ -153,8 +153,8 @@ impl CompensationEngine {
             .sum();
 
         // Base calculation: rate * units
-        // Using checked arithmetic to prevent overflow
-        let base_amount = rate.checked_mul(total_units).unwrap_or(u64::MAX);
+        // Use saturating arithmetic so overflow deterministically clamps to u64::MAX
+        let base_amount = rate.saturating_mul(total_units);
 
         Ok((base_amount, total_units))
     }
@@ -172,10 +172,10 @@ impl CompensationEngine {
         let mut result = amount;
         let mut cap_applied = None;
 
-        // Check against epoch cap (max per epoch)
+        // Check against global epoch cap (hard limit from EconomicConstants)
         if result > constants.max_epoch_payout {
             cap_applied = Some(CapApplication {
-                cap_type: CapType::AssignmentEpoch,
+                cap_type: CapType::Global,
                 original_amount: result,
                 cap_value: constants.max_epoch_payout,
                 capped_amount: constants.max_epoch_payout,
@@ -183,7 +183,7 @@ impl CompensationEngine {
             result = constants.max_epoch_payout;
         }
 
-        // Check against snapshotted per-epoch cap
+        // Check against snapshotted per-epoch cap (from assignment snapshot)
         if result > assignment.snap_per_epoch_cap {
             cap_applied = Some(CapApplication {
                 cap_type: CapType::AssignmentEpoch,
@@ -233,42 +233,39 @@ impl CompensationEngine {
         assignment: &Assignment,
         epoch: u64,
     ) -> ComputationHash {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use blake3::Hasher;
 
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = Hasher::new();
 
         // Hash metrics in deterministic order (sorted by key)
         let mut sorted_metrics: Vec<_> = metrics.iter().collect();
         sorted_metrics.sort_by(|a, b| a.key.cmp(&b.key));
 
         for metric in sorted_metrics {
-            metric.key.epoch.hash(&mut hasher);
-            metric.key.assignment_id.hash(&mut hasher);
-            format!("{:?}", metric.key.metric_type).hash(&mut hasher);
-            metric.value.hash(&mut hasher);
+            hasher.update(&metric.key.epoch.to_le_bytes());
+            hasher.update(&metric.key.assignment_id);
+            hasher.update(format!("{:?}", metric.key.metric_type).as_bytes());
+            hasher.update(&metric.value.to_le_bytes());
         }
 
         // Hash role
-        role.role_id.hash(&mut hasher);
-        role.annual_cap.hash(&mut hasher);
+        hasher.update(&role.role_id);
+        hasher.update(&role.annual_cap.to_le_bytes());
 
         // Hash assignment
-        assignment.assignment_id.hash(&mut hasher);
-        assignment.snap_annual_cap.hash(&mut hasher);
-        assignment.snap_lifetime_cap.hash(&mut hasher);
+        hasher.update(&assignment.assignment_id);
+        hasher.update(&assignment.snap_annual_cap.to_le_bytes());
+        // Hash lifetime cap - use 0 for None to maintain determinism
+        let lifetime_cap_value = assignment.snap_lifetime_cap.unwrap_or(0);
+        hasher.update(&lifetime_cap_value.to_le_bytes());
 
         // Hash epoch
-        epoch.hash(&mut hasher);
+        hasher.update(&epoch.to_le_bytes());
 
-        // Finalize hash
-        let hash = hasher.finish();
+        // Finalize hash - Blake3 provides full 32 bytes
+        let hash = hasher.finalize();
         let mut result = [0u8; 32];
-        result[..8].copy_from_slice(&hash.to_le_bytes());
-        // Fill remaining bytes with secondary hash
-        result[8..16].copy_from_slice(&(hash.wrapping_mul(31)).to_le_bytes());
-        result[16..24].copy_from_slice(&(hash.wrapping_mul(37)).to_le_bytes());
-        result[24..32].copy_from_slice(&(hash.wrapping_mul(41)).to_le_bytes());
+        result.copy_from_slice(hash.as_bytes());
         result
     }
 

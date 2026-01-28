@@ -158,9 +158,6 @@ pub struct PeriodConsumption {
 
     /// Total consumed in this period (global)
     pub total_consumed: u64,
-
-    /// Number of payouts in this period
-    pub payout_count: u64,
 }
 
 impl PeriodConsumption {
@@ -169,14 +166,12 @@ impl PeriodConsumption {
         Self {
             period,
             total_consumed: 0,
-            payout_count: 0,
         }
     }
 
     /// Record a payout
     pub fn record_payout(&mut self, amount: u64) {
         self.total_consumed = self.total_consumed.saturating_add(amount);
-        self.payout_count = self.payout_count.saturating_add(1);
     }
 }
 
@@ -452,7 +447,6 @@ mod tests {
         period.record_payout(20_000);
 
         assert_eq!(period.total_consumed, 30_000);
-        assert_eq!(period.payout_count, 2);
     }
 
     #[test]

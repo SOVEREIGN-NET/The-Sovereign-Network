@@ -107,7 +107,6 @@ impl CapLedger {
         let period_consumption = PeriodConsumption {
             period: self.current_period,
             total_consumed: self.global_pool_consumed,
-            payout_count: 0, // Would need to track this separately
         };
         self.period_history.insert(self.current_period, period_consumption);
 
@@ -302,20 +301,31 @@ impl CapLedger {
 
     /// Generate unique reservation ID
     fn generate_reservation_id(&mut self, assignment_id: &AssignmentId) -> ReservationId {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use blake3::Hasher;
 
-        let mut hasher = DefaultHasher::new();
-        assignment_id.hash(&mut hasher);
-        self.next_reservation_counter.hash(&mut hasher);
-        self.current_period.hash(&mut hasher);
+        // Use Blake3 for deterministic, consensus-safe hashing
+        let mut hasher = Hasher::new();
+        // Hash all bytes of the assignment ID to bind the reservation to this assignment
+        hasher.update(assignment_id);
+        // Include the current reservation counter and period so IDs are unique over time
+        hasher.update(&self.next_reservation_counter.to_le_bytes());
+        hasher.update(&self.current_period.to_le_bytes());
+
+        // Preserve existing semantics: the counter value used in the ID field
+        // is the incremented one
         self.next_reservation_counter += 1;
 
-        let hash = hasher.finish();
+        let hash = hasher.finalize();
+        let hash_bytes = hash.as_bytes();
+
         let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
+        // First 8 bytes from the Blake3 hash output
+        id[..8].copy_from_slice(&hash_bytes[..8]);
+        // Next 8 bytes: incremented reservation counter
         id[8..16].copy_from_slice(&self.next_reservation_counter.to_le_bytes());
+        // Next 8 bytes: prefix of assignment ID for traceability
         id[16..24].copy_from_slice(&assignment_id[..8]);
+        // Last 8 bytes: current period for additional domain separation
         id[24..32].copy_from_slice(&self.current_period.to_le_bytes());
         id
     }
