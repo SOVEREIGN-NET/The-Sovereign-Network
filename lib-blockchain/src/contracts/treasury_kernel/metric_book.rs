@@ -452,7 +452,8 @@ impl EpochClock {
 
     /// Close an epoch in one step (Open -> Closed)
     ///
-    /// Convenience method that calls begin_close and finalize_close.
+    /// Convenience method that directly transitions to Closed state.
+    /// Internally delegates to finalize_close_epoch.
     pub fn close_epoch(
         &mut self,
         epoch: u64,
