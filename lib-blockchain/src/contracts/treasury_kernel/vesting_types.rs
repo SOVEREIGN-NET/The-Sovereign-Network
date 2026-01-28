@@ -263,11 +263,14 @@ impl VestingLock {
     /// # Returns
     /// Amount that can be released (releasable - already_released)
     pub fn available_to_release(&self, current_epoch: u64) -> u64 {
-        if self.revoked_epoch.is_some() {
-            return 0;
-        }
+        // If revoked, vesting stops accruing at the revocation epoch,
+        // but any amount vested up to that point remains claimable by beneficiary
+        let effective_epoch = match self.revoked_epoch {
+            Some(revoked) => revoked.min(current_epoch),
+            None => current_epoch,
+        };
 
-        let releasable = self.schedule.releasable_amount(current_epoch);
+        let releasable = self.schedule.releasable_amount(effective_epoch);
         releasable.saturating_sub(self.amount_released)
     }
 
@@ -307,12 +310,24 @@ impl VestingLock {
             return Err("Vesting lock already revoked".to_string());
         }
 
-        // Calculate unvested amount that will be returned
+        // Calculate unvested amount that will be returned to governance
         let vested = self.schedule.vested_amount(current_epoch);
         let unvested = self.schedule.total_amount.saturating_sub(vested);
 
+        // Cap at what's actually still locked (accounts for already-released tokens)
+        // remaining_locked = total_amount - amount_released
+        // amount to return = min(unvested, remaining_locked - vested_but_unreleased)
+        // But simpler: return unvested, capped at (remaining_locked - (vested - released))
+        // Actually: remaining_locked = total - released, vested_unreleased = vested - released
+        // So: returnable = remaining_locked - vested_unreleased = (total - released) - (vested - released) = total - vested = unvested
+        // The math works out - unvested is always <= remaining_locked when released <= vested
+        // But add a safety cap anyway
+        let remaining_locked = self.remaining_locked();
+        let vested_unreleased = vested.saturating_sub(self.amount_released);
+        let returnable = remaining_locked.saturating_sub(vested_unreleased);
+
         self.revoked_epoch = Some(current_epoch);
-        Ok(unvested)
+        Ok(returnable.min(unvested))
     }
 
     /// Get remaining locked amount
@@ -530,8 +545,12 @@ mod tests {
         let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
         let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, true);
 
+        // Revoke at epoch 150 when 50% (5000) is vested
         lock.revoke(150).unwrap();
-        assert_eq!(lock.available_to_release(200), 0);
+        // Beneficiary can still claim the 5000 that had vested before revocation
+        assert_eq!(lock.available_to_release(200), 5000);
+        // Even at later epochs, only the amount vested at revocation is available
+        assert_eq!(lock.available_to_release(300), 5000);
     }
 
     #[test]
@@ -540,5 +559,56 @@ mod tests {
         let schedule = VestingSchedule::new(100, 100, 100, 10000).unwrap();
         assert_eq!(schedule.vested_amount(100), 10000);
         assert_eq!(schedule.releasable_amount(100), 10000);
+    }
+
+    #[test]
+    fn test_large_amounts_overflow_protection() {
+        // Test with amounts close to u64::MAX to verify overflow protection
+        let large_amount = u64::MAX - 1;
+        let schedule = VestingSchedule::new(0, 0, 100, large_amount).unwrap();
+
+        // At 50% through, should get half without overflow
+        let vested = schedule.vested_amount(50);
+        assert_eq!(vested, large_amount / 2);
+
+        // At end, should get full amount
+        assert_eq!(schedule.vested_amount(100), large_amount);
+        assert_eq!(schedule.vested_amount(200), large_amount);
+    }
+
+    #[test]
+    fn test_large_amounts_linear_calculation() {
+        // Verify linear calculation precision with large amounts
+        let amount = u64::MAX / 2; // ~9.2 quintillion
+        let schedule = VestingSchedule::new(0, 0, 1000, amount).unwrap();
+
+        // 10% through
+        let vested_10 = schedule.vested_amount(100);
+        assert_eq!(vested_10, amount / 10);
+
+        // 25% through
+        let vested_25 = schedule.vested_amount(250);
+        assert_eq!(vested_25, amount / 4);
+
+        // 100% through
+        assert_eq!(schedule.vested_amount(1000), amount);
+    }
+
+    #[test]
+    fn test_vesting_lock_large_amounts() {
+        let large_amount = u64::MAX / 4;
+        let schedule = VestingSchedule::new(0, 0, 100, large_amount).unwrap();
+        let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 0, false);
+
+        // Release half
+        let available = lock.available_to_release(50);
+        assert_eq!(available, large_amount / 2);
+
+        lock.record_release(available).unwrap();
+        assert_eq!(lock.amount_released, large_amount / 2);
+
+        // Release remaining
+        let remaining = lock.available_to_release(100);
+        assert_eq!(remaining, large_amount - large_amount / 2);
     }
 }

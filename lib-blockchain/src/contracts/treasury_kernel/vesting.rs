@@ -31,18 +31,32 @@ use super::vesting_types::{VestingId, VestingSchedule, VestingLock, VestingStatu
 /// Vesting state stored in the Treasury Kernel
 ///
 /// Uses BTreeMap for deterministic serialization (consensus-critical).
+///
+/// # Persistence
+/// VestingState must be persisted as part of blockchain state (either embedded
+/// in KernelState or stored separately with the same persistence guarantees).
+/// The caller is responsible for persisting VestingState after each mutation
+/// to ensure vesting survives node restarts and chain reorgs.
+///
+/// # Index Behavior
+/// The `by_beneficiary` index includes all vestings (active, completed, revoked)
+/// for historical query support. Completed/revoked vestings remain queryable
+/// but have zero `available_to_release`. Consider periodic pruning of very old
+/// completed vestings if memory becomes a concern.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct VestingState {
     /// All vesting locks indexed by VestingId
     pub locks: BTreeMap<VestingId, VestingLock>,
 
-    /// Index: beneficiary -> list of their vesting IDs
+    /// Index: beneficiary -> list of their vesting IDs (includes historical)
+    /// Note: This index is append-only for auditability. Use status checks
+    /// to filter for active vestings.
     pub by_beneficiary: BTreeMap<[u8; 32], Vec<VestingId>>,
 
-    /// Counter for generating unique vesting IDs
+    /// Counter for generating unique vesting IDs (monotonically increasing)
     pub next_id: u64,
 
-    /// Total tokens currently locked in vesting
+    /// Total tokens currently locked in active vestings
     pub total_locked: u64,
 }
 
@@ -59,13 +73,35 @@ impl VestingState {
 
     /// Generate a deterministic vesting ID
     ///
-    /// Uses kernel address + counter for uniqueness
+    /// Uses kernel address + counter for uniqueness. The counter is monotonically
+    /// increasing and persisted with VestingState, ensuring uniqueness even across
+    /// node restarts.
+    ///
+    /// # Invariant
+    /// The kernel_address MUST remain constant for the lifetime of the chain.
+    /// Changing the kernel address would require migrating VestingState to use
+    /// the new address or maintaining a mapping. This is enforced by the Treasury
+    /// Kernel's immutable kernel_address field set at initialization.
     pub fn generate_id(&mut self, kernel_address: &[u8; 32]) -> VestingId {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Hash kernel_address + counter for better distribution
+        let mut hasher = DefaultHasher::new();
+        kernel_address.hash(&mut hasher);
+        self.next_id.hash(&mut hasher);
+        let hash1 = hasher.finish();
+
+        // Second hash for remaining bytes
+        self.next_id.wrapping_add(1).hash(&mut hasher);
+        let hash2 = hasher.finish();
+
         let mut id = [0u8; 32];
-        // First 24 bytes from kernel address
-        id[..24].copy_from_slice(&kernel_address[..24]);
-        // Last 8 bytes from counter
-        id[24..].copy_from_slice(&self.next_id.to_be_bytes());
+        id[..8].copy_from_slice(&hash1.to_be_bytes());
+        id[8..16].copy_from_slice(&hash2.to_be_bytes());
+        id[16..24].copy_from_slice(&self.next_id.to_be_bytes());
+        id[24..].copy_from_slice(&kernel_address[..8]);
+
         self.next_id += 1;
         id
     }
@@ -171,6 +207,17 @@ impl TreasuryKernel {
         );
         vesting_state.add_lock(lock);
 
+        // Emit VestingCreated event for audit trail
+        let _ = self.state().emit_vesting_created(
+            vesting_id,
+            beneficiary.key_id,
+            schedule.total_amount,
+            schedule.start_epoch,
+            schedule.cliff_epoch,
+            schedule.end_epoch,
+            revocable,
+        );
+
         Ok(vesting_id)
     }
 
@@ -220,8 +267,8 @@ impl TreasuryKernel {
             VestingStatus::Pending => return Err(KernelOpError::VestingNotStarted),
             VestingStatus::BeforeCliff => return Err(KernelOpError::VestingCliffNotReached),
             VestingStatus::Completed => return Err(KernelOpError::VestingAlreadyFullyReleased),
-            VestingStatus::Revoked => return Err(KernelOpError::VestingAlreadyFullyReleased),
-            VestingStatus::Active => {} // OK to proceed
+            // Revoked vestings can still release tokens that had vested before revocation
+            VestingStatus::Revoked | VestingStatus::Active => {}
         }
 
         // Calculate amount to release
@@ -254,7 +301,21 @@ impl TreasuryKernel {
         lock_mut
             .record_release(available)
             .map_err(|_| KernelOpError::Overflow)?;
+
+        let total_released = lock_mut.amount_released;
+        let remaining_locked = lock_mut.remaining_locked();
+
         vesting_state.record_release(available);
+
+        // Emit VestingReleased event for audit trail
+        let _ = self.state().emit_vesting_released(
+            *vesting_id,
+            beneficiary_key_id,
+            available,
+            total_released,
+            remaining_locked,
+            current_epoch,
+        );
 
         Ok(available)
     }
@@ -293,6 +354,10 @@ impl TreasuryKernel {
             .get_lock_mut(vesting_id)
             .ok_or(KernelOpError::VestingNotFound)?;
 
+        // Capture beneficiary and vested amount before revocation for event emission
+        let beneficiary_key_id = lock.beneficiary;
+        let vested_amount = lock.schedule.vested_amount(current_epoch);
+
         // Revoke and get unvested amount
         let unvested = lock
             .revoke(current_epoch)
@@ -300,7 +365,6 @@ impl TreasuryKernel {
 
         if unvested > 0 {
             // Get beneficiary key for token operations
-            let beneficiary_key_id = lock.beneficiary;
             let beneficiary_pk = self.find_beneficiary_key(token, &beneficiary_key_id)?;
 
             // Clone kernel address before mutable borrows
@@ -320,6 +384,16 @@ impl TreasuryKernel {
 
             vesting_state.record_release(unvested);
         }
+
+        // Emit VestingRevoked event for audit trail
+        let _ = self.state().emit_vesting_revoked(
+            *vesting_id,
+            beneficiary_key_id,
+            vested_amount,
+            unvested,
+            return_to.key_id,
+            current_epoch,
+        );
 
         Ok(unvested)
     }
@@ -371,28 +445,38 @@ impl TreasuryKernel {
         }
     }
 
-    /// Find a PublicKey by key_id from token contract balances
+    /// Construct a PublicKey from a beneficiary key_id.
     ///
-    /// This is a helper to reconstruct PublicKey from key_id.
-    /// In production, this would use a proper key registry.
+    /// This helper constructs a minimal PublicKey using only the key_id,
+    /// which is sufficient for token contract operations (they use key_id
+    /// for HashMap lookups via the PartialEq implementation).
+    ///
+    /// Note: In production with a proper key registry, this would look up
+    /// the full key material. For vesting operations, key_id is sufficient.
     fn find_beneficiary_key(
         &self,
         token: &TokenContract,
         key_id: &[u8; 32],
     ) -> Result<PublicKey, KernelOpError> {
-        // Search through token balances for matching key_id
+        // First try to find the full key in token balances (preferred)
         for pk in token.balances.keys() {
             if &pk.key_id == key_id {
                 return Ok(pk.clone());
             }
         }
-        // Also check locked_balances
         for pk in token.locked_balances.keys() {
             if &pk.key_id == key_id {
                 return Ok(pk.clone());
             }
         }
-        Err(KernelOpError::VestingNotFound)
+
+        // Fallback: construct minimal PublicKey with just key_id
+        // This works because token contract uses key_id for equality checks
+        Ok(PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: *key_id,
+        })
     }
 }
 
@@ -814,5 +898,114 @@ mod tests {
 
         let total = kernel.total_releasable_for_beneficiary(&beneficiary.key_id, 150, &vesting_state);
         assert_eq!(total, 10000); // 5000 + 5000
+    }
+
+    #[test]
+    fn test_revoke_after_partial_release() {
+        // Test critical edge case: revoke after some tokens already released
+        let (mut kernel, mut token, mut vesting_state) = setup();
+        let caller = test_kernel_address();
+        let governance = test_governance();
+        let beneficiary = test_beneficiary();
+        let treasury = test_other_account();
+
+        token
+            .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
+            .unwrap();
+
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let vesting_id = kernel
+            .create_vesting(
+                &mut token,
+                &caller,
+                &beneficiary,
+                schedule,
+                100,
+                true, // revocable
+                &mut vesting_state,
+            )
+            .unwrap();
+
+        // At epoch 125, 25% (2500) is vested. Release it.
+        let released = kernel
+            .release_vested(&mut token, &beneficiary, &vesting_id, 125, &mut vesting_state)
+            .unwrap();
+        assert_eq!(released, 2500);
+        assert_eq!(token.available_balance(&beneficiary), 2500); // 2500 unlocked
+
+        // Now revoke at epoch 150 when 50% (5000) is vested
+        // Already released: 2500, Still vested but locked: 2500, Unvested: 5000
+        // Should return: min(unvested, remaining_locked - vested_unreleased)
+        // = min(5000, 7500 - 2500) = min(5000, 5000) = 5000
+        let result = kernel.revoke_vesting(
+            &mut token,
+            &governance,
+            &vesting_id,
+            &treasury,
+            150,
+            &mut vesting_state,
+        );
+
+        assert!(result.is_ok());
+        let returned = result.unwrap();
+        assert_eq!(returned, 5000); // 5000 unvested returned to treasury
+        assert_eq!(token.balance_of(&treasury), 5000);
+
+        // Beneficiary should still be able to claim the remaining vested amount (2500)
+        let remaining = kernel
+            .release_vested(&mut token, &beneficiary, &vesting_id, 200, &mut vesting_state)
+            .unwrap();
+        assert_eq!(remaining, 2500); // Remaining vested-but-unreleased
+    }
+
+    #[test]
+    fn test_release_from_revoked_vesting() {
+        // Verify beneficiary can release vested tokens after revocation
+        let (mut kernel, mut token, mut vesting_state) = setup();
+        let caller = test_kernel_address();
+        let governance = test_governance();
+        let beneficiary = test_beneficiary();
+        let treasury = test_other_account();
+
+        token
+            .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
+            .unwrap();
+
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let vesting_id = kernel
+            .create_vesting(
+                &mut token,
+                &caller,
+                &beneficiary,
+                schedule,
+                100,
+                true,
+                &mut vesting_state,
+            )
+            .unwrap();
+
+        // Revoke at 50% vested without any prior releases
+        kernel
+            .revoke_vesting(
+                &mut token,
+                &governance,
+                &vesting_id,
+                &treasury,
+                150,
+                &mut vesting_state,
+            )
+            .unwrap();
+
+        // Beneficiary should be able to release the 5000 that vested before revocation
+        let result = kernel.release_vested(
+            &mut token,
+            &beneficiary,
+            &vesting_id,
+            200, // Later epoch doesn't matter - vesting stopped at revocation
+            &mut vesting_state,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 5000);
     }
 }
