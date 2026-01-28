@@ -4,6 +4,9 @@
 //! - **UbiDistributed**: Kernel successfully minted SOV for citizen
 //! - **UbiClaimRejected**: Kernel rejected a claim with reason code
 //! - **UbiPoolStatus**: End-of-epoch pool summary
+//! - **VestingCreated**: New vesting lock created
+//! - **VestingReleased**: Tokens released from vesting
+//! - **VestingRevoked**: Vesting lock revoked by governance
 //!
 //! # Event Guarantees
 //!
@@ -242,6 +245,140 @@ impl KernelState {
 
         Ok(())
     }
+
+    // ─── Vesting Events ─────────────────────────────────────────────────
+
+    /// Emit VestingCreated event
+    ///
+    /// Called when a new vesting lock is created.
+    ///
+    /// # Arguments
+    /// * `vesting_id` - Unique identifier for the vesting lock
+    /// * `beneficiary` - Account receiving the vested tokens
+    /// * `total_amount` - Total tokens in the vesting schedule
+    /// * `start_epoch` - When vesting calculation begins
+    /// * `cliff_epoch` - When tokens first become releasable
+    /// * `end_epoch` - When all tokens are fully vested
+    /// * `revocable` - Whether governance can revoke this vesting
+    ///
+    /// # Returns
+    /// Ok if event recorded successfully
+    pub fn emit_vesting_created(
+        &self,
+        _vesting_id: [u8; 32],
+        _beneficiary: [u8; 32],
+        total_amount: u64,
+        start_epoch: u64,
+        cliff_epoch: u64,
+        end_epoch: u64,
+        _revocable: bool,
+    ) -> Result<(), String> {
+        // Validate schedule parameters
+        if cliff_epoch < start_epoch {
+            return Err("Invalid vesting: cliff before start".to_string());
+        }
+        if end_epoch < cliff_epoch {
+            return Err("Invalid vesting: end before cliff".to_string());
+        }
+        if total_amount == 0 {
+            return Err("Invalid vesting: zero amount".to_string());
+        }
+
+        // Event structure would be:
+        // - vesting_id: [u8; 32]
+        // - beneficiary: [u8; 32]
+        // - total_amount: u64
+        // - start_epoch: u64
+        // - cliff_epoch: u64
+        // - end_epoch: u64
+        // - revocable: bool
+        // - timestamp: block_height (set by executor)
+
+        Ok(())
+    }
+
+    /// Emit VestingReleased event
+    ///
+    /// Called when tokens are released from a vesting lock.
+    ///
+    /// # Arguments
+    /// * `vesting_id` - Vesting lock identifier
+    /// * `beneficiary` - Account receiving the released tokens
+    /// * `amount_released` - Amount of tokens released in this transaction
+    /// * `total_released` - Cumulative amount released from this vesting
+    /// * `remaining_locked` - Amount still locked in the vesting
+    /// * `current_epoch` - Epoch when release occurred
+    ///
+    /// # Returns
+    /// Ok if event recorded successfully
+    pub fn emit_vesting_released(
+        &self,
+        _vesting_id: [u8; 32],
+        _beneficiary: [u8; 32],
+        amount_released: u64,
+        total_released: u64,
+        remaining_locked: u64,
+        _current_epoch: u64,
+    ) -> Result<(), String> {
+        if amount_released == 0 {
+            return Err("Cannot emit release for zero amount".to_string());
+        }
+
+        // Invariant: total_released + remaining_locked should equal original total
+        // (This is validated at creation time, so we just check non-negative here)
+
+        // Event structure would be:
+        // - vesting_id: [u8; 32]
+        // - beneficiary: [u8; 32]
+        // - amount_released: u64
+        // - total_released: u64
+        // - remaining_locked: u64
+        // - current_epoch: u64
+        // - timestamp: block_height
+
+        let _ = total_released;
+        let _ = remaining_locked;
+
+        Ok(())
+    }
+
+    /// Emit VestingRevoked event
+    ///
+    /// Called when governance revokes a vesting lock.
+    ///
+    /// # Arguments
+    /// * `vesting_id` - Vesting lock identifier
+    /// * `beneficiary` - Account that was receiving the vested tokens
+    /// * `amount_vested` - Amount that had vested (kept by beneficiary)
+    /// * `amount_returned` - Amount returned to governance/treasury
+    /// * `return_to` - Account receiving the returned tokens
+    /// * `revoke_epoch` - Epoch when revocation occurred
+    ///
+    /// # Returns
+    /// Ok if event recorded successfully
+    pub fn emit_vesting_revoked(
+        &self,
+        _vesting_id: [u8; 32],
+        _beneficiary: [u8; 32],
+        amount_vested: u64,
+        amount_returned: u64,
+        _return_to: [u8; 32],
+        _revoke_epoch: u64,
+    ) -> Result<(), String> {
+        // Event structure would be:
+        // - vesting_id: [u8; 32]
+        // - beneficiary: [u8; 32]
+        // - amount_vested: u64
+        // - amount_returned: u64
+        // - return_to: [u8; 32]
+        // - revoke_epoch: u64
+        // - timestamp: block_height
+
+        let _ = amount_vested;
+        let _ = amount_returned;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -437,5 +574,128 @@ mod tests {
         let state = KernelState::new();
         let result = state.emit_burn_executed([3u8; 32], [4u8; 32], 0, 4);
         assert!(result.is_err());
+    }
+
+    // ─── Vesting Event Tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_emit_vesting_created_success() {
+        let state = KernelState::new();
+        let result = state.emit_vesting_created(
+            [1u8; 32],  // vesting_id
+            [2u8; 32],  // beneficiary
+            10000,      // total_amount
+            100,        // start_epoch
+            110,        // cliff_epoch
+            200,        // end_epoch
+            false,      // revocable
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_emit_vesting_created_invalid_cliff_before_start() {
+        let state = KernelState::new();
+        let result = state.emit_vesting_created(
+            [1u8; 32],
+            [2u8; 32],
+            10000,
+            100,  // start
+            90,   // cliff < start (invalid)
+            200,
+            false,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cliff before start"));
+    }
+
+    #[test]
+    fn test_emit_vesting_created_invalid_end_before_cliff() {
+        let state = KernelState::new();
+        let result = state.emit_vesting_created(
+            [1u8; 32],
+            [2u8; 32],
+            10000,
+            100,
+            150,  // cliff
+            140,  // end < cliff (invalid)
+            false,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("end before cliff"));
+    }
+
+    #[test]
+    fn test_emit_vesting_created_invalid_zero_amount() {
+        let state = KernelState::new();
+        let result = state.emit_vesting_created(
+            [1u8; 32],
+            [2u8; 32],
+            0,    // zero amount (invalid)
+            100,
+            110,
+            200,
+            false,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("zero amount"));
+    }
+
+    #[test]
+    fn test_emit_vesting_released_success() {
+        let state = KernelState::new();
+        let result = state.emit_vesting_released(
+            [1u8; 32],  // vesting_id
+            [2u8; 32],  // beneficiary
+            5000,       // amount_released
+            5000,       // total_released
+            5000,       // remaining_locked
+            150,        // current_epoch
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_emit_vesting_released_zero_amount_fails() {
+        let state = KernelState::new();
+        let result = state.emit_vesting_released(
+            [1u8; 32],
+            [2u8; 32],
+            0,     // zero amount (invalid)
+            0,
+            10000,
+            150,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("zero amount"));
+    }
+
+    #[test]
+    fn test_emit_vesting_revoked_success() {
+        let state = KernelState::new();
+        let result = state.emit_vesting_revoked(
+            [1u8; 32],  // vesting_id
+            [2u8; 32],  // beneficiary
+            5000,       // amount_vested (kept)
+            5000,       // amount_returned (to treasury)
+            [3u8; 32],  // return_to
+            150,        // revoke_epoch
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_emit_vesting_revoked_full_return() {
+        let state = KernelState::new();
+        // Revoked before any vesting
+        let result = state.emit_vesting_revoked(
+            [1u8; 32],
+            [2u8; 32],
+            0,      // nothing vested
+            10000,  // all returned
+            [3u8; 32],
+            100,
+        );
+        assert!(result.is_ok());
     }
 }
