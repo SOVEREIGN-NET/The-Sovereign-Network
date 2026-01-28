@@ -27,6 +27,16 @@ pub enum KernelOpError {
     ExceedsMaxSupply,
     /// Minting disabled (no kernel authority set on token)
     MintingDisabled,
+    /// Vesting schedule not found
+    VestingNotFound,
+    /// Cliff period has not been reached yet
+    VestingCliffNotReached,
+    /// All tokens from this vesting schedule have been released
+    VestingAlreadyFullyReleased,
+    /// Invalid vesting schedule parameters (e.g., end before start)
+    InvalidVestingSchedule,
+    /// No tokens available to release yet (vesting not started)
+    VestingNotStarted,
 }
 
 impl fmt::Display for KernelOpError {
@@ -39,6 +49,11 @@ impl fmt::Display for KernelOpError {
             Self::Overflow => write!(f, "Balance overflow"),
             Self::ExceedsMaxSupply => write!(f, "Would exceed maximum token supply"),
             Self::MintingDisabled => write!(f, "Minting disabled: no kernel authority set"),
+            Self::VestingNotFound => write!(f, "Vesting schedule not found"),
+            Self::VestingCliffNotReached => write!(f, "Vesting cliff period not reached"),
+            Self::VestingAlreadyFullyReleased => write!(f, "Vesting already fully released"),
+            Self::InvalidVestingSchedule => write!(f, "Invalid vesting schedule parameters"),
+            Self::VestingNotStarted => write!(f, "Vesting period has not started"),
         }
     }
 }
