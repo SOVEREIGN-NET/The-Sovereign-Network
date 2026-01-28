@@ -29,9 +29,9 @@
 //! - Vesting + time locks (Phase M3, Issue #853)
 //! - Role Registry + Assignment Snapshots (Phase M4, Issue #854)
 //! - Cap Ledger Enforcement (Phase M5, Issue #855)
+//! - Metric Book + Epoch Finality (Phase M6, Issue #856)
 //!
 //! # Future Scope
-//! - Metric Book + Epoch Finality (M6)
 //! - Compensation Engine Activation (M7)
 //! - Governance Execution Completion (M8)
 //!
@@ -70,6 +70,8 @@ pub mod role_types;
 pub mod role_registry;
 pub mod cap_types;
 pub mod cap_ledger;
+pub mod metric_types;
+pub mod metric_book;
 
 pub use types::{KernelState, RejectionReason, KernelStats};
 pub use interface::{
@@ -88,6 +90,12 @@ pub use cap_types::{
     CapReservation, CapError,
 };
 pub use cap_ledger::CapLedger;
+pub use metric_types::{
+    MetricKey, MetricType, MetricUnit, MetricRecord, AttesterRole,
+    Attestation, AttestationPolicy, EpochStatus, EpochState,
+    MetricError, EpochError,
+};
+pub use metric_book::{MetricBook, EpochClock};
 
 use serde::{Serialize, Deserialize};
 use std::collections::{BTreeMap, BTreeSet};
