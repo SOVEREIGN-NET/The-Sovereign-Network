@@ -33,6 +33,16 @@ pub enum KernelOpError {
     DelayNotElapsed,
     /// Authorization already consumed (idempotency guard)
     AuthorizationConsumed,
+    /// Vesting schedule not found
+    VestingNotFound,
+    /// Cliff period has not been reached yet
+    VestingCliffNotReached,
+    /// All tokens from this vesting schedule have been released
+    VestingAlreadyFullyReleased,
+    /// Invalid vesting schedule parameters (e.g., end before start)
+    InvalidVestingSchedule,
+    /// No tokens available to release yet (vesting not started)
+    VestingNotStarted,
 }
 
 impl fmt::Display for KernelOpError {
@@ -48,6 +58,11 @@ impl fmt::Display for KernelOpError {
             Self::MissingAuthorization => write!(f, "Mint/burn authorization not found"),
             Self::DelayNotElapsed => write!(f, "Governance delay period has not elapsed"),
             Self::AuthorizationConsumed => write!(f, "Authorization already consumed"),
+            Self::VestingNotFound => write!(f, "Vesting schedule not found"),
+            Self::VestingCliffNotReached => write!(f, "Vesting cliff period not reached"),
+            Self::VestingAlreadyFullyReleased => write!(f, "Vesting already fully released"),
+            Self::InvalidVestingSchedule => write!(f, "Invalid vesting schedule parameters"),
+            Self::VestingNotStarted => write!(f, "Vesting period has not started"),
         }
     }
 }
