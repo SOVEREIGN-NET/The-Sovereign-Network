@@ -1361,7 +1361,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 let token = self.get_or_load_zhtp()?;
                 let zhtp_token_id = token.token_id;
 
-                ubi.claim_ubi(&citizen, context.block_number, token, &contract_context)
+                ubi.claim_ubi(&citizen, context.block_number, token, &contract_context, None)
                     .map_err(|e| anyhow!("{:?}", e))?;
 
                 // CRITICAL: Persist token contract after mutations using helper

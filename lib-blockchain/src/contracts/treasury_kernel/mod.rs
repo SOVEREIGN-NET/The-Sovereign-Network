@@ -58,8 +58,13 @@ pub mod validation;
 pub mod authority;
 pub mod events;
 pub mod ubi_engine;
+pub mod interface;
+pub mod kernel_ops;
 
 pub use types::{KernelState, RejectionReason, KernelStats};
+pub use interface::{
+    KernelOpError, CreditReason, DebitReason, LockReason, ReleaseReason,
+};
 
 use serde::{Serialize, Deserialize};
 use crate::integration::crypto_integration::PublicKey;
@@ -103,6 +108,11 @@ pub struct TreasuryKernel {
 
     /// Blocks per epoch (60,480 for 1-week epochs)
     blocks_per_epoch: u64,
+
+    /// Emergency pause flag — when true, all mutation operations are rejected.
+    /// Only governance_authority can set/clear this flag.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 impl TreasuryKernel {
@@ -125,6 +135,7 @@ impl TreasuryKernel {
             governance_authority,
             kernel_address,
             blocks_per_epoch,
+            paused: false,
         }
     }
 

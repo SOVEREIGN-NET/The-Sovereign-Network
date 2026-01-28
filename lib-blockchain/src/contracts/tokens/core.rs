@@ -60,6 +60,14 @@ pub struct TokenContract {
     /// If set, only this kernel can mint tokens via mint_kernel_only()
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_mint_authority: Option<PublicKey>,
+    /// Locked balances per account (non-transferable until released)
+    /// Used by Treasury Kernel for staking, vesting, escrow
+    #[serde(default)]
+    pub locked_balances: HashMap<PublicKey, u64>,
+    /// When true, only Treasury Kernel (kernel_mint_authority) can call
+    /// mint(), burn(), and transfer(). Defaults to false for backward compat.
+    #[serde(default)]
+    pub kernel_only_mode: bool,
 }
 
 impl TokenContract {
@@ -87,6 +95,8 @@ impl TokenContract {
             allowances: HashMap::new(),
             creator,
             kernel_mint_authority: None,
+            locked_balances: HashMap::new(),
+            kernel_only_mode: false,
         }
     }
 
@@ -187,6 +197,19 @@ impl TokenContract {
     /// - `Error::Unauthorized`: If call_origin is System (reserved)
     /// - `Error::InsufficientBalance`: If source account has insufficient balance
     pub fn transfer(&mut self, ctx: &ExecutionContext, to: &PublicKey, amount: u64) -> Result<u64, Error> {
+        // Phase C: kernel-only mode enforcement
+        if self.kernel_only_mode {
+            let caller_key = match ctx.call_origin {
+                CallOrigin::User => &ctx.caller,
+                CallOrigin::Contract => &ctx.contract,
+                CallOrigin::System => return Err(Error::Unauthorized),
+            };
+            match &self.kernel_mint_authority {
+                Some(authority) if caller_key == authority => { /* authorized */ }
+                _ => return Err(Error::Unauthorized),
+            }
+        }
+
         // Determine the source account based on execution context
         let source = match ctx.call_origin {
             CallOrigin::User => ctx.caller.clone(),
@@ -296,6 +319,9 @@ impl TokenContract {
 
     /// Mint new tokens
     pub fn mint(&mut self, to: &PublicKey, amount: u64) -> Result<(), String> {
+        if self.kernel_only_mode {
+            return Err("Direct minting disabled: use Treasury Kernel".to_string());
+        }
         if self.total_supply + amount > self.max_supply {
             return Err("Would exceed maximum supply".to_string());
         }
@@ -351,6 +377,9 @@ impl TokenContract {
 
     /// Burn tokens from an account
     pub fn burn(&mut self, from: &PublicKey, amount: u64) -> Result<(), String> {
+        if self.kernel_only_mode {
+            return Err("Direct burning disabled: use Treasury Kernel".to_string());
+        }
         let balance = self.balance_of(from);
         if balance < amount {
             return Err("Insufficient balance to burn".to_string());
@@ -361,6 +390,93 @@ impl TokenContract {
 
         Ok(())
     }
+
+    // ─── Treasury Kernel internal operations ────────────────────────────
+    // These methods are crate-internal, callable only by TreasuryKernel.
+    // They perform low-level balance mutations without supply changes
+    // (except where noted).
+
+    /// Credit balance without supply change (for transfers, fee distribution)
+    pub(crate) fn credit_balance(&mut self, to: &PublicKey, amount: u64) -> Result<(), String> {
+        let balance = self.balance_of(to);
+        let new_balance = balance
+            .checked_add(amount)
+            .ok_or_else(|| "Balance overflow".to_string())?;
+        self.balances.insert(to.clone(), new_balance);
+        Ok(())
+    }
+
+    /// Debit balance without supply change (for transfers, fee collection)
+    /// Respects locked balances: only available (balance - locked) can be debited.
+    pub(crate) fn debit_balance(&mut self, from: &PublicKey, amount: u64) -> Result<(), String> {
+        let balance = self.balance_of(from);
+        let locked = self.locked_balances.get(from).copied().unwrap_or(0);
+        let available = balance.saturating_sub(locked);
+        if available < amount {
+            return Err(format!(
+                "Insufficient available balance: have {}, locked {}, need {}",
+                balance, locked, amount
+            ));
+        }
+        self.balances.insert(from.clone(), balance - amount);
+        Ok(())
+    }
+
+    /// Lock tokens in an account (cannot be transferred until released)
+    pub(crate) fn lock_balance(&mut self, account: &PublicKey, amount: u64) -> Result<(), String> {
+        let balance = self.balance_of(account);
+        let locked = self.locked_balances.get(account).copied().unwrap_or(0);
+        let available = balance.saturating_sub(locked);
+        if available < amount {
+            return Err(format!(
+                "Insufficient available balance to lock: have {}, locked {}, need {}",
+                balance, locked, amount
+            ));
+        }
+        let new_locked = locked
+            .checked_add(amount)
+            .ok_or_else(|| "Locked balance overflow".to_string())?;
+        self.locked_balances.insert(account.clone(), new_locked);
+        Ok(())
+    }
+
+    /// Release previously locked tokens
+    pub(crate) fn release_balance(&mut self, account: &PublicKey, amount: u64) -> Result<(), String> {
+        let locked = self.locked_balances.get(account).copied().unwrap_or(0);
+        if locked < amount {
+            return Err(format!(
+                "Insufficient locked balance to release: locked {}, need {}",
+                locked, amount
+            ));
+        }
+        let new_locked = locked - amount;
+        if new_locked == 0 {
+            self.locked_balances.remove(account);
+        } else {
+            self.locked_balances.insert(account.clone(), new_locked);
+        }
+        Ok(())
+    }
+
+    /// Get available (unlocked) balance for an account
+    pub fn available_balance(&self, account: &PublicKey) -> u64 {
+        let balance = self.balance_of(account);
+        let locked = self.locked_balances.get(account).copied().unwrap_or(0);
+        balance.saturating_sub(locked)
+    }
+
+    /// Enable kernel-only mode (Phase C lockdown)
+    /// Once enabled, only kernel_mint_authority can call transfer/mint/burn.
+    pub fn enable_kernel_only_mode(&mut self) {
+        self.kernel_only_mode = true;
+    }
+
+    /// Check if this token is in kernel-only mode
+    pub fn is_kernel_only(&self) -> bool {
+        self.kernel_only_mode
+    }
+
+    // ─── End Treasury Kernel internal operations ─────────────────────────
 
     /// Check if supply can accommodate minting
     pub fn can_mint(&self, amount: u64) -> bool {
