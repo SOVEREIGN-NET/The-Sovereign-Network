@@ -257,12 +257,15 @@ impl RoleRegistry {
     fn generate_assignment_id(&mut self, person_id: &IdentityId, role_id: &RoleId) -> AssignmentId {
         use blake3::Hasher;
 
+        // Increment counter first to ensure same value is used in hash and ID
+        self.next_assignment_counter += 1;
+        let counter = self.next_assignment_counter;
+
         // Use Blake3 for deterministic, consensus-safe hashing
         let mut hasher = Hasher::new();
         hasher.update(person_id);
         hasher.update(role_id);
-        hasher.update(&self.next_assignment_counter.to_le_bytes());
-        self.next_assignment_counter += 1;
+        hasher.update(&counter.to_le_bytes());
 
         let hash = hasher.finalize();
         let hash_bytes = hash.as_bytes();
@@ -270,8 +273,8 @@ impl RoleRegistry {
         let mut id = [0u8; 32];
         // First 8 bytes from Blake3 hash
         id[..8].copy_from_slice(&hash_bytes[..8]);
-        // Next 8 bytes: incremented counter for uniqueness
-        id[8..16].copy_from_slice(&self.next_assignment_counter.to_le_bytes());
+        // Next 8 bytes: counter for uniqueness
+        id[8..16].copy_from_slice(&counter.to_le_bytes());
         // Next 8 bytes: prefix of person_id for traceability
         id[16..24].copy_from_slice(&person_id[..8]);
         // Last 8 bytes: prefix of role_id for traceability

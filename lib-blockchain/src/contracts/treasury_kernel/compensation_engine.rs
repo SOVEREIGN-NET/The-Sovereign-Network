@@ -172,10 +172,11 @@ impl CompensationEngine {
         let mut result = amount;
         let mut cap_applied = None;
 
-        // Check against global epoch cap (hard limit from EconomicConstants)
+        // Check against hard global epoch cap (from EconomicConstants)
+        // This is the absolute maximum per epoch per assignment
         if result > constants.max_epoch_payout {
             cap_applied = Some(CapApplication {
-                cap_type: CapType::Global,
+                cap_type: CapType::AssignmentEpoch,
                 original_amount: result,
                 cap_value: constants.max_epoch_payout,
                 capped_amount: constants.max_epoch_payout,
@@ -184,6 +185,7 @@ impl CompensationEngine {
         }
 
         // Check against snapshotted per-epoch cap (from assignment snapshot)
+        // This is the role-specific cap snapshotted at assignment time
         if result > assignment.snap_per_epoch_cap {
             cap_applied = Some(CapApplication {
                 cap_type: CapType::AssignmentEpoch,
@@ -244,7 +246,10 @@ impl CompensationEngine {
         for metric in sorted_metrics {
             hasher.update(&metric.key.epoch.to_le_bytes());
             hasher.update(&metric.key.assignment_id);
-            hasher.update(format!("{:?}", metric.key.metric_type).as_bytes());
+            // Use bincode for deterministic serialization instead of Debug formatting
+            if let Ok(serialized) = bincode::serialize(&metric.key.metric_type) {
+                hasher.update(&serialized);
+            }
             hasher.update(&metric.value.to_le_bytes());
         }
 
