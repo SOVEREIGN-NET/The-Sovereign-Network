@@ -22,8 +22,8 @@
 //! of their inputs.
 
 use super::role_types::{
-    Assignment, AssignmentError, AssignmentId, AssignmentStatus, IdentityId,
-    RoleDefinition, RoleId, RoleRegistryError,
+    Assignment, AssignmentId, AssignmentStatus, IdentityId, RoleDefinition,
+    RoleId, RoleRegistryError,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -253,24 +253,16 @@ impl RoleRegistry {
 
     // ─── Assignment Management ──────────────────────────────────────────────
 
-    /// Generate unique assignment ID
+    /// Generate unique assignment ID using consensus-safe blake3 hashing
     fn generate_assignment_id(&mut self, person_id: &IdentityId, role_id: &RoleId) -> AssignmentId {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        person_id.hash(&mut hasher);
-        role_id.hash(&mut hasher);
-        self.next_assignment_counter.hash(&mut hasher);
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"ASSIGNMENT_V1");
+        hasher.update(person_id);
+        hasher.update(role_id);
+        hasher.update(&self.next_assignment_counter.to_le_bytes());
         self.next_assignment_counter += 1;
 
-        let hash = hasher.finish();
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        id[8..16].copy_from_slice(&self.next_assignment_counter.to_le_bytes());
-        id[16..24].copy_from_slice(&person_id[..8]);
-        id[24..32].copy_from_slice(&role_id[..8]);
-        id
+        hasher.finalize().into()
     }
 
     /// Get active roles for a person
@@ -378,8 +370,11 @@ impl RoleRegistry {
         self.assignments.get(assignment_id)
     }
 
-    /// Get mutable assignment by ID
-    pub fn get_assignment_mut(&mut self, assignment_id: &AssignmentId) -> Option<&mut Assignment> {
+    /// Get mutable assignment by ID (crate-internal only to preserve snapshot immutability)
+    pub(crate) fn get_assignment_mut(
+        &mut self,
+        assignment_id: &AssignmentId,
+    ) -> Option<&mut Assignment> {
         self.assignments.get_mut(assignment_id)
     }
 
@@ -402,6 +397,7 @@ impl RoleRegistry {
     /// * `amount` - Amount to pay
     /// * `current_epoch` - Current epoch
     /// * `current_year` - Current year
+    /// * `caller` - Must be authorized admin
     ///
     /// # Returns
     /// Ok(()) if successful
@@ -411,7 +407,10 @@ impl RoleRegistry {
         amount: u64,
         current_epoch: u64,
         current_year: u64,
+        caller: &[u8; 32],
     ) -> Result<(), RoleRegistryError> {
+        self.verify_admin(caller)?;
+
         let assignment = self
             .assignments
             .get_mut(assignment_id)
@@ -630,8 +629,8 @@ mod tests {
             .unwrap();
 
         // Verify caps are snapshotted
-        assert_eq!(assignment.snap_annual_cap, 100_000);
-        assert_eq!(assignment.snap_per_epoch_cap, 10_000);
+        assert_eq!(assignment.snap_annual_cap(), 100_000);
+        assert_eq!(assignment.snap_per_epoch_cap(), 10_000);
     }
 
     #[test]
@@ -644,7 +643,7 @@ mod tests {
             .create_assignment(&alice_id(), &engineer_role_id(), 100, 2024, &admin_key())
             .unwrap();
         let assignment_id = assignment.assignment_id;
-        assert_eq!(assignment.snap_annual_cap, 100_000);
+        assert_eq!(assignment.snap_annual_cap(), 100_000);
 
         // Governance reduces cap to 50k
         registry
@@ -653,7 +652,7 @@ mod tests {
 
         // Alice's assignment still has 100k cap
         let assignment = registry.get_assignment(&assignment_id).unwrap();
-        assert_eq!(assignment.snap_annual_cap, 100_000); // NOT 50k
+        assert_eq!(assignment.snap_annual_cap(), 100_000); // NOT 50k
     }
 
     #[test]
@@ -676,8 +675,8 @@ mod tests {
             .create_assignment(&bob_id(), &engineer_role_id(), 101, 2024, &admin_key())
             .unwrap();
 
-        assert_eq!(alice_assignment.snap_annual_cap, 100_000);
-        assert_eq!(bob_assignment.snap_annual_cap, 50_000);
+        assert_eq!(alice_assignment.snap_annual_cap(), 100_000);
+        assert_eq!(bob_assignment.snap_annual_cap(), 50_000);
     }
 
     #[test]
@@ -719,7 +718,7 @@ mod tests {
 
         // Pay 10k per epoch for 5 epochs = 50k total
         for epoch in 100..105 {
-            registry.record_payment(&assignment_id, 10_000, epoch, 2024).unwrap();
+            registry.record_payment(&assignment_id, 10_000, epoch, 2024, &admin_key()).unwrap();
         }
 
         // Suspend
@@ -730,7 +729,7 @@ mod tests {
         // Accrued entitlement unchanged
         let assignment = registry.get_assignment(&assignment_id).unwrap();
         assert_eq!(assignment.total_paid, 50_000);
-        assert_eq!(assignment.snap_annual_cap, 100_000); // Still 50k remaining
+        assert_eq!(assignment.snap_annual_cap(), 100_000); // Still 50k remaining
         assert_eq!(assignment.status, AssignmentStatus::Suspended);
     }
 
@@ -781,7 +780,7 @@ mod tests {
         let assignment_id = assignment.assignment_id;
 
         // Pay
-        registry.record_payment(&assignment_id, 10_000, 100, 2024).unwrap();
+        registry.record_payment(&assignment_id, 10_000, 100, 2024, &admin_key()).unwrap();
 
         // Suspend
         registry
@@ -794,7 +793,7 @@ mod tests {
             .unwrap();
 
         // Pay more
-        registry.record_payment(&assignment_id, 10_000, 102, 2024).unwrap();
+        registry.record_payment(&assignment_id, 10_000, 102, 2024, &admin_key()).unwrap();
 
         // Terminate
         registry
