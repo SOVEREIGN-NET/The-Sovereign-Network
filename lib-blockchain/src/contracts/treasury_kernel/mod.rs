@@ -30,9 +30,9 @@
 //! - Role Registry + Assignment Snapshots (Phase M4, Issue #854)
 //! - Cap Ledger Enforcement (Phase M5, Issue #855)
 //! - Metric Book + Epoch Finality (Phase M6, Issue #856)
+//! - Compensation Engine Activation (Phase M7, Issue #857)
 //!
 //! # Future Scope
-//! - Compensation Engine Activation (M7)
 //! - Governance Execution Completion (M8)
 //!
 //! # Critical Invariants
@@ -72,6 +72,9 @@ pub mod cap_types;
 pub mod cap_ledger;
 pub mod metric_types;
 pub mod metric_book;
+pub mod payout_types;
+pub mod compensation_engine;
+pub mod paid_ledger;
 
 pub use types::{KernelState, RejectionReason, KernelStats};
 pub use interface::{
@@ -96,6 +99,13 @@ pub use metric_types::{
     MetricError, EpochError,
 };
 pub use metric_book::{MetricBook, EpochClock};
+pub use payout_types::{
+    PayoutCalculation, PaymentRecord, CompensationConfig, EconomicConstants,
+    CompensationError, PaymentError, PayoutBreakdown, CapApplication, CapType,
+    ComputationHash, TransactionId,
+};
+pub use compensation_engine::CompensationEngine;
+pub use paid_ledger::PaidLedger;
 
 use serde::{Serialize, Deserialize};
 use std::collections::{BTreeMap, BTreeSet};
