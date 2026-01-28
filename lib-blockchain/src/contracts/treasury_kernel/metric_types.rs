@@ -254,6 +254,7 @@ pub struct AttestationPolicy {
     /// Required attester roles (at least one from each)
     pub required_roles: Vec<AttesterRole>,
     /// Epochs before auto-rejection if not attested
+    /// NOTE: Timeout enforcement is not yet implemented - this is a reserved field for future use
     pub timeout_epochs: u64,
 }
 
@@ -371,6 +372,8 @@ pub enum MetricError {
     EpochClosed(u64),
     /// Epoch is closing, cannot record new metrics
     EpochClosing(u64),
+    /// Epoch not registered/unknown (must be explicitly opened via EpochClock)
+    EpochNotRegistered(u64),
     /// Metric already finalized
     AlreadyFinalized(MetricKey),
     /// Overwrite forbidden (explicit prohibition)
@@ -391,7 +394,7 @@ pub enum MetricError {
         key: MetricKey,
         attester: [u8; 32],
     },
-    /// Attestation timeout expired
+    /// Attestation timeout expired (reserved for future use, not yet enforced)
     AttestationTimeout {
         key: MetricKey,
         timeout_epoch: u64,
@@ -413,6 +416,9 @@ impl fmt::Display for MetricError {
             }
             Self::EpochClosed(epoch) => write!(f, "Epoch {} is closed", epoch),
             Self::EpochClosing(epoch) => write!(f, "Epoch {} is closing, no new metrics", epoch),
+            Self::EpochNotRegistered(epoch) => {
+                write!(f, "Epoch {} not registered - must be explicitly opened via EpochClock", epoch)
+            }
             Self::AlreadyFinalized(key) => {
                 write!(f, "Metric already finalized: epoch={}", key.epoch)
             }
@@ -464,6 +470,8 @@ pub enum EpochError {
     CannotCloseFutureEpoch(u64),
     /// Epoch not yet closeable (still in grace period)
     NotYetCloseable(u64),
+    /// Unauthorized caller attempted epoch state transition
+    Unauthorized,
 }
 
 impl fmt::Display for EpochError {
@@ -478,6 +486,7 @@ impl fmt::Display for EpochError {
             Self::NotYetCloseable(epoch) => {
                 write!(f, "Epoch {} is not yet closeable", epoch)
             }
+            Self::Unauthorized => write!(f, "Unauthorized: only governance can modify epoch state"),
         }
     }
 }

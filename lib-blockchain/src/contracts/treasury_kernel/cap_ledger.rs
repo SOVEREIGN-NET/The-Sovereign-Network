@@ -300,24 +300,18 @@ impl CapLedger {
 
     // ─── Reservation Pattern ────────────────────────────────────────────
 
-    /// Generate unique reservation ID
+    /// Generate unique reservation ID using blake3 for consensus stability
     fn generate_reservation_id(&mut self, assignment_id: &AssignmentId) -> ReservationId {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        assignment_id.hash(&mut hasher);
-        self.next_reservation_counter.hash(&mut hasher);
-        self.current_period.hash(&mut hasher);
+        let counter = self.next_reservation_counter;
         self.next_reservation_counter += 1;
 
-        let hash = hasher.finish();
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        id[8..16].copy_from_slice(&self.next_reservation_counter.to_le_bytes());
-        id[16..24].copy_from_slice(&assignment_id[..8]);
-        id[24..32].copy_from_slice(&self.current_period.to_le_bytes());
-        id
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&assignment_id[..]);
+        hasher.update(&counter.to_le_bytes());
+        hasher.update(&self.current_period.to_le_bytes());
+
+        let hash = hasher.finalize();
+        hash.into()
     }
 
     /// Reserve compensation
@@ -381,32 +375,39 @@ impl CapLedger {
     /// Ok(()) if committed successfully
     /// Err if reservation not found or already consumed
     pub fn commit_reservation(&mut self, reservation_id: &ReservationId) -> Result<(), CapError> {
-        // Remove reservation (consumed)
+        // First, look up reservation without mutating state
         let reservation = self
             .pending_reservations
-            .remove(reservation_id)
+            .get(reservation_id)
             .ok_or(CapError::ReservationNotFound(*reservation_id))?;
 
-        // Verify period matches
+        // Verify period matches before consuming reservation
         if reservation.period != self.current_period {
-            // Reservation from old period - reject
+            // Reservation from old period - reject but keep it pending
             return Err(CapError::PeriodMismatch {
                 expected: self.current_period,
                 actual: reservation.period,
             });
         }
 
-        // Update global consumption
+        // Period is valid; now remove reservation (consumed)
+        let reservation = self
+            .pending_reservations
+            .remove(reservation_id)
+            .ok_or(CapError::ReservationNotFound(*reservation_id))?;
+
+        // Update global consumption using checked addition
         self.global_pool_consumed = self
             .global_pool_consumed
-            .saturating_add(reservation.amount);
+            .checked_add(reservation.amount)
+            .ok_or(CapError::Overflow)?;
 
-        // Update role consumption
+        // Update role consumption (now returns Result after our changes)
         if let Some(role_cap) = self.role_caps.get_mut(&reservation.role_id) {
             role_cap.record_consumption(reservation.amount);
         }
 
-        // Update assignment consumption
+        // Update assignment consumption (now returns Result after our changes)
         if let Some(consumption) = self.assignment_consumption.get_mut(&reservation.assignment_id) {
             consumption.record_consumption(reservation.amount);
         }
