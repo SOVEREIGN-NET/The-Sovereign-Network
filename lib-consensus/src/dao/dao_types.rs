@@ -157,6 +157,34 @@ pub struct DaoExecutionParams {
 pub enum DaoExecutionAction {
     /// Governance parameter update
     GovernanceParameterUpdate(GovernanceParameterUpdate),
+    /// Mint authorization (requires Treasury Kernel - M2)
+    MintAuthorization(MintAuthorizationParams),
+    /// Burn authorization (requires Treasury Kernel - M2)
+    BurnAuthorization(BurnAuthorizationParams),
+}
+
+/// Parameters for a governance-authorized mint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MintAuthorizationParams {
+    /// Amount to mint (in smallest token units)
+    pub amount: u64,
+    /// Recipient key_id
+    pub recipient_key_id: [u8; 32],
+    /// Reason: "ubi", "welfare", "infrastructure", "treasury", "emergency"
+    pub reason: String,
+    /// Delay in epochs before executable (0 = use kernel default)
+    pub delay_epochs: u64,
+}
+
+/// Parameters for a governance-authorized burn
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BurnAuthorizationParams {
+    /// Amount to burn (in smallest token units)
+    pub amount: u64,
+    /// Account to burn from (key_id)
+    pub from_key_id: [u8; 32],
+    /// Delay in epochs before executable (0 = use kernel default)
+    pub delay_epochs: u64,
 }
 
 /// Governance parameter update payload
@@ -223,6 +251,11 @@ pub enum DaoProposalType {
     /// through DAO governance. Contains target_timespan, adjustment_interval,
     /// and optional min/max adjustment factors.
     DifficultyParameterUpdate,
+    /// Mint/burn authorization requiring Treasury Kernel execution
+    ///
+    /// Proposals of this type are registered with the Treasury Kernel
+    /// and can only execute after the governance delay period elapses.
+    MintBurnAuthorization,
 }
 
 /// DAO proposal status
@@ -875,4 +908,102 @@ pub enum FundingStatus {
     Disputed,
     /// Completed successfully
     Completed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mint_authorization_params_serialization() {
+        let params = MintAuthorizationParams {
+            amount: 1_000_000,
+            recipient_key_id: [42u8; 32],
+            reason: "welfare".to_string(),
+            delay_epochs: 2,
+        };
+
+        let encoded = bincode::serialize(&params).expect("serialize");
+        let decoded: MintAuthorizationParams =
+            bincode::deserialize(&encoded).expect("deserialize");
+
+        assert_eq!(decoded.amount, 1_000_000);
+        assert_eq!(decoded.recipient_key_id, [42u8; 32]);
+        assert_eq!(decoded.reason, "welfare");
+        assert_eq!(decoded.delay_epochs, 2);
+    }
+
+    #[test]
+    fn test_burn_authorization_params_serialization() {
+        let params = BurnAuthorizationParams {
+            amount: 500_000,
+            from_key_id: [7u8; 32],
+            delay_epochs: 0,
+        };
+
+        let encoded = bincode::serialize(&params).expect("serialize");
+        let decoded: BurnAuthorizationParams =
+            bincode::deserialize(&encoded).expect("deserialize");
+
+        assert_eq!(decoded.amount, 500_000);
+        assert_eq!(decoded.from_key_id, [7u8; 32]);
+        assert_eq!(decoded.delay_epochs, 0);
+    }
+
+    #[test]
+    fn test_dao_execution_action_mint_variant() {
+        let action = DaoExecutionAction::MintAuthorization(MintAuthorizationParams {
+            amount: 100,
+            recipient_key_id: [1u8; 32],
+            reason: "ubi".to_string(),
+            delay_epochs: 1,
+        });
+
+        assert!(matches!(action, DaoExecutionAction::MintAuthorization(_)));
+    }
+
+    #[test]
+    fn test_dao_execution_action_burn_variant() {
+        let action = DaoExecutionAction::BurnAuthorization(BurnAuthorizationParams {
+            amount: 200,
+            from_key_id: [2u8; 32],
+            delay_epochs: 3,
+        });
+
+        assert!(matches!(action, DaoExecutionAction::BurnAuthorization(_)));
+    }
+
+    #[test]
+    fn test_dao_execution_params_with_mint_roundtrip() {
+        let params = DaoExecutionParams {
+            action: DaoExecutionAction::MintAuthorization(MintAuthorizationParams {
+                amount: 50_000,
+                recipient_key_id: [99u8; 32],
+                reason: "infrastructure".to_string(),
+                delay_epochs: 1,
+            }),
+        };
+
+        let encoded = bincode::serialize(&params).expect("serialize");
+        let decoded: DaoExecutionParams =
+            bincode::deserialize(&encoded).expect("deserialize");
+
+        match decoded.action {
+            DaoExecutionAction::MintAuthorization(p) => {
+                assert_eq!(p.amount, 50_000);
+                assert_eq!(p.recipient_key_id, [99u8; 32]);
+                assert_eq!(p.reason, "infrastructure");
+            }
+            _ => panic!("Expected MintAuthorization variant"),
+        }
+    }
+
+    #[test]
+    fn test_dao_proposal_type_includes_mint_burn() {
+        let pt = DaoProposalType::MintBurnAuthorization;
+        assert_ne!(
+            format!("{:?}", pt),
+            format!("{:?}", DaoProposalType::TreasuryAllocation)
+        );
+    }
 }

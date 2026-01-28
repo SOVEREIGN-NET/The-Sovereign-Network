@@ -846,6 +846,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 // Use lazy-loading to get token (prevents "Token not found" after restart)
                 let token = self.get_or_load_token(&token_id)?;
 
+                #[allow(deprecated)] // TODO(#852): Route through TreasuryKernel
                 crate::contracts::tokens::functions::mint_tokens(
                     token,
                     &to,

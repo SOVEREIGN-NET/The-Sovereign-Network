@@ -99,6 +99,7 @@ pub struct BlockchainIntegration {
     total_processed: u64,
 }
 
+#[allow(deprecated)] // SupplyManager methods are deprecated; callers will migrate to TreasuryKernel
 impl BlockchainIntegration {
     /// Create new blockchain integration
     pub fn new() -> Self {
@@ -220,6 +221,7 @@ impl BlockchainIntegration {
     }
 }
 
+#[allow(deprecated)] // SupplyManager methods are deprecated; callers will migrate to TreasuryKernel
 impl BlockchainEconomics for BlockchainIntegration {
     fn process_transaction_fees(&mut self, transaction_id: &str, fees: u64) -> Result<()> {
         self.economic_model.process_network_fees(fees)?;

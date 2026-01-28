@@ -439,6 +439,14 @@ impl ConsensusEngine {
             DaoExecutionAction::GovernanceParameterUpdate(update) => {
                 self.apply_governance_update(&update)
             }
+            // Mint/burn authorizations are not consensus parameter updates —
+            // they are forwarded to the Treasury Kernel for execution.
+            DaoExecutionAction::MintAuthorization(_)
+            | DaoExecutionAction::BurnAuthorization(_) => {
+                Err(ConsensusError::ValidatorError(
+                    "Proposal is not a governance parameter update".to_string(),
+                ))
+            }
         }
     }
 

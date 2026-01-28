@@ -56,9 +56,80 @@
 //! - Crash recovery validation
 
 use super::types::{KernelState, RejectionReason};
+use super::interface::MintReason;
 
 /// Event emission for Treasury Kernel
 impl KernelState {
+    // ─── Governance Mint/Burn Authorization Events (M2) ──────────────
+
+    /// Emit MintAuthorized event
+    ///
+    /// Recorded when a governance proposal registers a mint authorization
+    /// with the Treasury Kernel. The mint cannot execute until the delay
+    /// period elapses.
+    pub fn emit_mint_authorized(
+        &self,
+        _proposal_id: [u8; 32],
+        _recipient_key_id: [u8; 32],
+        amount: u64,
+        _reason: MintReason,
+        _executable_after_epoch: u64,
+    ) -> Result<(), String> {
+        if amount == 0 {
+            return Err("Cannot authorize mint for zero amount".to_string());
+        }
+        Ok(())
+    }
+
+    /// Emit MintExecuted event
+    ///
+    /// Recorded after a governance-authorized mint is successfully executed.
+    pub fn emit_mint_executed(
+        &self,
+        _proposal_id: [u8; 32],
+        _recipient_key_id: [u8; 32],
+        amount: u64,
+        _execution_epoch: u64,
+    ) -> Result<(), String> {
+        if amount == 0 {
+            return Err("Cannot record execution of zero-amount mint".to_string());
+        }
+        Ok(())
+    }
+
+    /// Emit BurnAuthorized event
+    ///
+    /// Recorded when a governance proposal registers a burn authorization.
+    pub fn emit_burn_authorized(
+        &self,
+        _proposal_id: [u8; 32],
+        _from_key_id: [u8; 32],
+        amount: u64,
+        _executable_after_epoch: u64,
+    ) -> Result<(), String> {
+        if amount == 0 {
+            return Err("Cannot authorize burn for zero amount".to_string());
+        }
+        Ok(())
+    }
+
+    /// Emit BurnExecuted event
+    ///
+    /// Recorded after a governance-authorized burn is successfully executed.
+    pub fn emit_burn_executed(
+        &self,
+        _proposal_id: [u8; 32],
+        _from_key_id: [u8; 32],
+        amount: u64,
+        _execution_epoch: u64,
+    ) -> Result<(), String> {
+        if amount == 0 {
+            return Err("Cannot record execution of zero-amount burn".to_string());
+        }
+        Ok(())
+    }
+
+    // ─── UBI Distribution Events ────────────────────────────────────
     /// Emit UbiDistributed event
     ///
     /// Called after successful minting to record the distribution.
@@ -296,5 +367,75 @@ mod tests {
         // This should fail because expected remaining would be 0 but
         // cap.saturating_sub(1_000_001) = 0, so it should pass
         assert!(result.is_ok());
+    }
+
+    // ── Governance Mint/Burn Authorization Events ─────────────────
+
+    #[test]
+    fn test_emit_mint_authorized_success() {
+        let state = KernelState::new();
+        let result = state.emit_mint_authorized(
+            [1u8; 32],
+            [2u8; 32],
+            50_000,
+            super::MintReason::WelfareFunding,
+            5,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_emit_mint_authorized_zero_amount_fails() {
+        let state = KernelState::new();
+        let result = state.emit_mint_authorized(
+            [1u8; 32],
+            [2u8; 32],
+            0,
+            super::MintReason::TreasuryAllocation,
+            5,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_emit_mint_executed_success() {
+        let state = KernelState::new();
+        let result = state.emit_mint_executed([1u8; 32], [2u8; 32], 50_000, 6);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_emit_mint_executed_zero_fails() {
+        let state = KernelState::new();
+        let result = state.emit_mint_executed([1u8; 32], [2u8; 32], 0, 6);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_emit_burn_authorized_success() {
+        let state = KernelState::new();
+        let result = state.emit_burn_authorized([3u8; 32], [4u8; 32], 10_000, 3);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_emit_burn_authorized_zero_fails() {
+        let state = KernelState::new();
+        let result = state.emit_burn_authorized([3u8; 32], [4u8; 32], 0, 3);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_emit_burn_executed_success() {
+        let state = KernelState::new();
+        let result = state.emit_burn_executed([3u8; 32], [4u8; 32], 10_000, 4);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_emit_burn_executed_zero_fails() {
+        let state = KernelState::new();
+        let result = state.emit_burn_executed([3u8; 32], [4u8; 32], 0, 4);
+        assert!(result.is_err());
     }
 }

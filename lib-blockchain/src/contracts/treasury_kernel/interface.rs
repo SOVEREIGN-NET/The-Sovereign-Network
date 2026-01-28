@@ -27,6 +27,12 @@ pub enum KernelOpError {
     ExceedsMaxSupply,
     /// Minting disabled (no kernel authority set on token)
     MintingDisabled,
+    /// Mint/burn authorization not found
+    MissingAuthorization,
+    /// Governance delay period has not elapsed
+    DelayNotElapsed,
+    /// Authorization already consumed (idempotency guard)
+    AuthorizationConsumed,
 }
 
 impl fmt::Display for KernelOpError {
@@ -39,6 +45,9 @@ impl fmt::Display for KernelOpError {
             Self::Overflow => write!(f, "Balance overflow"),
             Self::ExceedsMaxSupply => write!(f, "Would exceed maximum token supply"),
             Self::MintingDisabled => write!(f, "Minting disabled: no kernel authority set"),
+            Self::MissingAuthorization => write!(f, "Mint/burn authorization not found"),
+            Self::DelayNotElapsed => write!(f, "Governance delay period has not elapsed"),
+            Self::AuthorizationConsumed => write!(f, "Authorization already consumed"),
         }
     }
 }
@@ -134,4 +143,73 @@ impl fmt::Display for ReleaseReason {
             Self::EscrowComplete => write!(f, "Escrow complete"),
         }
     }
+}
+
+// ─── Governance-Gated Mint/Burn Authorization (M2) ──────────────────────
+
+/// Reason for governance-authorized minting
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MintReason {
+    /// UBI distribution (auto-authorized by kernel at epoch boundaries)
+    UbiDistribution,
+    /// Welfare service funding (requires DAO proposal)
+    WelfareFunding,
+    /// Infrastructure rewards (requires DAO proposal)
+    InfrastructureReward,
+    /// Treasury allocation (requires DAO proposal)
+    TreasuryAllocation,
+    /// Emergency mint (requires DAO Emergency proposal + supermajority)
+    Emergency,
+}
+
+impl fmt::Display for MintReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UbiDistribution => write!(f, "UBI distribution"),
+            Self::WelfareFunding => write!(f, "Welfare funding"),
+            Self::InfrastructureReward => write!(f, "Infrastructure reward"),
+            Self::TreasuryAllocation => write!(f, "Treasury allocation"),
+            Self::Emergency => write!(f, "Emergency"),
+        }
+    }
+}
+
+/// Governance-approved mint authorization record
+///
+/// Created when a DAO MintBurnAuthorization proposal passes.
+/// Registered with the kernel; executable only after the delay period elapses.
+/// Each authorization can be consumed exactly once (idempotency guard).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MintAuthorization {
+    /// DAO proposal ID that authorized this mint
+    pub proposal_id: [u8; 32],
+    /// Reason for minting
+    pub reason: MintReason,
+    /// Amount authorized to mint
+    pub authorized_amount: u64,
+    /// Recipient key_id (matches PublicKey.key_id)
+    pub recipient_key_id: [u8; 32],
+    /// Epoch at which authorization was granted
+    pub authorized_at_epoch: u64,
+    /// Minimum epoch at which mint can execute
+    pub executable_after_epoch: u64,
+    /// Whether this authorization has been consumed
+    pub consumed: bool,
+}
+
+/// Governance-approved burn authorization record
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BurnAuthorization {
+    /// DAO proposal ID that authorized this burn
+    pub proposal_id: [u8; 32],
+    /// Amount authorized to burn
+    pub authorized_amount: u64,
+    /// Account to burn from (key_id)
+    pub from_key_id: [u8; 32],
+    /// Epoch at which authorization was granted
+    pub authorized_at_epoch: u64,
+    /// Minimum epoch at which burn can execute
+    pub executable_after_epoch: u64,
+    /// Whether this authorization has been consumed
+    pub consumed: bool,
 }
