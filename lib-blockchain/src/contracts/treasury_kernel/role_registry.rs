@@ -253,24 +253,15 @@ impl RoleRegistry {
 
     // ─── Assignment Management ──────────────────────────────────────────────
 
-    /// Generate unique assignment ID
+    /// Generate unique assignment ID using Blake3 for consensus-critical determinism
     fn generate_assignment_id(&mut self, person_id: &IdentityId, role_id: &RoleId) -> AssignmentId {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        person_id.hash(&mut hasher);
-        role_id.hash(&mut hasher);
-        self.next_assignment_counter.hash(&mut hasher);
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(person_id);
+        hasher.update(role_id);
+        hasher.update(&self.next_assignment_counter.to_le_bytes());
         self.next_assignment_counter += 1;
 
-        let hash = hasher.finish();
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        id[8..16].copy_from_slice(&self.next_assignment_counter.to_le_bytes());
-        id[16..24].copy_from_slice(&person_id[..8]);
-        id[24..32].copy_from_slice(&role_id[..8]);
-        id
+        (*hasher.finalize().as_bytes())
     }
 
     /// Get active roles for a person
