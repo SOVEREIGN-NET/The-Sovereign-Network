@@ -56,14 +56,17 @@ impl MetricBook {
     }
 
     /// Get epoch status
-    fn get_epoch_status(&self, epoch: u64) -> EpochStatus {
-        // Default to Open for unknown epochs (new epochs)
-        self.epoch_status_cache.get(&epoch).copied().unwrap_or(EpochStatus::Open)
+    fn get_epoch_status(&self, epoch: u64) -> Result<EpochStatus, MetricError> {
+        // Require explicit epoch registration to preserve finality
+        self.epoch_status_cache
+            .get(&epoch)
+            .copied()
+            .ok_or(MetricError::EpochNotRegistered(epoch))
     }
 
     /// Check if epoch is open for recording
     fn require_epoch_open(&self, epoch: u64) -> Result<(), MetricError> {
-        match self.get_epoch_status(epoch) {
+        match self.get_epoch_status(epoch)? {
             EpochStatus::Open => Ok(()),
             EpochStatus::Closing => Err(MetricError::EpochClosing(epoch)),
             EpochStatus::Closed => Err(MetricError::EpochClosed(epoch)),
@@ -72,7 +75,7 @@ impl MetricBook {
 
     /// Check if epoch allows attestations
     fn require_epoch_allows_attestations(&self, epoch: u64) -> Result<(), MetricError> {
-        match self.get_epoch_status(epoch) {
+        match self.get_epoch_status(epoch)? {
             EpochStatus::Open | EpochStatus::Closing => Ok(()),
             EpochStatus::Closed => Err(MetricError::EpochClosed(epoch)),
         }
@@ -392,7 +395,7 @@ impl EpochClock {
     ) -> Result<(), EpochError> {
         // Verify caller is governance
         if caller != &self.governance_authority {
-            // In production, would return Unauthorized error
+            return Err(EpochError::Unauthorized);
         }
 
         let state = self
@@ -424,7 +427,7 @@ impl EpochClock {
     ) -> Result<(), EpochError> {
         // Verify caller is governance
         if caller != &self.governance_authority {
-            // In production, would return Unauthorized error
+            return Err(EpochError::Unauthorized);
         }
 
         let state = self
@@ -459,6 +462,8 @@ impl EpochClock {
         caller: &[u8; 32],
         current_epoch: u64,
     ) -> Result<(), EpochError> {
+        // Follow the documented lifecycle: begin_close -> finalize_close
+        self.begin_close_epoch(epoch, caller)?;
         self.finalize_close_epoch(epoch, caller, current_epoch)
     }
 
@@ -510,6 +515,8 @@ mod tests {
     #[test]
     fn test_metric_overwrite_fails() {
         let mut book = MetricBook::new();
+        // Explicitly open epoch 1
+        book.set_epoch_status(1, EpochStatus::Open);
 
         // Record initial metric
         book.record_metric(
@@ -542,6 +549,8 @@ mod tests {
     fn test_metrics_immutable_after_epoch_close() {
         let mut book = MetricBook::new();
         let mut clock = EpochClock::new(1, governance_key());
+        // Sync epoch status to book
+        clock.sync_to_metric_book(&mut book);
 
         // Record metric while epoch is open
         book.record_metric(
@@ -587,6 +596,8 @@ mod tests {
     #[test]
     fn test_attestation_required_for_finalization() {
         let mut book = MetricBook::new();
+        // Explicitly open epoch 1
+        book.set_epoch_status(1, EpochStatus::Open);
 
         // Set policy requiring supervisor attestation
         let policy = AttestationPolicy::new(MetricType::HoursWorked, 1)
@@ -631,6 +642,8 @@ mod tests {
     #[test]
     fn test_duplicate_attestation_rejected() {
         let mut book = MetricBook::new();
+        // Explicitly open epoch 1
+        book.set_epoch_status(1, EpochStatus::Open);
 
         let key = book
             .record_metric(
@@ -671,6 +684,8 @@ mod tests {
     #[test]
     fn test_attestation_not_allowed_after_finalization() {
         let mut book = MetricBook::new();
+        // Explicitly open epoch 1
+        book.set_epoch_status(1, EpochStatus::Open);
 
         let key = book
             .record_metric(
@@ -733,6 +748,8 @@ mod tests {
     fn test_closing_epoch_still_allows_attestations() {
         let mut book = MetricBook::new();
         let mut clock = EpochClock::new(1, governance_key());
+        // Sync epoch status to book
+        clock.sync_to_metric_book(&mut book);
 
         // Record while open
         let key = book
@@ -776,6 +793,8 @@ mod tests {
     #[test]
     fn test_multiple_attesters_required() {
         let mut book = MetricBook::new();
+        // Explicitly open epoch 1
+        book.set_epoch_status(1, EpochStatus::Open);
 
         // Policy requiring 2 attestations: supervisor + peer
         let policy = AttestationPolicy::new(MetricType::CodeCommits, 2)
@@ -820,6 +839,8 @@ mod tests {
     #[test]
     fn test_get_metrics_for_assignment() {
         let mut book = MetricBook::new();
+        // Explicitly open epoch 1
+        book.set_epoch_status(1, EpochStatus::Open);
 
         // Record multiple metrics for same assignment
         book.record_metric(
