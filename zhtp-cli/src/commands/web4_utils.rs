@@ -223,6 +223,14 @@ pub fn validate_domain(domain: &str) -> CliResult<String> {
         ));
     }
 
+    // Check for reserved dao. prefix (virtual namespace - cannot be registered)
+    let name_parts = &parts[..parts.len() - 1];
+    if !name_parts.is_empty() && (name_parts[0] == "dao" || name_parts.len() == 1 && name_parts[0] == "dao") {
+        return Err(CliError::ConfigError(
+            "dao. prefix is virtual and cannot be registered. DAO governance is automatically derived from base domains.".to_string(),
+        ));
+    }
+
     let mut seen = HashSet::new();
     for label in &parts[..parts.len() - 1] {
         if label.is_empty() {
