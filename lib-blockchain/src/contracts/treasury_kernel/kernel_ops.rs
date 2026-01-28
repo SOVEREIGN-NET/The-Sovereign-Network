@@ -184,7 +184,8 @@ impl TreasuryKernel {
             return Err(KernelOpError::AuthorizationConsumed);
         }
         // Validate that executable_after_epoch respects the configured delay
-        let minimum_executable_epoch = auth.authorized_at_epoch + self.mint_delay_epochs;
+        // Use saturating_add to handle overflow: if the sum overflows, any executable_after_epoch will be valid
+        let minimum_executable_epoch = auth.authorized_at_epoch.saturating_add(self.mint_delay_epochs);
         if auth.executable_after_epoch < minimum_executable_epoch {
             return Err(KernelOpError::DelayNotElapsed);
         }
@@ -245,7 +246,8 @@ impl TreasuryKernel {
             return Err(KernelOpError::AuthorizationConsumed);
         }
         // Validate that executable_after_epoch respects the configured delay
-        let minimum_executable_epoch = auth.authorized_at_epoch + self.mint_delay_epochs;
+        // Use saturating_add to handle overflow: if the sum overflows, any executable_after_epoch will be valid
+        let minimum_executable_epoch = auth.authorized_at_epoch.saturating_add(self.mint_delay_epochs);
         if auth.executable_after_epoch < minimum_executable_epoch {
             return Err(KernelOpError::DelayNotElapsed);
         }
