@@ -28,9 +28,9 @@
 //! - UBI Distribution (Phase 1)
 //! - Vesting + time locks (Phase M3, Issue #853)
 //! - Role Registry + Assignment Snapshots (Phase M4, Issue #854)
+//! - Cap Ledger Enforcement (Phase M5, Issue #855)
 //!
 //! # Future Scope
-//! - Cap Ledger Enforcement (M5)
 //! - Metric Book + Epoch Finality (M6)
 //! - Compensation Engine Activation (M7)
 //! - Governance Execution Completion (M8)
@@ -68,6 +68,8 @@ pub mod vesting_types;
 pub mod vesting;
 pub mod role_types;
 pub mod role_registry;
+pub mod cap_types;
+pub mod cap_ledger;
 
 pub use types::{KernelState, RejectionReason, KernelStats};
 pub use interface::{
@@ -81,6 +83,11 @@ pub use role_types::{
     AssignmentStatus, AssignmentError, RoleRegistryError,
 };
 pub use role_registry::RoleRegistry;
+pub use cap_types::{
+    ReservationId, RoleCap, AssignmentConsumption, PeriodConsumption,
+    CapReservation, CapError,
+};
+pub use cap_ledger::CapLedger;
 
 use serde::{Serialize, Deserialize};
 use std::collections::{BTreeMap, BTreeSet};
