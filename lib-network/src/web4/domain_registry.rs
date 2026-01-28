@@ -797,15 +797,23 @@ impl DomainRegistry {
             if label.len() > 63 {
                 return Err(anyhow!("Domain label '{}' exceeds 63 characters", label));
             }
-            
+
             // Must contain only valid characters (alphanumeric + hyphen)
             if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
                 return Err(anyhow!("Domain label '{}' can only contain letters, numbers, and hyphens", label));
             }
-            
+
             // Cannot start or end with hyphen
             if label.starts_with('-') || label.ends_with('-') {
                 return Err(anyhow!("Domain label '{}' cannot start or end with hyphen", label));
+            }
+        }
+
+        // Base domain (last label before TLD) must be at least 3 characters
+        // This maintains the original 3-character minimum policy while allowing shorter subdomain labels
+        if let Some(base_domain) = labels.last() {
+            if base_domain.len() < 3 {
+                return Err(anyhow!("Base domain '{}' must be at least 3 characters", base_domain));
             }
         }
         

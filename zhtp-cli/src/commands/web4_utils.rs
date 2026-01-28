@@ -7,7 +7,7 @@ use lib_crypto::types::PrivateKey;
 use lib_identity::ZhtpIdentity;
 use lib_network::client::{ZhtpClient, ZhtpClientConfig};
 use lib_network::web4::TrustConfig;
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -17,13 +17,14 @@ pub struct LoadedIdentity {
     pub keypair: KeyPair,
 }
 
-#[derive(Deserialize)]
-struct KeystorePrivateKey {
-    dilithium_sk: Vec<u8>,
+/// Private key storage format matching zhtp node format
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeystorePrivateKey {
+    pub dilithium_sk: Vec<u8>,
     #[serde(default)]
-    dilithium_pk: Vec<u8>,  // Optional for backward compatibility with old keystores
-    kyber_sk: Vec<u8>,
-    master_seed: Vec<u8>,
+    pub dilithium_pk: Vec<u8>,  // Optional for backward compatibility with old keystores
+    pub kyber_sk: Vec<u8>,
+    pub master_seed: Vec<u8>,
 }
 
 pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIdentity> {
@@ -277,4 +278,37 @@ pub fn default_trust_paths() -> (PathBuf, PathBuf) {
         .unwrap_or_else(|_| PathBuf::from("trustdb.json"));
     let audit = TrustConfig::default_audit_path();
     (trustdb, audit)
+}
+
+/// Save private key to file with restrictive permissions
+pub fn save_private_key_to_file(
+    private_key: &lib_crypto::types::PrivateKey,
+    private_key_file: &Path,
+) -> CliResult<()> {
+    let keystore_key = KeystorePrivateKey {
+        dilithium_sk: private_key.dilithium_sk.clone(),
+        dilithium_pk: private_key.dilithium_pk.clone(),
+        kyber_sk: private_key.kyber_sk.clone(),
+        master_seed: private_key.master_seed.clone(),
+    };
+
+    let private_key_json = serde_json::to_string_pretty(&keystore_key).map_err(|e| {
+        CliError::IdentityError(format!("Failed to serialize private key: {}", e))
+    })?;
+
+    std::fs::write(private_key_file, private_key_json).map_err(|e| {
+        CliError::IdentityError(format!("Failed to write private key file: {}", e))
+    })?;
+
+    // Set restrictive permissions on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(private_key_file, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| {
+                CliError::IdentityError(format!("Failed to set file permissions: {}", e))
+            })?;
+    }
+
+    Ok(())
 }
