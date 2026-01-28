@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use crate::integration::crypto_integration::PublicKey;
 use crate::contracts::tokens::core::TokenContract;
+use crate::contracts::treasury_kernel::TreasuryKernel;
 use super::types::*;
 
 /// Universal Basic Income Distribution Contract
@@ -313,6 +314,7 @@ impl UbiDistributor {
         current_height: u64,
         token: &mut TokenContract,
         ctx: &crate::contracts::executor::ExecutionContext,
+        kernel: Option<&mut TreasuryKernel>,
     ) -> Result<(), Error> {
         let id = Self::key_id(citizen);
 
@@ -345,9 +347,24 @@ impl UbiDistributor {
         // ATOMIC TRANSFER PHASE - Token transfer must succeed first
         // Capability-bound: source is derived from ctx, not from parameter
         // ====================================================================
-        let _burned = token
-            .transfer(ctx, citizen, amount)
-            .map_err(|_| Error::TokenTransferFailed)?;
+        if let Some(kernel) = kernel {
+            // Route through Treasury Kernel (preferred path)
+            use crate::contracts::executor::CallOrigin;
+            let from = match ctx.call_origin {
+                CallOrigin::User => &ctx.caller,
+                CallOrigin::Contract => &ctx.contract,
+                CallOrigin::System => return Err(Error::TokenTransferFailed),
+            };
+            let kernel_addr = kernel.kernel_address().clone();
+            kernel
+                .transfer(token, &kernel_addr, from, citizen, amount)
+                .map_err(|_| Error::TokenTransferFailed)?;
+        } else {
+            // Legacy direct path
+            let _burned = token
+                .transfer(ctx, citizen, amount)
+                .map_err(|_| Error::TokenTransferFailed)?;
+        }
 
         // ====================================================================
         // STATE MUTATION PHASE - Only after successful token transfer
@@ -870,7 +887,7 @@ mod tests {
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx, None);
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::NotRegistered);
@@ -888,7 +905,7 @@ mod tests {
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx, None);
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::ZeroAmount);
@@ -906,7 +923,7 @@ mod tests {
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx, None);
 
         assert!(result.is_ok());
         assert_eq!(ubi.balance(), 900);
@@ -928,11 +945,11 @@ mod tests {
         let ctx = test_execution_context_for_contract(&gov);
 
         // First claim succeeds
-        ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx)
+        ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx, None)
             .expect("first claim failed");
 
         // Second claim same month fails
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx, None);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::AlreadyPaidThisMonth);
     }
@@ -952,12 +969,12 @@ mod tests {
         let ctx = test_execution_context_for_contract(&gov);
 
         // Claim in month 0 (height 100)
-        ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx)
+        ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx, None)
             .expect("claim month 0 failed");
         assert_eq!(ubi.month_paid_count(0), 1);
 
         // Claim in month 1 (height 1100)
-        let result = ubi.claim_ubi(&citizen, 1100, &mut mock_token, &ctx);
+        let result = ubi.claim_ubi(&citizen, 1100, &mut mock_token, &ctx, None);
         assert!(result.is_ok());
         assert_eq!(ubi.month_paid_count(1), 1);
         assert_eq!(ubi.total_paid(), 200);
@@ -975,7 +992,7 @@ mod tests {
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx, None);
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::InsufficientFunds);
@@ -994,7 +1011,7 @@ mod tests {
         // Use a token with insufficient balance to simulate transfer failure
         let mut mock_token = create_mock_token_with_insufficient_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx, None);
 
         // Transfer failed (insufficient balance in token), so claim should fail
         assert!(result.is_err());
@@ -1035,9 +1052,9 @@ mod tests {
         let ctx = test_execution_context_for_contract(&gov);
 
         // Both citizens claim in same month
-        ubi.claim_ubi(&citizen1, 100, &mut mock_token, &ctx)
+        ubi.claim_ubi(&citizen1, 100, &mut mock_token, &ctx, None)
             .expect("citizen1 claim failed");
-        ubi.claim_ubi(&citizen2, 100, &mut mock_token, &ctx)
+        ubi.claim_ubi(&citizen2, 100, &mut mock_token, &ctx, None)
             .expect("citizen2 claim failed");
 
         assert_eq!(ubi.month_paid_count(0), 2);
@@ -1078,7 +1095,7 @@ mod tests {
         let ctx = test_execution_context_for_contract(&gov);
 
         // This should fail due to total_paid overflow when adding 200
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx, None);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::Overflow);
     }

@@ -1,6 +1,9 @@
 use super::core::{TokenContract, TokenInfo};
 use crate::integration::crypto_integration::PublicKey;
 use crate::contracts::utils;
+use crate::contracts::treasury_kernel::{
+    TreasuryKernel, KernelOpError, CreditReason, DebitReason,
+};
 use std::collections::HashMap;
 
 /// Token operation functions for contract system integration
@@ -36,6 +39,34 @@ pub fn burn_tokens(
     amount: u64,
 ) -> Result<(), String> {
     contract.burn(from, amount)
+}
+
+/// Mint new tokens via Treasury Kernel (preferred path)
+///
+/// Routes minting through the kernel's authorization layer.
+/// Use this instead of direct `mint_tokens()` when kernel is available.
+pub fn mint_tokens_via_kernel(
+    kernel: &mut TreasuryKernel,
+    contract: &mut TokenContract,
+    to: &PublicKey,
+    amount: u64,
+) -> Result<(), KernelOpError> {
+    let caller = kernel.kernel_address().clone();
+    kernel.credit(contract, &caller, to, amount, CreditReason::Mint)
+}
+
+/// Burn tokens via Treasury Kernel (preferred path)
+///
+/// Routes burning through the kernel's authorization layer.
+/// Use this instead of direct `burn_tokens()` when kernel is available.
+pub fn burn_tokens_via_kernel(
+    kernel: &mut TreasuryKernel,
+    contract: &mut TokenContract,
+    from: &PublicKey,
+    amount: u64,
+) -> Result<(), KernelOpError> {
+    let caller = kernel.kernel_address().clone();
+    kernel.debit(contract, &caller, from, amount, DebitReason::Burn)
 }
 
 /// Get account balance
