@@ -253,15 +253,18 @@ impl RoleRegistry {
 
     // ─── Assignment Management ──────────────────────────────────────────────
 
-    /// Generate unique assignment ID using Blake3 for consensus-critical determinism
+    /// Generate unique assignment ID using blake3 for consensus stability
     fn generate_assignment_id(&mut self, person_id: &IdentityId, role_id: &RoleId) -> AssignmentId {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(person_id);
-        hasher.update(role_id);
-        hasher.update(&self.next_assignment_counter.to_le_bytes());
+        let counter = self.next_assignment_counter;
         self.next_assignment_counter += 1;
 
-        (*hasher.finalize().as_bytes())
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&person_id[..]);
+        hasher.update(&role_id[..]);
+        hasher.update(&counter.to_le_bytes());
+
+        let hash = hasher.finalize();
+        hash.into()
     }
 
     /// Get active roles for a person
@@ -393,6 +396,7 @@ impl RoleRegistry {
     /// * `amount` - Amount to pay
     /// * `current_epoch` - Current epoch
     /// * `current_year` - Current year
+    /// * `caller` - Caller identity (must be governance)
     ///
     /// # Returns
     /// Ok(()) if successful
@@ -402,7 +406,11 @@ impl RoleRegistry {
         amount: u64,
         current_epoch: u64,
         current_year: u64,
+        caller: &[u8; 32],
     ) -> Result<(), RoleRegistryError> {
+        // Verify caller is authorized (governance)
+        self.verify_admin(caller)?;
+
         let assignment = self
             .assignments
             .get_mut(assignment_id)
@@ -710,7 +718,7 @@ mod tests {
 
         // Pay 10k per epoch for 5 epochs = 50k total
         for epoch in 100..105 {
-            registry.record_payment(&assignment_id, 10_000, epoch, 2024).unwrap();
+            registry.record_payment(&assignment_id, 10_000, epoch, 2024, &admin_key()).unwrap();
         }
 
         // Suspend
@@ -772,7 +780,7 @@ mod tests {
         let assignment_id = assignment.assignment_id;
 
         // Pay
-        registry.record_payment(&assignment_id, 10_000, 100, 2024).unwrap();
+        registry.record_payment(&assignment_id, 10_000, 100, 2024, &admin_key()).unwrap();
 
         // Suspend
         registry
@@ -785,7 +793,7 @@ mod tests {
             .unwrap();
 
         // Pay more
-        registry.record_payment(&assignment_id, 10_000, 102, 2024).unwrap();
+        registry.record_payment(&assignment_id, 10_000, 102, 2024, &admin_key()).unwrap();
 
         // Terminate
         registry
