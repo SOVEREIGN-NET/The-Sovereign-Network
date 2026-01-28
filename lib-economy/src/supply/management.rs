@@ -31,6 +31,11 @@ impl SupplyManager {
     }
     
     /// Mint tokens for network operations (unlimited utility minting)
+    ///
+    /// **Deprecated**: SupplyManager tracks internal counters only and does not mutate
+    /// on-chain token balances. Use `TreasuryKernel::execute_authorized_mint()` for
+    /// governance-gated on-chain minting.
+    #[deprecated(since = "0.1.0", note = "Use TreasuryKernel for on-chain minting. SupplyManager is statistical tracking only.")]
     pub fn mint_operational_tokens(&mut self, amount: u64, purpose: &str) -> Result<u64> {
         // UNLIMITED MINTING for actual network utility
         // Think of tokens like "bandwidth credits" or "compute credits"
@@ -48,21 +53,25 @@ impl SupplyManager {
     }
     
     /// Mint tokens for UBI distribution
+    #[deprecated(since = "0.1.0", note = "Use TreasuryKernel for on-chain UBI minting")]
     pub fn mint_for_ubi(&mut self, amount: u64) -> Result<u64> {
         self.mint_operational_tokens(amount, "UBI distribution")
     }
     
     /// Mint tokens for welfare services
+    #[deprecated(since = "0.1.0", note = "Use TreasuryKernel for on-chain welfare minting")]
     pub fn mint_for_welfare(&mut self, amount: u64) -> Result<u64> {
         self.mint_operational_tokens(amount, "welfare services")
     }
     
     /// Mint tokens for infrastructure rewards
+    #[deprecated(since = "0.1.0", note = "Use TreasuryKernel for on-chain infrastructure minting")]
     pub fn mint_for_infrastructure(&mut self, amount: u64) -> Result<u64> {
         self.mint_operational_tokens(amount, "infrastructure rewards")
     }
 
     /// Legacy method for backward compatibility - delegates to mint_operational_tokens
+    #[deprecated(since = "0.1.0", note = "Use TreasuryKernel for on-chain minting")]
     pub fn mint_tokens(&mut self, amount: u64) -> Result<(), String> {
         self.mint_operational_tokens(amount, "legacy mint")
             .map(|_| ())
@@ -79,6 +88,7 @@ impl SupplyManager {
     }
     
     /// Burn tokens (minimal use for utility-focused economics)
+    #[deprecated(since = "0.1.0", note = "Use TreasuryKernel::execute_authorized_burn() for on-chain burning")]
     pub fn burn_tokens(&mut self, amount: u64, reason: &str) -> Result<u64> {
         if amount > self.current_supply {
             return Err(anyhow::anyhow!("Cannot burn more tokens than current supply"));
@@ -147,6 +157,7 @@ impl Default for SupplyManager {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

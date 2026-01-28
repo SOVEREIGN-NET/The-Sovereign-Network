@@ -68,12 +68,16 @@ pub mod vesting;
 pub use types::{KernelState, RejectionReason, KernelStats};
 pub use interface::{
     KernelOpError, CreditReason, DebitReason, LockReason, ReleaseReason,
+    MintAuthorization, BurnAuthorization, MintReason,
 };
 pub use vesting_types::{VestingId, VestingSchedule, VestingLock, VestingStatus};
 pub use vesting::VestingState;
 
 use serde::{Serialize, Deserialize};
+use std::collections::{BTreeMap, BTreeSet};
 use crate::integration::crypto_integration::PublicKey;
+
+fn default_mint_delay_epochs() -> u64 { 1 }
 
 /// Treasury Kernel - Exclusive enforcement for economic operations
 ///
@@ -119,6 +123,22 @@ pub struct TreasuryKernel {
     /// Only governance_authority can set/clear this flag.
     #[serde(default)]
     pub paused: bool,
+
+    /// Pending mint authorizations from governance proposals (proposal_id -> auth)
+    #[serde(default)]
+    pending_mint_authorizations: BTreeMap<[u8; 32], MintAuthorization>,
+
+    /// Pending burn authorizations from governance proposals (proposal_id -> auth)
+    #[serde(default)]
+    pending_burn_authorizations: BTreeMap<[u8; 32], BurnAuthorization>,
+
+    /// Consumed authorization IDs (idempotency guard)
+    #[serde(default)]
+    consumed_authorizations: BTreeSet<[u8; 32]>,
+
+    /// Mint delay in epochs (default: 1 epoch). Governance-configurable.
+    #[serde(default = "default_mint_delay_epochs")]
+    mint_delay_epochs: u64,
 }
 
 impl TreasuryKernel {
@@ -142,6 +162,10 @@ impl TreasuryKernel {
             kernel_address,
             blocks_per_epoch,
             paused: false,
+            pending_mint_authorizations: BTreeMap::new(),
+            pending_burn_authorizations: BTreeMap::new(),
+            consumed_authorizations: BTreeSet::new(),
+            mint_delay_epochs: default_mint_delay_epochs(),
         }
     }
 
