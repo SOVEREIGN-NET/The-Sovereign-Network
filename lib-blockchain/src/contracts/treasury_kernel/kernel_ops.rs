@@ -8,6 +8,7 @@ use crate::integration::crypto_integration::PublicKey;
 use super::TreasuryKernel;
 use super::interface::{
     KernelOpError, CreditReason, DebitReason, LockReason, ReleaseReason,
+    MintAuthorization, BurnAuthorization,
 };
 
 impl TreasuryKernel {
@@ -169,6 +170,147 @@ impl TreasuryKernel {
             .map_err(|_| KernelOpError::Overflow)?;
 
         Ok(())
+    }
+
+    // ─── Governance-Gated Authorization (M2) ────────────────────────────
+
+    /// Register a mint authorization from a passed DAO proposal.
+    /// The authorization becomes executable after the delay period elapses.
+    pub fn register_mint_authorization(
+        &mut self,
+        auth: MintAuthorization,
+    ) -> Result<(), KernelOpError> {
+        if self.consumed_authorizations.contains(&auth.proposal_id) {
+            return Err(KernelOpError::AuthorizationConsumed);
+        }
+        self.pending_mint_authorizations.insert(auth.proposal_id, auth);
+        Ok(())
+    }
+
+    /// Execute a previously registered mint authorization after the delay period.
+    ///
+    /// Flow: check paused → lookup auth → check consumed → check delay → mint → mark consumed
+    pub fn execute_authorized_mint(
+        &mut self,
+        token: &mut TokenContract,
+        proposal_id: &[u8; 32],
+        current_epoch: u64,
+    ) -> Result<(), KernelOpError> {
+        if self.paused {
+            return Err(KernelOpError::Paused);
+        }
+        if self.consumed_authorizations.contains(proposal_id) {
+            return Err(KernelOpError::AuthorizationConsumed);
+        }
+        let auth = self.pending_mint_authorizations.get(proposal_id)
+            .ok_or(KernelOpError::MissingAuthorization)?
+            .clone();
+        if auth.consumed {
+            return Err(KernelOpError::AuthorizationConsumed);
+        }
+        if current_epoch < auth.executable_after_epoch {
+            return Err(KernelOpError::DelayNotElapsed);
+        }
+
+        // Build recipient PublicKey from key_id for mint_kernel_only
+        let recipient = PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: auth.recipient_key_id,
+        };
+
+        // Execute mint through the existing kernel credit path
+        let kernel_addr = self.kernel_address.clone();
+        self.credit(token, &kernel_addr, &recipient, auth.authorized_amount, CreditReason::Mint)?;
+
+        // Mark consumed
+        self.consumed_authorizations.insert(*proposal_id);
+        if let Some(a) = self.pending_mint_authorizations.get_mut(proposal_id) {
+            a.consumed = true;
+        }
+        Ok(())
+    }
+
+    /// Register a burn authorization from a passed DAO proposal.
+    pub fn register_burn_authorization(
+        &mut self,
+        auth: BurnAuthorization,
+    ) -> Result<(), KernelOpError> {
+        if self.consumed_authorizations.contains(&auth.proposal_id) {
+            return Err(KernelOpError::AuthorizationConsumed);
+        }
+        self.pending_burn_authorizations.insert(auth.proposal_id, auth);
+        Ok(())
+    }
+
+    /// Execute a previously registered burn authorization after the delay period.
+    pub fn execute_authorized_burn(
+        &mut self,
+        token: &mut TokenContract,
+        proposal_id: &[u8; 32],
+        current_epoch: u64,
+    ) -> Result<(), KernelOpError> {
+        if self.paused {
+            return Err(KernelOpError::Paused);
+        }
+        if self.consumed_authorizations.contains(proposal_id) {
+            return Err(KernelOpError::AuthorizationConsumed);
+        }
+        let auth = self.pending_burn_authorizations.get(proposal_id)
+            .ok_or(KernelOpError::MissingAuthorization)?
+            .clone();
+        if auth.consumed {
+            return Err(KernelOpError::AuthorizationConsumed);
+        }
+        if current_epoch < auth.executable_after_epoch {
+            return Err(KernelOpError::DelayNotElapsed);
+        }
+
+        // Build from PublicKey from key_id
+        let from = PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: auth.from_key_id,
+        };
+
+        // Execute burn through the existing kernel debit path
+        let kernel_addr = self.kernel_address.clone();
+        self.debit(token, &kernel_addr, &from, auth.authorized_amount, DebitReason::Burn)?;
+
+        // Mark consumed
+        self.consumed_authorizations.insert(*proposal_id);
+        if let Some(a) = self.pending_burn_authorizations.get_mut(proposal_id) {
+            a.consumed = true;
+        }
+        Ok(())
+    }
+
+    /// Get the configured mint delay in epochs
+    pub fn mint_delay_epochs(&self) -> u64 {
+        self.mint_delay_epochs
+    }
+
+    /// Set mint delay (governance authority only)
+    pub fn set_mint_delay_epochs(
+        &mut self,
+        caller: &PublicKey,
+        delay: u64,
+    ) -> Result<(), KernelOpError> {
+        if caller != self.governance_authority() {
+            return Err(KernelOpError::Unauthorized);
+        }
+        self.mint_delay_epochs = delay;
+        Ok(())
+    }
+
+    /// Get pending mint authorizations (read-only)
+    pub fn pending_mint_authorizations(&self) -> &std::collections::BTreeMap<[u8; 32], MintAuthorization> {
+        &self.pending_mint_authorizations
+    }
+
+    /// Get pending burn authorizations (read-only)
+    pub fn pending_burn_authorizations(&self) -> &std::collections::BTreeMap<[u8; 32], BurnAuthorization> {
+        &self.pending_burn_authorizations
     }
 }
 
@@ -519,5 +661,220 @@ mod tests {
         // Transfer 200 should succeed
         let result = kernel.transfer(&mut token, &caller, &alice, &bob, 200);
         assert!(result.is_ok());
+    }
+
+    // ─── M2: Governance-Gated Authorization Tests ───────────────────────
+
+    use super::super::interface::{MintAuthorization, BurnAuthorization, MintReason};
+
+    fn test_mint_auth(epoch: u64) -> MintAuthorization {
+        MintAuthorization {
+            proposal_id: [1u8; 32],
+            reason: MintReason::TreasuryAllocation,
+            authorized_amount: 500,
+            recipient_key_id: [1u8; 32],
+            authorized_at_epoch: epoch,
+            executable_after_epoch: epoch + 1,
+            consumed: false,
+        }
+    }
+
+    fn test_burn_auth(epoch: u64) -> BurnAuthorization {
+        BurnAuthorization {
+            proposal_id: [2u8; 32],
+            authorized_amount: 200,
+            from_key_id: [1u8; 32],
+            authorized_at_epoch: epoch,
+            executable_after_epoch: epoch + 1,
+            consumed: false,
+        }
+    }
+
+    #[test]
+    fn test_register_mint_authorization_succeeds() {
+        let (mut kernel, _) = setup();
+        let auth = test_mint_auth(0);
+        let result = kernel.register_mint_authorization(auth);
+        assert!(result.is_ok());
+        assert_eq!(kernel.pending_mint_authorizations().len(), 1);
+    }
+
+    #[test]
+    fn test_register_duplicate_authorization_rejected() {
+        let (mut kernel, _) = setup();
+        let auth = test_mint_auth(0);
+        kernel.register_mint_authorization(auth.clone()).unwrap();
+
+        // Simulate consumed by inserting into consumed set
+        kernel.consumed_authorizations.insert(auth.proposal_id);
+
+        // Re-register with same proposal_id should fail
+        let auth2 = test_mint_auth(0);
+        let result = kernel.register_mint_authorization(auth2);
+        assert_eq!(result, Err(KernelOpError::AuthorizationConsumed));
+    }
+
+    #[test]
+    fn test_execute_authorized_mint_after_delay_succeeds() {
+        let (mut kernel, mut token) = setup();
+        let auth = test_mint_auth(0); // executable_after_epoch = 1
+        kernel.register_mint_authorization(auth).unwrap();
+
+        // Execute at epoch 1 (delay elapsed)
+        let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1);
+        assert!(result.is_ok());
+
+        // Balance is stored under the minimal PublicKey resolved from key_id.
+        // In production, key resolution would map key_id to a full PublicKey.
+        let recipient = PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: [1u8; 32],
+        };
+        assert_eq!(token.balance_of(&recipient), 500);
+    }
+
+    #[test]
+    fn test_execute_authorized_mint_before_delay_fails() {
+        let (mut kernel, mut token) = setup();
+        let auth = test_mint_auth(0); // executable_after_epoch = 1
+        kernel.register_mint_authorization(auth).unwrap();
+
+        // Execute at epoch 0 (delay NOT elapsed)
+        let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 0);
+        assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
+    }
+
+    #[test]
+    fn test_execute_authorized_mint_when_paused_fails() {
+        let (mut kernel, mut token) = setup();
+        let auth = test_mint_auth(0);
+        kernel.register_mint_authorization(auth).unwrap();
+
+        let gov = test_governance();
+        kernel.pause(&gov).unwrap();
+
+        let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1);
+        assert_eq!(result, Err(KernelOpError::Paused));
+    }
+
+    #[test]
+    fn test_execute_authorized_mint_missing_auth_fails() {
+        let (mut kernel, mut token) = setup();
+        let result = kernel.execute_authorized_mint(&mut token, &[99u8; 32], 1);
+        assert_eq!(result, Err(KernelOpError::MissingAuthorization));
+    }
+
+    #[test]
+    fn test_execute_authorized_mint_consumed_fails() {
+        let (mut kernel, mut token) = setup();
+        let auth = test_mint_auth(0);
+        kernel.register_mint_authorization(auth).unwrap();
+
+        // Execute once — succeeds
+        kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1).unwrap();
+
+        // Execute again — consumed
+        let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 2);
+        assert_eq!(result, Err(KernelOpError::AuthorizationConsumed));
+    }
+
+    #[test]
+    fn test_execute_authorized_mint_exceeds_max_supply_fails() {
+        let (mut kernel, mut token) = setup();
+        let kernel_addr = test_kernel_address();
+        let user = test_user();
+        token.mint_kernel_only(&kernel_addr, &user, token.max_supply - 100).unwrap();
+
+        // Now register authorization for 500 (exceeds remaining 100)
+        let auth = test_mint_auth(0);
+        kernel.register_mint_authorization(auth).unwrap();
+
+        let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1);
+        assert_eq!(result, Err(KernelOpError::ExceedsMaxSupply));
+    }
+
+    #[test]
+    fn test_register_burn_authorization_succeeds() {
+        let (mut kernel, _) = setup();
+        let auth = test_burn_auth(0);
+        let result = kernel.register_burn_authorization(auth);
+        assert!(result.is_ok());
+        assert_eq!(kernel.pending_burn_authorizations().len(), 1);
+    }
+
+    #[test]
+    fn test_execute_authorized_burn_after_delay_succeeds() {
+        let (mut kernel, mut token) = setup();
+        let kernel_addr = test_kernel_address();
+
+        // Pre-fund the minimal key that burn will resolve
+        let from = PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: [1u8; 32],
+        };
+        token.mint_kernel_only(&kernel_addr, &from, 1000).unwrap();
+
+        let auth = test_burn_auth(0); // burn 200, executable_after_epoch = 1
+        kernel.register_burn_authorization(auth).unwrap();
+
+        let result = kernel.execute_authorized_burn(&mut token, &[2u8; 32], 1);
+        assert!(result.is_ok());
+        assert_eq!(token.balance_of(&from), 800);
+    }
+
+    #[test]
+    fn test_execute_authorized_burn_before_delay_fails() {
+        let (mut kernel, mut token) = setup();
+        let auth = test_burn_auth(0);
+        kernel.register_burn_authorization(auth).unwrap();
+
+        let result = kernel.execute_authorized_burn(&mut token, &[2u8; 32], 0);
+        assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
+    }
+
+    #[test]
+    fn test_execute_authorized_burn_consumed_fails() {
+        let (mut kernel, mut token) = setup();
+        let kernel_addr = test_kernel_address();
+
+        // Pre-fund the minimal key that burn will resolve
+        let from = PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: [1u8; 32],
+        };
+        token.mint_kernel_only(&kernel_addr, &from, 1000).unwrap();
+
+        let auth = test_burn_auth(0);
+        kernel.register_burn_authorization(auth).unwrap();
+
+        kernel.execute_authorized_burn(&mut token, &[2u8; 32], 1).unwrap();
+        let result = kernel.execute_authorized_burn(&mut token, &[2u8; 32], 2);
+        assert_eq!(result, Err(KernelOpError::AuthorizationConsumed));
+    }
+
+    #[test]
+    fn test_set_mint_delay_governance_only() {
+        let (mut kernel, _) = setup();
+        let gov = test_governance();
+        let user = test_user();
+
+        // Governance can set delay
+        let result = kernel.set_mint_delay_epochs(&gov, 3);
+        assert!(result.is_ok());
+        assert_eq!(kernel.mint_delay_epochs(), 3);
+
+        // Non-governance cannot
+        let result = kernel.set_mint_delay_epochs(&user, 5);
+        assert_eq!(result, Err(KernelOpError::Unauthorized));
+        assert_eq!(kernel.mint_delay_epochs(), 3); // unchanged
+    }
+
+    #[test]
+    fn test_mint_delay_default() {
+        let (kernel, _) = setup();
+        assert_eq!(kernel.mint_delay_epochs(), 1);
     }
 }

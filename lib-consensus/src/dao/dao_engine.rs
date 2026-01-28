@@ -392,6 +392,10 @@ impl DaoEngine {
             DaoExecutionAction::GovernanceParameterUpdate(update) => {
                 self.apply_governance_update(config, update)
             }
+            // Mint/burn authorizations don't modify ConsensusConfig —
+            // they are forwarded to the Treasury Kernel for execution.
+            DaoExecutionAction::MintAuthorization(_)
+            | DaoExecutionAction::BurnAuthorization(_) => Ok(()),
         }
     }
 
@@ -576,6 +580,10 @@ impl DaoEngine {
             DaoExecutionAction::GovernanceParameterUpdate(_) => {
                 self.apply_execution_params(config, &decoded)
             }
+            // Mint/burn authorizations don't modify ConsensusConfig —
+            // they are forwarded to the Treasury Kernel for execution.
+            DaoExecutionAction::MintAuthorization(_)
+            | DaoExecutionAction::BurnAuthorization(_) => Ok(()),
         }
     }
 
