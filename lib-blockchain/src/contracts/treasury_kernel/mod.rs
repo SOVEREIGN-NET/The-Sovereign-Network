@@ -31,9 +31,10 @@
 //! - Cap Ledger Enforcement (Phase M5, Issue #855)
 //! - Metric Book + Epoch Finality (Phase M6, Issue #856)
 //! - Compensation Engine Activation (Phase M7, Issue #857)
+//! - Governance Execution Completion (Phase M8, Issue #858)
 //!
-//! # Future Scope
-//! - Governance Execution Completion (M8)
+//! # Treasury Kernel Complete
+//! All milestones (M1-M8) are now implemented.
 //!
 //! # Critical Invariants
 //!
@@ -51,10 +52,13 @@
 //! - Mint or reject with reason code
 //! - Emit UbiDistributed or UbiClaimRejected events
 //!
-//! ## Future Scope
-//! - Compensation engine (deterministic, mechanical payouts)
-//! - Metric book (prevent compensation without finalized work)
-//! - Role registry + snapshots
+//! ## Architecture Layers
+//! - **Role Registry**: Identity → Role assignments with snapshotted caps
+//! - **Cap Ledger**: Hard cap enforcement at all scopes
+//! - **Metric Book**: Append-only work metrics with attestations
+//! - **Compensation Engine**: Deterministic payout computation
+//! - **Paid Ledger**: Double-payment prevention
+//! - **Governance Executor**: Proposal lifecycle and execution
 
 pub mod types;
 pub mod state;
@@ -75,6 +79,8 @@ pub mod metric_book;
 pub mod payout_types;
 pub mod compensation_engine;
 pub mod paid_ledger;
+pub mod governance_types;
+pub mod governance_executor;
 
 pub use types::{KernelState, RejectionReason, KernelStats};
 pub use interface::{
@@ -106,6 +112,12 @@ pub use payout_types::{
 };
 pub use compensation_engine::CompensationEngine;
 pub use paid_ledger::PaidLedger;
+pub use governance_types::{
+    ProposalId, TreasuryProposal, TreasuryAction, ProposalStatus,
+    TreasuryParameter, GovernanceError, ExecutionResult,
+    MintReason as GovMintReason, BurnReason as GovBurnReason,
+};
+pub use governance_executor::GovernanceExecutor;
 
 use serde::{Serialize, Deserialize};
 use std::collections::{BTreeMap, BTreeSet};
