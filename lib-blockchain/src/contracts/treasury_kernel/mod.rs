@@ -27,11 +27,13 @@
 //! # Implemented Features
 //! - UBI Distribution (Phase 1)
 //! - Vesting + time locks (Phase M3, Issue #853)
+//! - Role Registry + Assignment Snapshots (Phase M4, Issue #854)
 //!
 //! # Future Scope
-//! - Compensation engine (deterministic, mechanical payouts)
-//! - Metric book (prevent compensation without finalized work)
-//! - Role registry + snapshots
+//! - Cap Ledger Enforcement (M5)
+//! - Metric Book + Epoch Finality (M6)
+//! - Compensation Engine Activation (M7)
+//! - Governance Execution Completion (M8)
 //!
 //! # Critical Invariants
 //!
@@ -64,6 +66,8 @@ pub mod interface;
 pub mod kernel_ops;
 pub mod vesting_types;
 pub mod vesting;
+pub mod role_types;
+pub mod role_registry;
 
 pub use types::{KernelState, RejectionReason, KernelStats};
 pub use interface::{
@@ -72,6 +76,11 @@ pub use interface::{
 };
 pub use vesting_types::{VestingId, VestingSchedule, VestingLock, VestingStatus};
 pub use vesting::VestingState;
+pub use role_types::{
+    RoleId, AssignmentId, IdentityId, RoleDefinition, Assignment,
+    AssignmentStatus, AssignmentError, RoleRegistryError,
+};
+pub use role_registry::RoleRegistry;
 
 use serde::{Serialize, Deserialize};
 use std::collections::{BTreeMap, BTreeSet};
