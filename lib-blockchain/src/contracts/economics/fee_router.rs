@@ -951,6 +951,61 @@ impl Default for FeeRouter {
 }
 
 // ============================================================================
+// FEE COLLECTOR TRAIT IMPLEMENTATION
+// ============================================================================
+
+impl lib_consensus::types::FeeCollector for FeeRouter {
+    /// Collect fees for the current block
+    ///
+    /// Wraps the existing `collect()` method to implement the FeeCollector trait.
+    fn collect_fee(&mut self, amount: u64) -> Result<(), String> {
+        self.collect(amount).map_err(|e| e.to_string())
+    }
+
+    /// Distribute collected fees to pools
+    ///
+    /// Distributes fees according to the 45/30/15/10 split and returns
+    /// a FeeDistributionResult for consensus engine tracking.
+    fn distribute_fees(&mut self, block_height: u64) -> Result<lib_consensus::types::FeeDistributionResult, String> {
+        // Use the existing distribute() method
+        let distribution = self.distribute(block_height).map_err(|e| e.to_string())?;
+
+        // Convert FeeDistribution to FeeDistributionResult
+        // Map the existing distribution fields to the consensus trait's result type:
+        // - ubi_pool (45%) -> ubi_amount
+        // - dao_pool (30%) -> consensus_amount (validator rewards in consensus context)
+        // - emergency_reserve (15%) -> governance_amount
+        // - dev_grants (10%) -> treasury_amount
+        Ok(lib_consensus::types::FeeDistributionResult::new(
+            distribution.ubi_pool,
+            distribution.dao_pool,
+            distribution.emergency_reserve,
+            distribution.dev_grants,
+        ))
+    }
+
+    /// Check if the fee collector is initialized and ready
+    fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    /// Get total fees collected but not yet distributed
+    fn pending_fees(&self) -> u64 {
+        self.collected_fees
+    }
+
+    /// Get total fees ever collected (audit trail)
+    fn total_collected(&self) -> u64 {
+        self.total_collected
+    }
+
+    /// Get total fees ever distributed (audit trail)
+    fn total_distributed(&self) -> u64 {
+        self.total_distributed
+    }
+}
+
+// ============================================================================
 // UNIT TESTS
 // ============================================================================
 
@@ -1455,5 +1510,90 @@ mod tests {
         addresses.sort();
         addresses.dedup();
         assert_eq!(addresses.len(), 11);
+    }
+
+    // ========================================================================
+    // FEE COLLECTOR TRAIT TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_fee_collector_trait_collect_and_distribute() {
+        use lib_consensus::types::FeeCollector;
+
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Test collect_fee via trait
+        let result = router.collect_fee(10_000);
+        assert!(result.is_ok());
+        assert_eq!(router.pending_fees(), 10_000);
+
+        // Test distribute_fees via trait
+        let result = router.distribute_fees(100);
+        assert!(result.is_ok());
+
+        let distribution = result.unwrap();
+        assert_eq!(distribution.ubi_amount, 4_500);      // 45%
+        assert_eq!(distribution.consensus_amount, 3_000); // 30%
+        assert_eq!(distribution.governance_amount, 1_500); // 15%
+        assert_eq!(distribution.treasury_amount, 1_000);  // 10%
+        assert_eq!(distribution.total_distributed, 10_000);
+    }
+
+    #[test]
+    fn test_fee_collector_trait_audit_trail() {
+        use lib_consensus::types::FeeCollector;
+
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Collect and distribute multiple times
+        router.collect_fee(10_000).unwrap();
+        router.distribute_fees(100).unwrap();
+
+        router.collect_fee(20_000).unwrap();
+        router.distribute_fees(200).unwrap();
+
+        // Check audit trail
+        assert_eq!(router.total_collected(), 30_000);
+        assert_eq!(router.total_distributed(), 30_000);
+        assert_eq!(router.pending_fees(), 0); // All distributed
+    }
+
+    #[test]
+    fn test_fee_collector_trait_not_initialized_error() {
+        use lib_consensus::types::FeeCollector;
+
+        let mut router = FeeRouter::new();
+        // Don't initialize
+
+        assert!(!router.is_initialized());
+
+        let result = router.collect_fee(10_000);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not initialized"));
+    }
+
+    #[test]
+    fn test_fee_collector_trait_zero_amount_error() {
+        use lib_consensus::types::FeeCollector;
+
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        let result = router.collect_fee(0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("zero"));
+    }
+
+    #[test]
+    fn test_fee_distribution_result_from_total_fees() {
+        let dist = lib_consensus::types::FeeDistributionResult::from_total_fees(10_000);
+
+        assert_eq!(dist.ubi_amount, 4_500);      // 45%
+        assert_eq!(dist.consensus_amount, 3_000); // 30%
+        assert_eq!(dist.governance_amount, 1_500); // 15%
+        assert_eq!(dist.treasury_amount, 1_000);  // 10%
+        assert_eq!(dist.total_distributed, 10_000);
     }
 }

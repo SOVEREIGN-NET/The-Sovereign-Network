@@ -21,6 +21,9 @@ use lib_types::NodeId;
 
 type DhtPayload = (Vec<u8>, NodeId);
 
+/// Consensus message sender type - forwards ValidatorMessages to the consensus engine
+pub type ConsensusMessageSender = tokio::sync::mpsc::Sender<lib_consensus::types::ValidatorMessage>;
+
 type DhtPayloadSender = tokio::sync::mpsc::UnboundedSender<DhtPayload>;
 
 /// Central mesh message handler
@@ -50,6 +53,9 @@ pub struct MeshMessageHandler {
     pub dht_rate_limits: Arc<RwLock<HashMap<String, (u32, u64)>>>,
     /// Receive-side event sink for blocks/transactions from mesh peers (#916)
     pub blockchain_event_receiver: Arc<dyn crate::blockchain_sync::BlockchainEventReceiver>,
+    /// Consensus message sender for forwarding ValidatorMessages to the consensus engine
+    /// When set, received ValidatorMessages are converted and sent to the consensus loop
+    pub consensus_message_sender: Option<ConsensusMessageSender>,
 }
 
 /// DHT rate limit configuration
@@ -80,6 +86,7 @@ impl MeshMessageHandler {
             dht_payload_sender: None,
             dht_rate_limits: Arc::new(RwLock::new(HashMap::new())),
             blockchain_event_receiver: Arc::new(crate::blockchain_sync::NullBlockchainEventReceiver),
+            consensus_message_sender: None,
         }
     }
 
@@ -118,7 +125,16 @@ impl MeshMessageHandler {
     pub fn set_blockchain_event_receiver(&mut self, receiver: Arc<dyn crate::blockchain_sync::BlockchainEventReceiver>) {
         self.blockchain_event_receiver = receiver;
     }
-    
+
+    /// Set consensus message sender for forwarding ValidatorMessages to the consensus engine
+    ///
+    /// When set, received ValidatorMessages are converted from network format to consensus format
+    /// and forwarded to the consensus engine's message receiver for BFT processing.
+    pub fn set_consensus_message_sender(&mut self, sender: ConsensusMessageSender) {
+        self.consensus_message_sender = Some(sender);
+        info!("🔗 Consensus message sender wired to mesh message handler");
+    }
+
     /// Handle incoming mesh message
     pub async fn handle_mesh_message(&self, message: ZhtpMeshMessage, sender: PublicKey) -> Result<()> {
         match message {
@@ -230,12 +246,29 @@ impl MeshMessageHandler {
                 // Ticket #154: Handle generic DHT payload routed through mesh network
                 self.handle_dht_generic_payload(requester, payload, signature).await?;
             },
-            ZhtpMeshMessage::ValidatorMessage(_msg) => {
-                // Consensus validator messages are routed through the mesh layer
-                // but handled by the consensus layer, not here. Just log receipt.
-                tracing::debug!("Received ValidatorMessage from peer {:?}",
-                    hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
-                );
+            ZhtpMeshMessage::ValidatorMessage(msg) => {
+                // Forward to consensus engine if sender is wired
+                if let Some(ref consensus_tx) = self.consensus_message_sender {
+                    // Convert from network format to consensus engine format
+                    let consensus_msg = convert_network_to_consensus_message(&msg);
+
+                    match consensus_tx.send(consensus_msg).await {
+                        Ok(()) => {
+                            debug!("✅ ValidatorMessage forwarded to consensus engine from peer {:?}",
+                                hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
+                            );
+                        }
+                        Err(e) => {
+                            warn!("Failed to forward ValidatorMessage to consensus: {} (consensus may be stopped)",
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    debug!("Received ValidatorMessage but no consensus sender wired (peer {:?})",
+                        hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
+                    );
+                }
             },
         }
         Ok(())
@@ -1189,6 +1222,80 @@ impl MeshMessageHandler {
         }
 
         Ok(())
+    }
+}
+
+/// Convert from network ValidatorMessage format to consensus engine format
+///
+/// The network layer uses `lib_consensus::validators::ValidatorMessage` (the wire format),
+/// while the consensus engine uses `lib_consensus::types::ValidatorMessage` (the internal format).
+/// This function bridges the two representations.
+fn convert_network_to_consensus_message(
+    msg: &lib_consensus::validators::ValidatorMessage
+) -> lib_consensus::types::ValidatorMessage {
+    use lib_consensus::validators::ValidatorMessage as NetworkMessage;
+    use lib_consensus::types::{ValidatorMessage as ConsensusMessage, ConsensusVote, VoteType};
+
+    match msg {
+        NetworkMessage::Propose(propose_msg) => {
+            ConsensusMessage::Propose {
+                proposal: propose_msg.proposal.clone(),
+            }
+        }
+        NetworkMessage::Vote(vote_msg) => {
+            ConsensusMessage::Vote {
+                vote: vote_msg.vote.clone(),
+            }
+        }
+        NetworkMessage::Commit(commit_msg) => {
+            // Commit messages are converted to Vote with VoteType::Commit
+            let commit_vote = ConsensusVote {
+                id: commit_msg.message_id.clone(),
+                height: commit_msg.height,
+                round: commit_msg.round,
+                vote_type: VoteType::Commit,
+                proposal_id: commit_msg.proposal_id.clone(),
+                voter: commit_msg.committer.clone(),
+                timestamp: commit_msg.timestamp,
+                signature: commit_msg.signature.clone(),
+            };
+            ConsensusMessage::Vote { vote: commit_vote }
+        }
+        NetworkMessage::RoundChange(round_change_msg) => {
+            // Round change messages don't have a direct mapping in the consensus engine
+            // Log and convert to a heartbeat-like message to maintain liveness tracking
+            tracing::debug!(
+                "Received RoundChange from validator {:?} for height {} -> round {}",
+                round_change_msg.validator,
+                round_change_msg.height,
+                round_change_msg.new_round
+            );
+            // Create a heartbeat to keep the validator marked as responsive
+            use lib_consensus::validators::NetworkSummary;
+            let heartbeat = lib_consensus::types::HeartbeatMessage {
+                message_id: round_change_msg.message_id.clone(),
+                validator: round_change_msg.validator.clone(),
+                height: round_change_msg.height,
+                round: round_change_msg.new_round,
+                step: lib_consensus::types::ConsensusStep::NewRound,
+                network_summary: NetworkSummary {
+                    active_validators: 0,
+                    health_score: 1.0,
+                    block_rate: 0.0,
+                },
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                signature: round_change_msg.signature.clone(),
+            };
+            ConsensusMessage::Heartbeat { message: heartbeat }
+        }
+        NetworkMessage::Heartbeat(heartbeat_msg) => {
+            ConsensusMessage::Heartbeat {
+                message: heartbeat_msg.clone(),
+            }
+        }
     }
 }
 

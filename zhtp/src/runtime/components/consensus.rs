@@ -8,8 +8,139 @@ use tracing::{info, warn, debug, error};
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::node_runtime::NodeRole;
 use lib_consensus::{ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorManager, NoOpBroadcaster};
+use lib_consensus::types::{MessageBroadcaster as ConsensusMessageBroadcaster, ValidatorMessage};
+use lib_identity::IdentityId;
 use crate::monitoring::{Alert, AlertLevel, AlertManager};
+use crate::runtime::mesh_router_provider::get_global_mesh_router;
+use crate::server::mesh::core::MeshRouter;
 use lib_blockchain::Blockchain;
+
+/// Adapter that implements lib-consensus MessageBroadcaster using zhtp's MeshRouter
+///
+/// This bridges the consensus layer (which uses IdentityId) to the network layer
+/// (which uses QUIC mesh routing) for multi-node BFT consensus.
+pub struct ConsensusMeshBroadcaster {
+    mesh_router: Arc<MeshRouter>,
+}
+
+impl ConsensusMeshBroadcaster {
+    pub fn new(mesh_router: Arc<MeshRouter>) -> Self {
+        Self { mesh_router }
+    }
+}
+
+#[async_trait::async_trait]
+impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
+    async fn broadcast_to_validators(
+        &self,
+        message: ValidatorMessage,
+        _validator_ids: &[IdentityId],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Get QUIC protocol for sending
+        let quic_protocol_guard = self.mesh_router.quic_protocol.read().await;
+        let quic_protocol = match quic_protocol_guard.as_ref() {
+            Some(qp) => qp.clone(),
+            None => {
+                debug!("QUIC protocol not available for consensus broadcast");
+                return Ok(()); // Best-effort, don't fail
+            }
+        };
+        drop(quic_protocol_guard);
+
+        // Convert types::ValidatorMessage to validators::ValidatorMessage for mesh transport
+        let network_message = convert_to_network_message(&message);
+        let mesh_message = lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(network_message);
+        let message_bytes = bincode::serialize(&mesh_message)?;
+
+        // Broadcast to all connected peers
+        //
+        // NOTE: Currently broadcasts to ALL connected peers rather than filtering to
+        // the specific validator_ids passed in. This is acceptable because:
+        // 1. Non-validators ignore consensus messages they can't verify
+        // 2. Validators validate signatures before processing
+        // 3. The mesh network is permissioned (authenticated peers only)
+        //
+        // TODO: For production optimization, filter to validator_ids by:
+        // - Maintaining a validator pubkey -> peer_id mapping
+        // - Using targeted send_to_peer instead of broadcast_message
+        match quic_protocol.broadcast_message(&message_bytes).await {
+            Ok(count) => {
+                info!("Consensus broadcast sent to {} peers", count);
+                Ok(())
+            }
+            Err(e) => {
+                // Propagate error for observability at call sites
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Consensus broadcast failed: {}", e),
+                )))
+            }
+        }
+    }
+}
+
+/// Convert from lib_consensus::types::ValidatorMessage to lib_consensus::validators::ValidatorMessage
+fn convert_to_network_message(msg: &ValidatorMessage) -> lib_consensus::validators::ValidatorMessage {
+    use lib_consensus::validators::{
+        ValidatorMessage as NetworkValidatorMessage,
+        ProposeMessage, VoteMessage, ConsensusStateView,
+    };
+    use lib_consensus::types::HeartbeatMessage;
+    use std::collections::BTreeMap;
+
+    match msg {
+        ValidatorMessage::Propose { proposal } => {
+            NetworkValidatorMessage::Propose(ProposeMessage {
+                message_id: proposal.id.clone(),
+                proposer: proposal.proposer.clone(),
+                proposal: proposal.clone(),
+                justification: None,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                signature: proposal.signature.clone(),
+            })
+        }
+        ValidatorMessage::Vote { vote } => {
+            // Derive step from vote_type to ensure consistency
+            let step = match vote.vote_type {
+                lib_consensus::types::VoteType::PreVote => {
+                    lib_consensus::types::ConsensusStep::PreVote
+                }
+                lib_consensus::types::VoteType::PreCommit => {
+                    lib_consensus::types::ConsensusStep::PreCommit
+                }
+                lib_consensus::types::VoteType::Commit => {
+                    lib_consensus::types::ConsensusStep::Commit
+                }
+                lib_consensus::types::VoteType::Against => {
+                    // Against votes can occur during any voting step, default to PreVote
+                    lib_consensus::types::ConsensusStep::PreVote
+                }
+            };
+            let state_view = ConsensusStateView {
+                height: vote.height,
+                round: vote.round,
+                step,
+                known_proposals: vec![vote.proposal_id.clone()],
+                vote_counts: BTreeMap::new(),
+            };
+            NetworkValidatorMessage::Vote(VoteMessage {
+                message_id: vote.id.clone(),
+                voter: vote.voter.clone(),
+                vote: vote.clone(),
+                consensus_state: state_view,
+                timestamp: vote.timestamp,
+                signature: vote.signature.clone(),
+            })
+        }
+        ValidatorMessage::Heartbeat { message } => {
+            // HeartbeatMessage is the same type, just re-exported
+            NetworkValidatorMessage::Heartbeat(message.clone())
+        }
+    }
+}
 
 /// Adapter to make blockchain ValidatorInfo compatible with consensus ValidatorInfo trait
 pub struct BlockchainValidatorAdapter(pub lib_blockchain::ValidatorInfo);
@@ -45,6 +176,252 @@ impl lib_consensus::validators::ValidatorInfo for BlockchainValidatorAdapter {
     
     fn commission_rate(&self) -> u8 {
         self.0.commission_rate
+    }
+}
+
+/// Shared blockchain slot that can be populated after consensus engine starts
+///
+/// This allows the consensus engine to start before the blockchain is wired,
+/// and access it once it becomes available.
+pub type SharedBlockchainSlot = Arc<RwLock<Option<Arc<RwLock<Blockchain>>>>>;
+
+/// Adapter that provides blockchain data to the consensus engine for block production
+///
+/// This bridges the consensus layer to the actual blockchain, providing:
+/// - Latest block hash for chain continuity
+/// - Pending transactions for new blocks
+/// - Current blockchain height for validation
+///
+/// Uses a shared slot pattern to handle the case where consensus starts
+/// before the blockchain is fully wired.
+pub struct ConsensusBlockchainAdapter {
+    blockchain_slot: SharedBlockchainSlot,
+}
+
+impl ConsensusBlockchainAdapter {
+    pub fn new(blockchain_slot: SharedBlockchainSlot) -> Self {
+        Self { blockchain_slot }
+    }
+}
+
+/// Callback for committing BFT-finalized blocks to the blockchain
+///
+/// When BFT consensus achieves 2/3+1 commit votes, this callback is invoked
+/// to actually commit the block to the blockchain storage layer.
+///
+/// This separates the "when" (BFT consensus decides) from the "how"
+/// (blockchain layer stores), maintaining clean architectural boundaries.
+pub struct ConsensusBlockCommitter {
+    blockchain_slot: SharedBlockchainSlot,
+    environment: crate::config::Environment,
+}
+
+impl ConsensusBlockCommitter {
+    pub fn new(blockchain_slot: SharedBlockchainSlot, environment: crate::config::Environment) -> Self {
+        Self {
+            blockchain_slot,
+            environment,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
+    async fn commit_finalized_block(
+        &self,
+        proposal: &lib_consensus::types::ConsensusProposal,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Get blockchain from slot
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Err("Blockchain not yet available for commit".into()),
+        };
+        drop(slot);
+
+        let mut blockchain = blockchain_arc.write().await;
+
+        // Check if block at this height already exists (idempotent)
+        if blockchain.height >= proposal.height && proposal.height > 0 {
+            info!(
+                "Block at height {} already exists (current height: {}), skipping commit",
+                proposal.height,
+                blockchain.height
+            );
+            return Ok(());
+        }
+
+        // Deserialize transactions from proposal block_data
+        let transactions: Vec<lib_blockchain::Transaction> = if proposal.block_data.is_empty() {
+            Vec::new()
+        } else {
+            // Try to deserialize as Vec<Transaction>
+            match bincode::deserialize(&proposal.block_data) {
+                Ok(txs) => txs,
+                Err(e) => {
+                    warn!(
+                        "Failed to deserialize block_data as transactions: {} - treating as empty block",
+                        e
+                    );
+                    Vec::new()
+                }
+            }
+        };
+
+        info!(
+            "🔨 BFT consensus committing block at height {} with {} transactions",
+            proposal.height,
+            transactions.len()
+        );
+
+        // Get previous block hash
+        let previous_hash = blockchain.latest_block()
+            .map(|b| b.hash())
+            .unwrap_or_default();
+
+        // Get mining config for difficulty
+        let mining_config = lib_blockchain::types::get_mining_config_from_env();
+        let block_difficulty = mining_config.difficulty.clone();
+
+        // Create block from the transactions
+        let block = lib_blockchain::block::creation::create_block(
+            transactions,
+            previous_hash,
+            proposal.height,
+            block_difficulty,
+        )?;
+
+        // Mine the block (quick in dev mode due to low difficulty)
+        info!(
+            "⛏️ Mining BFT-finalized block at height {} with {} profile...",
+            proposal.height,
+            if mining_config.allow_instant_mining { "Bootstrap" } else { "Standard" }
+        );
+        let mined_block = lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
+        info!("✓ BFT block mined with nonce: {}", mined_block.header.nonce);
+
+        // Add block to blockchain
+        match blockchain.add_block_with_proof(mined_block.clone()).await {
+            Ok(()) => {
+                info!(
+                    "✅ BFT BLOCK COMMITTED! Height: {}, Hash: {:?}, Transactions: {}",
+                    blockchain.height,
+                    mined_block.hash(),
+                    mined_block.transactions.len()
+                );
+
+                // Auto-persist blockchain after BFT commit
+                blockchain.increment_persist_counter();
+                let persist_path_str = self.environment.blockchain_data_path();
+                let persist_path = std::path::Path::new(&persist_path_str);
+                match blockchain.save_to_file(persist_path) {
+                    Ok(()) => {
+                        blockchain.mark_persisted();
+                        info!("💾 Blockchain auto-persisted after BFT commit");
+                    }
+                    Err(e) => {
+                        warn!("⚠️ Failed to auto-persist blockchain after BFT commit: {}", e);
+                    }
+                }
+
+                // Index in DHT
+                if let Err(e) = crate::runtime::dht_indexing::index_block_in_dht(&mined_block).await {
+                    warn!("DHT indexing failed for BFT block: {}", e);
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to add BFT-finalized block to blockchain: {}", e);
+                Err(e.into())
+            }
+        }
+    }
+
+    async fn get_active_validator_count(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        // Get blockchain from slot
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Ok(0), // No blockchain = no validators
+        };
+        drop(slot);
+
+        let blockchain = blockchain_arc.read().await;
+        let validators = blockchain.get_active_validators();
+        Ok(validators.len())
+    }
+}
+
+#[async_trait::async_trait]
+impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAdapter {
+    async fn get_latest_block_hash(&self) -> Result<lib_crypto::Hash, Box<dyn std::error::Error + Send + Sync>> {
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Err("Blockchain not yet available".into()),
+        };
+        drop(slot);
+
+        let blockchain = blockchain_arc.read().await;
+        if blockchain.blocks.is_empty() {
+            // No blocks yet - genesis
+            Ok(lib_crypto::Hash([0u8; 32]))
+        } else {
+            let latest_block = blockchain.blocks.last().unwrap();
+            // Convert lib_blockchain::Hash to lib_crypto::Hash
+            let block_hash = latest_block.header.hash();
+            let hash_bytes = block_hash.as_array();
+            Ok(lib_crypto::Hash(hash_bytes))
+        }
+    }
+
+    async fn get_pending_transactions(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Ok(Vec::new()), // No blockchain = no transactions
+        };
+        drop(slot);
+
+        let blockchain = blockchain_arc.read().await;
+        let pending = &blockchain.pending_transactions;
+
+        if pending.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Serialize pending transactions
+        let tx_data = bincode::serialize(pending)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+        info!("📦 Providing {} pending transactions ({} bytes) to consensus",
+            pending.len(), tx_data.len());
+
+        Ok(tx_data)
+    }
+
+    async fn get_blockchain_height(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Ok(0),
+        };
+        drop(slot);
+
+        let blockchain = blockchain_arc.read().await;
+        Ok(blockchain.height)
+    }
+
+    async fn is_ready(&self) -> bool {
+        let slot = self.blockchain_slot.read().await;
+        if let Some(blockchain_arc) = slot.as_ref() {
+            // Blockchain is wired and ready
+            if let Ok(blockchain) = blockchain_arc.try_read() {
+                return !blockchain.blocks.is_empty() || blockchain.height == 0;
+            }
+        }
+        false
     }
 }
 
@@ -216,6 +593,58 @@ async fn handle_liveness_event(alert_manager: &AlertManager, event: ConsensusEve
 
             let _ = alert_manager.trigger_alert(alert).await;
         }
+        ConsensusEvent::ModeTransitionToBft {
+            validator_count,
+            height,
+            timestamp,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("validator_count".to_string(), validator_count.to_string());
+            metadata.insert("height".to_string(), height.to_string());
+            metadata.insert("mode".to_string(), "BFT".to_string());
+
+            let alert = Alert {
+                id: format!("consensus-mode-bft-{}", height),
+                level: AlertLevel::Info,
+                title: "BFT consensus activated".to_string(),
+                message: format!(
+                    "Network transitioned to BFT consensus mode with {} validators at height {}",
+                    validator_count, height
+                ),
+                source: "consensus".to_string(),
+                timestamp,
+                metadata,
+            };
+
+            let _ = alert_manager.trigger_alert(alert).await;
+        }
+        ConsensusEvent::ModeTransitionToBootstrap {
+            validator_count,
+            min_required,
+            height,
+            timestamp,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("validator_count".to_string(), validator_count.to_string());
+            metadata.insert("min_required".to_string(), min_required.to_string());
+            metadata.insert("height".to_string(), height.to_string());
+            metadata.insert("mode".to_string(), "Bootstrap".to_string());
+
+            let alert = Alert {
+                id: format!("consensus-mode-bootstrap-{}", height),
+                level: AlertLevel::Warning,
+                title: "Network degraded to bootstrap mode".to_string(),
+                message: format!(
+                    "Network degraded to bootstrap mode at height {} ({} validators, need ≥{} for BFT)",
+                    height, validator_count, min_required
+                ),
+                source: "consensus".to_string(),
+                timestamp,
+                metadata,
+            };
+
+            let _ = alert_manager.trigger_alert(alert).await;
+        }
         _ => {}
     }
 }
@@ -265,10 +694,47 @@ impl Component for ConsensusComponent {
             info!("🛡️ Production mode: Full consensus validation required (minimum 4 validators for BFT)");
         }
 
-        let broadcaster = Arc::new(NoOpBroadcaster);
+        // Create broadcaster - use ConsensusMeshBroadcaster if mesh router is available,
+        // otherwise fall back to NoOpBroadcaster (single-node mode)
+        let broadcaster: Arc<dyn ConsensusMessageBroadcaster> =
+            match get_global_mesh_router().await {
+                Ok(mesh_router) => {
+                    info!("🌐 Mesh router available - enabling multi-node consensus broadcasting");
+                    Arc::new(ConsensusMeshBroadcaster::new(mesh_router))
+                }
+                Err(e) => {
+                    warn!(
+                        "⚠️ Mesh router not available: {} - consensus will run in single-node mode",
+                        e
+                    );
+                    Arc::new(NoOpBroadcaster)
+                }
+            };
+
         let mut consensus_engine = lib_consensus::init_consensus(config, broadcaster)?;
         let (liveness_tx, mut liveness_rx) = tokio::sync::mpsc::unbounded_channel();
         consensus_engine.set_liveness_event_sender(liveness_tx);
+
+        // Create consensus message channel for receiving ValidatorMessages from the network
+        // Channel size of 256 provides buffer for burst message handling
+        let (consensus_msg_tx, consensus_msg_rx) = tokio::sync::mpsc::channel::<ValidatorMessage>(256);
+        consensus_engine.set_message_receiver(consensus_msg_rx);
+
+        // Wire the message sender to the mesh message handler
+        if let Ok(mesh_router) = get_global_mesh_router().await {
+            if let Some(quic_protocol) = mesh_router.quic_protocol.read().await.as_ref() {
+                if let Some(handler) = quic_protocol.message_handler.as_ref() {
+                    handler.write().await.set_consensus_message_sender(consensus_msg_tx.clone());
+                    info!("🔗 Consensus message channel wired to mesh message handler");
+                } else {
+                    warn!("QUIC message handler not available - consensus messages won't be received from network");
+                }
+            } else {
+                warn!("QUIC protocol not available - consensus messages won't be received from network");
+            }
+        } else {
+            warn!("Mesh router not available - consensus messages won't be received from network");
+        }
 
         // **Start-order independent alert wiring**
         //
@@ -321,12 +787,44 @@ impl Component for ConsensusComponent {
         info!("Consensus engine initialized with hybrid PoS");
         info!("Validator management ready");
         info!("Byzantine fault tolerance active");
-        
-        *self.consensus_engine.write().await = Some(consensus_engine);
-        
+
+        // Wire blockchain provider for real block data in proposals
+        // Uses the same slot that set_blockchain() populates
+        let blockchain_adapter = ConsensusBlockchainAdapter::new(self.blockchain.clone());
+        consensus_engine.set_blockchain_provider(Arc::new(blockchain_adapter));
+        info!("📦 Blockchain provider wired to consensus engine");
+
+        // Wire block commit callback for BFT-finalized blocks
+        // This is the critical bridge that commits blocks when BFT achieves 2/3+1 votes
+        let block_committer = ConsensusBlockCommitter::new(
+            self.blockchain.clone(),
+            self.environment.clone(),
+        );
+        consensus_engine.set_block_commit_callback(Arc::new(block_committer));
+        info!("🔗 Block commit callback wired to consensus engine");
+
+        // Store reference to engine (for validator manager access)
+        // Note: The engine is moved into the consensus loop task
+        *self.consensus_engine.write().await = None; // Engine is now owned by the loop task
+
+        // Spawn the consensus loop as a background task
+        // This is the main BFT state machine driver
+        tokio::spawn(async move {
+            info!("🚀 Starting BFT consensus loop...");
+            match consensus_engine.run_consensus_loop().await {
+                Ok(()) => {
+                    info!("Consensus loop exited normally");
+                }
+                Err(e) => {
+                    error!("Consensus loop exited with error: {}", e);
+                }
+            }
+        });
+
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
-        
+
+        info!("🗳️ BFT consensus loop started - listening for validator messages");
         info!("Consensus component started with consensus mechanisms");
         Ok(())
     }
