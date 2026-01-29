@@ -7,24 +7,16 @@ use lib_crypto::types::PrivateKey;
 use lib_identity::ZhtpIdentity;
 use lib_network::client::{ZhtpClient, ZhtpClientConfig};
 use lib_network::web4::TrustConfig;
-use serde::{Serialize, Deserialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+// Re-export KeystorePrivateKey from zhtp for local use and external consumers
+pub use zhtp::keystore_names::KeystorePrivateKey;
 
 #[derive(Debug, Clone)]
 pub struct LoadedIdentity {
     pub identity: ZhtpIdentity,
     pub keypair: KeyPair,
-}
-
-/// Private key storage format matching zhtp node format
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeystorePrivateKey {
-    pub dilithium_sk: Vec<u8>,
-    #[serde(default)]
-    pub dilithium_pk: Vec<u8>,  // Optional for backward compatibility with old keystores
-    pub kyber_sk: Vec<u8>,
-    pub master_seed: Vec<u8>,
 }
 
 pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIdentity> {
@@ -226,7 +218,7 @@ pub fn validate_domain(domain: &str) -> CliResult<String> {
 
     // Check for reserved dao. prefix (virtual namespace - cannot be registered)
     let name_parts = &parts[..parts.len() - 1];
-    if !name_parts.is_empty() && (name_parts[0] == "dao" || name_parts.len() == 1 && name_parts[0] == "dao") {
+    if !name_parts.is_empty() && name_parts[0] == "dao" {
         return Err(CliError::ConfigError(
             "dao. prefix is virtual and cannot be registered. DAO governance is automatically derived from base domains.".to_string(),
         ));

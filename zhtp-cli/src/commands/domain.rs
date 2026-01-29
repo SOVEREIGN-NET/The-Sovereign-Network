@@ -67,12 +67,17 @@ pub fn validate_domain_name(domain: &str) -> CliResult<()> {
 fn minimum_registration_fee() -> u64 {
     // Match blockchain's fee calculation formula
     // (lib-blockchain/src/transaction/creation.rs::calculate_minimum_fee)
-    // Formula: base_fee + (transaction_size / bytes_per_zhtp)
+    // Formula: base_fee + size_fee, where size_fee = (tx_size / bytes_per_zhtp)
+    // and size_fee is multiplied by 2 for transactions larger than 10_000 bytes.
     let estimated_tx_size = 9000u64; // Domain registration typically ~8718 bytes
     let base_fee = 1000u64;
     let bytes_per_zhtp = 100u64;
-    let size_fee = (estimated_tx_size / bytes_per_zhtp).max(1);
-    base_fee + size_fee  // = 1000 + 90 = 1090 ZHTP
+    let threshold_bytes = 10_000u64;
+    let mut size_fee = (estimated_tx_size / bytes_per_zhtp).max(1);
+    if estimated_tx_size > threshold_bytes {
+        size_fee *= 2;
+    }
+    base_fee + size_fee  // = 1000 + 90 = 1090 ZHTP for 9000-byte estimate
 }
 
 // ============================================================================
