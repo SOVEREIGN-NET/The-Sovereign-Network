@@ -679,21 +679,40 @@ impl ConsensusEngine {
     }
 
     /// Apply block to blockchain state
+    ///
+    /// This is the critical bridge between BFT consensus and blockchain storage.
+    /// When BFT achieves 2/3+1 commit votes, this method commits the block.
     async fn apply_block_to_state(&mut self, proposal: &ConsensusProposal) -> ConsensusResult<()> {
-        // In production, this would:
-        // 1. Execute all transactions in the block
-        // 2. Update account balances and state
-        // 3. Update validator set if needed
-        // 4. Apply any governance changes
-        // 5. Store block in blockchain database
-
-        // For now, just log the application
-        tracing::info!(
-            " Applied block {:?} to state (height: {}, size: {} bytes)",
-            proposal.id,
-            proposal.height,
-            proposal.block_data.len()
-        );
+        // Call the block commit callback if configured
+        // This is the bridge to the actual blockchain storage layer
+        if let Some(ref callback) = self.block_commit_callback {
+            match callback.commit_finalized_block(proposal).await {
+                Ok(()) => {
+                    tracing::info!(
+                        "✅ BFT finalized block committed to blockchain (height: {}, proposal: {:?})",
+                        proposal.height,
+                        proposal.id
+                    );
+                }
+                Err(e) => {
+                    // Log but don't fail consensus - block commit is best-effort
+                    // The block is still finalized in consensus, storage is a side effect
+                    tracing::error!(
+                        "⚠️ Failed to commit BFT finalized block to blockchain: {} (height: {}, proposal: {:?})",
+                        e,
+                        proposal.height,
+                        proposal.id
+                    );
+                }
+            }
+        } else {
+            // No callback configured - log the state change for debugging
+            tracing::info!(
+                "📝 Block finalized by BFT consensus (height: {}, size: {} bytes) - no commit callback configured",
+                proposal.height,
+                proposal.block_data.len()
+            );
+        }
 
         Ok(())
     }

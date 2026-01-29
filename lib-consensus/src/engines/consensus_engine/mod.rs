@@ -279,6 +279,11 @@ pub struct ConsensusEngine {
     storage_proof_provider: Option<Arc<dyn crate::proofs::StorageProofProvider>>,
     /// Blockchain provider for block production (injected by runtime)
     blockchain_provider: Option<Arc<dyn crate::types::ConsensusBlockchainProvider>>,
+    /// Block commit callback for finalizing blocks to blockchain storage
+    ///
+    /// When BFT consensus achieves 2/3+1 commit votes, this callback commits
+    /// the finalized block to the actual blockchain storage layer.
+    block_commit_callback: Option<Arc<dyn crate::types::BlockCommitCallback>>,
 }
 
 impl ConsensusEngine {
@@ -341,6 +346,7 @@ impl ConsensusEngine {
             validator_keypair: None,
             storage_proof_provider: None,
             blockchain_provider: None,
+            block_commit_callback: None,
         })
     }
 
@@ -363,6 +369,18 @@ impl ConsensusEngine {
     pub fn set_blockchain_provider(&mut self, provider: Arc<dyn crate::types::ConsensusBlockchainProvider>) {
         self.blockchain_provider = Some(provider);
         tracing::info!("📦 Blockchain provider connected to consensus engine");
+    }
+
+    /// Set block commit callback for finalizing blocks to blockchain storage
+    ///
+    /// When BFT consensus achieves supermajority (2/3+1) commit votes,
+    /// this callback is invoked to commit the finalized block to storage.
+    ///
+    /// This separates consensus finalization (determining WHEN) from
+    /// block storage (determining HOW), maintaining clean layer separation.
+    pub fn set_block_commit_callback(&mut self, callback: Arc<dyn crate::types::BlockCommitCallback>) {
+        self.block_commit_callback = Some(callback);
+        tracing::info!("🔗 Block commit callback connected to consensus engine");
     }
 
     /// Set fee router for fee collection integration (Week 7)

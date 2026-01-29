@@ -308,7 +308,19 @@ impl BlockchainComponent {
         Ok(())
     }
     
+    /// Minimum validators required for BFT consensus mode
+    /// With fewer validators, direct mining is allowed (bootstrap mode)
+    /// With 4+ validators, all block production must go through BFT consensus
+    const MIN_BFT_VALIDATORS: usize = 4;
+
     /// Real mining loop with consensus coordination
+    ///
+    /// Operating Modes:
+    /// - Bootstrap Mode (< 4 validators): Direct mining allowed for network bootstrapping
+    /// - BFT Mode (>= 4 validators): Mining loop is disabled, BFT consensus drives blocks
+    ///
+    /// When BFT mode is active, the mining loop only checks for pending transactions
+    /// and logs status - actual block production is handled by the BFT consensus engine.
     async fn real_mining_loop(
         blockchain: Arc<RwLock<Option<Blockchain>>>,
         validator_manager_arc: Arc<RwLock<Option<Arc<RwLock<ValidatorManager>>>>>,
@@ -325,48 +337,83 @@ impl BlockchainComponent {
             );
             return;
         }
-        
-        info!(" Mining loop started - waiting 2 seconds for consensus to wire...");
+
+        info!("⛏️ Mining loop started - waiting 2 seconds for consensus to wire...");
         tokio::time::sleep(Duration::from_secs(2)).await;
-        info!(" Starting mining checks every 30 seconds");
-        
+        info!("⛏️ Starting mining checks every 30 seconds");
+
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         let mut block_counter = 1u64;
         let mut consensus_round = 0u32;
-        
+        let mut last_bft_mode_log = std::time::Instant::now();
+
         loop {
             debug!("⏰ Mining loop tick #{}", block_counter);
             interval.tick().await;
-            
+
             match crate::runtime::blockchain_provider::get_global_blockchain().await {
                 Ok(shared_blockchain) => {
                     let blockchain_guard = shared_blockchain.read().await;
                     let pending_count = blockchain_guard.pending_transactions.len();
                     let current_height = blockchain_guard.height;
-                    
-                    info!("Mining check #{} - Height: {}, Pending: {}, UTXOs: {}, Identities: {}", 
+
+                    // Check validator count for mode switching
+                    let validator_count = blockchain_guard.get_active_validators().len();
+                    let bft_mode_active = validator_count >= Self::MIN_BFT_VALIDATORS;
+
+                    if bft_mode_active {
+                        // BFT MODE: Mining loop is disabled, BFT consensus drives blocks
+                        // Only log periodically to avoid spam
+                        if last_bft_mode_log.elapsed() >= Duration::from_secs(120) {
+                            info!(
+                                "🛡️ BFT MODE ACTIVE: {} validators registered (min: {})",
+                                validator_count,
+                                Self::MIN_BFT_VALIDATORS
+                            );
+                            info!(
+                                "   Mining loop disabled - block production driven by BFT consensus"
+                            );
+                            info!(
+                                "   Height: {}, Pending: {}, UTXOs: {}",
+                                current_height,
+                                pending_count,
+                                blockchain_guard.utxo_set.len()
+                            );
+                            last_bft_mode_log = std::time::Instant::now();
+                        }
+
+                        // Don't mine - BFT consensus engine handles block production
+                        // The ConsensusBlockCommitter callback commits finalized blocks
+                        drop(blockchain_guard);
+                        continue;
+                    }
+
+                    // BOOTSTRAP MODE: Direct mining allowed
+                    info!("⛏️ BOOTSTRAP MODE: {} validators (need {} for BFT)",
+                        validator_count, Self::MIN_BFT_VALIDATORS);
+                    info!("Mining check #{} - Height: {}, Pending: {}, UTXOs: {}, Identities: {}",
                         block_counter, current_height, pending_count,
                         blockchain_guard.utxo_set.len(),
                         blockchain_guard.identity_registry.len()
                     );
-                    
+
                     if pending_count > 0 {
                         let validator_manager_opt = validator_manager_arc.read().await.clone();
                         let node_identity_opt = node_identity_arc.read().await.clone();
-                        
+
                         let should_mine = if let (Some(vm), Some(node_id)) = (validator_manager_opt, node_identity_opt) {
                             let vm_guard = vm.read().await;
                             let active_validators = vm_guard.get_active_validators();
-                            
+
                             if active_validators.is_empty() {
-                                warn!("⛏️ BOOTSTRAP MODE: No validators registered");
+                                warn!("⛏️ No validators in ValidatorManager");
                                 true
                             } else {
                                 let next_height = current_height + 1;
                                 if let Some(proposer) = vm_guard.select_proposer(next_height, consensus_round) {
                                     let node_id_hex = hex::encode(node_id.as_bytes());
                                     let mut is_proposer = false;
-                                    
+
                                     for (did_string, identity_data) in blockchain_guard.identity_registry.iter() {
                                         if identity_data.controlled_nodes.contains(&node_id_hex) {
                                             if let Some(identity_hex) = did_string.strip_prefix("did:zhtp:") {
@@ -380,11 +427,11 @@ impl BlockchainComponent {
                                             }
                                         }
                                     }
-                                    
+
                                     if is_proposer {
-                                        info!(" CONSENSUS: This node selected as proposer");
+                                        info!("⛏️ BOOTSTRAP: This node selected as proposer");
                                     } else {
-                                        info!(" CONSENSUS: Waiting for our turn");
+                                        info!("⛏️ BOOTSTRAP: Waiting for our turn");
                                     }
                                     is_proposer
                                 } else {
@@ -395,13 +442,13 @@ impl BlockchainComponent {
                             warn!("⛏️ Mining without consensus coordination");
                             true
                         };
-                        
+
                         if should_mine {
                             drop(blockchain_guard);
                             let mut blockchain_guard = shared_blockchain.write().await;
                             match Self::mine_real_block(&mut *blockchain_guard).await {
                                 Ok(()) => {
-                                    info!("Block #{} mined successfully!", block_counter);
+                                    info!("⛏️ Bootstrap block #{} mined successfully!", block_counter);
                                     block_counter += 1;
                                     consensus_round = 0;
 

@@ -177,6 +177,155 @@ impl ConsensusBlockchainAdapter {
     }
 }
 
+/// Callback for committing BFT-finalized blocks to the blockchain
+///
+/// When BFT consensus achieves 2/3+1 commit votes, this callback is invoked
+/// to actually commit the block to the blockchain storage layer.
+///
+/// This separates the "when" (BFT consensus decides) from the "how"
+/// (blockchain layer stores), maintaining clean architectural boundaries.
+pub struct ConsensusBlockCommitter {
+    blockchain_slot: SharedBlockchainSlot,
+    environment: crate::config::Environment,
+}
+
+impl ConsensusBlockCommitter {
+    pub fn new(blockchain_slot: SharedBlockchainSlot, environment: crate::config::Environment) -> Self {
+        Self {
+            blockchain_slot,
+            environment,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
+    async fn commit_finalized_block(
+        &self,
+        proposal: &lib_consensus::types::ConsensusProposal,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Get blockchain from slot
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Err("Blockchain not yet available for commit".into()),
+        };
+        drop(slot);
+
+        let mut blockchain = blockchain_arc.write().await;
+
+        // Check if block at this height already exists (idempotent)
+        if blockchain.height >= proposal.height && proposal.height > 0 {
+            info!(
+                "Block at height {} already exists (current height: {}), skipping commit",
+                proposal.height,
+                blockchain.height
+            );
+            return Ok(());
+        }
+
+        // Deserialize transactions from proposal block_data
+        let transactions: Vec<lib_blockchain::Transaction> = if proposal.block_data.is_empty() {
+            Vec::new()
+        } else {
+            // Try to deserialize as Vec<Transaction>
+            match bincode::deserialize(&proposal.block_data) {
+                Ok(txs) => txs,
+                Err(e) => {
+                    warn!(
+                        "Failed to deserialize block_data as transactions: {} - treating as empty block",
+                        e
+                    );
+                    Vec::new()
+                }
+            }
+        };
+
+        info!(
+            "🔨 BFT consensus committing block at height {} with {} transactions",
+            proposal.height,
+            transactions.len()
+        );
+
+        // Get previous block hash
+        let previous_hash = blockchain.latest_block()
+            .map(|b| b.hash())
+            .unwrap_or_default();
+
+        // Get mining config for difficulty
+        let mining_config = lib_blockchain::types::get_mining_config_from_env();
+        let block_difficulty = mining_config.difficulty.clone();
+
+        // Create block from the transactions
+        let block = lib_blockchain::block::creation::create_block(
+            transactions,
+            previous_hash,
+            proposal.height,
+            block_difficulty,
+        )?;
+
+        // Mine the block (quick in dev mode due to low difficulty)
+        info!(
+            "⛏️ Mining BFT-finalized block at height {} with {} profile...",
+            proposal.height,
+            if mining_config.allow_instant_mining { "Bootstrap" } else { "Standard" }
+        );
+        let mined_block = lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
+        info!("✓ BFT block mined with nonce: {}", mined_block.header.nonce);
+
+        // Add block to blockchain
+        match blockchain.add_block_with_proof(mined_block.clone()).await {
+            Ok(()) => {
+                info!(
+                    "✅ BFT BLOCK COMMITTED! Height: {}, Hash: {:?}, Transactions: {}",
+                    blockchain.height,
+                    mined_block.hash(),
+                    mined_block.transactions.len()
+                );
+
+                // Auto-persist blockchain after BFT commit
+                blockchain.increment_persist_counter();
+                let persist_path_str = self.environment.blockchain_data_path();
+                let persist_path = std::path::Path::new(&persist_path_str);
+                match blockchain.save_to_file(persist_path) {
+                    Ok(()) => {
+                        blockchain.mark_persisted();
+                        info!("💾 Blockchain auto-persisted after BFT commit");
+                    }
+                    Err(e) => {
+                        warn!("⚠️ Failed to auto-persist blockchain after BFT commit: {}", e);
+                    }
+                }
+
+                // Index in DHT
+                if let Err(e) = crate::runtime::dht_indexing::index_block_in_dht(&mined_block).await {
+                    warn!("DHT indexing failed for BFT block: {}", e);
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to add BFT-finalized block to blockchain: {}", e);
+                Err(e.into())
+            }
+        }
+    }
+
+    async fn get_active_validator_count(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        // Get blockchain from slot
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Ok(0), // No blockchain = no validators
+        };
+        drop(slot);
+
+        let blockchain = blockchain_arc.read().await;
+        let validators = blockchain.get_active_validators();
+        Ok(validators.len())
+    }
+}
+
 #[async_trait::async_trait]
 impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAdapter {
     async fn get_latest_block_hash(&self) -> Result<lib_crypto::Hash, Box<dyn std::error::Error + Send + Sync>> {
@@ -565,6 +714,15 @@ impl Component for ConsensusComponent {
         let blockchain_adapter = ConsensusBlockchainAdapter::new(self.blockchain.clone());
         consensus_engine.set_blockchain_provider(Arc::new(blockchain_adapter));
         info!("📦 Blockchain provider wired to consensus engine");
+
+        // Wire block commit callback for BFT-finalized blocks
+        // This is the critical bridge that commits blocks when BFT achieves 2/3+1 votes
+        let block_committer = ConsensusBlockCommitter::new(
+            self.blockchain.clone(),
+            self.environment.clone(),
+        );
+        consensus_engine.set_block_commit_callback(Arc::new(block_committer));
+        info!("🔗 Block commit callback wired to consensus engine");
 
         // Store reference to engine (for validator manager access)
         // Note: The engine is moved into the consensus loop task

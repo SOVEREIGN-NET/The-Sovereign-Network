@@ -512,3 +512,54 @@ impl ConsensusBlockchainProvider for NoOpBlockchainProvider {
         false
     }
 }
+
+/// Callback for committing finalized blocks to the blockchain
+///
+/// When BFT consensus achieves 2/3+1 commit votes on a proposal, this callback
+/// is invoked to actually commit the block to the blockchain storage.
+///
+/// This separates consensus finalization from block storage:
+/// - ConsensusEngine determines WHEN a block is finalized (BFT safety)
+/// - BlockCommitCallback determines HOW the block is stored (blockchain layer)
+///
+/// # Thread Safety
+/// Implementations must be thread-safe (Send + Sync) as the consensus engine
+/// may finalize blocks from multiple async contexts.
+#[async_trait]
+pub trait BlockCommitCallback: Send + Sync {
+    /// Commit a finalized block to the blockchain
+    ///
+    /// Called when BFT consensus achieves supermajority (2/3+1) commit votes.
+    /// The proposal contains the block data that was agreed upon.
+    ///
+    /// # Arguments
+    /// * `proposal` - The consensus proposal that was finalized
+    ///
+    /// # Returns
+    /// * `Ok(())` - Block was successfully committed
+    /// * `Err(...)` - Block commit failed (logged but does not affect consensus)
+    ///
+    /// # Invariants
+    /// - This callback is best-effort; consensus correctness does not depend on it
+    /// - The same block may be committed multiple times (idempotent handling required)
+    async fn commit_finalized_block(
+        &self,
+        proposal: &ConsensusProposal,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Get the number of active validators for mode switching
+    ///
+    /// Returns the count of validators currently registered and active.
+    /// Used by the mining loop to determine whether to use BFT consensus
+    /// (4+ validators) or bootstrap mode (< 4 validators).
+    async fn get_active_validator_count(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// Minimum validators required for BFT consensus mode
+///
+/// With fewer validators, the network operates in bootstrap mode where
+/// a single validator can mine blocks directly. Once this threshold is
+/// reached, all block production must go through BFT consensus.
+///
+/// Value: 4 validators (allows 1 Byzantine fault with f < n/3)
+pub const MIN_BFT_VALIDATORS: usize = 4;
