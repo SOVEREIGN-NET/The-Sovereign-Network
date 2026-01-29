@@ -16,9 +16,17 @@ impl ConsensusEngine {
     /// - Timer events drive phase transitions (Propose → PreVote → PreCommit → Commit)
     /// - Messages drive quorum detection and early transitions
     /// - Receiver closure causes graceful shutdown
+    ///
+    /// Mode Awareness (Phase 4):
+    /// - BFT Mode (>= 4 validators): Full consensus participation
+    /// - Bootstrap Mode (< 4 validators): Passive monitoring, no proposals
     pub async fn run_consensus_loop(&mut self) -> ConsensusResult<()> {
         let mut message_rx = self.message_rx.take()
             .ok_or_else(|| ConsensusError::ValidatorError("Message receiver not set".to_string()))?;
+
+        // Sync consensus height with blockchain before starting
+        // This ensures we start at the correct height after bootstrap mode
+        self.sync_height_with_blockchain().await?;
 
         // Auto-initialize heartbeat sender if not already initialized
         if self.heartbeat_interval.is_none() {
@@ -46,17 +54,102 @@ impl ConsensusEngine {
         // Ensure validator membership snapshot is initialized for the current height
         self.snapshot_validator_set(self.current_round.height);
 
-        tracing::info!(
-            "Starting consensus loop at height {} round {} step {:?}",
-            self.current_round.height,
-            self.current_round.round,
-            self.current_round.step
-        );
+        // Track BFT mode for transition logging
+        let mut last_bft_mode = self.is_bft_mode_active();
+        let validator_count = self.get_validator_count();
+
+        if last_bft_mode {
+            tracing::info!(
+                "🛡️ Starting consensus loop in BFT MODE ({} validators) at height {} round {} step {:?}",
+                validator_count,
+                self.current_round.height,
+                self.current_round.round,
+                self.current_round.step
+            );
+        } else {
+            tracing::info!(
+                "⛏️ Starting consensus loop in BOOTSTRAP MODE ({} validators, need {} for BFT) at height {}",
+                validator_count,
+                crate::types::MIN_BFT_VALIDATORS,
+                self.current_round.height
+            );
+            tracing::info!(
+                "   Consensus loop will monitor for BFT mode activation"
+            );
+        }
 
         loop {
             tokio::select! {
                 // Timer fired: only process if token matches current state
                 _ = &mut timer_fut => {
+                    // Check for mode transitions (Bootstrap <-> BFT)
+                    let current_bft_mode = self.is_bft_mode_active();
+                    if current_bft_mode != last_bft_mode {
+                        let validator_count = self.get_validator_count();
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+
+                        if current_bft_mode {
+                            // Transitioning TO BFT mode
+                            tracing::info!(
+                                "🔄 MODE TRANSITION: Bootstrap → BFT ({} validators now active)",
+                                validator_count
+                            );
+                            // Re-sync height with blockchain to ensure continuity
+                            if let Err(e) = self.sync_height_with_blockchain().await {
+                                tracing::warn!("Failed to sync height during mode transition: {}", e);
+                            }
+                            // Update timer token for new height
+                            timer_token = TimerToken::new(
+                                self.current_round.height,
+                                self.current_round.round,
+                                &self.current_round.step,
+                            );
+                            // Emit mode transition event
+                            self.emit_liveness_event(ConsensusEvent::ModeTransitionToBft {
+                                validator_count,
+                                height: self.current_round.height,
+                                timestamp,
+                            });
+                        } else {
+                            // Transitioning TO Bootstrap mode (degraded)
+                            tracing::warn!(
+                                "🔄 MODE TRANSITION: BFT → Bootstrap ({} validators, need {} for BFT)",
+                                validator_count,
+                                crate::types::MIN_BFT_VALIDATORS
+                            );
+                            tracing::warn!(
+                                "   Consensus loop entering passive mode - mining loop will handle blocks"
+                            );
+                            // Emit mode transition event
+                            self.emit_liveness_event(ConsensusEvent::ModeTransitionToBootstrap {
+                                validator_count,
+                                min_required: crate::types::MIN_BFT_VALIDATORS,
+                                height: self.current_round.height,
+                                timestamp,
+                            });
+                        }
+                        last_bft_mode = current_bft_mode;
+                    }
+
+                    // Only process timeouts in BFT mode
+                    if !current_bft_mode {
+                        // In bootstrap mode, just re-arm the timer and wait
+                        timer_token = TimerToken::new(
+                            self.current_round.height,
+                            self.current_round.round,
+                            &self.current_round.step,
+                        );
+                        timer_fut.set(self.round_timer.next_deadline(
+                            self.current_round.height,
+                            self.current_round.round,
+                            &self.current_round.step,
+                        ));
+                        continue;
+                    }
+
                     if timer_token.matches(self.current_round.height, self.current_round.round, &self.current_round.step) {
                         tracing::debug!(
                             "Timer fired for height {} round {} step {:?}",

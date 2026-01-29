@@ -341,6 +341,19 @@ pub enum ConsensusEvent {
         round: u32,
         timestamp: u64,
     },
+    /// Mode transition from Bootstrap to BFT
+    ModeTransitionToBft {
+        validator_count: usize,
+        height: u64,
+        timestamp: u64,
+    },
+    /// Mode transition from BFT to Bootstrap (degraded state)
+    ModeTransitionToBootstrap {
+        validator_count: usize,
+        min_required: usize,
+        height: u64,
+        timestamp: u64,
+    },
 }
 
 /// Block metadata for fee tracking and statistics

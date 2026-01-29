@@ -566,6 +566,58 @@ async fn handle_liveness_event(alert_manager: &AlertManager, event: ConsensusEve
 
             let _ = alert_manager.trigger_alert(alert).await;
         }
+        ConsensusEvent::ModeTransitionToBft {
+            validator_count,
+            height,
+            timestamp,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("validator_count".to_string(), validator_count.to_string());
+            metadata.insert("height".to_string(), height.to_string());
+            metadata.insert("mode".to_string(), "BFT".to_string());
+
+            let alert = Alert {
+                id: format!("consensus-mode-bft-{}", height),
+                level: AlertLevel::Info,
+                title: "BFT consensus activated".to_string(),
+                message: format!(
+                    "Network transitioned to BFT consensus mode with {} validators at height {}",
+                    validator_count, height
+                ),
+                source: "consensus".to_string(),
+                timestamp,
+                metadata,
+            };
+
+            let _ = alert_manager.trigger_alert(alert).await;
+        }
+        ConsensusEvent::ModeTransitionToBootstrap {
+            validator_count,
+            min_required,
+            height,
+            timestamp,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("validator_count".to_string(), validator_count.to_string());
+            metadata.insert("min_required".to_string(), min_required.to_string());
+            metadata.insert("height".to_string(), height.to_string());
+            metadata.insert("mode".to_string(), "Bootstrap".to_string());
+
+            let alert = Alert {
+                id: format!("consensus-mode-bootstrap-{}", height),
+                level: AlertLevel::Warning,
+                title: "Network degraded to bootstrap mode".to_string(),
+                message: format!(
+                    "Network degraded to bootstrap mode at height {} ({} validators, need {} for BFT)",
+                    height, validator_count, min_required
+                ),
+                source: "consensus".to_string(),
+                timestamp,
+                metadata,
+            };
+
+            let _ = alert_manager.trigger_alert(alert).await;
+        }
         _ => {}
     }
 }

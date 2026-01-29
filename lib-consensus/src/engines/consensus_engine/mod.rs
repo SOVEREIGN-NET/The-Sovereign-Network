@@ -383,6 +383,59 @@ impl ConsensusEngine {
         tracing::info!("🔗 Block commit callback connected to consensus engine");
     }
 
+    /// Synchronize consensus engine height with blockchain
+    ///
+    /// Called before starting the consensus loop to ensure the engine
+    /// starts proposing at the correct height (blockchain_height + 1).
+    ///
+    /// This is critical for mode transitions:
+    /// - Bootstrap mode produces blocks directly to blockchain
+    /// - When switching to BFT mode, consensus must continue from the correct height
+    pub async fn sync_height_with_blockchain(&mut self) -> ConsensusResult<()> {
+        if let Some(ref provider) = self.blockchain_provider {
+            match provider.get_blockchain_height().await {
+                Ok(blockchain_height) => {
+                    let old_height = self.current_round.height;
+                    // Consensus proposes for next block, so height = blockchain_height + 1
+                    // But if blockchain is at 0 (no blocks), we start at height 1
+                    self.current_round.height = if blockchain_height == 0 { 1 } else { blockchain_height + 1 };
+                    tracing::info!(
+                        "📊 Consensus height synced: {} → {} (blockchain at {})",
+                        old_height,
+                        self.current_round.height,
+                        blockchain_height
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to sync consensus height with blockchain: {} - using current height {}",
+                        e,
+                        self.current_round.height
+                    );
+                    Ok(()) // Non-fatal, continue with current height
+                }
+            }
+        } else {
+            tracing::debug!("No blockchain provider - consensus height unchanged at {}", self.current_round.height);
+            Ok(())
+        }
+    }
+
+    /// Check if BFT consensus mode is active (>= 4 validators)
+    ///
+    /// Returns true if there are enough validators for BFT consensus.
+    /// In bootstrap mode (< 4 validators), the mining loop handles block production directly.
+    pub fn is_bft_mode_active(&self) -> bool {
+        let validator_count = self.validator_manager.get_active_validators().len();
+        validator_count >= crate::types::MIN_BFT_VALIDATORS
+    }
+
+    /// Get current validator count
+    pub fn get_validator_count(&self) -> usize {
+        self.validator_manager.get_active_validators().len()
+    }
+
     /// Set fee router for fee collection integration (Week 7)
     ///
     /// Allows the consensus engine to collect and distribute fees at block finalization.
