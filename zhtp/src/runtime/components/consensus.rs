@@ -9,7 +9,7 @@ use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, C
 use crate::runtime::node_runtime::NodeRole;
 use lib_consensus::{ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorManager, NoOpBroadcaster};
 use lib_consensus::types::{MessageBroadcaster as ConsensusMessageBroadcaster, ValidatorMessage};
-use lib_crypto::Hash as IdentityId;
+use lib_identity::IdentityId;
 use crate::monitoring::{Alert, AlertLevel, AlertManager};
 use crate::runtime::mesh_router_provider::get_global_mesh_router;
 use crate::server::mesh::core::MeshRouter;
@@ -53,18 +53,29 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
         let message_bytes = bincode::serialize(&mesh_message)?;
 
         // Broadcast to all connected peers
-        // Note: In production, we should filter to only validators in validator_ids,
-        // but for now we broadcast to all connected peers (validators self-filter)
+        //
+        // NOTE: Currently broadcasts to ALL connected peers rather than filtering to
+        // the specific validator_ids passed in. This is acceptable because:
+        // 1. Non-validators ignore consensus messages they can't verify
+        // 2. Validators validate signatures before processing
+        // 3. The mesh network is permissioned (authenticated peers only)
+        //
+        // TODO: For production optimization, filter to validator_ids by:
+        // - Maintaining a validator pubkey -> peer_id mapping
+        // - Using targeted send_to_peer instead of broadcast_message
         match quic_protocol.broadcast_message(&message_bytes).await {
             Ok(count) => {
                 info!("Consensus broadcast sent to {} peers", count);
+                Ok(())
             }
             Err(e) => {
-                debug!("Consensus broadcast failed: {} (continuing)", e);
+                // Propagate error for observability at call sites
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Consensus broadcast failed: {}", e),
+                )))
             }
         }
-
-        Ok(())
     }
 }
 
@@ -72,7 +83,7 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
 fn convert_to_network_message(msg: &ValidatorMessage) -> lib_consensus::validators::ValidatorMessage {
     use lib_consensus::validators::{
         ValidatorMessage as NetworkValidatorMessage,
-        ProposeMessage, VoteMessage, ConsensusStateView, NetworkSummary,
+        ProposeMessage, VoteMessage, ConsensusStateView,
     };
     use lib_consensus::types::HeartbeatMessage;
     use std::collections::BTreeMap;
@@ -92,10 +103,26 @@ fn convert_to_network_message(msg: &ValidatorMessage) -> lib_consensus::validato
             })
         }
         ValidatorMessage::Vote { vote } => {
+            // Derive step from vote_type to ensure consistency
+            let step = match vote.vote_type {
+                lib_consensus::types::VoteType::PreVote => {
+                    lib_consensus::types::ConsensusStep::PreVote
+                }
+                lib_consensus::types::VoteType::PreCommit => {
+                    lib_consensus::types::ConsensusStep::PreCommit
+                }
+                lib_consensus::types::VoteType::Commit => {
+                    lib_consensus::types::ConsensusStep::Commit
+                }
+                lib_consensus::types::VoteType::Against => {
+                    // Against votes can occur during any voting step, default to PreVote
+                    lib_consensus::types::ConsensusStep::PreVote
+                }
+            };
             let state_view = ConsensusStateView {
                 height: vote.height,
                 round: vote.round,
-                step: lib_consensus::types::ConsensusStep::PreVote, // Default, updated on receive
+                step,
                 known_proposals: vec![vote.proposal_id.clone()],
                 vote_counts: BTreeMap::new(),
             };
