@@ -608,7 +608,7 @@ async fn handle_liveness_event(alert_manager: &AlertManager, event: ConsensusEve
                 level: AlertLevel::Warning,
                 title: "Network degraded to bootstrap mode".to_string(),
                 message: format!(
-                    "Network degraded to bootstrap mode at height {} ({} validators, need {} for BFT)",
+                    "Network degraded to bootstrap mode at height {} ({} validators, need ≥{} for BFT)",
                     height, validator_count, min_required
                 ),
                 source: "consensus".to_string(),

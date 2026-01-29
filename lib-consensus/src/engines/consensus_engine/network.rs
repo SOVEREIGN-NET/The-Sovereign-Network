@@ -68,7 +68,7 @@ impl ConsensusEngine {
             );
         } else {
             tracing::info!(
-                "⛏️ Starting consensus loop in BOOTSTRAP MODE ({} validators, need {} for BFT) at height {}",
+                "⛏️ Starting consensus loop in BOOTSTRAP MODE ({} validators, need ≥{} for BFT) at height {}",
                 validator_count,
                 crate::types::MIN_BFT_VALIDATORS,
                 self.current_round.height
@@ -116,7 +116,7 @@ impl ConsensusEngine {
                         } else {
                             // Transitioning TO Bootstrap mode (degraded)
                             tracing::warn!(
-                                "🔄 MODE TRANSITION: BFT → Bootstrap ({} validators, need {} for BFT)",
+                                "🔄 MODE TRANSITION: BFT → Bootstrap ({} validators, need ≥{} for BFT)",
                                 validator_count,
                                 crate::types::MIN_BFT_VALIDATORS
                             );

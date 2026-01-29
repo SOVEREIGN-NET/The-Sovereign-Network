@@ -389,7 +389,7 @@ impl BlockchainComponent {
                     }
 
                     // BOOTSTRAP MODE: Direct mining allowed
-                    info!("⛏️ BOOTSTRAP MODE: {} validators (need {} for BFT)",
+                    info!("⛏️ BOOTSTRAP MODE: {} validators (need ≥{} for BFT)",
                         validator_count, Self::MIN_BFT_VALIDATORS);
                     info!("Mining check #{} - Height: {}, Pending: {}, UTXOs: {}, Identities: {}",
                         block_counter, current_height, pending_count,
