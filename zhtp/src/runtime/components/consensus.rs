@@ -8,8 +8,112 @@ use tracing::{info, warn, debug, error};
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::node_runtime::NodeRole;
 use lib_consensus::{ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorManager, NoOpBroadcaster};
+use lib_consensus::types::{MessageBroadcaster as ConsensusMessageBroadcaster, ValidatorMessage};
+use lib_crypto::Hash as IdentityId;
 use crate::monitoring::{Alert, AlertLevel, AlertManager};
+use crate::runtime::mesh_router_provider::get_global_mesh_router;
+use crate::server::mesh::core::MeshRouter;
 use lib_blockchain::Blockchain;
+
+/// Adapter that implements lib-consensus MessageBroadcaster using zhtp's MeshRouter
+///
+/// This bridges the consensus layer (which uses IdentityId) to the network layer
+/// (which uses QUIC mesh routing) for multi-node BFT consensus.
+pub struct ConsensusMeshBroadcaster {
+    mesh_router: Arc<MeshRouter>,
+}
+
+impl ConsensusMeshBroadcaster {
+    pub fn new(mesh_router: Arc<MeshRouter>) -> Self {
+        Self { mesh_router }
+    }
+}
+
+#[async_trait::async_trait]
+impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
+    async fn broadcast_to_validators(
+        &self,
+        message: ValidatorMessage,
+        _validator_ids: &[IdentityId],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Get QUIC protocol for sending
+        let quic_protocol_guard = self.mesh_router.quic_protocol.read().await;
+        let quic_protocol = match quic_protocol_guard.as_ref() {
+            Some(qp) => qp.clone(),
+            None => {
+                debug!("QUIC protocol not available for consensus broadcast");
+                return Ok(()); // Best-effort, don't fail
+            }
+        };
+        drop(quic_protocol_guard);
+
+        // Convert types::ValidatorMessage to validators::ValidatorMessage for mesh transport
+        let network_message = convert_to_network_message(&message);
+        let mesh_message = lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(network_message);
+        let message_bytes = bincode::serialize(&mesh_message)?;
+
+        // Broadcast to all connected peers
+        // Note: In production, we should filter to only validators in validator_ids,
+        // but for now we broadcast to all connected peers (validators self-filter)
+        match quic_protocol.broadcast_message(&message_bytes).await {
+            Ok(count) => {
+                info!("Consensus broadcast sent to {} peers", count);
+            }
+            Err(e) => {
+                debug!("Consensus broadcast failed: {} (continuing)", e);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Convert from lib_consensus::types::ValidatorMessage to lib_consensus::validators::ValidatorMessage
+fn convert_to_network_message(msg: &ValidatorMessage) -> lib_consensus::validators::ValidatorMessage {
+    use lib_consensus::validators::{
+        ValidatorMessage as NetworkValidatorMessage,
+        ProposeMessage, VoteMessage, ConsensusStateView, NetworkSummary,
+    };
+    use lib_consensus::types::HeartbeatMessage;
+    use std::collections::BTreeMap;
+
+    match msg {
+        ValidatorMessage::Propose { proposal } => {
+            NetworkValidatorMessage::Propose(ProposeMessage {
+                message_id: proposal.id.clone(),
+                proposer: proposal.proposer.clone(),
+                proposal: proposal.clone(),
+                justification: None,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                signature: proposal.signature.clone(),
+            })
+        }
+        ValidatorMessage::Vote { vote } => {
+            let state_view = ConsensusStateView {
+                height: vote.height,
+                round: vote.round,
+                step: lib_consensus::types::ConsensusStep::PreVote, // Default, updated on receive
+                known_proposals: vec![vote.proposal_id.clone()],
+                vote_counts: BTreeMap::new(),
+            };
+            NetworkValidatorMessage::Vote(VoteMessage {
+                message_id: vote.id.clone(),
+                voter: vote.voter.clone(),
+                vote: vote.clone(),
+                consensus_state: state_view,
+                timestamp: vote.timestamp,
+                signature: vote.signature.clone(),
+            })
+        }
+        ValidatorMessage::Heartbeat { message } => {
+            // HeartbeatMessage is the same type, just re-exported
+            NetworkValidatorMessage::Heartbeat(message.clone())
+        }
+    }
+}
 
 /// Adapter to make blockchain ValidatorInfo compatible with consensus ValidatorInfo trait
 pub struct BlockchainValidatorAdapter(pub lib_blockchain::ValidatorInfo);
@@ -265,7 +369,23 @@ impl Component for ConsensusComponent {
             info!("🛡️ Production mode: Full consensus validation required (minimum 4 validators for BFT)");
         }
 
-        let broadcaster = Arc::new(NoOpBroadcaster);
+        // Create broadcaster - use ConsensusMeshBroadcaster if mesh router is available,
+        // otherwise fall back to NoOpBroadcaster (single-node mode)
+        let broadcaster: Arc<dyn ConsensusMessageBroadcaster> =
+            match get_global_mesh_router().await {
+                Ok(mesh_router) => {
+                    info!("🌐 Mesh router available - enabling multi-node consensus broadcasting");
+                    Arc::new(ConsensusMeshBroadcaster::new(mesh_router))
+                }
+                Err(e) => {
+                    warn!(
+                        "⚠️ Mesh router not available: {} - consensus will run in single-node mode",
+                        e
+                    );
+                    Arc::new(NoOpBroadcaster)
+                }
+            };
+
         let mut consensus_engine = lib_consensus::init_consensus(config, broadcaster)?;
         let (liveness_tx, mut liveness_rx) = tokio::sync::mpsc::unbounded_channel();
         consensus_engine.set_liveness_event_sender(liveness_tx);
