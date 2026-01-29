@@ -816,6 +816,13 @@ impl Blockchain {
             }
         }
 
+        // Issue #1016: Deduct transaction fees from sender balances BEFORE updating UTXO set
+        // This ensures fees are collected at the consensus layer, not just declared
+        let block_fees = self.deduct_transaction_fees(&block)?;
+        if block_fees > 0 {
+            debug!("Collected {} in fees from block {}", block_fees, block.height());
+        }
+
         // Update blockchain state
         self.blocks.push(block.clone());
         self.height += 1;
@@ -1121,6 +1128,95 @@ impl Blockchain {
         }
 
         Ok(())
+    }
+
+    /// Deduct transaction fees from sender balances (Issue #1016)
+    ///
+    /// This method is public to allow testing and external access for fee analysis.
+    ///
+    /// For each non-system transaction in the block:
+    /// 1. Identifies the sender from tx.signature.public_key
+    /// 2. Deducts the fee from their SOV token balance
+    /// 3. Accumulates total fees for later distribution via FeeRouter
+    ///
+    /// # Arguments
+    /// * `block` - The block containing transactions to process
+    ///
+    /// # Returns
+    /// * Total fees collected from this block
+    ///
+    /// # Errors
+    /// * If SOV token contract is not found (non-fatal, logs warning)
+    /// * If sender has insufficient balance for fee (transaction should have been rejected earlier)
+    pub fn deduct_transaction_fees(&mut self, block: &Block) -> Result<u64> {
+        // Get SOV token contract ID
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+
+        // Get mutable reference to SOV token contract
+        let sov_token = match self.token_contracts.get_mut(&sov_token_id) {
+            Some(token) => token,
+            None => {
+                // SOV token not deployed yet - this is expected during bootstrap
+                debug!("SOV token contract not found, skipping fee deduction for block {}", block.height());
+                return Ok(0);
+            }
+        };
+
+        let mut total_fees: u64 = 0;
+
+        for tx in &block.transactions {
+            // Skip system transactions (empty inputs = UBI, rewards, genesis)
+            if tx.inputs.is_empty() {
+                continue;
+            }
+
+            // Skip zero-fee transactions (shouldn't exist after validation, but be safe)
+            if tx.fee == 0 {
+                continue;
+            }
+
+            // Get sender's public key from signature
+            let sender = &tx.signature.public_key;
+
+            // Check sender's balance before deduction
+            let sender_balance = sov_token.balance_of(sender);
+            if sender_balance < tx.fee {
+                // This shouldn't happen if validation is working correctly
+                warn!(
+                    "Fee deduction failed: sender {} has insufficient balance ({}) for fee ({})",
+                    hex::encode(&sender.key_id[..8]),
+                    sender_balance,
+                    tx.fee
+                );
+                // Continue processing other transactions - don't fail the block
+                continue;
+            }
+
+            // Deduct fee from sender's balance
+            // Note: We use the internal balance mutation since this is at the blockchain level
+            let new_balance = sender_balance - tx.fee;
+            sov_token.balances.insert(sender.clone(), new_balance);
+
+            total_fees = total_fees.saturating_add(tx.fee);
+
+            debug!(
+                "Fee deducted: {} from sender {} (tx: {})",
+                tx.fee,
+                hex::encode(&sender.key_id[..8]),
+                hex::encode(&tx.hash().as_bytes()[..8])
+            );
+        }
+
+        if total_fees > 0 {
+            info!(
+                "Block {} fee collection: {} total from {} transactions",
+                block.height(),
+                total_fees,
+                block.transactions.iter().filter(|tx| !tx.inputs.is_empty() && tx.fee > 0).count()
+            );
+        }
+
+        Ok(total_fees)
     }
 
     /// Calculate output ID from transaction hash and index
