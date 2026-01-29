@@ -857,6 +857,10 @@ impl ZhtpUnifiedServer {
             info!(" Global mesh router provider initialized");
         }
 
+        // Start block sync responder (serves blockchain data to peers requesting sync)
+        // This enables mesh-based blockchain synchronization for new nodes joining the network
+        crate::network_output_dispatcher::spawn_app_network_output_processor();
+
         // STEP 1: Apply network isolation to block internet access
         info!(" Applying network isolation for ISP-free mesh operation...");
         if let Err(e) = crate::config::network_isolation::initialize_network_isolation().await {
