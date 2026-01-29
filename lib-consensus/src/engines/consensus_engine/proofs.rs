@@ -67,33 +67,75 @@ impl ConsensusEngine {
 
     /// Get the hash of the previous block
     async fn get_previous_block_hash(&self) -> ConsensusResult<Hash> {
-        // In production, this would query the blockchain for the latest block hash
         if self.current_round.height == 0 {
-            // Genesis block
-            Ok(Hash([0u8; 32]))
-        } else {
-            // For demo, create deterministic previous hash based on height
-            let prev_hash_data = format!("block_{}", self.current_round.height - 1);
-            Ok(Hash::from_bytes(&hash_blake3(prev_hash_data.as_bytes())))
+            // Genesis block - no previous hash
+            return Ok(Hash([0u8; 32]));
         }
+
+        // Use blockchain provider if available
+        if let Some(ref provider) = self.blockchain_provider {
+            match provider.get_latest_block_hash().await {
+                Ok(hash) => {
+                    tracing::debug!(
+                        "Got previous block hash from blockchain: {:?}",
+                        &hash.as_bytes()[..8]
+                    );
+                    return Ok(hash);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to get block hash from blockchain provider: {} - using fallback",
+                        e
+                    );
+                }
+            }
+        }
+
+        // Fallback: deterministic hash based on height (for testing/single-node)
+        let prev_hash_data = format!("block_{}", self.current_round.height - 1);
+        Ok(Hash::from_bytes(&hash_blake3(prev_hash_data.as_bytes())))
     }
 
     /// Collect transactions for the new block
     async fn collect_block_transactions(&self) -> ConsensusResult<Vec<u8>> {
-        // In production, this would:
-        // 1. Get pending transactions from mempool
-        // 2. Validate transactions
-        // 3. Select transactions based on fees and priority
-        // 4. Create block data with transaction merkle tree
+        // Use blockchain provider if available
+        if let Some(ref provider) = self.blockchain_provider {
+            if provider.is_ready().await {
+                match provider.get_pending_transactions().await {
+                    Ok(tx_data) => {
+                        if !tx_data.is_empty() {
+                            tracing::info!(
+                                "📦 Collected {} bytes of pending transactions for block {}",
+                                tx_data.len(),
+                                self.current_round.height
+                            );
+                            return Ok(tx_data);
+                        } else {
+                            tracing::debug!(
+                                "No pending transactions for block {}",
+                                self.current_round.height
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to get pending transactions: {} - creating empty block",
+                            e
+                        );
+                    }
+                }
+            }
+        }
 
-        // For demo, create minimal block data
+        // Fallback: create minimal block data (for empty blocks or when provider unavailable)
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| ConsensusError::TimeError(e))?
             .as_secs();
 
+        // Empty block with just metadata
         let block_data = format!(
-            "block_height:{},timestamp:{},validator_count:{}",
+            "empty_block:height={},timestamp={},validators={}",
             self.current_round.height,
             timestamp,
             self.validator_manager.get_active_validators().len()
