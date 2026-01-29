@@ -2839,25 +2839,35 @@ impl Blockchain {
             .ok_or_else(|| anyhow::anyhow!("Treasury wallet not found in registry"))
     }
 
-    /// Get treasury balance from UTXOs
+    /// Get treasury balance from TokenContract (Issue #1018)
+    ///
+    /// Uses TokenContract::balance_of() as the source of truth for treasury balance.
+    /// This replaces the previous UTXO scanning approach which used a placeholder.
+    ///
+    /// The TokenContract tracks balances in a HashMap<PublicKey, u64>, which provides:
+    /// - Accurate balance tracking (not placeholder values)
+    /// - Efficient O(1) lookup
+    /// - Consistency with other balance queries in the system
     pub fn get_dao_treasury_balance(&self) -> Result<u64> {
         let treasury_wallet = self.get_dao_treasury_wallet()?;
         let treasury_pubkey = crate::integration::crypto_integration::PublicKey::new(
             treasury_wallet.public_key.clone()
         );
-        
-        // Sum all UTXOs belonging to treasury wallet
-        let mut balance = 0u64;
-        for (_utxo_id, output) in &self.utxo_set {
-            if output.recipient.as_bytes() == treasury_pubkey.as_bytes() {
-                // In a real ZK system, we'd need to decrypt the commitment
-                // For now, we track balance separately
-                // TODO: Implement proper UTXO amount extraction
-                balance += 1; // Placeholder
-            }
+
+        // Issue #1018: Use TokenContract as source of truth for treasury balance
+        // This replaces the UTXO scanning approach that used `balance += 1` placeholder
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+
+        if let Some(token) = self.token_contracts.get(&sov_token_id) {
+            Ok(token.balance_of(&treasury_pubkey))
+        } else {
+            // Token contract not initialized yet (early bootstrap)
+            // Fall back to counting UTXOs (legacy behavior, but returns 0 not placeholder)
+            tracing::debug!(
+                "SOV token contract not found, treasury balance query returning 0 during bootstrap"
+            );
+            Ok(0)
         }
-        
-        Ok(balance)
     }
 
     /// Get all UTXOs belonging to the treasury wallet
