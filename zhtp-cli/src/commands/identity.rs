@@ -13,8 +13,10 @@ use crate::output::Output;
 use crate::logic;
 
 use lib_identity::ZhtpIdentity;
-use zhtp::keystore_names::NODE_IDENTITY_FILENAME;
+use zhtp::keystore_names::{USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME};
 use std::path::PathBuf;
+
+use super::web4_utils::save_private_key_to_file;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -131,7 +133,8 @@ async fn create_identity_impl(
     };
 
     // Check if identity already exists
-    let identity_file = keystore.join(NODE_IDENTITY_FILENAME);
+    let identity_file = keystore.join(USER_IDENTITY_FILENAME);
+    let private_key_file = keystore.join(USER_PRIVATE_KEY_FILENAME);
     if identity_file.exists() {
         return Err(CliError::IdentityError(format!(
             "Identity already exists at {:?}. Use a different keystore path or delete the existing identity first.",
@@ -158,12 +161,17 @@ async fn create_identity_impl(
     output.success(&format!("DID: {}", identity.did))?;
     output.print(&format!("Identity ID: {}", identity.id))?;
 
-    // Save identity to file
+    // Extract and save private key
+    let private_key = identity.private_key.as_ref()
+        .ok_or_else(|| CliError::IdentityError("Identity missing private key".to_string()))?;
+    save_private_key_to_file(private_key, &private_key_file)?;
+
+    // Save identity to file (public data)
     let identity_json = serde_json::to_string_pretty(&identity).map_err(|e| {
         CliError::IdentityError(format!("Failed to serialize identity: {}", e))
     })?;
     std::fs::write(&identity_file, identity_json).map_err(|e| {
-        CliError::IdentityError(format!("Failed to write {}: {}", NODE_IDENTITY_FILENAME, e))
+        CliError::IdentityError(format!("Failed to write {}: {}", USER_IDENTITY_FILENAME, e))
     })?;
 
     // Set restrictive permissions on Unix
@@ -177,6 +185,7 @@ async fn create_identity_impl(
     }
 
     output.success(&format!("Identity saved to: {:?}", identity_file))?;
+    output.success(&format!("Private key saved to: {:?}", private_key_file))?;
     output.warning("Keep your identity secure! It contains cryptographic material.")?;
 
     Ok(())
@@ -195,7 +204,8 @@ async fn create_identity_with_type_impl(
     let keystore = get_default_keystore_path()?;
 
     // Check if identity already exists
-    let identity_file = keystore.join(NODE_IDENTITY_FILENAME);
+    let identity_file = keystore.join(USER_IDENTITY_FILENAME);
+    let private_key_file = keystore.join(USER_PRIVATE_KEY_FILENAME);
     if identity_file.exists() {
         return Err(CliError::IdentityError(format!(
             "Identity already exists at {:?}",
@@ -221,12 +231,17 @@ async fn create_identity_with_type_impl(
     output.success(&format!("DID: {}", identity.did))?;
     output.print(&format!("Identity Type: {}", identity_type))?;
 
-    // Save identity
+    // Extract and save private key
+    let private_key = identity.private_key.as_ref()
+        .ok_or_else(|| CliError::IdentityError("Identity missing private key".to_string()))?;
+    save_private_key_to_file(private_key, &private_key_file)?;
+
+    // Save identity (public data)
     let identity_json = serde_json::to_string_pretty(&identity).map_err(|e| {
         CliError::IdentityError(format!("Failed to serialize identity: {}", e))
     })?;
     std::fs::write(&identity_file, identity_json).map_err(|e| {
-        CliError::IdentityError(format!("Failed to write {}: {}", NODE_IDENTITY_FILENAME, e))
+        CliError::IdentityError(format!("Failed to write {}: {}", USER_IDENTITY_FILENAME, e))
     })?;
 
     #[cfg(unix)]
@@ -239,6 +254,7 @@ async fn create_identity_with_type_impl(
     }
 
     output.success(&format!("Identity saved to: {:?}", identity_file))?;
+    output.success(&format!("Private key saved to: {:?}", private_key_file))?;
 
     Ok(())
 }
