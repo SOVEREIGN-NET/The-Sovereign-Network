@@ -251,9 +251,11 @@ pub struct ConsensusEngine {
     byzantine_detector: ByzantineFaultDetector,
     /// Reward calculation system
     reward_calculator: RewardCalculator,
-    /// Fee router for fee collection integration (Week 7)
-    /// Option allows for lazy initialization
-    fee_router: Option<std::sync::Arc<std::sync::Mutex<dyn std::any::Any + Send>>>,
+    /// Fee collector for fee collection integration
+    ///
+    /// Implements the FeeCollector trait for collecting and distributing fees
+    /// during block finalization. Uses Arc<Mutex<>> for thread-safe access.
+    fee_router: Option<std::sync::Arc<std::sync::Mutex<dyn FeeCollector>>>,
     /// Message broadcaster for network distribution
     ///
     /// Invariant CE-ENG-1: ConsensusEngine never constructs, configures, or inspects
@@ -436,12 +438,15 @@ impl ConsensusEngine {
         self.validator_manager.get_active_validators().len()
     }
 
-    /// Set fee router for fee collection integration (Week 7)
+    /// Set fee collector for fee collection integration
     ///
     /// Allows the consensus engine to collect and distribute fees at block finalization.
-    /// FeeRouter must implement Send trait for thread-safe storage.
-    pub fn set_fee_router<T: std::any::Any + Send + 'static>(&mut self, fee_router: T) {
-        self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_router)));
+    /// The fee collector must implement the FeeCollector trait.
+    ///
+    /// # Arguments
+    /// * `fee_collector` - Implementation of FeeCollector trait (e.g., FeeRouter from lib-blockchain)
+    pub fn set_fee_router<T: FeeCollector + 'static>(&mut self, fee_collector: T) {
+        self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_collector)));
     }
 
     fn emit_liveness_event(&self, event: ConsensusEvent) {

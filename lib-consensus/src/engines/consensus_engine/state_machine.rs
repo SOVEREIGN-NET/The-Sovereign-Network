@@ -550,40 +550,102 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    /// Collect and distribute fees from block metadata (Week 7 integration)
+    /// Collect and distribute fees from block metadata
     ///
-    /// Called after block finalization to trigger fee collection.
+    /// Called after block finalization to trigger fee collection and distribution.
     /// Uses BlockMetadata to track fees without requiring transaction execution.
-    /// Mirrors reward distribution pattern (lines 502-505).
+    /// Mirrors reward distribution pattern.
     ///
     /// **Invariant CE-ENG-4**: Consensus correctness does NOT depend on fee collection
     /// success. Fee collection is a side-effect of block finalization, not a prerequisite.
+    ///
+    /// **Invariant FC-1**: Fee collection is a side-effect of block finalization
+    /// **Invariant FC-2**: Fee distribution follows the 45/30/15/10 split exactly
     fn collect_and_distribute_fees(&self, metadata: &BlockMetadata) -> ConsensusResult<()> {
+        // Skip if no fees to collect
+        if metadata.total_fees_collected == 0 {
+            tracing::debug!(
+                "💰 No fees to collect for block {} (genesis or empty block)",
+                metadata.height
+            );
+            return Ok(());
+        }
+
         // Log fee collection attempt
         tracing::info!(
-            " Collecting fees from block height {} (total_fees: {})",
+            "💰 Collecting fees from block height {} (total_fees: {})",
             metadata.height,
             metadata.total_fees_collected
         );
 
-        // If FeeRouter is set, notify it about fees
-        // Week 7: Stub implementation using generic dyn Any
-        // Production: Will call FeeRouter::collect_fee() and distribute()
-        if let Some(ref _fee_router_arc) = self.fee_router {
-            // TODO: Week 8 - Actually call FeeRouter methods when integration is ready
-            // For now, just log the intent
-            if metadata.total_fees_collected > 0 {
-                tracing::debug!(
-                    " Fee collection registered for height {} (amount: {})",
-                    metadata.height,
-                    metadata.total_fees_collected
+        // If FeeCollector is set, collect and distribute fees
+        if let Some(ref fee_router_arc) = self.fee_router {
+            // Lock the fee router for exclusive access
+            let mut fee_router = match fee_router_arc.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    tracing::error!(
+                        "💰 FeeCollector mutex poisoned at block {}: {}",
+                        metadata.height,
+                        poisoned
+                    );
+                    // Recover from poisoned mutex
+                    poisoned.into_inner()
+                }
+            };
+
+            // Check if fee collector is initialized
+            if !fee_router.is_initialized() {
+                tracing::warn!(
+                    "💰 FeeCollector not initialized - skipping fee collection for block {}",
+                    metadata.height
                 );
-                // TODO: Call fee_router.collect_fee(metadata.total_fees_collected)
-                // TODO: Call fee_router.distribute(height, governance, tx_hash)
+                return Ok(());
+            }
+
+            // Step 1: Collect fees
+            if let Err(e) = fee_router.collect_fee(metadata.total_fees_collected) {
+                tracing::warn!(
+                    "💰 Failed to collect fees for block {}: {}",
+                    metadata.height,
+                    e
+                );
+                // Non-critical: Continue even if collection fails
+                return Ok(());
+            }
+
+            tracing::debug!(
+                "💰 Fees collected for block {} (amount: {}, pending: {})",
+                metadata.height,
+                metadata.total_fees_collected,
+                fee_router.pending_fees()
+            );
+
+            // Step 2: Distribute fees according to 45/30/15/10 split
+            match fee_router.distribute_fees(metadata.height) {
+                Ok(distribution) => {
+                    tracing::info!(
+                        "💰 Fees distributed for block {}: UBI={} (45%), Consensus={} (30%), Governance={} (15%), Treasury={} (10%), Total={}",
+                        metadata.height,
+                        distribution.ubi_amount,
+                        distribution.consensus_amount,
+                        distribution.governance_amount,
+                        distribution.treasury_amount,
+                        distribution.total_distributed
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "💰 Failed to distribute fees for block {}: {}",
+                        metadata.height,
+                        e
+                    );
+                    // Non-critical: Fees remain pending for next distribution
+                }
             }
         } else {
             tracing::debug!(
-                " No FeeRouter configured - skipping fee collection for block {}",
+                "💰 No FeeCollector configured - skipping fee collection for block {}",
                 metadata.height
             );
         }
