@@ -390,6 +390,27 @@ impl Component for ConsensusComponent {
         let (liveness_tx, mut liveness_rx) = tokio::sync::mpsc::unbounded_channel();
         consensus_engine.set_liveness_event_sender(liveness_tx);
 
+        // Create consensus message channel for receiving ValidatorMessages from the network
+        // Channel size of 256 provides buffer for burst message handling
+        let (consensus_msg_tx, consensus_msg_rx) = tokio::sync::mpsc::channel::<ValidatorMessage>(256);
+        consensus_engine.set_message_receiver(consensus_msg_rx);
+
+        // Wire the message sender to the mesh message handler
+        if let Ok(mesh_router) = get_global_mesh_router().await {
+            if let Some(quic_protocol) = mesh_router.quic_protocol.read().await.as_ref() {
+                if let Some(handler) = quic_protocol.message_handler.as_ref() {
+                    handler.write().await.set_consensus_message_sender(consensus_msg_tx.clone());
+                    info!("🔗 Consensus message channel wired to mesh message handler");
+                } else {
+                    warn!("QUIC message handler not available - consensus messages won't be received from network");
+                }
+            } else {
+                warn!("QUIC protocol not available - consensus messages won't be received from network");
+            }
+        } else {
+            warn!("Mesh router not available - consensus messages won't be received from network");
+        }
+
         // **Start-order independent alert wiring**
         //
         // CRITICAL: Always spawn the alert receiver task, even if monitoring is not running yet.
@@ -441,12 +462,29 @@ impl Component for ConsensusComponent {
         info!("Consensus engine initialized with hybrid PoS");
         info!("Validator management ready");
         info!("Byzantine fault tolerance active");
-        
-        *self.consensus_engine.write().await = Some(consensus_engine);
-        
+
+        // Store reference to engine (for validator manager access)
+        // Note: The engine is moved into the consensus loop task
+        *self.consensus_engine.write().await = None; // Engine is now owned by the loop task
+
+        // Spawn the consensus loop as a background task
+        // This is the main BFT state machine driver
+        tokio::spawn(async move {
+            info!("🚀 Starting BFT consensus loop...");
+            match consensus_engine.run_consensus_loop().await {
+                Ok(()) => {
+                    info!("Consensus loop exited normally");
+                }
+                Err(e) => {
+                    error!("Consensus loop exited with error: {}", e);
+                }
+            }
+        });
+
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
-        
+
+        info!("🗳️ BFT consensus loop started - listening for validator messages");
         info!("Consensus component started with consensus mechanisms");
         Ok(())
     }
