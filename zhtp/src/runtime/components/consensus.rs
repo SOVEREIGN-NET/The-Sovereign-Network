@@ -152,6 +152,103 @@ impl lib_consensus::validators::ValidatorInfo for BlockchainValidatorAdapter {
     }
 }
 
+/// Shared blockchain slot that can be populated after consensus engine starts
+///
+/// This allows the consensus engine to start before the blockchain is wired,
+/// and access it once it becomes available.
+pub type SharedBlockchainSlot = Arc<RwLock<Option<Arc<RwLock<Blockchain>>>>>;
+
+/// Adapter that provides blockchain data to the consensus engine for block production
+///
+/// This bridges the consensus layer to the actual blockchain, providing:
+/// - Latest block hash for chain continuity
+/// - Pending transactions for new blocks
+/// - Current blockchain height for validation
+///
+/// Uses a shared slot pattern to handle the case where consensus starts
+/// before the blockchain is fully wired.
+pub struct ConsensusBlockchainAdapter {
+    blockchain_slot: SharedBlockchainSlot,
+}
+
+impl ConsensusBlockchainAdapter {
+    pub fn new(blockchain_slot: SharedBlockchainSlot) -> Self {
+        Self { blockchain_slot }
+    }
+}
+
+#[async_trait::async_trait]
+impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAdapter {
+    async fn get_latest_block_hash(&self) -> Result<lib_crypto::Hash, Box<dyn std::error::Error + Send + Sync>> {
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Err("Blockchain not yet available".into()),
+        };
+        drop(slot);
+
+        let blockchain = blockchain_arc.read().await;
+        if blockchain.blocks.is_empty() {
+            // No blocks yet - genesis
+            Ok(lib_crypto::Hash([0u8; 32]))
+        } else {
+            let latest_block = blockchain.blocks.last().unwrap();
+            // Convert lib_blockchain::Hash to lib_crypto::Hash
+            let block_hash = latest_block.header.hash();
+            let hash_bytes = block_hash.as_array();
+            Ok(lib_crypto::Hash(hash_bytes))
+        }
+    }
+
+    async fn get_pending_transactions(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Ok(Vec::new()), // No blockchain = no transactions
+        };
+        drop(slot);
+
+        let blockchain = blockchain_arc.read().await;
+        let pending = &blockchain.pending_transactions;
+
+        if pending.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Serialize pending transactions
+        let tx_data = bincode::serialize(pending)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+        info!("📦 Providing {} pending transactions ({} bytes) to consensus",
+            pending.len(), tx_data.len());
+
+        Ok(tx_data)
+    }
+
+    async fn get_blockchain_height(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Ok(0),
+        };
+        drop(slot);
+
+        let blockchain = blockchain_arc.read().await;
+        Ok(blockchain.height)
+    }
+
+    async fn is_ready(&self) -> bool {
+        let slot = self.blockchain_slot.read().await;
+        if let Some(blockchain_arc) = slot.as_ref() {
+            // Blockchain is wired and ready
+            if let Ok(blockchain) = blockchain_arc.try_read() {
+                return !blockchain.blocks.is_empty() || blockchain.height == 0;
+            }
+        }
+        false
+    }
+}
+
 /// Consensus component implementation using lib-consensus package
 pub struct ConsensusComponent {
     status: Arc<RwLock<ComponentStatus>>,
@@ -462,6 +559,12 @@ impl Component for ConsensusComponent {
         info!("Consensus engine initialized with hybrid PoS");
         info!("Validator management ready");
         info!("Byzantine fault tolerance active");
+
+        // Wire blockchain provider for real block data in proposals
+        // Uses the same slot that set_blockchain() populates
+        let blockchain_adapter = ConsensusBlockchainAdapter::new(self.blockchain.clone());
+        consensus_engine.set_blockchain_provider(Arc::new(blockchain_adapter));
+        info!("📦 Blockchain provider wired to consensus engine");
 
         // Store reference to engine (for validator manager access)
         // Note: The engine is moved into the consensus loop task

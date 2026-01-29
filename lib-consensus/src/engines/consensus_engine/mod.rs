@@ -277,6 +277,8 @@ pub struct ConsensusEngine {
     validator_keypair: Option<KeyPair>,
     /// Storage proof provider (lib-storage backed)
     storage_proof_provider: Option<Arc<dyn crate::proofs::StorageProofProvider>>,
+    /// Blockchain provider for block production (injected by runtime)
+    blockchain_provider: Option<Arc<dyn crate::types::ConsensusBlockchainProvider>>,
 }
 
 impl ConsensusEngine {
@@ -338,6 +340,7 @@ impl ConsensusEngine {
             liveness_check_interval: None,
             validator_keypair: None,
             storage_proof_provider: None,
+            blockchain_provider: None,
         })
     }
 
@@ -349,6 +352,17 @@ impl ConsensusEngine {
     /// Set liveness event sender for monitoring/alert bridges.
     pub fn set_liveness_event_sender(&mut self, tx: mpsc::UnboundedSender<ConsensusEvent>) {
         self.liveness_event_tx = Some(tx);
+    }
+
+    /// Set blockchain provider for block production
+    ///
+    /// The blockchain provider gives the consensus engine access to:
+    /// - Latest block hash (for chain continuity in proposals)
+    /// - Pending transactions (for block content)
+    /// - Current blockchain height (for validation)
+    pub fn set_blockchain_provider(&mut self, provider: Arc<dyn crate::types::ConsensusBlockchainProvider>) {
+        self.blockchain_provider = Some(provider);
+        tracing::info!("📦 Blockchain provider connected to consensus engine");
     }
 
     /// Set fee router for fee collection integration (Week 7)

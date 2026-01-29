@@ -448,3 +448,67 @@ pub trait MessageBroadcaster: Send + Sync {
         validator_ids: &[IdentityId],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
+
+/// Blockchain provider for consensus block production
+///
+/// Provides access to blockchain state needed for creating block proposals:
+/// - Latest block hash (for chain continuity)
+/// - Pending transactions (for block content)
+/// - Current blockchain height (for validation)
+///
+/// This trait is implemented by the runtime layer and injected into ConsensusEngine.
+/// The consensus engine never directly accesses blockchain storage.
+///
+/// # Thread Safety
+/// Implementations must be thread-safe (Send + Sync) as the consensus engine
+/// may query blockchain state from multiple async contexts.
+#[async_trait]
+pub trait ConsensusBlockchainProvider: Send + Sync {
+    /// Get the hash of the latest committed block
+    ///
+    /// Returns the hash of the block at `height - 1` when proposing for `height`.
+    /// For genesis (height 0), returns a zero hash.
+    async fn get_latest_block_hash(&self) -> Result<Hash, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Get pending transactions from the mempool
+    ///
+    /// Returns serialized transactions ready to be included in the next block.
+    /// The consensus engine includes these in the proposal's block_data field.
+    ///
+    /// # Returns
+    /// - Serialized transaction data (bincode-encoded Vec<Transaction>)
+    /// - Empty Vec if no pending transactions
+    async fn get_pending_transactions(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Get current blockchain height
+    ///
+    /// Used to validate that consensus height matches blockchain height.
+    async fn get_blockchain_height(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Check if blockchain is ready for block production
+    ///
+    /// Returns false during initialization or sync.
+    async fn is_ready(&self) -> bool;
+}
+
+/// No-op blockchain provider for testing or when blockchain is not available
+pub struct NoOpBlockchainProvider;
+
+#[async_trait]
+impl ConsensusBlockchainProvider for NoOpBlockchainProvider {
+    async fn get_latest_block_hash(&self) -> Result<Hash, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Hash([0u8; 32]))
+    }
+
+    async fn get_pending_transactions(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_blockchain_height(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(0)
+    }
+
+    async fn is_ready(&self) -> bool {
+        false
+    }
+}
