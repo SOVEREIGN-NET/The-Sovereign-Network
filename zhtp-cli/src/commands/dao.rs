@@ -3,15 +3,13 @@
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
 //! - **Pure Logic**: DAO operation validation, request body construction, API endpoint generation
-//! - **Imperative Shell**: QUIC client calls, response handling, output formatting
+//! - **Imperative Shell**: HTTP requests, response handling, output formatting
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for validation and request building
 
+use anyhow::Result;
 use crate::argument_parsing::{DaoArgs, DaoAction, ZhtpCli, format_output};
-use crate::commands::web4_utils::connect_default;
 use crate::error::{CliResult, CliError};
-use crate::output::Output;
-use lib_network::client::ZhtpClient;
 use serde_json::{json, Value};
 
 // ============================================================================
@@ -24,6 +22,7 @@ pub enum DaoOperation {
     Info,
     Propose,
     Vote,
+    ClaimUbi,
     Balance,
 }
 
@@ -34,35 +33,27 @@ impl DaoOperation {
             DaoOperation::Info => "Get DAO information",
             DaoOperation::Propose => "Create proposal",
             DaoOperation::Vote => "Vote on proposal",
+            DaoOperation::ClaimUbi => "Claim UBI",
             DaoOperation::Balance => "Get DAO treasury balance",
         }
     }
 
-    /// Get request method for this operation
-    pub fn method(&self) -> &'static str {
+    /// Get HTTP method for this operation
+    pub fn http_method(&self) -> &'static str {
         match self {
             DaoOperation::Info | DaoOperation::Balance => "GET",
-            DaoOperation::Propose | DaoOperation::Vote => "POST",
+            _ => "POST",
         }
     }
 
     /// Get endpoint path for this operation
     pub fn endpoint_path(&self) -> &'static str {
         match self {
-            DaoOperation::Info => "/api/v1/dao/data",
-            DaoOperation::Propose => "/api/v1/dao/proposal/create",
-            DaoOperation::Vote => "/api/v1/dao/vote/cast",
-            DaoOperation::Balance => "/api/v1/dao/treasury/status",
-        }
-    }
-
-    /// Get a user-friendly title for this operation
-    pub fn title(&self) -> &'static str {
-        match self {
-            DaoOperation::Info => "DAO Information",
-            DaoOperation::Propose => "Proposal Creation",
-            DaoOperation::Vote => "Vote Submission",
-            DaoOperation::Balance => "Treasury Status",
+            DaoOperation::Info => "dao/info",
+            DaoOperation::Propose => "dao/proposal/create",
+            DaoOperation::Vote => "dao/proposal/vote",
+            DaoOperation::ClaimUbi => "dao/ubi/claim",
+            DaoOperation::Balance => "dao/treasury/status",
         }
     }
 }
@@ -75,6 +66,7 @@ pub fn action_to_operation(action: &DaoAction) -> DaoOperation {
         DaoAction::Info => DaoOperation::Info,
         DaoAction::Propose { .. } => DaoOperation::Propose,
         DaoAction::Vote { .. } => DaoOperation::Vote,
+        DaoAction::ClaimUbi => DaoOperation::ClaimUbi,
         DaoAction::Balance | DaoAction::TreasuryBalance => DaoOperation::Balance,
     }
 }
@@ -134,6 +126,13 @@ pub fn validate_proposal_title(title: &str) -> CliResult<()> {
     Ok(())
 }
 
+/// Build API endpoint URL
+///
+/// Pure function - URL construction only
+pub fn build_api_url(server: &str, endpoint: &str) -> String {
+    format!("http://{}/api/v1/{}", server, endpoint)
+}
+
 /// Build request body for DAO operation
 ///
 /// Pure function - JSON construction only
@@ -156,6 +155,9 @@ pub fn build_request_body(
             "choice": choice,
             "orchestrated": true
         }),
+        DaoOperation::ClaimUbi => json!({
+            "orchestrated": true
+        }),
         DaoOperation::Balance => json!({}),
     }
 }
@@ -170,97 +172,92 @@ pub fn get_operation_message(
     choice: Option<&str>,
 ) -> String {
     match operation {
-        DaoOperation::Info => "Fetching DAO information...".to_string(),
+        DaoOperation::Info => "📋 Orchestrating DAO information request...".to_string(),
         DaoOperation::Propose => {
-            format!("Creating proposal: {}", title.unwrap_or("unknown"))
+            format!("📝 Orchestrating proposal creation: {}", title.unwrap_or("unknown"))
         }
         DaoOperation::Vote => format!(
-            "Submitting vote: {} on proposal {}",
+            "🗳️  Orchestrating vote: {} on proposal {}",
             choice.unwrap_or("unknown"),
             proposal_id.unwrap_or("unknown")
         ),
-        DaoOperation::Balance => "Fetching DAO treasury balance...".to_string(),
+        DaoOperation::ClaimUbi => "💰 Orchestrating UBI claim...".to_string(),
+        DaoOperation::Balance => "💼 Fetching DAO treasury balance...".to_string(),
     }
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - All side effects here (QUIC requests, I/O)
+// IMPERATIVE SHELL - All side effects here (HTTP requests, I/O)
 // ============================================================================
 
 /// Handle DAO command with proper error handling and output
-pub async fn handle_dao_command(args: DaoArgs, cli: &ZhtpCli) -> CliResult<()> {
-    let output = crate::output::ConsoleOutput;
-    handle_dao_command_impl(args, cli, &output).await
-}
-
-/// Internal implementation with dependency injection
-async fn handle_dao_command_impl(
-    args: DaoArgs,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    // Connect using default keystore with bootstrap mode
-    let client = connect_default(&cli.server).await?;
-
+pub async fn handle_dao_command(args: DaoArgs, cli: &ZhtpCli) -> Result<()> {
     match args.action {
         DaoAction::Info => {
             let operation = DaoOperation::Info;
-            handle_dao_operation_impl(&client, operation, None, None, None, None, cli, output).await
+            handle_dao_operation_impl(operation, None, None, None, None, cli).await
         }
         DaoAction::Propose { title, description } => {
             validate_proposal_title(&title)?;
             let operation = DaoOperation::Propose;
-            handle_dao_operation_impl(&client, operation, Some(&title), Some(&description), None, None, cli, output).await
+            handle_dao_operation_impl(operation, Some(&title), Some(&description), None, None, cli).await
         }
         DaoAction::Vote { proposal_id, choice } => {
             validate_proposal_id(&proposal_id)?;
             validate_vote_choice(&choice)?;
             let operation = DaoOperation::Vote;
-            handle_dao_operation_impl(&client, operation, None, None, Some(&proposal_id), Some(&choice), cli, output).await
+            handle_dao_operation_impl(operation, None, None, Some(&proposal_id), Some(&choice), cli).await
+        }
+        DaoAction::ClaimUbi => {
+            let operation = DaoOperation::ClaimUbi;
+            handle_dao_operation_impl(operation, None, None, None, None, cli).await
         }
         DaoAction::Balance | DaoAction::TreasuryBalance => {
             let operation = DaoOperation::Balance;
-            handle_dao_operation_impl(&client, operation, None, None, None, None, cli, output).await
+            handle_dao_operation_impl(operation, None, None, None, None, cli).await
         }
     }
 }
 
 /// Internal handler for DAO operations
 async fn handle_dao_operation_impl(
-    client: &ZhtpClient,
     operation: DaoOperation,
     title: Option<&str>,
     description: Option<&str>,
     proposal_id: Option<&str>,
     choice: Option<&str>,
     cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    output.info(&get_operation_message(operation, title, proposal_id, choice))?;
-
+) -> Result<()> {
+    let client = reqwest::Client::new();
+    let url = build_api_url(&cli.server, operation.endpoint_path());
     let request_body = build_request_body(operation, title, description, proposal_id, choice);
 
-    let response = match operation.method() {
-        "GET" => client.get(operation.endpoint_path()).await,
-        "POST" => client.post_json(operation.endpoint_path(), &request_body).await,
-        _ => client.get(operation.endpoint_path()).await,
-    }
-    .map_err(|e| CliError::ApiCallFailed {
-        endpoint: operation.endpoint_path().to_string(),
-        status: 0,
-        reason: e.to_string(),
-    })?;
+    println!("{}", get_operation_message(operation, title, proposal_id, choice));
 
-    let result: Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: operation.endpoint_path().to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
-    let formatted = format_output(&result, &cli.format)?;
-    output.header(operation.title())?;
-    output.print(&formatted)?;
-    Ok(())
+    let response = match operation {
+        DaoOperation::Info | DaoOperation::Balance => client.get(&url).send().await?,
+        DaoOperation::ClaimUbi => {
+            client
+                .post(&url)
+                .header("x-user-id", cli.user_id.as_deref().unwrap_or("anonymous"))
+                .send()
+                .await?
+        }
+        _ => client.post(&url).json(&request_body).send().await?,
+    };
+
+    if response.status().is_success() {
+        let result: Value = response.json().await?;
+        let formatted = format_output(&result, &cli.format)?;
+        println!("✓ {} orchestrated successfully!", operation.description());
+        println!("{}", formatted);
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "Failed to orchestrate DAO operation: {}",
+            response.status()
+        ))
+    }
 }
 
 // ============================================================================
@@ -299,23 +296,15 @@ mod tests {
         assert_eq!(DaoOperation::Info.description(), "Get DAO information");
         assert_eq!(DaoOperation::Propose.description(), "Create proposal");
         assert_eq!(DaoOperation::Vote.description(), "Vote on proposal");
-        assert_eq!(DaoOperation::Balance.description(), "Get DAO treasury balance");
+        assert_eq!(DaoOperation::ClaimUbi.description(), "Claim UBI");
     }
 
     #[test]
-    fn test_operation_method() {
-        assert_eq!(DaoOperation::Info.method(), "GET");
-        assert_eq!(DaoOperation::Propose.method(), "POST");
-        assert_eq!(DaoOperation::Vote.method(), "POST");
-        assert_eq!(DaoOperation::Balance.method(), "GET");
-    }
-
-    #[test]
-    fn test_operation_endpoint_path() {
-        assert_eq!(DaoOperation::Info.endpoint_path(), "/api/v1/dao/data");
-        assert_eq!(DaoOperation::Propose.endpoint_path(), "/api/v1/dao/proposal/create");
-        assert_eq!(DaoOperation::Vote.endpoint_path(), "/api/v1/dao/vote/cast");
-        assert_eq!(DaoOperation::Balance.endpoint_path(), "/api/v1/dao/treasury/status");
+    fn test_operation_http_method() {
+        assert_eq!(DaoOperation::Info.http_method(), "GET");
+        assert_eq!(DaoOperation::Propose.http_method(), "POST");
+        assert_eq!(DaoOperation::Vote.http_method(), "POST");
+        assert_eq!(DaoOperation::ClaimUbi.http_method(), "POST");
     }
 
     #[test]
@@ -354,6 +343,12 @@ mod tests {
         assert!(validate_proposal_title("").is_err());
         let long_title = "a".repeat(256);
         assert!(validate_proposal_title(&long_title).is_err());
+    }
+
+    #[test]
+    fn test_build_api_url() {
+        let url = build_api_url("localhost:9333", "dao/info");
+        assert_eq!(url, "http://localhost:9333/api/v1/dao/info");
     }
 
     #[test]
