@@ -7966,7 +7966,6 @@ dependencies = [
  "lib-protocols",
  "mime_guess",
  "regex",
- "reqwest",
  "rpassword",
  "self_update",
  "semver",

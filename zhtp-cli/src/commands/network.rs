@@ -3,14 +3,16 @@
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
 //! - **Pure Logic**: Socket address validation, ping count validation
-//! - **Imperative Shell**: HTTP client calls, UDP operations, output printing
+//! - **Imperative Shell**: QUIC client calls, UDP operations, output printing
 //! - **Error Handling**: Domain-specific CliError types
-//! - **Testability**: Traits for HTTP client and output injection
+//! - **Testability**: Traits for client and output injection
 
 use crate::argument_parsing::{NetworkArgs, NetworkAction, ZhtpCli, format_output};
+use crate::commands::web4_utils::connect_default;
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
 use crate::logic;
+use lib_network::client::ZhtpClient;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
@@ -31,14 +33,14 @@ impl NetworkEndpoint {
     /// Get the API endpoint path for this operation
     pub fn endpoint_path(&self) -> &'static str {
         match self {
-            NetworkEndpoint::Status => "network/status",
-            NetworkEndpoint::Peers => "network/peers",
-            NetworkEndpoint::Test => "network/test",
+            NetworkEndpoint::Status => "/api/v1/network/status",
+            NetworkEndpoint::Peers => "/api/v1/network/peers",
+            NetworkEndpoint::Test => "/api/v1/network/test",
         }
     }
 
-    /// Get HTTP method for this operation
-    pub fn http_method(&self) -> &'static str {
+    /// Get request method for this operation
+    pub fn method(&self) -> &'static str {
         match self {
             NetworkEndpoint::Status => "GET",
             NetworkEndpoint::Peers => "GET",
@@ -69,7 +71,7 @@ pub fn action_to_endpoint(action: &NetworkAction) -> Option<NetworkEndpoint> {
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - All side effects here (HTTP, UDP, output)
+// IMPERATIVE SHELL - All side effects here (QUIC, UDP, output)
 // ============================================================================
 
 /// Handle network command with proper error handling and output
@@ -93,9 +95,13 @@ async fn handle_network_command_impl(
         NetworkAction::Status | NetworkAction::Peers | NetworkAction::Test => {
             let endpoint = action_to_endpoint(&args.action)
                 .ok_or_else(|| CliError::NetworkError("Invalid network action".to_string()))?;
-            let client = reqwest::Client::new();
-            let base_url = format!("http://{}/api/v1", cli.server);
-            fetch_and_display_network_info(&client, &base_url, endpoint, cli, output).await
+
+            output.info(&format!("Fetching {}...", endpoint.title().to_lowercase()))?;
+
+            // Connect using default keystore with bootstrap mode
+            let client = connect_default(&cli.server).await?;
+
+            fetch_and_display_network_info(&client, endpoint, cli, output).await
         }
         NetworkAction::Ping { target, count } => {
             // Pure validation
@@ -108,55 +114,34 @@ async fn handle_network_command_impl(
     }
 }
 
-/// Fetch network information and display it
+/// Fetch network information and display it via QUIC
 async fn fetch_and_display_network_info(
-    client: &reqwest::Client,
-    base_url: &str,
+    client: &ZhtpClient,
     endpoint: NetworkEndpoint,
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    output.info(&format!("Fetching {}...", endpoint.title().to_lowercase()))?;
-
-    let url = format!("{}/{}", base_url, endpoint.endpoint_path());
-    let response = match endpoint {
-        NetworkEndpoint::Status | NetworkEndpoint::Peers => {
-            client
-                .get(&url)
-                .send()
-                .await
-                .map_err(|e| CliError::ApiCallFailed {
-                    endpoint: endpoint.endpoint_path().to_string(),
-                    status: 0,
-                    reason: e.to_string(),
-                })?
-        }
-        NetworkEndpoint::Test => {
-            client
-                .post(&url)
-                .send()
-                .await
-                .map_err(|e| CliError::ApiCallFailed {
-                    endpoint: endpoint.endpoint_path().to_string(),
-                    status: 0,
-                    reason: e.to_string(),
-                })?
-        }
-    };
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        output.header(endpoint.title())?;
-        output.print(&formatted)?;
-        Ok(())
-    } else {
-        Err(CliError::ApiCallFailed {
-            endpoint: endpoint.endpoint_path().to_string(),
-            status: response.status().as_u16(),
-            reason: format!("HTTP {}", response.status()),
-        })
+    let response = match endpoint.method() {
+        "GET" => client.get(endpoint.endpoint_path()).await,
+        "POST" => client.post_json(endpoint.endpoint_path(), &serde_json::json!({})).await,
+        _ => client.get(endpoint.endpoint_path()).await,
     }
+    .map_err(|e| CliError::ApiCallFailed {
+        endpoint: endpoint.endpoint_path().to_string(),
+        status: 0,
+        reason: e.to_string(),
+    })?;
+
+    let result: serde_json::Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: endpoint.endpoint_path().to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        })?;
+    let formatted = format_output(&result, &cli.format)?;
+    output.header(endpoint.title())?;
+    output.print(&formatted)?;
+    Ok(())
 }
 
 /// Ping a peer node directly via UDP
@@ -312,16 +297,16 @@ mod tests {
 
     #[test]
     fn test_network_endpoint_paths() {
-        assert_eq!(NetworkEndpoint::Status.endpoint_path(), "network/status");
-        assert_eq!(NetworkEndpoint::Peers.endpoint_path(), "network/peers");
-        assert_eq!(NetworkEndpoint::Test.endpoint_path(), "network/test");
+        assert_eq!(NetworkEndpoint::Status.endpoint_path(), "/api/v1/network/status");
+        assert_eq!(NetworkEndpoint::Peers.endpoint_path(), "/api/v1/network/peers");
+        assert_eq!(NetworkEndpoint::Test.endpoint_path(), "/api/v1/network/test");
     }
 
     #[test]
-    fn test_network_endpoint_http_methods() {
-        assert_eq!(NetworkEndpoint::Status.http_method(), "GET");
-        assert_eq!(NetworkEndpoint::Peers.http_method(), "GET");
-        assert_eq!(NetworkEndpoint::Test.http_method(), "POST");
+    fn test_network_endpoint_methods() {
+        assert_eq!(NetworkEndpoint::Status.method(), "GET");
+        assert_eq!(NetworkEndpoint::Peers.method(), "GET");
+        assert_eq!(NetworkEndpoint::Test.method(), "POST");
     }
 
     #[test]
