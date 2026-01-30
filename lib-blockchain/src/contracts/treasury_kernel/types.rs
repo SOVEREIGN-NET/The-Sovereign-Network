@@ -29,6 +29,9 @@ pub enum RejectionReason {
 
     /// Check 3 failed: Citizenship epoch hasn't arrived yet
     EligibilityNotMet = 5,
+
+    /// Issue #1017: Token minting failed
+    MintFailed = 6,
 }
 
 impl std::fmt::Display for RejectionReason {
@@ -39,6 +42,7 @@ impl std::fmt::Display for RejectionReason {
             Self::AlreadyClaimedEpoch => write!(f, "Already claimed this epoch"),
             Self::PoolExhausted => write!(f, "Pool exhausted"),
             Self::EligibilityNotMet => write!(f, "Eligibility not met"),
+            Self::MintFailed => write!(f, "Token minting failed"),
         }
     }
 }

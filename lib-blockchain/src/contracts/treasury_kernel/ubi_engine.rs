@@ -49,6 +49,8 @@
 use super::types::KernelState;
 use crate::contracts::UbiClaimRecorded;
 use crate::contracts::governance::CitizenRegistry;
+use crate::contracts::TokenContract;
+use crate::integration::crypto_integration::PublicKey;
 
 /// UBI Distribution Engine
 impl KernelState {
@@ -57,7 +59,7 @@ impl KernelState {
     /// Main orchestration loop that:
     /// 1. Retrieves all UbiClaimRecorded events for the epoch
     /// 2. Validates each claim against 5 checks (delegated to validation module)
-    /// 3. Attempts minting (in production)
+    /// 3. Mints tokens to recipient (Issue #1017: now actually mints!)
     /// 4. Records results (success/rejection)
     /// 5. Emits corresponding events
     ///
@@ -65,6 +67,8 @@ impl KernelState {
     /// * `claims` - All UbiClaimRecorded events for this epoch
     /// * `citizen_registry` - For eligibility checks
     /// * `current_epoch` - Current epoch
+    /// * `token` - SOV token contract for minting (optional for backward compat)
+    /// * `kernel_address` - Treasury Kernel's public key for mint authorization
     ///
     /// # Returns
     /// (successes, rejections) tuple
@@ -74,8 +78,37 @@ impl KernelState {
         citizen_registry: &CitizenRegistry,
         current_epoch: u64,
     ) -> (u64, u64) {
+        // Call the new version without token (backward compatibility)
+        self.process_ubi_claims_with_minting(claims, citizen_registry, current_epoch, None, None)
+    }
+
+    /// Process all UBI distributions with actual token minting (Issue #1017)
+    ///
+    /// This is the full implementation that actually mints tokens to recipients.
+    /// Use this method when you have access to the TokenContract.
+    ///
+    /// # Arguments
+    /// * `claims` - All UbiClaimRecorded events for this epoch
+    /// * `citizen_registry` - For eligibility checks
+    /// * `current_epoch` - Current epoch
+    /// * `token` - SOV token contract for minting (if None, only tracks distribution)
+    /// * `kernel_address` - Treasury Kernel's public key for mint authorization
+    ///
+    /// # Returns
+    /// (successes, rejections) tuple
+    pub fn process_ubi_claims_with_minting(
+        &mut self,
+        claims: &[UbiClaimRecorded],
+        citizen_registry: &CitizenRegistry,
+        current_epoch: u64,
+        mut token: Option<&mut TokenContract>,
+        kernel_address: Option<&PublicKey>,
+    ) -> (u64, u64) {
         let mut successes = 0u64;
         let mut rejections = 0u64;
+
+        // Check if we can mint (both token and kernel address available)
+        let can_mint = token.is_some() && kernel_address.is_some();
 
         for claim in claims {
             // Delegated to validation module (defined in validation.rs)
@@ -85,10 +118,60 @@ impl KernelState {
                     // Mark claimed in dedup map (should always succeed after validation)
                     match self.mark_claimed(claim.citizen_id, current_epoch) {
                         Ok(()) => {
-                            // In production, would call mint_ubi() here
-                            if let Ok(()) = self.add_distributed(current_epoch, claim.amount) {
-                                self.record_success();
-                                successes += 1;
+                            // Issue #1017: Actually mint tokens if token contract is available
+                            let mint_success = if can_mint {
+                                // Create recipient PublicKey from citizen_id
+                                // The citizen_id is used as the key_id for balance tracking
+                                //
+                                // ARCHITECTURAL NOTE: This creates a "synthetic" PublicKey with only key_id populated.
+                                // The dilithium_pk and kyber_pk fields are left empty because:
+                                // 1. TokenContract uses PublicKey as HashMap key (via PartialEq which checks all fields)
+                                // 2. CitizenRegistry currently only stores citizen_id ([u8; 32]), not full PublicKeys
+                                // 3. Balance tracking doesn't require cryptographic operations on the key
+                                //
+                                // Future improvement: Either refactor TokenContract to use key_id-only lookups,
+                                // or extend CitizenRegistry to store full PublicKeys for each citizen.
+                                // See PR#1019 review comments for discussion.
+                                let recipient = PublicKey {
+                                    dilithium_pk: vec![], // Empty - not needed for balance tracking
+                                    kyber_pk: vec![],     // Empty - not needed for balance tracking
+                                    key_id: claim.citizen_id,
+                                };
+
+                                // SAFETY: We verified token.is_some() and kernel_address.is_some() above
+                                let kernel_addr = kernel_address.unwrap();
+                                match token.as_mut().unwrap().mint_kernel_only(kernel_addr, &recipient, claim.amount) {
+                                    Ok(()) => {
+                                        tracing::debug!(
+                                            "UBI minted: {} to citizen {:?}",
+                                            claim.amount,
+                                            &claim.citizen_id[..4]
+                                        );
+                                        true
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "UBI mint failed for citizen {:?}: {}",
+                                            &claim.citizen_id[..4],
+                                            e
+                                        );
+                                        false
+                                    }
+                                }
+                            } else {
+                                // No token contract - just track distribution (backward compat)
+                                true
+                            };
+
+                            if mint_success {
+                                if let Ok(()) = self.add_distributed(current_epoch, claim.amount) {
+                                    self.record_success();
+                                    successes += 1;
+                                }
+                            } else {
+                                // Mint failed - record as rejection
+                                self.record_rejection(crate::contracts::treasury_kernel::types::RejectionReason::MintFailed);
+                                rejections += 1;
                             }
                         }
                         Err(_) => {
@@ -103,7 +186,6 @@ impl KernelState {
                     // Claim failed validation
                     self.record_rejection(reason);
                     rejections += 1;
-                    // In production, would emit_claim_rejected() here
                 }
             }
         }
@@ -128,6 +210,7 @@ impl KernelState {
 mod tests {
     use super::*;
     use crate::contracts::governance::CitizenRole;
+    use crate::contracts::TokenContract;
 
     fn create_test_claim(
         citizen_id: [u8; 32],
@@ -326,5 +409,120 @@ mod tests {
 
         assert_eq!(successes, 0);
         assert_eq!(rejections, 0);
+    }
+
+    #[test]
+    fn test_process_claim_with_actual_minting() {
+        // Issue #1017: Verify that tokens are actually minted when TokenContract is provided
+        let mut state = KernelState::new();
+        let mut registry = create_test_registry();
+
+        // Create kernel authority using PublicKey::new to derive key_id from dilithium_pk
+        let kernel_authority = PublicKey::new(vec![99u8; 32]);
+
+        // Create SOV token with kernel authority
+        let mut token = TokenContract::new_sov_with_kernel_authority(kernel_authority.clone());
+
+        // Register citizen
+        let citizen_id = [1u8; 32];
+        let citizen = CitizenRole::new(citizen_id, 100, 100);
+        registry.register(citizen).expect("register citizen");
+
+        // Verify citizen has no balance initially
+        let citizen_pubkey = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: citizen_id,
+        };
+        assert_eq!(token.balance_of(&citizen_pubkey), 0);
+
+        // Create claim
+        let ubi_amount = 1000u64;
+        let claims = vec![create_test_claim(citizen_id, 100, ubi_amount)];
+
+        // Process with minting
+        let (successes, rejections) = state.process_ubi_claims_with_minting(
+            &claims,
+            &registry,
+            100,
+            Some(&mut token),
+            Some(&kernel_authority),
+        );
+
+        // Verify results
+        assert_eq!(successes, 1, "Should have 1 success");
+        assert_eq!(rejections, 0, "Should have 0 rejections");
+
+        // Verify tokens were actually minted to citizen's balance
+        let balance_after = token.balance_of(&citizen_pubkey);
+        assert_eq!(
+            balance_after, ubi_amount,
+            "Citizen should have {} SOV after UBI mint, got {}",
+            ubi_amount, balance_after
+        );
+
+        // Verify total supply increased
+        assert_eq!(
+            token.total_supply, ubi_amount,
+            "Total supply should be {} after mint",
+            ubi_amount
+        );
+    }
+
+    #[test]
+    fn test_process_claim_minting_fails_without_authority() {
+        // Verify that minting fails gracefully when kernel authority doesn't match
+        let mut state = KernelState::new();
+        let mut registry = create_test_registry();
+
+        // Create kernel authority
+        let kernel_authority = PublicKey {
+            dilithium_pk: vec![99u8; 32],
+            kyber_pk: vec![99u8; 32],
+            key_id: [99u8; 32],
+        };
+
+        // Create different authority (wrong key)
+        let wrong_authority = PublicKey {
+            dilithium_pk: vec![88u8; 32],
+            kyber_pk: vec![88u8; 32],
+            key_id: [88u8; 32],
+        };
+
+        // Create SOV token with kernel authority
+        let mut token = TokenContract::new_sov_with_kernel_authority(kernel_authority);
+
+        // Register citizen
+        let citizen_id = [1u8; 32];
+        let citizen = CitizenRole::new(citizen_id, 100, 100);
+        registry.register(citizen).expect("register citizen");
+
+        // Create claim
+        let claims = vec![create_test_claim(citizen_id, 100, 1000)];
+
+        // Process with wrong authority - should fail mint
+        let (successes, rejections) = state.process_ubi_claims_with_minting(
+            &claims,
+            &registry,
+            100,
+            Some(&mut token),
+            Some(&wrong_authority), // Wrong authority!
+        );
+
+        // Verify mint failed
+        assert_eq!(successes, 0, "Should have 0 successes (mint failed)");
+        assert_eq!(rejections, 1, "Should have 1 rejection (MintFailed)");
+
+        // Verify no tokens were minted
+        let citizen_pubkey = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: citizen_id,
+        };
+        assert_eq!(
+            token.balance_of(&citizen_pubkey),
+            0,
+            "Citizen should have 0 balance (mint failed)"
+        );
     }
 }
