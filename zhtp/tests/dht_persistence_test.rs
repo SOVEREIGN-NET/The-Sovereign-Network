@@ -4,12 +4,12 @@
 //! with deterministic NodeIds.
 
 use anyhow::Result;
-use std::time::Duration;
-mod common;
+use lib_identity::testing::create_test_identity;
+use uuid::Uuid;
+#[path = "common_network_test.rs"]
+mod common_network_test;
 use common_network_test::{DhtEntry, DhtRoutingState, run_shared_dht_persistence_test, create_test_identities, build_dht_states, populate_dht_peers, assert_dht_peer_counts};
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(20);
-const CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[tokio::test]
 async fn test_dht_persistence_shared() -> Result<()> {
@@ -23,7 +23,7 @@ fn test_three_node_dht_bootstrap() -> Result<()> {
         ("bob-dht-001", [0xBB; 64]),
         ("charlie-dht-001", [0xCC; 64]),
     ];
-    let identities = create_test_identities(&nodes, identity_with_seed);
+    let identities = create_test_identities(&nodes, create_test_identity);
     let mut dht_states = build_dht_states(&identities, 0);
     populate_dht_peers(&mut dht_states, &identities, 0);
     assert_dht_peer_counts(&dht_states, 2);
@@ -48,7 +48,7 @@ fn test_dht_persistence_single_node_restart() -> Result<()> {
 
     let mut identities_before = Vec::new();
     for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
+        let identity = create_test_identity(device, *seed)?;
         identities_before.push(identity);
     }
 
@@ -71,7 +71,7 @@ fn test_dht_persistence_single_node_restart() -> Result<()> {
     }
 
     // Phase 3: Restart Alice (recreate with same seed)
-    let alice_restarted = identity_with_seed("alice-dht-002", [0xAA; 64])?;
+    let alice_restarted = create_test_identity("alice-dht-002", [0xAA; 64])?;
 
     // Verify Alice's NodeId is unchanged
     assert_eq!(
@@ -128,13 +128,13 @@ fn test_dht_persistence_full_network_restart() -> Result<()> {
     ];
 
     // Phase 1: Create identities and simulate first convergence
-    let identities_before = create_test_identities(&nodes, identity_with_seed);
+    let identities_before = create_test_identities(&nodes, create_test_identity);
     let mut dht_cycle_0 = build_dht_states(&identities_before, 1);
     populate_dht_peers(&mut dht_cycle_0, &identities_before, 0);
     assert_dht_peer_counts(&dht_cycle_0, 2);
 
     // Phase 2: Restart all nodes simultaneously
-    let identities_after = create_test_identities(&nodes, identity_with_seed);
+    let identities_after = create_test_identities(&nodes, create_test_identity);
     common_network_test::assert_node_id_stability(&identities_before, &identities_after);
 
     // Phase 3: Rebuild DHT tables after restart
@@ -162,12 +162,12 @@ fn test_dht_consistency_across_multiple_restart_cycles() -> Result<()> {
     ];
 
     // Create baseline identities for first cycle
-    let baseline_identities = create_test_identities(&nodes, identity_with_seed);
+    let baseline_identities = create_test_identities(&nodes, create_test_identity);
     let baseline_node_ids: Vec<_> = baseline_identities.iter().map(|id| id.node_id.clone()).collect();
 
     // Cycle through 3 restart cycles and verify consistency
     for cycle in 0..3 {
-        let identities = create_test_identities(&nodes, identity_with_seed);
+        let identities = create_test_identities(&nodes, create_test_identity);
         common_network_test::assert_node_ids_match(&identities, &baseline_node_ids, cycle);
 
         let mut dht_states = build_dht_states(&identities, cycle as u32);
@@ -191,7 +191,7 @@ fn test_dht_network_convergence_simulation() -> Result<()> {
         ("node-dht-3", [0x40; 64]),
     ];
 
-    let identities = common_network_test::create_test_identities(&nodes, identity_with_seed);
+    let identities = common_network_test::create_test_identities(&nodes, create_test_identity);
 
     let mut dht_states = identities
         .iter()
@@ -246,7 +246,7 @@ fn test_dht_persistence_metrics() -> Result<()> {
     ];
 
     // Cycle 1: Initial startup
-    let identities_c1 = create_test_identities(&nodes, identity_with_seed);
+    let identities_c1 = create_test_identities(&nodes, create_test_identity);
     let mut dht_c1 = build_dht_states(&identities_c1, 1);
     populate_dht_peers(&mut dht_c1, &identities_c1, 0);
 
@@ -254,7 +254,7 @@ fn test_dht_persistence_metrics() -> Result<()> {
     let metrics_c1: Vec<usize> = dht_c1.iter().map(|d| d.peer_count()).collect();
 
     // Cycle 2: Restart all nodes
-    let identities_c2 = create_test_identities(&nodes, identity_with_seed);
+    let identities_c2 = create_test_identities(&nodes, create_test_identity);
     common_network_test::assert_node_id_stability(&identities_c1, &identities_c2);
 
     let mut dht_c2 = build_dht_states(&identities_c2, 2);
