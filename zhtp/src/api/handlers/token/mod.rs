@@ -16,9 +16,9 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 // Blockchain imports
 use lib_blockchain::Blockchain;
-use lib_blockchain::contracts::TokenContract;
-use lib_blockchain::transaction::{Transaction, TransactionOutput};
-use lib_blockchain::types::{TransactionType, Hash};
+use lib_blockchain::transaction::Transaction;
+use lib_blockchain::contracts::utils::generate_custom_token_id;
+use lib_blockchain::types::ContractCall;
 use lib_crypto::types::keys::PublicKey;
 
 /// Helper function to create JSON responses
@@ -39,36 +39,35 @@ fn create_error_response(status: ZhtpStatus, message: String) -> ZhtpResponse {
 // Request/Response Types
 // ============================================================================
 
-/// Request to create a new token
+/// Request to submit a signed token transaction
+#[derive(Debug, Deserialize)]
+pub struct SubmitTokenTransactionRequest {
+    /// Hex-encoded bincode Transaction
+    pub signed_tx: String,
+}
+
+/// Request to create a new token (client must provide signed tx)
 #[derive(Debug, Deserialize)]
 pub struct CreateTokenRequest {
-    pub name: String,
-    pub symbol: String,
-    pub initial_supply: u64,
-    #[serde(default = "default_decimals")]
-    pub decimals: u8,
-    pub max_supply: Option<u64>,
-    // NOTE: creator_identity removed - now derived from authenticated session (request.requester)
+    pub signed_tx: String,
 }
 
-fn default_decimals() -> u8 { 8 }
-
-/// Request to mint tokens
+/// Request to mint tokens (client must provide signed tx)
 #[derive(Debug, Deserialize)]
 pub struct MintTokenRequest {
-    pub token_id: String,
-    pub amount: u64,
-    pub to: String,
-    // NOTE: creator_identity removed - authorization now verified via authenticated session (request.requester)
+    pub signed_tx: String,
 }
 
-/// Request to transfer tokens
+/// Request to transfer tokens (client must provide signed tx)
 #[derive(Debug, Deserialize)]
 pub struct TransferTokenRequest {
-    pub token_id: String,
-    // NOTE: `from` removed - source is now the authenticated caller (request.requester)
-    pub to: String,
-    pub amount: u64,
+    pub signed_tx: String,
+}
+
+/// Request to burn tokens (client must provide signed tx)
+#[derive(Debug, Deserialize)]
+pub struct BurnTokenRequest {
+    pub signed_tx: String,
 }
 
 /// Token info response
@@ -122,87 +121,63 @@ impl TokenHandler {
         let create_req: CreateTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        info!("Creating token: {} ({})", create_req.name, create_req.symbol);
-
-        // Validate inputs
-        if create_req.name.is_empty() || create_req.symbol.is_empty() {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Name and symbol are required".to_string()
-            ));
-        }
-
-        if create_req.symbol.len() > 10 {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Symbol must be 10 characters or less".to_string()
-            ));
-        }
-
-        // SECURITY FIX: Use authenticated session identity, not user-supplied value
-        let requester_hash = match &request.requester {
-            Some(hash) => hash,
-            None => {
+        let (tx, call) = match self.decode_signed_tx(&create_req.signed_tx) {
+            Ok(parsed) => parsed,
+            Err(e) => {
                 return Ok(create_error_response(
-                    ZhtpStatus::Unauthorized,
-                    "Authentication required to create tokens".to_string()
+                    ZhtpStatus::BadRequest,
+                    e.to_string(),
                 ));
             }
         };
-
-        // Convert requester hash to hex string for identity lookup
-        let requester_hex = hex::encode(requester_hash.as_bytes());
-
-        // Create creator public key from authenticated session identity
-        let creator_pubkey = self.identity_to_pubkey(&requester_hex)?;
-
-        // Create the token contract
-        let token = TokenContract::new_custom(
-            create_req.name.clone(),
-            create_req.symbol.clone(),
-            create_req.initial_supply,
-            creator_pubkey.clone(),
-        );
-
-        let token_id = token.token_id;
-        let token_id_hex = hex::encode(token_id);
-
-        // Create deployment transaction
-        let tx = self.create_token_deployment_tx(&token, &creator_pubkey)?;
-        let tx_hash = tx.hash();
-
-        // Register token and add transaction to blockchain
-        {
-            let mut blockchain = self.blockchain.write().await;
-
-            // Check if token already exists
-            if blockchain.get_token_contract(&token_id).is_some() {
-                return Ok(create_error_response(
-                    ZhtpStatus::Conflict,
-                    format!("Token with symbol {} already exists", create_req.symbol)
-                ));
-            }
-
-            // Register the token contract
-            let height = blockchain.height;
-            blockchain.register_token_contract(token_id, token, height);
-
-            // Add transaction to pending pool
-            if let Err(e) = blockchain.add_pending_transaction(tx) {
-                warn!("Failed to add token creation tx to pending pool: {}", e);
-            }
+        if let Err(e) = self.ensure_token_call(&call, "create_custom_token") {
+            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
         }
 
-        info!("Token created: {} ({}) with ID {}", create_req.name, create_req.symbol, token_id_hex);
+        // Extract params for response
+        let (name, symbol, initial_supply): (String, String, u64) =
+            match bincode::deserialize(&call.params) {
+                Ok(params) => params,
+                Err(e) => {
+                    return Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        format!("Invalid token create params: {}", e),
+                    ));
+                }
+            };
+
+        if name.is_empty() || symbol.is_empty() {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Name and symbol are required".to_string(),
+            ));
+        }
+
+        if symbol.len() > 10 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Symbol must be 10 characters or less".to_string(),
+            ));
+        }
+
+        let token_id = generate_custom_token_id(&name, &symbol);
+
+        if let Err(e) = self.submit_to_mempool(tx).await {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                e.to_string(),
+            ));
+        }
+
+        info!("Token creation submitted: {} ({})", name, symbol);
 
         create_json_response(json!({
             "success": true,
-            "token_id": token_id_hex,
-            "name": create_req.name,
-            "symbol": create_req.symbol,
-            "total_supply": create_req.initial_supply,
-            "creator": requester_hex,
-            "tx_hash": hex::encode(tx_hash.as_bytes())
+            "token_id": hex::encode(token_id),
+            "name": name,
+            "symbol": symbol,
+            "initial_supply": initial_supply,
+            "tx_status": "submitted_to_mempool"
         }))
     }
 
@@ -211,72 +186,47 @@ impl TokenHandler {
         let mint_req: MintTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let token_id = hex::decode(&mint_req.token_id)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-
-        if token_id.len() != 32 {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Token ID must be 32 bytes".to_string()
-            ));
-        }
-
-        let token_id_array: [u8; 32] = token_id.try_into().unwrap();
-
-        // SECURITY FIX: Verify caller is authenticated
-        let requester_hash = match &request.requester {
-            Some(hash) => hash,
-            None => {
+        let (tx, call) = match self.decode_signed_tx(&mint_req.signed_tx) {
+            Ok(parsed) => parsed,
+            Err(e) => {
                 return Ok(create_error_response(
-                    ZhtpStatus::Unauthorized,
-                    "Authentication required to mint tokens".to_string()
+                    ZhtpStatus::BadRequest,
+                    e.to_string(),
                 ));
             }
         };
+        if let Err(e) = self.ensure_token_call(&call, "mint") {
+            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
+        }
 
-        // Convert requester hash to hex string for identity lookup
-        let requester_hex = hex::encode(requester_hash.as_bytes());
+        // Extract params for response
+        let (token_id, to, amount): ([u8; 32], PublicKey, u64) =
+            match bincode::deserialize(&call.params) {
+                Ok(params) => params,
+                Err(e) => {
+                    return Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        format!("Invalid mint params: {}", e),
+                    ));
+                }
+            };
 
-        // Get recipient public key
-        let to_pubkey = self.identity_to_pubkey(&mint_req.to)?;
-
-        // SECURITY FIX: Use authenticated session identity for creator verification
-        let caller_pubkey = self.identity_to_pubkey(&requester_hex)?;
-
-        let mut blockchain = self.blockchain.write().await;
-
-        // Get token contract
-        let token = blockchain.get_token_contract_mut(&token_id_array)
-            .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-        // SECURITY FIX: Verify authenticated caller is the token creator
-        if token.creator != caller_pubkey {
+        if let Err(e) = self.submit_to_mempool(tx).await {
             return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "Only the token creator can mint".to_string()
+                ZhtpStatus::BadRequest,
+                e.to_string(),
             ));
         }
 
-        // Mint tokens
-        match token.mint(&to_pubkey, mint_req.amount) {
-            Ok(_) => {
-                let new_supply = token.total_supply;
-                info!("Minted {} tokens to {}", mint_req.amount, mint_req.to);
+        info!("Mint submitted for token {}", hex::encode(token_id));
 
-                create_json_response(json!({
-                    "success": true,
-                    "amount_minted": mint_req.amount,
-                    "to": mint_req.to,
-                    "new_total_supply": new_supply
-                }))
-            }
-            Err(e) => {
-                Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    format!("Mint failed: {}", e)
-                ))
-            }
-        }
+        create_json_response(json!({
+            "success": true,
+            "token_id": hex::encode(token_id),
+            "to": format!("0x{}", hex::encode(to.key_id)),
+            "amount_minted": amount,
+            "tx_status": "submitted_to_mempool"
+        }))
     }
 
     /// POST /api/v1/token/transfer - Transfer tokens
@@ -284,70 +234,91 @@ impl TokenHandler {
         let transfer_req: TransferTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        // SECURITY FIX: Require authentication - the authenticated caller is the sender
-        let requester_hash = match &request.requester {
-            Some(hash) => hash,
-            None => {
+        let (tx, call) = match self.decode_signed_tx(&transfer_req.signed_tx) {
+            Ok(parsed) => parsed,
+            Err(e) => {
                 return Ok(create_error_response(
-                    ZhtpStatus::Unauthorized,
-                    "Authentication required for transfers".to_string()
+                    ZhtpStatus::BadRequest,
+                    e.to_string(),
                 ));
             }
         };
+        if let Err(e) = self.ensure_token_call(&call, "transfer") {
+            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
+        }
 
-        // Convert requester hash to hex string for identity lookup
-        let requester_hex = hex::encode(requester_hash.as_bytes());
+        let (token_id, to, amount): ([u8; 32], PublicKey, u64) =
+            match bincode::deserialize(&call.params) {
+                Ok(params) => params,
+                Err(e) => {
+                    return Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        format!("Invalid transfer params: {}", e),
+                    ));
+                }
+            };
 
-        let token_id = hex::decode(&transfer_req.token_id)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-
-        if token_id.len() != 32 {
+        if let Err(e) = self.submit_to_mempool(tx).await {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                "Token ID must be 32 bytes".to_string()
+                e.to_string(),
             ));
         }
 
-        let token_id_array: [u8; 32] = token_id.try_into().unwrap();
-
-        // SECURITY FIX: Use authenticated session identity as sender, not user-supplied value
-        // This prevents unauthorized transfers from other accounts
-        let from_pubkey = self.identity_to_pubkey(&requester_hex)?;
-        let to_pubkey = self.identity_to_pubkey(&transfer_req.to)?;
-
-        let mut blockchain = self.blockchain.write().await;
-
-        // Get token contract
-        let token = blockchain.get_token_contract_mut(&token_id_array)
-            .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-        // Check balance
-        let from_balance = token.balance_of(&from_pubkey);
-        if from_balance < transfer_req.amount {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                format!("Insufficient balance: have {}, need {}", from_balance, transfer_req.amount)
-            ));
-        }
-
-        // Perform transfer
-        let new_from_balance = from_balance - transfer_req.amount;
-        let to_balance = token.balance_of(&to_pubkey);
-        let new_to_balance = to_balance + transfer_req.amount;
-
-        token.balances.insert(from_pubkey.clone(), new_from_balance);
-        token.balances.insert(to_pubkey.clone(), new_to_balance);
-
-        info!("Transferred {} tokens from {} to {}",
-            transfer_req.amount, requester_hex, transfer_req.to);
+        info!("Transfer submitted for token {}", hex::encode(token_id));
 
         create_json_response(json!({
             "success": true,
-            "amount": transfer_req.amount,
-            "from": requester_hex,
-            "to": transfer_req.to,
-            "from_balance": new_from_balance,
-            "to_balance": new_to_balance
+            "token_id": hex::encode(token_id),
+            "to": format!("0x{}", hex::encode(to.key_id)),
+            "amount": amount,
+            "tx_status": "submitted_to_mempool"
+        }))
+    }
+
+    /// POST /api/v1/token/burn - Burn tokens (caller burns own balance)
+    async fn handle_burn_token(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let burn_req: BurnTokenRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        let (tx, call) = match self.decode_signed_tx(&burn_req.signed_tx) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    e.to_string(),
+                ));
+            }
+        };
+        if let Err(e) = self.ensure_token_call(&call, "burn") {
+            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
+        }
+
+        let (token_id, amount): ([u8; 32], u64) =
+            match bincode::deserialize(&call.params) {
+                Ok(params) => params,
+                Err(e) => {
+                    return Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        format!("Invalid burn params: {}", e),
+                    ));
+                }
+            };
+
+        if let Err(e) = self.submit_to_mempool(tx).await {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                e.to_string(),
+            ));
+        }
+
+        info!("Burn submitted for token {}", hex::encode(token_id));
+
+        create_json_response(json!({
+            "success": true,
+            "token_id": hex::encode(token_id),
+            "amount": amount,
+            "tx_status": "submitted_to_mempool"
         }))
     }
 
@@ -414,7 +385,7 @@ impl TokenHandler {
             "token_id": token_id_hex,
             "address": address,
             "balance": balance,
-            "symbol": token.symbol
+            "symbol": token.symbol.clone()
         }))
     }
 
@@ -447,8 +418,7 @@ impl TokenHandler {
     /// Convert identity string to PublicKey
     fn identity_to_pubkey(&self, identity: &str) -> Result<PublicKey> {
         // Handle different identity formats
-        let key_id = if identity.starts_with("did:zhtp:") {
-            // Extract key_id from DID
+        let key_bytes = if identity.starts_with("did:zhtp:") {
             let hex_part = identity.strip_prefix("did:zhtp:").unwrap_or(identity);
             hex::decode(hex_part)
                 .map_err(|_| anyhow::anyhow!("Invalid DID format"))?
@@ -460,61 +430,64 @@ impl TokenHandler {
                 .map_err(|_| anyhow::anyhow!("Invalid identity format"))?
         };
 
-        if key_id.len() != 32 {
-            return Err(anyhow::anyhow!("Identity must be 32 bytes"));
+        if key_bytes.len() == 32 {
+            let mut key_id_array = [0u8; 32];
+            key_id_array.copy_from_slice(&key_bytes);
+            return Ok(PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: key_id_array,
+            });
         }
 
-        let mut key_id_array = [0u8; 32];
-        key_id_array.copy_from_slice(&key_id);
-
-        Ok(PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
-            key_id: key_id_array,
-        })
+        Ok(PublicKey::new(key_bytes))
     }
 
-    /// Create a token deployment transaction
-    fn create_token_deployment_tx(&self, token: &TokenContract, creator: &PublicKey) -> Result<Transaction> {
-        // Serialize token contract
-        let token_bytes = bincode::serialize(token)?;
+    fn decode_signed_tx(&self, signed_tx: &str) -> Result<(Transaction, ContractCall)> {
+        let tx_bytes = hex::decode(signed_tx)
+            .map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
+        let tx: Transaction = bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
 
-        // Create transaction output with serialized token
-        let output = TransactionOutput {
-            commitment: Hash::new(lib_crypto::hash_blake3(&token_bytes)),
-            note: Hash::new(token.token_id),
-            recipient: creator.clone(),
-        };
+        let call = self.extract_contract_call(&tx)?;
+        Ok((tx, call))
+    }
 
-        // Create the transaction
-        let tx = Transaction {
-            version: 1,
-            chain_id: 0x03, // testnet
-            transaction_type: TransactionType::ContractDeployment,
-            inputs: vec![], // System transaction
-            outputs: vec![output],
-            fee: 0,
-            signature: lib_crypto::types::signatures::Signature {
-                signature: vec![],
-                public_key: creator.clone(),
-                algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            },
-            memo: format!("Token deployment: {} ({})", token.name, token.symbol).into_bytes(),
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-        };
+    fn extract_contract_call(&self, tx: &Transaction) -> Result<ContractCall> {
+        if tx.transaction_type != lib_blockchain::TransactionType::ContractExecution {
+            return Err(anyhow::anyhow!("Transaction type must be ContractExecution"));
+        }
+        if tx.memo.len() <= 4 || &tx.memo[0..4] != b"ZHTP" {
+            return Err(anyhow::anyhow!("Transaction memo is missing contract call marker"));
+        }
 
-        Ok(tx)
+        let call_data = &tx.memo[4..];
+        let (call, _sig): (ContractCall, lib_crypto::types::signatures::Signature) =
+            bincode::deserialize(call_data)
+                .map_err(|e| anyhow::anyhow!("Invalid contract call data: {}", e))?;
+
+        Ok(call)
+    }
+
+    fn ensure_token_call(&self, call: &ContractCall, expected_method: &str) -> Result<()> {
+        if call.contract_type != lib_blockchain::types::ContractType::Token {
+            return Err(anyhow::anyhow!("Transaction is not a token contract call"));
+        }
+        if call.method != expected_method {
+            return Err(anyhow::anyhow!("Expected token method '{}'", expected_method));
+        }
+        if !call.permissions.requires_caller() {
+            return Err(anyhow::anyhow!("Token calls must bind a caller identity"));
+        }
+        call.validate().map_err(|e| anyhow::anyhow!(e))?;
+        Ok(())
+    }
+
+    async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {
+        let mut blockchain = self.blockchain.write().await;
+        blockchain.add_pending_transaction(tx)
+            .map_err(|e| anyhow::anyhow!("Failed to submit transaction to mempool: {}", e))?;
+        Ok(())
     }
 }
 
@@ -536,6 +509,10 @@ impl ZhtpRequestHandler for TokenHandler {
             (ZhtpMethod::Post, "/api/v1/token/transfer") => {
                 self.handle_transfer_token(request).await
             }
+            // POST /api/v1/token/burn
+            (ZhtpMethod::Post, "/api/v1/token/burn") => {
+                self.handle_burn_token(request).await
+            }
             // GET /api/v1/token/list
             (ZhtpMethod::Get, "/api/v1/token/list") => {
                 self.handle_list_tokens().await
@@ -553,8 +530,8 @@ impl ZhtpRequestHandler for TokenHandler {
             (ZhtpMethod::Get, path) if path.contains("/balance/") => {
                 let parts: Vec<&str> = path.split('/').collect();
                 // /api/v1/token/{id}/balance/{address}
-                // 0   1  2     3     4       5
-                if parts.len() >= 6 {
+                // 0   1  2     3     4       5      6
+                if parts.len() >= 7 {
                     let token_id = parts[4];
                     let address = parts.get(6).unwrap_or(&"");
                     self.handle_get_balance(token_id, address).await
@@ -587,5 +564,92 @@ impl ZhtpRequestHandler for TokenHandler {
 impl Default for TokenHandler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper to parse identity without needing full handler
+    fn parse_identity(identity: &str) -> Result<PublicKey> {
+        let key_bytes = if identity.starts_with("did:zhtp:") {
+            let hex_part = identity.strip_prefix("did:zhtp:").unwrap_or(identity);
+            hex::decode(hex_part)
+                .map_err(|_| anyhow::anyhow!("Invalid DID format"))?
+        } else if identity.starts_with("0x") {
+            hex::decode(&identity[2..])
+                .map_err(|_| anyhow::anyhow!("Invalid hex address"))?
+        } else {
+            hex::decode(identity)
+                .map_err(|_| anyhow::anyhow!("Invalid identity format"))?
+        };
+
+        if key_bytes.len() == 32 {
+            let mut key_id_array = [0u8; 32];
+            key_id_array.copy_from_slice(&key_bytes);
+            return Ok(PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: key_id_array,
+            });
+        }
+
+        Ok(PublicKey::new(key_bytes))
+    }
+
+    #[test]
+    fn test_identity_to_pubkey_did_format() {
+        let did = "did:zhtp:0102030405060708091011121314151617181920212223242526272829303132";
+        let result = parse_identity(did);
+        assert!(result.is_ok());
+        let pk = result.unwrap();
+        assert_eq!(pk.key_id[0], 0x01);
+        assert_eq!(pk.key_id[31], 0x32);
+    }
+
+    #[test]
+    fn test_identity_to_pubkey_hex_format() {
+        let hex_addr = "0x0102030405060708091011121314151617181920212223242526272829303132";
+        let result = parse_identity(hex_addr);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_identity_to_pubkey_raw_hex() {
+        let raw_hex = "0102030405060708091011121314151617181920212223242526272829303132";
+        let result = parse_identity(raw_hex);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_identity_to_pubkey_invalid() {
+        let invalid = "not-valid-hex";
+        let result = parse_identity(invalid);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_balance_path_parsing() {
+        // /api/v1/token/{id}/balance/{address}
+        // parts: ["", "api", "v1", "token", "{id}", "balance", "{address}"]
+        // indices:  0     1     2      3       4        5          6
+        let path = "/api/v1/token/abc123/balance/def456";
+        let parts: Vec<&str> = path.split('/').collect();
+
+        assert!(parts.len() >= 7);
+        assert_eq!(parts[4], "abc123");
+        assert_eq!(parts[6], "def456");
+    }
+
+    #[test]
+    fn test_balance_path_malformed_rejected() {
+        // Missing address should fail length check
+        let path = "/api/v1/token/abc123/balance";
+        let parts: Vec<&str> = path.split('/').collect();
+
+        // parts: ["", "api", "v1", "token", "abc123", "balance"]
+        // This has 6 elements, not 7
+        assert!(parts.len() < 7);
     }
 }

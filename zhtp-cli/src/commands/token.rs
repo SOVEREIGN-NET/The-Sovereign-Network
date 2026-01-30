@@ -8,57 +8,18 @@
 //! - List all tokens
 
 use crate::argument_parsing::{TokenArgs, TokenAction, ZhtpCli, format_output};
-use crate::commands::web4_utils::connect_default;
+use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
+use lib_blockchain::{ContractCall, CallPermissions, ContractTransactionBuilder, Transaction, TransactionOutput, Hash};
 use lib_network::client::ZhtpClient;
 use serde_json::json;
+use lib_crypto::keypair::KeyPair;
+use std::path::PathBuf;
 
 // ============================================================================
 // PURE LOGIC - Path builders and validation
 // ============================================================================
-
-/// Build create token request body
-/// NOTE: creator_identity removed - server uses authenticated session identity
-pub fn build_create_request(
-    name: &str,
-    symbol: &str,
-    initial_supply: u64,
-) -> serde_json::Value {
-    json!({
-        "name": name,
-        "symbol": symbol,
-        "initial_supply": initial_supply
-    })
-}
-
-/// Build mint token request body
-/// NOTE: creator_identity removed - server verifies via authenticated session
-pub fn build_mint_request(
-    token_id: &str,
-    amount: u64,
-    to: &str,
-) -> serde_json::Value {
-    json!({
-        "token_id": token_id,
-        "amount": amount,
-        "to": to
-    })
-}
-
-/// Build transfer token request body
-/// NOTE: from removed - server uses authenticated session identity as sender
-pub fn build_transfer_request(
-    token_id: &str,
-    to: &str,
-    amount: u64,
-) -> serde_json::Value {
-    json!({
-        "token_id": token_id,
-        "to": to,
-        "amount": amount
-    })
-}
 
 /// Build token info path
 pub fn build_info_path(token_id: &str) -> String {
@@ -68,6 +29,83 @@ pub fn build_info_path(token_id: &str) -> String {
 /// Build balance path
 pub fn build_balance_path(token_id: &str, address: &str) -> String {
     format!("/api/v1/token/{}/balance/{}", token_id, address)
+}
+
+fn default_keystore_path() -> CliResult<PathBuf> {
+    dirs::home_dir()
+        .map(|h| h.join(".zhtp").join("keystore"))
+        .ok_or_else(|| CliError::ConfigError("Cannot determine home directory".to_string()))
+}
+
+fn load_default_keypair() -> CliResult<KeyPair> {
+    let keystore = default_keystore_path()?;
+    let loaded = load_identity_from_keystore(&keystore)?;
+    Ok(loaded.keypair)
+}
+
+fn strip_prefix<'a>(value: &'a str) -> &'a str {
+    value.strip_prefix("0x").unwrap_or(value)
+}
+
+fn parse_token_id(token_id: &str) -> CliResult<[u8; 32]> {
+    let hex_str = strip_prefix(token_id);
+    let bytes = hex::decode(hex_str)
+        .map_err(|_| CliError::ConfigError("Invalid token_id hex".to_string()))?;
+    if bytes.len() != 32 {
+        return Err(CliError::ConfigError("Token ID must be 32 bytes".to_string()));
+    }
+    let mut id = [0u8; 32];
+    id.copy_from_slice(&bytes);
+    Ok(id)
+}
+
+fn parse_public_key(address: &str) -> CliResult<lib_crypto::PublicKey> {
+    let trimmed = address.strip_prefix("did:zhtp:").unwrap_or(address);
+    let hex_str = strip_prefix(trimmed);
+    let bytes = hex::decode(hex_str)
+        .map_err(|_| CliError::ConfigError("Invalid address hex".to_string()))?;
+
+    if bytes.len() == 32 {
+        let mut key_id = [0u8; 32];
+        key_id.copy_from_slice(&bytes);
+        return Ok(lib_crypto::PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id,
+        });
+    }
+
+    Ok(lib_crypto::PublicKey::new(bytes))
+}
+
+fn build_signed_token_tx(keypair: &KeyPair, call: ContractCall) -> CliResult<Transaction> {
+    let call_bytes = bincode::serialize(&call)
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize call: {}", e)))?;
+    let call_signature = keypair
+        .sign(&call_bytes)
+        .map_err(|e| CliError::ConfigError(format!("Failed to sign call: {}", e)))?;
+
+    let output = TransactionOutput::new(
+        Hash::from_slice(&call_bytes),
+        Hash::from_slice(b"token-call"),
+        keypair.public_key.clone(),
+    );
+
+    let mut builder = ContractTransactionBuilder::new();
+    builder.add_call(call, call_signature);
+    builder.add_output(output);
+    builder.set_fee(0);
+
+    let temp_tx = builder
+        .build(keypair)
+        .map_err(|e| CliError::ConfigError(format!("Failed to build temp tx: {}", e)))?;
+
+    let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(temp_tx.size());
+    builder.set_fee(min_fee);
+
+    builder
+        .build(keypair)
+        .map_err(|e| CliError::ConfigError(format!("Failed to build signed tx: {}", e)))
 }
 
 // ============================================================================
@@ -99,6 +137,9 @@ pub async fn handle_token_command_with_output<O: Output>(
         TokenAction::Transfer { token_id, to, amount } => {
             handle_transfer(cli, output, &token_id, &to, amount).await
         }
+        TokenAction::Burn { token_id, amount } => {
+            handle_burn(cli, output, &token_id, amount).await
+        }
         TokenAction::Info { token_id } => {
             handle_info(cli, output, &token_id).await
         }
@@ -122,11 +163,25 @@ async fn handle_create<O: Output>(
 ) -> CliResult<()> {
     output.info(&format!("Creating token: {} ({})", name, symbol))?;
     output.info(&format!("Initial supply: {}", supply))?;
-    output.info("(Creator identity will be derived from authenticated session)")?;
+    output.info("Signing token creation transaction with local keypair")?;
+
+    let keypair = load_default_keypair()?;
+
+    let params = ContractCall::serialize_params(&(name.to_string(), symbol.to_string(), supply))
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize params: {}", e)))?;
+    let call = ContractCall::new(
+        lib_blockchain::ContractType::Token,
+        "create_custom_token".to_string(),
+        params,
+        CallPermissions::restricted(keypair.public_key.clone(), Vec::new()),
+    );
+
+    let tx = build_signed_token_tx(&keypair, call)?;
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
+    let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
 
     let client = connect_default(&cli.server).await?;
-
-    let request_body = build_create_request(name, symbol, supply);
 
     let response = client
         .post_json("/api/v1/token/create", &request_body)
@@ -168,11 +223,27 @@ async fn handle_mint<O: Output>(
     to: &str,
 ) -> CliResult<()> {
     output.info(&format!("Minting {} tokens to {}", amount, to))?;
-    output.info("(Authorization will be verified via authenticated session)")?;
+    output.info("Signing mint transaction with local keypair")?;
+
+    let keypair = load_default_keypair()?;
+    let token_id_bytes = parse_token_id(token_id)?;
+    let to_pubkey = parse_public_key(to)?;
+
+    let params = ContractCall::serialize_params(&(token_id_bytes, to_pubkey, amount))
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize params: {}", e)))?;
+    let call = ContractCall::new(
+        lib_blockchain::ContractType::Token,
+        "mint".to_string(),
+        params,
+        CallPermissions::restricted(keypair.public_key.clone(), Vec::new()),
+    );
+
+    let tx = build_signed_token_tx(&keypair, call)?;
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
+    let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
 
     let client = connect_default(&cli.server).await?;
-
-    let request_body = build_mint_request(token_id, amount, to);
 
     let response = client
         .post_json("/api/v1/token/mint", &request_body)
@@ -213,11 +284,27 @@ async fn handle_transfer<O: Output>(
     amount: u64,
 ) -> CliResult<()> {
     output.info(&format!("Transferring {} tokens to {}", amount, to))?;
-    output.info("(Sender identity will be derived from authenticated session)")?;
+    output.info("Signing transfer transaction with local keypair")?;
+
+    let keypair = load_default_keypair()?;
+    let token_id_bytes = parse_token_id(token_id)?;
+    let to_pubkey = parse_public_key(to)?;
+
+    let params = ContractCall::serialize_params(&(token_id_bytes, to_pubkey, amount))
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize params: {}", e)))?;
+    let call = ContractCall::new(
+        lib_blockchain::ContractType::Token,
+        "transfer".to_string(),
+        params,
+        CallPermissions::restricted(keypair.public_key.clone(), Vec::new()),
+    );
+
+    let tx = build_signed_token_tx(&keypair, call)?;
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
+    let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
 
     let client = connect_default(&cli.server).await?;
-
-    let request_body = build_transfer_request(token_id, to, amount);
 
     let response = client
         .post_json("/api/v1/token/transfer", &request_body)
@@ -240,6 +327,64 @@ async fn handle_transfer<O: Output>(
     } else {
         let error = response_json.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
         output.error(&format!("Transfer failed: {}", error))?;
+    }
+
+    let formatted = format_output(&response_json, &cli.format)?;
+    output.print(&formatted)?;
+
+    Ok(())
+}
+
+/// Handle token burn
+async fn handle_burn<O: Output>(
+    cli: &ZhtpCli,
+    output: &O,
+    token_id: &str,
+    amount: u64,
+) -> CliResult<()> {
+    output.info(&format!("Burning {} tokens from caller", amount))?;
+    output.info("Signing burn transaction with local keypair")?;
+
+    let keypair = load_default_keypair()?;
+    let token_id_bytes = parse_token_id(token_id)?;
+
+    let params = ContractCall::serialize_params(&(token_id_bytes, amount))
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize params: {}", e)))?;
+    let call = ContractCall::new(
+        lib_blockchain::ContractType::Token,
+        "burn".to_string(),
+        params,
+        CallPermissions::restricted(keypair.public_key.clone(), Vec::new()),
+    );
+
+    let tx = build_signed_token_tx(&keypair, call)?;
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
+    let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
+
+    let client = connect_default(&cli.server).await?;
+
+    let response = client
+        .post_json("/api/v1/token/burn", &request_body)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/token/burn".to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    let response_json: serde_json::Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/token/burn".to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        })?;
+
+    if response_json.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+        output.success("Burn submitted successfully!")?;
+    } else {
+        let error = response_json.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        output.error(&format!("Burn failed: {}", error))?;
     }
 
     let formatted = format_output(&response_json, &cli.format)?;
@@ -347,4 +492,78 @@ async fn handle_list<O: Output>(
     output.print(&formatted)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_info_path() {
+        let token_id = "abc123def456";
+        let path = build_info_path(token_id);
+        assert_eq!(path, "/api/v1/token/abc123def456");
+    }
+
+    #[test]
+    fn test_build_balance_path() {
+        let token_id = "abc123";
+        let address = "0xdef456";
+        let path = build_balance_path(token_id, address);
+        assert_eq!(path, "/api/v1/token/abc123/balance/0xdef456");
+    }
+
+    #[test]
+    fn test_parse_token_id_valid() {
+        let hex_id = "0102030405060708091011121314151617181920212223242526272829303132";
+        let result = parse_token_id(hex_id);
+        assert!(result.is_ok());
+        let id = result.unwrap();
+        assert_eq!(id[0], 0x01);
+        assert_eq!(id[31], 0x32);
+    }
+
+    #[test]
+    fn test_parse_token_id_with_0x_prefix() {
+        let hex_id = "0x0102030405060708091011121314151617181920212223242526272829303132";
+        let result = parse_token_id(hex_id);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_token_id_invalid_length() {
+        let short_id = "0102030405";
+        let result = parse_token_id(short_id);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_token_id_invalid_hex() {
+        let invalid = "not-valid-hex-string-here-32-bytes";
+        let result = parse_token_id(invalid);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_public_key_did_format() {
+        let did = "did:zhtp:0102030405060708091011121314151617181920212223242526272829303132";
+        let result = parse_public_key(did);
+        assert!(result.is_ok());
+        let pk = result.unwrap();
+        assert_eq!(pk.key_id[0], 0x01);
+    }
+
+    #[test]
+    fn test_parse_public_key_0x_format() {
+        let addr = "0x0102030405060708091011121314151617181920212223242526272829303132";
+        let result = parse_public_key(addr);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_strip_prefix() {
+        assert_eq!(strip_prefix("0xabc"), "abc");
+        assert_eq!(strip_prefix("abc"), "abc");
+        assert_eq!(strip_prefix("0x"), "");
+    }
 }

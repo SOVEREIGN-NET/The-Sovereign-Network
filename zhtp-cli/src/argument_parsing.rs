@@ -1067,6 +1067,15 @@ pub enum TokenAction {
         #[arg(short, long)]
         amount: u64,
     },
+    /// Burn tokens (caller burns own balance)
+    Burn {
+        /// Token ID
+        #[arg(short, long)]
+        token_id: String,
+        /// Amount to burn
+        #[arg(short, long)]
+        amount: u64,
+    },
     /// Get token information
     Info {
         /// Token ID
