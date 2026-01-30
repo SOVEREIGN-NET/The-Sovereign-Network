@@ -89,6 +89,10 @@ pub enum CliError {
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
 
+    // HTTP/Network
+    #[error("HTTP request failed: {0}")]
+    HttpError(#[from] reqwest::Error),
+
     // Generic
     #[error("{0}")]
     Other(String),

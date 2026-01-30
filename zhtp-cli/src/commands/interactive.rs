@@ -2,13 +2,10 @@
 //!
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
-//! - **Pure Logic**: Command parsing, validation, message formatting
-//! - **Imperative Shell**: User interaction loop (placeholder - awaiting QUIC control surfaces)
+//! - **Pure Logic**: Command parsing, validation, endpoint generation, message formatting
+//! - **Imperative Shell**: HTTP requests, I/O, user interaction loop
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for command validation and parsing
-//!
-//! NOTE: This module is a placeholder. The interactive shell requires server-side
-//! QUIC control surfaces that are not yet implemented.
 
 use anyhow::Result;
 use std::io::{self, Write};
@@ -50,6 +47,28 @@ impl InteractiveCommand {
             InteractiveCommand::Exit => "Exit shell",
             InteractiveCommand::Empty => "No command",
             InteractiveCommand::Unknown => "Unknown command",
+        }
+    }
+
+    /// Get API endpoint for this command
+    pub fn endpoint(&self) -> Option<&'static str> {
+        match self {
+            InteractiveCommand::Status => Some("status"),
+            InteractiveCommand::Health => Some("monitor/health"),
+            InteractiveCommand::Components => Some("component/list"),
+            InteractiveCommand::Start => Some("component/start"),
+            InteractiveCommand::Stop => Some("component/stop"),
+            InteractiveCommand::Info => Some("component/status"),
+            _ => None,
+        }
+    }
+
+    /// Get HTTP method for this command
+    pub fn http_method(&self) -> &'static str {
+        match self {
+            InteractiveCommand::Status | InteractiveCommand::Health | InteractiveCommand::Components => "GET",
+            InteractiveCommand::Start | InteractiveCommand::Stop | InteractiveCommand::Info => "POST",
+            _ => "GET",
         }
     }
 }
@@ -130,6 +149,13 @@ pub fn validate_component_name(name: &str) -> CliResult<()> {
     Ok(())
 }
 
+/// Build API endpoint URL
+///
+/// Pure function - URL construction only
+pub fn build_api_url(server: &str, endpoint: &str) -> String {
+    format!("http://{}/api/v1/{}", server, endpoint)
+}
+
 /// Get help message
 ///
 /// Pure function - message formatting only
@@ -157,7 +183,7 @@ pub fn get_prompt() -> &'static str {
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - Placeholder awaiting server-side QUIC support
+// IMPERATIVE SHELL - All side effects here (I/O, HTTP requests)
 // ============================================================================
 
 /// Execute a component command with validation
@@ -470,9 +496,21 @@ mod tests {
     }
 
     #[test]
+    fn test_build_api_url() {
+        let url = build_api_url("localhost:9333", "status");
+        assert_eq!(url, "http://localhost:9333/api/v1/status");
+    }
+
+    #[test]
     fn test_command_description() {
         assert_eq!(InteractiveCommand::Status.description(), "Show orchestrator status");
         assert_eq!(InteractiveCommand::Exit.description(), "Exit shell");
+    }
+
+    #[test]
+    fn test_command_endpoint() {
+        assert_eq!(InteractiveCommand::Status.endpoint(), Some("status"));
+        assert_eq!(InteractiveCommand::Exit.endpoint(), None);
     }
 
     #[test]

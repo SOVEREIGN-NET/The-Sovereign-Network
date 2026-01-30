@@ -147,45 +147,6 @@ pub async fn connect_client(
     Ok(client)
 }
 
-/// Connect to ZHTP node using default keystore with bootstrap mode
-///
-/// This is a simplified connection method for commands that don't need
-/// explicit keystore/trust configuration (monitoring, status queries, etc.)
-///
-/// Uses:
-/// - Default keystore at ~/.zhtp/keystore
-/// - Bootstrap mode (no TLS verification) for development convenience
-pub async fn connect_default(server: &str) -> CliResult<ZhtpClient> {
-    // Try to find default keystore
-    let default_keystore = dirs::home_dir()
-        .map(|h| h.join(".zhtp").join("keystore"))
-        .ok_or_else(|| CliError::ConfigError("Cannot determine home directory".to_string()))?;
-
-    if !default_keystore.exists() {
-        return Err(CliError::IdentityError(format!(
-            "Default keystore not found at {:?}. Run 'zhtp-cli identity create-did <name>' first.",
-            default_keystore
-        )));
-    }
-
-    let loaded = load_identity_from_keystore(&default_keystore)?;
-    let trust_config = TrustConfig::bootstrap();
-    let config = ZhtpClientConfig {
-        allow_bootstrap: true,
-    };
-
-    let mut client = ZhtpClient::new_with_config(loaded.identity, trust_config, config)
-        .await
-        .map_err(|e| CliError::ConfigError(format!("Failed to create client: {}", e)))?;
-
-    client
-        .connect(server)
-        .await
-        .map_err(|e| CliError::ConfigError(format!("Failed to connect to {}: {}", server, e)))?;
-
-    Ok(client)
-}
-
 pub fn validate_domain(domain: &str) -> CliResult<String> {
     if domain.is_empty() {
         return Err(CliError::ConfigError("Domain cannot be empty".to_string()));
