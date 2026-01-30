@@ -3,15 +3,13 @@
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
 //! - **Pure Logic**: Component name validation, request body construction, API endpoint generation
-//! - **Imperative Shell**: QUIC client calls, response handling, output formatting
+//! - **Imperative Shell**: HTTP requests, response handling, output formatting
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for request building and validation
 
+use anyhow::Result;
 use crate::argument_parsing::{ComponentArgs, ComponentAction, ZhtpCli, format_output};
-use crate::commands::web4_utils::connect_default;
 use crate::error::{CliResult, CliError};
-use crate::output::Output;
-use lib_network::client::ZhtpClient;
 use serde_json::{json, Value};
 
 // ============================================================================
@@ -40,8 +38,8 @@ impl ComponentOperation {
         }
     }
 
-    /// Get request method for this operation
-    pub fn method(&self) -> &'static str {
+    /// Get HTTP method for this operation
+    pub fn http_method(&self) -> &'static str {
         match self {
             ComponentOperation::List => "GET",
             _ => "POST",
@@ -51,22 +49,11 @@ impl ComponentOperation {
     /// Get endpoint path for this operation
     pub fn endpoint_path(&self) -> &'static str {
         match self {
-            ComponentOperation::Start => "/api/v1/component/start",
-            ComponentOperation::Stop => "/api/v1/component/stop",
-            ComponentOperation::Status => "/api/v1/component/status",
-            ComponentOperation::Restart => "/api/v1/component/restart",
-            ComponentOperation::List => "/api/v1/component/list",
-        }
-    }
-
-    /// Get a user-friendly title for this operation
-    pub fn title(&self) -> &'static str {
-        match self {
-            ComponentOperation::Start => "Component Start",
-            ComponentOperation::Stop => "Component Stop",
-            ComponentOperation::Status => "Component Status",
-            ComponentOperation::Restart => "Component Restart",
-            ComponentOperation::List => "Component List",
+            ComponentOperation::Start => "component/start",
+            ComponentOperation::Stop => "component/stop",
+            ComponentOperation::Status => "component/status",
+            ComponentOperation::Restart => "component/restart",
+            ComponentOperation::List => "component/list",
         }
     }
 }
@@ -115,6 +102,13 @@ pub fn validate_component_name(name: &str) -> CliResult<()> {
     Ok(())
 }
 
+/// Build API endpoint URL
+///
+/// Pure function - URL construction only
+pub fn build_api_url(server: &str, endpoint: &str) -> String {
+    format!("http://{}/api/v1/{}", server, endpoint)
+}
+
 /// Build request body for component operation
 ///
 /// Pure function - JSON construction only
@@ -140,61 +134,51 @@ pub fn build_request_body(
 pub fn get_operation_message(operation: ComponentOperation, component: Option<&str>) -> String {
     match operation {
         ComponentOperation::Start => {
-            format!("Orchestrating component start: {}", component.unwrap_or("unknown"))
+            format!("▶️  Orchestrating component start: {}", component.unwrap_or("unknown"))
         }
         ComponentOperation::Stop => {
-            format!("Orchestrating component stop: {}", component.unwrap_or("unknown"))
+            format!("⏹️  Orchestrating component stop: {}", component.unwrap_or("unknown"))
         }
         ComponentOperation::Status => {
-            format!("Orchestrating component status: {}", component.unwrap_or("unknown"))
+            format!("📊 Orchestrating component status: {}", component.unwrap_or("unknown"))
         }
         ComponentOperation::Restart => {
-            format!("Orchestrating component restart: {}", component.unwrap_or("unknown"))
+            format!("🔄 Orchestrating component restart: {}", component.unwrap_or("unknown"))
         }
-        ComponentOperation::List => "Orchestrating component list...".to_string(),
+        ComponentOperation::List => "📋 Orchestrating component list...".to_string(),
     }
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - All side effects here (QUIC requests, I/O)
+// IMPERATIVE SHELL - All side effects here (HTTP requests, I/O)
 // ============================================================================
 
 /// Handle component command with proper error handling and output
-pub async fn handle_component_command(args: ComponentArgs, cli: &ZhtpCli) -> CliResult<()> {
-    let output = crate::output::ConsoleOutput;
-    handle_component_command_impl(args, cli, &output).await
-}
-
-/// Internal implementation with dependency injection
-async fn handle_component_command_impl(
-    args: ComponentArgs,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
+pub async fn handle_component_command(args: ComponentArgs, cli: &ZhtpCli) -> Result<()> {
     match args.action {
         ComponentAction::Start { name } => {
             validate_component_name(&name)?;
             let operation = ComponentOperation::Start;
-            handle_component_operation_impl(operation, Some(&name), cli, output).await
+            handle_component_operation_impl(operation, Some(&name), cli).await
         }
         ComponentAction::Stop { name } => {
             validate_component_name(&name)?;
             let operation = ComponentOperation::Stop;
-            handle_component_operation_impl(operation, Some(&name), cli, output).await
+            handle_component_operation_impl(operation, Some(&name), cli).await
         }
         ComponentAction::Status { name } => {
             validate_component_name(&name)?;
             let operation = ComponentOperation::Status;
-            handle_component_operation_impl(operation, Some(&name), cli, output).await
+            handle_component_operation_impl(operation, Some(&name), cli).await
         }
         ComponentAction::Restart { name } => {
             validate_component_name(&name)?;
             let operation = ComponentOperation::Restart;
-            handle_component_operation_impl(operation, Some(&name), cli, output).await
+            handle_component_operation_impl(operation, Some(&name), cli).await
         }
         ComponentAction::List => {
             let operation = ComponentOperation::List;
-            handle_component_operation_impl(operation, None, cli, output).await
+            handle_component_operation_impl(operation, None, cli).await
         }
     }
 }
@@ -204,47 +188,33 @@ async fn handle_component_operation_impl(
     operation: ComponentOperation,
     component_name: Option<&str>,
     cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    output.info(&get_operation_message(operation, component_name))?;
-
-    // Connect using default keystore with bootstrap mode
-    let client = connect_default(&cli.server).await?;
-
+) -> Result<()> {
+    let client = reqwest::Client::new();
+    let url = build_api_url(&cli.server, operation.endpoint_path());
     let request_body = build_request_body(operation, component_name);
 
-    fetch_and_display_component_result(&client, operation, &request_body, cli, output).await
-}
+    println!("{}", get_operation_message(operation, component_name));
 
-/// Fetch component operation result and display it via QUIC
-async fn fetch_and_display_component_result(
-    client: &ZhtpClient,
-    operation: ComponentOperation,
-    request_body: &Value,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    let response = match operation.method() {
-        "GET" => client.get(operation.endpoint_path()).await,
-        "POST" => client.post_json(operation.endpoint_path(), request_body).await,
-        _ => client.get(operation.endpoint_path()).await,
+    let response = match operation {
+        ComponentOperation::List => client.get(&url).send().await?,
+        _ => client.post(&url).json(&request_body).send().await?,
+    };
+
+    if response.status().is_success() {
+        let result: Value = response.json().await?;
+        let formatted = format_output(&result, &cli.format)?;
+        println!(
+            "✓ Component {} orchestrated:",
+            operation.endpoint_path().split('/').last().unwrap_or("unknown")
+        );
+        println!("{}", formatted);
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "Failed to orchestrate component operation: {}",
+            response.status()
+        ))
     }
-    .map_err(|e| CliError::ApiCallFailed {
-        endpoint: operation.endpoint_path().to_string(),
-        status: 0,
-        reason: e.to_string(),
-    })?;
-
-    let result: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: operation.endpoint_path().to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
-    let formatted = format_output(&result, &cli.format)?;
-    output.header(operation.title())?;
-    output.print(&formatted)?;
-    Ok(())
 }
 
 // ============================================================================
@@ -302,19 +272,19 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_method() {
-        assert_eq!(ComponentOperation::Start.method(), "POST");
-        assert_eq!(ComponentOperation::Stop.method(), "POST");
-        assert_eq!(ComponentOperation::List.method(), "GET");
+    fn test_operation_http_method() {
+        assert_eq!(ComponentOperation::Start.http_method(), "POST");
+        assert_eq!(ComponentOperation::Stop.http_method(), "POST");
+        assert_eq!(ComponentOperation::List.http_method(), "GET");
     }
 
     #[test]
     fn test_operation_endpoint_path() {
-        assert_eq!(ComponentOperation::Start.endpoint_path(), "/api/v1/component/start");
-        assert_eq!(ComponentOperation::Stop.endpoint_path(), "/api/v1/component/stop");
-        assert_eq!(ComponentOperation::Status.endpoint_path(), "/api/v1/component/status");
-        assert_eq!(ComponentOperation::Restart.endpoint_path(), "/api/v1/component/restart");
-        assert_eq!(ComponentOperation::List.endpoint_path(), "/api/v1/component/list");
+        assert_eq!(ComponentOperation::Start.endpoint_path(), "component/start");
+        assert_eq!(ComponentOperation::Stop.endpoint_path(), "component/stop");
+        assert_eq!(ComponentOperation::Status.endpoint_path(), "component/status");
+        assert_eq!(ComponentOperation::Restart.endpoint_path(), "component/restart");
+        assert_eq!(ComponentOperation::List.endpoint_path(), "component/list");
     }
 
     #[test]
@@ -341,6 +311,12 @@ mod tests {
         assert!(validate_component_name("component!").is_err());
         assert!(validate_component_name("component@1").is_err());
         assert!(validate_component_name("component/name").is_err());
+    }
+
+    #[test]
+    fn test_build_api_url() {
+        let url = build_api_url("localhost:9333", "component/start");
+        assert_eq!(url, "http://localhost:9333/api/v1/component/start");
     }
 
     #[test]

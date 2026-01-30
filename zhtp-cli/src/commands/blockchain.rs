@@ -3,15 +3,14 @@
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
 //! - **Pure Logic**: Validation, request building (pure functions)
-//! - **Imperative Shell**: QUIC client calls, output printing
+//! - **Imperative Shell**: HTTP client calls, output printing
 //! - **Error Handling**: Domain-specific CliError types
-//! - **Testability**: Traits for client and output injection
+//! - **Testability**: Traits for HTTP client and output injection
 
 use crate::argument_parsing::{BlockchainArgs, BlockchainAction, ZhtpCli, format_output};
-use crate::commands::web4_utils::connect_default;
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
-use lib_network::client::ZhtpClient;
+use serde_json::json;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -34,15 +33,18 @@ fn validate_tx_hash(tx_hash: &str) -> CliResult<()> {
     Ok(())
 }
 
-/// Build transaction lookup endpoint path
+/// Build transaction lookup request body
 ///
-/// Pure function - URL path construction
-fn build_transaction_endpoint(tx_hash: &str) -> String {
-    format!("/api/v1/blockchain/transaction/{}", tx_hash)
+/// Pure function - creates JSON request data
+fn build_transaction_request(tx_hash: &str) -> serde_json::Value {
+    json!({
+        "tx_hash": tx_hash,
+        "orchestrated": true
+    })
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - All side effects here (QUIC, output)
+// IMPERATIVE SHELL - All side effects here (HTTP, output)
 // ============================================================================
 
 /// Handle blockchain command with proper error handling and output
@@ -60,7 +62,7 @@ pub async fn handle_blockchain_command(
 ///
 /// This is the imperative shell - it:
 /// 1. Validates inputs (pure)
-/// 2. Makes QUIC requests (side effect)
+/// 2. Makes HTTP requests (side effect)
 /// 3. Formats and prints output (side effect)
 /// 4. Returns proper error types
 async fn handle_blockchain_command_impl(
@@ -68,8 +70,8 @@ async fn handle_blockchain_command_impl(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    // Connect using default keystore with bootstrap mode
-    let client = connect_default(&cli.server).await?;
+    let client = reqwest::Client::new();
+    let base_url = format!("http://{}/api/v1", cli.server);
 
     match args.action {
         BlockchainAction::Status => {
@@ -84,7 +86,7 @@ async fn handle_blockchain_command_impl(
             ).await
         }
         BlockchainAction::Transaction { tx_hash } => {
-            fetch_and_display_transaction(&client, &tx_hash, cli, output).await
+            fetch_and_display_transaction(&client, &base_url, &tx_hash, cli, output).await
         }
         BlockchainAction::Stats => {
             output.print("Collecting blockchain statistics...")?;
@@ -102,7 +104,8 @@ async fn handle_blockchain_command_impl(
 
 /// Fetch transaction details and display them
 async fn fetch_and_display_transaction(
-    client: &ZhtpClient,
+    client: &reqwest::Client,
+    base_url: &str,
     tx_hash: &str,
     cli: &ZhtpCli,
     output: &dyn Output,
@@ -129,6 +132,7 @@ async fn fetch_and_display_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::testing::MockOutput;
 
     #[test]
     fn test_validate_tx_hash_valid() {
@@ -150,15 +154,16 @@ mod tests {
     }
 
     #[test]
-    fn test_build_transaction_endpoint() {
-        let endpoint = build_transaction_endpoint("abc123def456");
-        assert_eq!(endpoint, "/api/v1/blockchain/transaction/abc123def456");
+    fn test_build_transaction_request() {
+        let req = build_transaction_request("abc123");
+        assert_eq!(req["tx_hash"], "abc123");
+        assert_eq!(req["orchestrated"], true);
     }
 
     #[tokio::test]
     async fn test_validate_tx_hash_in_handler_path() {
         // This test shows that the pure validation logic is called
-        // before making any QUIC requests
+        // before making any HTTP requests
         let hash = "";
         let result = validate_tx_hash(hash);
         assert!(result.is_err());
