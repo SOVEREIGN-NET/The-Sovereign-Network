@@ -13,12 +13,10 @@
 use anyhow::Result;
 use std::time::Duration;
 mod common;
-use common_network_test::run_shared_multi_node_network_test;
+use common_network_test::{run_shared_multi_node_network_test, create_test_identities};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 const DISCOVERY_WAIT_TIME: Duration = Duration::from_secs(2);
-
-// ...existing code...
 
 #[tokio::test]
 async fn test_multi_node_network_shared() -> Result<()> {
@@ -168,13 +166,7 @@ async fn test_three_node_restart_with_reconnection() -> Result<()> {
             .collect::<Result<_>>()?;
 
         // Verify all NodeIds remained stable
-        for i in 0..identities_before.len() {
-            assert_eq!(
-                identities_before[i].node_id, identities_after[i].node_id,
-                "NodeId {} must survive restart",
-                i
-            );
-        }
+        common_network_test::assert_node_id_stability(&identities_before, &identities_after);
 
         // Phase 3: Verify Charlie can still locate Alice and Bob
         let charlie_before = &identities_before[2];
@@ -277,15 +269,7 @@ async fn test_five_node_network_formation() -> Result<()> {
             ("node-5", [0x55; 64]),
         ];
 
-        let mut identities = Vec::new();
-
-        for (device, seed) in &nodes {
-            let identity = create_test_identity(device, *seed)?;
-            identities.push(identity);
-
-            // Simulate network propagation time
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
+        let identities = common_network_test::create_test_identities(&nodes, create_test_identity);
 
         // Verify all nodes are unique
         let mut node_ids = identities.iter().map(|id| id.node_id.clone()).collect::<Vec<_>>();
