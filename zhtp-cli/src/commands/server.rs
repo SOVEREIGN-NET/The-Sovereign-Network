@@ -1,24 +1,15 @@
 //! Server management commands for ZHTP orchestrator
 //!
-//! Architecture: Local Process Supervisor (NOT a network concern)
+//! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
-//! - **Pure Logic**: Server operation validation, message formatting
-//! - **Imperative Shell**: Local process management (placeholder - to be implemented)
+//! - **Pure Logic**: Server operation validation, endpoint construction, message formatting
+//! - **Imperative Shell**: HTTP requests, response handling, output formatting
 //! - **Error Handling**: Domain-specific CliError types
-//! - **Testability**: Pure functions for message generation
-//!
-//! NOTE: Server lifecycle management is a LOCAL concern, not a network concern.
-//! This module will manage the ZHTP server process via:
-//! - Direct process spawn/kill
-//! - systemd/launchd integration
-//! - PID file management
-//!
-//! It will NEVER use HTTP or QUIC to manage the server - you cannot call an API
-//! to start a server that isn't running, and stopping a server via its own API
-//! is architecturally unsound.
+//! - **Testability**: Pure functions for message generation and endpoint building
 
 use anyhow::Result;
-use crate::argument_parsing::{ServerArgs, ServerAction, ZhtpCli};
+use crate::argument_parsing::{ServerArgs, ServerAction, ZhtpCli, format_output};
+use serde_json::{json, Value};
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -56,6 +47,25 @@ impl ServerOperation {
             ServerOperation::Config => "⚙️",
         }
     }
+
+    /// Get HTTP method for this operation
+    pub fn http_method(&self) -> &'static str {
+        match self {
+            ServerOperation::Status | ServerOperation::Config => "GET",
+            ServerOperation::Start | ServerOperation::Stop | ServerOperation::Restart => "POST",
+        }
+    }
+
+    /// Get endpoint path for this operation
+    pub fn endpoint_path(&self) -> &'static str {
+        match self {
+            ServerOperation::Start => "server/start",
+            ServerOperation::Stop => "server/stop",
+            ServerOperation::Restart => "server/restart",
+            ServerOperation::Status => "server/status",
+            ServerOperation::Config => "server/config",
+        }
+    }
 }
 
 /// Determine operation from arguments
@@ -71,40 +81,85 @@ pub fn action_to_operation(action: &ServerAction) -> ServerOperation {
     }
 }
 
+/// Build API endpoint URL
+///
+/// Pure function - URL construction only
+pub fn build_api_url(server: &str, endpoint: &str) -> String {
+    format!("http://{}/api/v1/{}", server, endpoint)
+}
+
+/// Build request body for server operation
+///
+/// Pure function - JSON construction only
+pub fn build_request_body(operation: ServerOperation) -> Value {
+    match operation {
+        ServerOperation::Status | ServerOperation::Config => json!({}),
+        _ => json!({
+            "action": operation.endpoint_path().split('/').last().unwrap_or(""),
+            "orchestrated": true
+        }),
+    }
+}
+
 /// Get user-friendly operation message
 ///
 /// Pure function - message formatting only
 pub fn get_operation_message(operation: ServerOperation) -> String {
-    format!("{} {}", operation.emoji(), operation.description())
+    match operation {
+        ServerOperation::Start => format!("{} Starting ZHTP orchestrator server...", operation.emoji()),
+        ServerOperation::Stop => format!("{} Stopping ZHTP orchestrator server...", operation.emoji()),
+        ServerOperation::Restart => format!("{} Restarting ZHTP orchestrator server...", operation.emoji()),
+        ServerOperation::Status => format!("{} Checking ZHTP orchestrator server status...", operation.emoji()),
+        ServerOperation::Config => format!("{} Getting ZHTP orchestrator server configuration...", operation.emoji()),
+    }
+}
+
+/// Get response message for operation
+///
+/// Pure function - message formatting only
+pub fn get_response_message(operation: ServerOperation) -> String {
+    format!("Server {} orchestrated:", operation.endpoint_path().split('/').last().unwrap_or("unknown"))
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - Placeholder for local process supervisor
+// IMPERATIVE SHELL - All side effects here (HTTP requests, I/O)
 // ============================================================================
 
 /// Handle server command
-///
-/// NOTE: Server lifecycle management is not yet implemented.
-/// This will be a LOCAL process supervisor - never remote API calls.
-pub async fn handle_server_command(args: ServerArgs, _cli: &ZhtpCli) -> Result<()> {
+pub async fn handle_server_command(args: ServerArgs, cli: &ZhtpCli) -> Result<()> {
     let operation = action_to_operation(&args.action);
+    handle_server_operation_impl(operation, cli).await
+}
+
+/// Internal handler for server operations
+async fn handle_server_operation_impl(operation: ServerOperation, cli: &ZhtpCli) -> Result<()> {
+    let client = reqwest::Client::new();
+    let url = build_api_url(&cli.server, operation.endpoint_path());
+    let request_body = build_request_body(operation);
 
     println!("{}", get_operation_message(operation));
-    println!();
-    println!("Not implemented: local process supervisor pending.");
-    println!();
-    println!("Server lifecycle is a LOCAL concern, not a network concern.");
-    println!("This command will be implemented to manage the ZHTP server via:");
-    println!("  - Direct process spawn/kill");
-    println!("  - systemd/launchd service integration");
-    println!("  - PID file management");
-    println!();
-    println!("For now, manage the server directly:");
-    println!("  Start:   zhtp-cli node start");
-    println!("  Stop:    Ctrl+C or kill <pid>");
-    println!("  Status:  ps aux | grep zhtp");
 
-    Ok(())
+    let response = match operation {
+        ServerOperation::Status | ServerOperation::Config => {
+            client.get(&url).send().await?
+        }
+        _ => {
+            client.post(&url).json(&request_body).send().await?
+        }
+    };
+
+    if response.status().is_success() {
+        let result: Value = response.json().await?;
+        let formatted = format_output(&result, &cli.format)?;
+        println!("{}", get_response_message(operation));
+        println!("{}", formatted);
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "Failed to orchestrate server operation: {}",
+            response.status()
+        ))
+    }
 }
 
 // ============================================================================
@@ -159,10 +214,54 @@ mod tests {
     }
 
     #[test]
+    fn test_operation_http_method() {
+        assert_eq!(ServerOperation::Start.http_method(), "POST");
+        assert_eq!(ServerOperation::Stop.http_method(), "POST");
+        assert_eq!(ServerOperation::Restart.http_method(), "POST");
+        assert_eq!(ServerOperation::Status.http_method(), "GET");
+        assert_eq!(ServerOperation::Config.http_method(), "GET");
+    }
+
+    #[test]
+    fn test_operation_endpoint_path() {
+        assert_eq!(ServerOperation::Start.endpoint_path(), "server/start");
+        assert_eq!(ServerOperation::Stop.endpoint_path(), "server/stop");
+        assert_eq!(ServerOperation::Restart.endpoint_path(), "server/restart");
+        assert_eq!(ServerOperation::Status.endpoint_path(), "server/status");
+        assert_eq!(ServerOperation::Config.endpoint_path(), "server/config");
+    }
+
+    #[test]
+    fn test_build_api_url() {
+        let url = build_api_url("localhost:9333", "server/start");
+        assert_eq!(url, "http://localhost:9333/api/v1/server/start");
+    }
+
+    #[test]
+    fn test_build_request_body_start() {
+        let body = build_request_body(ServerOperation::Start);
+        assert_eq!(body.get("action").and_then(|v| v.as_str()), Some("start"));
+        assert_eq!(body.get("orchestrated").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn test_build_request_body_status() {
+        let body = build_request_body(ServerOperation::Status);
+        assert!(body.as_object().map(|o| o.is_empty()).unwrap_or(false));
+    }
+
+    #[test]
     fn test_get_operation_message() {
         let msg = get_operation_message(ServerOperation::Start);
-        assert!(msg.contains("Start"));
+        assert!(msg.contains("Starting"));
         assert!(msg.contains("▶️"));
+    }
+
+    #[test]
+    fn test_get_response_message() {
+        let msg = get_response_message(ServerOperation::Start);
+        assert!(msg.contains("start"));
+        assert!(msg.contains("orchestrated"));
     }
 
     #[test]
@@ -177,6 +276,8 @@ mod tests {
         for op in ops {
             assert!(!op.description().is_empty());
             assert!(!op.emoji().is_empty());
+            assert!(!op.endpoint_path().is_empty());
+            assert!(!op.http_method().is_empty());
         }
     }
 }
