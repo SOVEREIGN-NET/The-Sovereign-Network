@@ -45,6 +45,7 @@ pub mod handshake;
 pub mod identity;
 pub mod request;
 pub mod session;
+pub mod token_tx;
 mod bip39_wordlist;
 
 #[cfg(feature = "wasm")]
@@ -496,6 +497,159 @@ pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const Identity
 
     match serde_json::to_string(&zhtp_identity) {
         Ok(json) => match std::ffi::CString::new(json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Token Transaction FFI Exports
+// =============================================================================
+
+/// Build a signed token transfer transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/token/transfer
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle
+/// - token_id: 32-byte token ID
+/// - to_pubkey: Recipient's public key bytes (2592 bytes for Dilithium5)
+/// - to_pubkey_len: Length of to_pubkey
+/// - amount: Amount to transfer (in smallest units)
+/// - chain_id: Network chain ID (0x02=testnet, 0x03=development)
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_token_transfer(
+    handle: *const IdentityHandle,
+    token_id: *const u8,
+    to_pubkey: *const u8,
+    to_pubkey_len: usize,
+    amount: u64,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || token_id.is_null() || to_pubkey.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let token_id_slice = unsafe { std::slice::from_raw_parts(token_id, 32) };
+    let to_pubkey_slice = unsafe { std::slice::from_raw_parts(to_pubkey, to_pubkey_len) };
+
+    let mut token_id_arr = [0u8; 32];
+    token_id_arr.copy_from_slice(token_id_slice);
+
+    match token_tx::build_transfer_tx(identity, &token_id_arr, to_pubkey_slice, amount, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed token mint transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/token/mint
+/// Caller must free with `zhtp_client_string_free`.
+/// Note: Only the token creator can mint.
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_token_mint(
+    handle: *const IdentityHandle,
+    token_id: *const u8,
+    to_pubkey: *const u8,
+    to_pubkey_len: usize,
+    amount: u64,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || token_id.is_null() || to_pubkey.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let token_id_slice = unsafe { std::slice::from_raw_parts(token_id, 32) };
+    let to_pubkey_slice = unsafe { std::slice::from_raw_parts(to_pubkey, to_pubkey_len) };
+
+    let mut token_id_arr = [0u8; 32];
+    token_id_arr.copy_from_slice(token_id_slice);
+
+    match token_tx::build_mint_tx(identity, &token_id_arr, to_pubkey_slice, amount, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed token creation transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/token/create
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (becomes token creator)
+/// - name: Token name (null-terminated C string)
+/// - symbol: Token symbol (null-terminated C string)
+/// - initial_supply: Initial supply to mint to creator
+/// - decimals: Decimal places (e.g., 8 for 8 decimal places)
+/// - chain_id: Network chain ID
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_token_create(
+    handle: *const IdentityHandle,
+    name: *const std::ffi::c_char,
+    symbol: *const std::ffi::c_char,
+    initial_supply: u64,
+    decimals: u8,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || name.is_null() || symbol.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let name_str = unsafe {
+        match std::ffi::CStr::from_ptr(name).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let symbol_str = unsafe {
+        match std::ffi::CStr::from_ptr(symbol).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    match token_tx::build_create_token_tx(identity, name_str, symbol_str, initial_supply, decimals, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed token burn transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/token/burn
+/// Caller must free with `zhtp_client_string_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_token_burn(
+    handle: *const IdentityHandle,
+    token_id: *const u8,
+    amount: u64,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || token_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let token_id_slice = unsafe { std::slice::from_raw_parts(token_id, 32) };
+
+    let mut token_id_arr = [0u8; 32];
+    token_id_arr.copy_from_slice(token_id_slice);
+
+    match token_tx::build_burn_tx(identity, &token_id_arr, amount, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
         },
