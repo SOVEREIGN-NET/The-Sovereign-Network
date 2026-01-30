@@ -13,9 +13,6 @@ use tracing::{info, error, debug};
 use super::alerting::{Alert, AlertLevel, AlertManager};
 use crate::runtime::components::create_default_storage_config;
 
-// Import shared storage configuration from canonical location
-use crate::runtime::components::create_default_storage_config;
-
 /// storage stats from lib-storage
 struct StorageStats {
     total_storage: u64,
