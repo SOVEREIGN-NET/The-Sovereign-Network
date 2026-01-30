@@ -4,6 +4,82 @@
 //! to maintain DRY principles and ensure consistent validation behavior.
 
 use crate::error::{CliResult, CliError};
+use crate::output::Output;
+use crate::argument_parsing::format_output;
+
+/// Fetch data from API endpoint and display result
+///
+/// Generic helper to reduce duplicate API fetching code across commands.
+pub async fn fetch_and_display(
+    client: &reqwest::Client,
+    url: &str,
+    endpoint_name: &str,
+    header_text: &str,
+    format: &str,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: endpoint_name.to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        let formatted = format_output(&result, format)?;
+        output.header(header_text)?;
+        output.print(&formatted)?;
+        Ok(())
+    } else {
+        Err(CliError::ApiCallFailed {
+            endpoint: endpoint_name.to_string(),
+            status: response.status().as_u16(),
+            reason: format!("HTTP {}", response.status()),
+        })
+    }
+}
+
+/// Post data to API endpoint and display result
+///
+/// Generic helper to reduce duplicate API posting code across commands.
+pub async fn post_and_display(
+    client: &reqwest::Client,
+    url: &str,
+    body: serde_json::Value,
+    endpoint_name: &str,
+    header_text: &str,
+    format: &str,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let response = client
+        .post(url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: endpoint_name.to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        let formatted = format_output(&result, format)?;
+        output.header(header_text)?;
+        output.print(&formatted)?;
+        Ok(())
+    } else {
+        Err(CliError::ApiCallFailed {
+            endpoint: endpoint_name.to_string(),
+            status: response.status().as_u16(),
+            reason: format!("HTTP {}", response.status()),
+        })
+    }
+}
 
 /// Minimum length for a valid identity ID
 const MIN_IDENTITY_ID_LENGTH: usize = 10;

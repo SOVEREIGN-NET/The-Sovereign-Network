@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use lib_crypto::{hash_blake3, kdf::hkdf::hkdf_sha3};
-use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
+use lib_identity::{NodeId, ZhtpIdentity, testing::{create_test_identity, peer_id_from_node_id}};
 use lib_network::{
     discovery::{DiscoveryProtocol, DiscoveryResult, UnifiedDiscoveryService},
     identity::UnifiedPeerId,
@@ -10,22 +10,7 @@ use uuid::Uuid;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Device,
-        None,
-        None,
-        device,
-        Some(seed),
-    )
-}
-
-fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
-    Uuid::from_slice(&node_id.as_bytes()[..16])
-        .expect("NodeId::as_bytes() must return at least 16 bytes for UUID conversion")
-}
-
-fn derive_session_key_for_test(
+fn derive_master_key_for_test(
     uhp_session_key: &[u8; 32],
     pqc_shared_secret: &[u8; 32],
     transcript_hash: &[u8; 32],
@@ -53,8 +38,8 @@ fn node_id_remains_stable_across_restart() -> Result<()> {
     let seed = [0x11u8; 64];
     let device = "alpha-mesh-node-01";
 
-    let first = identity_with_seed(device, seed)?;
-    let second = identity_with_seed(device, seed)?;
+    let first = create_test_identity(device, seed)?;
+    let second = create_test_identity(device, seed)?;
 
     assert_eq!(first.did, second.did, "DID should be deterministic");
     assert_eq!(first.node_id, second.node_id, "NodeId should survive restart with same seed");
@@ -77,8 +62,8 @@ fn node_id_remains_stable_across_restart() -> Result<()> {
 #[test]
 fn node_id_changes_with_different_seed() -> Result<()> {
     let device = "alpha-mesh-node-01";
-    let a = identity_with_seed(device, [0x11u8; 64])?;
-    let b = identity_with_seed(device, [0x12u8; 64])?;
+    let a = create_test_identity(device, [0x11u8; 64])?;
+    let b = create_test_identity(device, [0x12u8; 64])?;
 
     assert_ne!(a.did, b.did, "Different seeds should produce different DIDs");
     assert_ne!(
@@ -92,8 +77,8 @@ fn node_id_changes_with_different_seed() -> Result<()> {
 #[test]
 fn node_id_changes_with_different_device_name() -> Result<()> {
     let seed = [0x11u8; 64];
-    let a = identity_with_seed("alpha-mesh-node-01", seed)?;
-    let b = identity_with_seed("alpha-mesh-node-02", seed)?;
+    let a = create_test_identity("alpha-mesh-node-01", seed)?;
+    let b = create_test_identity("alpha-mesh-node-02", seed)?;
 
     assert_eq!(
         a.did, b.did,
@@ -110,7 +95,7 @@ fn node_id_changes_with_different_device_name() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let local = identity_with_seed("alpha-mesh-local", [0x20u8; 64])?;
+        let local = create_test_identity("alpha-mesh-local", [0x20u8; 64])?;
         let service = UnifiedDiscoveryService::new(
             peer_id_from_node_id(&local.node_id),
             9443,
@@ -123,7 +108,7 @@ async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()
         let identities: Vec<ZhtpIdentity> = seeds
             .iter()
             .zip(devices.iter())
-            .map(|(seed, device)| identity_with_seed(device, *seed))
+            .map(|(seed, device)| create_test_identity(device, *seed))
             .collect::<Result<_>>()?;
 
         for (idx, identity) in identities.iter().enumerate() {
@@ -173,14 +158,14 @@ async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()
 #[tokio::test(flavor = "multi_thread")]
 async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let local = identity_with_seed("alpha-mesh-local", [0x30u8; 64])?;
+        let local = create_test_identity("alpha-mesh-local", [0x30u8; 64])?;
         let service = UnifiedDiscoveryService::new(
             peer_id_from_node_id(&local.node_id),
             9443,
             local.public_key.clone(),
         );
 
-        let identity = identity_with_seed("alpha-mesh-peer", [0x31u8; 64])?;
+        let identity = create_test_identity("alpha-mesh-peer", [0x31u8; 64])?;
         let peer_id = peer_id_from_node_id(&identity.node_id);
 
         let addr_a: SocketAddr = "192.0.2.10:9443".parse().unwrap(); // RFC 5737
@@ -217,7 +202,7 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
 
         // If a different key appears later for the same peer_id, the discovery cache should not
         // overwrite an existing verified public key.
-        let other_identity = identity_with_seed("alpha-mesh-peer-rotated", [0x32u8; 64])?;
+        let other_identity = create_test_identity("alpha-mesh-peer-rotated", [0x32u8; 64])?;
         let mut key_rotation_attempt =
             DiscoveryResult::new(peer_id, addr_b, DiscoveryProtocol::UdpMulticast, 9443);
         key_rotation_attempt.public_key = Some(other_identity.public_key.clone());
@@ -248,14 +233,14 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
 #[tokio::test(flavor = "multi_thread")]
 async fn mesh_discovery_concurrent_duplicate_registration_is_consistent() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let local = identity_with_seed("alpha-mesh-local", [0x40u8; 64])?;
+        let local = create_test_identity("alpha-mesh-local", [0x40u8; 64])?;
         let service = Arc::new(UnifiedDiscoveryService::new(
             peer_id_from_node_id(&local.node_id),
             9443,
             local.public_key.clone(),
         ));
 
-        let identity = identity_with_seed("alpha-mesh-peer", [0x41u8; 64])?;
+        let identity = create_test_identity("alpha-mesh-peer", [0x41u8; 64])?;
         let peer_id = peer_id_from_node_id(&identity.node_id);
 
         let addr_a: SocketAddr = "198.51.100.10:9443".parse().unwrap(); // RFC 5737
@@ -303,9 +288,9 @@ fn quic_session_key_is_bound_to_node_id() -> Result<()> {
     // This tests both stability (same seed on restart) and differentiation (different seeds)
     let device = "alpha-mesh-node-02";
     let same_device_seed = [0x33u8; 64];
-    let identity = identity_with_seed(device, same_device_seed)?;
-    let restarted_identity = identity_with_seed(device, same_device_seed)?;
-    let other_peer = identity_with_seed("alpha-mesh-node-03", [0x34u8; 64])?;
+    let identity = create_test_identity(device, same_device_seed)?;
+    let restarted_identity = create_test_identity(device, same_device_seed)?;
+    let other_peer = create_test_identity("alpha-mesh-node-03", [0x34u8; 64])?;
 
     // Fixed test vectors for QUIC session key derivation (deterministic, realistic handshake outputs).
     let uhp_session_key: [u8; 32] = [

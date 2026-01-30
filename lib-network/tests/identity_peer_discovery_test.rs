@@ -4,25 +4,14 @@
 //! and that all discovered peers have deterministic, validated NodeIds.
 
 use anyhow::Result;
-use lib_identity::{ZhtpIdentity, IdentityType, NodeId};
+use lib_identity::{IdentityType, ZhtpIdentity, NodeId, testing::create_human_identity};
 use lib_network::bootstrap::peer_discovery::PeerInfo;
-
-/// Helper to create test identity with optional fixed seed for determinism
-fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Human,
-        Some(25),
-        Some("US".to_string()),
-        device,
-        seed,
-    )
-}
 
 #[tokio::test]
 async fn test_deterministic_node_id_from_identity() -> Result<()> {
     // Create identity with fixed seed for determinism
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed))?;
+    let identity = create_human_identity("laptop", Some(seed))?;
     
     // Verify NodeId is deterministic from seed
     let expected_node_id = NodeId::from_did_device(&identity.did, "laptop")?;
@@ -33,7 +22,7 @@ async fn test_deterministic_node_id_from_identity() -> Result<()> {
     );
     
     // Create second identity with same seed
-    let identity2 = create_test_identity("laptop", Some(seed))?;
+    let identity2 = create_human_identity("laptop", Some(seed))?;
     
     // Both should have identical DID and NodeId
     assert_eq!(
@@ -59,8 +48,8 @@ async fn test_different_seeds_produce_different_node_ids() -> Result<()> {
     let seed1 = [0x42u8; 64];
     let seed2 = [0x43u8; 64];
     
-    let identity1 = create_test_identity("laptop", Some(seed1))?;
-    let identity2 = create_test_identity("laptop", Some(seed2))?;
+    let identity1 = create_human_identity("laptop", Some(seed1))?;
+    let identity2 = create_human_identity("laptop", Some(seed2))?;
     
     // Different seeds should produce different DIDs
     assert_ne!(
@@ -90,10 +79,10 @@ async fn test_multi_device_same_identity() -> Result<()> {
     let seed = [0x42u8; 64];
     
     // Create identity on laptop
-    let laptop = create_test_identity("laptop", Some(seed))?;
+    let laptop = create_human_identity("laptop", Some(seed))?;
     
     // Create identity on phone (same seed, different device)
-    let phone = create_test_identity("phone", Some(seed))?;
+    let phone = create_human_identity("phone", Some(seed))?;
     
     // Same seed produces same DID
     assert_eq!(
@@ -126,7 +115,7 @@ async fn test_multi_device_same_identity() -> Result<()> {
 
 #[tokio::test]
 async fn test_node_id_validation() -> Result<()> {
-    let identity = create_test_identity("laptop", None)?;
+    let identity = create_human_identity("laptop", None)?;
     
     // Create valid PeerInfo with matching NodeId
     let valid_peer = PeerInfo {
@@ -177,7 +166,7 @@ async fn test_node_id_validation() -> Result<()> {
 
 #[tokio::test]
 async fn test_node_id_validation_missing() -> Result<()> {
-    let identity = create_test_identity("laptop", None)?;
+    let identity = create_human_identity("laptop", None)?;
     
     // Create PeerInfo without NodeId
     let peer_without_node_id = PeerInfo {
@@ -205,7 +194,7 @@ async fn test_node_id_validation_missing() -> Result<()> {
 
 #[tokio::test]
 async fn test_node_id_hex_roundtrip() -> Result<()> {
-    let identity = create_test_identity("laptop", None)?;
+    let identity = create_human_identity("laptop", None)?;
     
     // Convert NodeId to hex
     let hex = identity.node_id.to_hex();
@@ -231,7 +220,7 @@ async fn test_node_id_determinism_golden_vector() -> Result<()> {
     let seed = [0x42u8; 64];
     
     // Create identity with known parameters
-    let identity = create_test_identity("test-device", Some(seed))?;
+    let identity = create_human_identity("test-device", Some(seed))?;
     
     // Verify DID is deterministic
     let expected_did_hash = lib_crypto::hash_blake3(&[&seed[..], b"ZHTP_DID_V1"].concat());
@@ -257,9 +246,9 @@ async fn test_node_id_case_insensitivity() -> Result<()> {
     let seed = [0x42u8; 64];
     
     // Create identities with different device name casing
-    let lowercase = create_test_identity("laptop", Some(seed))?;
-    let uppercase = create_test_identity("LAPTOP", Some(seed))?;
-    let mixed = create_test_identity("LapTop", Some(seed))?;
+    let lowercase = create_human_identity("laptop", Some(seed))?;
+    let uppercase = create_human_identity("LAPTOP", Some(seed))?;
+    let mixed = create_human_identity("LapTop", Some(seed))?;
     
     // All should normalize to same NodeId
     assert_eq!(
@@ -362,7 +351,7 @@ async fn test_identity_types_all_support_node_id() -> Result<()> {
 
 #[tokio::test]
 async fn test_node_id_storage_hash_conversion() -> Result<()> {
-    let identity = create_test_identity("laptop", None)?;
+    let identity = create_human_identity("laptop", None)?;
     
     // Convert to storage hash
     let storage_hash = identity.node_id.to_storage_hash();
@@ -383,8 +372,8 @@ async fn test_node_id_storage_hash_conversion() -> Result<()> {
 
 #[tokio::test]
 async fn test_node_id_xor_distance() -> Result<()> {
-    let identity1 = create_test_identity("laptop", None)?;
-    let identity2 = create_test_identity("phone", None)?;
+    let identity1 = create_human_identity("laptop", None)?;
+    let identity2 = create_human_identity("phone", None)?;
     
     // Distance to self should be zero
     let self_distance = identity1.node_id.xor_distance(&identity1.node_id);

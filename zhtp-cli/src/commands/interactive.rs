@@ -11,7 +11,10 @@
 //! QUIC control surfaces that are not yet implemented.
 
 use anyhow::Result;
-use crate::argument_parsing::{InteractiveArgs, ZhtpCli};
+use std::io::{self, Write};
+use std::future::Future;
+use std::pin::Pin;
+use crate::argument_parsing::{InteractiveArgs, ZhtpCli, format_output};
 use crate::error::{CliResult, CliError};
 
 // ============================================================================
@@ -157,28 +160,258 @@ pub fn get_prompt() -> &'static str {
 // IMPERATIVE SHELL - Placeholder awaiting server-side QUIC support
 // ============================================================================
 
+/// Execute a component command with validation
+async fn execute_component_command<'a, F>(
+    client: &'a reqwest::Client,
+    base_url: &'a str,
+    component: Option<String>,
+    usage_msg: &str,
+    cli: &'a ZhtpCli,
+    handler: F,
+) where
+    F: Fn(&'a reqwest::Client, &'a str, String, &'a ZhtpCli) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>,
+{
+    match component {
+        Some(comp) => {
+            if let Err(e) = validate_component_name(&comp) {
+                println!("Error: {}", e);
+            } else if let Err(e) = handler(client, base_url, comp, cli).await {
+                println!("Error: {}", e);
+            }
+        }
+        None => println!("{}", usage_msg),
+    }
+}
+
+/// Execute a simple command and print error if it fails
+async fn execute_simple_command<F, Fut>(handler: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    if let Err(e) = handler().await {
+        println!("Error: {}", e);
+    }
+}
+
 /// Handle interactive command
-///
-/// NOTE: Interactive shell is not yet implemented. Requires server-side QUIC
-/// control surfaces for component management and status queries.
-pub async fn handle_interactive_command(_args: InteractiveArgs, _cli: &ZhtpCli) -> Result<()> {
+pub async fn handle_interactive_command(_args: InteractiveArgs, cli: &ZhtpCli) -> Result<()> {
     println!("ZHTP Orchestrator Interactive Shell");
-    println!("====================================");
-    println!();
-    println!("Not implemented: requires server-side QUIC support.");
-    println!();
-    println!("The interactive shell will be available once the server implements");
-    println!("QUIC-based control surfaces for:");
-    println!("  - Component status queries");
-    println!("  - Component lifecycle management (start/stop)");
-    println!("  - Health monitoring endpoints");
-    println!();
-    println!("For now, use individual CLI commands instead:");
-    println!("  zhtp-cli network status");
-    println!("  zhtp-cli blockchain info");
-    println!("  zhtp-cli wallet balance <identity>");
+    println!("======================================");
+    println!("Type 'help' for available commands, 'exit' to quit");
+    println!("Server: {}", cli.server);
+    println!("Format: {}", cli.format);
+    println!("");
+
+    let client = reqwest::Client::new();
+    let base_url = format!("http://{}/api/v1", cli.server);
+
+    loop {
+        print!("{}", get_prompt());
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            println!("Error reading input");
+            break;
+        }
+
+        let (command, component) = parse_command_input(&input);
+        let should_exit = dispatch_command(command, component, &client, &base_url, cli, &input).await;
+        if should_exit {
+            break;
+        }
+    }
 
     Ok(())
+}
+
+/// Dispatch command to appropriate handler. Returns true if should exit.
+async fn dispatch_command(
+    command: InteractiveCommand,
+    component: Option<String>,
+    client: &reqwest::Client,
+    base_url: &str,
+    cli: &ZhtpCli,
+    input: &str,
+) -> bool {
+    match command {
+        InteractiveCommand::Exit => {
+            println!("Goodbye!");
+            return true;
+        }
+        InteractiveCommand::Help => println!("{}", get_help_message()),
+        InteractiveCommand::Empty => {}
+        InteractiveCommand::Unknown => {
+            println!("Unknown command: {}", input.trim());
+            println!("Type 'help' for available commands");
+        }
+        InteractiveCommand::Status => {
+            execute_simple_command(|| handle_status(client, base_url, cli)).await;
+        }
+        InteractiveCommand::Health => {
+            execute_simple_command(|| handle_health(client, base_url, cli)).await;
+        }
+        InteractiveCommand::Components => {
+            execute_simple_command(|| handle_list_components(client, base_url, cli)).await;
+        }
+        InteractiveCommand::Start => {
+            execute_component_command(client, base_url, component, "Usage: start <component-name>", cli, handle_start_component).await;
+        }
+        InteractiveCommand::Stop => {
+            execute_component_command(client, base_url, component, "Usage: stop <component-name>", cli, handle_stop_component).await;
+        }
+        InteractiveCommand::Info => {
+            execute_component_command(client, base_url, component, "Usage: info <component-name>", cli, handle_component_info).await;
+        }
+    }
+    false
+}
+
+/// Handle status command
+async fn handle_status(client: &reqwest::Client, base_url: &str, cli: &ZhtpCli) -> Result<()> {
+    println!("📊 Checking orchestrator status...");
+    let url = build_api_url(base_url.trim_start_matches("http://").split("/api/v1").next().unwrap_or(base_url), "status");
+
+    let response = client.get(&url).send().await?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        let formatted = format_output(&result, &cli.format)?;
+        println!("✓ Status:\n{}", formatted);
+    } else {
+        println!("❌ Orchestrator status unavailable: {}", response.status());
+    }
+
+    Ok(())
+}
+
+/// Handle health command
+async fn handle_health(client: &reqwest::Client, base_url: &str, cli: &ZhtpCli) -> Result<()> {
+    println!("❤️  Checking component health...");
+    let url = format!("{}/monitor/health", base_url);
+
+    let response = client.get(&url).send().await?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        let formatted = format_output(&result, &cli.format)?;
+        println!("✓ Health:\n{}", formatted);
+    } else {
+        println!("❌ Component health check failed: {}", response.status());
+    }
+
+    Ok(())
+}
+
+/// Handle list components command
+async fn handle_list_components(client: &reqwest::Client, base_url: &str, cli: &ZhtpCli) -> Result<()> {
+    println!("📋 Listing components...");
+    let url = format!("{}/component/list", base_url);
+
+    let response = client.get(&url).send().await?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        let formatted = format_output(&result, &cli.format)?;
+        println!("✓ Components:\n{}", formatted);
+    } else {
+        println!("❌ Component list unavailable: {}", response.status());
+    }
+
+    Ok(())
+}
+
+/// Handle start component command
+fn handle_start_component<'a>(
+    client: &'a reqwest::Client,
+    base_url: &'a str,
+    component: String,
+    cli: &'a ZhtpCli,
+) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        println!("Starting component: {}", component);
+        let url = format!("{}/component/start", base_url);
+
+        let request_body = serde_json::json!({
+            "component": component,
+            "action": "start",
+            "orchestrated": true
+        });
+
+        let response = client.post(&url).json(&request_body).send().await?;
+
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            let formatted = format_output(&result, &cli.format)?;
+            println!("Started:\n{}", formatted);
+        } else {
+            println!("Failed to start component: {}", response.status());
+        }
+
+        Ok(())
+    })
+}
+
+/// Handle stop component command
+fn handle_stop_component<'a>(
+    client: &'a reqwest::Client,
+    base_url: &'a str,
+    component: String,
+    cli: &'a ZhtpCli,
+) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        println!("Stopping component: {}", component);
+        let url = format!("{}/component/stop", base_url);
+
+        let request_body = serde_json::json!({
+            "component": component,
+            "action": "stop",
+            "orchestrated": true
+        });
+
+        let response = client.post(&url).json(&request_body).send().await?;
+
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            let formatted = format_output(&result, &cli.format)?;
+            println!("Stopped:\n{}", formatted);
+        } else {
+            println!("Failed to stop component: {}", response.status());
+        }
+
+        Ok(())
+    })
+}
+
+/// Handle component info command
+fn handle_component_info<'a>(
+    client: &'a reqwest::Client,
+    base_url: &'a str,
+    component: String,
+    cli: &'a ZhtpCli,
+) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        println!("Getting component info: {}", component);
+        let url = format!("{}/component/status", base_url);
+
+        let request_body = serde_json::json!({
+            "component": component,
+            "orchestrated": true
+        });
+
+        let response = client.post(&url).json(&request_body).send().await?;
+
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            let formatted = format_output(&result, &cli.format)?;
+            println!("Info:\n{}", formatted);
+        } else {
+            println!("Failed to get component info: {}", response.status());
+        }
+
+        Ok(())
+    })
 }
 
 // ============================================================================
