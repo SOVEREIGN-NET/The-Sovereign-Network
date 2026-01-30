@@ -19,45 +19,42 @@ use serde_json::json;
 // ============================================================================
 
 /// Build create token request body
+/// NOTE: creator_identity removed - server uses authenticated session identity
 pub fn build_create_request(
     name: &str,
     symbol: &str,
     initial_supply: u64,
-    creator_identity: &str,
 ) -> serde_json::Value {
     json!({
         "name": name,
         "symbol": symbol,
-        "initial_supply": initial_supply,
-        "creator_identity": creator_identity
+        "initial_supply": initial_supply
     })
 }
 
 /// Build mint token request body
+/// NOTE: creator_identity removed - server verifies via authenticated session
 pub fn build_mint_request(
     token_id: &str,
     amount: u64,
     to: &str,
-    creator_identity: &str,
 ) -> serde_json::Value {
     json!({
         "token_id": token_id,
         "amount": amount,
-        "to": to,
-        "creator_identity": creator_identity
+        "to": to
     })
 }
 
 /// Build transfer token request body
+/// NOTE: from removed - server uses authenticated session identity as sender
 pub fn build_transfer_request(
     token_id: &str,
-    from: &str,
     to: &str,
     amount: u64,
 ) -> serde_json::Value {
     json!({
         "token_id": token_id,
-        "from": from,
         "to": to,
         "amount": amount
     })
@@ -93,14 +90,14 @@ pub async fn handle_token_command_with_output<O: Output>(
     output: &O,
 ) -> CliResult<()> {
     match args.action {
-        TokenAction::Create { name, symbol, supply, creator } => {
-            handle_create(cli, output, &name, &symbol, supply, &creator).await
+        TokenAction::Create { name, symbol, supply } => {
+            handle_create(cli, output, &name, &symbol, supply).await
         }
-        TokenAction::Mint { token_id, amount, to, creator } => {
-            handle_mint(cli, output, &token_id, amount, &to, &creator).await
+        TokenAction::Mint { token_id, amount, to } => {
+            handle_mint(cli, output, &token_id, amount, &to).await
         }
-        TokenAction::Transfer { token_id, from, to, amount } => {
-            handle_transfer(cli, output, &token_id, &from, &to, amount).await
+        TokenAction::Transfer { token_id, to, amount } => {
+            handle_transfer(cli, output, &token_id, &to, amount).await
         }
         TokenAction::Info { token_id } => {
             handle_info(cli, output, &token_id).await
@@ -115,20 +112,21 @@ pub async fn handle_token_command_with_output<O: Output>(
 }
 
 /// Handle token creation
+/// NOTE: Creator identity is derived from authenticated session on server
 async fn handle_create<O: Output>(
     cli: &ZhtpCli,
     output: &O,
     name: &str,
     symbol: &str,
     supply: u64,
-    creator: &str,
 ) -> CliResult<()> {
     output.info(&format!("Creating token: {} ({})", name, symbol))?;
     output.info(&format!("Initial supply: {}", supply))?;
+    output.info("(Creator identity will be derived from authenticated session)")?;
 
     let client = connect_default(&cli.server).await?;
 
-    let request_body = build_create_request(name, symbol, supply, creator);
+    let request_body = build_create_request(name, symbol, supply);
 
     let response = client
         .post_json("/api/v1/token/create", &request_body)
@@ -161,19 +159,20 @@ async fn handle_create<O: Output>(
 }
 
 /// Handle token minting
+/// NOTE: Authorization verified via authenticated session on server
 async fn handle_mint<O: Output>(
     cli: &ZhtpCli,
     output: &O,
     token_id: &str,
     amount: u64,
     to: &str,
-    creator: &str,
 ) -> CliResult<()> {
     output.info(&format!("Minting {} tokens to {}", amount, to))?;
+    output.info("(Authorization will be verified via authenticated session)")?;
 
     let client = connect_default(&cli.server).await?;
 
-    let request_body = build_mint_request(token_id, amount, to, creator);
+    let request_body = build_mint_request(token_id, amount, to);
 
     let response = client
         .post_json("/api/v1/token/mint", &request_body)
@@ -205,19 +204,20 @@ async fn handle_mint<O: Output>(
 }
 
 /// Handle token transfer
+/// NOTE: Sender identity is derived from authenticated session on server
 async fn handle_transfer<O: Output>(
     cli: &ZhtpCli,
     output: &O,
     token_id: &str,
-    from: &str,
     to: &str,
     amount: u64,
 ) -> CliResult<()> {
-    output.info(&format!("Transferring {} tokens from {} to {}", amount, from, to))?;
+    output.info(&format!("Transferring {} tokens to {}", amount, to))?;
+    output.info("(Sender identity will be derived from authenticated session)")?;
 
     let client = connect_default(&cli.server).await?;
 
-    let request_body = build_transfer_request(token_id, from, to, amount);
+    let request_body = build_transfer_request(token_id, to, amount);
 
     let response = client
         .post_json("/api/v1/token/transfer", &request_body)

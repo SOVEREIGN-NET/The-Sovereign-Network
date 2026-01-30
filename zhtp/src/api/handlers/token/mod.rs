@@ -48,7 +48,7 @@ pub struct CreateTokenRequest {
     #[serde(default = "default_decimals")]
     pub decimals: u8,
     pub max_supply: Option<u64>,
-    pub creator_identity: String,
+    // NOTE: creator_identity removed - now derived from authenticated session (request.requester)
 }
 
 fn default_decimals() -> u8 { 8 }
@@ -59,14 +59,14 @@ pub struct MintTokenRequest {
     pub token_id: String,
     pub amount: u64,
     pub to: String,
-    pub creator_identity: String,
+    // NOTE: creator_identity removed - authorization now verified via authenticated session (request.requester)
 }
 
 /// Request to transfer tokens
 #[derive(Debug, Deserialize)]
 pub struct TransferTokenRequest {
     pub token_id: String,
-    pub from: String,
+    // NOTE: `from` removed - source is now the authenticated caller (request.requester)
     pub to: String,
     pub amount: u64,
 }
@@ -139,8 +139,22 @@ impl TokenHandler {
             ));
         }
 
-        // Create creator public key from identity
-        let creator_pubkey = self.identity_to_pubkey(&create_req.creator_identity)?;
+        // SECURITY FIX: Use authenticated session identity, not user-supplied value
+        let requester_hash = match &request.requester {
+            Some(hash) => hash,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Authentication required to create tokens".to_string()
+                ));
+            }
+        };
+
+        // Convert requester hash to hex string for identity lookup
+        let requester_hex = hex::encode(requester_hash.as_bytes());
+
+        // Create creator public key from authenticated session identity
+        let creator_pubkey = self.identity_to_pubkey(&requester_hex)?;
 
         // Create the token contract
         let token = TokenContract::new_custom(
@@ -187,7 +201,7 @@ impl TokenHandler {
             "name": create_req.name,
             "symbol": create_req.symbol,
             "total_supply": create_req.initial_supply,
-            "creator": create_req.creator_identity,
+            "creator": requester_hex,
             "tx_hash": hex::encode(tx_hash.as_bytes())
         }))
     }
@@ -209,9 +223,25 @@ impl TokenHandler {
 
         let token_id_array: [u8; 32] = token_id.try_into().unwrap();
 
+        // SECURITY FIX: Verify caller is authenticated
+        let requester_hash = match &request.requester {
+            Some(hash) => hash,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Authentication required to mint tokens".to_string()
+                ));
+            }
+        };
+
+        // Convert requester hash to hex string for identity lookup
+        let requester_hex = hex::encode(requester_hash.as_bytes());
+
         // Get recipient public key
         let to_pubkey = self.identity_to_pubkey(&mint_req.to)?;
-        let creator_pubkey = self.identity_to_pubkey(&mint_req.creator_identity)?;
+
+        // SECURITY FIX: Use authenticated session identity for creator verification
+        let caller_pubkey = self.identity_to_pubkey(&requester_hex)?;
 
         let mut blockchain = self.blockchain.write().await;
 
@@ -219,8 +249,8 @@ impl TokenHandler {
         let token = blockchain.get_token_contract_mut(&token_id_array)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
-        // Verify creator
-        if token.creator != creator_pubkey {
+        // SECURITY FIX: Verify authenticated caller is the token creator
+        if token.creator != caller_pubkey {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Only the token creator can mint".to_string()
@@ -254,6 +284,20 @@ impl TokenHandler {
         let transfer_req: TransferTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
+        // SECURITY FIX: Require authentication - the authenticated caller is the sender
+        let requester_hash = match &request.requester {
+            Some(hash) => hash,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Authentication required for transfers".to_string()
+                ));
+            }
+        };
+
+        // Convert requester hash to hex string for identity lookup
+        let requester_hex = hex::encode(requester_hash.as_bytes());
+
         let token_id = hex::decode(&transfer_req.token_id)
             .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
 
@@ -266,8 +310,9 @@ impl TokenHandler {
 
         let token_id_array: [u8; 32] = token_id.try_into().unwrap();
 
-        // Get public keys
-        let from_pubkey = self.identity_to_pubkey(&transfer_req.from)?;
+        // SECURITY FIX: Use authenticated session identity as sender, not user-supplied value
+        // This prevents unauthorized transfers from other accounts
+        let from_pubkey = self.identity_to_pubkey(&requester_hex)?;
         let to_pubkey = self.identity_to_pubkey(&transfer_req.to)?;
 
         let mut blockchain = self.blockchain.write().await;
@@ -285,8 +330,7 @@ impl TokenHandler {
             ));
         }
 
-        // Perform transfer (direct balance manipulation for now)
-        // In production, this would create a signed transaction
+        // Perform transfer
         let new_from_balance = from_balance - transfer_req.amount;
         let to_balance = token.balance_of(&to_pubkey);
         let new_to_balance = to_balance + transfer_req.amount;
@@ -295,12 +339,12 @@ impl TokenHandler {
         token.balances.insert(to_pubkey.clone(), new_to_balance);
 
         info!("Transferred {} tokens from {} to {}",
-            transfer_req.amount, transfer_req.from, transfer_req.to);
+            transfer_req.amount, requester_hex, transfer_req.to);
 
         create_json_response(json!({
             "success": true,
             "amount": transfer_req.amount,
-            "from": transfer_req.from,
+            "from": requester_hex,
             "to": transfer_req.to,
             "from_balance": new_from_balance,
             "to_balance": new_to_balance

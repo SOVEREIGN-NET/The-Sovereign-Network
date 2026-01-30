@@ -1039,9 +1039,7 @@ pub enum TokenAction {
         /// Initial supply
         #[arg(long)]
         supply: u64,
-        /// Creator identity (DID)
-        #[arg(short, long)]
-        creator: String,
+        // NOTE: creator removed - now derived from authenticated session
     },
     /// Mint additional tokens (creator only)
     Mint {
@@ -1054,18 +1052,14 @@ pub enum TokenAction {
         /// Recipient address
         #[arg(short, long)]
         to: String,
-        /// Creator identity (must be token creator)
-        #[arg(short, long)]
-        creator: String,
+        // NOTE: creator removed - authorization via authenticated session
     },
     /// Transfer tokens
     Transfer {
         /// Token ID
         #[arg(short, long)]
         token_id: String,
-        /// Sender address
-        #[arg(short, long)]
-        from: String,
+        // NOTE: from removed - sender is the authenticated caller
         /// Recipient address
         #[arg(long)]
         to: String,
