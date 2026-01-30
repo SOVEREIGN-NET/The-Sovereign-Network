@@ -185,13 +185,10 @@ pub enum WalletAction {
         #[arg(short, long, default_value = "citizen")]
         wallet_type: String,
     },
-    /// Get wallet balance for an identity
+    /// Get wallet balance (orchestrated)
     Balance {
-        /// Identity ID (DID or public key)
-        identity_id: String,
-        /// Wallet type (primary, staking, governance, etc.)
-        #[arg(short, long, default_value = "primary")]
-        wallet_type: String,
+        /// Wallet address
+        address: String,
     },
     /// Transfer funds (orchestrated)
     Transfer {
@@ -205,21 +202,13 @@ pub enum WalletAction {
         #[arg(short, long)]
         amount: u64,
     },
-    /// Get transaction history for an identity
+    /// Get transaction history (orchestrated)
     History {
-        /// Identity ID (DID or public key)
-        identity_id: String,
+        /// Wallet address
+        address: String,
     },
-    /// List all wallets for an identity
-    List {
-        /// Identity ID (DID or public key)
-        identity_id: String,
-    },
-    /// Get wallet statistics for an identity
-    Statistics {
-        /// Identity ID (DID or public key)
-        identity_id: String,
-    },
+    /// List all wallets
+    List,
 }
 
 /// DAO operation commands
@@ -251,6 +240,8 @@ pub enum DaoAction {
         #[arg(short, long)]
         choice: String,
     },
+    /// Claim UBI (orchestrated)
+    ClaimUbi,
     /// Get DAO treasury balance
     Balance,
     /// Get treasury balance (alias for Balance)
