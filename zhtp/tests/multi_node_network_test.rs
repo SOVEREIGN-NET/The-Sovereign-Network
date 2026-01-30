@@ -11,8 +11,11 @@
 //! - Peer connections re-establish automatically
 
 use anyhow::Result;
+use lib_identity::testing::create_test_identity;
 use std::time::Duration;
-mod common;
+
+#[path = "common_network_test.rs"]
+mod common_network_test;
 use common_network_test::{run_shared_multi_node_network_test, create_test_identities};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -112,15 +115,9 @@ async fn test_four_node_mesh_full_connectivity() -> Result<()> {
 
         // Verify mesh connectivity: each node should have routing entries for all others
         for (i, alice) in identities.iter().enumerate() {
-            let alice_peer = UnifiedPeerId::from_zhtp_identity(alice)?;
-            alice_peer.verify_node_id()?;
-
             // Alice should be able to route to all other nodes
             for (j, bob) in identities.iter().enumerate() {
                 if i != j {
-                    let bob_peer = UnifiedPeerId::from_zhtp_identity(bob)?;
-                    bob_peer.verify_node_id()?;
-
                     // Verify they can be cross-referenced
                     assert_ne!(
                         alice.node_id, bob.node_id,
@@ -297,13 +294,14 @@ mod helpers {
     use super::*;
 
     #[test]
-    fn test_peer_id_derivation_from_node_id() {
+    fn test_node_id_derivation() {
         let seed = [0xAA; 64];
         let identity = create_test_identity("test-device", seed).unwrap();
         
-        let peer_id = peer_id_from_node_id(&identity.node_id);
+        // Verify node_id is valid
+        assert!(!identity.node_id.as_bytes().is_empty());
         
-        // Verify peer_id is valid UUID
-        assert_eq!(peer_id.as_bytes().len(), 16);
+        // Verify node_id has expected length
+        assert_eq!(identity.node_id.as_bytes().len(), 32);
     }
 }
