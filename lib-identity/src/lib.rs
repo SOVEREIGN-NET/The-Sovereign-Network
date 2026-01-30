@@ -32,6 +32,9 @@ pub mod economics;
 pub mod integration;
 pub mod verification;
 
+// Test utilities - shared helpers for integration tests across crates
+pub mod testing;
+
 // ============================================================================
 // PUBLIC API EXPORTS
 // ============================================================================
