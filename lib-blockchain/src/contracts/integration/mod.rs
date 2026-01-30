@@ -35,8 +35,9 @@ impl<S: ContractStorage> BlockchainIntegration<S> {
         
         for (call, signature) in contract_calls {
             // Create execution context from height and timestamp
+            let call_caller = call.get_caller().map_err(|e| anyhow!(e))?;
             let mut context = ExecutionContext::new(
-                call.get_caller().map_err(|e| anyhow!(e))?,
+                call_caller.clone(),
                 height,
                 timestamp,
                 self.calculate_gas_limit(transaction)?,
@@ -45,6 +46,9 @@ impl<S: ContractStorage> BlockchainIntegration<S> {
 
             // Validate transaction signature
             let caller_key = self.extract_public_key(transaction)?;
+            if call_caller != caller_key {
+                return Err(anyhow!("Contract call caller does not match transaction signer"));
+            }
             if !self.executor.validate_signature(&call, &signature, &caller_key)? {
                 return Err(anyhow!("Invalid signature"));
             }

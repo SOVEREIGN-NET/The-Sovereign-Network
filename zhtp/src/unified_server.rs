@@ -62,6 +62,7 @@ use crate::api::handlers::{
     DaoHandler,
     Web4Handler,
     DnsHandler,
+    TokenHandler,
 };
 use crate::session_manager::SessionManager;
 
@@ -754,6 +755,12 @@ impl ZhtpUnifiedServer {
             WalletHandler::new(identity_manager.clone())
         );
         zhtp_router.register_handler("/api/v1/wallet".to_string(), wallet_handler);
+
+        // Token operations (custom token creation, minting, transfer)
+        let token_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            TokenHandler::new()
+        );
+        zhtp_router.register_handler("/api/v1/token".to_string(), token_handler);
 
         // DAO operations
         let dao_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
