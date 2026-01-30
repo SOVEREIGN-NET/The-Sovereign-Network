@@ -6,17 +6,15 @@
 use anyhow::Result;
 use std::time::Duration;
 mod common;
-use common_network_test::{MeshNode, MeshTopology, run_shared_mesh_formation_test};
+use common_network_test::{MeshNode, MeshTopology, run_shared_mesh_formation_test, create_test_identities, build_mesh_topology, assert_fully_connected};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(25);
 const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
-// ...existing code...
-
 #[tokio::test]
 async fn test_mesh_formation_shared() -> Result<()> {
     run_shared_mesh_formation_test().await
-    }
+}
 
 /// Test 1: Five-Node Mesh Network Formation via Multicast
 ///
@@ -24,7 +22,6 @@ async fn test_mesh_formation_shared() -> Result<()> {
 /// Verify they all discover each other and form fully connected mesh.
 #[test]
 fn test_five_node_mesh_formation() -> Result<()> {
-    // Phase 1: Create five nodes
     let nodes = [
         ("mesh-node-a", [0x11; 64]),
         ("mesh-node-b", [0x22; 64]),
@@ -75,13 +72,6 @@ fn test_mesh_node_departure_and_rejoin() -> Result<()> {
 
 /// Test 3: Network Stability with Random Restarts
 ///
-    const TEST_TIMEOUT: Duration = Duration::from_secs(25);
-    const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
-
-    #[tokio::test]
-    async fn test_mesh_formation_shared() -> Result<()> {
-        run_shared_mesh_formation_test().await
-    }
 /// Scenario: Restart 2 random nodes from a 5-node network.
 /// Verify network remains stable and nodes rejoin.
 #[test]
