@@ -8,9 +8,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tokio::sync::RwLock;
 use tokio::time::{Duration, interval};
-use tracing::{info, warn, error, debug};
+use tracing::{info, error, debug};
 
 use super::alerting::{Alert, AlertLevel, AlertManager};
+use crate::runtime::components::create_default_storage_config;
+
+// Import shared storage configuration from canonical location
 use crate::runtime::components::create_default_storage_config;
 
 /// storage stats from lib-storage
@@ -733,104 +736,74 @@ impl HealthMonitor {
 
     /// Check storage health using lib-storage
     async fn check_storage_health() -> Result<StorageHealth> {
-        // Try to get storage stats from lib-storage package with proper config
-        let storage_stats = match create_default_storage_config() {
-            Ok(config) => {
-                let db_path = config.storage_config.dht_persist_path.clone()
-                    .unwrap_or_else(|| {
-                        dirs::home_dir()
-                            .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join(".zhtp")
-                            .join("storage")
-                            .join("dht_db")
-                    });
+        let storage_stats = Self::get_storage_stats().await;
+        Ok(Self::build_storage_health(storage_stats))
+    }
 
-                if let Some(parent) = db_path.parent() {
-                    if let Err(e) = std::fs::create_dir_all(parent) {
-                        warn!("Failed to create storage directory {:?}: {}", parent, e);
-                    }
-                }
+    /// Get storage statistics from lib-storage or fallback to system stats
+    async fn get_storage_stats() -> Option<StorageStats> {
+        let config = create_default_storage_config().ok()?;
+        let db_path = config.storage_config.dht_persist_path.clone()
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join(".zhtp")
+                    .join("storage")
+                    .join("dht_db")
+            });
 
-                match lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path).await {
-                    Ok(mut storage) => {
-                        // Try to get storage metrics
-                        let (total_storage, used_storage) = match storage.get_statistics().await {
-                            Ok(stats) => (
-                                1024 * 1024 * 1024 * 100, // 100GB system capacity
-                                stats.storage_stats.total_storage_used
-                            ),
-                            Err(_) => (
-                                1024 * 1024 * 1024 * 100, // 100GB system capacity
-                                std::fs::metadata("./")
-                                    .map(|m| m.len())
-                                    .unwrap_or(1024 * 1024 * 500) // 500MB fallback
-                            )
-                        };
-                        
-                        Some(StorageStats {
-                            total_storage,
-                            used_storage,
-                            dht_nodes: 10, // Estimate DHT node count from storage system
-                        })
-                    }
-                    Err(_) => {
-                        // Fallback to system disk usage
-                        use sysinfo::Disks;
-                        let disks = Disks::new_with_refreshed_list();
-                        
-                        if let Some(disk) = disks.iter().next() {
-                            Some(StorageStats {
-                                total_storage: disk.total_space(),
-                                used_storage: disk.total_space() - disk.available_space(),
-                                dht_nodes: 1,
-                            })
-                        } else {
-                            None
-                        }
-                    }
-                }
-            },
-            Err(_) => None
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        match lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path).await {
+            Ok(mut storage) => Self::stats_from_storage(&mut storage).await,
+            Err(_) => Self::stats_from_system_disk(),
+        }
+    }
+
+    /// Get storage stats from the unified storage system
+    async fn stats_from_storage(storage: &mut lib_storage::UnifiedStorageSystem<lib_storage::dht::backend::SledBackend>) -> Option<StorageStats> {
+        let (total, used) = match storage.get_statistics().await {
+            Ok(stats) => (1024 * 1024 * 1024 * 100, stats.storage_stats.total_storage_used),
+            Err(_) => (1024 * 1024 * 1024 * 100, std::fs::metadata("./").map(|m| m.len()).unwrap_or(1024 * 1024 * 500)),
         };
-        
-        match storage_stats {
-            Some(stats) => {
-                Ok(StorageHealth {
-                    total_capacity: stats.total_storage,
-                    used_capacity: stats.used_storage,
-                    dht_node_count: stats.dht_nodes,
-                    replication_health: ReplicationHealth {
-                        replication_factor: 3.0, // Standard replication factor
-                        under_replicated_files: 0, // Calculated from storage system status
-                        replication_efficiency: 0.95,
-                    },
-                    retrieval_health: RetrievalHealth {
-                        average_retrieval_time: 500.0, // ms
-                        retrieval_success_rate: 0.99,
-                        cache_hit_rate: 0.85,
-                    },
-                    availability: 0.999, // Default high availability
-                })
+        Some(StorageStats { total_storage: total, used_storage: used, dht_nodes: 10 })
+    }
+
+    /// Get storage stats from system disk as fallback
+    fn stats_from_system_disk() -> Option<StorageStats> {
+        use sysinfo::Disks;
+        let disks = Disks::new_with_refreshed_list();
+        disks.iter().next().map(|disk| StorageStats {
+            total_storage: disk.total_space(),
+            used_storage: disk.total_space() - disk.available_space(),
+            dht_nodes: 1,
+        })
+    }
+
+    /// Build StorageHealth from optional StorageStats
+    fn build_storage_health(stats: Option<StorageStats>) -> StorageHealth {
+        let has_stats = stats.is_some();
+        let (capacity, used, nodes, avail) = match stats {
+            Some(s) => (s.total_storage, s.used_storage, s.dht_nodes, 0.999),
+            None => (1024 * 1024 * 1024 * 1024, 1024 * 1024 * 1024 * 250, 0, 0.0),
+        };
+        StorageHealth {
+            total_capacity: capacity,
+            used_capacity: used,
+            dht_node_count: nodes,
+            replication_health: ReplicationHealth {
+                replication_factor: 3.0,
+                under_replicated_files: if has_stats { 0 } else { 50 },
+                replication_efficiency: 0.95,
             },
-            None => {
-                // Fallback values when storage is unavailable
-                Ok(StorageHealth {
-                    total_capacity: 1024 * 1024 * 1024 * 1024, // 1TB
-                    used_capacity: 1024 * 1024 * 1024 * 250,   // 250GB
-                    dht_node_count: 0, // No DHT nodes when storage unavailable
-                    replication_health: ReplicationHealth {
-                        replication_factor: 3.0,
-                        under_replicated_files: 50,
-                        replication_efficiency: 0.95,
-                    },
-                    retrieval_health: RetrievalHealth {
-                        average_retrieval_time: 500.0, // ms
-                        retrieval_success_rate: 0.99,
-                        cache_hit_rate: 0.85,
-                    },
-                    availability: 0.0, // Unavailable
-                })
-            }
+            retrieval_health: RetrievalHealth {
+                average_retrieval_time: 500.0,
+                retrieval_success_rate: 0.99,
+                cache_hit_rate: 0.85,
+            },
+            availability: avail,
         }
     }
 
