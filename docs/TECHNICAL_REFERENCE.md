@@ -725,9 +725,9 @@ pub struct ProtocolParams {
 
 | Service | Port | Protocol |
 |---------|------|----------|
-| ZHTP Mesh | 9333 | QUIC/UDP |
-| Block Sync | 9333 | QUIC/UDP (same connection) |
-| RPC API | 9334 | HTTP/JSON-RPC |
+| ZHTP Mesh & Block Sync | 9334 | QUIC/UDP |
+| Multicast Peer Discovery | 37775 | UDP Multicast |
+| RPC API (if enabled) | Configurable | HTTP/JSON-RPC |
 | Metrics | 9335 | HTTP/Prometheus |
 
 ---
