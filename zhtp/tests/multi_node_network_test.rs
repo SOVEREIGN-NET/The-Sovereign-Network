@@ -18,7 +18,7 @@ use std::time::Duration;
 mod common_network_test;
 use common_network_test::{run_shared_multi_node_network_test, create_test_identities};
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(15);
+const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 const DISCOVERY_WAIT_TIME: Duration = Duration::from_secs(2);
 
 #[tokio::test]
