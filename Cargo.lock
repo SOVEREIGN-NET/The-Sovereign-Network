@@ -2907,6 +2907,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+ "uuid",
  "zeroize",
 ]
 

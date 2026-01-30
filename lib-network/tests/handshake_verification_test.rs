@@ -4,23 +4,12 @@
 //! and reject connections with mismatched identity/NodeId pairs.
 
 use anyhow::Result;
-use lib_identity::{ZhtpIdentity, IdentityType, NodeId};
+use lib_identity::{IdentityType, ZhtpIdentity, NodeId, testing::create_human_identity};
 use lib_network::{
     ClientHello, HandshakeCapabilities,
 };
 use lib_network::handshake::{HandshakeContext, NonceCache, NetworkEpoch};
 use tempfile::TempDir;
-
-/// Helper to create test identity
-fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Human,
-        Some(25),
-        Some("US".to_string()),
-        device,
-        seed,
-    )
-}
 
 fn create_test_context() -> Result<(HandshakeContext, TempDir)> {
     let temp_dir = TempDir::new()?;
@@ -34,7 +23,7 @@ fn create_test_context() -> Result<(HandshakeContext, TempDir)> {
 async fn test_valid_node_id_verification() -> Result<()> {
     // Create identity with known seed
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed))?;
+    let identity = create_human_identity("laptop", Some(seed))?;
     
     // Verify NodeId derives correctly from DID + device
     let expected_node_id = NodeId::from_did_device(&identity.did, &identity.primary_device)?;
@@ -47,7 +36,7 @@ async fn test_valid_node_id_verification() -> Result<()> {
 #[tokio::test]
 async fn test_invalid_node_id_rejected() -> Result<()> {
     // Create identity
-    let identity = create_test_identity("laptop", None)?;
+    let identity = create_human_identity("laptop", None)?;
     
     // Create fake NodeId (all zeros - definitely wrong)
     let fake_node_id = NodeId::from_bytes([0u8; 32]);
@@ -62,7 +51,7 @@ async fn test_invalid_node_id_rejected() -> Result<()> {
 #[tokio::test]
 async fn test_mismatched_did_rejected() -> Result<()> {
     // Create identity
-    let identity = create_test_identity("laptop", None)?;
+    let identity = create_human_identity("laptop", None)?;
     
     // Try to derive NodeId from wrong DID
     let wrong_did = "did:zhtp:wrong";
@@ -77,7 +66,7 @@ async fn test_mismatched_did_rejected() -> Result<()> {
 #[tokio::test]
 async fn test_mismatched_device_rejected() -> Result<()> {
     // Create identity
-    let identity = create_test_identity("laptop", None)?;
+    let identity = create_human_identity("laptop", None)?;
     
     // Try to derive NodeId from wrong device
     let wrong_device = "wrong-device";
@@ -92,7 +81,7 @@ async fn test_mismatched_device_rejected() -> Result<()> {
 #[tokio::test]
 async fn test_create_handshake_data() -> Result<()> {
     // Create identity
-    let identity = create_test_identity("test-device", None)?;
+    let identity = create_human_identity("test-device", None)?;
     
     // Create ClientHello
     let capabilities = HandshakeCapabilities::default();
@@ -115,7 +104,7 @@ async fn test_create_handshake_data() -> Result<()> {
 #[tokio::test]
 async fn test_handshake_serialization() -> Result<()> {
     // Create handshake data
-    let identity = create_test_identity("device1", None)?;
+    let identity = create_human_identity("device1", None)?;
     let capabilities = HandshakeCapabilities::default();
     let (ctx, _temp_dir) = create_test_context()?;
     let client_hello = ClientHello::new(&identity, capabilities, &ctx)?;
@@ -147,8 +136,8 @@ async fn test_handshake_serialization() -> Result<()> {
 async fn test_multiple_devices_same_identity() -> Result<()> {
     // Create identity with same seed but different devices
     let seed = [0x33u8; 64];
-    let identity1 = create_test_identity("laptop", Some(seed))?;
-    let identity2 = create_test_identity("phone", Some(seed))?;
+    let identity1 = create_human_identity("laptop", Some(seed))?;
+    let identity2 = create_human_identity("phone", Some(seed))?;
     
     // Both should have same DID
     assert_eq!(identity1.did, identity2.did, "Same seed should produce same DID");
@@ -179,8 +168,8 @@ async fn test_multiple_devices_same_identity() -> Result<()> {
 async fn test_deterministic_verification() -> Result<()> {
     // Create two identities with same seed and device
     let seed = [0x55u8; 64];
-    let identity1 = create_test_identity("desktop", Some(seed))?;
-    let identity2 = create_test_identity("desktop", Some(seed))?;
+    let identity1 = create_human_identity("desktop", Some(seed))?;
+    let identity2 = create_human_identity("desktop", Some(seed))?;
     
     // Should have identical DIDs and NodeIds
     assert_eq!(identity1.did, identity2.did);
@@ -200,7 +189,7 @@ async fn test_deterministic_verification() -> Result<()> {
 #[tokio::test]
 async fn test_tampered_node_id_detected() -> Result<()> {
     // Create valid identity
-    let identity = create_test_identity("laptop", None)?;
+    let identity = create_human_identity("laptop", None)?;
     
     // Get valid NodeId and tamper with one byte
     let mut tampered_bytes = *identity.node_id.as_bytes();
@@ -265,14 +254,14 @@ async fn test_golden_vector_verification() -> Result<()> {
     let seed = [0x01u8; 64];
     let device = "test-device";
     
-    let identity = create_test_identity(device, Some(seed))?;
+    let identity = create_human_identity(device, Some(seed))?;
     
     // Verify the NodeId derives correctly
     let expected = NodeId::from_did_device(&identity.did, device)?;
     assert_eq!(identity.node_id, expected);
     
     // Create second identity with same parameters
-    let identity2 = create_test_identity(device, Some(seed))?;
+    let identity2 = create_human_identity(device, Some(seed))?;
     
     // Should produce identical results
     assert_eq!(identity.did, identity2.did);
