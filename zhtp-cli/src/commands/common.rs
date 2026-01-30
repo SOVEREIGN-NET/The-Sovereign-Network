@@ -81,9 +81,6 @@ pub async fn post_and_display(
     }
 }
 
-/// Minimum length for a valid identity ID
-const MIN_IDENTITY_ID_LENGTH: usize = 10;
-
 /// Validate identity ID format
 ///
 /// Pure function - format validation only
@@ -99,10 +96,10 @@ pub fn validate_identity_id(identity_id: &str) -> CliResult<()> {
         ));
     }
 
-    if identity_id.len() < MIN_IDENTITY_ID_LENGTH {
+    if identity_id.len() < 10 {
         return Err(CliError::ConfigError(format!(
-            "Invalid identity ID: {}. Must be at least {} characters",
-            identity_id, MIN_IDENTITY_ID_LENGTH
+            "Invalid identity ID: {}. Must be at least 10 characters",
+            identity_id
         )));
     }
 
