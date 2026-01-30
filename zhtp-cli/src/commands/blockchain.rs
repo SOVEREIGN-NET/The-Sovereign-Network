@@ -73,44 +73,31 @@ async fn handle_blockchain_command_impl(
 
     match args.action {
         BlockchainAction::Status => {
-            fetch_and_display_blockchain_status(&client, cli, output).await
+            output.print("Querying blockchain status...")?;
+            super::common::fetch_and_display(
+                &client,
+                &format!("{}/blockchain/status", base_url),
+                "blockchain/status",
+                "Blockchain Status",
+                &cli.format,
+                output,
+            ).await
         }
         BlockchainAction::Transaction { tx_hash } => {
             fetch_and_display_transaction(&client, &tx_hash, cli, output).await
         }
         BlockchainAction::Stats => {
-            fetch_and_display_blockchain_stats(&client, cli, output).await
+            output.print("Collecting blockchain statistics...")?;
+            super::common::fetch_and_display(
+                &client,
+                &format!("{}/blockchain/stats", base_url),
+                "blockchain/stats",
+                "Blockchain Statistics",
+                &cli.format,
+                output,
+            ).await
         }
     }
-}
-
-/// Fetch blockchain status and display it
-async fn fetch_and_display_blockchain_status(
-    client: &ZhtpClient,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    output.print("Querying blockchain status...")?;
-
-    let response = client
-        .get("/api/v1/blockchain/status")
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/blockchain/status".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let result: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/blockchain/status".to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
-    let formatted = format_output(&result, &cli.format)?;
-    output.header("Blockchain Status")?;
-    output.print(&formatted)?;
-    Ok(())
 }
 
 /// Fetch transaction details and display them
@@ -120,63 +107,19 @@ async fn fetch_and_display_transaction(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    // Pure validation
     validate_tx_hash(tx_hash)?;
-
     output.print(&format!("Looking up transaction: {}", tx_hash))?;
+    let request_body = build_transaction_request(tx_hash);
 
-    // Pure endpoint path building
-    let endpoint = build_transaction_endpoint(tx_hash);
-
-    // Imperative: QUIC call (GET with hash in path)
-    let response = client
-        .get(&endpoint)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.clone(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let result: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint,
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
-    let formatted = format_output(&result, &cli.format)?;
-    output.header("Transaction Details")?;
-    output.print(&formatted)?;
-    Ok(())
-}
-
-/// Fetch blockchain statistics and display them
-async fn fetch_and_display_blockchain_stats(
-    client: &ZhtpClient,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    output.print("Collecting blockchain statistics...")?;
-
-    let response = client
-        .get("/api/v1/blockchain/stats")
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/blockchain/stats".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let result: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/blockchain/stats".to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
-    let formatted = format_output(&result, &cli.format)?;
-    output.header("Blockchain Statistics")?;
-    output.print(&formatted)?;
-    Ok(())
+    super::common::post_and_display(
+        client,
+        &format!("{}/blockchain/transaction", base_url),
+        request_body,
+        "blockchain/transaction",
+        "Transaction Details",
+        &cli.format,
+        output,
+    ).await
 }
 
 // ============================================================================
