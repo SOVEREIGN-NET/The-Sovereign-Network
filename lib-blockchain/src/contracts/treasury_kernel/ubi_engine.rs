@@ -122,6 +122,16 @@ impl KernelState {
                             let mint_success = if can_mint {
                                 // Create recipient PublicKey from citizen_id
                                 // The citizen_id is used as the key_id for balance tracking
+                                //
+                                // ARCHITECTURAL NOTE: This creates a "synthetic" PublicKey with only key_id populated.
+                                // The dilithium_pk and kyber_pk fields are left empty because:
+                                // 1. TokenContract uses PublicKey as HashMap key (via PartialEq which checks all fields)
+                                // 2. CitizenRegistry currently only stores citizen_id ([u8; 32]), not full PublicKeys
+                                // 3. Balance tracking doesn't require cryptographic operations on the key
+                                //
+                                // Future improvement: Either refactor TokenContract to use key_id-only lookups,
+                                // or extend CitizenRegistry to store full PublicKeys for each citizen.
+                                // See PR#1019 review comments for discussion.
                                 let recipient = PublicKey {
                                     dilithium_pk: vec![], // Empty - not needed for balance tracking
                                     kyber_pk: vec![],     // Empty - not needed for balance tracking
@@ -407,12 +417,8 @@ mod tests {
         let mut state = KernelState::new();
         let mut registry = create_test_registry();
 
-        // Create kernel authority
-        let kernel_authority = PublicKey {
-            dilithium_pk: vec![99u8; 32],
-            kyber_pk: vec![99u8; 32],
-            key_id: [99u8; 32],
-        };
+        // Create kernel authority using PublicKey::new to derive key_id from dilithium_pk
+        let kernel_authority = PublicKey::new(vec![99u8; 32]);
 
         // Create SOV token with kernel authority
         let mut token = TokenContract::new_sov_with_kernel_authority(kernel_authority.clone());

@@ -14,12 +14,10 @@ use lib_crypto::types::keys::PublicKey;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
 /// Create a test public key with a specific ID byte
+/// Uses PublicKey::new() to ensure consistent key_id computation
 fn create_test_pubkey(id: u8) -> PublicKey {
-    PublicKey {
-        dilithium_pk: vec![id; 32],
-        kyber_pk: vec![id; 32],
-        key_id: [id; 32],
-    }
+    let dilithium_pk = vec![id; 32];
+    PublicKey::new(dilithium_pk)
 }
 
 /// Create a test signature with the given public key
