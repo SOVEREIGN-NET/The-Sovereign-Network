@@ -773,19 +773,53 @@ impl DomainRegistry {
         // Extract the name part (before TLD)
         let name = &domain[..domain.len() - tld_len];
         
-        // Must be 3-63 characters
-        if name.len() < 3 || name.len() > 63 {
-            return Err(anyhow!("Domain name must be 3-63 characters (excluding TLD)"));
+        // Check for reserved dao. prefix (virtual namespace - cannot be registered)
+        if name.starts_with("dao.") || name == "dao" {
+            return Err(anyhow!(
+                "dao. prefix is virtual and cannot be registered. DAO governance is automatically derived from base domains."
+            ));
+        }
+        
+        // Split into labels and validate each independently
+        let labels: Vec<&str> = name.split('.').collect();
+        
+        // Must have at least one label
+        if labels.is_empty() {
+            return Err(anyhow!("Domain must have at least one label"));
+        }
+        
+        // Validate each label
+        for label in &labels {
+            // Each label must be 1-63 characters
+            if label.is_empty() {
+                return Err(anyhow!("Domain labels cannot be empty"));
+            }
+            if label.len() > 63 {
+                return Err(anyhow!("Domain label '{}' exceeds 63 characters", label));
+            }
+
+            // Must contain only valid characters (alphanumeric + hyphen)
+            if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                return Err(anyhow!("Domain label '{}' can only contain letters, numbers, and hyphens", label));
+            }
+
+            // Cannot start or end with hyphen
+            if label.starts_with('-') || label.ends_with('-') {
+                return Err(anyhow!("Domain label '{}' cannot start or end with hyphen", label));
+            }
         }
 
-        // Must contain only valid characters
-        if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-            return Err(anyhow!("Domain name can only contain letters, numbers, and hyphens"));
+        // Base domain (last label before TLD) must be at least 3 characters
+        // This maintains the original 3-character minimum policy while allowing shorter subdomain labels
+        if let Some(base_domain) = labels.last() {
+            if base_domain.len() < 3 {
+                return Err(anyhow!("Base domain '{}' must be at least 3 characters", base_domain));
+            }
         }
-
-        // Cannot start or end with hyphen
-        if name.starts_with('-') || name.ends_with('-') {
-            return Err(anyhow!("Domain name cannot start or end with hyphen"));
+        
+        // Overall name length check (all labels + dots, excluding TLD)
+        if name.len() > 253 {
+            return Err(anyhow!("Domain name (excluding TLD) cannot exceed 253 characters"));
         }
 
         Ok(())

@@ -814,6 +814,14 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 );
                 
                 let token_id = token.token_id;
+                // Prevent duplicate token creation (deterministic token_id)
+                if self.token_contracts.contains_key(&token_id) {
+                    return Err(anyhow!("Token already exists"));
+                }
+                let storage_key = generate_storage_key("token", &token_id);
+                if self.storage.get(&storage_key)?.is_some() {
+                    return Err(anyhow!("Token already exists in storage"));
+                }
                 self.token_contracts.insert(token_id, token.clone());
                 
                 // Stage token change for atomic commit
@@ -846,6 +854,15 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 // Use lazy-loading to get token (prevents "Token not found" after restart)
                 let token = self.get_or_load_token(&token_id)?;
 
+                // Enforce mint authorization in consensus
+                if let Some(authority) = &token.kernel_mint_authority {
+                    if authority != &context.caller {
+                        return Err(anyhow!("Unauthorized mint: kernel authority required"));
+                    }
+                } else if token.creator != context.caller {
+                    return Err(anyhow!("Unauthorized mint: only token creator can mint"));
+                }
+
                 #[allow(deprecated)] // TODO(#852): Route through TreasuryKernel
                 crate::contracts::tokens::functions::mint_tokens(
                     token,
@@ -858,6 +875,23 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 self.stage_or_persist_token(&token_id, &token_clone)?;
 
                 Ok(ContractResult::with_return_data(&"Mint successful", context.gas_used)?)
+            },
+            "burn" => {
+                let params: ([u8; 32], u64) = bincode::deserialize(&call.params)?;
+                let (token_id, amount) = params;
+
+                // Use lazy-loading to get token (prevents "Token not found" after restart)
+                let token = self.get_or_load_token(&token_id)?;
+
+                // Burn from caller's own balance
+                token.burn(&context.caller, amount)
+                    .map_err(|e| anyhow!("{}", e))?;
+
+                // Stage token change for atomic commit
+                let token_clone = token.clone();
+                self.stage_or_persist_token(&token_id, &token_clone)?;
+
+                Ok(ContractResult::with_return_data(&"Burn successful", context.gas_used)?)
             },
             "balance_of" => {
                 let params: ([u8; 32], PublicKey) = bincode::deserialize(&call.params)?;

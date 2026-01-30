@@ -15,7 +15,7 @@ use lib_identity::types::IdentityType;
 use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_crypto::{PrivateKey, Hash};
 use serde::{Serialize, Deserialize};
-use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME, WALLET_DATA_FILENAME};
+use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME, WALLET_DATA_FILENAME, KeystorePrivateKey};
 use tracing::info;
 // Core wallet functionality with mesh network integration
 
@@ -48,16 +48,6 @@ impl std::fmt::Display for KeystoreError {
 }
 
 impl std::error::Error for KeystoreError {}
-
-/// Private key storage format for keystore (matches identity.rs format)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct KeystorePrivateKey {
-    dilithium_sk: Vec<u8>,
-    #[serde(default)]
-    dilithium_pk: Vec<u8>,  // Optional for backward compatibility with old keystores
-    kyber_sk: Vec<u8>,
-    master_seed: Vec<u8>,
-}
 
 /// Serializable format for WalletStartupResult persistence
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -62,6 +62,7 @@ use crate::api::handlers::{
     DaoHandler,
     Web4Handler,
     DnsHandler,
+    TokenHandler,
 };
 use crate::session_manager::SessionManager;
 
@@ -755,6 +756,12 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/v1/wallet".to_string(), wallet_handler);
 
+        // Token operations (custom token creation, minting, transfer)
+        let token_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            TokenHandler::new()
+        );
+        zhtp_router.register_handler("/api/v1/token".to_string(), token_handler);
+
         // DAO operations
         let dao_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             DaoHandler::new(identity_manager.clone(), _session_manager.clone())
@@ -856,6 +863,10 @@ impl ZhtpUnifiedServer {
         } else {
             info!(" Global mesh router provider initialized");
         }
+
+        // Start block sync responder (serves blockchain data to peers requesting sync)
+        // This enables mesh-based blockchain synchronization for new nodes joining the network
+        crate::network_output_dispatcher::spawn_app_network_output_processor();
 
         // STEP 1: Apply network isolation to block internet access
         info!(" Applying network isolation for ISP-free mesh operation...");

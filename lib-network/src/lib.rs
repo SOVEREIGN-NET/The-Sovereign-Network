@@ -81,6 +81,10 @@ pub use crate::consensus_receiver::{
     ConsensusReceiver, ReceivedConsensusMessage,
 };
 
+// Validator discovery gossip transport (transport-dependent)
+#[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
+pub use crate::validator_discovery_transport::MeshValidatorDiscoveryTransport;
+
 // Network utilities
 pub mod network_utils;
 pub use crate::network_utils::{get_local_ip, get_local_ip_with_config, LocalIpConfig};
@@ -117,6 +121,8 @@ pub mod client; // Authenticated QUIC client for control-plane operations
 pub mod message_broadcaster; // Consensus message broadcaster trait
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
 pub mod consensus_receiver; // Consensus receiver (Gap 4: ingress boundary)
+#[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
+pub mod validator_discovery_transport; // Mesh-based validator discovery gossip transport
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
 pub mod monitoring;
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]

@@ -251,9 +251,11 @@ pub struct ConsensusEngine {
     byzantine_detector: ByzantineFaultDetector,
     /// Reward calculation system
     reward_calculator: RewardCalculator,
-    /// Fee router for fee collection integration (Week 7)
-    /// Option allows for lazy initialization
-    fee_router: Option<std::sync::Arc<std::sync::Mutex<dyn std::any::Any + Send>>>,
+    /// Fee collector for fee collection integration
+    ///
+    /// Implements the FeeCollector trait for collecting and distributing fees
+    /// during block finalization. Uses Arc<Mutex<>> for thread-safe access.
+    fee_router: Option<std::sync::Arc<std::sync::Mutex<dyn FeeCollector>>>,
     /// Message broadcaster for network distribution
     ///
     /// Invariant CE-ENG-1: ConsensusEngine never constructs, configures, or inspects
@@ -277,6 +279,13 @@ pub struct ConsensusEngine {
     validator_keypair: Option<KeyPair>,
     /// Storage proof provider (lib-storage backed)
     storage_proof_provider: Option<Arc<dyn crate::proofs::StorageProofProvider>>,
+    /// Blockchain provider for block production (injected by runtime)
+    blockchain_provider: Option<Arc<dyn crate::types::ConsensusBlockchainProvider>>,
+    /// Block commit callback for finalizing blocks to blockchain storage
+    ///
+    /// When BFT consensus achieves 2/3+1 commit votes, this callback commits
+    /// the finalized block to the actual blockchain storage layer.
+    block_commit_callback: Option<Arc<dyn crate::types::BlockCommitCallback>>,
 }
 
 impl ConsensusEngine {
@@ -338,6 +347,8 @@ impl ConsensusEngine {
             liveness_check_interval: None,
             validator_keypair: None,
             storage_proof_provider: None,
+            blockchain_provider: None,
+            block_commit_callback: None,
         })
     }
 
@@ -351,12 +362,91 @@ impl ConsensusEngine {
         self.liveness_event_tx = Some(tx);
     }
 
-    /// Set fee router for fee collection integration (Week 7)
+    /// Set blockchain provider for block production
+    ///
+    /// The blockchain provider gives the consensus engine access to:
+    /// - Latest block hash (for chain continuity in proposals)
+    /// - Pending transactions (for block content)
+    /// - Current blockchain height (for validation)
+    pub fn set_blockchain_provider(&mut self, provider: Arc<dyn crate::types::ConsensusBlockchainProvider>) {
+        self.blockchain_provider = Some(provider);
+        tracing::info!("📦 Blockchain provider connected to consensus engine");
+    }
+
+    /// Set block commit callback for finalizing blocks to blockchain storage
+    ///
+    /// When BFT consensus achieves supermajority (2/3+1) commit votes,
+    /// this callback is invoked to commit the finalized block to storage.
+    ///
+    /// This separates consensus finalization (determining WHEN) from
+    /// block storage (determining HOW), maintaining clean layer separation.
+    pub fn set_block_commit_callback(&mut self, callback: Arc<dyn crate::types::BlockCommitCallback>) {
+        self.block_commit_callback = Some(callback);
+        tracing::info!("🔗 Block commit callback connected to consensus engine");
+    }
+
+    /// Synchronize consensus engine height with blockchain
+    ///
+    /// Called before starting the consensus loop to ensure the engine
+    /// starts proposing at the correct height (blockchain_height + 1).
+    ///
+    /// This is critical for mode transitions:
+    /// - Bootstrap mode produces blocks directly to blockchain
+    /// - When switching to BFT mode, consensus must continue from the correct height
+    pub async fn sync_height_with_blockchain(&mut self) -> ConsensusResult<()> {
+        if let Some(ref provider) = self.blockchain_provider {
+            match provider.get_blockchain_height().await {
+                Ok(blockchain_height) => {
+                    let old_height = self.current_round.height;
+                    // Consensus proposes for next block, so height = blockchain_height + 1
+                    // But if blockchain is at 0 (no blocks), we start at height 1
+                    self.current_round.height = if blockchain_height == 0 { 1 } else { blockchain_height + 1 };
+                    tracing::info!(
+                        "📊 Consensus height synced: {} → {} (blockchain at {})",
+                        old_height,
+                        self.current_round.height,
+                        blockchain_height
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to sync consensus height with blockchain: {} - using current height {}",
+                        e,
+                        self.current_round.height
+                    );
+                    Ok(()) // Non-fatal, continue with current height
+                }
+            }
+        } else {
+            tracing::debug!("No blockchain provider - consensus height unchanged at {}", self.current_round.height);
+            Ok(())
+        }
+    }
+
+    /// Check if BFT consensus mode is active (>= 4 validators)
+    ///
+    /// Returns true if there are enough validators for BFT consensus.
+    /// In bootstrap mode (< 4 validators), the mining loop handles block production directly.
+    pub fn is_bft_mode_active(&self) -> bool {
+        let validator_count = self.validator_manager.get_active_validators().len();
+        validator_count >= crate::types::MIN_BFT_VALIDATORS
+    }
+
+    /// Get current validator count
+    pub fn get_validator_count(&self) -> usize {
+        self.validator_manager.get_active_validators().len()
+    }
+
+    /// Set fee collector for fee collection integration
     ///
     /// Allows the consensus engine to collect and distribute fees at block finalization.
-    /// FeeRouter must implement Send trait for thread-safe storage.
-    pub fn set_fee_router<T: std::any::Any + Send + 'static>(&mut self, fee_router: T) {
-        self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_router)));
+    /// The fee collector must implement the FeeCollector trait.
+    ///
+    /// # Arguments
+    /// * `fee_collector` - Implementation of FeeCollector trait (e.g., FeeRouter from lib-blockchain)
+    pub fn set_fee_router<T: FeeCollector + 'static>(&mut self, fee_collector: T) {
+        self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_collector)));
     }
 
     fn emit_liveness_event(&self, event: ConsensusEvent) {
