@@ -23,6 +23,9 @@ use lib_crypto::KeyPair;
 // Identity imports
 use lib_identity::IdentityManager;
 
+// Import shared helpers from common module
+use super::common::create_error_response;
+
 /// Crypto utilities handler for signing, verification, and key generation
 pub struct CryptoHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
@@ -274,9 +277,4 @@ impl CryptoHandler {
             None,
         ))
     }
-}
-
-// Helper function to create error responses
-fn create_error_response(status: ZhtpStatus, message: String) -> ZhtpResponse {
-    ZhtpResponse::error(status, message)
 }
