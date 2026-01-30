@@ -63,6 +63,10 @@ async fn test_two_node_nodeid_stability_across_restart() -> Result<()> {
         // Simulate restart: Create Alice again with same seed
         tokio::time::sleep(Duration::from_millis(100)).await;
         let alice_after = create_test_identity(alice_device, alice_seed)?;
+#[tokio::test]
+async fn test_multi_node_network_shared() -> Result<()> {
+    run_shared_multi_node_network_test().await
+}
 
         // Verify NodeIds are identical after restart
         assert_eq!(

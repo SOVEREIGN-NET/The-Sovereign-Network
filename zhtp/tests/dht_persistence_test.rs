@@ -6,9 +6,10 @@
 use anyhow::Result;
 use lib_identity::testing::create_test_identity;
 use uuid::Uuid;
+
 #[path = "common_network_test.rs"]
 mod common_network_test;
-use common_network_test::{DhtEntry, DhtRoutingState, run_shared_dht_persistence_test, create_test_identities, build_dht_states, populate_dht_peers, assert_dht_peer_counts};
+use common_network_test::{DhtRoutingState, run_shared_dht_persistence_test, create_test_identities, build_dht_states, populate_dht_peers, assert_dht_peer_counts};
 
 
 #[tokio::test]
