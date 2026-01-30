@@ -3,7 +3,7 @@
 //! Provides comprehensive validation for ZHTP blockchain transactions.
 
 use crate::transaction::core::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData};
-use crate::types::{Hash, transaction_type::TransactionType};
+use crate::types::{Hash, transaction_type::TransactionType, ContractCall, ContractType};
 use crate::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
 use crate::integration::zk_integration::is_valid_proof_structure;
 
@@ -317,8 +317,8 @@ impl TransactionValidator {
         let identity_data = transaction.identity_data.as_ref()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        // Check if this is a system transaction (empty inputs)
-        let is_system_transaction = transaction.inputs.is_empty();
+        // Check if this is a system transaction (empty inputs), except for token contract calls
+        let is_system_transaction = transaction.inputs.is_empty() && !is_token_contract_execution(transaction);
         
         self.validate_identity_data(identity_data, is_system_transaction)?;
 
@@ -826,6 +826,31 @@ impl TransactionValidator {
     }
 }
 
+fn is_token_contract_execution(transaction: &Transaction) -> bool {
+    if transaction.transaction_type != TransactionType::ContractExecution {
+        return false;
+    }
+
+    if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
+        return false;
+    }
+
+    let call_data = &transaction.memo[4..];
+    let (call, _sig): (ContractCall, Signature) = match bincode::deserialize(call_data) {
+        Ok(parsed) => parsed,
+        Err(_) => return false,
+    };
+
+    if call.contract_type != ContractType::Token {
+        return false;
+    }
+
+    matches!(
+        call.method.as_str(),
+        "create_custom_token" | "mint" | "transfer" | "burn"
+    )
+}
+
 impl Default for TransactionValidator {
     fn default() -> Self {
         Self::new()
@@ -849,8 +874,8 @@ impl<'a> StatefulTransactionValidator<'a> {
 
     /// Validate a transaction with full state context including identity verification
     pub fn validate_transaction_with_state(&self, transaction: &Transaction) -> ValidationResult {
-        // Check if this is a system transaction (empty inputs = coinbase-style)
-        let is_system_transaction = transaction.inputs.is_empty();
+        // Check if this is a system transaction (empty inputs = coinbase-style), except token contract calls
+        let is_system_transaction = transaction.inputs.is_empty() && !is_token_contract_execution(transaction);
 
         // Create a stateless validator for basic checks
         let stateless_validator = TransactionValidator::new();
