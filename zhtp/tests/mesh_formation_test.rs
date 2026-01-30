@@ -4,12 +4,11 @@
 //! under various conditions including node restarts.
 
 use anyhow::Result;
-use std::time::Duration;
-mod common;
-use common_network_test::{MeshNode, MeshTopology, run_shared_mesh_formation_test, create_test_identities, build_mesh_topology, assert_fully_connected};
+use lib_identity::testing::create_test_identity;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(25);
-const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
+#[path = "common_network_test.rs"]
+mod common_network_test;
+use common_network_test::{MeshTopology, run_shared_mesh_formation_test, create_test_identities, build_mesh_topology, assert_fully_connected};
 
 #[tokio::test]
 async fn test_mesh_formation_shared() -> Result<()> {
