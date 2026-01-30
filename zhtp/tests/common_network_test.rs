@@ -78,6 +78,22 @@ impl MeshTopology {
             !node.is_active || node.peer_count() == active_count - 1
         })
     }
+    pub fn advance_cycle(&mut self) {
+        self.cycle += 1;
+    }
+    pub fn get_active_node_count(&self) -> usize {
+        self.nodes.iter().filter(|n| n.is_active).count()
+    }
+    pub fn deactivate_node(&mut self, index: usize) {
+        if index < self.nodes.len() {
+            self.nodes[index].is_active = false;
+        }
+    }
+    pub fn reactivate_node(&mut self, index: usize) {
+        if index < self.nodes.len() {
+            self.nodes[index].is_active = true;
+        }
+    }
 }
 
 pub async fn run_shared_mesh_formation_test() -> Result<()> {
