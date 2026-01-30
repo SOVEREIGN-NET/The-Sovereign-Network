@@ -3,12 +3,12 @@
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
 //! - **Pure Logic**: Validation, endpoint selection (pure functions)
-//! - **Imperative Shell**: HTTP client calls, output printing
+//! - **Imperative Shell**: QUIC client calls, output printing
 //! - **Error Handling**: Domain-specific CliError types
-//! - **Testability**: Traits for HTTP client and output injection
+//! - **Testability**: Traits for client and output injection
 
-use crate::argument_parsing::{MonitorArgs, MonitorAction, ZhtpCli, format_output};
-use crate::error::{CliResult, CliError};
+use crate::argument_parsing::{MonitorArgs, MonitorAction, ZhtpCli};
+use crate::error::CliResult;
 use crate::output::Output;
 
 // ============================================================================
@@ -28,10 +28,10 @@ impl MonitoringEndpoint {
     /// Get the API endpoint path for this monitoring type
     pub fn endpoint_path(&self) -> &'static str {
         match self {
-            MonitoringEndpoint::System => "monitor/system",
-            MonitoringEndpoint::Health => "monitor/health",
-            MonitoringEndpoint::Performance => "monitor/performance",
-            MonitoringEndpoint::Logs => "monitor/logs",
+            MonitoringEndpoint::System => "/api/v1/monitor/system",
+            MonitoringEndpoint::Health => "/api/v1/monitor/health",
+            MonitoringEndpoint::Performance => "/api/v1/monitor/performance",
+            MonitoringEndpoint::Logs => "/api/v1/monitor/logs",
         }
     }
 
@@ -69,7 +69,7 @@ pub fn action_to_endpoint(action: &MonitorAction) -> MonitoringEndpoint {
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - All side effects here (HTTP, output)
+// IMPERATIVE SHELL - All side effects here (QUIC, output)
 // ============================================================================
 
 /// Handle monitoring command with proper error handling and output
@@ -87,56 +87,32 @@ pub async fn handle_monitor_command(
 ///
 /// This is the imperative shell - it:
 /// 1. Converts action to endpoint (pure)
-/// 2. Makes HTTP requests (side effect)
+/// 2. Makes QUIC requests (side effect)
 /// 3. Formats and prints output (side effect)
 /// 4. Returns proper error types
 async fn handle_monitor_command_impl(
     args: MonitorArgs,
-    cli: &ZhtpCli,
+    _cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
     let endpoint = action_to_endpoint(&args.action);
-    let client = reqwest::Client::new();
-    let base_url = format!("http://{}/api/v1", cli.server);
 
-    fetch_and_display_monitoring(&client, &base_url, endpoint, cli, output).await
+    // Note: The /api/v1/monitor/* endpoints are not yet implemented on the server.
+    // This command is a placeholder for future monitoring functionality.
+    output.warning(&format!(
+        "Monitoring endpoint '{}' is not yet implemented on the server.",
+        endpoint.endpoint_path()
+    ))?;
+    output.info(&format!(
+        "The {} functionality will be available in a future server release.",
+        endpoint.description().to_lowercase()
+    ))?;
+
+    Ok(())
 }
 
-/// Fetch monitoring data and display it
-async fn fetch_and_display_monitoring(
-    client: &reqwest::Client,
-    base_url: &str,
-    endpoint: MonitoringEndpoint,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    output.info(&format!("Fetching {}...", endpoint.description()))?;
-
-    let url = format!("{}/{}", base_url, endpoint.endpoint_path());
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.endpoint_path().to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        output.header(endpoint.title())?;
-        output.print(&formatted)?;
-        Ok(())
-    } else {
-        Err(CliError::ApiCallFailed {
-            endpoint: endpoint.endpoint_path().to_string(),
-            status: response.status().as_u16(),
-            reason: format!("HTTP {}", response.status()),
-        })
-    }
-}
+// Note: fetch_and_display_monitoring removed - monitoring endpoints not implemented server-side.
+// Will be restored when /api/v1/monitor/* endpoints are available.
 
 // ============================================================================
 // TESTS - Pure logic is testable without mocks or side effects
@@ -148,13 +124,13 @@ mod tests {
 
     #[test]
     fn test_monitoring_endpoint_path() {
-        assert_eq!(MonitoringEndpoint::System.endpoint_path(), "monitor/system");
-        assert_eq!(MonitoringEndpoint::Health.endpoint_path(), "monitor/health");
+        assert_eq!(MonitoringEndpoint::System.endpoint_path(), "/api/v1/monitor/system");
+        assert_eq!(MonitoringEndpoint::Health.endpoint_path(), "/api/v1/monitor/health");
         assert_eq!(
             MonitoringEndpoint::Performance.endpoint_path(),
-            "monitor/performance"
+            "/api/v1/monitor/performance"
         );
-        assert_eq!(MonitoringEndpoint::Logs.endpoint_path(), "monitor/logs");
+        assert_eq!(MonitoringEndpoint::Logs.endpoint_path(), "/api/v1/monitor/logs");
     }
 
     #[test]

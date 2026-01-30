@@ -3,14 +3,15 @@
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
 //! - **Pure Logic**: Validation, request building (pure functions)
-//! - **Imperative Shell**: HTTP client calls, output printing
+//! - **Imperative Shell**: QUIC client calls, output printing
 //! - **Error Handling**: Domain-specific CliError types
-//! - **Testability**: Traits for HTTP client and output injection
+//! - **Testability**: Traits for client and output injection
 
 use crate::argument_parsing::{BlockchainArgs, BlockchainAction, ZhtpCli, format_output};
+use crate::commands::web4_utils::connect_default;
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
-use serde_json::json;
+use lib_network::client::ZhtpClient;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -33,18 +34,15 @@ fn validate_tx_hash(tx_hash: &str) -> CliResult<()> {
     Ok(())
 }
 
-/// Build transaction lookup request body
+/// Build transaction lookup endpoint path
 ///
-/// Pure function - creates JSON request data
-fn build_transaction_request(tx_hash: &str) -> serde_json::Value {
-    json!({
-        "tx_hash": tx_hash,
-        "orchestrated": true
-    })
+/// Pure function - URL path construction
+fn build_transaction_endpoint(tx_hash: &str) -> String {
+    format!("/api/v1/blockchain/transaction/{}", tx_hash)
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - All side effects here (HTTP, output)
+// IMPERATIVE SHELL - All side effects here (QUIC, output)
 // ============================================================================
 
 /// Handle blockchain command with proper error handling and output
@@ -62,7 +60,7 @@ pub async fn handle_blockchain_command(
 ///
 /// This is the imperative shell - it:
 /// 1. Validates inputs (pure)
-/// 2. Makes HTTP requests (side effect)
+/// 2. Makes QUIC requests (side effect)
 /// 3. Formats and prints output (side effect)
 /// 4. Returns proper error types
 async fn handle_blockchain_command_impl(
@@ -70,59 +68,115 @@ async fn handle_blockchain_command_impl(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let client = reqwest::Client::new();
-    let base_url = format!("http://{}/api/v1", cli.server);
+    // Connect using default keystore with bootstrap mode
+    let client = connect_default(&cli.server).await?;
 
     match args.action {
         BlockchainAction::Status => {
-            output.print("Querying blockchain status...")?;
-            super::common::fetch_and_display(
-                &client,
-                &format!("{}/blockchain/status", base_url),
-                "blockchain/status",
-                "Blockchain Status",
-                &cli.format,
-                output,
-            ).await
+            fetch_and_display_blockchain_status(&client, cli, output).await
         }
         BlockchainAction::Transaction { tx_hash } => {
-            fetch_and_display_transaction(&client, &base_url, &tx_hash, cli, output).await
+            fetch_and_display_transaction(&client, &tx_hash, cli, output).await
         }
         BlockchainAction::Stats => {
-            output.print("Collecting blockchain statistics...")?;
-            super::common::fetch_and_display(
-                &client,
-                &format!("{}/blockchain/stats", base_url),
-                "blockchain/stats",
-                "Blockchain Statistics",
-                &cli.format,
-                output,
-            ).await
+            fetch_and_display_blockchain_stats(&client, cli, output).await
         }
     }
 }
 
+/// Fetch blockchain status and display it
+async fn fetch_and_display_blockchain_status(
+    client: &ZhtpClient,
+    cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
+    output.print("Querying blockchain status...")?;
+
+    let response = client
+        .get("/api/v1/blockchain/status")
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/blockchain/status".to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    let result: serde_json::Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/blockchain/status".to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        })?;
+    let formatted = format_output(&result, &cli.format)?;
+    output.header("Blockchain Status")?;
+    output.print(&formatted)?;
+    Ok(())
+}
+
 /// Fetch transaction details and display them
 async fn fetch_and_display_transaction(
-    client: &reqwest::Client,
-    base_url: &str,
+    client: &ZhtpClient,
     tx_hash: &str,
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
+    // Pure validation
     validate_tx_hash(tx_hash)?;
-    output.print(&format!("Looking up transaction: {}", tx_hash))?;
-    let request_body = build_transaction_request(tx_hash);
 
-    super::common::post_and_display(
-        client,
-        &format!("{}/blockchain/transaction", base_url),
-        request_body,
-        "blockchain/transaction",
-        "Transaction Details",
-        &cli.format,
-        output,
-    ).await
+    output.print(&format!("Looking up transaction: {}", tx_hash))?;
+
+    // Pure endpoint path building
+    let endpoint = build_transaction_endpoint(tx_hash);
+
+    // Imperative: QUIC call (GET with hash in path)
+    let response = client
+        .get(&endpoint)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: endpoint.clone(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    let result: serde_json::Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint,
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        })?;
+    let formatted = format_output(&result, &cli.format)?;
+    output.header("Transaction Details")?;
+    output.print(&formatted)?;
+    Ok(())
+}
+
+/// Fetch blockchain statistics and display them
+async fn fetch_and_display_blockchain_stats(
+    client: &ZhtpClient,
+    cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
+    output.print("Collecting blockchain statistics...")?;
+
+    let response = client
+        .get("/api/v1/blockchain/stats")
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/blockchain/stats".to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    let result: serde_json::Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/blockchain/stats".to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        })?;
+    let formatted = format_output(&result, &cli.format)?;
+    output.header("Blockchain Statistics")?;
+    output.print(&formatted)?;
+    Ok(())
 }
 
 // ============================================================================
@@ -132,7 +186,6 @@ async fn fetch_and_display_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::testing::MockOutput;
 
     #[test]
     fn test_validate_tx_hash_valid() {
@@ -154,16 +207,15 @@ mod tests {
     }
 
     #[test]
-    fn test_build_transaction_request() {
-        let req = build_transaction_request("abc123");
-        assert_eq!(req["tx_hash"], "abc123");
-        assert_eq!(req["orchestrated"], true);
+    fn test_build_transaction_endpoint() {
+        let endpoint = build_transaction_endpoint("abc123def456");
+        assert_eq!(endpoint, "/api/v1/blockchain/transaction/abc123def456");
     }
 
     #[tokio::test]
     async fn test_validate_tx_hash_in_handler_path() {
         // This test shows that the pure validation logic is called
-        // before making any HTTP requests
+        // before making any QUIC requests
         let hash = "";
         let result = validate_tx_hash(hash);
         assert!(result.is_err());

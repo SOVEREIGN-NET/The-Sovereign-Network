@@ -15,8 +15,8 @@ use serde_json::Value;
 #[command(author, version, about, long_about = None)]
 #[command(name = "zhtp-cli")]
 pub struct ZhtpCli {
-    /// API server address
-    #[arg(short, long, default_value = "127.0.0.1:9333", env = "ZHTP_SERVER")]
+    /// QUIC server address (connects to running node via QUIC on port 9334)
+    #[arg(short, long, default_value = "127.0.0.1:9334", env = "ZHTP_SERVER")]
     pub server: String,
 
     /// Enable verbose output
@@ -185,10 +185,13 @@ pub enum WalletAction {
         #[arg(short, long, default_value = "citizen")]
         wallet_type: String,
     },
-    /// Get wallet balance (orchestrated)
+    /// Get wallet balance for an identity
     Balance {
-        /// Wallet address
-        address: String,
+        /// Identity ID (DID or public key)
+        identity_id: String,
+        /// Wallet type (primary, staking, governance, etc.)
+        #[arg(short, long, default_value = "primary")]
+        wallet_type: String,
     },
     /// Transfer funds (orchestrated)
     Transfer {
@@ -202,13 +205,21 @@ pub enum WalletAction {
         #[arg(short, long)]
         amount: u64,
     },
-    /// Get transaction history (orchestrated)
+    /// Get transaction history for an identity
     History {
-        /// Wallet address
-        address: String,
+        /// Identity ID (DID or public key)
+        identity_id: String,
     },
-    /// List all wallets
-    List,
+    /// List all wallets for an identity
+    List {
+        /// Identity ID (DID or public key)
+        identity_id: String,
+    },
+    /// Get wallet statistics for an identity
+    Statistics {
+        /// Identity ID (DID or public key)
+        identity_id: String,
+    },
 }
 
 /// DAO operation commands
@@ -240,8 +251,6 @@ pub enum DaoAction {
         #[arg(short, long)]
         choice: String,
     },
-    /// Claim UBI (orchestrated)
-    ClaimUbi,
     /// Get DAO treasury balance
     Balance,
     /// Get treasury balance (alias for Balance)
