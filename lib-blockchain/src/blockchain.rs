@@ -1139,6 +1139,14 @@ impl Blockchain {
     /// 2. Deducts the fee from their SOV token balance
     /// 3. Accumulates total fees for later distribution via FeeRouter
     ///
+    /// # Fee Distribution Flow
+    /// Fees are deducted immediately but not credited to any address until FeeRouter distributes them.
+    /// This creates a temporary gap where deducted fees reduce the circulating supply until distribution.
+    /// This is intentional behavior:
+    /// - Prevents double-spending of fees during the same block
+    /// - Allows FeeRouter to batch distribute fees according to governance rules
+    /// - Maintains audit trail of fee collection vs. distribution
+    ///
     /// # Arguments
     /// * `block` - The block containing transactions to process
     ///
