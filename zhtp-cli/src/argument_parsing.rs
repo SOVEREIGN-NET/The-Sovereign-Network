@@ -120,6 +120,9 @@ pub enum ZhtpCommand {
 
     /// Manage system service installation
     Service(ServiceArgs),
+
+    /// Token operations (create, mint, transfer)
+    Token(TokenArgs),
 }
 
 /// Node management commands
@@ -1016,6 +1019,79 @@ pub enum ServiceAction {
     },
 }
 
+/// Token operation commands
+#[derive(Args, Debug, Clone)]
+pub struct TokenArgs {
+    #[command(subcommand)]
+    pub action: TokenAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum TokenAction {
+    /// Create a new custom token
+    Create {
+        /// Token name (e.g., "MyToken")
+        #[arg(short, long)]
+        name: String,
+        /// Token symbol (e.g., "MTK")
+        #[arg(short, long)]
+        symbol: String,
+        /// Initial supply
+        #[arg(long)]
+        supply: u64,
+        /// Creator identity (DID)
+        #[arg(short, long)]
+        creator: String,
+    },
+    /// Mint additional tokens (creator only)
+    Mint {
+        /// Token ID
+        #[arg(short, long)]
+        token_id: String,
+        /// Amount to mint
+        #[arg(short, long)]
+        amount: u64,
+        /// Recipient address
+        #[arg(short, long)]
+        to: String,
+        /// Creator identity (must be token creator)
+        #[arg(short, long)]
+        creator: String,
+    },
+    /// Transfer tokens
+    Transfer {
+        /// Token ID
+        #[arg(short, long)]
+        token_id: String,
+        /// Sender address
+        #[arg(short, long)]
+        from: String,
+        /// Recipient address
+        #[arg(long)]
+        to: String,
+        /// Amount to transfer
+        #[arg(short, long)]
+        amount: u64,
+    },
+    /// Get token information
+    Info {
+        /// Token ID
+        #[arg(short, long)]
+        token_id: String,
+    },
+    /// Get token balance for an address
+    Balance {
+        /// Token ID
+        #[arg(short, long)]
+        token_id: String,
+        /// Address to check
+        #[arg(short, long)]
+        address: String,
+    },
+    /// List all tokens
+    List,
+}
+
 /// Main CLI runner
 pub async fn run_cli() -> Result<()> {
     // Initialize network genesis for replay protection
@@ -1058,6 +1134,7 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Man(args) => commands::man::handle_man_command(args.clone()).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Update(args) => commands::update::handle_update_command(args.clone()).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Service(args) => commands::service::handle_service_command(args.clone()).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Token(args) => commands::token::handle_token_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
     }
 }
 

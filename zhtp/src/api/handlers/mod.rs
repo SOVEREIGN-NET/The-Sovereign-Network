@@ -19,6 +19,7 @@ pub mod marketplace;
 pub mod mesh;
 pub mod validator;
 pub mod crypto;
+pub mod token;
 
 pub use identity::IdentityHandler;
 pub use guardian::GuardianHandler;
@@ -37,3 +38,4 @@ pub use marketplace::MarketplaceHandler;
 pub use mesh::MeshHandler;
 pub use validator::ValidatorHandler;
 pub use crypto::CryptoHandler;
+pub use token::TokenHandler;
