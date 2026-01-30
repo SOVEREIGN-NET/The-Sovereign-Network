@@ -48,7 +48,7 @@ lib-identity = { path = "../lib-identity" }
 lib-crypto = { path = "../lib-crypto" }
 lib-economy = { path = "../lib-economy" }
 lib-network = { path = "../lib-network" }
-lib-blockchain = { path = "../lib-blockchain", features = ["contracts"], optional = true }
+lib-blockchain = { path = "../lib-blockchain", features = ["contracts"] }
 lib-protocols = { path = "../lib-protocols" }
 lib-proofs = { path = "../lib-proofs" }
 
