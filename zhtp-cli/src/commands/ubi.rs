@@ -2,18 +2,15 @@
 //!
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
-//! - **Pure Logic**: Identity validation, endpoint path construction
-//! - **Imperative Shell**: QUIC client calls, response handling, output formatting
+//! - **Pure Logic**: Identity validation, request body construction, API endpoint generation
+//! - **Imperative Shell**: HTTP requests, response handling, output formatting
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for validation
 
 use crate::argument_parsing::{UbiArgs, UbiAction, ZhtpCli, format_output};
-use crate::commands::common::validate_identity_id;
-use crate::commands::web4_utils::connect_default;
 use crate::error::{CliResult, CliError};
-use crate::output::Output;
-use lib_network::client::ZhtpClient;
-use serde_json::Value;
+use crate::commands::common::validate_identity_id;
+use serde_json::{json, Value};
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -22,37 +19,38 @@ use serde_json::Value;
 /// UBI operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UbiOperation {
-    PersonalStatus,
-    PoolStatus,
+    Status,
 }
 
 impl UbiOperation {
     /// Get user-friendly description
     pub fn description(&self) -> &'static str {
         match self {
-            UbiOperation::PersonalStatus => "Get personal UBI wallet status",
-            UbiOperation::PoolStatus => "Get global UBI pool status",
+            UbiOperation::Status => "Get UBI status (personal or pool)",
         }
     }
 
-    /// Get a user-friendly title for this operation
-    pub fn title(&self) -> &'static str {
+    /// Get HTTP method for this operation
+    pub fn http_method(&self) -> &'static str {
+        "GET"
+    }
+
+    /// Get endpoint path for this operation
+    pub fn endpoint_path(&self, identity_id: Option<&str>) -> String {
         match self {
-            UbiOperation::PersonalStatus => "Personal UBI Status",
-            UbiOperation::PoolStatus => "Global UBI Pool Status",
+            UbiOperation::Status => {
+                if let Some(id) = identity_id {
+                    format!("ubi/status/{}", id)
+                } else {
+                    "ubi/pool".to_string()
+                }
+            }
         }
     }
-}
-
-/// Build UBI wallet balance endpoint path
-///
-/// Uses the wallet balance endpoint with wallet_type=ubi
-pub fn build_ubi_balance_endpoint(identity_id: &str) -> String {
-    format!("/api/v1/wallet/balance/ubi/{}", identity_id)
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - QUIC calls and side effects
+// IMPERATIVE SHELL - API calls and side effects
 // ============================================================================
 
 /// Handle UBI command
@@ -60,68 +58,92 @@ pub async fn handle_ubi_command(
     args: UbiArgs,
     cli: &ZhtpCli,
 ) -> CliResult<()> {
-    let output = crate::output::ConsoleOutput;
-    handle_ubi_command_impl(args, cli, &output).await
-}
+    if cli.verbose {
+        eprintln!("[ubi] UBI status command");
+    }
 
-/// Internal implementation with dependency injection
-async fn handle_ubi_command_impl(
-    args: UbiArgs,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    match &args.action {
+    match args.action {
         UbiAction::Status { identity_id } => {
-            match identity_id {
-                Some(id) => fetch_personal_ubi_status(id, cli, output).await,
-                None => {
-                    // Global pool status endpoint not implemented
-                    output.warning("Global UBI pool status endpoint not yet implemented on server.")?;
-                    output.info("To check your personal UBI status, use: zhtp-cli ubi status <identity_id>")?;
-                    Ok(())
-                }
-            }
+            fetch_ubi_status(identity_id.as_deref(), cli).await
         }
     }
 }
 
-/// Fetch personal UBI status (via UBI wallet balance)
-async fn fetch_personal_ubi_status(
-    identity_id: &str,
+/// Fetch UBI status for an identity (or global pool if None)
+async fn fetch_ubi_status(
+    identity_id: Option<&str>,
     cli: &ZhtpCli,
-    output: &dyn Output,
 ) -> CliResult<()> {
-    // Validate identity ID format
-    validate_identity_id(identity_id)?;
+    // Validate identity ID if provided
+    if let Some(id) = identity_id {
+        validate_identity_id(id)?;
+    }
 
-    output.info(&format!("Fetching UBI status for: {}", identity_id))?;
+    if cli.verbose {
+        if let Some(id) = identity_id {
+            eprintln!("[ubi:status] Fetching personal UBI status for: {}", id);
+        } else {
+            eprintln!("[ubi:status] Fetching global UBI pool status");
+        }
+    }
 
-    // Connect using default keystore with bootstrap mode
-    let client = connect_default(&cli.server).await?;
+    let operation = UbiOperation::Status;
 
-    // Query UBI wallet balance via wallet endpoint
-    let endpoint = build_ubi_balance_endpoint(identity_id);
+    // Build endpoint URL
+    let endpoint = operation.endpoint_path(identity_id);
+    let url = format!("http://{}/api/v1/{}", cli.server, endpoint);
+
+    if cli.verbose {
+        eprintln!("[ubi:status] GET {}", url);
+    }
+
+    // Create HTTP client and send request
+    let client = reqwest::Client::new();
 
     let response = client
-        .get(&endpoint)
+        .get(&url)
+        .send()
         .await
         .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.clone(),
+            endpoint: "ubi/status".to_string(),
             status: 0,
             reason: e.to_string(),
         })?;
 
-    let result: Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.clone(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
+    let status = response.status();
+
+    if status.is_success() {
+        let result: Value = response.json().await.map_err(|e| {
+            CliError::ApiCallFailed {
+                endpoint: "ubi/status".to_string(),
+                status: status.as_u16(),
+                reason: format!("Failed to parse response: {}", e),
+            }
         })?;
 
-    let formatted = format_output(&result, &cli.format)?;
-    output.header(UbiOperation::PersonalStatus.title())?;
-    output.print(&formatted)?;
-    Ok(())
+        let formatted = format_output(&result, &cli.format)
+            .map_err(|e| CliError::Other(e.to_string()))?;
+
+        let header = if identity_id.is_some() {
+            "✓ Personal UBI Status"
+        } else {
+            "✓ Global UBI Pool Status"
+        };
+
+        println!("{}\n{}", header, formatted);
+        Ok(())
+    } else {
+        let error_body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+
+        Err(CliError::ApiCallFailed {
+            endpoint: "ubi/status".to_string(),
+            status: status.as_u16(),
+            reason: error_body,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -129,20 +151,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_ubi_balance_endpoint() {
-        let endpoint = build_ubi_balance_endpoint("did:zhtp:123");
-        assert_eq!(endpoint, "/api/v1/wallet/balance/ubi/did:zhtp:123");
+    fn test_ubi_operation_personal_endpoint() {
+        let endpoint = UbiOperation::Status.endpoint_path(Some("did:example:123"));
+        assert_eq!(endpoint, "ubi/status/did:example:123");
+    }
+
+    #[test]
+    fn test_ubi_operation_pool_endpoint() {
+        let endpoint = UbiOperation::Status.endpoint_path(None);
+        assert_eq!(endpoint, "ubi/pool");
+    }
+
+    #[test]
+    fn test_ubi_operation_http_method() {
+        assert_eq!(UbiOperation::Status.http_method(), "GET");
     }
 
     #[test]
     fn test_ubi_operation_description() {
-        assert!(!UbiOperation::PersonalStatus.description().is_empty());
-        assert!(!UbiOperation::PoolStatus.description().is_empty());
-    }
-
-    #[test]
-    fn test_ubi_operation_title() {
-        assert_eq!(UbiOperation::PersonalStatus.title(), "Personal UBI Status");
-        assert_eq!(UbiOperation::PoolStatus.title(), "Global UBI Pool Status");
+        assert!(!UbiOperation::Status.description().is_empty());
     }
 }

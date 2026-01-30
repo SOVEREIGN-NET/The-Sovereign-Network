@@ -10,8 +10,6 @@ use lib_network::web4::TrustConfig;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use zhtp::config::SeedStorageConfig;
-use zhtp::runtime::seed_storage::{KeystoreSeedlessKey, SeedKind, SeedStorage};
 
 #[derive(Debug, Clone)]
 pub struct LoadedIdentity {
@@ -23,8 +21,7 @@ pub struct LoadedIdentity {
 struct KeystorePrivateKey {
     dilithium_sk: Vec<u8>,
     kyber_sk: Vec<u8>,
-    #[serde(default)]
-    master_seed: Option<Vec<u8>>,
+    master_seed: Vec<u8>,
 }
 
 pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIdentity> {
@@ -32,7 +29,6 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
     // NODE identity is for mesh networking operations only
     let mut identity_file = keystore_path.join(zhtp::keystore_names::USER_IDENTITY_FILENAME);
     let mut private_key_file = keystore_path.join(zhtp::keystore_names::USER_PRIVATE_KEY_FILENAME);
-    let mut seed_kind = SeedKind::User;
 
     // Fallback to NODE identity files for backwards compatibility with old keystores
     // that were created before USER/NODE identity separation
@@ -48,7 +44,6 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
             );
             identity_file = node_identity_file;
             private_key_file = node_private_key_file;
-            seed_kind = SeedKind::Node;
         }
     }
 
@@ -70,35 +65,13 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
     let private_key_json = std::fs::read_to_string(&private_key_file)
         .map_err(|e| CliError::IdentityError(format!("Failed to read private key: {}", e)))?;
 
-    let identity_id = SeedStorage::identity_id_from_json(&identity_json)
-        .map_err(|e| CliError::IdentityError(format!("Failed to parse identity id: {}", e)))?;
-    let seed_storage = SeedStorage::new(SeedStorageConfig::for_keystore(keystore_path));
-
-    let mut keystore_key: KeystorePrivateKey = serde_json::from_str(&private_key_json)
+    let keystore_key: KeystorePrivateKey = serde_json::from_str(&private_key_json)
         .map_err(|e| CliError::IdentityError(format!("Failed to parse private key: {}", e)))?;
-
-    let master_seed = if let Some(seed) = keystore_key.master_seed.take() {
-        seed_storage
-            .store_seed(&identity_id, seed_kind, &seed)
-            .map_err(|e| CliError::IdentityError(format!("Failed to store encrypted seed: {}", e)))?;
-        let scrubbed = KeystoreSeedlessKey {
-            dilithium_sk: keystore_key.dilithium_sk.clone(),
-            kyber_sk: keystore_key.kyber_sk.clone(),
-        };
-        SeedStorage::scrub_seed_from_key_file(&private_key_file, &scrubbed)
-            .map_err(|e| CliError::IdentityError(format!("Failed to scrub private key file: {}", e)))?;
-        seed
-    } else {
-        seed_storage
-            .load_seed(&identity_id, seed_kind)
-            .map_err(|e| CliError::IdentityError(format!("Failed to load encrypted seed: {}", e)))?
-            .ok_or_else(|| CliError::IdentityError("Missing encrypted master seed".to_string()))?
-    };
 
     let private_key = PrivateKey {
         dilithium_sk: keystore_key.dilithium_sk,
         kyber_sk: keystore_key.kyber_sk,
-        master_seed,
+        master_seed: keystore_key.master_seed,
     };
 
     let identity = ZhtpIdentity::from_serialized(&identity_json, &private_key)
@@ -171,45 +144,6 @@ pub async fn connect_client(
         .connect(server)
         .await
         .map_err(|e| CliError::ConfigError(format!("Failed to connect: {}", e)))?;
-    Ok(client)
-}
-
-/// Connect to ZHTP node using default keystore with bootstrap mode
-///
-/// This is a simplified connection method for commands that don't need
-/// explicit keystore/trust configuration (monitoring, status queries, etc.)
-///
-/// Uses:
-/// - Default keystore at ~/.zhtp/keystore
-/// - Bootstrap mode (no TLS verification) for development convenience
-pub async fn connect_default(server: &str) -> CliResult<ZhtpClient> {
-    // Try to find default keystore
-    let default_keystore = dirs::home_dir()
-        .map(|h| h.join(".zhtp").join("keystore"))
-        .ok_or_else(|| CliError::ConfigError("Cannot determine home directory".to_string()))?;
-
-    if !default_keystore.exists() {
-        return Err(CliError::IdentityError(format!(
-            "Default keystore not found at {:?}. Run 'zhtp-cli identity create-did <name>' first.",
-            default_keystore
-        )));
-    }
-
-    let loaded = load_identity_from_keystore(&default_keystore)?;
-    let trust_config = TrustConfig::bootstrap();
-    let config = ZhtpClientConfig {
-        allow_bootstrap: true,
-    };
-
-    let mut client = ZhtpClient::new_with_config(loaded.identity, trust_config, config)
-        .await
-        .map_err(|e| CliError::ConfigError(format!("Failed to create client: {}", e)))?;
-
-    client
-        .connect(server)
-        .await
-        .map_err(|e| CliError::ConfigError(format!("Failed to connect to {}: {}", server, e)))?;
-
     Ok(client)
 }
 
