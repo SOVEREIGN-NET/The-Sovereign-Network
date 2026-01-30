@@ -11,8 +11,19 @@ pub fn generate_lib_token_id() -> [u8; 32] {
 }
 
 /// Generate custom token ID based on name and symbol
+///
+/// SECURITY: Uses length-prefixing to prevent collisions.
+/// Without length-prefixing, "AB" + "CD" would hash the same as "ABC" + "D".
+/// With length-prefixing: "TOKEN:2:AB:2:CD" != "TOKEN:3:ABC:1:D"
 pub fn generate_custom_token_id(name: &str, symbol: &str) -> [u8; 32] {
-    let token_data = format!("{}_{}_TOKEN", name.to_uppercase(), symbol.to_uppercase());
+    // Length-prefix to prevent collisions: "AB"+"CD" != "ABC"+"D"
+    let token_data = format!(
+        "TOKEN:{}:{}:{}:{}",
+        name.len(),
+        name.to_uppercase(),
+        symbol.len(),
+        symbol.to_uppercase()
+    );
     blake3::hash(token_data.as_bytes()).into()
 }
 
@@ -141,12 +152,32 @@ mod tests {
         let id1 = generate_custom_token_id("Whisper", "WHISPER");
         let id2 = generate_custom_token_id("Whisper", "WHISPER");
         let id3 = generate_custom_token_id("Test", "TEST");
-        
+
         // Same inputs should produce same ID
         assert_eq!(id1, id2);
         // Different inputs should produce different IDs
         assert_ne!(id1, id3);
         assert_eq!(id1.len(), 32);
+    }
+
+    #[test]
+    fn test_custom_token_id_collision_resistance() {
+        // Test that length-prefixing prevents collisions
+        // Without length-prefixing, these would produce the same hash:
+        // "AB_CD_TOKEN" == "ABC_D_TOKEN" (if name/symbol were just concatenated)
+
+        let id1 = generate_custom_token_id("AB", "CD");
+        let id2 = generate_custom_token_id("ABC", "D");
+        let id3 = generate_custom_token_id("A", "BCD");
+        let id4 = generate_custom_token_id("ABCD", "");
+
+        // All should be different due to length-prefixing
+        assert_ne!(id1, id2, "AB+CD should differ from ABC+D");
+        assert_ne!(id1, id3, "AB+CD should differ from A+BCD");
+        assert_ne!(id1, id4, "AB+CD should differ from ABCD+empty");
+        assert_ne!(id2, id3, "ABC+D should differ from A+BCD");
+        assert_ne!(id2, id4, "ABC+D should differ from ABCD+empty");
+        assert_ne!(id3, id4, "A+BCD should differ from ABCD+empty");
     }
 
     #[test]

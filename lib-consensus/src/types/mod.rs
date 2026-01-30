@@ -341,6 +341,19 @@ pub enum ConsensusEvent {
         round: u32,
         timestamp: u64,
     },
+    /// Mode transition from Bootstrap to BFT
+    ModeTransitionToBft {
+        validator_count: usize,
+        height: u64,
+        timestamp: u64,
+    },
+    /// Mode transition from BFT to Bootstrap (degraded state)
+    ModeTransitionToBootstrap {
+        validator_count: usize,
+        min_required: usize,
+        height: u64,
+        timestamp: u64,
+    },
 }
 
 /// Block metadata for fee tracking and statistics
@@ -447,4 +460,227 @@ pub trait MessageBroadcaster: Send + Sync {
         message: ValidatorMessage,
         validator_ids: &[IdentityId],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// Blockchain provider for consensus block production
+///
+/// Provides access to blockchain state needed for creating block proposals:
+/// - Latest block hash (for chain continuity)
+/// - Pending transactions (for block content)
+/// - Current blockchain height (for validation)
+///
+/// This trait is implemented by the runtime layer and injected into ConsensusEngine.
+/// The consensus engine never directly accesses blockchain storage.
+///
+/// # Thread Safety
+/// Implementations must be thread-safe (Send + Sync) as the consensus engine
+/// may query blockchain state from multiple async contexts.
+#[async_trait]
+pub trait ConsensusBlockchainProvider: Send + Sync {
+    /// Get the hash of the latest committed block
+    ///
+    /// Returns the hash of the block at `height - 1` when proposing for `height`.
+    /// For genesis (height 0), returns a zero hash.
+    async fn get_latest_block_hash(&self) -> Result<Hash, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Get pending transactions from the mempool
+    ///
+    /// Returns serialized transactions ready to be included in the next block.
+    /// The consensus engine includes these in the proposal's block_data field.
+    ///
+    /// # Returns
+    /// - Serialized transaction data (bincode-encoded Vec<Transaction>)
+    /// - Empty Vec if no pending transactions
+    async fn get_pending_transactions(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Get current blockchain height
+    ///
+    /// Used to validate that consensus height matches blockchain height.
+    async fn get_blockchain_height(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Check if blockchain is ready for block production
+    ///
+    /// Returns false during initialization or sync.
+    async fn is_ready(&self) -> bool;
+}
+
+/// No-op blockchain provider for testing or when blockchain is not available
+pub struct NoOpBlockchainProvider;
+
+#[async_trait]
+impl ConsensusBlockchainProvider for NoOpBlockchainProvider {
+    async fn get_latest_block_hash(&self) -> Result<Hash, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Hash([0u8; 32]))
+    }
+
+    async fn get_pending_transactions(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_blockchain_height(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(0)
+    }
+
+    async fn is_ready(&self) -> bool {
+        false
+    }
+}
+
+/// Callback for committing finalized blocks to the blockchain
+///
+/// When BFT consensus achieves 2/3+1 commit votes on a proposal, this callback
+/// is invoked to actually commit the block to the blockchain storage.
+///
+/// This separates consensus finalization from block storage:
+/// - ConsensusEngine determines WHEN a block is finalized (BFT safety)
+/// - BlockCommitCallback determines HOW the block is stored (blockchain layer)
+///
+/// # Thread Safety
+/// Implementations must be thread-safe (Send + Sync) as the consensus engine
+/// may finalize blocks from multiple async contexts.
+#[async_trait]
+pub trait BlockCommitCallback: Send + Sync {
+    /// Commit a finalized block to the blockchain
+    ///
+    /// Called when BFT consensus achieves supermajority (2/3+1) commit votes.
+    /// The proposal contains the block data that was agreed upon.
+    ///
+    /// # Arguments
+    /// * `proposal` - The consensus proposal that was finalized
+    ///
+    /// # Returns
+    /// * `Ok(())` - Block was successfully committed
+    /// * `Err(...)` - Block commit failed (logged but does not affect consensus)
+    ///
+    /// # Invariants
+    /// - This callback is best-effort; consensus correctness does not depend on it
+    /// - The same block may be committed multiple times (idempotent handling required)
+    async fn commit_finalized_block(
+        &self,
+        proposal: &ConsensusProposal,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Get the number of active validators for mode switching
+    ///
+    /// Returns the count of validators currently registered and active.
+    /// Used by the mining loop to determine whether to use BFT consensus
+    /// (4+ validators) or bootstrap mode (< 4 validators).
+    async fn get_active_validator_count(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// Minimum validators required for BFT consensus mode
+///
+/// With fewer validators, the network operates in bootstrap mode where
+/// a single validator can mine blocks directly. Once this threshold is
+/// reached, all block production must go through BFT consensus.
+///
+/// Value: 4 validators (allows 1 Byzantine fault with f < n/3)
+pub const MIN_BFT_VALIDATORS: usize = 4;
+
+// ============================================================================
+// FEE COLLECTION TRAIT
+// ============================================================================
+
+/// Fee distribution result from a distribution operation
+///
+/// Represents the breakdown of fees distributed to different pools
+/// according to the 45/30/15/10 split:
+/// - 45% UBI pool
+/// - 30% Consensus/DAO pool
+/// - 15% Governance/Emergency reserve
+/// - 10% Treasury/Development grants
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct FeeDistributionResult {
+    /// Amount sent to UBI pool (45%)
+    pub ubi_amount: u64,
+    /// Amount sent to Consensus rewards pool (30%)
+    pub consensus_amount: u64,
+    /// Amount sent to Governance pool (15%)
+    pub governance_amount: u64,
+    /// Amount sent to Treasury pool (10%)
+    pub treasury_amount: u64,
+    /// Total amount distributed
+    pub total_distributed: u64,
+}
+
+impl FeeDistributionResult {
+    /// Create a new fee distribution result
+    pub fn new(
+        ubi_amount: u64,
+        consensus_amount: u64,
+        governance_amount: u64,
+        treasury_amount: u64,
+    ) -> Self {
+        Self {
+            ubi_amount,
+            consensus_amount,
+            governance_amount,
+            treasury_amount,
+            total_distributed: ubi_amount + consensus_amount + governance_amount + treasury_amount,
+        }
+    }
+
+    /// Calculate distribution from total fees using 45/30/15/10 split
+    pub fn from_total_fees(total_fees: u64) -> Self {
+        let ubi_amount = total_fees * 45 / 100;
+        let consensus_amount = total_fees * 30 / 100;
+        let governance_amount = total_fees * 15 / 100;
+        let treasury_amount = total_fees * 10 / 100;
+        Self::new(ubi_amount, consensus_amount, governance_amount, treasury_amount)
+    }
+}
+
+/// Fee collector trait for consensus-blockchain integration
+///
+/// This trait defines the interface for fee collection and distribution
+/// during block finalization. It is implemented by the FeeRouter contract
+/// in lib-blockchain and used by ConsensusEngine.
+///
+/// # Thread Safety
+/// Implementations must be thread-safe (Send + Sync) as fee collection
+/// may occur from multiple async contexts during block finalization.
+///
+/// # Invariants
+/// - **FC-1**: Fee collection is a side-effect of block finalization, not a prerequisite
+/// - **FC-2**: Fee distribution follows the 45/30/15/10 split exactly
+/// - **FC-3**: Distribution is permissionless (anyone can trigger via block finalization)
+/// - **FC-4**: All arithmetic uses integer math (no floating point)
+pub trait FeeCollector: Send + Sync {
+    /// Collect fees for the current block
+    ///
+    /// Called during block finalization to record fees collected from transactions.
+    /// The fees are accumulated until distributed.
+    ///
+    /// # Arguments
+    /// * `amount` - The total fees collected from the block
+    ///
+    /// # Returns
+    /// * `Ok(())` - Fees were collected successfully
+    /// * `Err(...)` - Collection failed (fee router not initialized, overflow, etc.)
+    fn collect_fee(&mut self, amount: u64) -> Result<(), String>;
+
+    /// Distribute collected fees to pools
+    ///
+    /// Called during block finalization to distribute accumulated fees
+    /// according to the 45/30/15/10 split.
+    ///
+    /// # Arguments
+    /// * `block_height` - The height of the block being finalized
+    ///
+    /// # Returns
+    /// * `Ok(FeeDistributionResult)` - Distribution amounts for each pool
+    /// * `Err(...)` - Distribution failed
+    fn distribute_fees(&mut self, block_height: u64) -> Result<FeeDistributionResult, String>;
+
+    /// Check if the fee collector is initialized and ready
+    fn is_initialized(&self) -> bool;
+
+    /// Get total fees collected but not yet distributed
+    fn pending_fees(&self) -> u64;
+
+    /// Get total fees ever collected (audit trail)
+    fn total_collected(&self) -> u64;
+
+    /// Get total fees ever distributed (audit trail)
+    fn total_distributed(&self) -> u64;
 }

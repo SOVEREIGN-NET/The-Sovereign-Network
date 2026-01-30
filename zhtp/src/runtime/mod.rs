@@ -301,9 +301,9 @@ impl RuntimeOrchestrator {
                 ComponentId::Storage,     // Distributed storage
                 ComponentId::Network,     // Mesh networking
                 ComponentId::Blockchain,  // Blockchain layer
-                ComponentId::Consensus,   // Consensus mechanism
+                ComponentId::Protocols,   // High-level protocols - MUST start before Consensus for mesh router
+                ComponentId::Consensus,   // Consensus mechanism - uses mesh router from Protocols
                 ComponentId::Economics,   // Economic incentives
-                ComponentId::Protocols,   // High-level protocols (includes ZHTP server with comprehensive handlers)
             ],
         };
 
@@ -490,16 +490,7 @@ impl RuntimeOrchestrator {
             self.register_component(Arc::new(blockchain_component)).await?;
         }
 
-        if !is_registered(ComponentId::Consensus).await {
-            let environment = self.config.environment;
-            let node_role = self.node_role.read().await.clone();
-            self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
-        }
-        
-        if !is_registered(ComponentId::Economics).await {
-            self.register_component(Arc::new(EconomicsComponent::new())).await?;
-        }
-        
+        // Protocols must start before Consensus so mesh router is available
         if !is_registered(ComponentId::Protocols).await {
             let environment = self.config.environment;
             let api_port = self.config.protocols_config.api_port;
@@ -509,6 +500,16 @@ impl RuntimeOrchestrator {
             self.register_component(Arc::new(ProtocolsComponent::new_with_node_type_and_ports(
                 environment, api_port, quic_port, discovery_port, is_edge_node
             ))).await?;
+        }
+
+        if !is_registered(ComponentId::Consensus).await {
+            let environment = self.config.environment;
+            let node_role = self.node_role.read().await.clone();
+            self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
+        }
+
+        if !is_registered(ComponentId::Economics).await {
+            self.register_component(Arc::new(EconomicsComponent::new())).await?;
         }
         
         if !is_registered(ComponentId::Api).await {
@@ -1051,13 +1052,14 @@ impl RuntimeOrchestrator {
         );
         self.register_component(Arc::new(blockchain_component)).await?;
 
-        self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
+        // Protocols must start before Consensus so mesh router is available
         self.register_component(Arc::new(ProtocolsComponent::new_with_ports(
             environment,
             self.config.protocols_config.api_port,
             self.config.protocols_config.quic_port,
             self.config.protocols_config.discovery_port,
         ))).await?;
+        self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         
@@ -1069,9 +1071,9 @@ impl RuntimeOrchestrator {
         self.start_component(ComponentId::Storage).await?;     // Data layer first
         self.start_component(ComponentId::Identity).await?;    // Needs Storage for DHT bootstrap
         self.start_component(ComponentId::Blockchain).await?;  // Needs Storage, Identity
-        self.start_component(ComponentId::Consensus).await?;   // Needs Blockchain
+        self.start_component(ComponentId::Protocols).await?;   // MUST start before Consensus - provides mesh router
+        self.start_component(ComponentId::Consensus).await?;   // Needs Blockchain + mesh router from Protocols
         self.start_component(ComponentId::Economics).await?;   // Needs Blockchain
-        self.start_component(ComponentId::Protocols).await?;   // Main server, needs everything
         self.start_component(ComponentId::Api).await?;         // Endpoint layer, last
         
         // ========================================================================
