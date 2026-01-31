@@ -8,13 +8,14 @@ use crate::identity::Identity;
 use crate::crypto;
 
 // Use the canonical types from lib-blockchain and lib-crypto to ensure bincode compatibility
+// CRITICAL: These MUST be imported, not redefined locally, for bincode serialization to match
 use lib_blockchain::{Transaction, TransactionType};
-use lib_blockchain::types::ContractType;
+use lib_blockchain::types::{ContractType, ContractCall, CallPermissions};
 use lib_crypto::types::SignatureAlgorithm;
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey};
 
 // ============================================================================
-// Token-specific types
+// Helper functions
 // ============================================================================
 
 /// Helper function to create a PublicKey from dilithium_pk
@@ -27,28 +28,6 @@ pub fn create_public_key(dilithium_pk: Vec<u8>) -> PublicKey {
         kyber_pk: vec![],
         key_id: key_id_arr,
     }
-}
-
-/// Call permissions
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CallPermissions {
-    Public,
-    Restricted {
-        caller: PublicKey,
-        permissions: Vec<String>,
-    },
-    AdminOnly {
-        admin: PublicKey,
-    },
-}
-
-/// Contract call structure (what gets encoded in transaction memo)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContractCall {
-    pub contract_type: ContractType,
-    pub method: String,
-    pub params: Vec<u8>,
-    pub permissions: CallPermissions,
 }
 
 // ============================================================================
