@@ -7,157 +7,27 @@ use serde::{Deserialize, Serialize};
 use crate::identity::Identity;
 use crate::crypto;
 
+// Use the canonical types from lib-blockchain and lib-crypto to ensure bincode compatibility
+// CRITICAL: These MUST be imported, not redefined locally, for bincode serialization to match
+use lib_blockchain::{Transaction, TransactionType};
+use lib_blockchain::types::{ContractType, ContractCall, CallPermissions};
+use lib_crypto::types::SignatureAlgorithm;
+use lib_blockchain::integration::crypto_integration::{Signature, PublicKey};
+
 // ============================================================================
-// Transaction Types (minimal subset matching lib-blockchain bincode format)
+// Helper functions
 // ============================================================================
 
-/// Transaction type enum - must match lib-blockchain exactly for bincode compat
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[repr(u8)]
-pub enum TransactionType {
-    Transfer = 0,
-    IdentityRegistration = 1,
-    IdentityUpdate = 2,
-    IdentityRevocation = 3,
-    ContractDeployment = 4,
-    ContractExecution = 5,
-    SessionCreation = 6,
-    SessionTermination = 7,
-    ContentUpload = 8,
-    UbiDistribution = 9,
-    WalletRegistration = 10,
-    ValidatorRegistration = 11,
-    UBIClaim = 12,
-    ProfitDeclaration = 13,
-}
-
-/// Signature algorithm enum
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum SignatureAlgorithm {
-    Ed25519,
-    Secp256k1,
-    Dilithium5,
-}
-
-/// Public key wrapper
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PublicKey {
-    pub dilithium_pk: Vec<u8>,
-    pub kyber_pk: Vec<u8>,
-    pub key_id: [u8; 32],
-}
-
-impl PublicKey {
-    pub fn new(dilithium_pk: Vec<u8>) -> Self {
-        let key_id = crypto::Blake3::hash(&dilithium_pk);
-        let mut key_id_arr = [0u8; 32];
-        key_id_arr.copy_from_slice(&key_id[..32]);
-        Self {
-            dilithium_pk,
-            kyber_pk: vec![],
-            key_id: key_id_arr,
-        }
+/// Helper function to create a PublicKey from dilithium_pk
+pub fn create_public_key(dilithium_pk: Vec<u8>) -> PublicKey {
+    let key_id = crypto::Blake3::hash(&dilithium_pk);
+    let mut key_id_arr = [0u8; 32];
+    key_id_arr.copy_from_slice(&key_id[..32]);
+    PublicKey {
+        dilithium_pk,
+        kyber_pk: vec![],
+        key_id: key_id_arr,
     }
-}
-
-/// Signature structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Signature {
-    pub signature: Vec<u8>,
-    pub public_key: PublicKey,
-    pub algorithm: SignatureAlgorithm,
-    pub timestamp: u64,
-}
-
-/// ZK proof placeholder (minimal for token txs which don't need ZK proofs)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ZkProof {
-    pub proof_system: String,
-    pub proof_data: Vec<u8>,
-    pub public_inputs: Vec<u8>,
-    pub verification_key: Vec<u8>,
-    pub plonky2_proof: Option<Vec<u8>>,
-    pub proof: Vec<u8>,
-}
-
-/// ZK transaction proof
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ZkTransactionProof {
-    pub amount_proof: ZkProof,
-    pub balance_proof: ZkProof,
-    pub nullifier_proof: ZkProof,
-}
-
-/// Transaction input
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionInput {
-    pub previous_output: [u8; 32],
-    pub output_index: u32,
-    pub nullifier: [u8; 32],
-    pub zk_proof: ZkTransactionProof,
-}
-
-/// Transaction output
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionOutput {
-    pub commitment: [u8; 32],
-    pub encrypted_amount: Vec<u8>,
-    pub owner_commitment: [u8; 32],
-    pub range_proof: ZkProof,
-}
-
-/// Contract type enum
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ContractType {
-    Token,
-    WhisperMessaging,
-    ContactRegistry,
-    GroupChat,
-    FileSharing,
-    Custom,
-}
-
-/// Call permissions
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CallPermissions {
-    Public,
-    Restricted {
-        caller: PublicKey,
-        permissions: Vec<String>,
-    },
-    AdminOnly {
-        admin: PublicKey,
-    },
-}
-
-/// Contract call structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContractCall {
-    pub contract_type: ContractType,
-    pub method: String,
-    pub params: Vec<u8>,
-    pub permissions: CallPermissions,
-}
-
-/// Full transaction structure (matching lib-blockchain)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub version: u32,
-    pub chain_id: u8,
-    pub transaction_type: TransactionType,
-    pub inputs: Vec<TransactionInput>,
-    pub outputs: Vec<TransactionOutput>,
-    pub fee: u64,
-    pub signature: Signature,
-    pub memo: Vec<u8>,
-    pub identity_data: Option<()>,
-    pub wallet_data: Option<()>,
-    pub validator_data: Option<()>,
-    pub dao_proposal_data: Option<()>,
-    pub dao_vote_data: Option<()>,
-    pub dao_execution_data: Option<()>,
-    pub ubi_claim_data: Option<()>,
-    pub profit_declaration_data: Option<()>,
 }
 
 // ============================================================================
@@ -201,6 +71,13 @@ pub struct BurnParams {
 // ============================================================================
 
 /// Build a signed token transaction
+///
+/// CRITICAL: The signing process must match lib-blockchain's verification exactly:
+/// 1. Build tx with ZEROED signature (empty public_key, timestamp 0)
+/// 2. Serialize with bincode
+/// 3. Hash with blake3
+/// 4. Sign the HASH (not the raw serialized bytes)
+/// 5. Put real signature and public key back
 fn build_token_transaction(
     identity: &Identity,
     method: &str,
@@ -216,25 +93,27 @@ fn build_token_transaction(
         permissions: CallPermissions::Public,
     };
 
-    // Create signature struct (will be populated after signing)
-    let public_key = PublicKey::new(identity.public_key.clone());
+    // Create public key using the blockchain's canonical structure
+    let public_key = create_public_key(identity.public_key.clone());
 
     // Build memo: "ZHTP" + bincode(call, placeholder_sig)
-    let placeholder_sig = Signature {
+    // Note: The memo signature uses the actual public key (this is separate from tx signature)
+    let memo_sig = Signature {
         signature: vec![],
         public_key: public_key.clone(),
         algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: 0,
     };
 
-    let call_and_sig = (&call, &placeholder_sig);
+    let call_and_sig = (&call, &memo_sig);
     let call_data = bincode::serialize(&call_and_sig)
         .map_err(|e| format!("Failed to serialize call: {}", e))?;
 
     let mut memo = b"ZHTP".to_vec();
     memo.extend(call_data);
 
-    // Build transaction without signature first
+    // Step 1: Build transaction with ZEROED signature for hashing
+    // This MUST match lib-blockchain/src/transaction/hashing.rs:hash_transaction()
     let mut tx = Transaction {
         version: 1,
         chain_id,
@@ -244,14 +123,11 @@ fn build_token_transaction(
         fee: 1000,
         signature: Signature {
             signature: vec![],
-            public_key: public_key.clone(),
+            public_key: PublicKey::new(vec![]),  // EMPTY - must match server
             algorithm: SignatureAlgorithm::Dilithium5,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            timestamp: 0,  // ZERO - must match server
         },
-        memo,
+        memo: memo.clone(),
         identity_data: None,
         wallet_data: None,
         validator_data: None,
@@ -262,18 +138,52 @@ fn build_token_transaction(
         profit_declaration_data: None,
     };
 
-    // Serialize tx for signing (with empty signature)
-    let tx_bytes_for_signing = bincode::serialize(&tx)
+    eprintln!("[token_tx] Method: {}", method);
+    eprintln!("[token_tx] Memo length: {} bytes", memo.len());
+    eprintln!("[token_tx] Public key size: {}", identity.public_key.len());
+
+    // Debug: Log the zeroed signature structure
+    eprintln!("[token_tx] Zeroed sig.signature.len={}", tx.signature.signature.len());
+    eprintln!("[token_tx] Zeroed sig.public_key.dilithium_pk.len={}", tx.signature.public_key.dilithium_pk.len());
+    eprintln!("[token_tx] Zeroed sig.public_key.kyber_pk.len={}", tx.signature.public_key.kyber_pk.len());
+    eprintln!("[token_tx] Zeroed sig.public_key.key_id={}", hex::encode(&tx.signature.public_key.key_id));
+    eprintln!("[token_tx] Zeroed sig.timestamp={}", tx.signature.timestamp);
+    eprintln!("[token_tx] Memo hex (first 100): {}", hex::encode(&memo[..std::cmp::min(100, memo.len())]));
+
+    // Step 2: Serialize for hashing
+    let tx_bytes_for_hashing = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize tx: {}", e))?;
 
-    // Sign the transaction
-    let signature_bytes = crate::identity::sign_message(identity, &tx_bytes_for_signing)
+    eprintln!("[token_tx] Serialized tx size: {} bytes", tx_bytes_for_hashing.len());
+    eprintln!("[token_tx] Serialized tx hex (first 100): {}", hex::encode(&tx_bytes_for_hashing[..std::cmp::min(100, tx_bytes_for_hashing.len())]));
+    // Log signature struct position (after fee at offset ~33) for comparison with server
+    if tx_bytes_for_hashing.len() > 97 {
+        eprintln!("[token_tx] Bytes 33-97 (signature struct): {}", hex::encode(&tx_bytes_for_hashing[33..97]));
+    }
+
+    // Step 3: Hash with blake3 (matching lib-blockchain's hash_transaction)
+    let tx_hash = blake3::hash(&tx_bytes_for_hashing);
+
+    eprintln!("[token_tx] Tx hash: {}", hex::encode(tx_hash.as_bytes()));
+
+    // Step 4: Sign the HASH (not the raw bytes)
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
 
-    // Update signature in transaction
-    tx.signature.signature = signature_bytes;
+    eprintln!("[token_tx] Signature size: {} bytes", signature_bytes.len());
 
-    // Serialize final transaction
+    // Step 5: Put real signature and public key back into transaction
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: public_key.clone(),
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    // Step 6: Serialize final transaction with signature
     let final_tx_bytes = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
@@ -359,15 +269,4 @@ pub fn build_burn_tx(
         .map_err(|e| format!("Failed to serialize params: {}", e))?;
 
     build_token_transaction(identity, "burn", params_bytes, chain_id)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_transaction_type_serialization() {
-        // Ensure enum values match expected
-        assert_eq!(TransactionType::ContractExecution as u8, 5);
-    }
 }

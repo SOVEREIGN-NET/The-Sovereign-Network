@@ -384,7 +384,13 @@ impl TransactionValidator {
         };
         
         let tx_hash = tx_for_verification.hash();
-        
+
+        // DEBUG: Log hash for comparison with client
+        tracing::debug!(
+            "[validation] DEBUG: Server computed tx_hash = {}",
+            hex::encode(tx_hash.as_bytes())
+        );
+
         // Get signature data
         let signature_bytes = &transaction.signature.signature;
         let public_key_bytes = transaction.signature.public_key.as_bytes();
