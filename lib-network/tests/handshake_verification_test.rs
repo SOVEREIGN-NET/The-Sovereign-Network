@@ -11,16 +11,8 @@ use lib_network::{
 use lib_network::handshake::{HandshakeContext, NonceCache, NetworkEpoch};
 use tempfile::TempDir;
 
-/// Helper to create test identity
-fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Human,
-        Some(25),
-        Some("US".to_string()),
-        device,
-        seed,
-    )
-}
+mod common;
+use common::test_helpers::create_test_identity;
 
 fn create_test_context() -> Result<(HandshakeContext, TempDir)> {
     let temp_dir = TempDir::new()?;

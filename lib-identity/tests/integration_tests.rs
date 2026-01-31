@@ -9,6 +9,9 @@ use lib_identity::identity::activity_tracking::{ActivityTracker, ActivityType};
 use lib_crypto::Hash;
 use std::collections::HashMap;
 
+mod common;
+use common::test_helpers::create_test_identity_async as create_test_identity;
+
 #[tokio::test]
 async fn test_complete_citizen_onboarding_flow() {
     println!(" Testing complete citizen onboarding flow...");
@@ -372,43 +375,6 @@ async fn test_citizenship_system_integration() {
 }
 
 // Helper functions for tests
-
-async fn create_test_identity() -> identity::ZhtpIdentity {
-    use lib_proofs::ZeroKnowledgeProof;
-
-    // Use realistic Dilithium2 key sizes for testing
-    // Dilithium2: PK = 1312 bytes, SK = 2560 bytes
-    let public_key = lib_crypto::PublicKey {
-        dilithium_pk: vec![42u8; 1312],  // Real Dilithium2 public key size
-        kyber_pk: vec![],
-        key_id: [42u8; 32],
-    };
-    let private_key = lib_crypto::PrivateKey {
-        dilithium_sk: vec![1u8; 2560],   // Real Dilithium2 secret key size
-        dilithium_pk: vec![42u8; 1312],  // Matches public_key.dilithium_pk
-        kyber_sk: vec![],
-        master_seed: vec![],
-    };
-    let ownership_proof = ZeroKnowledgeProof {
-        proof_system: "Test".to_string(),
-        proof_data: vec![1, 2, 3, 4],
-        public_inputs: vec![5, 6, 7, 8],
-        verification_key: vec![9, 10, 11, 12],
-        plonky2_proof: None,
-        proof: vec![],
-    };
-
-    identity::ZhtpIdentity::new(
-        IdentityType::Human,
-        public_key,
-        private_key,
-        "test_device".to_string(),
-        Some(30),
-        Some("US".to_string()),
-        false,  // Not a verified citizen in test
-        ownership_proof,
-    ).expect("Failed to create test identity")
-}
 
 fn create_mock_economic_model() -> economics::EconomicModel {
     economics::EconomicModel::new()
