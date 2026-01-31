@@ -174,6 +174,56 @@ impl DhtRoutingState {
     }
 }
 
+// --- DHT Helper Functions ---
+
+/// Helper: Create identities from a list of (device_name, seed) tuples
+pub fn create_identities_from_nodes(nodes: &[(&str, [u8; 64])]) -> Result<Vec<lib_identity::ZhtpIdentity>> {
+    nodes.iter()
+        .map(|(device, seed)| create_test_identity_with_seed(device, *seed))
+        .collect()
+}
+
+/// Helper: Create DHT routing states for a list of identities
+pub fn create_dht_states(identities: &[lib_identity::ZhtpIdentity]) -> Vec<DhtRoutingState> {
+    identities.iter()
+        .map(|id| DhtRoutingState::new(id.node_id.clone()))
+        .collect()
+}
+
+/// Helper: Populate DHT routing tables with all peers (full mesh)
+pub fn populate_dht_full_mesh(
+    dht_states: &mut [DhtRoutingState],
+    identities: &[lib_identity::ZhtpIdentity],
+    cycle: u32,
+) -> Result<()> {
+    for i in 0..identities.len() {
+        for j in 0..identities.len() {
+            if i != j {
+                let peer_node_id = identities[j].node_id.clone();
+                let peer_uuid = peer_id_from_node_id(&peer_node_id);
+                dht_states[i].add_peer(peer_node_id, peer_uuid, cycle);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Helper: Verify all NodeIds match between two identity lists
+pub fn verify_node_ids_match(
+    identities_a: &[lib_identity::ZhtpIdentity],
+    identities_b: &[lib_identity::ZhtpIdentity],
+) -> bool {
+    identities_a.len() == identities_b.len()
+        && identities_a.iter()
+            .zip(identities_b.iter())
+            .all(|(a, b)| a.node_id == b.node_id)
+}
+
+/// Helper: Verify all DHT states have expected peer count
+pub fn verify_dht_peer_counts(dht_states: &[DhtRoutingState], expected_count: usize) -> bool {
+    dht_states.iter().all(|dht| dht.peer_count() == expected_count)
+}
+
 pub async fn run_shared_dht_persistence_test() -> Result<()> {
     // TODO: Move DHT persistence orchestration logic here
     Ok(())
