@@ -15,63 +15,10 @@ use common_network_test::{
     create_test_identity_with_seed as create_test_identity,
     create_identities_from_nodes, create_mesh_topology_from_nodes,
     verify_mesh_fully_connected, verify_all_routing_paths,
-    MeshNode, MeshTopology,
+    MeshTopology,
 };
 
 use anyhow::Result;
-use lib_identity::NodeId;
-use std::{collections::HashSet, time::Duration};
-
-const TEST_TIMEOUT: Duration = Duration::from_secs(25);
-const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
-
-// Extension methods for MeshTopology specific to these tests
-trait MeshTopologyExt {
-    fn peer_count(&self, index: usize) -> usize;
-    fn get_active_node_count(&self) -> usize;
-    fn deactivate_node(&mut self, index: usize);
-    fn reactivate_node(&mut self, index: usize);
-    fn advance_cycle(&mut self);
-}
-
-impl MeshTopologyExt for MeshTopology {
-    fn peer_count(&self, index: usize) -> usize {
-        self.nodes[index].peer_count()
-    }
-
-    fn get_active_node_count(&self) -> usize {
-        self.nodes.iter().filter(|n| n.is_active).count()
-    }
-
-    fn deactivate_node(&mut self, index: usize) {
-        let node_id = self.nodes[index].node_id.clone();
-        self.nodes[index].deactivate();
-        // Remove from all other nodes' peer lists
-        for i in 0..self.nodes.len() {
-            if i != index {
-                self.nodes[i].remove_peer(&node_id);
-            }
-        }
-    }
-
-    fn reactivate_node(&mut self, index: usize) {
-        self.cycle += 1;
-        self.nodes[index].reactivate(self.cycle);
-        // Reestablish connections
-        let node_id_to_add = self.nodes[index].node_id.clone();
-        for j in 0..self.nodes.len() {
-            if j != index && self.nodes[j].is_active {
-                let peer_id = self.nodes[j].node_id.clone();
-                self.nodes[index].add_peer(peer_id);
-                self.nodes[j].add_peer(node_id_to_add.clone());
-            }
-        }
-    }
-
-    fn advance_cycle(&mut self) {
-        self.cycle += 1;
-    }
-}
 
 /// Test 1: Five-Node Mesh Network Formation via Multicast
 ///
@@ -87,7 +34,7 @@ fn test_five_node_mesh_formation() -> Result<()> {
         ("mesh-node-e", [0x55; 64]),
     ];
 
-    let (identities, topology) = create_mesh_topology_from_nodes(&nodes)?;
+    let (_identities, topology) = create_mesh_topology_from_nodes(&nodes)?;
 
     // Verify mesh is fully connected (each node has 4 peers)
     assert!(verify_mesh_fully_connected(&topology, 4), "5-node mesh should be fully connected with 4 peers each");
