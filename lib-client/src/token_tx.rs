@@ -71,6 +71,13 @@ pub struct BurnParams {
 // ============================================================================
 
 /// Build a signed token transaction
+///
+/// CRITICAL: The signing process must match lib-blockchain's verification exactly:
+/// 1. Build tx with ZEROED signature (empty public_key, timestamp 0)
+/// 2. Serialize with bincode
+/// 3. Hash with blake3
+/// 4. Sign the HASH (not the raw serialized bytes)
+/// 5. Put real signature and public key back
 fn build_token_transaction(
     identity: &Identity,
     method: &str,
@@ -90,21 +97,23 @@ fn build_token_transaction(
     let public_key = create_public_key(identity.public_key.clone());
 
     // Build memo: "ZHTP" + bincode(call, placeholder_sig)
-    let placeholder_sig = Signature {
+    // Note: The memo signature uses the actual public key (this is separate from tx signature)
+    let memo_sig = Signature {
         signature: vec![],
         public_key: public_key.clone(),
         algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: 0,
     };
 
-    let call_and_sig = (&call, &placeholder_sig);
+    let call_and_sig = (&call, &memo_sig);
     let call_data = bincode::serialize(&call_and_sig)
         .map_err(|e| format!("Failed to serialize call: {}", e))?;
 
     let mut memo = b"ZHTP".to_vec();
     memo.extend(call_data);
 
-    // Build transaction without signature first
+    // Step 1: Build transaction with ZEROED signature for hashing
+    // This MUST match lib-blockchain/src/transaction/hashing.rs:hash_transaction()
     let mut tx = Transaction {
         version: 1,
         chain_id,
@@ -114,12 +123,9 @@ fn build_token_transaction(
         fee: 1000,
         signature: Signature {
             signature: vec![],
-            public_key: public_key.clone(),
+            public_key: PublicKey::new(vec![]),  // EMPTY - must match server
             algorithm: SignatureAlgorithm::Dilithium5,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            timestamp: 0,  // ZERO - must match server
         },
         memo,
         identity_data: None,
@@ -132,18 +138,29 @@ fn build_token_transaction(
         profit_declaration_data: None,
     };
 
-    // Serialize tx for signing (with empty signature)
-    let tx_bytes_for_signing = bincode::serialize(&tx)
+    // Step 2: Serialize for hashing
+    let tx_bytes_for_hashing = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize tx: {}", e))?;
 
-    // Sign the transaction
-    let signature_bytes = crate::identity::sign_message(identity, &tx_bytes_for_signing)
+    // Step 3: Hash with blake3 (matching lib-blockchain's hash_transaction)
+    let tx_hash = blake3::hash(&tx_bytes_for_hashing);
+
+    // Step 4: Sign the HASH (not the raw bytes)
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
 
-    // Update signature in transaction
-    tx.signature.signature = signature_bytes;
+    // Step 5: Put real signature and public key back into transaction
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: public_key.clone(),
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
 
-    // Serialize final transaction
+    // Step 6: Serialize final transaction with signature
     let final_tx_bytes = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
