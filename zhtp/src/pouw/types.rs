@@ -150,6 +150,69 @@ pub struct ChallengeIssue {
     pub deleted: bool,
 }
 
+/// Receipt submitted by a client after completing work
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Receipt {
+    /// Protocol version (= 1)
+    pub version: u32,
+    /// Task ID from the challenge
+    #[serde(with = "hex_bytes")]
+    pub task_id: Vec<u8>,
+    /// Client's DID (decentralized identifier)
+    pub client_did: String,
+    /// Client's node ID (public key)
+    #[serde(with = "hex_bytes")]
+    pub client_node_id: Vec<u8>,
+    /// Optional provider ID
+    #[serde(with = "hex_bytes")]
+    pub provider_id: Vec<u8>,
+    /// Content ID that was verified
+    #[serde(with = "hex_bytes")]
+    pub content_id: Vec<u8>,
+    /// Type of proof performed
+    pub proof_type: ProofType,
+    /// Number of bytes verified
+    pub bytes_verified: u64,
+    /// Whether the verification succeeded
+    pub result_ok: bool,
+    /// Unix timestamp when work started
+    pub started_at: u64,
+    /// Unix timestamp when work finished
+    pub finished_at: u64,
+    /// Unique receipt nonce (16-32 bytes)
+    #[serde(with = "hex_bytes")]
+    pub receipt_nonce: Vec<u8>,
+    /// Challenge nonce from the issued token
+    #[serde(with = "hex_bytes")]
+    pub challenge_nonce: Vec<u8>,
+    /// Optional auxiliary data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aux: Option<String>,
+}
+
+/// A receipt with client's signature
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedReceipt {
+    /// The receipt data
+    pub receipt: Receipt,
+    /// Signature scheme used ("ed25519" or "dilithium5")
+    pub sig_scheme: String,
+    /// Client's signature over the receipt
+    #[serde(with = "hex_bytes")]
+    pub signature: Vec<u8>,
+}
+
+/// Batch of receipts for submission
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReceiptBatch {
+    /// Protocol version
+    pub version: u32,
+    /// Client's DID (must match all receipts)
+    pub client_did: String,
+    /// List of signed receipts
+    pub receipts: Vec<SignedReceipt>,
+}
+
 /// Helper module for hex serialization of byte arrays
 mod hex_bytes {
     use serde::{Deserialize, Deserializer, Serializer};
