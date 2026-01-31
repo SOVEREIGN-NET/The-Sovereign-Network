@@ -6,7 +6,6 @@ pub mod config;
 pub mod runtime;
 pub mod monitoring;
 pub mod integration;
-pub mod pouw; // Proof-of-Useful-Work (Phase 1: Challenge Generation)
 // CLI module moved to separate zhtp-cli crate
 pub mod api;
 pub mod server;

@@ -1111,10 +1111,7 @@ impl MeshRouter {
 
     // ==================== Helper Methods ====================
 
-    /// Broadcast to all peers except the specified one.
-    /// 
-    /// Issue #846 Fix: Uses QuicMeshProtocol as the canonical connection store
-    /// instead of the deprecated MeshRouter.connections PeerRegistry.
+    /// Broadcast to all peers except the specified one
     pub async fn broadcast_to_peers_except(
         &self, 
         message: ZhtpMeshMessage, 
@@ -1123,61 +1120,33 @@ impl MeshRouter {
         let serialized = bincode::serialize(&message)
             .context("Failed to serialize message")?;
         
-        // Issue #846: Use QuicMeshProtocol for broadcast (canonical store)
-        let quic_guard = self.quic_protocol.read().await;
-        let quic = match quic_guard.as_ref() {
-            Some(q) => q,
-            None => {
-                debug!("QUIC protocol not initialized for broadcast");
-                return Ok(0);
-            }
-        };
-
-        // Get all peer IDs and filter out the sender
-        let exclude_node_id = exclude.as_bytes();
-        let peers_to_send: Vec<(Vec<u8>, quinn::Connection, Option<[u8; 32]>)> = quic
-            .connections
-            .iter()
-            .filter(|entry| {
-                // Exclude sender by comparing first 32 bytes of node_id to pubkey
-                let key = entry.key();
-                key.len() < 32 || &key[..32] != exclude_node_id
-            })
-            .map(|entry| {
-                (entry.key().clone(), entry.value().quic_conn.clone(), entry.value().session_key)
-            })
-            .collect();
-
-        if peers_to_send.is_empty() {
-            return Ok(0);
-        }
-
+        let connections = self.connections.read().await;
         let mut success_count = 0;
-        for (peer_id, conn, session_key) in &peers_to_send {
-            let key = match session_key {
-                Some(k) => k,
-                None => {
-                    debug!(peer = ?hex::encode(&peer_id[..8.min(peer_id.len())]),
-                          "Peer has no session key, skipping");
-                    continue;
+        
+        for (peer_key, connection) in connections.iter() {
+            if peer_key == exclude {
+                continue;
+            }
+            
+            match &connection.protocol {
+                NetworkProtocol::UDP => {
+                    // UDP removed - should use QUIC protocol instead
+                    if false { // UDP socket removed
+                        if let Some(peer_addr_str) = &connection.peer_address {
+                            if let Ok(addr) = peer_addr_str.parse::<SocketAddr>() {
+                                if sock.send_to(&serialized, addr).await.is_ok() {
+                                    success_count += 1;
+                                }
+                            }
+                        }
+                    }
                 }
-            };
-
-            // Use QuicMeshProtocol's send method
-            match lib_network::protocols::quic_mesh::QuicMeshProtocol::send_encrypted_to(conn, key, &serialized).await {
-                Ok(()) => {
-                    success_count += 1;
-                }
-                Err(e) => {
-                    debug!(peer = ?hex::encode(&peer_id[..8.min(peer_id.len())]),
-                          error = %e, "Send failed during broadcast");
-                }
+                _ => {}
             }
         }
         
         self.track_bytes_sent((serialized.len() * success_count) as u64).await;
-        debug!("Broadcast complete: {}/{} peers reached (excluding sender)", 
-               success_count, peers_to_send.len());
+        debug!("📤 Broadcast complete: {} peers reached (excluding sender)", success_count);
         
         Ok(success_count)
     }
