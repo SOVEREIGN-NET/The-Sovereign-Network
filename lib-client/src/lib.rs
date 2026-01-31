@@ -61,6 +61,7 @@ pub use request::{
     ZhtpRequest, ZhtpResponse,
 };
 pub use session::Session;
+pub use token_tx::{build_burn_tx, build_create_token_tx, build_mint_tx, build_transfer_tx};
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

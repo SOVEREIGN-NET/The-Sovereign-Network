@@ -22,7 +22,25 @@ pub fn hash_transaction(transaction: &Transaction) -> Hash {
     // Serialize and hash
     let serialized = bincode::serialize(&tx_for_hash)
         .expect("Transaction serialization should never fail");
-    
+
+    // DEBUG: Log serialized bytes for comparison with client
+    debug!(
+        "[hashing] DEBUG: Serialized tx for hashing, len={}",
+        serialized.len()
+    );
+    if serialized.len() >= 64 {
+        debug!(
+            "[hashing] DEBUG: First 64 bytes: {}",
+            hex::encode(&serialized[..64])
+        );
+    }
+    if serialized.len() > 97 {
+        debug!(
+            "[hashing] DEBUG: Bytes 33-97 (signature struct): {}",
+            hex::encode(&serialized[33..97])
+        );
+    }
+
     crate::types::hash::blake3_hash(&serialized)
 }
 
