@@ -15,6 +15,7 @@ use common_network_test::{
     create_test_identity_with_seed as create_test_identity,
     create_identities_from_nodes, create_mesh_topology_from_nodes,
     verify_mesh_fully_connected, verify_all_routing_paths,
+    build_incremental_mesh_and_verify, simulate_stable_cycles_and_verify,
     MeshTopology,
 };
 
@@ -143,24 +144,7 @@ fn test_mesh_convergence_timeline() -> Result<()> {
     ];
 
     let identities = create_identities_from_nodes(&nodes)?;
-
-    // Build network incrementally
-    let mut topology = MeshTopology::new();
-    topology.add_node(identities[0].node_id.clone());
-    topology.advance_cycle();
-
-    // Add nodes 2-6 one at a time, verify connectivity after each
-    for i in 1..identities.len() {
-        topology.add_node(identities[i].node_id.clone());
-        topology.connect_all_peers();
-        topology.advance_cycle();
-        assert!(topology.is_fully_connected(), "Mesh should be fully connected after adding node {}", i + 1);
-    }
-
-    // Verify final network
-    assert_eq!(topology.nodes.len(), 6, "Should have 6 nodes");
-    assert!(verify_mesh_fully_connected(&topology, 5), "All nodes should have 5 peers in 6-node mesh");
-
+    build_incremental_mesh_and_verify(&identities);
     Ok(())
 }
 
@@ -213,12 +197,6 @@ fn test_mesh_stability_metrics() -> Result<()> {
     let (_identities, mut topology) = create_mesh_topology_from_nodes(&nodes)?;
 
     // Simulate 5 cycles of stable operation
-    for cycle in 0..5 {
-        topology.connect_all_peers();
-        topology.advance_cycle();
-        assert!(topology.is_fully_connected(), "Mesh should remain stable in cycle {}", cycle);
-        assert_eq!(topology.get_active_node_count(), 4, "Should have 4 active nodes in cycle {}", cycle);
-    }
-
+    simulate_stable_cycles_and_verify(&mut topology, 5, 4);
     Ok(())
 }

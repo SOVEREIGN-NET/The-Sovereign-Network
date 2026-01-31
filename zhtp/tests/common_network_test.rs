@@ -1,3 +1,29 @@
+/// Build mesh incrementally and verify full connectivity after each addition
+pub fn build_incremental_mesh_and_verify(identities: &[lib_identity::ZhtpIdentity]) {
+    let mut topology = MeshTopology::new();
+    topology.add_node(identities[0].node_id.clone());
+    topology.advance_cycle();
+
+    for i in 1..identities.len() {
+        topology.add_node(identities[i].node_id.clone());
+        topology.connect_all_peers();
+        topology.advance_cycle();
+        assert!(topology.is_fully_connected(), "Mesh should be fully connected after adding node {}", i + 1);
+    }
+
+    assert_eq!(topology.nodes.len(), identities.len(), "Should have {} nodes", identities.len());
+    assert!(verify_mesh_fully_connected(&topology, identities.len() - 1), "All nodes should have {} peers in mesh", identities.len() - 1);
+}
+
+/// Simulate N cycles of stable mesh operation and verify connectivity
+pub fn simulate_stable_cycles_and_verify(topology: &mut MeshTopology, cycles: usize, expected_active: usize) {
+    for cycle in 0..cycles {
+        topology.connect_all_peers();
+        topology.advance_cycle();
+        assert!(topology.is_fully_connected(), "Mesh should remain stable in cycle {}", cycle);
+        assert_eq!(topology.get_active_node_count(), expected_active, "Should have {} active nodes in cycle {}", expected_active, cycle);
+    }
+}
 // Shared network test logic for mesh, dht, and multi-node tests
 // Move all common setup, orchestration, and assertion logic here
 
