@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::types::{
-    ChallengeIssue, ChallengeResponse, ChallengeToken, ChallengeTokenSignable, Policy, ProofType,
+    ChallengeIssue, ChallengeResponse, ChallengeToken, Policy, ProofType,
     DEFAULT_CHALLENGE_TTL_SECS, DEFAULT_MAX_BYTES_TOTAL, DEFAULT_MAX_RECEIPTS,
     DEFAULT_MIN_BYTES_PER_RECEIPT, POUW_VERSION,
 };
