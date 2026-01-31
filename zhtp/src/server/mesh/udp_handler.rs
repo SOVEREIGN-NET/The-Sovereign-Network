@@ -1123,62 +1123,82 @@ impl MeshRouter {
         let serialized = bincode::serialize(&message)
             .context("Failed to serialize message")?;
         
-        // Issue #846: Use QuicMeshProtocol for broadcast (canonical store)
-        let quic_guard = self.quic_protocol.read().await;
-        let quic = match quic_guard.as_ref() {
-            Some(q) => q,
-            None => {
-                debug!("QUIC protocol not initialized for broadcast");
-                return Ok(0);
-            }
-        };
-
-        // Get all peer IDs and filter out the sender
-        let exclude_node_id = exclude.as_bytes();
-        let peers_to_send: Vec<(Vec<u8>, quinn::Connection, Option<[u8; 32]>)> = quic
-            .connections
-            .iter()
-            .filter(|entry| {
-                // Exclude sender by comparing first 32 bytes of node_id to pubkey
-                let key = entry.key();
-                key.len() < 32 || &key[..32] != exclude_node_id
-            })
-            .map(|entry| {
-                (entry.key().clone(), entry.value().quic_conn.clone(), entry.value().session_key)
-            })
-            .collect();
-
+        let peers_to_send = self.collect_broadcast_peers(exclude).await;
         if peers_to_send.is_empty() {
             return Ok(0);
         }
 
-        let mut success_count = 0;
-        for (peer_id, conn, session_key) in &peers_to_send {
-            let key = match session_key {
-                Some(k) => k,
-                None => {
-                    debug!(peer = ?hex::encode(&peer_id[..8.min(peer_id.len())]),
-                          "Peer has no session key, skipping");
-                    continue;
-                }
-            };
-
-            // Use QuicMeshProtocol's send method
-            match lib_network::protocols::quic_mesh::QuicMeshProtocol::send_encrypted_to(conn, key, &serialized).await {
-                Ok(()) => {
-                    success_count += 1;
-                }
-                Err(e) => {
-                    debug!(peer = ?hex::encode(&peer_id[..8.min(peer_id.len())]),
-                          error = %e, "Send failed during broadcast");
-                }
-            }
-        }
+        let success_count = self.send_to_peers(&serialized, &peers_to_send).await;
         
         self.track_bytes_sent((serialized.len() * success_count) as u64).await;
         debug!("Broadcast complete: {}/{} peers reached (excluding sender)", 
                success_count, peers_to_send.len());
         
         Ok(success_count)
+    }
+
+    /// Collect peers eligible for broadcast, excluding the sender.
+    async fn collect_broadcast_peers(
+        &self,
+        exclude: &PublicKey,
+    ) -> Vec<(Vec<u8>, quinn::Connection, Option<[u8; 32]>)> {
+        let quic_guard = self.quic_protocol.read().await;
+        let quic = match quic_guard.as_ref() {
+            Some(q) => q,
+            None => {
+                debug!("QUIC protocol not initialized for broadcast");
+                return Vec::new();
+            }
+        };
+
+        let exclude_node_id = exclude.as_bytes();
+        quic.connections
+            .iter()
+            .filter(|entry| {
+                let key = entry.key();
+                key.len() < 32 || &key[..32] != exclude_node_id
+            })
+            .map(|entry| {
+                (entry.key().clone(), entry.value().quic_conn.clone(), entry.value().session_key)
+            })
+            .collect()
+    }
+
+    /// Send serialized data to a list of peers, returning the success count.
+    async fn send_to_peers(
+        &self,
+        serialized: &[u8],
+        peers: &[(Vec<u8>, quinn::Connection, Option<[u8; 32]>)],
+    ) -> usize {
+        let mut success_count = 0;
+        for (peer_id, conn, session_key) in peers {
+            if let Some(key) = session_key {
+                if self.send_to_single_peer(peer_id, conn, key, serialized).await {
+                    success_count += 1;
+                }
+            } else {
+                debug!(peer = ?hex::encode(&peer_id[..8.min(peer_id.len())]),
+                      "Peer has no session key, skipping");
+            }
+        }
+        success_count
+    }
+
+    /// Send encrypted data to a single peer, returning true on success.
+    async fn send_to_single_peer(
+        &self,
+        peer_id: &[u8],
+        conn: &quinn::Connection,
+        key: &[u8; 32],
+        serialized: &[u8],
+    ) -> bool {
+        match lib_network::protocols::quic_mesh::QuicMeshProtocol::send_encrypted_to(conn, key, serialized).await {
+            Ok(()) => true,
+            Err(e) => {
+                debug!(peer = ?hex::encode(&peer_id[..8.min(peer_id.len())]),
+                      error = %e, "Send failed during broadcast");
+                false
+            }
+        }
     }
 }
