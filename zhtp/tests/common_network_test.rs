@@ -119,6 +119,39 @@ pub async fn run_shared_mesh_formation_test() -> Result<()> {
     Ok(())
 }
 
+// --- Mesh Formation Helper Functions ---
+
+/// Helper: Create identities and build a connected mesh topology
+pub fn create_mesh_topology_from_nodes(nodes: &[(&str, [u8; 64])]) -> Result<(Vec<ZhtpIdentity>, MeshTopology)> {
+    let identities = create_identities_from_nodes(nodes)?;
+    let mut topology = MeshTopology::new();
+    for identity in &identities {
+        topology.add_node(identity.node_id.clone());
+    }
+    topology.connect_all_peers();
+    Ok((identities, topology))
+}
+
+/// Helper: Verify mesh is fully connected with expected peer count
+pub fn verify_mesh_fully_connected(topology: &MeshTopology, expected_peer_count: usize) -> bool {
+    topology.is_fully_connected() 
+        && topology.nodes.iter().all(|n| !n.is_active || n.peer_count() == expected_peer_count)
+}
+
+/// Helper: Verify all routing paths exist between all node pairs
+pub fn verify_all_routing_paths(topology: &MeshTopology) {
+    for i in 0..topology.nodes.len() {
+        for j in 0..topology.nodes.len() {
+            if i != j && topology.nodes[i].is_active && topology.nodes[j].is_active {
+                assert!(
+                    topology.nodes[i].has_peer(&topology.nodes[j].node_id),
+                    "Node {} should have direct route to Node {}", i, j
+                );
+            }
+        }
+    }
+}
+
 // --- DHT Persistence Shared Logic ---
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DhtEntry {
