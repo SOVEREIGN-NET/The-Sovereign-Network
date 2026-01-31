@@ -157,6 +157,7 @@ fn build_token_transaction(
     eprintln!("[token_tx] Zeroed sig.timestamp={}", tx.signature.timestamp);
     eprintln!("[token_tx] Memo hex (first 100): {}", hex::encode(&memo[..std::cmp::min(100, memo.len())]));
 
+
     // Step 2: Serialize for hashing
     let tx_bytes_for_hashing = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize tx: {}", e))?;
@@ -172,6 +173,7 @@ fn build_token_transaction(
     let tx_hash = blake3::hash(&tx_bytes_for_hashing);
 
     eprintln!("[token_tx] Tx hash: {}", hex::encode(tx_hash.as_bytes()));
+
 
     // Step 4: Sign the HASH (not the raw bytes)
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
@@ -189,6 +191,7 @@ fn build_token_transaction(
             .unwrap_or_default()
             .as_secs(),
     };
+
 
     // Step 6: Serialize final transaction with signature
     let final_tx_bytes = bincode::serialize(&tx)
