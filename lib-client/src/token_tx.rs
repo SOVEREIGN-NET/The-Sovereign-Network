@@ -7,114 +7,26 @@ use serde::{Deserialize, Serialize};
 use crate::identity::Identity;
 use crate::crypto;
 
+// Use the canonical types from lib-blockchain and lib-crypto to ensure bincode compatibility
+use lib_blockchain::{Transaction, TransactionType};
+use lib_blockchain::types::ContractType;
+use lib_crypto::types::SignatureAlgorithm;
+use lib_blockchain::integration::crypto_integration::{Signature, PublicKey};
+
 // ============================================================================
-// Transaction Types (minimal subset matching lib-blockchain bincode format)
+// Token-specific types
 // ============================================================================
 
-/// Transaction type enum - must match lib-blockchain exactly for bincode compat
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[repr(u8)]
-pub enum TransactionType {
-    Transfer = 0,
-    IdentityRegistration = 1,
-    IdentityUpdate = 2,
-    IdentityRevocation = 3,
-    ContractDeployment = 4,
-    ContractExecution = 5,
-    SessionCreation = 6,
-    SessionTermination = 7,
-    ContentUpload = 8,
-    UbiDistribution = 9,
-    WalletRegistration = 10,
-    ValidatorRegistration = 11,
-    UBIClaim = 12,
-    ProfitDeclaration = 13,
-}
-
-/// Signature algorithm enum
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum SignatureAlgorithm {
-    Ed25519,
-    Secp256k1,
-    Dilithium5,
-}
-
-/// Public key wrapper
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PublicKey {
-    pub dilithium_pk: Vec<u8>,
-    pub kyber_pk: Vec<u8>,
-    pub key_id: [u8; 32],
-}
-
-impl PublicKey {
-    pub fn new(dilithium_pk: Vec<u8>) -> Self {
-        let key_id = crypto::Blake3::hash(&dilithium_pk);
-        let mut key_id_arr = [0u8; 32];
-        key_id_arr.copy_from_slice(&key_id[..32]);
-        Self {
-            dilithium_pk,
-            kyber_pk: vec![],
-            key_id: key_id_arr,
-        }
+/// Helper function to create a PublicKey from dilithium_pk
+pub fn create_public_key(dilithium_pk: Vec<u8>) -> PublicKey {
+    let key_id = crypto::Blake3::hash(&dilithium_pk);
+    let mut key_id_arr = [0u8; 32];
+    key_id_arr.copy_from_slice(&key_id[..32]);
+    PublicKey {
+        dilithium_pk,
+        kyber_pk: vec![],
+        key_id: key_id_arr,
     }
-}
-
-/// Signature structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Signature {
-    pub signature: Vec<u8>,
-    pub public_key: PublicKey,
-    pub algorithm: SignatureAlgorithm,
-    pub timestamp: u64,
-}
-
-/// ZK proof placeholder (minimal for token txs which don't need ZK proofs)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ZkProof {
-    pub proof_system: String,
-    pub proof_data: Vec<u8>,
-    pub public_inputs: Vec<u8>,
-    pub verification_key: Vec<u8>,
-    pub plonky2_proof: Option<Vec<u8>>,
-    pub proof: Vec<u8>,
-}
-
-/// ZK transaction proof
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ZkTransactionProof {
-    pub amount_proof: ZkProof,
-    pub balance_proof: ZkProof,
-    pub nullifier_proof: ZkProof,
-}
-
-/// Transaction input
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionInput {
-    pub previous_output: [u8; 32],
-    pub output_index: u32,
-    pub nullifier: [u8; 32],
-    pub zk_proof: ZkTransactionProof,
-}
-
-/// Transaction output
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionOutput {
-    pub commitment: [u8; 32],
-    pub encrypted_amount: Vec<u8>,
-    pub owner_commitment: [u8; 32],
-    pub range_proof: ZkProof,
-}
-
-/// Contract type enum
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ContractType {
-    Token,
-    WhisperMessaging,
-    ContactRegistry,
-    GroupChat,
-    FileSharing,
-    Custom,
 }
 
 /// Call permissions
@@ -130,34 +42,13 @@ pub enum CallPermissions {
     },
 }
 
-/// Contract call structure
+/// Contract call structure (what gets encoded in transaction memo)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractCall {
     pub contract_type: ContractType,
     pub method: String,
     pub params: Vec<u8>,
     pub permissions: CallPermissions,
-}
-
-/// Full transaction structure (matching lib-blockchain)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub version: u32,
-    pub chain_id: u8,
-    pub transaction_type: TransactionType,
-    pub inputs: Vec<TransactionInput>,
-    pub outputs: Vec<TransactionOutput>,
-    pub fee: u64,
-    pub signature: Signature,
-    pub memo: Vec<u8>,
-    pub identity_data: Option<()>,
-    pub wallet_data: Option<()>,
-    pub validator_data: Option<()>,
-    pub dao_proposal_data: Option<()>,
-    pub dao_vote_data: Option<()>,
-    pub dao_execution_data: Option<()>,
-    pub ubi_claim_data: Option<()>,
-    pub profit_declaration_data: Option<()>,
 }
 
 // ============================================================================
@@ -216,8 +107,8 @@ fn build_token_transaction(
         permissions: CallPermissions::Public,
     };
 
-    // Create signature struct (will be populated after signing)
-    let public_key = PublicKey::new(identity.public_key.clone());
+    // Create public key using the blockchain's canonical structure
+    let public_key = create_public_key(identity.public_key.clone());
 
     // Build memo: "ZHTP" + bincode(call, placeholder_sig)
     let placeholder_sig = Signature {
@@ -359,15 +250,4 @@ pub fn build_burn_tx(
         .map_err(|e| format!("Failed to serialize params: {}", e))?;
 
     build_token_transaction(identity, "burn", params_bytes, chain_id)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_transaction_type_serialization() {
-        // Ensure enum values match expected
-        assert_eq!(TransactionType::ContractExecution as u8, 5);
-    }
 }
