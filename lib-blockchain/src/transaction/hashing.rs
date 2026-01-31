@@ -12,9 +12,16 @@ use tracing::debug;
 pub fn hash_transaction(transaction: &Transaction) -> Hash {
     // Create a copy without signature for consistent hashing
     let mut tx_for_hash = transaction.clone();
+    // CRITICAL: Must use all-zero key_id, NOT blake3(empty)
+    // PublicKey::new(vec![]) computes key_id = blake3([]) = af1349b9...
+    // For zeroed signature, key_id must be [0u8; 32] to match client
     tx_for_hash.signature = Signature {
         signature: Vec::new(),
-        public_key: PublicKey::new(Vec::new()),
+        public_key: PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: [0u8; 32],  // All zeros - must match client's zeroed signature
+        },
         algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: 0,
     };
@@ -22,7 +29,25 @@ pub fn hash_transaction(transaction: &Transaction) -> Hash {
     // Serialize and hash
     let serialized = bincode::serialize(&tx_for_hash)
         .expect("Transaction serialization should never fail");
-    
+
+    // Log serialized bytes for comparison with client
+    tracing::info!(
+        "[hashing] Serialized tx for hashing, len={}",
+        serialized.len()
+    );
+    if serialized.len() >= 64 {
+        tracing::info!(
+            "[hashing] First 64 bytes: {}",
+            hex::encode(&serialized[..64])
+        );
+    }
+    if serialized.len() > 97 {
+        tracing::info!(
+            "[hashing] Bytes 33-97 (signature struct): {}",
+            hex::encode(&serialized[33..97])
+        );
+    }
+
     crate::types::hash::blake3_hash(&serialized)
 }
 
