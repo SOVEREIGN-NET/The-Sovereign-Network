@@ -12,7 +12,7 @@ pub mod spki_pin;
 
 use anyhow::Result;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Re-export configuration types
 pub use aggregation::NodeConfig;
@@ -30,6 +30,24 @@ pub struct CliArgs {
     pub environment: Environment,
     pub log_level: String,
     pub data_dir: PathBuf,
+}
+
+/// Seed storage configuration (encrypted at rest)
+#[derive(Debug, Clone)]
+pub struct SeedStorageConfig {
+    pub storage_dir: PathBuf,
+    pub keyring_service: String,
+    pub prefer_keyring: bool,
+}
+
+impl SeedStorageConfig {
+    pub fn for_keystore(keystore_path: &Path) -> Self {
+        Self {
+            storage_dir: keystore_path.join(crate::keystore_names::SEED_STORAGE_DIRNAME),
+            keyring_service: "zhtp-seed-storage".to_string(),
+            prefer_keyring: true,
+        }
+    }
 }
 
 /// Load and validate complete node configuration
