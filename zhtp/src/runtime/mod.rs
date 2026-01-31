@@ -50,6 +50,7 @@ pub mod reward_orchestrator;
 pub mod node_identity;
 pub mod node_runtime;
 pub mod node_runtime_orchestrator;
+pub mod seed_storage;
 #[cfg(test)]
 pub mod test_api_integration;
 
