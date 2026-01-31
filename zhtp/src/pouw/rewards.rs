@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use super::types::ProofType;
+use super::types::*;
 use super::validation::ValidatedReceipt;
 
 /// Epoch duration in seconds (1 hour default)
