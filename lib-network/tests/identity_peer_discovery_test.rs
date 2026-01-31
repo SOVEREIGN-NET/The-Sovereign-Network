@@ -7,16 +7,8 @@ use anyhow::Result;
 use lib_identity::{ZhtpIdentity, IdentityType, NodeId};
 use lib_network::bootstrap::peer_discovery::PeerInfo;
 
-/// Helper to create test identity with optional fixed seed for determinism
-fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Human,
-        Some(25),
-        Some("US".to_string()),
-        device,
-        seed,
-    )
-}
+mod common;
+use common::test_helpers::create_test_identity;
 
 #[tokio::test]
 async fn test_deterministic_node_id_from_identity() -> Result<()> {
