@@ -207,7 +207,8 @@ fn build_token_transaction(
     params: Vec<u8>,
     chain_id: u8,
 ) -> Result<String, String> {
-    // Build ContractCall
+    // Build ContractCall with Public permissions
+    // Authorization is via tx.signature.public_key, not the permissions field
     let call = ContractCall {
         contract_type: ContractType::Token,
         method: method.to_string(),
