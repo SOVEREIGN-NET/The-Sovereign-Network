@@ -283,7 +283,12 @@ pub async fn run_load_test(config: LoadTestConfig) -> LoadTestResults {
     let mut latencies: Vec<u64> = Vec::new();
 
     // Calculate how many batches to generate
-    let total_receipts = config.receipts_per_second as u64 * config.duration.as_secs();
+    let duration_secs = config.duration.as_secs_f64();
+    let total_receipts = if duration_secs > 0.0 {
+        (config.receipts_per_second as f64 * duration_secs).ceil() as u64
+    } else {
+        0
+    };
     let num_batches = (total_receipts as usize + config.batch_size - 1) / config.batch_size;
 
     for _ in 0..num_batches {
