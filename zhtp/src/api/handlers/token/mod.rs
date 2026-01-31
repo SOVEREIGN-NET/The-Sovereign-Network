@@ -476,9 +476,10 @@ impl TokenHandler {
         if call.method != expected_method {
             return Err(anyhow::anyhow!("Expected token method '{}'", expected_method));
         }
-        if !call.permissions.requires_caller() {
-            return Err(anyhow::anyhow!("Token calls must bind a caller identity"));
-        }
+        // NOTE: We don't check call.permissions.requires_caller() because:
+        // - Authorization is done via tx.signature.public_key (the canonical sender)
+        // - The signature cryptographically proves the caller's identity
+        // - CallPermissions::Public is valid - the signature IS the authorization
         call.validate().map_err(|e| anyhow::anyhow!(e))?;
         Ok(())
     }
