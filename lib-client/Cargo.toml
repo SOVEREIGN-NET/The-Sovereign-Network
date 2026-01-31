@@ -28,6 +28,10 @@ hex = "0.4"
 base64 = "0.21"
 tracing = "0.1"
 
+# Workspace dependencies for correct transaction serialization
+lib-blockchain = { path = "../lib-blockchain" }
+lib-crypto = { path = "../lib-crypto" }
+
 # Post-quantum crypto (native builds use C-based implementations)
 blake3 = "1.5"
 sha3 = "0.10"
