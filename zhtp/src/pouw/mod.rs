@@ -9,6 +9,8 @@
 
 pub mod challenge;
 pub mod types;
+pub mod validation;
 
 pub use challenge::ChallengeGenerator;
 pub use types::*;
+pub use validation::{ReceiptValidator, ReceiptValidationResult, SubmitResponse, RejectionReason};
