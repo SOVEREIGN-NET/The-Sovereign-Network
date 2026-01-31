@@ -13,64 +13,17 @@ mod common_network_test;
 use common_network_test::{
     create_test_identity_with_seed as create_test_identity,
     peer_id_from_node_id, DhtEntry, DhtRoutingState,
+    create_identities_from_nodes, create_dht_states, populate_dht_full_mesh,
+    verify_node_ids_match, verify_dht_peer_counts,
 };
 
 use anyhow::Result;
 use lib_identity::NodeId;
 use lib_network::identity::UnifiedPeerId;
 use std::time::Duration;
-use uuid::Uuid;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(20);
 const CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Helper: Create identities from a list of (device_name, seed) tuples
-fn create_identities_from_nodes(nodes: &[(&str, [u8; 64])]) -> Result<Vec<lib_identity::ZhtpIdentity>> {
-    nodes.iter()
-        .map(|(device, seed)| create_test_identity(device, *seed))
-        .collect()
-}
-
-/// Helper: Create DHT routing states for a list of identities
-fn create_dht_states(identities: &[lib_identity::ZhtpIdentity]) -> Vec<DhtRoutingState> {
-    identities.iter()
-        .map(|id| DhtRoutingState::new(id.node_id.clone()))
-        .collect()
-}
-
-/// Helper: Populate DHT routing tables with all peers (full mesh)
-fn populate_dht_full_mesh(
-    dht_states: &mut [DhtRoutingState],
-    identities: &[lib_identity::ZhtpIdentity],
-    cycle: u32,
-) -> Result<()> {
-    for i in 0..identities.len() {
-        for j in 0..identities.len() {
-            if i != j {
-                let peer_node_id = identities[j].node_id.clone();
-                let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                dht_states[i].add_peer(peer_node_id, peer_uuid, cycle);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Helper: Verify all NodeIds match between two identity lists
-fn verify_node_ids_match(
-    identities_a: &[lib_identity::ZhtpIdentity],
-    identities_b: &[lib_identity::ZhtpIdentity],
-) -> bool {
-    identities_a.len() == identities_b.len()
-        && identities_a.iter()
-            .zip(identities_b.iter())
-            .all(|(a, b)| a.node_id == b.node_id)
-}
-
-/// Helper: Verify all DHT states have expected peer count
-fn verify_dht_peer_counts(dht_states: &[DhtRoutingState], expected_count: usize) -> bool {
-    dht_states.iter().all(|dht| dht.peer_count() == expected_count)
-}
 
 /// Test 1: Three-Node DHT Bootstrap and Routing Table Population
 ///
