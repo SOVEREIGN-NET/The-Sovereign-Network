@@ -1,3 +1,55 @@
+/// Simulate node departure and rejoin in a mesh
+pub fn simulate_node_departure_and_rejoin(nodes: &[(&str, [u8; 64])]) -> anyhow::Result<()> {
+    let (identities, mut topology) = create_mesh_topology_from_nodes(nodes)?;
+    assert!(topology.is_fully_connected(), "Initial mesh should be fully connected");
+    // Remove node B from network
+    topology.deactivate_node(1);
+    assert_eq!(topology.get_active_node_count(), nodes.len() - 1, "Should have {} active nodes", nodes.len() - 1);
+    // Node B rejoins with same NodeId
+    let node_b_restarted = create_test_identity_with_seed(nodes[1].0, nodes[1].1)?;
+    assert_eq!(identities[1].node_id, node_b_restarted.node_id, "Node B must have same NodeId after restart");
+    // Reactivate in topology
+    topology.reactivate_node(1);
+    assert!(topology.is_fully_connected(), "Mesh should be fully connected after node rejoin");
+    Ok(())
+}
+
+/// Simulate random node restarts in a mesh
+pub fn simulate_random_restarts(nodes: &[(&str, [u8; 64])], deactivate: &[usize]) -> anyhow::Result<()> {
+    let (_identities, mut topology) = create_mesh_topology_from_nodes(nodes)?;
+    assert!(topology.is_fully_connected(), "Initial mesh should be connected");
+    // Deactivate nodes
+    for &idx in deactivate { topology.deactivate_node(idx); }
+    assert_eq!(topology.get_active_node_count(), nodes.len() - deactivate.len(), "Should have {} active nodes after deactivation", nodes.len() - deactivate.len());
+    // Reactivate nodes
+    for &idx in deactivate { topology.reactivate_node(idx); }
+    // Verify all nodes reconnected
+    assert_eq!(topology.get_active_node_count(), nodes.len(), "All nodes should be active again");
+    assert!(verify_mesh_fully_connected(&topology, nodes.len() - 1), "Network should be fully connected after restarts");
+    Ok(())
+}
+
+/// Simulate mesh partition and recovery
+pub fn simulate_partition_and_recovery(nodes: &[(&str, [u8; 64])], partition: &[usize]) -> anyhow::Result<()> {
+    let (_identities, mut topology) = create_mesh_topology_from_nodes(nodes)?;
+    assert!(topology.is_fully_connected(), "Initial mesh fully connected");
+    // Simulate partition - remove nodes
+    for &idx in partition { topology.deactivate_node(idx); }
+    assert_eq!(topology.get_active_node_count(), nodes.len() - partition.len(), "{} nodes should remain active", nodes.len() - partition.len());
+    // Heal partition - reactivate nodes
+    for &idx in partition { topology.reactivate_node(idx); }
+    // Verify network is whole again
+    assert!(topology.is_fully_connected(), "Mesh should recover after partition healing");
+    assert_eq!(topology.get_active_node_count(), nodes.len(), "All nodes should be reconnected");
+    Ok(())
+}
+
+/// Simulate mesh routing verification
+pub fn simulate_routing_verification(nodes: &[(&str, [u8; 64])]) -> anyhow::Result<()> {
+    let (_identities, topology) = create_mesh_topology_from_nodes(nodes)?;
+    verify_all_routing_paths(&topology);
+    Ok(())
+}
 /// Build mesh incrementally and verify full connectivity after each addition
 pub fn build_incremental_mesh_and_verify(identities: &[lib_identity::ZhtpIdentity]) {
     let mut topology = MeshTopology::new();
