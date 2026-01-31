@@ -11,7 +11,7 @@
 //! - Peer connections re-establish automatically
 
 use anyhow::Result;
-use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
+use lib_identity::{NodeId, ZhtpIdentity, testing::{create_test_identity, peer_id_from_node_id}};
 use lib_network::{
     discovery::UnifiedDiscoveryService,
     identity::UnifiedPeerId,
@@ -21,23 +21,6 @@ use uuid::Uuid;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 const DISCOVERY_WAIT_TIME: Duration = Duration::from_secs(2);
-
-/// Helper function to create a ZhtpIdentity with a specific seed and device
-fn create_test_identity(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Device,
-        None,
-        None,
-        device,
-        Some(seed),
-    )
-}
-
-/// Helper function to derive PeerId from NodeId for network operations
-fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
-    Uuid::from_slice(&node_id.as_bytes()[..16])
-        .expect("NodeId::as_bytes() must return at least 16 bytes for UUID conversion")
-}
 
 
 
