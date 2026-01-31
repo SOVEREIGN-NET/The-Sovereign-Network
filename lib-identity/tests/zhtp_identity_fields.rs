@@ -187,50 +187,8 @@ fn test_citizenship_fields() {
     assert_eq!(identity.jurisdiction, None);
 }
 
-// Helper function to create test identity using proper new() constructor
-// This ensures all cryptographic fields are derived correctly per spec
-fn create_test_identity() -> ZhtpIdentity {
-    // Use realistic Dilithium2 key sizes for testing
-    // Dilithium2: PK = 1312 bytes, SK = 2560 bytes
-    // Using deterministic values for repeatability in tests
-    let public_key = PublicKey {
-        dilithium_pk: vec![42u8; 1312],  // Real Dilithium2 public key size
-        kyber_pk: vec![],
-        key_id: [42u8; 32],
-    };
-    let private_key = PrivateKey {
-        dilithium_sk: vec![1u8; 2560],   // Real Dilithium2 secret key size
-        dilithium_pk: vec![42u8; 1312],  // Same as public_key.dilithium_pk
-        kyber_sk: vec![],
-        master_seed: vec![],
-    };
-
-    let ownership_proof = ZeroKnowledgeProof {
-        proof_system: "test".to_string(),
-        proof_data: vec![],
-        public_inputs: vec![],
-        verification_key: vec![],
-        plonky2_proof: None,
-        proof: vec![],
-    };
-
-    // Use new() to get proper derivation of all fields
-    let mut identity = ZhtpIdentity::new(
-        IdentityType::Human,
-        public_key,
-        private_key,
-        "laptop".to_string(),
-        Some(30u64),
-        Some("US".to_string()),
-        true,  // Verified citizen for testing
-        ownership_proof,
-    ).expect("Failed to create test identity");
-
-    // Override reputation for testing (in real usage, this would be managed separately)
-    identity.reputation = 1000u64;
-
-    identity
-}
+mod common;
+use common::test_helpers::create_test_identity;
 
 // SECURITY TEST: Validate secrets are properly derived
 #[test]
