@@ -112,6 +112,36 @@ impl MeshTopology {
             !node.is_active || node.peer_count() == active_count - 1
         })
     }
+    pub fn peer_count(&self, index: usize) -> usize {
+        self.nodes[index].peer_count()
+    }
+    pub fn get_active_node_count(&self) -> usize {
+        self.nodes.iter().filter(|n| n.is_active).count()
+    }
+    pub fn deactivate_node(&mut self, index: usize) {
+        let node_id = self.nodes[index].node_id.clone();
+        self.nodes[index].deactivate();
+        for i in 0..self.nodes.len() {
+            if i != index {
+                self.nodes[i].remove_peer(&node_id);
+            }
+        }
+    }
+    pub fn reactivate_node(&mut self, index: usize) {
+        self.cycle += 1;
+        self.nodes[index].reactivate(self.cycle);
+        let node_id_to_add = self.nodes[index].node_id.clone();
+        for j in 0..self.nodes.len() {
+            if j != index && self.nodes[j].is_active {
+                let peer_id = self.nodes[j].node_id.clone();
+                self.nodes[index].add_peer(peer_id);
+                self.nodes[j].add_peer(node_id_to_add.clone());
+            }
+        }
+    }
+    pub fn advance_cycle(&mut self) {
+        self.cycle += 1;
+    }
 }
 
 pub async fn run_shared_mesh_formation_test() -> Result<()> {
