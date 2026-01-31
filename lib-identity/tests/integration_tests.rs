@@ -9,6 +9,9 @@ use lib_identity::identity::activity_tracking::{ActivityTracker, ActivityType};
 use lib_crypto::Hash;
 use std::collections::HashMap;
 
+mod common;
+use common::test_helpers::create_test_identity_async as create_test_identity;
+
 #[tokio::test]
 async fn test_complete_citizen_onboarding_flow() {
     println!(" Testing complete citizen onboarding flow...");
@@ -372,8 +375,6 @@ async fn test_citizenship_system_integration() {
 }
 
 // Helper functions for tests
-mod common;
-use common::test_helpers::create_test_identity_async as create_test_identity;
 
 fn create_mock_economic_model() -> economics::EconomicModel {
     economics::EconomicModel::new()

@@ -9,6 +9,9 @@ use lib_proofs::ZeroKnowledgeProof;
 use blake3;
 use std::collections::HashMap;
 
+mod common;
+use common::test_helpers::create_test_identity;
+
 // AC1: New fields added to ZhtpIdentity
 // Given: ZhtpIdentity struct in lib_identity.rs
 // When: new fields are added
@@ -186,9 +189,6 @@ fn test_citizenship_fields() {
     assert_eq!(identity.citizenship_verified, false);
     assert_eq!(identity.jurisdiction, None);
 }
-
-mod common;
-use common::test_helpers::create_test_identity;
 
 // SECURITY TEST: Validate secrets are properly derived
 #[test]
