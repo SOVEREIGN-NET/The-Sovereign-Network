@@ -1151,17 +1151,13 @@ impl MeshRouter {
             }
         };
 
-        let exclude_node_id = exclude.as_bytes();
-        quic.connections
-            .iter()
-            .filter(|entry| {
-                let key = entry.key();
-                key.len() < 32 || &key[..32] != exclude_node_id
-            })
-            .map(|entry| {
-                (entry.key().clone(), entry.value().quic_conn.clone(), entry.value().session_key)
-            })
-            .collect()
+        // Delegate to QuicMeshProtocol to determine broadcast peers, avoiding
+        // direct access to its internal `connections` field.
+        lib_network::protocols::quic_mesh::QuicMeshProtocol::collect_broadcast_peers_except(
+            quic,
+            exclude.as_bytes(),
+        )
+        .await
     }
 
     /// Send serialized data to a list of peers, returning the success count.
