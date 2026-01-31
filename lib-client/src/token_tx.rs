@@ -146,6 +146,7 @@ fn build_token_transaction(
     eprintln!("[token_tx] Zeroed sig.signature.len={}", tx.signature.signature.len());
     eprintln!("[token_tx] Zeroed sig.public_key.dilithium_pk.len={}", tx.signature.public_key.dilithium_pk.len());
     eprintln!("[token_tx] Zeroed sig.public_key.kyber_pk.len={}", tx.signature.public_key.kyber_pk.len());
+    eprintln!("[token_tx] Zeroed sig.public_key.key_id={}", hex::encode(&tx.signature.public_key.key_id));
     eprintln!("[token_tx] Zeroed sig.timestamp={}", tx.signature.timestamp);
     eprintln!("[token_tx] Memo hex (first 100): {}", hex::encode(&memo[..std::cmp::min(100, memo.len())]));
 
@@ -155,6 +156,10 @@ fn build_token_transaction(
 
     eprintln!("[token_tx] Serialized tx size: {} bytes", tx_bytes_for_hashing.len());
     eprintln!("[token_tx] Serialized tx hex (first 100): {}", hex::encode(&tx_bytes_for_hashing[..std::cmp::min(100, tx_bytes_for_hashing.len())]));
+    // Log signature struct position (after fee at offset ~33) for comparison with server
+    if tx_bytes_for_hashing.len() > 97 {
+        eprintln!("[token_tx] Bytes 33-97 (signature struct): {}", hex::encode(&tx_bytes_for_hashing[33..97]));
+    }
 
     // Step 3: Hash with blake3 (matching lib-blockchain's hash_transaction)
     let tx_hash = blake3::hash(&tx_bytes_for_hashing);
