@@ -13,7 +13,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use super::types::*;
+use super::types::{
+    ChallengeIssue, ChallengeToken, ChallengeTokenSignable, Policy, ProofType,
+    DEFAULT_CHALLENGE_TTL_SECS, DEFAULT_MAX_BYTES_TOTAL, DEFAULT_MAX_RECEIPTS,
+    DEFAULT_MIN_BYTES_PER_RECEIPT, POUW_VERSION,
+};
 
 /// Challenge token generator
 pub struct ChallengeGenerator {
