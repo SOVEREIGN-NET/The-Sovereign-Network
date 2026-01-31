@@ -390,6 +390,16 @@ impl ReceiptValidator {
             return Err(RejectionReason::Policy);
         }
 
+        // Check maximum verified bytes per receipt (uses policy's total-bytes cap).
+        // Treat 0 as "no explicit upper bound" to preserve existing configurations.
+        if policy.max_bytes_total > 0 && receipt.bytes_verified > policy.max_bytes_total {
+            return Err(RejectionReason::Policy);
+        }
+
+        // Ensure policy allows at least one receipt; a zero limit is treated as invalid/misconfigured.
+        if policy.max_receipts == 0 {
+            return Err(RejectionReason::Policy);
+        }
         Ok(())
     }
 
