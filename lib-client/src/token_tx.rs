@@ -174,7 +174,6 @@ fn build_token_transaction(
 
     eprintln!("[token_tx] Tx hash: {}", hex::encode(tx_hash.as_bytes()));
 
-
     // Step 4: Sign the HASH (not the raw bytes)
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
