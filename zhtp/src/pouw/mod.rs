@@ -8,7 +8,11 @@
 //! Reference: docs/dapps_auth/pouw-protocol-spec.md
 
 pub mod challenge;
+pub mod rewards;
 pub mod types;
+pub mod validation;
 
 pub use challenge::ChallengeGenerator;
+pub use rewards::{RewardCalculator, Reward, PayoutStatus, EpochClientStats};
 pub use types::*;
+pub use validation::{ReceiptValidator, ReceiptValidationResult, SubmitResponse, RejectionReason};
