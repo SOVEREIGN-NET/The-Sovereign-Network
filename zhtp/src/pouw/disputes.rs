@@ -197,16 +197,29 @@ impl DisputeService {
         offset: usize,
     ) -> Vec<Dispute> {
         let disputes = self.disputes.read().await;
-        
-        disputes
+
+        // Collect matching disputes into a Vec so we can apply a deterministic sort
+        let mut matching: Vec<Dispute> = disputes
             .values()
             .filter(|d| {
                 client_did.map_or(true, |did| d.client_did == did) &&
                 status.map_or(true, |s| d.status == s)
             })
+            .cloned()
+            .collect();
+
+        // Sort deterministically by filed_at, then by id as a tiebreaker
+        matching.sort_by(|a, b| {
+            match a.filed_at.cmp(&b.filed_at) {
+                std::cmp::Ordering::Equal => a.id.cmp(&b.id),
+                other => other,
+            }
+        });
+
+        matching
+            .into_iter()
             .skip(offset)
             .take(limit)
-            .cloned()
             .collect()
     }
 
