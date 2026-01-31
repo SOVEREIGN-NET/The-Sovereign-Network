@@ -38,6 +38,18 @@ pub fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> 
     )
 }
 
+/// Create a test identity with optional seed (Human type, for handshake/discovery tests).
+/// This variant matches the pattern used in handshake_verification_test, identity_peer_discovery_test, etc.
+pub fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIdentity> {
+    ZhtpIdentity::new_unified(
+        IdentityType::Human,
+        Some(25),
+        Some("US".to_string()),
+        device,
+        seed,
+    )
+}
+
 /// Convert NodeId to UUID for peer identification.
 pub fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
     Uuid::from_slice(&node_id.as_bytes()[..16])
