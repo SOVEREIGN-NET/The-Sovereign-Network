@@ -15,7 +15,10 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use super::challenge::ChallengeGenerator;
-use super::types::*;
+use super::types::{
+    ChallengeIssue, ChallengeToken, Policy, ProofType, Receipt, ReceiptBatch, SignedReceipt,
+    POUW_VERSION,
+};
 
 /// Rejection reason codes (Spec 8.2)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
