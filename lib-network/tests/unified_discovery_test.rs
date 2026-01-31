@@ -11,16 +11,8 @@ use lib_network::discovery::{
 use std::net::SocketAddr;
 use uuid::Uuid;
 
-/// Helper to create test identity with optional fixed seed for determinism
-fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Human,
-        Some(25),
-        Some("US".to_string()),
-        device,
-        seed,
-    )
-}
+mod common;
+use common::test_helpers::create_test_identity;
 
 #[test]
 fn test_discovery_protocol_priority() {

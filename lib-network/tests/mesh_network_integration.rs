@@ -1,50 +1,17 @@
 use anyhow::{anyhow, Result};
 use lib_crypto::{hash_blake3, kdf::hkdf::hkdf_sha3};
-use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
+use lib_identity::{NodeId, ZhtpIdentity};
 use lib_network::{
     discovery::{DiscoveryProtocol, DiscoveryResult, UnifiedDiscoveryService},
     identity::UnifiedPeerId,
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use uuid::Uuid;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(10);
-
-fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Device,
-        None,
-        None,
-        device,
-        Some(seed),
-    )
-}
-
-fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
-    Uuid::from_slice(&node_id.as_bytes()[..16])
-        .expect("NodeId::as_bytes() must return at least 16 bytes for UUID conversion")
-}
-
-fn derive_session_key_for_test(
-    uhp_session_key: &[u8; 32],
-    pqc_shared_secret: &[u8; 32],
-    transcript_hash: &[u8; 32],
-    peer_node_id: &[u8],
-) -> Result<[u8; 32]> {
-    // v2 key derivation using HKDF-SHA3 with transcript hash
-    let mut ikm = Vec::with_capacity(32 + 32 + 32 + peer_node_id.len());
-    ikm.extend_from_slice(uhp_session_key);
-    ikm.extend_from_slice(pqc_shared_secret);
-    ikm.extend_from_slice(transcript_hash);
-    ikm.extend_from_slice(peer_node_id);
-
-    let extracted = hkdf_sha3(&ikm, b"zhtp-quic-mesh-v2", 32)?;
-    let expanded = hkdf_sha3(&extracted, b"zhtp-quic-session-v2", 32)?;
-
-    let mut session_key = [0u8; 32];
-    session_key.copy_from_slice(&expanded);
-    Ok(session_key)
-}
+mod common;
+use common::test_helpers::{
+    identity_with_seed, peer_id_from_node_id, derive_session_key_for_test,
+    TEST_TIMEOUT,
+};
 
 #[test]
 fn node_id_remains_stable_across_restart() -> Result<()> {
