@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use lib_crypto::{hash_blake3, kdf::hkdf::hkdf_sha3};
-use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
+use lib_identity::{NodeId, ZhtpIdentity, testing::{create_test_identity, peer_id_from_node_id}};
 use lib_network::{
     discovery::{DiscoveryProtocol, DiscoveryResult, UnifiedDiscoveryService},
     identity::UnifiedPeerId,
@@ -10,40 +10,24 @@ use uuid::Uuid;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Device,
-        None,
-        None,
-        device,
-        Some(seed),
-    )
-}
-
-fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
-    Uuid::from_slice(&node_id.as_bytes()[..16])
-        .expect("NodeId::as_bytes() must return at least 16 bytes for UUID conversion")
-}
-
-fn derive_session_key_for_test(
+fn derive_master_key_for_test(
     uhp_session_key: &[u8; 32],
     pqc_shared_secret: &[u8; 32],
     transcript_hash: &[u8; 32],
     peer_node_id: &[u8],
 ) -> Result<[u8; 32]> {
-    // v2 key derivation using HKDF-SHA3 with transcript hash
     let mut ikm = Vec::with_capacity(32 + 32 + 32 + peer_node_id.len());
     ikm.extend_from_slice(uhp_session_key);
     ikm.extend_from_slice(pqc_shared_secret);
     ikm.extend_from_slice(transcript_hash);
     ikm.extend_from_slice(peer_node_id);
 
-    let extracted = hkdf_sha3(&ikm, b"zhtp-quic-mesh-v2", 32)?;
-    let expanded = hkdf_sha3(&extracted, b"zhtp-quic-session-v2", 32)?;
+    let extracted = hkdf_sha3(&ikm, b"zhtp-quic-mesh", 32)?;
+    let expanded = hkdf_sha3(&extracted, b"zhtp-quic-master", 32)?;
 
-    let mut session_key = [0u8; 32];
-    session_key.copy_from_slice(&expanded);
-    Ok(session_key)
+    let mut master_key = [0u8; 32];
+    master_key.copy_from_slice(&expanded);
+    Ok(master_key)
 }
 
 #[test]
@@ -53,8 +37,8 @@ fn node_id_remains_stable_across_restart() -> Result<()> {
     let seed = [0x11u8; 64];
     let device = "alpha-mesh-node-01";
 
-    let first = identity_with_seed(device, seed)?;
-    let second = identity_with_seed(device, seed)?;
+    let first = create_test_identity(device, seed)?;
+    let second = create_test_identity(device, seed)?;
 
     assert_eq!(first.did, second.did, "DID should be deterministic");
     assert_eq!(first.node_id, second.node_id, "NodeId should survive restart with same seed");
@@ -77,8 +61,8 @@ fn node_id_remains_stable_across_restart() -> Result<()> {
 #[test]
 fn node_id_changes_with_different_seed() -> Result<()> {
     let device = "alpha-mesh-node-01";
-    let a = identity_with_seed(device, [0x11u8; 64])?;
-    let b = identity_with_seed(device, [0x12u8; 64])?;
+    let a = create_test_identity(device, [0x11u8; 64])?;
+    let b = create_test_identity(device, [0x12u8; 64])?;
 
     assert_ne!(a.did, b.did, "Different seeds should produce different DIDs");
     assert_ne!(
@@ -92,8 +76,8 @@ fn node_id_changes_with_different_seed() -> Result<()> {
 #[test]
 fn node_id_changes_with_different_device_name() -> Result<()> {
     let seed = [0x11u8; 64];
-    let a = identity_with_seed("alpha-mesh-node-01", seed)?;
-    let b = identity_with_seed("alpha-mesh-node-02", seed)?;
+    let a = create_test_identity("alpha-mesh-node-01", seed)?;
+    let b = create_test_identity("alpha-mesh-node-02", seed)?;
 
     assert_eq!(
         a.did, b.did,
@@ -110,7 +94,7 @@ fn node_id_changes_with_different_device_name() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let local = identity_with_seed("alpha-mesh-local", [0x20u8; 64])?;
+        let local = create_test_identity("alpha-mesh-local", [0x20u8; 64])?;
         let service = UnifiedDiscoveryService::new(
             peer_id_from_node_id(&local.node_id),
             9443,
@@ -123,7 +107,7 @@ async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()
         let identities: Vec<ZhtpIdentity> = seeds
             .iter()
             .zip(devices.iter())
-            .map(|(seed, device)| identity_with_seed(device, *seed))
+            .map(|(seed, device)| create_test_identity(device, *seed))
             .collect::<Result<_>>()?;
 
         for (idx, identity) in identities.iter().enumerate() {
@@ -173,14 +157,14 @@ async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()
 #[tokio::test(flavor = "multi_thread")]
 async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let local = identity_with_seed("alpha-mesh-local", [0x30u8; 64])?;
+        let local = create_test_identity("alpha-mesh-local", [0x30u8; 64])?;
         let service = UnifiedDiscoveryService::new(
             peer_id_from_node_id(&local.node_id),
             9443,
             local.public_key.clone(),
         );
 
-        let identity = identity_with_seed("alpha-mesh-peer", [0x31u8; 64])?;
+        let identity = create_test_identity("alpha-mesh-peer", [0x31u8; 64])?;
         let peer_id = peer_id_from_node_id(&identity.node_id);
 
         let addr_a: SocketAddr = "192.0.2.10:9443".parse().unwrap(); // RFC 5737
@@ -217,7 +201,7 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
 
         // If a different key appears later for the same peer_id, the discovery cache should not
         // overwrite an existing verified public key.
-        let other_identity = identity_with_seed("alpha-mesh-peer-rotated", [0x32u8; 64])?;
+        let other_identity = create_test_identity("alpha-mesh-peer-rotated", [0x32u8; 64])?;
         let mut key_rotation_attempt =
             DiscoveryResult::new(peer_id, addr_b, DiscoveryProtocol::UdpMulticast, 9443);
         key_rotation_attempt.public_key = Some(other_identity.public_key.clone());
@@ -248,14 +232,14 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
 #[tokio::test(flavor = "multi_thread")]
 async fn mesh_discovery_concurrent_duplicate_registration_is_consistent() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let local = identity_with_seed("alpha-mesh-local", [0x40u8; 64])?;
+        let local = create_test_identity("alpha-mesh-local", [0x40u8; 64])?;
         let service = Arc::new(UnifiedDiscoveryService::new(
             peer_id_from_node_id(&local.node_id),
             9443,
             local.public_key.clone(),
         ));
 
-        let identity = identity_with_seed("alpha-mesh-peer", [0x41u8; 64])?;
+        let identity = create_test_identity("alpha-mesh-peer", [0x41u8; 64])?;
         let peer_id = peer_id_from_node_id(&identity.node_id);
 
         let addr_a: SocketAddr = "198.51.100.10:9443".parse().unwrap(); // RFC 5737
@@ -298,16 +282,16 @@ async fn mesh_discovery_concurrent_duplicate_registration_is_consistent() -> Res
 }
 
 #[test]
-fn quic_session_key_is_bound_to_node_id() -> Result<()> {
+fn quic_master_key_is_bound_to_node_id() -> Result<()> {
     // Use seed pattern 0x33 for the stable node, 0x34 for a different node
     // This tests both stability (same seed on restart) and differentiation (different seeds)
     let device = "alpha-mesh-node-02";
     let same_device_seed = [0x33u8; 64];
-    let identity = identity_with_seed(device, same_device_seed)?;
-    let restarted_identity = identity_with_seed(device, same_device_seed)?;
-    let other_peer = identity_with_seed("alpha-mesh-node-03", [0x34u8; 64])?;
+    let identity = create_test_identity(device, same_device_seed)?;
+    let restarted_identity = create_test_identity(device, same_device_seed)?;
+    let other_peer = create_test_identity("alpha-mesh-node-03", [0x34u8; 64])?;
 
-    // Fixed test vectors for QUIC session key derivation (deterministic, realistic handshake outputs).
+    // Fixed test vectors for QUIC master key derivation (deterministic, realistic handshake outputs).
     let uhp_session_key: [u8; 32] = [
         0x02, 0x4F, 0x4F, 0xD7, 0x2E, 0x70, 0xF5, 0x8B, 0xDE, 0xDC, 0x55, 0x33, 0x53, 0x09,
         0xC5, 0x71, 0xDD, 0xF5, 0x39, 0xCF, 0x76, 0xEA, 0x25, 0x97, 0x6B, 0x40, 0xEC, 0xDA,
@@ -329,73 +313,73 @@ fn quic_session_key_is_bound_to_node_id() -> Result<()> {
     ];
     let transcript_hash = hash_blake3(&transcript_preimage);
 
-    let session = derive_session_key_for_test(
+    let master = derive_master_key_for_test(
         &uhp_session_key,
         &pqc_shared_secret,
         &transcript_hash,
         identity.node_id.as_bytes(),
     )?;
-    assert_eq!(session.len(), 32, "Session key must be 32 bytes");
+    assert_eq!(master.len(), 32, "Master key must be 32 bytes");
 
-    let session_restarted = derive_session_key_for_test(
+    let master_restarted = derive_master_key_for_test(
         &uhp_session_key,
         &pqc_shared_secret,
         &transcript_hash,
         restarted_identity.node_id.as_bytes(),
     )?;
     assert_eq!(
-        session, session_restarted,
-        "Session key should remain stable when NodeId is stable across restarts"
+        master, master_restarted,
+        "Master key should remain stable when NodeId is stable across restarts"
     );
 
-    let session_other_peer = derive_session_key_for_test(
+    let master_other_peer = derive_master_key_for_test(
         &uhp_session_key,
         &pqc_shared_secret,
         &transcript_hash,
         other_peer.node_id.as_bytes(),
     )?;
     assert_ne!(
-        session, session_other_peer,
-        "Changing peer NodeId must change the derived session key"
+        master, master_other_peer,
+        "Changing peer NodeId must change the derived mesh master key"
     );
 
     let mut uhp_session_key_changed = uhp_session_key;
     uhp_session_key_changed[0] ^= 0x01;
-    let session_uhp_changed = derive_session_key_for_test(
+    let master_uhp_changed = derive_master_key_for_test(
         &uhp_session_key_changed,
         &pqc_shared_secret,
         &transcript_hash,
         identity.node_id.as_bytes(),
     )?;
     assert_ne!(
-        session, session_uhp_changed,
-        "Changing UHP session key must change the derived session key"
+        master, master_uhp_changed,
+        "Changing UHP session key must change the derived master key"
     );
 
     let mut pqc_shared_secret_changed = pqc_shared_secret;
     pqc_shared_secret_changed[0] ^= 0x01;
-    let session_pqc_changed = derive_session_key_for_test(
+    let master_pqc_changed = derive_master_key_for_test(
         &uhp_session_key,
         &pqc_shared_secret_changed,
         &transcript_hash,
         identity.node_id.as_bytes(),
     )?;
     assert_ne!(
-        session, session_pqc_changed,
-        "Changing PQC shared secret must change the derived session key"
+        master, master_pqc_changed,
+        "Changing PQC shared secret must change the derived master key"
     );
 
     let mut transcript_hash_changed = transcript_hash;
     transcript_hash_changed[0] ^= 0x01;
-    let session_transcript_changed = derive_session_key_for_test(
+    let master_transcript_changed = derive_master_key_for_test(
         &uhp_session_key,
         &pqc_shared_secret,
         &transcript_hash_changed,
         identity.node_id.as_bytes(),
     )?;
     assert_ne!(
-        session, session_transcript_changed,
-        "Changing transcript hash must change the derived session key"
+        master, master_transcript_changed,
+        "Changing transcript hash must change the derived master key"
     );
 
     let mut ikm = Vec::with_capacity(32 + 32 + 32 + identity.node_id.as_bytes().len());
@@ -404,27 +388,27 @@ fn quic_session_key_is_bound_to_node_id() -> Result<()> {
     ikm.extend_from_slice(&transcript_hash);
     ikm.extend_from_slice(identity.node_id.as_bytes());
 
-    let extracted = hkdf_sha3(&ikm, b"zhtp-quic-mesh-v2", 32)?;
-    let expanded = hkdf_sha3(&extracted, b"zhtp-quic-session-v2", 32)?;
+    let extracted = hkdf_sha3(&ikm, b"zhtp-quic-mesh", 32)?;
+    let expanded = hkdf_sha3(&extracted, b"zhtp-quic-master", 32)?;
     assert_eq!(
-        session.to_vec(),
+        master.to_vec(),
         expanded,
-        "Session key derivation must use both HKDF labels"
+        "Master key derivation must use both HKDF labels"
     );
 
-    let wrong_expand = hkdf_sha3(&extracted, b"zhtp-quic-session-v2-wrong", 32)?;
+    let wrong_expand = hkdf_sha3(&extracted, b"zhtp-quic-master-wrong", 32)?;
     assert_ne!(
-        session.to_vec(),
+        master.to_vec(),
         wrong_expand,
-        "Changing HKDF expansion label must change the derived session key"
+        "Changing HKDF expansion label must change the derived master key"
     );
 
-    let extracted_wrong = hkdf_sha3(&ikm, b"zhtp-quic-mesh-v2-wrong", 32)?;
-    let expanded_wrong = hkdf_sha3(&extracted_wrong, b"zhtp-quic-session-v2", 32)?;
+    let extracted_wrong = hkdf_sha3(&ikm, b"zhtp-quic-mesh-wrong", 32)?;
+    let expanded_wrong = hkdf_sha3(&extracted_wrong, b"zhtp-quic-master", 32)?;
     assert_ne!(
-        session.to_vec(),
+        master.to_vec(),
         expanded_wrong,
-        "Changing HKDF extraction label must change the derived session key"
+        "Changing HKDF extraction label must change the derived master key"
     );
 
     Ok(())
