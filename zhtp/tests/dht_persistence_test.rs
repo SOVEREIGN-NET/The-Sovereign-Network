@@ -21,6 +21,7 @@ use anyhow::Result;
 use lib_identity::NodeId;
 use lib_network::identity::UnifiedPeerId;
 use std::time::Duration;
+use uuid::Uuid;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(20);
 const CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -38,53 +39,36 @@ fn test_three_node_dht_bootstrap() -> Result<()> {
         ("charlie-dht-001", [0xCC; 64]),
     ];
 
-    let mut identities = Vec::new();
-    let mut dht_states = Vec::new();
-
-    for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
-        let mut dht = DhtRoutingState::new(identity.node_id.clone());
+    let identities = create_identities_from_nodes(&nodes)?;
+    let mut dht_states = create_dht_states(&identities);
+    for dht in &mut dht_states {
         dht.set_convergence_cycle(0);
-        identities.push(identity);
-        dht_states.push(dht);
     }
 
-    // Phase 2: Simulate DHT peer discovery
-    for i in 0..identities.len() {
-        for j in 0..identities.len() {
-            if i != j {
-                let peer_node_id = identities[j].node_id.clone();
-                let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                dht_states[i].add_peer(peer_node_id, peer_uuid, 0);
-            }
-        }
-    }
+    // Phase 2: Simulate DHT peer discovery using helper
+    populate_dht_full_mesh(&mut dht_states, &identities, 0)?;
 
     // Phase 3: Verify DHT tables populated
-    for (i, dht) in dht_states.iter().enumerate() {
-        assert_eq!(
-            dht.peer_count(),
-            2,
-            "Node {} should have 2 peers (other 2 nodes)",
-            i
-        );
-    }
+    assert!(verify_dht_peer_counts(&dht_states, 2), "All nodes should have 2 peers");
 
     // Phase 4: Verify all nodes can see each other
-    for i in 0..identities.len() {
-        for j in 0..identities.len() {
+    verify_full_mesh_connectivity(&dht_states, &identities);
+
+    Ok(())
+}
+
+/// Helper: Verify all nodes have entries for all other nodes
+fn verify_full_mesh_connectivity(dht_states: &[DhtRoutingState], identities: &[lib_identity::ZhtpIdentity]) {
+    for (i, dht) in dht_states.iter().enumerate() {
+        for (j, identity) in identities.iter().enumerate() {
             if i != j {
                 assert!(
-                    dht_states[i].has_peer(&identities[j].node_id),
-                    "Node {} should know about Node {}",
-                    i,
-                    j
+                    dht.has_peer(&identity.node_id),
+                    "Node {} should know about Node {}", i, j
                 );
             }
         }
     }
-
-    Ok(())
 }
 
 /// Test 2: DHT Persistence Across Single Node Restart
@@ -103,69 +87,52 @@ fn test_dht_persistence_single_node_restart() -> Result<()> {
         ("charlie-dht-002", [0xCC; 64]),
     ];
 
-    let mut identities_before = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
-        identities_before.push(identity);
-    }
+    let identities_before = create_identities_from_nodes(&nodes)?;
 
     // Phase 2: Build DHT routing tables
-    let mut dht_before = vec![
-        DhtRoutingState::new(identities_before[0].node_id.clone()),
-        DhtRoutingState::new(identities_before[1].node_id.clone()),
-        DhtRoutingState::new(identities_before[2].node_id.clone()),
-    ];
-
-    for i in 0..identities_before.len() {
-        for j in 0..identities_before.len() {
-            if i != j {
-                let peer_node_id = identities_before[j].node_id.clone();
-                let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                dht_before[i].add_peer(peer_node_id, peer_uuid, 0);
-            }
-        }
-        dht_before[i].set_convergence_cycle(1);
+    let mut dht_before = create_dht_states(&identities_before);
+    populate_dht_full_mesh(&mut dht_before, &identities_before, 0)?;
+    for dht in &mut dht_before {
+        dht.set_convergence_cycle(1);
     }
 
     // Phase 3: Restart Alice (recreate with same seed)
     let alice_restarted = create_test_identity("alice-dht-002", [0xAA; 64])?;
-
-    // Verify Alice's NodeId is unchanged
     assert_eq!(
         identities_before[0].node_id, alice_restarted.node_id,
         "Alice's NodeId must survive restart"
     );
 
-    // Phase 4: Alice rebuilds DHT table
+    // Phase 4: Alice rebuilds DHT table from other nodes
     let mut dht_alice_after = DhtRoutingState::new(alice_restarted.node_id.clone());
-    for j in 1..identities_before.len() {
-        let peer_node_id = identities_before[j].node_id.clone();
-        let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-        dht_alice_after.add_peer(peer_node_id, peer_uuid, 1);
-    }
+    add_peers_except_self(&mut dht_alice_after, &identities_before, 0, 1)?;
     dht_alice_after.set_convergence_cycle(2);
 
     // Verify Alice recovered her routing table
     assert_eq!(dht_alice_after.peer_count(), 2, "Alice should recover 2 peers");
-    assert!(
-        dht_alice_after.has_peer(&identities_before[1].node_id),
-        "Alice should recover Bob's entry"
-    );
-    assert!(
-        dht_alice_after.has_peer(&identities_before[2].node_id),
-        "Alice should recover Charlie's entry"
-    );
+    assert!(dht_alice_after.has_peer(&identities_before[1].node_id), "Alice should recover Bob's entry");
+    assert!(dht_alice_after.has_peer(&identities_before[2].node_id), "Alice should recover Charlie's entry");
 
     // Verify Bob and Charlie still have Alice
-    assert!(
-        dht_before[1].has_peer(&identities_before[0].node_id),
-        "Bob should still have Alice's entry"
-    );
-    assert!(
-        dht_before[2].has_peer(&identities_before[0].node_id),
-        "Charlie should still have Alice's entry"
-    );
+    assert!(dht_before[1].has_peer(&identities_before[0].node_id), "Bob should still have Alice's entry");
+    assert!(dht_before[2].has_peer(&identities_before[0].node_id), "Charlie should still have Alice's entry");
 
+    Ok(())
+}
+
+/// Helper: Add all peers to a DHT state except self (by index)
+fn add_peers_except_self(
+    dht: &mut DhtRoutingState,
+    identities: &[lib_identity::ZhtpIdentity],
+    self_index: usize,
+    cycle: u32,
+) -> Result<()> {
+    for (j, identity) in identities.iter().enumerate() {
+        if j != self_index {
+            let peer_uuid = Uuid::from_slice(&identity.node_id.as_bytes()[..16])?;
+            dht.add_peer(identity.node_id.clone(), peer_uuid, cycle);
+        }
+    }
     Ok(())
 }
 
@@ -283,49 +250,50 @@ fn test_dht_network_convergence_simulation() -> Result<()> {
         ("node-dht-3", [0x40; 64]),
     ];
 
-    let mut identities = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
-        identities.push(identity);
-    }
+    let identities = create_identities_from_nodes(&nodes)?;
+    let mut dht_states = create_dht_states(&identities);
 
-    let mut dht_states = identities
-        .iter()
-        .map(|id| DhtRoutingState::new(id.node_id.clone()))
-        .collect::<Vec<_>>();
+    // Round 1: Each peer discovers direct neighbor (ring topology)
+    discover_ring_neighbors(&mut dht_states, &identities)?;
 
-    // Simulate convergence: peers discover each other gradually
-    // Round 1: Each peer discovers direct neighbors
+    // Round 2: Complete discovery to full mesh
+    complete_mesh_discovery(&mut dht_states, &identities)?;
+
+    // Verify full convergence
+    let expected_peers = identities.len() - 1;
+    assert!(verify_dht_peer_counts(&dht_states, expected_peers), 
+            "All nodes should discover all {} peers", expected_peers);
+
+    Ok(())
+}
+
+/// Helper: Discover ring neighbors (each node discovers next node in ring)
+fn discover_ring_neighbors(
+    dht_states: &mut [DhtRoutingState],
+    identities: &[lib_identity::ZhtpIdentity],
+) -> Result<()> {
     for i in 0..identities.len() {
         let next = (i + 1) % identities.len();
-        let peer_node_id = identities[next].node_id.clone();
-        let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-        dht_states[i].add_peer(peer_node_id, peer_uuid, 0);
+        let peer_uuid = Uuid::from_slice(&identities[next].node_id.as_bytes()[..16])?;
+        dht_states[i].add_peer(identities[next].node_id.clone(), peer_uuid, 0);
     }
+    Ok(())
+}
 
-    // Round 2: Peers discover peers they heard about
+/// Helper: Complete discovery to full mesh (discover all missing peers)
+fn complete_mesh_discovery(
+    dht_states: &mut [DhtRoutingState],
+    identities: &[lib_identity::ZhtpIdentity],
+) -> Result<()> {
     for i in 0..identities.len() {
         for j in 0..identities.len() {
             if i != j && !dht_states[i].has_peer(&identities[j].node_id) {
-                let peer_node_id = identities[j].node_id.clone();
-                let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                dht_states[i].add_peer(peer_node_id, peer_uuid, 1);
+                let peer_uuid = Uuid::from_slice(&identities[j].node_id.as_bytes()[..16])?;
+                dht_states[i].add_peer(identities[j].node_id.clone(), peer_uuid, 1);
             }
         }
         dht_states[i].set_convergence_cycle(2);
     }
-
-    // Verify full convergence
-    for (i, dht) in dht_states.iter().enumerate() {
-        assert_eq!(
-            dht.peer_count(),
-            3,
-            "Node {} should have discovered all {} other peers",
-            i,
-            identities.len() - 1
-        );
-    }
-
     Ok(())
 }
 
