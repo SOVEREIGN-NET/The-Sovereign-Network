@@ -127,7 +127,7 @@ fn build_token_transaction(
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,  // ZERO - must match server
         },
-        memo,
+        memo: memo.clone(),
         identity_data: None,
         wallet_data: None,
         validator_data: None,
@@ -138,16 +138,34 @@ fn build_token_transaction(
         profit_declaration_data: None,
     };
 
+    eprintln!("[token_tx] Method: {}", method);
+    eprintln!("[token_tx] Memo length: {} bytes", memo.len());
+    eprintln!("[token_tx] Public key size: {}", identity.public_key.len());
+
+    // Debug: Log the zeroed signature structure
+    eprintln!("[token_tx] Zeroed sig.signature.len={}", tx.signature.signature.len());
+    eprintln!("[token_tx] Zeroed sig.public_key.dilithium_pk.len={}", tx.signature.public_key.dilithium_pk.len());
+    eprintln!("[token_tx] Zeroed sig.public_key.kyber_pk.len={}", tx.signature.public_key.kyber_pk.len());
+    eprintln!("[token_tx] Zeroed sig.timestamp={}", tx.signature.timestamp);
+    eprintln!("[token_tx] Memo hex (first 100): {}", hex::encode(&memo[..std::cmp::min(100, memo.len())]));
+
     // Step 2: Serialize for hashing
     let tx_bytes_for_hashing = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize tx: {}", e))?;
 
+    eprintln!("[token_tx] Serialized tx size: {} bytes", tx_bytes_for_hashing.len());
+    eprintln!("[token_tx] Serialized tx hex (first 100): {}", hex::encode(&tx_bytes_for_hashing[..std::cmp::min(100, tx_bytes_for_hashing.len())]));
+
     // Step 3: Hash with blake3 (matching lib-blockchain's hash_transaction)
     let tx_hash = blake3::hash(&tx_bytes_for_hashing);
+
+    eprintln!("[token_tx] Tx hash: {}", hex::encode(tx_hash.as_bytes()));
 
     // Step 4: Sign the HASH (not the raw bytes)
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
+
+    eprintln!("[token_tx] Signature size: {} bytes", signature_bytes.len());
 
     // Step 5: Put real signature and public key back into transaction
     tx.signature = Signature {
