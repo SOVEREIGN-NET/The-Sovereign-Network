@@ -375,19 +375,25 @@ impl TransactionValidator {
         use lib_crypto::verification::verify_signature;
         
         // Create transaction hash for verification (without signature)
+        // Note: hash() -> hash_transaction() will override this anyway, but be explicit
         let mut tx_for_verification = transaction.clone();
         tx_for_verification.signature = Signature {
             signature: Vec::new(),
-            public_key: PublicKey::new(Vec::new()),
-            algorithm: transaction.signature.algorithm.clone(), // Use the same algorithm as the actual signature
+            // CRITICAL: Must use all-zero key_id for consistent hashing
+            public_key: PublicKey {
+                dilithium_pk: Vec::new(),
+                kyber_pk: Vec::new(),
+                key_id: [0u8; 32],
+            },
+            algorithm: transaction.signature.algorithm.clone(),
             timestamp: 0,
         };
         
         let tx_hash = tx_for_verification.hash();
 
-        // DEBUG: Log hash for comparison with client
-        tracing::debug!(
-            "[validation] DEBUG: Server computed tx_hash = {}",
+        // Log hash for comparison with client
+        tracing::info!(
+            "[validation] Server computed tx_hash = {}",
             hex::encode(tx_hash.as_bytes())
         );
 

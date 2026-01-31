@@ -123,7 +123,14 @@ fn build_token_transaction(
         fee: 1000,
         signature: Signature {
             signature: vec![],
-            public_key: PublicKey::new(vec![]),  // EMPTY - must match server
+            // CRITICAL: Must use all-zero key_id, NOT blake3(empty)
+            // PublicKey::new(vec![]) computes key_id = blake3([]) = af1349b9...
+            // For zeroed signature, key_id must be [0u8; 32] to match server
+            public_key: PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: [0u8; 32],  // All zeros - must match server's hash_transaction()
+            },
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,  // ZERO - must match server
         },
@@ -149,6 +156,7 @@ fn build_token_transaction(
     eprintln!("[token_tx] Zeroed sig.public_key.key_id={}", hex::encode(&tx.signature.public_key.key_id));
     eprintln!("[token_tx] Zeroed sig.timestamp={}", tx.signature.timestamp);
     eprintln!("[token_tx] Memo hex (first 100): {}", hex::encode(&memo[..std::cmp::min(100, memo.len())]));
+
 
     // Step 2: Serialize for hashing
     let tx_bytes_for_hashing = bincode::serialize(&tx)
@@ -182,6 +190,7 @@ fn build_token_transaction(
             .unwrap_or_default()
             .as_secs(),
     };
+
 
     // Step 6: Serialize final transaction with signature
     let final_tx_bytes = bincode::serialize(&tx)
