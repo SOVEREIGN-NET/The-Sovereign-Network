@@ -394,23 +394,30 @@ pub fn create_token_transaction(
 pub mod utils {
     use super::*;
 
-    /// Calculate the minimum fee for a transaction based on size
+    /// Calculate the minimum fee for a transaction based on effective size
+    ///
+    /// Post-quantum signatures (Dilithium5) are ~7KB, dwarfing actual payload.
+    /// To avoid penalizing PQ crypto adoption, we cap witness overhead.
     pub fn calculate_minimum_fee(transaction_size: usize) -> u64 {
-        // Dynamic fee calculation based on transaction size
-        let base_fee = 1000u64;
-        let bytes_per_zhtp = 100; // 100 bytes per 1 ZHTP fee unit
-        let size_fee = (transaction_size as u64 / bytes_per_zhtp).max(1); // Minimum 1 ZHTP for size
-        
-        // Apply size multiplier for larger transactions
-        let total_fee = if transaction_size > 10000 { // Large transaction threshold
-            base_fee + (size_fee * 2) // Double the size fee for large transactions
-        } else {
-            base_fee + size_fee
-        };
-        
-        debug!("Calculated fee for {} byte transaction: {} ZHTP (base: {}, size: {})", 
-               transaction_size, total_fee, base_fee, size_fee);
-        
+        // Post-quantum witness overhead (signature + pubkey)
+        const PQ_WITNESS_SIZE: usize = 7219; // Dilithium5 sig (4627) + pk (2592)
+        const WITNESS_CAP: usize = 500;      // Cap witness contribution to fee calc
+        const BASE_FEE: u64 = 100;           // Base transaction fee
+        const BYTES_PER_ZHTP: u64 = 100;     // 100 bytes per 1 ZHTP
+
+        // Estimate payload vs witness
+        let payload_bytes = transaction_size.saturating_sub(PQ_WITNESS_SIZE);
+        let witness_bytes = transaction_size.saturating_sub(payload_bytes);
+
+        // Effective size = payload + capped witness
+        let effective_size = payload_bytes + witness_bytes.min(WITNESS_CAP);
+        let size_fee = (effective_size as u64 / BYTES_PER_ZHTP).max(1);
+
+        let total_fee = BASE_FEE + size_fee;
+
+        debug!("Fee calc: tx={}B, payload={}B, witness={}B, effective={}B, fee={} ZHTP",
+               transaction_size, payload_bytes, witness_bytes, effective_size, total_fee);
+
         total_fee
     }
 
