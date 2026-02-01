@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 
 // ZHTP protocol imports
 use lib_protocols::zhtp::ZhtpRequestHandler;
@@ -477,7 +477,7 @@ impl TokenHandler {
         let target_key_id = pubkey.key_id;
         let blockchain = self.blockchain.read().await;
 
-        info!(
+        debug!(
             "token/balances: address={}, target_key_id={}, token_count={}",
             address,
             hex::encode(&target_key_id),
@@ -495,22 +495,13 @@ impl TokenHandler {
                 .map(|(_, bal)| *bal)
                 .unwrap_or(0);
 
-            info!(
+            debug!(
                 "token/balances: token={} ({}) balance_count={} found_balance={}",
                 token.name,
                 token.symbol,
                 token.balances.len(),
                 balance
             );
-
-            // Debug: log all balance holders
-            for (pk, bal) in &token.balances {
-                info!(
-                    "token/balances:   holder key_id={} balance={}",
-                    hex::encode(&pk.key_id),
-                    bal
-                );
-            }
 
             if balance > 0 {
                 let is_creator = token.creator.key_id == target_key_id;

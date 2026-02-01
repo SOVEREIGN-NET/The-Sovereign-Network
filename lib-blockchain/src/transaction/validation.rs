@@ -261,7 +261,7 @@ impl TransactionValidator {
 
     /// Validate basic transaction structure
     fn validate_basic_structure(&self, transaction: &Transaction) -> ValidationResult {
-        tracing::warn!("[BREADCRUMB] validate_basic_structure ENTER: version={}, size={}, memo_len={}",
+        tracing::debug!("[BREADCRUMB] validate_basic_structure ENTER: version={}, size={}, memo_len={}",
             transaction.version, transaction.size(), transaction.memo.len());
 
         // Check version
@@ -282,7 +282,7 @@ impl TransactionValidator {
             return Err(ValidationError::InvalidTransaction);
         }
 
-        tracing::warn!("[BREADCRUMB] validate_basic_structure PASSED");
+        tracing::debug!("[BREADCRUMB] validate_basic_structure PASSED");
         Ok(())
     }
 
@@ -337,7 +337,7 @@ impl TransactionValidator {
 
     /// Validate contract transaction
     fn validate_contract_transaction(&self, transaction: &Transaction) -> ValidationResult {
-        tracing::warn!("[BREADCRUMB] validate_contract_transaction ENTER");
+        tracing::debug!("[BREADCRUMB] validate_contract_transaction ENTER");
 
         // Allow system contract deployments (empty inputs) for Web4 and system contracts
         let is_system_contract = transaction.inputs.is_empty();
@@ -357,7 +357,7 @@ impl TransactionValidator {
             return Err(ValidationError::InvalidOutputs);
         }
 
-        tracing::warn!("[BREADCRUMB] validate_contract_transaction PASSED");
+        tracing::debug!("[BREADCRUMB] validate_contract_transaction PASSED");
         Ok(())
     }
 
@@ -939,22 +939,22 @@ impl<'a> StatefulTransactionValidator<'a> {
 
     /// Validate a transaction with full state context including identity verification
     pub fn validate_transaction_with_state(&self, transaction: &Transaction) -> ValidationResult {
-        tracing::warn!("[BREADCRUMB] validate_transaction_with_state ENTER, memo.len={}", transaction.memo.len());
+        tracing::debug!("[BREADCRUMB] validate_transaction_with_state ENTER, memo.len={}", transaction.memo.len());
 
         // Check if this is a system transaction (empty inputs = coinbase-style), except token contract calls
         let is_token = is_token_contract_execution(transaction);
-        tracing::warn!("[BREADCRUMB] is_token_contract_execution = {}", is_token);
+        tracing::debug!("[BREADCRUMB] is_token_contract_execution = {}", is_token);
 
         let is_system_transaction = transaction.inputs.is_empty() && !is_token;
-        tracing::warn!("[BREADCRUMB] is_system_transaction = {}", is_system_transaction);
+        tracing::debug!("[BREADCRUMB] is_system_transaction = {}", is_system_transaction);
 
         // Create a stateless validator for basic checks
         let stateless_validator = TransactionValidator::new();
 
         // Basic structure validation
-        tracing::warn!("[BREADCRUMB] validate_basic_structure CALL");
+        tracing::debug!("[BREADCRUMB] validate_basic_structure CALL");
         stateless_validator.validate_basic_structure(transaction)?;
-        tracing::warn!("[BREADCRUMB] validate_basic_structure OK");
+        tracing::debug!("[BREADCRUMB] validate_basic_structure OK");
 
         // Type-specific validation
         match transaction.transaction_type {
@@ -1016,29 +1016,29 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::IdentityRegistration
             && !is_token_contract_execution(transaction)
         {
-            tracing::warn!("[BREADCRUMB] validate_sender_identity_exists CALL");
+            tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");
             self.validate_sender_identity_exists(transaction)?;
-            tracing::warn!("[BREADCRUMB] validate_sender_identity_exists OK");
+            tracing::debug!("[BREADCRUMB] validate_sender_identity_exists OK");
         }
 
         // Signature validation (always required except for system transactions)
         if !is_system_transaction {
-            tracing::warn!("[BREADCRUMB] validate_signature CALL");
+            tracing::debug!("[BREADCRUMB] validate_signature CALL");
             stateless_validator.validate_signature(transaction)?;
-            tracing::warn!("[BREADCRUMB] validate_signature OK");
+            tracing::debug!("[BREADCRUMB] validate_signature OK");
         }
 
         // Zero-knowledge proof validation (skip for system transactions)
         if !is_system_transaction {
-            tracing::warn!("[BREADCRUMB] validate_zk_proofs CALL");
+            tracing::debug!("[BREADCRUMB] validate_zk_proofs CALL");
             stateless_validator.validate_zk_proofs(transaction)?;
-            tracing::warn!("[BREADCRUMB] validate_zk_proofs OK");
+            tracing::debug!("[BREADCRUMB] validate_zk_proofs OK");
         }
 
         // Economic validation (modified for system transactions)
-        tracing::warn!("[BREADCRUMB] validate_economics_with_system_check CALL");
+        tracing::debug!("[BREADCRUMB] validate_economics_with_system_check CALL");
         stateless_validator.validate_economics_with_system_check(transaction, is_system_transaction)?;
-        tracing::warn!("[BREADCRUMB] validate_economics_with_system_check OK");
+        tracing::debug!("[BREADCRUMB] validate_economics_with_system_check OK");
 
         Ok(())
     }
@@ -1046,7 +1046,7 @@ impl<'a> StatefulTransactionValidator<'a> {
     /// CRITICAL FIX: Verify that the sender's identity exists on the blockchain
     /// This prevents transactions from non-existent or unregistered identities
     fn validate_sender_identity_exists(&self, transaction: &Transaction) -> ValidationResult {
-        tracing::warn!("[BREADCRUMB] validate_sender_identity_exists ENTER");
+        tracing::debug!("[BREADCRUMB] validate_sender_identity_exists ENTER");
 
         // If we don't have blockchain access, skip this check (backward compatibility)
         let blockchain = match self.blockchain {

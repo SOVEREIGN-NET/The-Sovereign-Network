@@ -2713,9 +2713,18 @@ impl Blockchain {
     ) -> Result<()> {
         match call.method.as_str() {
             "create_custom_token" => {
-                let params: (String, String, u64) = bincode::deserialize(&call.params)
+                // CreateTokenParams struct: { name: String, symbol: String, initial_supply: u64, decimals: u8 }
+                #[derive(serde::Deserialize)]
+                struct CreateTokenParams {
+                    name: String,
+                    symbol: String,
+                    initial_supply: u64,
+                    #[allow(dead_code)]
+                    decimals: u8,
+                }
+                let params: CreateTokenParams = bincode::deserialize(&call.params)
                     .map_err(|e| anyhow::anyhow!("Invalid create_custom_token params: {}", e))?;
-                let (name, symbol, initial_supply) = params;
+                let CreateTokenParams { name, symbol, initial_supply, .. } = params;
 
                 // CRITICAL: Check for duplicate symbol across ALL existing tokens
                 // This prevents confusion where multiple tokens share the same symbol
@@ -2749,16 +2758,34 @@ impl Blockchain {
                     name, symbol, hex::encode(token_id));
             }
             "mint" => {
-                // Accept (token_id, to_key_id, amount) - client sends just key_id, not full PublicKey
-                let params: ([u8; 32], [u8; 32], u64) = bincode::deserialize(&call.params)
+                // MintParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
+                #[derive(serde::Deserialize)]
+                struct MintParams {
+                    token_id: [u8; 32],
+                    to: Vec<u8>,  // PublicKey bytes (bincode serialized)
+                    amount: u64,
+                }
+                let params: MintParams = bincode::deserialize(&call.params)
                     .map_err(|e| anyhow::anyhow!("Invalid mint params: {}", e))?;
-                let (token_id, to_key_id, amount) = params;
+                let MintParams { token_id, to: to_bytes, amount } = params;
 
-                // Create a minimal PublicKey with just the key_id for balance tracking
-                let to = lib_crypto::types::keys::PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
-                    key_id: to_key_id,
+                // Deserialize PublicKey from bytes, or create minimal key with key_id
+                let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
+                    // Just key_id was sent
+                    lib_crypto::types::keys::PublicKey {
+                        dilithium_pk: vec![],
+                        kyber_pk: vec![],
+                        key_id: to_bytes.try_into().unwrap_or([0u8; 32]),
+                    }
+                } else {
+                    // Full PublicKey was serialized
+                    bincode::deserialize(&to_bytes).unwrap_or_else(|_| {
+                        lib_crypto::types::keys::PublicKey {
+                            dilithium_pk: vec![],
+                            kyber_pk: vec![],
+                            key_id: [0u8; 32],
+                        }
+                    })
                 };
 
                 let token = self.token_contracts.get_mut(&token_id)
@@ -2773,16 +2800,34 @@ impl Blockchain {
                 info!("Minted {} tokens to {:?}", amount, to.key_id);
             }
             "transfer" => {
-                // Accept (token_id, to_key_id, amount) - client sends just key_id, not full PublicKey
-                let params: ([u8; 32], [u8; 32], u64) = bincode::deserialize(&call.params)
+                // TransferParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
+                #[derive(serde::Deserialize)]
+                struct TransferParams {
+                    token_id: [u8; 32],
+                    to: Vec<u8>,  // PublicKey bytes (bincode serialized)
+                    amount: u64,
+                }
+                let params: TransferParams = bincode::deserialize(&call.params)
                     .map_err(|e| anyhow::anyhow!("Invalid transfer params: {}", e))?;
-                let (token_id, to_key_id, amount) = params;
+                let TransferParams { token_id, to: to_bytes, amount } = params;
 
-                // Create a minimal PublicKey with just the key_id for balance tracking
-                let to = lib_crypto::types::keys::PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
-                    key_id: to_key_id,
+                // Deserialize PublicKey from bytes, or create minimal key with key_id
+                let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
+                    // Just key_id was sent
+                    lib_crypto::types::keys::PublicKey {
+                        dilithium_pk: vec![],
+                        kyber_pk: vec![],
+                        key_id: to_bytes.try_into().unwrap_or([0u8; 32]),
+                    }
+                } else {
+                    // Full PublicKey was serialized
+                    bincode::deserialize(&to_bytes).unwrap_or_else(|_| {
+                        lib_crypto::types::keys::PublicKey {
+                            dilithium_pk: vec![],
+                            kyber_pk: vec![],
+                            key_id: [0u8; 32],
+                        }
+                    })
                 };
 
                 let token = self.token_contracts.get_mut(&token_id)
@@ -2800,9 +2845,15 @@ impl Blockchain {
                 info!("Transferred {} tokens from {:?} to {:?}", amount, caller.key_id, to.key_id);
             }
             "burn" => {
-                let params: ([u8; 32], u64) = bincode::deserialize(&call.params)
+                // BurnParams struct: { token_id: [u8; 32], amount: u64 }
+                #[derive(serde::Deserialize)]
+                struct BurnParams {
+                    token_id: [u8; 32],
+                    amount: u64,
+                }
+                let params: BurnParams = bincode::deserialize(&call.params)
                     .map_err(|e| anyhow::anyhow!("Invalid burn params: {}", e))?;
-                let (token_id, amount) = params;
+                let BurnParams { token_id, amount } = params;
 
                 let token = self.token_contracts.get_mut(&token_id)
                     .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
