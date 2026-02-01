@@ -954,8 +954,29 @@ impl RuntimeOrchestrator {
                     (bc, true)
                 }
                 Err(e) => {
-                    warn!("⚠ Failed to load blockchain from disk: {} - will create new", e);
-                    (lib_blockchain::Blockchain::new()?, false)
+                    // CRITICAL: Preserve corrupted file for recovery - NEVER overwrite
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let corrupt_path = persist_path.with_extension(format!("dat.corrupt.{}", timestamp));
+
+                    if let Err(rename_err) = std::fs::rename(persist_path, &corrupt_path) {
+                        error!("❌ FATAL: Failed to preserve corrupted blockchain file: {}", rename_err);
+                    } else {
+                        error!("❌ Corrupted blockchain file preserved as: {:?}", corrupt_path);
+                    }
+
+                    // FATAL: Do NOT silently create new blockchain - this destroys data
+                    return Err(anyhow::anyhow!(
+                        "FATAL: Blockchain file corrupted: {}\n\
+                        The corrupted file has been preserved for potential recovery.\n\
+                        Options:\n\
+                        1. Restore from backup (if available)\n\
+                        2. Delete {:?} to start fresh (WARNING: loses all data)\n\
+                        3. Contact support for recovery assistance",
+                        e, persist_path
+                    ));
                 }
             }
         } else {
