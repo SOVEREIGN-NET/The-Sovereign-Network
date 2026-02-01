@@ -23,6 +23,12 @@ pub mod receipts;
 pub mod fork_recovery;
 pub mod events;
 pub mod byzantine_evidence;
+pub mod storage;
+pub mod execution;
+pub mod validation;
+pub mod fees;
+pub mod sync;
+pub mod protocol;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
@@ -77,6 +83,12 @@ pub use dht_index::{IndexedBlockHeader, IndexedTransactionSummary};
 pub use receipts::{TransactionReceipt, TransactionStatus};
 pub use fork_recovery::{ForkPoint, ForkDetector, ForkDetection, ChainEvaluation, ForkRecoveryConfig, ForkResolution};
 
+// Sync module (Phase 3A)
+pub use sync::{ChainSync, SyncError, SyncResult, ImportResult};
+
+// Protocol module (Phase 3B)
+pub use protocol::{ProtocolParams, ProtocolError, ProtocolResult, fee_model, PROTOCOL_PARAMS_KEY};
+
 // Re-export enhanced integrations
 pub use integration::enhanced_zk_crypto::{
     EnhancedTransactionValidator,
@@ -109,6 +121,24 @@ pub use integration::consensus_integration::{
 
 // Re-export difficulty types from lib-consensus for convenience
 pub use lib_consensus::{DifficultyConfig, DifficultyManager, DifficultyError, DifficultyResult};
+
+// Re-export storage types (Phase 1 storage layer)
+pub use storage::{
+    BlockchainStore, SledStore, StorageError, StorageResult,
+    BlockHash, TxHash, OutPoint, Address, TokenId, Utxo,
+    AccountState, WalletState, WalletMetadata, IdentityState, IdentityAttribute,
+    IdentityStatus, ValidatorState, ValidatorStatus,
+};
+
+// Re-export execution types (Phase 2 execution layer)
+pub use execution::{
+    BlockExecutor, ExecutorConfig, ApplyOutcome, StateChangesSummary,
+    BlockApplyError, BlockApplyResult, TxApplyError, TxApplyResult,
+    StateMutator, StateView, StateViewExt,
+};
+
+// Phase 2 validation module available as crate::validation
+// Not re-exported at top level to avoid conflict with transaction::validation
 
 // Re-export contracts when feature is enabled
 // contracts/mod.rs has explicit re-exports, so this is safe and curated

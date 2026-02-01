@@ -61,6 +61,7 @@ fn create_transfer_tx(sender: &PublicKey, fee: u64, nullifier_id: u8) -> Transac
         dao_execution_data: None,
         ubi_claim_data: None,
         profit_declaration_data: None,
+        token_transfer_data: None,
     }
 }
 
@@ -81,6 +82,7 @@ fn create_test_block(height: u64, transactions: Vec<Transaction>) -> Block {
         cumulative_difficulty: Difficulty::from_bits(0),
         transaction_count: transactions.len() as u32,
         block_size: 0,
+        fee_model_version: 2, // Phase 2+ uses v2
     };
     Block::new(header, transactions)
 }
