@@ -2807,6 +2807,8 @@ dependencies = [
  "hex",
  "hkdf",
  "js-sys",
+ "lib-blockchain",
+ "lib-crypto",
  "pqc_kyber",
  "pqcrypto-dilithium",
  "pqcrypto-kyber 0.8.1",
