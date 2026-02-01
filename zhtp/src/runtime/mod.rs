@@ -961,21 +961,36 @@ impl RuntimeOrchestrator {
                         .unwrap_or(0);
                     let corrupt_path = persist_path.with_extension(format!("dat.corrupt.{}", timestamp));
 
-                    if let Err(rename_err) = std::fs::rename(persist_path, &corrupt_path) {
-                        error!("❌ FATAL: Failed to preserve corrupted blockchain file: {}", rename_err);
-                    } else {
-                        error!("❌ Corrupted blockchain file preserved as: {:?}", corrupt_path);
-                    }
+                    let preservation_note = match std::fs::rename(persist_path, &corrupt_path) {
+                        Ok(()) => {
+                            error!("❌ Corrupted blockchain file preserved as: {:?}", corrupt_path);
+                            format!(
+                                "The corrupted file has been preserved for potential recovery as: {:?}.",
+                                corrupt_path
+                            )
+                        }
+                        Err(rename_err) => {
+                            error!("❌ FATAL: Failed to preserve corrupted blockchain file: {}", rename_err);
+                            format!(
+                                "WARNING: Failed to preserve corrupted file for potential recovery: {}. \
+                                The original file at {:?} may still exist or be partially moved.",
+                                rename_err,
+                                persist_path
+                            )
+                        }
+                    };
 
                     // FATAL: Do NOT silently create new blockchain - this destroys data
                     return Err(anyhow::anyhow!(
                         "FATAL: Blockchain file corrupted: {}\n\
-                        The corrupted file has been preserved for potential recovery.\n\
+                        {}\n\
                         Options:\n\
                         1. Restore from backup (if available)\n\
                         2. Delete {:?} to start fresh (WARNING: loses all data)\n\
                         3. Contact support for recovery assistance",
-                        e, persist_path
+                        e,
+                        preservation_note,
+                        persist_path
                     ));
                 }
             }
