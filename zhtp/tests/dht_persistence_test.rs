@@ -1,3 +1,45 @@
+/// Helper: Run DHT consistency test across multiple restart cycles
+fn run_dht_consistency_across_restarts(nodes: &[(&str, [u8; 64])], cycles: usize) -> Result<()> {
+    let reference_identities = create_identities_from_nodes(nodes)?;
+    let reference_node_ids: Vec<NodeId> = reference_identities.iter().map(|id| id.node_id.clone()).collect();
+    for cycle in 0..cycles {
+        verify_restart_cycle_consistency(nodes, &reference_node_ids, cycle)?;
+    }
+    Ok(())
+}
+
+/// Helper: Run DHT network convergence simulation
+fn run_dht_network_convergence(nodes: &[(&str, [u8; 64])]) -> Result<()> {
+    let identities = create_identities_from_nodes(nodes)?;
+    let mut dht_states = create_dht_states(&identities);
+    discover_ring_neighbors(&mut dht_states, &identities)?;
+    complete_mesh_discovery(&mut dht_states, &identities)?;
+    let expected_peers = identities.len() - 1;
+    assert!(verify_dht_peer_counts(&dht_states, expected_peers), "All nodes should discover all {} peers", expected_peers);
+    Ok(())
+}
+
+/// Helper: Run DHT persistence metrics tracking
+fn run_dht_persistence_metrics(nodes: &[(&str, [u8; 64])]) -> Result<()> {
+    let identities_c1 = create_identities_from_nodes(nodes)?;
+    let mut dht_c1 = create_dht_states(&identities_c1);
+    populate_dht_full_mesh(&mut dht_c1, &identities_c1, 0)?;
+    for dht in &mut dht_c1 { dht.set_convergence_cycle(1); }
+    let metrics_c1: Vec<usize> = dht_c1.iter().map(|d| d.peer_count()).collect();
+    let convergence_c1: Vec<u32> = dht_c1.iter().map(|d| d.get_convergence_cycle()).collect();
+    let identities_c2 = create_identities_from_nodes(nodes)?;
+    assert!(verify_node_ids_match(&identities_c1, &identities_c2), "NodeIds must persist");
+    let mut dht_c2 = create_dht_states(&identities_c2);
+    populate_dht_full_mesh(&mut dht_c2, &identities_c2, 1)?;
+    for dht in &mut dht_c2 { dht.set_convergence_cycle(2); }
+    let metrics_c2: Vec<usize> = dht_c2.iter().map(|d| d.peer_count()).collect();
+    assert_eq!(metrics_c1, metrics_c2, "DHT peer counts must match after restart");
+    let convergence_c2: Vec<u32> = dht_c2.iter().map(|d| d.get_convergence_cycle()).collect();
+    for (c1, c2) in convergence_c1.iter().zip(convergence_c2.iter()) {
+        assert!(c2 > c1, "Convergence cycle must progress");
+    }
+    Ok(())
+}
 //! DHT Persistence Test (Issue #70)
 //!
 //! Goal: Verify DHT routing tables rebuild correctly after network restart
@@ -190,17 +232,7 @@ fn test_dht_consistency_across_multiple_restart_cycles() -> Result<()> {
         ("alice-dht-004", [0xAA; 64]),
         ("bob-dht-004", [0xBB; 64]),
     ];
-
-    // First cycle: store reference NodeIds and routing tables
-    let reference_identities = create_identities_from_nodes(&nodes)?;
-    let reference_node_ids: Vec<NodeId> = reference_identities.iter().map(|id| id.node_id.clone()).collect();
-
-    // Run 3 restart cycles and verify consistency
-    for cycle in 0..3 {
-        verify_restart_cycle_consistency(&nodes, &reference_node_ids, cycle)?;
-    }
-
-    Ok(())
+    run_dht_consistency_across_restarts(&nodes, 3)
 }
 
 /// Helper: Verify a single restart cycle maintains NodeId and routing consistency
@@ -249,22 +281,7 @@ fn test_dht_network_convergence_simulation() -> Result<()> {
         ("node-dht-2", [0x30; 64]),
         ("node-dht-3", [0x40; 64]),
     ];
-
-    let identities = create_identities_from_nodes(&nodes)?;
-    let mut dht_states = create_dht_states(&identities);
-
-    // Round 1: Each peer discovers direct neighbor (ring topology)
-    discover_ring_neighbors(&mut dht_states, &identities)?;
-
-    // Round 2: Complete discovery to full mesh
-    complete_mesh_discovery(&mut dht_states, &identities)?;
-
-    // Verify full convergence
-    let expected_peers = identities.len() - 1;
-    assert!(verify_dht_peer_counts(&dht_states, expected_peers), 
-            "All nodes should discover all {} peers", expected_peers);
-
-    Ok(())
+    run_dht_network_convergence(&nodes)
 }
 
 /// Helper: Discover ring neighbors (each node discovers next node in ring)
@@ -308,38 +325,5 @@ fn test_dht_persistence_metrics() -> Result<()> {
         ("bob-metrics", [0xBB; 64]),
         ("charlie-metrics", [0xCC; 64]),
     ];
-
-    // Cycle 1: Initial startup and convergence
-    let identities_c1 = create_identities_from_nodes(&nodes)?;
-    let mut dht_c1 = create_dht_states(&identities_c1);
-    populate_dht_full_mesh(&mut dht_c1, &identities_c1, 0)?;
-    for dht in &mut dht_c1 {
-        dht.set_convergence_cycle(1);
-    }
-
-    // Record metrics from cycle 1
-    let metrics_c1: Vec<usize> = dht_c1.iter().map(|d| d.peer_count()).collect();
-    let convergence_c1: Vec<u32> = dht_c1.iter().map(|d| d.get_convergence_cycle()).collect();
-
-    // Cycle 2: Restart all nodes
-    let identities_c2 = create_identities_from_nodes(&nodes)?;
-    assert!(verify_node_ids_match(&identities_c1, &identities_c2), "NodeIds must persist");
-
-    let mut dht_c2 = create_dht_states(&identities_c2);
-    populate_dht_full_mesh(&mut dht_c2, &identities_c2, 1)?;
-    for dht in &mut dht_c2 {
-        dht.set_convergence_cycle(2);
-    }
-
-    // Verify metrics recovered
-    let metrics_c2: Vec<usize> = dht_c2.iter().map(|d| d.peer_count()).collect();
-    assert_eq!(metrics_c1, metrics_c2, "DHT peer counts must match after restart");
-
-    // Verify convergence progressed
-    let convergence_c2: Vec<u32> = dht_c2.iter().map(|d| d.get_convergence_cycle()).collect();
-    for (c1, c2) in convergence_c1.iter().zip(convergence_c2.iter()) {
-        assert!(c2 > c1, "Convergence cycle must progress");
-    }
-
-    Ok(())
+    run_dht_persistence_metrics(&nodes)
 }
