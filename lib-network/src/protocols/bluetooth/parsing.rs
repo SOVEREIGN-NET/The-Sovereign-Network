@@ -180,6 +180,7 @@ impl BluetoothMeshProtocol {
     }
 
     /// Parse macOS GATT read output for a specific characteristic.
+    #[cfg(target_os = "macos")]
     pub(crate) fn parse_macos_gatt_data(
         &self,
         json_output: &str,
