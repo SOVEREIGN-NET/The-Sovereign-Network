@@ -2278,6 +2278,28 @@ impl Blockchain {
         Ok(registration_tx.hash())
     }
 
+    /// Create a spendable UTXO for wallet funding (welcome bonus, migration, etc.)
+    ///
+    /// This creates an actual spendable output in the UTXO set, not just registry metadata.
+    /// The recipient is identified by their identity hash (32 bytes).
+    pub fn create_funding_utxo(&mut self, wallet_id: &str, recipient_identity: &[u8], amount: u64) -> Hash {
+        let utxo_output = crate::transaction::TransactionOutput {
+            commitment: crate::types::hash::blake3_hash(
+                format!("funding_commitment_{}_{}", wallet_id, amount).as_bytes()
+            ),
+            note: crate::types::hash::blake3_hash(
+                format!("funding_note_{}", wallet_id).as_bytes()
+            ),
+            recipient: PublicKey::new(recipient_identity.to_vec()),
+        };
+        let utxo_hash = crate::types::hash::blake3_hash(
+            format!("funding_utxo:{}:{}", wallet_id, amount).as_bytes()
+        );
+        self.utxo_set.insert(utxo_hash, utxo_output);
+        info!("💰 Created funding UTXO: {} ZHTP for wallet {}", amount, &wallet_id[..16.min(wallet_id.len())]);
+        utxo_hash
+    }
+
     /// Get wallet by ID
     pub fn get_wallet(&self, wallet_id: &str) -> Option<&crate::transaction::WalletTransactionData> {
         self.wallet_registry.get(wallet_id)
@@ -6156,11 +6178,32 @@ impl Blockchain {
 
             match version {
                 3 => {
-                    // Current version - V3 storage format
-                    let storage: BlockchainStorageV3 = bincode::deserialize(data)
-                        .map_err(|e| anyhow::anyhow!("Failed to deserialize v3 blockchain: {}", e))?;
-                    info!("📂 Loaded blockchain storage v3");
-                    storage.to_blockchain()
+                    // V3 format - try BlockchainStorageV3 first, fallback to direct Blockchain
+                    match bincode::deserialize::<BlockchainStorageV3>(data) {
+                        Ok(storage) => {
+                            info!("📂 Loaded blockchain storage v3 (new format)");
+                            storage.to_blockchain()
+                        }
+                        Err(storage_err) => {
+                            // Fallback: v3 header but old direct Blockchain format
+                            // (files saved between adding header and adding BlockchainStorageV3)
+                            info!("📂 BlockchainStorageV3 failed, trying direct format: {}", storage_err);
+                            match bincode::deserialize::<Blockchain>(data) {
+                                Ok(bc) => {
+                                    info!("📂 Loaded v3 with direct Blockchain format (legacy v3)");
+                                    bc
+                                }
+                                Err(direct_err) => {
+                                    error!("❌ Failed to deserialize v3 blockchain:");
+                                    error!("   BlockchainStorageV3 error: {}", storage_err);
+                                    error!("   Direct format error: {}", direct_err);
+                                    return Err(anyhow::anyhow!(
+                                        "Failed to deserialize v3 blockchain: {}", storage_err
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
                 2 => {
                     // Future: V2 format migration
