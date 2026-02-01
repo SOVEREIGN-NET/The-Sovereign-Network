@@ -231,17 +231,23 @@ impl TokenHandler {
             return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
         }
 
-        // Extract params for response
-        let (token_id, to, amount): ([u8; 32], PublicKey, u64) =
-            match bincode::deserialize(&call.params) {
-                Ok(params) => params,
-                Err(e) => {
-                    return Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        format!("Invalid mint params: {}", e),
-                    ));
-                }
-            };
+        // Must match MintParams from lib-client
+        #[derive(serde::Deserialize)]
+        struct MintParams {
+            token_id: [u8; 32],
+            to: Vec<u8>,
+            amount: u64,
+        }
+        let params: MintParams = match bincode::deserialize(&call.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid mint params: {}", e),
+                ));
+            }
+        };
+        let MintParams { token_id, to, amount } = params;
 
         if let Err(e) = self.submit_to_mempool(tx).await {
             return Ok(create_error_response(
@@ -255,7 +261,7 @@ impl TokenHandler {
         create_json_response(json!({
             "success": true,
             "token_id": hex::encode(token_id),
-            "to": format!("0x{}", hex::encode(to.key_id)),
+            "to": format!("0x{}", hex::encode(&to)),
             "amount_minted": amount,
             "tx_status": "submitted_to_mempool"
         }))
@@ -279,16 +285,23 @@ impl TokenHandler {
             return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
         }
 
-        let (token_id, to, amount): ([u8; 32], PublicKey, u64) =
-            match bincode::deserialize(&call.params) {
-                Ok(params) => params,
-                Err(e) => {
-                    return Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        format!("Invalid transfer params: {}", e),
-                    ));
-                }
-            };
+        // Must match TransferParams from lib-client
+        #[derive(serde::Deserialize)]
+        struct TransferParams {
+            token_id: [u8; 32],
+            to: Vec<u8>,
+            amount: u64,
+        }
+        let params: TransferParams = match bincode::deserialize(&call.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid transfer params: {}", e),
+                ));
+            }
+        };
+        let TransferParams { token_id, to, amount } = params;
 
         if let Err(e) = self.submit_to_mempool(tx).await {
             return Ok(create_error_response(
@@ -302,7 +315,7 @@ impl TokenHandler {
         create_json_response(json!({
             "success": true,
             "token_id": hex::encode(token_id),
-            "to": format!("0x{}", hex::encode(to.key_id)),
+            "to": format!("0x{}", hex::encode(&to)),
             "amount": amount,
             "tx_status": "submitted_to_mempool"
         }))
@@ -326,16 +339,22 @@ impl TokenHandler {
             return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
         }
 
-        let (token_id, amount): ([u8; 32], u64) =
-            match bincode::deserialize(&call.params) {
-                Ok(params) => params,
-                Err(e) => {
-                    return Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        format!("Invalid burn params: {}", e),
-                    ));
-                }
-            };
+        // Must match BurnParams from lib-client
+        #[derive(serde::Deserialize)]
+        struct BurnParams {
+            token_id: [u8; 32],
+            amount: u64,
+        }
+        let params: BurnParams = match bincode::deserialize(&call.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid burn params: {}", e),
+                ));
+            }
+        };
+        let BurnParams { token_id, amount } = params;
 
         if let Err(e) = self.submit_to_mempool(tx).await {
             return Ok(create_error_response(
