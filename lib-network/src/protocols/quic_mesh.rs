@@ -74,7 +74,7 @@ use crate::messaging::message_handler::MeshMessageHandler;
 use crate::discovery::global_pin_cache;
 // Import PinnedCertVerifier for production-safe TLS verification
 #[allow(deprecated)]
-use crate::discovery::{PinnedCertVerifier, PinnedVerifierConfig, init_global_verifier, global_verifier};
+use crate::discovery::{PinnedCertVerifier, PinnedVerifierConfig};
 
 /// Default path for TLS certificate
 pub const DEFAULT_TLS_CERT_PATH: &str = "./data/tls/server.crt";
@@ -804,7 +804,10 @@ impl QuicMeshProtocol {
     }
 
     /// Encrypt and send a message to a single QUIC connection via UNI stream.
-    async fn send_encrypted_to(conn: &Connection, session_key: &[u8; 32], message: &[u8]) -> Result<()> {
+    /// 
+    /// Made public for Issue #846 - allows direct sending to specific peers
+    /// from external code that has access to a Connection and session key.
+    pub async fn send_encrypted_to(conn: &Connection, session_key: &[u8; 32], message: &[u8]) -> Result<()> {
         let encrypted = encrypt_data(message, session_key)?;
         let mut stream = conn.open_uni().await
             .context("Failed to open UNI stream")?;

@@ -891,18 +891,26 @@ impl MeshRouter {
     ) -> Result<()> {
         info!("🔍 DHT FindNode request: target={} bytes, max_hops={}", target_id.len(), max_hops);
         
+        // Issue #846: Use QuicMeshProtocol as canonical connection store for DHT
         let closer_nodes: Vec<(PublicKey, String)> = if max_hops > 0 {
-            let connections = self.connections.read().await;
-            connections.iter()
-                .take(20)
-                .map(|(pk, conn)| {
-                    let addr = conn.peer_address
-                        .as_ref()
-                        .map(|a| a.to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-                    (pk.clone(), addr)
-                })
-                .collect()
+            let quic_guard = self.quic_protocol.read().await;
+            match quic_guard.as_ref() {
+                Some(quic) => {
+                    quic.connections
+                        .iter()
+                        .take(20)
+                        .map(|entry| {
+                            let peer_id = PublicKey::from_bytes(&entry.key()[..entry.key().len().min(32)]).unwrap_or_else(|_| PublicKey::new());
+                            let addr = "quic-peer".to_string();
+                            (peer_id, addr)
+                        })
+                        .collect()
+                }
+                None => {
+                    debug!("QUIC protocol not initialized for DHT");
+                    Vec::new()
+                }
+            }
         } else {
             Vec::new()
         };
@@ -1111,7 +1119,10 @@ impl MeshRouter {
 
     // ==================== Helper Methods ====================
 
-    /// Broadcast to all peers except the specified one
+    /// Broadcast to all peers except the specified one.
+    /// 
+    /// Issue #846 Fix: Uses QuicMeshProtocol as the canonical connection store
+    /// instead of the deprecated MeshRouter.connections PeerRegistry.
     pub async fn broadcast_to_peers_except(
         &self, 
         message: ZhtpMeshMessage, 
@@ -1120,34 +1131,82 @@ impl MeshRouter {
         let serialized = bincode::serialize(&message)
             .context("Failed to serialize message")?;
         
-        let connections = self.connections.read().await;
-        let mut success_count = 0;
-        
-        for (peer_key, connection) in connections.iter() {
-            if peer_key == exclude {
-                continue;
-            }
-            
-            match &connection.protocol {
-                NetworkProtocol::UDP => {
-                    // UDP removed - should use QUIC protocol instead
-                    if false { // UDP socket removed
-                        if let Some(peer_addr_str) = &connection.peer_address {
-                            if let Ok(addr) = peer_addr_str.parse::<SocketAddr>() {
-                                if sock.send_to(&serialized, addr).await.is_ok() {
-                                    success_count += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
+        let peers_to_send = self.collect_broadcast_peers(exclude).await;
+        if peers_to_send.is_empty() {
+            return Ok(0);
         }
+
+        let success_count = self.send_to_peers(&serialized, &peers_to_send).await;
         
         self.track_bytes_sent((serialized.len() * success_count) as u64).await;
-        debug!("📤 Broadcast complete: {} peers reached (excluding sender)", success_count);
+        debug!("Broadcast complete: {}/{} peers reached (excluding sender)", 
+               success_count, peers_to_send.len());
         
         Ok(success_count)
+    }
+
+    /// Collect peers eligible for broadcast, excluding the sender.
+    async fn collect_broadcast_peers(
+        &self,
+        exclude: &PublicKey,
+    ) -> Vec<(Vec<u8>, quinn::Connection, Option<[u8; 32]>)> {
+        let quic_guard = self.quic_protocol.read().await;
+        let quic = match quic_guard.as_ref() {
+            Some(q) => q,
+            None => {
+                debug!("QUIC protocol not initialized for broadcast");
+                return Vec::new();
+            }
+        };
+
+        let exclude_node_id = exclude.as_bytes();
+        quic.connections
+            .iter()
+            .filter(|entry| {
+                let key = entry.key();
+                key.len() < 32 || &key[..32] != exclude_node_id
+            })
+            .map(|entry| {
+                (entry.key().clone(), entry.value().quic_conn.clone(), entry.value().session_key)
+            })
+            .collect()
+    }
+
+    /// Send serialized data to a list of peers, returning the success count.
+    async fn send_to_peers(
+        &self,
+        serialized: &[u8],
+        peers: &[(Vec<u8>, quinn::Connection, Option<[u8; 32]>)],
+    ) -> usize {
+        let mut success_count = 0;
+        for (peer_id, conn, session_key) in peers {
+            if let Some(key) = session_key {
+                if self.send_to_single_peer(peer_id, conn, key, serialized).await {
+                    success_count += 1;
+                }
+            } else {
+                debug!(peer = ?hex::encode(&peer_id[..8.min(peer_id.len())]),
+                      "Peer has no session key, skipping");
+            }
+        }
+        success_count
+    }
+
+    /// Send encrypted data to a single peer, returning true on success.
+    async fn send_to_single_peer(
+        &self,
+        peer_id: &[u8],
+        conn: &quinn::Connection,
+        key: &[u8; 32],
+        serialized: &[u8],
+    ) -> bool {
+        match lib_network::protocols::quic_mesh::QuicMeshProtocol::send_encrypted_to(conn, key, serialized).await {
+            Ok(()) => true,
+            Err(e) => {
+                debug!(peer = ?hex::encode(&peer_id[..8.min(peer_id.len())]),
+                      error = %e, "Send failed during broadcast");
+                false
+            }
+        }
     }
 }
