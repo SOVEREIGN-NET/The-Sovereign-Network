@@ -74,7 +74,7 @@ use crate::messaging::message_handler::MeshMessageHandler;
 use crate::discovery::global_pin_cache;
 // Import PinnedCertVerifier for production-safe TLS verification
 #[allow(deprecated)]
-use crate::discovery::{PinnedCertVerifier, PinnedVerifierConfig, init_global_verifier, global_verifier};
+use crate::discovery::{PinnedCertVerifier, PinnedVerifierConfig};
 
 /// Default path for TLS certificate
 pub const DEFAULT_TLS_CERT_PATH: &str = "./data/tls/server.crt";
