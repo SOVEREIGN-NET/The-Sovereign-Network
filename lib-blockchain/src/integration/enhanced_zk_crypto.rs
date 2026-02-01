@@ -697,7 +697,16 @@ pub mod testing {
 
 // Module re-exports for convenience
 pub mod types {
-    pub use crate::types::*;
+    // Re-export only the types from crate::types that are commonly used
+    pub use crate::types::{
+        TransactionType, Hash, Difficulty, DifficultyConfig,
+        blake3_hash, hash_to_hex, hex_to_hash, zero_hash, is_zero_hash, Hashable,
+        calculate_target, meets_difficulty, target_to_difficulty, max_target, min_target,
+        adjust_difficulty, adjust_difficulty_with_config, difficulty_to_work,
+        MiningProfile, MiningConfig, get_mining_config_from_env, validate_mining_for_chain,
+        DAOType, TokenClass, DAOMetadata, TreasuryAllocation, SectorDao, DifficultyParameterUpdateData,
+        WelfareSectorId, SectorVerificationFloor,
+    };
 }
 
 // Note: Consensus types removed as they belong to lib-consensus package
