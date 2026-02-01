@@ -1,8 +1,6 @@
 //! Connectivity helpers for Bluetooth mesh protocol.
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-use anyhow::anyhow;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use tracing::info;
 
 use super::device::MeshPeer;
@@ -58,20 +56,6 @@ impl BluetoothMeshProtocol {
         Ok(connection)
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    pub(crate) async fn connect_mesh_peer(&self, peer: &MeshPeer) -> Result<BluetoothConnection> {
-        Ok(BluetoothConnection {
-            peer_id: peer.peer_id.clone(),
-            connected_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            mtu: 247,
-            address: peer.address.clone(),
-            last_seen: peer.last_seen,
-            rssi: peer.rssi,
-        })
-    }
 
     #[cfg(target_os = "linux")]
     async fn linux_connect_mesh_peer(peer: &MeshPeer) -> Result<BluetoothConnection> {
