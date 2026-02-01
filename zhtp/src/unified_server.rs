@@ -640,6 +640,12 @@ impl ZhtpUnifiedServer {
             revenue_pools,
         );
 
+        // Wire identity store-and-forward for identity envelopes
+        let mut identity_store = lib_network::identity_store_forward::IdentityStoreForward::new(128);
+        identity_store.set_pouw_verifier(lib_network::identity_store_forward::IdentityStoreForward::default_pouw_verifier());
+        let identity_store = Arc::new(RwLock::new(identity_store));
+        message_handler.set_identity_store_forward(identity_store);
+
         // If integration layer has already registered a DHT payload sender, wire it now
         info!(" [QUIC] Wiring message handler for DHT integration");
         crate::integration::wire_message_handler(&mut message_handler).await;

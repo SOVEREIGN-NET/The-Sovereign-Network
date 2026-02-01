@@ -42,6 +42,7 @@ pub use seed::generate_identity_seed;
 
 // Re-export keypair functionality
 pub use keypair::generation::KeyPair;
+pub use keypair::operations::encrypt_with_public_key;
 
 // Re-export symmetric encryption
 pub use symmetric::{

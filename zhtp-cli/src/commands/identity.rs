@@ -7,10 +7,11 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{IdentityArgs, IdentityAction, ZhtpCli};
+use crate::argument_parsing::{IdentityArgs, IdentityAction, ZhtpCli, format_output};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
 use crate::logic;
+use crate::commands::web4_utils::connect_default;
 
 use lib_identity::ZhtpIdentity;
 use zhtp::keystore_names::{USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME};
@@ -29,6 +30,9 @@ pub enum IdentityOperation {
     CreateWithType,
     Verify,
     List,
+    SimulateMessage,
+    Pending,
+    Ack,
 }
 
 impl IdentityOperation {
@@ -39,6 +43,9 @@ impl IdentityOperation {
             IdentityOperation::CreateWithType => "Create identity with specific type",
             IdentityOperation::Verify => "Verify identity on blockchain",
             IdentityOperation::List => "List blockchain identities",
+            IdentityOperation::SimulateMessage => "Simulate identity message flow",
+            IdentityOperation::Pending => "Fetch pending identity envelopes",
+            IdentityOperation::Ack => "Acknowledge identity envelope delivery",
         }
     }
 }
@@ -52,6 +59,9 @@ pub fn action_to_operation(action: &IdentityAction) -> IdentityOperation {
         IdentityAction::CreateDid { .. } => IdentityOperation::CreateWithType,
         IdentityAction::Verify { .. } => IdentityOperation::Verify,
         IdentityAction::List => IdentityOperation::List,
+        IdentityAction::SimulateMessage { .. } => IdentityOperation::SimulateMessage,
+        IdentityAction::Pending { .. } => IdentityOperation::Pending,
+        IdentityAction::Ack { .. } => IdentityOperation::Ack,
     }
 }
 
@@ -109,6 +119,15 @@ async fn handle_identity_command_impl(
         IdentityAction::List => {
             // Imperative: QUIC communication
             list_identities_impl(cli, output).await
+        }
+        IdentityAction::SimulateMessage { devices, retain_until_ttl } => {
+            simulate_message_flow_impl(devices, retain_until_ttl, output).await
+        }
+        IdentityAction::Pending { recipient_did, device_id } => {
+            fetch_pending_envelopes_impl(&recipient_did, &device_id, cli, output).await
+        }
+        IdentityAction::Ack { recipient_did, device_id, message_id, retain_until_ttl } => {
+            acknowledge_identity_delivery_impl(&recipient_did, &device_id, message_id, retain_until_ttl, cli, output).await
         }
     }
 }
@@ -191,6 +210,82 @@ async fn create_identity_impl(
     Ok(())
 }
 
+/// Fetch pending identity envelopes via node API
+async fn fetch_pending_envelopes_impl(
+    recipient_did: &str,
+    device_id: &str,
+    cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
+    output.info("Fetching pending identity envelopes...")?;
+
+    let client = connect_default(&cli.server).await?;
+    let body = serde_json::json!({
+        "recipient_did": recipient_did,
+        "device_id": device_id,
+    });
+
+    let response = client
+        .post_json("/api/v1/network/identity/pending", &body)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/network/identity/pending".to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    let result: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/network/identity/pending".to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        })?;
+
+    let formatted = format_output(&result, &cli.format)?;
+    output.print(&formatted)?;
+    Ok(())
+}
+
+/// Acknowledge delivery of an identity envelope via node API
+async fn acknowledge_identity_delivery_impl(
+    recipient_did: &str,
+    device_id: &str,
+    message_id: u64,
+    retain_until_ttl: bool,
+    cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
+    output.info("Acknowledging identity delivery...")?;
+
+    let client = connect_default(&cli.server).await?;
+    let body = serde_json::json!({
+        "recipient_did": recipient_did,
+        "device_id": device_id,
+        "message_id": message_id,
+        "retain_until_ttl": retain_until_ttl,
+    });
+
+    let response = client
+        .post_json("/api/v1/network/identity/ack", &body)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/network/identity/ack".to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    let result: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/network/identity/ack".to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        })?;
+
+    let formatted = format_output(&result, &cli.format)?;
+    output.print(&formatted)?;
+    Ok(())
+}
+
 /// Create identity with specific type
 async fn create_identity_with_type_impl(
     name: &str,
@@ -255,6 +350,121 @@ async fn create_identity_with_type_impl(
 
     output.success(&format!("Identity saved to: {:?}", identity_file))?;
     output.success(&format!("Private key saved to: {:?}", private_key_file))?;
+
+    Ok(())
+}
+
+/// Simulate identity message flow (local)
+async fn simulate_message_flow_impl(
+    devices: u32,
+    retain_until_ttl: bool,
+    output: &dyn Output,
+) -> CliResult<()> {
+    use lib_identity::{
+        ZhtpIdentity, IdentityType,
+        create_device_add_update, apply_did_update, store_did_document, set_did_store_memory,
+    };
+    use lib_protocols::identity_messaging::{
+        build_delivery_receipt_envelope, build_identity_envelope_with_retention,
+        create_delivery_receipt, extract_device_ciphertext,
+    };
+    use lib_protocols::types::{IdentityPayload, MessageTtl};
+    use lib_network::identity_store_forward::IdentityStoreForward;
+    use lib_crypto::keypair::generation::KeyPair;
+
+    set_did_store_memory().map_err(|e| CliError::IdentityError(e))?;
+
+    let sender = ZhtpIdentity::new_unified(
+        IdentityType::Human,
+        Some(30),
+        Some("US".to_string()),
+        "sender-device",
+        None,
+    ).map_err(|e| CliError::IdentityError(e.to_string()))?;
+
+    let sender_doc = lib_identity::DidDocument::from_identity(&sender, None)
+        .map_err(|e| CliError::IdentityError(e))?;
+    let sender_update = create_device_add_update(
+        &sender,
+        &sender_doc,
+        "sender-device",
+        &sender.public_key.dilithium_pk,
+        &sender.public_key.kyber_pk,
+    ).map_err(|e| CliError::IdentityError(e))?;
+    let sender_doc = apply_did_update(sender_doc, &sender_update)
+        .map_err(|e| CliError::IdentityError(e))?;
+    store_did_document(sender_doc.clone()).map_err(|e| CliError::IdentityError(e))?;
+
+    let recipient = ZhtpIdentity::new_unified(
+        IdentityType::Human,
+        Some(30),
+        Some("US".to_string()),
+        "device-0",
+        None,
+    ).map_err(|e| CliError::IdentityError(e.to_string()))?;
+
+    let mut doc = lib_identity::DidDocument::from_identity(&recipient, None)
+        .map_err(|e| CliError::IdentityError(e))?;
+
+    for i in 0..devices {
+        let device_id = format!("device-{}", i);
+        let update = create_device_add_update(
+            &recipient,
+            &doc,
+            &device_id,
+            &recipient.public_key.dilithium_pk,
+            &recipient.public_key.kyber_pk,
+        ).map_err(|e| CliError::IdentityError(e))?;
+        doc = apply_did_update(doc, &update).map_err(|e| CliError::IdentityError(e))?;
+    }
+
+    store_did_document(doc.clone()).map_err(|e| CliError::IdentityError(e))?;
+
+    let payload = IdentityPayload::user_message(b"simulated-message".to_vec());
+    let envelope = build_identity_envelope_with_retention(
+        "did:zhtp:sender",
+        &doc.id,
+        &payload,
+        MessageTtl::Days7,
+        retain_until_ttl,
+    ).map_err(|e| CliError::IdentityError(e))?;
+
+    let mut queue = IdentityStoreForward::new(32);
+    queue.enqueue(envelope.clone()).map_err(|e| CliError::IdentityError(e))?;
+
+    let pending = queue.get_pending(&doc.id).map_err(|e| CliError::IdentityError(e))?;
+    output.success(&format!("Queued envelopes: {}", pending.len()))?;
+
+    if let Some(ct) = extract_device_ciphertext(&envelope, "device-0") {
+        output.info(&format!("Device-0 ciphertext bytes: {}", ct.len()))?;
+    } else {
+        output.warning("No ciphertext found for device-0")?;
+    }
+
+    let pending_for_device = queue
+        .get_pending_for_device(&doc.id, "device-0")
+        .map_err(|e| CliError::IdentityError(e))?;
+    output.info(&format!("Pending for device-0: {}", pending_for_device.len()))?;
+
+    let recipient_kp = KeyPair {
+        public_key: recipient.public_key.clone(),
+        private_key: recipient.private_key.clone().ok_or_else(|| {
+            CliError::IdentityError("Recipient missing private key".to_string())
+        })?,
+    };
+    let receipt = create_delivery_receipt(envelope.message_id, "device-0", &recipient_kp)
+        .map_err(|e| CliError::IdentityError(e))?;
+    let receipt_env = build_delivery_receipt_envelope(
+        &doc.id,
+        &sender_doc.id,
+        &receipt,
+        MessageTtl::Days7,
+    ).map_err(|e| CliError::IdentityError(e))?;
+    output.success(&format!("Receipt envelope payloads: {}", receipt_env.payloads.len()))?;
+
+    let removed = queue.acknowledge_delivery(&doc.id, envelope.message_id)
+        .map_err(|e| CliError::IdentityError(e))?;
+    output.success(&format!("Store-and-forward acknowledged: {}", removed))?;
 
     Ok(())
 }
@@ -345,6 +555,32 @@ mod tests {
     }
 
     #[test]
+    fn test_action_to_operation_pending() {
+        let action = IdentityAction::Pending {
+            recipient_did: "did:zhtp:recipient".to_string(),
+            device_id: "device-1".to_string(),
+        };
+        assert_eq!(
+            action_to_operation(&action),
+            IdentityOperation::Pending
+        );
+    }
+
+    #[test]
+    fn test_action_to_operation_ack() {
+        let action = IdentityAction::Ack {
+            recipient_did: "did:zhtp:recipient".to_string(),
+            device_id: "device-1".to_string(),
+            message_id: 42,
+            retain_until_ttl: false,
+        };
+        assert_eq!(
+            action_to_operation(&action),
+            IdentityOperation::Ack
+        );
+    }
+
+    #[test]
     fn test_operation_description() {
         assert_eq!(
             IdentityOperation::Create.description(),
@@ -361,6 +597,14 @@ mod tests {
         assert_eq!(
             IdentityOperation::List.description(),
             "List blockchain identities"
+        );
+        assert_eq!(
+            IdentityOperation::Pending.description(),
+            "Fetch pending identity envelopes"
+        );
+        assert_eq!(
+            IdentityOperation::Ack.description(),
+            "Acknowledge identity envelope delivery"
         );
     }
 }

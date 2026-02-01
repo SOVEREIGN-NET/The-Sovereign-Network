@@ -56,6 +56,8 @@ pub struct MeshMessageHandler {
     /// Consensus message sender for forwarding ValidatorMessages to the consensus engine
     /// When set, received ValidatorMessages are converted and sent to the consensus loop
     pub consensus_message_sender: Option<ConsensusMessageSender>,
+    /// Store-and-forward queue for identity envelopes
+    pub identity_store_forward: Option<Arc<RwLock<crate::identity_store_forward::IdentityStoreForward>>>,
 }
 
 /// DHT rate limit configuration
@@ -87,6 +89,7 @@ impl MeshMessageHandler {
             dht_rate_limits: Arc::new(RwLock::new(HashMap::new())),
             blockchain_event_receiver: Arc::new(crate::blockchain_sync::NullBlockchainEventReceiver),
             consensus_message_sender: None,
+            identity_store_forward: None,
         }
     }
 
@@ -133,6 +136,45 @@ impl MeshMessageHandler {
     pub fn set_consensus_message_sender(&mut self, sender: ConsensusMessageSender) {
         self.consensus_message_sender = Some(sender);
         info!("🔗 Consensus message sender wired to mesh message handler");
+    }
+
+    /// Set identity store-and-forward queue for envelope storage
+    pub fn set_identity_store_forward(
+        &mut self,
+        store: Arc<RwLock<crate::identity_store_forward::IdentityStoreForward>>,
+    ) {
+        self.identity_store_forward = Some(store);
+        info!("📦 Identity store-and-forward wired to mesh message handler");
+    }
+
+    /// Fetch pending identity envelopes for a specific recipient device (if configured)
+    pub async fn get_identity_pending_for_device(
+        &self,
+        recipient_did: &str,
+        device_id: &str,
+    ) -> Result<Vec<lib_protocols::types::IdentityEnvelope>, String> {
+        match &self.identity_store_forward {
+            Some(store) => {
+                let mut store = store.write().await;
+                store.get_pending_for_device(recipient_did, device_id)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Acknowledge delivery for a specific recipient and message id (if configured)
+    pub async fn acknowledge_identity_delivery(
+        &self,
+        recipient_did: &str,
+        message_id: u64,
+    ) -> Result<bool, String> {
+        match &self.identity_store_forward {
+            Some(store) => {
+                let mut store = store.write().await;
+                store.acknowledge_delivery(recipient_did, message_id)
+            }
+            None => Ok(false),
+        }
     }
 
     /// Handle incoming mesh message
@@ -184,6 +226,26 @@ impl MeshMessageHandler {
                     .unwrap_or(0);
                     
                 self.handle_lib_response(request_id, response.status.code(), response.status_message, headers_map, response.body, response.timestamp).await?;
+            },
+            ZhtpMeshMessage::IdentityEnvelope(envelope) => {
+                if let Some(store) = &self.identity_store_forward {
+                    let mut store = store.write().await;
+                    if let Err(err) = store.enqueue(envelope) {
+                        warn!("Failed to enqueue identity envelope: {}", err);
+                    }
+                } else {
+                    warn!("Identity envelope received but no store-and-forward configured");
+                }
+            },
+            ZhtpMeshMessage::IdentityDeliveryAck(ack) => {
+                if let Some(store) = &self.identity_store_forward {
+                    let mut store = store.write().await;
+                    if let Err(err) = store.acknowledge_delivery(&ack.recipient_did, ack.message_id) {
+                        warn!("Failed to acknowledge identity delivery: {}", err);
+                    }
+                } else {
+                    warn!("Identity delivery ack received but no store-and-forward configured");
+                }
             },
             ZhtpMeshMessage::BlockchainRequest { requester, request_id, request_type } => {
                 self.handle_blockchain_request(requester, request_id, request_type).await?;
@@ -1498,5 +1560,100 @@ mod tests {
         
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("signature"));
+    }
+
+    #[tokio::test]
+    async fn test_identity_envelope_handling() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+
+        let mut handler = MeshMessageHandler::new(
+            peer_registry,
+            long_range_relays,
+            revenue_pools,
+        );
+
+        let store = Arc::new(RwLock::new(crate::identity_store_forward::IdentityStoreForward::new(10)));
+        handler.set_identity_store_forward(store.clone());
+
+        let envelope = lib_protocols::types::IdentityEnvelope {
+            message_id: 1,
+            sender_did: "did:zhtp:sender".to_string(),
+            recipient_did: "did:zhtp:recipient".to_string(),
+            created_at: 1,
+            ttl: lib_protocols::types::MessageTtl::Days7,
+            retain_until_ttl: false,
+            pouw_stamp: None,
+            payloads: vec![lib_protocols::types::DevicePayload {
+                device_id: "device-1".to_string(),
+                ciphertext: vec![1, 2, 3],
+            }],
+        };
+
+        handler
+            .handle_mesh_message(ZhtpMeshMessage::IdentityEnvelope(envelope.clone()), PublicKey::new(vec![9]))
+            .await
+            .unwrap();
+
+        let pending = store.write().await.get_pending(&envelope.recipient_did).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].message_id, envelope.message_id);
+    }
+
+    #[tokio::test]
+    async fn test_identity_delivery_ack_handling() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+
+        let mut handler = MeshMessageHandler::new(
+            peer_registry,
+            long_range_relays,
+            revenue_pools,
+        );
+
+        let store = Arc::new(RwLock::new(crate::identity_store_forward::IdentityStoreForward::new(10)));
+        handler.set_identity_store_forward(store.clone());
+
+        let envelope = lib_protocols::types::IdentityEnvelope {
+            message_id: 42,
+            sender_did: "did:zhtp:sender".to_string(),
+            recipient_did: "did:zhtp:recipient".to_string(),
+            created_at: 1,
+            ttl: lib_protocols::types::MessageTtl::Days7,
+            retain_until_ttl: false,
+            pouw_stamp: None,
+            payloads: vec![lib_protocols::types::DevicePayload {
+                device_id: "device-1".to_string(),
+                ciphertext: vec![1, 2, 3],
+            }],
+        };
+
+        handler
+            .handle_mesh_message(ZhtpMeshMessage::IdentityEnvelope(envelope.clone()), PublicKey::new(vec![9]))
+            .await
+            .unwrap();
+
+        let pending_for_device = handler
+            .get_identity_pending_for_device(&envelope.recipient_did, "device-1")
+            .await
+            .unwrap();
+        assert_eq!(pending_for_device.len(), 1);
+
+        let ack = crate::types::mesh_message::IdentityDeliveryAck {
+            recipient_did: envelope.recipient_did.clone(),
+            message_id: envelope.message_id,
+            device_id: "device-1".to_string(),
+            retain_until_ttl: false,
+        };
+
+        handler
+            .handle_mesh_message(ZhtpMeshMessage::IdentityDeliveryAck(ack), PublicKey::new(vec![9]))
+            .await
+            .unwrap();
+
+        let pending = store.write().await.get_pending(&envelope.recipient_did).unwrap();
+        assert!(pending.is_empty());
     }
 }

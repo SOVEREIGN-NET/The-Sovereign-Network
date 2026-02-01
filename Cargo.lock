@@ -2807,6 +2807,8 @@ dependencies = [
  "hex",
  "hkdf",
  "js-sys",
+ "lib-blockchain",
+ "lib-crypto",
  "pqc_kyber",
  "pqcrypto-dilithium",
  "pqcrypto-kyber 0.8.1",
@@ -3019,6 +3021,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "bincode",
  "blake3",
  "chrono",
  "ciborium",
@@ -5957,6 +5960,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
+name = "tools"
+version = "0.1.0"
+dependencies = [
+ "lib-crypto",
+ "lib-identity",
+ "lib-network",
+ "lib-protocols",
+]
+
+[[package]]
 name = "tower"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7849,6 +7862,17 @@ dependencies = [
  "windows-service",
  "zeroize",
  "zhtp",
+]
+
+[[package]]
+name = "zhtp-dilithium-signer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.21.7",
+ "lib-crypto",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

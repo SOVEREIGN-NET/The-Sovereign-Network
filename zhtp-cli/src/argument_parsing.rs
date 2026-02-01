@@ -327,6 +327,34 @@ pub enum IdentityAction {
     },
     /// List identities
     List,
+    /// Simulate identity message flow (local, no network)
+    SimulateMessage {
+        /// Number of devices to register
+        #[arg(short, long, default_value = "2")]
+        devices: u32,
+        /// Retain until TTL after delivery
+        #[arg(long)]
+        retain_until_ttl: bool,
+    },
+    /// Fetch pending identity envelopes from node
+    Pending {
+        /// Recipient DID
+        recipient_did: String,
+        /// Device ID
+        device_id: String,
+    },
+    /// Acknowledge delivery of an identity envelope
+    Ack {
+        /// Recipient DID
+        recipient_did: String,
+        /// Device ID
+        device_id: String,
+        /// Message ID
+        message_id: u64,
+        /// Retain until TTL after delivery
+        #[arg(long)]
+        retain_until_ttl: bool,
+    },
 }
 
 /// Network operation commands

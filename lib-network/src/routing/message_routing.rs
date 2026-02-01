@@ -357,6 +357,12 @@ impl MeshMessageRouter {
             ZhtpMeshMessage::NewBlock { block, .. } => block.len() + 100,
             ZhtpMeshMessage::NewTransaction { transaction, .. } => transaction.len() + 100,
             ZhtpMeshMessage::UbiDistribution { proof, .. } => proof.len() + 100,
+            ZhtpMeshMessage::IdentityEnvelope(envelope) => {
+                envelope.payloads.iter().map(|p| p.ciphertext.len() + p.device_id.len()).sum::<usize>() + 128
+            },
+            ZhtpMeshMessage::IdentityDeliveryAck(ack) => {
+                ack.recipient_did.len() + ack.device_id.len() + 64
+            },
             _ => 256, // Default estimate for other message types
         }
     }
@@ -414,6 +420,16 @@ impl MeshMessageRouter {
         self.execute_routing(message_id, message, route).await?;
         
         Ok(message_id)
+    }
+
+    /// Route identity envelope (per-device fan-out) to destination
+    pub async fn route_identity_envelope(
+        &self,
+        envelope: lib_protocols::types::IdentityEnvelope,
+        destination: PublicKey,
+        sender: PublicKey,
+    ) -> Result<u64> {
+        self.route_message(ZhtpMeshMessage::IdentityEnvelope(envelope), destination, sender).await
     }
     
     /// Find optimal route to destination
