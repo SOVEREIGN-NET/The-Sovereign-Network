@@ -3,5 +3,5 @@
 
 pub mod protocol;
 
-pub use crate::dht_stub::{DHTNetworkStatus, ZkDHTIntegration, DHTClient};
+pub use crate::dht_stub::{DHTNetworkStatus, ZkDHTIntegration, DHTClient, call_native_dht_client};
 pub use lib_types::dht::{types::*, message::*, transport::*};
