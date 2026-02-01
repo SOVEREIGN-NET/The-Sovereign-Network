@@ -50,7 +50,7 @@ jobs:
       - name: Download zhtp-cli
         run: |
           cd /tmp
-          gh release download ${{ inputs.cli_version }} \
+          gh release download "$CLI_VERSION" \
             --repo SOVEREIGN-NET/The-Sovereign-Network \
             --pattern 'zhtp-cli-linux-x86_64.tar.gz' \
             --pattern 'SHA256SUMS'
@@ -60,6 +60,7 @@ jobs:
           chmod +x /tmp/zhtp-cli
         env:
           GH_TOKEN: ${{ github.token }}
+          CLI_VERSION: ${{ inputs.cli_version }}
 
       - name: Restore keystore
         run: |
@@ -74,11 +75,13 @@ jobs:
             TRUST_ARG="--pin-spki $ZHTP_SERVER_SPKI"
           fi
           /tmp/zhtp-cli deploy site \
-            --domain "${{ inputs.domain }}" \
+            --domain "$DEPLOY_DOMAIN" \
             --keystore ~/.zhtp/keystore \
-            --mode "${{ inputs.deployment_mode }}" \
+            --mode "$DEPLOY_MODE" \
             $TRUST_ARG \
             out/
         env:
           ZHTP_SERVER: ${{ secrets.ZHTP_SERVER }}
           ZHTP_SERVER_SPKI: ${{ secrets.ZHTP_SERVER_SPKI }}
+          DEPLOY_DOMAIN: ${{ inputs.domain }}
+          DEPLOY_MODE: ${{ inputs.deployment_mode }}
