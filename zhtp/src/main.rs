@@ -4,7 +4,7 @@
 //! Starts the unified server and manages the network node lifecycle.
 
 use zhtp::config::{CliArgs, load_configuration, Environment};
-use zhtp::runtime::RuntimeOrchestrator;
+use zhtp::runtime::{RuntimeOrchestrator, NodeRole};
 use tracing_subscriber;
 use std::env;
 use std::path::PathBuf;
@@ -25,11 +25,28 @@ async fn main() -> anyhow::Result<()> {
     // Load and validate configuration
     let config = load_configuration(&args).await?;
 
-    // Create the orchestrator with the configuration
-    let orchestrator = RuntimeOrchestrator::new(config).await?;
-
-    // Start the node with full startup sequence (includes identity creation)
-    orchestrator.start_node().await?;
+    // ========================================================================
+    // Issue #454: Canonical startup dispatch based on node role
+    // ========================================================================
+    // Single dispatch to the appropriate startup function based on the configured
+    // node role. Each startup function validates it was called with the correct
+    // role and performs role-specific initialization.
+    // ========================================================================
+    let node_role = config.node_role.clone();
+    let orchestrator = match node_role {
+        NodeRole::FullValidator => {
+            tracing::info!("Starting node as FullValidator (mining and consensus enabled)");
+            RuntimeOrchestrator::start_validator(config).await?
+        }
+        NodeRole::LightNode | NodeRole::MobileNode => {
+            tracing::info!("Starting node as {:?} (edge mode, headers only)", node_role);
+            RuntimeOrchestrator::start_edge_node(config).await?
+        }
+        NodeRole::Observer | NodeRole::BootstrapNode | NodeRole::ArchivalNode => {
+            tracing::info!("Starting node as {:?} (full blockchain, no mining)", node_role);
+            RuntimeOrchestrator::start_full_node(config).await?
+        }
+    };
 
     // Wait for shutdown signal (SIGTERM/SIGINT)
     tokio::select! {
