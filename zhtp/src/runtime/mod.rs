@@ -858,6 +858,87 @@ impl RuntimeOrchestrator {
         *self.edge_max_headers.read().await
     }
 
+    // ========================================================================
+    // CANONICAL STARTUP METHODS - Issue #454
+    // ========================================================================
+    // These are THE canonical entry points per node type. CLI dispatches to one
+    // of these based on NodeRole. All node-type-specific initialization happens
+    // within these methods, not scattered across component init functions.
+    // ========================================================================
+
+    /// Internal helper for canonical startup methods.
+    /// Validates that the config's node_role matches the expected role,
+    /// then calls start_node() for the common startup sequence.
+    async fn start_with_role_validation<F>(
+        config: NodeConfig,
+        _method_name: &str,
+        validate: F,
+    ) -> Result<Self>
+    where
+        F: FnOnce(&node_runtime::NodeRole) -> Result<()>,
+    {
+        validate(&config.node_role)?;
+        let orchestrator = Self::new(config).await?;
+        orchestrator.start_node().await?;
+        Ok(orchestrator)
+    }
+
+    /// Start a full node - THE canonical way
+    ///
+    /// Full nodes (Observer role) store the complete blockchain and verify all blocks,
+    /// but do NOT participate in consensus or mining.
+    ///
+    /// # Errors
+    /// Returns an error if config.node_role is not compatible with full node operation
+    /// (i.e., if it's an edge/light node role or a validator role).
+    pub async fn start_full_node(config: NodeConfig) -> Result<Self> {
+        Self::start_with_role_validation(config, "start_full_node", |role| {
+            if role.is_light_node() {
+                return Err(anyhow::anyhow!("start_full_node called for light/edge node role: {:?}", role));
+            }
+            if role.can_mine() {
+                return Err(anyhow::anyhow!("start_full_node called for validator role: {:?} - use start_validator instead", role));
+            }
+            Ok(())
+        }).await
+    }
+
+    /// Start an edge node - THE canonical way
+    ///
+    /// Edge nodes (LightNode/MobileNode role) only store block headers and ZK proofs,
+    /// optimized for resource-constrained devices.
+    ///
+    /// # Errors
+    /// Returns an error if config.node_role is not a light/edge node role.
+    pub async fn start_edge_node(config: NodeConfig) -> Result<Self> {
+        Self::start_with_role_validation(config, "start_edge_node", |role| {
+            if !role.is_light_node() {
+                return Err(anyhow::anyhow!("start_edge_node called for non-edge role: {:?}", role));
+            }
+            Ok(())
+        }).await
+    }
+
+    /// Start a validator node - THE canonical way
+    ///
+    /// Validator nodes (FullValidator role) store the complete blockchain, participate
+    /// in consensus, and can mine blocks.
+    ///
+    /// # Errors
+    /// Returns an error if config.node_role is not FullValidator.
+    pub async fn start_validator(config: NodeConfig) -> Result<Self> {
+        Self::start_with_role_validation(config, "start_validator", |role| {
+            if !role.can_mine() {
+                return Err(anyhow::anyhow!("start_validator called for non-validator role: {:?}", role));
+            }
+            Ok(())
+        }).await
+    }
+
+    // ========================================================================
+    // END CANONICAL STARTUP METHODS
+    // ========================================================================
+
     /// Start the node with full startup sequence
     /// 
     /// This is the main entry point called by CLI after configuration is loaded.
