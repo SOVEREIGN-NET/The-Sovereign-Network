@@ -261,21 +261,28 @@ impl TransactionValidator {
 
     /// Validate basic transaction structure
     fn validate_basic_structure(&self, transaction: &Transaction) -> ValidationResult {
+        tracing::warn!("[BREADCRUMB] validate_basic_structure ENTER: version={}, size={}, memo_len={}",
+            transaction.version, transaction.size(), transaction.memo.len());
+
         // Check version
         if transaction.version == 0 {
+            tracing::warn!("[BREADCRUMB] validate_basic_structure FAILED: version is 0");
             return Err(ValidationError::InvalidTransaction);
         }
 
         // Check transaction size limits
         if transaction.size() > MAX_TRANSACTION_SIZE {
+            tracing::warn!("[BREADCRUMB] validate_basic_structure FAILED: size {} > MAX {}", transaction.size(), MAX_TRANSACTION_SIZE);
             return Err(ValidationError::InvalidTransaction);
         }
 
         // Check memo size
         if transaction.memo.len() > MAX_MEMO_SIZE {
+            tracing::warn!("[BREADCRUMB] validate_basic_structure FAILED: memo.len {} > MAX {}", transaction.memo.len(), MAX_MEMO_SIZE);
             return Err(ValidationError::InvalidTransaction);
         }
 
+        tracing::warn!("[BREADCRUMB] validate_basic_structure PASSED");
         Ok(())
     }
 
@@ -330,21 +337,27 @@ impl TransactionValidator {
 
     /// Validate contract transaction
     fn validate_contract_transaction(&self, transaction: &Transaction) -> ValidationResult {
-        // Contract validation is handled by lib-contracts package
-        // Here we just validate basic structure
-        
+        tracing::warn!("[BREADCRUMB] validate_contract_transaction ENTER");
+
         // Allow system contract deployments (empty inputs) for Web4 and system contracts
-        // These are validated as system transactions in development/testnet environments
         let is_system_contract = transaction.inputs.is_empty();
-        
+
         if !is_system_contract && transaction.inputs.is_empty() {
+            tracing::warn!("[BREADCRUMB] validate_contract_transaction FAILED: empty inputs for non-system contract");
             return Err(ValidationError::InvalidInputs);
         }
 
-        if transaction.outputs.is_empty() {
+        // Token contract executions don't require outputs
+        let is_token = is_token_contract_execution(transaction);
+        tracing::warn!("[BREADCRUMB] validate_contract_transaction: outputs.is_empty={}, is_token={}",
+            transaction.outputs.is_empty(), is_token);
+
+        if transaction.outputs.is_empty() && !is_token {
+            tracing::warn!("[BREADCRUMB] validate_contract_transaction FAILED: empty outputs for non-token contract");
             return Err(ValidationError::InvalidOutputs);
         }
 
+        tracing::warn!("[BREADCRUMB] validate_contract_transaction PASSED");
         Ok(())
     }
 
@@ -372,10 +385,15 @@ impl TransactionValidator {
 
     /// Validate transaction signature using proper cryptographic verification
     fn validate_signature(&self, transaction: &Transaction) -> ValidationResult {
+        tracing::warn!(
+            "[BREADCRUMB] validate_signature ENTER: sig_len={}, pk_len={}, algo={:?}",
+            transaction.signature.signature.len(),
+            transaction.signature.public_key.as_bytes().len(),
+            transaction.signature.algorithm
+        );
         use lib_crypto::verification::verify_signature;
-        
+
         // Create transaction hash for verification (without signature)
-        // Note: hash() -> hash_transaction() will override this anyway, but be explicit
         let mut tx_for_verification = transaction.clone();
         tx_for_verification.signature = Signature {
             signature: Vec::new(),
@@ -458,7 +476,10 @@ impl TransactionValidator {
     /// Validate zero-knowledge proofs for all inputs using ZK verification
     fn validate_zk_proofs(&self, transaction: &Transaction) -> ValidationResult {
         use lib_proofs::ZkTransactionProof;
-        
+        tracing::warn!(
+            "[BREADCRUMB] validate_zk_proofs ENTER: inputs={}",
+            transaction.inputs.len()
+        );
         println!(" DEBUG: Starting ZK proof validation for {} transaction inputs", transaction.inputs.len());
         log::info!("Starting ZK proof validation for {} transaction inputs", transaction.inputs.len());
         
@@ -626,9 +647,16 @@ impl TransactionValidator {
 
     /// Validate economic aspects (fees, amounts) with system transaction support
     fn validate_economics_with_system_check(&self, transaction: &Transaction, is_system_transaction: bool) -> ValidationResult {
+        tracing::warn!(
+            "[BREADCRUMB] validate_economics_with_system_check ENTER: system={}, fee={}, size={}",
+            is_system_transaction,
+            transaction.fee,
+            transaction.size()
+        );
         if is_system_transaction {
             // System transactions are fee-free and create new money
             if transaction.fee != 0 {
+                tracing::warn!("[BREADCRUMB] validate_economics_with_system_check FAIL: system fee != 0");
                 return Err(ValidationError::InvalidFee);
             }
             // System transactions don't need fee validation
@@ -637,6 +665,11 @@ impl TransactionValidator {
 
         // Regular transaction fee validation
         let min_fee = calculate_minimum_fee(transaction.size());
+        tracing::warn!(
+            "[BREADCRUMB] validate_economics_with_system_check min_fee={}, fee={}",
+            min_fee,
+            transaction.fee
+        );
         println!("FEE VALIDATION DEBUG:");
         println!("   Transaction size: {} bytes", transaction.size());
         println!("   Calculated minimum fee: {} ZHTP", min_fee);
@@ -840,27 +873,47 @@ impl TransactionValidator {
 
 fn is_token_contract_execution(transaction: &Transaction) -> bool {
     if transaction.transaction_type != TransactionType::ContractExecution {
+        tracing::debug!("is_token_contract_execution: not ContractExecution type");
         return false;
     }
 
-    if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
+    if transaction.memo.len() <= 4 {
+        tracing::warn!("is_token_contract_execution: memo too short (len={})", transaction.memo.len());
+        return false;
+    }
+
+    if &transaction.memo[0..4] != b"ZHTP" {
+        tracing::warn!("is_token_contract_execution: memo doesn't start with ZHTP, starts with {:?}",
+            &transaction.memo[0..4]);
         return false;
     }
 
     let call_data = &transaction.memo[4..];
     let (call, _sig): (ContractCall, Signature) = match bincode::deserialize(call_data) {
         Ok(parsed) => parsed,
-        Err(_) => return false,
+        Err(e) => {
+            tracing::warn!("is_token_contract_execution: bincode deserialize failed: {}", e);
+            return false;
+        }
     };
 
     if call.contract_type != ContractType::Token {
+        tracing::warn!("is_token_contract_execution: contract_type is {:?}, not Token", call.contract_type);
         return false;
     }
 
-    matches!(
+    let is_token_method = matches!(
         call.method.as_str(),
         "create_custom_token" | "mint" | "transfer" | "burn"
-    )
+    );
+
+    if !is_token_method {
+        tracing::warn!("is_token_contract_execution: method '{}' is not a token method", call.method);
+    } else {
+        tracing::info!("is_token_contract_execution: VALID token contract call, method={}", call.method);
+    }
+
+    is_token_method
 }
 
 impl Default for TransactionValidator {
@@ -886,14 +939,22 @@ impl<'a> StatefulTransactionValidator<'a> {
 
     /// Validate a transaction with full state context including identity verification
     pub fn validate_transaction_with_state(&self, transaction: &Transaction) -> ValidationResult {
+        tracing::warn!("[BREADCRUMB] validate_transaction_with_state ENTER, memo.len={}", transaction.memo.len());
+
         // Check if this is a system transaction (empty inputs = coinbase-style), except token contract calls
-        let is_system_transaction = transaction.inputs.is_empty() && !is_token_contract_execution(transaction);
+        let is_token = is_token_contract_execution(transaction);
+        tracing::warn!("[BREADCRUMB] is_token_contract_execution = {}", is_token);
+
+        let is_system_transaction = transaction.inputs.is_empty() && !is_token;
+        tracing::warn!("[BREADCRUMB] is_system_transaction = {}", is_system_transaction);
 
         // Create a stateless validator for basic checks
         let stateless_validator = TransactionValidator::new();
 
         // Basic structure validation
+        tracing::warn!("[BREADCRUMB] validate_basic_structure CALL");
         stateless_validator.validate_basic_structure(transaction)?;
+        tracing::warn!("[BREADCRUMB] validate_basic_structure OK");
 
         // Type-specific validation
         match transaction.transaction_type {
@@ -955,21 +1016,29 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::IdentityRegistration
             && !is_token_contract_execution(transaction)
         {
+            tracing::warn!("[BREADCRUMB] validate_sender_identity_exists CALL");
             self.validate_sender_identity_exists(transaction)?;
+            tracing::warn!("[BREADCRUMB] validate_sender_identity_exists OK");
         }
 
         // Signature validation (always required except for system transactions)
         if !is_system_transaction {
+            tracing::warn!("[BREADCRUMB] validate_signature CALL");
             stateless_validator.validate_signature(transaction)?;
+            tracing::warn!("[BREADCRUMB] validate_signature OK");
         }
 
         // Zero-knowledge proof validation (skip for system transactions)
         if !is_system_transaction {
+            tracing::warn!("[BREADCRUMB] validate_zk_proofs CALL");
             stateless_validator.validate_zk_proofs(transaction)?;
+            tracing::warn!("[BREADCRUMB] validate_zk_proofs OK");
         }
 
         // Economic validation (modified for system transactions)
+        tracing::warn!("[BREADCRUMB] validate_economics_with_system_check CALL");
         stateless_validator.validate_economics_with_system_check(transaction, is_system_transaction)?;
+        tracing::warn!("[BREADCRUMB] validate_economics_with_system_check OK");
 
         Ok(())
     }
@@ -977,6 +1046,8 @@ impl<'a> StatefulTransactionValidator<'a> {
     /// CRITICAL FIX: Verify that the sender's identity exists on the blockchain
     /// This prevents transactions from non-existent or unregistered identities
     fn validate_sender_identity_exists(&self, transaction: &Transaction) -> ValidationResult {
+        tracing::warn!("[BREADCRUMB] validate_sender_identity_exists ENTER");
+
         // If we don't have blockchain access, skip this check (backward compatibility)
         let blockchain = match self.blockchain {
             Some(blockchain) => blockchain,
@@ -1154,7 +1225,7 @@ fn calculate_minimum_fee(transaction_size: usize) -> u64 {
 
 /// Constants for validation
 const MAX_TRANSACTION_SIZE: usize = 1_048_576; // 1 MB
-const MAX_MEMO_SIZE: usize = 1024; // 1 KB
+const MAX_MEMO_SIZE: usize = 8192; // 8 KB - increased for post-quantum signatures (Dilithium5 pubkey = 2592 bytes)
 
 /// Validation utility functions
 pub mod utils {
