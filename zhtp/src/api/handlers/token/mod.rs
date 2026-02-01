@@ -145,23 +145,31 @@ impl TokenHandler {
             return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
         }
 
-        // Extract params for response
-        let (name, symbol, initial_supply): (String, String, u64) =
-            match bincode::deserialize(&call.params) {
-                Ok(params) => params,
-                Err(e) => {
-                    tracing::warn!("[FLOW] token/create: params deserialize FAILED: {}", e);
-                    return Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        format!("Invalid token create params: {}", e),
-                    ));
-                }
-            };
+        // Extract params for response - must match CreateTokenParams struct from lib-client
+        #[derive(serde::Deserialize)]
+        struct CreateTokenParams {
+            name: String,
+            symbol: String,
+            initial_supply: u64,
+            decimals: u8,
+        }
+        let params: CreateTokenParams = match bincode::deserialize(&call.params) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("[FLOW] token/create: params deserialize FAILED: {}", e);
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid token create params: {}", e),
+                ));
+            }
+        };
+        let CreateTokenParams { name, symbol, initial_supply, decimals } = params;
         tracing::warn!(
-            "[FLOW] token/create params: name='{}' symbol='{}' supply={}",
+            "[FLOW] token/create params: name='{}' symbol='{}' supply={} decimals={}",
             name,
             symbol,
-            initial_supply
+            initial_supply,
+            decimals
         );
 
         if name.is_empty() || symbol.is_empty() {
@@ -200,6 +208,7 @@ impl TokenHandler {
             "name": name,
             "symbol": symbol,
             "initial_supply": initial_supply,
+            "decimals": decimals,
             "tx_status": "submitted_to_mempool"
         }))
     }
