@@ -329,7 +329,7 @@ fn test_minimum_fee_calculation() -> Result<()> {
     let min_fee_large = creation::utils::calculate_minimum_fee(1000);
     
     assert!(min_fee_large > min_fee_small);
-    assert!(min_fee_small >= 1000); // Base fee
+    assert!(min_fee_small >= 100); // Base fee reduced from 1000 to 100
     
     Ok(())
 }
