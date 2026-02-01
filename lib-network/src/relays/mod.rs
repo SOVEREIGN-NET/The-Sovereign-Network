@@ -7,9 +7,9 @@ pub mod lorawan_gateway;
 pub mod satellite_info;
 pub mod wifi_network;
 
-pub use lorawan_gateway::*;
-pub use satellite_info::*;
-pub use wifi_network::*;
+pub use lorawan_gateway::LoRaWANGatewayInfo;
+pub use satellite_info::SatelliteInfo;
+pub use wifi_network::WiFiNetworkInfo;
 
 // Re-export the main LongRangeRelay from long_range_relay module
 pub use long_range_relay::LongRangeRelay;
