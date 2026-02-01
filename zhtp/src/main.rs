@@ -31,10 +31,34 @@ async fn main() -> anyhow::Result<()> {
     // Start the node with full startup sequence (includes identity creation)
     orchestrator.start_node().await?;
 
-    // Keep running indefinitely
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+    // Wait for shutdown signal (SIGTERM/SIGINT)
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("Received SIGINT (Ctrl+C), initiating graceful shutdown...");
+        }
+        _ = async {
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+                sigterm.recv().await;
+            }
+            #[cfg(not(unix))]
+            {
+                std::future::pending::<()>().await;
+            }
+        } => {
+            tracing::info!("Received SIGTERM, initiating graceful shutdown...");
+        }
     }
+
+    // Graceful shutdown - saves blockchain before exit
+    if let Err(e) = orchestrator.graceful_shutdown().await {
+        tracing::error!("Error during graceful shutdown: {}", e);
+    }
+
+    tracing::info!("Node shutdown complete");
+    Ok(())
 }
 
 /// Parse command-line arguments
