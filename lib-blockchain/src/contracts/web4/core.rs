@@ -602,249 +602,165 @@ impl Web4Contract {
     /// Execute a Web4 contract function call
     pub fn execute(&mut self, call: ContractCall) -> ContractResult {
         match call.method.as_str() {
-            "register_domain" => {
-                let args: (String, String, u32) = match serde_json::from_slice(&call.params) {
-                    Ok(args) => args,
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&format!("Invalid arguments: {}", e));
-                        return result;
-                    }
-                };
-                
-                match self.register_domain(args.0, args.1, args.2) {
-                    Ok(response) => {
-                        match ContractResult::with_return_data(&response, 5000) {
-                            Ok(result) => result,
-                            Err(_) => {
-                                let mut result = ContractResult::with_gas(5000);
-                                result.gas_used = 5000;
-                                result
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&e.to_string());
-                        result
-                    }
-                }
-            }
-            "update_content" => {
-                let args: (String, String, String, u64) = match serde_json::from_slice(&call.params) {
-                    Ok(args) => args,
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&format!("Invalid arguments: {}", e));
-                        return result;
-                    }
-                };
-                
-                match self.update_content(args.0, args.1, args.2, args.3) {
-                    Ok(response) => {
-                        match ContractResult::with_return_data(&response, 3000) {
-                            Ok(result) => result,
-                            Err(_) => {
-                                let mut result = ContractResult::with_gas(3000);
-                                result.gas_used = 3000;
-                                result
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&e.to_string());
-                        result
-                    }
-                }
-            }
-            "add_route" => {
-                let route: ContentRoute = match serde_json::from_slice(&call.params) {
-                    Ok(route) => route,
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&format!("Invalid route data: {}", e));
-                        return result;
-                    }
-                };
-                
-                match self.add_route(route) {
-                    Ok(response) => {
-                        match ContractResult::with_return_data(&response, 2000) {
-                            Ok(result) => result,
-                            Err(_) => {
-                                let mut result = ContractResult::with_gas(2000);
-                                result.gas_used = 2000;
-                                result
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&e.to_string());
-                        result
-                    }
-                }
-            }
-            "remove_route" => {
-                let route_path: String = match serde_json::from_slice(&call.params) {
-                    Ok(path) => path,
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&format!("Invalid route path: {}", e));
-                        return result;
-                    }
-                };
-                
-                match self.remove_route(route_path) {
-                    Ok(response) => {
-                        match ContractResult::with_return_data(&response, 1500) {
-                            Ok(result) => result,
-                            Err(_) => ContractResult::with_gas(1500)
-                        }
-                    },
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&e.to_string());
-                        result
-                    }
-                }
-            }
-            "update_metadata" => {
-                let metadata: WebsiteMetadata = match serde_json::from_slice(&call.params) {
-                    Ok(metadata) => metadata,
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&format!("Invalid metadata: {}", e));
-                        return result;
-                    }
-                };
-                
-                match self.update_metadata(metadata) {
-                    Ok(response) => {
-                        match ContractResult::with_return_data(&response, 1500) {
-                            Ok(result) => result,
-                            Err(_) => ContractResult::with_gas(1500)
-                        }
-                    },
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&e.to_string());
-                        result
-                    }
-                }
-            }
-            "transfer_ownership" => {
-                let new_owner: String = match serde_json::from_slice(&call.params) {
-                    Ok(owner) => owner,
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&format!("Invalid owner: {}", e));
-                        return result;
-                    }
-                };
-                
-                match self.transfer_ownership(self.domain.clone(), new_owner) {
-                    Ok(response) => {
-                        match ContractResult::with_return_data(&response, 4000) {
-                            Ok(result) => result,
-                            Err(_) => {
-                                let mut result = ContractResult::with_gas(4000);
-                                result.gas_used = 4000;
-                                result
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        let mut result = ContractResult::failure(1000);
-                        let _ = result.set_return_data(&e.to_string());
-                        result
-                    }
-                }
-            }
-            "get_content_hash" => {
-                let route: String = match serde_json::from_slice(&call.params) {
-                    Ok(route) => route,
-                    Err(e) => {
-                        let mut result = ContractResult::failure(100);
-                        let _ = result.set_return_data(&format!("Invalid route: {}", e));
-                        return result;
-                    }
-                };
-                
-                match self.get_content_hash(route) {
-                    Ok(hash) => {
-                        match ContractResult::with_return_data(&hash, 300) {
-                            Ok(result) => result,
-                            Err(_) => {
-                                let mut result = ContractResult::with_gas(300);
-                                result.gas_used = 300;
-                                result
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        let mut result = ContractResult::failure(100);
-                        let _ = result.set_return_data(&e.to_string());
-                        result
-                    }
-                }
-            }
-            "get_routes" => {
-                let routes = self.get_routes();
-                match ContractResult::with_return_data(&routes, 500) {
-                    Ok(result) => result,
-                    Err(_) => ContractResult::with_gas(500)
-                }
-            }
-            "get_metadata" => {
-                let metadata = self.get_metadata();
-                match ContractResult::with_return_data(&metadata, 300) {
-                    Ok(result) => result,
-                    Err(_) => ContractResult::with_gas(300)
-                }
-            }
-            "get_domain" => {
-                let domain: String = match serde_json::from_slice(&call.params) {
-                    Ok(domain) => domain,
-                    Err(e) => {
-                        let mut result = ContractResult::failure(100);
-                        let _ = result.set_return_data(&format!("Invalid domain: {}", e));
-                        return result;
-                    }
-                };
-                
-                match self.get_domain(&domain) {
-                    Ok(response) => {
-                        match ContractResult::with_return_data(&response, 500) {
-                            Ok(result) => result,
-                            Err(_) => {
-                                let mut result = ContractResult::with_gas(500);
-                                result.gas_used = 500;
-                                result
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        let mut result = ContractResult::failure(100);
-                        let _ = result.set_return_data(&e.to_string());
-                        result
-                    }
-                }
-            }
-            "get_stats" => {
-                let stats = self.get_stats();
-                match ContractResult::with_return_data(&stats, 300) {
-                    Ok(result) => result,
-                    Err(_) => ContractResult::with_gas(300)
-                }
-            }
-            _ => {
-                let mut result = ContractResult::failure(100);
-                let _ = result.set_return_data(&format!("Unknown method: {}", call.method));
+            "register_domain" => self.handle_register_domain(&call),
+            "update_content" => self.handle_update_content(&call),
+            "add_route" => self.handle_add_route(&call),
+            "remove_route" => self.handle_remove_route(&call),
+            "update_metadata" => self.handle_update_metadata(&call),
+            "transfer_ownership" => self.handle_transfer_ownership(&call),
+            "get_content_hash" => self.handle_get_content_hash(&call),
+            "get_routes" => self.handle_get_routes(),
+            "get_metadata" => self.handle_get_metadata(),
+            "get_domain" => self.handle_get_domain(&call),
+            "get_stats" => self.handle_get_stats(),
+            _ => self.handle_unknown_method(&call),
+        }
+    }
+
+    /// Handle register_domain method call
+    fn handle_register_domain(&mut self, call: &ContractCall) -> ContractResult {
+        let args: (String, String, u32) = match serde_json::from_slice(&call.params) {
+            Ok(args) => args,
+            Err(e) => return self.error_result(1000, &format!("Invalid arguments: {}", e)),
+        };
+        
+        match self.register_domain(args.0, args.1, args.2) {
+            Ok(response) => self.success_result(&response, 5000),
+            Err(e) => self.error_result(1000, &e.to_string()),
+        }
+    }
+
+    /// Handle update_content method call
+    fn handle_update_content(&mut self, call: &ContractCall) -> ContractResult {
+        let args: (String, String, String, u64) = match serde_json::from_slice(&call.params) {
+            Ok(args) => args,
+            Err(e) => return self.error_result(1000, &format!("Invalid arguments: {}", e)),
+        };
+        
+        match self.update_content(args.0, args.1, args.2, args.3) {
+            Ok(response) => self.success_result(&response, 3000),
+            Err(e) => self.error_result(1000, &e.to_string()),
+        }
+    }
+
+    /// Handle add_route method call
+    fn handle_add_route(&mut self, call: &ContractCall) -> ContractResult {
+        let route: ContentRoute = match serde_json::from_slice(&call.params) {
+            Ok(route) => route,
+            Err(e) => return self.error_result(1000, &format!("Invalid route data: {}", e)),
+        };
+        
+        match self.add_route(route) {
+            Ok(response) => self.success_result(&response, 2000),
+            Err(e) => self.error_result(1000, &e.to_string()),
+        }
+    }
+
+    /// Handle remove_route method call
+    fn handle_remove_route(&mut self, call: &ContractCall) -> ContractResult {
+        let route_path: String = match serde_json::from_slice(&call.params) {
+            Ok(path) => path,
+            Err(e) => return self.error_result(1000, &format!("Invalid route path: {}", e)),
+        };
+        
+        match self.remove_route(route_path) {
+            Ok(response) => self.success_result(&response, 1500),
+            Err(e) => self.error_result(1000, &e.to_string()),
+        }
+    }
+
+    /// Handle update_metadata method call
+    fn handle_update_metadata(&mut self, call: &ContractCall) -> ContractResult {
+        let metadata: WebsiteMetadata = match serde_json::from_slice(&call.params) {
+            Ok(metadata) => metadata,
+            Err(e) => return self.error_result(1000, &format!("Invalid metadata: {}", e)),
+        };
+        
+        match self.update_metadata(metadata) {
+            Ok(response) => self.success_result(&response, 1500),
+            Err(e) => self.error_result(1000, &e.to_string()),
+        }
+    }
+
+    /// Handle transfer_ownership method call
+    fn handle_transfer_ownership(&mut self, call: &ContractCall) -> ContractResult {
+        let new_owner: String = match serde_json::from_slice(&call.params) {
+            Ok(owner) => owner,
+            Err(e) => return self.error_result(1000, &format!("Invalid owner: {}", e)),
+        };
+        
+        match self.transfer_ownership(self.domain.clone(), new_owner) {
+            Ok(response) => self.success_result(&response, 4000),
+            Err(e) => self.error_result(1000, &e.to_string()),
+        }
+    }
+
+    /// Handle get_content_hash method call
+    fn handle_get_content_hash(&self, call: &ContractCall) -> ContractResult {
+        let route: String = match serde_json::from_slice(&call.params) {
+            Ok(route) => route,
+            Err(e) => return self.error_result(100, &format!("Invalid route: {}", e)),
+        };
+        
+        match self.get_content_hash(route) {
+            Ok(hash) => self.success_result(&hash, 300),
+            Err(e) => self.error_result(100, &e.to_string()),
+        }
+    }
+
+    /// Handle get_routes method call
+    fn handle_get_routes(&self) -> ContractResult {
+        let routes = self.get_routes();
+        self.success_result(&routes, 500)
+    }
+
+    /// Handle get_metadata method call
+    fn handle_get_metadata(&self) -> ContractResult {
+        let metadata = self.get_metadata();
+        self.success_result(&metadata, 300)
+    }
+
+    /// Handle get_domain method call
+    fn handle_get_domain(&self, call: &ContractCall) -> ContractResult {
+        let domain: String = match serde_json::from_slice(&call.params) {
+            Ok(domain) => domain,
+            Err(e) => return self.error_result(100, &format!("Invalid domain: {}", e)),
+        };
+        
+        match self.get_domain(&domain) {
+            Ok(response) => self.success_result(&response, 500),
+            Err(e) => self.error_result(100, &e.to_string()),
+        }
+    }
+
+    /// Handle get_stats method call
+    fn handle_get_stats(&self) -> ContractResult {
+        let stats = self.get_stats();
+        self.success_result(&stats, 300)
+    }
+
+    /// Handle unknown method call
+    fn handle_unknown_method(&self, call: &ContractCall) -> ContractResult {
+        self.error_result(100, &format!("Unknown method: {}", call.method))
+    }
+
+    /// Create a success result with return data
+    fn success_result<T: serde::Serialize>(&self, data: &T, gas_used: u64) -> ContractResult {
+        match ContractResult::with_return_data(data, gas_used) {
+            Ok(result) => result,
+            Err(_) => {
+                let mut result = ContractResult::with_gas(gas_used);
+                result.gas_used = gas_used;
                 result
             }
         }
+    }
+
+    /// Create an error result
+    fn error_result(&self, code: u64, message: &str) -> ContractResult {
+        let mut result = ContractResult::failure(code);
+        let _ = result.set_return_data(&message.to_string());
+        result
     }
     
     fn get_state(&self) -> Vec<u8> {
