@@ -15,7 +15,11 @@ pub mod functions;
 pub mod types;
 
 pub use core::{Web4Contract, ContentStatistics};
-pub use functions::*;
+pub use functions::{
+    calculate_total_size, create_default_metadata, create_route, create_website_contract,
+    deploy_website, format_file_size, generate_contract_id, get_website_stats, 
+    is_valid_route_path, validate_deployment_data
+};
 pub use types::{
     WebsiteMetadata, ContentRoute, DomainRecord, WebsiteDeploymentData, DomainStatus, 
     Web4Operation, Web4Query, Web4Response, Web4Error,
