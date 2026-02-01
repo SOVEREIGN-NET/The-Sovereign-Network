@@ -13,14 +13,14 @@ pub mod pin_cache;
 #[cfg(feature = "quic")]
 pub mod pinned_verifier;
 
-pub use lorawan::*;
-pub use satellite::*;
-pub use wifi::*;
-pub use hardware::*;
+pub use lorawan::LoRaWANGatewayInfo;
+pub use satellite::SatelliteInfo;
+pub use wifi::WiFiNetworkInfo;
+pub use hardware::{HardwareCapabilities, HardwareDevice};
 #[cfg(feature = "lorawan")]
-pub use lorawan_hardware::*;
+pub use lorawan_hardware::{LoRaWANHardware, FrequencyBand, LoRaWANCapabilities};
 pub use geo_location::GeographicLocation;
-pub use local_network::*;
+pub use local_network::{NodeAnnouncement, DiscoverySigningContext};
 #[cfg(feature = "quic")]
 pub use pin_cache::{TlsPinCache, PinCacheEntry, NodeIdKey, global_pin_cache};
 #[cfg(feature = "quic")]
