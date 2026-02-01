@@ -389,6 +389,292 @@ impl BlockchainV1 {
     }
 }
 
+// =============================================================================
+// V3 Stable Storage Format (Jan 2026)
+// =============================================================================
+// This format uses explicit field ordering and versioning to ensure
+// compatibility across code changes. Fields are serialized in the exact
+// order they appear in the struct - DO NOT REORDER FIELDS.
+// =============================================================================
+
+/// Stable storage format V3 for blockchain serialization.
+///
+/// CRITICAL: Field order MUST remain fixed forever. New fields can only be
+/// added at the END of the struct with `#[serde(default)]` to maintain
+/// backward compatibility.
+///
+/// This struct maps to/from the runtime `Blockchain` struct but provides
+/// a stable serialization format that survives code refactoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BlockchainStorageV3 {
+    // === Core chain state (fields 1-5) ===
+    pub blocks: Vec<Block>,
+    pub height: u64,
+    pub difficulty: Difficulty,
+    #[serde(default)]
+    pub difficulty_config: DifficultyConfig,
+    pub total_work: u128,
+
+    // === UTXO and nullifier sets (fields 6-7) ===
+    pub utxo_set: HashMap<Hash, TransactionOutput>,
+    pub nullifier_set: HashSet<Hash>,
+
+    // === Pending transactions (field 8) ===
+    pub pending_transactions: Vec<Transaction>,
+
+    // === Identity registry (fields 9-10) ===
+    pub identity_registry: HashMap<String, IdentityTransactionData>,
+    pub identity_blocks: HashMap<String, u64>,
+
+    // === Wallet registry (fields 11-12) ===
+    pub wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
+    pub wallet_blocks: HashMap<String, u64>,
+
+    // === Economics (field 13) ===
+    #[serde(default)]
+    pub economics_transactions: Vec<EconomicsTransaction>,
+
+    // === Token contracts (fields 14-16) ===
+    #[serde(default)]
+    pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
+    #[serde(default)]
+    pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
+    #[serde(default)]
+    pub contract_blocks: HashMap<[u8; 32], u64>,
+
+    // === Validator registry (fields 17-18) ===
+    #[serde(default)]
+    pub validator_registry: HashMap<String, ValidatorInfo>,
+    #[serde(default)]
+    pub validator_blocks: HashMap<String, u64>,
+
+    // === DAO (field 19) ===
+    #[serde(default)]
+    pub dao_treasury_wallet_id: Option<String>,
+
+    // === Welfare services (fields 20-24) ===
+    #[serde(default)]
+    pub welfare_services: HashMap<String, lib_consensus::WelfareService>,
+    #[serde(default)]
+    pub welfare_service_blocks: HashMap<String, u64>,
+    #[serde(default)]
+    pub welfare_audit_trail: HashMap<lib_crypto::Hash, lib_consensus::WelfareAuditEntry>,
+    #[serde(default)]
+    pub service_performance: HashMap<String, lib_consensus::ServicePerformanceMetrics>,
+    #[serde(default)]
+    pub outcome_reports: HashMap<lib_crypto::Hash, lib_consensus::OutcomeReport>,
+
+    // === Auto-persistence config (fields 25-26) ===
+    #[serde(default)]
+    pub auto_persist_enabled: bool,
+    #[serde(default)]
+    pub blocks_since_last_persist: u64,
+
+    // === DAO execution tracking (field 27) ===
+    #[serde(default)]
+    pub executed_dao_proposals: HashSet<Hash>,
+
+    // === Transaction receipts (field 28) ===
+    #[serde(default)]
+    pub receipts: HashMap<Hash, crate::receipts::TransactionReceipt>,
+
+    // === Finality (fields 29-30) ===
+    #[serde(default = "default_finality_depth")]
+    pub finality_depth: u64,
+    #[serde(default)]
+    pub finalized_blocks: HashSet<u64>,
+
+    // === Contract state (fields 31-32) ===
+    #[serde(default)]
+    pub contract_states: HashMap<[u8; 32], Vec<u8>>,
+    #[serde(default)]
+    pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
+
+    // === UTXO snapshots and fork recovery (fields 33-36) ===
+    #[serde(default)]
+    pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
+    #[serde(default)]
+    pub fork_points: HashMap<u64, crate::fork_recovery::ForkPoint>,
+    #[serde(default)]
+    pub reorg_count: u64,
+    #[serde(default)]
+    pub fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
+
+    // === UBI registry (fields 37-38) ===
+    #[serde(default)]
+    pub ubi_registry: HashMap<String, UbiRegistryEntry>,
+    #[serde(default)]
+    pub ubi_blocks: HashMap<String, u64>,
+
+    // =========================================================================
+    // ADD NEW FIELDS BELOW HERE ONLY - with #[serde(default)]
+    // =========================================================================
+}
+
+impl BlockchainStorageV3 {
+    /// Convert from runtime Blockchain to stable storage format
+    fn from_blockchain(bc: &Blockchain) -> Self {
+        BlockchainStorageV3 {
+            // Core chain state
+            blocks: bc.blocks.clone(),
+            height: bc.height,
+            difficulty: bc.difficulty.clone(),
+            difficulty_config: bc.difficulty_config.clone(),
+            total_work: bc.total_work,
+
+            // UTXO and nullifiers
+            utxo_set: bc.utxo_set.clone(),
+            nullifier_set: bc.nullifier_set.clone(),
+
+            // Pending transactions
+            pending_transactions: bc.pending_transactions.clone(),
+
+            // Identity registry
+            identity_registry: bc.identity_registry.clone(),
+            identity_blocks: bc.identity_blocks.clone(),
+
+            // Wallet registry
+            wallet_registry: bc.wallet_registry.clone(),
+            wallet_blocks: bc.wallet_blocks.clone(),
+
+            // Economics
+            economics_transactions: bc.economics_transactions.clone(),
+
+            // Contracts
+            token_contracts: bc.token_contracts.clone(),
+            web4_contracts: bc.web4_contracts.clone(),
+            contract_blocks: bc.contract_blocks.clone(),
+
+            // Validators
+            validator_registry: bc.validator_registry.clone(),
+            validator_blocks: bc.validator_blocks.clone(),
+
+            // DAO
+            dao_treasury_wallet_id: bc.dao_treasury_wallet_id.clone(),
+
+            // Welfare
+            welfare_services: bc.welfare_services.clone(),
+            welfare_service_blocks: bc.welfare_service_blocks.clone(),
+            welfare_audit_trail: bc.welfare_audit_trail.clone(),
+            service_performance: bc.service_performance.clone(),
+            outcome_reports: bc.outcome_reports.clone(),
+
+            // Auto-persistence
+            auto_persist_enabled: bc.auto_persist_enabled,
+            blocks_since_last_persist: bc.blocks_since_last_persist,
+
+            // DAO execution
+            executed_dao_proposals: bc.executed_dao_proposals.clone(),
+
+            // Receipts
+            receipts: bc.receipts.clone(),
+
+            // Finality
+            finality_depth: bc.finality_depth,
+            finalized_blocks: bc.finalized_blocks.clone(),
+
+            // Contract state
+            contract_states: bc.contract_states.clone(),
+            contract_state_history: bc.contract_state_history.clone(),
+
+            // Fork recovery
+            utxo_snapshots: bc.utxo_snapshots.clone(),
+            fork_points: bc.fork_points.clone(),
+            reorg_count: bc.reorg_count,
+            fork_recovery_config: bc.fork_recovery_config.clone(),
+
+            // UBI
+            ubi_registry: bc.ubi_registry.clone(),
+            ubi_blocks: bc.ubi_blocks.clone(),
+        }
+    }
+
+    /// Convert from stable storage format to runtime Blockchain
+    fn to_blockchain(self) -> Blockchain {
+        Blockchain {
+            // Core chain state
+            blocks: self.blocks,
+            height: self.height,
+            difficulty: self.difficulty,
+            difficulty_config: self.difficulty_config,
+            total_work: self.total_work,
+
+            // UTXO and nullifiers
+            utxo_set: self.utxo_set,
+            nullifier_set: self.nullifier_set,
+
+            // Pending transactions
+            pending_transactions: self.pending_transactions,
+
+            // Identity registry
+            identity_registry: self.identity_registry,
+            identity_blocks: self.identity_blocks,
+
+            // Wallet registry
+            wallet_registry: self.wallet_registry,
+            wallet_blocks: self.wallet_blocks,
+
+            // Economics
+            economics_transactions: self.economics_transactions,
+
+            // Contracts
+            token_contracts: self.token_contracts,
+            web4_contracts: self.web4_contracts,
+            contract_blocks: self.contract_blocks,
+
+            // Validators
+            validator_registry: self.validator_registry,
+            validator_blocks: self.validator_blocks,
+
+            // DAO
+            dao_treasury_wallet_id: self.dao_treasury_wallet_id,
+
+            // Welfare
+            welfare_services: self.welfare_services,
+            welfare_service_blocks: self.welfare_service_blocks,
+            welfare_audit_trail: self.welfare_audit_trail,
+            service_performance: self.service_performance,
+            outcome_reports: self.outcome_reports,
+
+            // Non-serialized runtime fields - must be re-initialized
+            economic_processor: None,
+            consensus_coordinator: None,
+            storage_manager: None,
+            proof_aggregator: None,
+            broadcast_sender: None,
+            event_publisher: crate::events::BlockchainEventPublisher::new(),
+
+            // Auto-persistence
+            auto_persist_enabled: self.auto_persist_enabled,
+            blocks_since_last_persist: self.blocks_since_last_persist,
+
+            // DAO execution
+            executed_dao_proposals: self.executed_dao_proposals,
+
+            // Receipts
+            receipts: self.receipts,
+
+            // Finality
+            finality_depth: self.finality_depth,
+            finalized_blocks: self.finalized_blocks,
+
+            // Contract state
+            contract_states: self.contract_states,
+            contract_state_history: self.contract_state_history,
+
+            // Fork recovery
+            utxo_snapshots: self.utxo_snapshots,
+            fork_points: self.fork_points,
+            reorg_count: self.reorg_count,
+            fork_recovery_config: self.fork_recovery_config,
+
+            // UBI
+            ubi_registry: self.ubi_registry,
+            ubi_blocks: self.ubi_blocks,
+        }
+    }
+}
+
 /// Blockchain import structure for deserializing received chains
 #[derive(Serialize, Deserialize)]
 pub struct BlockchainImport {
@@ -5736,11 +6022,17 @@ impl Blockchain {
     /// ```ignore
     /// blockchain.save_to_file(Path::new("./data/blockchain.dat"))?;
     /// ```
+    /// File format magic bytes - "ZHTP"
+    const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
+    /// Current file format version
+    const FILE_VERSION: u16 = 3;
+
     pub fn save_to_file(&self, path: &std::path::Path) -> Result<()> {
         use std::io::Write;
 
-        info!("💾 Saving blockchain to {} (height: {}, identities: {}, wallets: {})",
-              path.display(), self.height, self.identity_registry.len(), self.wallet_registry.len());
+        info!("💾 Saving blockchain to {} (height: {}, identities: {}, wallets: {}, tokens: {})",
+              path.display(), self.height, self.identity_registry.len(),
+              self.wallet_registry.len(), self.token_contracts.len());
 
         let start = std::time::Instant::now();
 
@@ -5749,21 +6041,31 @@ impl Blockchain {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Serialize blockchain to bincode
-        let serialized = bincode::serialize(self)
+        // Convert to stable storage format
+        let storage = BlockchainStorageV3::from_blockchain(self);
+
+        // Serialize to bincode
+        let serialized = bincode::serialize(&storage)
             .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))?;
+
+        // Build file with header: MAGIC (4 bytes) + VERSION (2 bytes) + DATA
+        let mut file_data = Vec::with_capacity(6 + serialized.len());
+        file_data.extend_from_slice(&Self::FILE_MAGIC);
+        file_data.extend_from_slice(&Self::FILE_VERSION.to_le_bytes());
+        file_data.extend_from_slice(&serialized);
 
         // Write to temporary file first, then rename (atomic operation)
         let temp_path = path.with_extension("dat.tmp");
         let mut file = std::fs::File::create(&temp_path)?;
-        file.write_all(&serialized)?;
+        file.write_all(&file_data)?;
         file.sync_all()?; // Ensure data is flushed to disk
 
         // Atomic rename
         std::fs::rename(&temp_path, path)?;
 
         let elapsed = start.elapsed();
-        info!("💾 Blockchain saved successfully ({} bytes, {:?})", serialized.len(), elapsed);
+        info!("💾 Blockchain saved successfully (v{}, {} bytes, {:?})",
+              Self::FILE_VERSION, file_data.len(), elapsed);
 
         Ok(())
     }
@@ -5786,28 +6088,67 @@ impl Blockchain {
         let start = std::time::Instant::now();
 
         // Read file
-        let serialized = std::fs::read(path)
+        let file_data = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("Failed to read blockchain file: {}", e))?;
 
-        // Try to deserialize as current format first
-        let mut blockchain: Blockchain = match bincode::deserialize(&serialized) {
-            Ok(bc) => {
-                info!("📂 Blockchain loaded as current format");
-                bc
+        if file_data.len() < 6 {
+            return Err(anyhow::anyhow!("Blockchain file too small"));
+        }
+
+        // Check for versioned format (magic header)
+        let mut blockchain: Blockchain = if file_data[0..4] == Self::FILE_MAGIC {
+            // Versioned format - read version and route to appropriate deserializer
+            let version = u16::from_le_bytes([file_data[4], file_data[5]]);
+            let data = &file_data[6..];
+
+            info!("📂 Detected versioned format v{}", version);
+
+            match version {
+                3 => {
+                    // Current version - V3 storage format
+                    let storage: BlockchainStorageV3 = bincode::deserialize(data)
+                        .map_err(|e| anyhow::anyhow!("Failed to deserialize v3 blockchain: {}", e))?;
+                    info!("📂 Loaded blockchain storage v3");
+                    storage.to_blockchain()
+                }
+                2 => {
+                    // Future: V2 format migration
+                    return Err(anyhow::anyhow!("V2 format not supported - please use newer binary"));
+                }
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Unsupported blockchain file version: {}. This binary supports v{}",
+                        version, Self::FILE_VERSION
+                    ));
+                }
             }
-            Err(current_err) => {
-                // Try V1 format (backward compatibility for production nodes)
-                info!("📂 Current format failed, trying V1 migration format...");
-                match bincode::deserialize::<BlockchainV1>(&serialized) {
-                    Ok(v1_blockchain) => {
-                        info!("📂 Blockchain loaded as V1 format, migrating...");
-                        v1_blockchain.migrate_to_current()
-                    }
-                    Err(v1_err) => {
-                        error!("❌ Failed to deserialize blockchain as either format:");
-                        error!("   Current format error: {}", current_err);
-                        error!("   V1 format error: {}", v1_err);
-                        return Err(anyhow::anyhow!("Failed to deserialize blockchain: {}", current_err));
+        } else {
+            // Legacy format (no header) - try old deserialization methods
+            info!("📂 No version header found, trying legacy formats...");
+
+            // Try direct deserialization first (very old format)
+            match bincode::deserialize::<Blockchain>(&file_data) {
+                Ok(bc) => {
+                    info!("📂 Loaded as legacy direct format");
+                    bc
+                }
+                Err(current_err) => {
+                    // Try V1 format (backward compatibility for production nodes)
+                    info!("📂 Direct format failed, trying V1 migration format...");
+                    match bincode::deserialize::<BlockchainV1>(&file_data) {
+                        Ok(v1_blockchain) => {
+                            info!("📂 Blockchain loaded as V1 format, migrating...");
+                            v1_blockchain.migrate_to_current()
+                        }
+                        Err(v1_err) => {
+                            error!("❌ Failed to deserialize blockchain as any format:");
+                            error!("   Direct format error: {}", current_err);
+                            error!("   V1 format error: {}", v1_err);
+                            return Err(anyhow::anyhow!(
+                                "Failed to deserialize blockchain. File may be corrupted or from incompatible version. Error: {}",
+                                current_err
+                            ));
+                        }
                     }
                 }
             }
@@ -5827,9 +6168,10 @@ impl Blockchain {
         }
 
         let elapsed = start.elapsed();
-        info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, UTXOs: {}, {:?})",
+        info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, tokens: {}, UTXOs: {}, {:?})",
               blockchain.height, blockchain.identity_registry.len(),
-              blockchain.wallet_registry.len(), blockchain.utxo_set.len(), elapsed);
+              blockchain.wallet_registry.len(), blockchain.token_contracts.len(),
+              blockchain.utxo_set.len(), elapsed);
 
         Ok(blockchain)
     }
