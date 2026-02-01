@@ -7,9 +7,9 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{info, debug, warn};
 
-use crate::types::*;
-use crate::transaction::*;
-use crate::blockchain::*;
+use crate::types::TransactionId;
+use crate::transaction::Transaction;
+use crate::blockchain::Blockchain;
 
 /// Enhanced blockchain manager with unified ZK proof coordination
 pub struct UnifiedZkBlockchainManager {
