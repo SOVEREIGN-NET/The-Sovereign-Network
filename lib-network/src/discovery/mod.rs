@@ -20,7 +20,7 @@ pub use hardware::{HardwareCapabilities, HardwareDevice};
 #[cfg(feature = "lorawan")]
 pub use lorawan_hardware::{LoRaWANHardware, FrequencyBand, LoRaWANCapabilities};
 pub use geo_location::GeographicLocation;
-pub use local_network::{NodeAnnouncement, DiscoverySigningContext};
+pub use local_network::{NodeAnnouncement, DiscoverySigningContext, start_local_discovery};
 #[cfg(feature = "quic")]
 pub use pin_cache::{TlsPinCache, PinCacheEntry, NodeIdKey, global_pin_cache};
 #[cfg(feature = "quic")]

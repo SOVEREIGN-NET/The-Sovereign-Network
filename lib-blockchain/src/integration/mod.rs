@@ -14,7 +14,12 @@ pub use enhanced_zk_crypto::{
     ConsensusProofData, EnhancedConsensusValidator, EnhancedTransactionCreator, 
     EnhancedTransactionValidator, ProofMetadata, TransactionSpec
 };
-pub use crypto_integration::{encrypt_data_hybrid, public_key_bytes};
+pub use crypto_integration::{
+    encrypt_data_hybrid, public_key_bytes,
+    // Re-exported from lib_crypto
+    PublicKey, PrivateKey, Signature, SignatureAlgorithm,
+    hash_data, KeyPair, hybrid_encrypt, hybrid_decrypt,
+};
 pub use zk_integration::{
     batch_verify_transaction_proofs, generate_identity_proof_for_transaction, 
     generate_proofs_transaction_proof, generate_simple_transaction_proof, 
