@@ -587,9 +587,13 @@ impl QuicHandler {
 
         // 4. Validate counter AFTER MAC verification (strictly increasing - prevents replay)
         // Counter is only updated after MAC proves request authenticity
+        let last_counter_before = session.last_counter();
         if let Err(e) = session.validate_counter(counter) {
             warn!(
                 counter = counter,
+                last_counter = last_counter_before,
+                session_id = %hex::encode(&session.session_id()[..8]),
+                path = %wire_request.request.uri,
                 error = %e,
                 "Counter validation failed - possible replay attack"
             );
@@ -602,9 +606,12 @@ impl QuicHandler {
             return Ok(());
         }
 
-        debug!(
+        info!(
             request_id = %wire_request.request_id_hex(),
             counter = counter,
+            last_counter = last_counter_before,
+            session_id = %hex::encode(&session.session_id()[..8]),
+            path = %wire_request.request.uri,
             "V2 request authenticated successfully"
         );
 

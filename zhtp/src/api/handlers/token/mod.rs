@@ -118,19 +118,30 @@ impl TokenHandler {
 
     /// POST /api/v1/token/create - Create a new custom token
     async fn handle_create_token(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        tracing::warn!("[FLOW] token/create: ENTER body_len={}", request.body.len());
         let create_req: CreateTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
         let (tx, call) = match self.decode_signed_tx(&create_req.signed_tx) {
             Ok(parsed) => parsed,
             Err(e) => {
+                tracing::warn!("[FLOW] token/create: decode_signed_tx FAILED: {}", e);
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
                     e.to_string(),
                 ));
             }
         };
+        tracing::warn!(
+            "[FLOW] token/create decoded tx: size={}, memo_len={}, fee={}, inputs={}, outputs={}",
+            tx.size(),
+            tx.memo.len(),
+            tx.fee,
+            tx.inputs.len(),
+            tx.outputs.len()
+        );
         if let Err(e) = self.ensure_token_call(&call, "create_custom_token") {
+            tracing::warn!("[FLOW] token/create: ensure_token_call FAILED: {}", e);
             return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
         }
 
@@ -139,14 +150,22 @@ impl TokenHandler {
             match bincode::deserialize(&call.params) {
                 Ok(params) => params,
                 Err(e) => {
+                    tracing::warn!("[FLOW] token/create: params deserialize FAILED: {}", e);
                     return Ok(create_error_response(
                         ZhtpStatus::BadRequest,
                         format!("Invalid token create params: {}", e),
                     ));
                 }
             };
+        tracing::warn!(
+            "[FLOW] token/create params: name='{}' symbol='{}' supply={}",
+            name,
+            symbol,
+            initial_supply
+        );
 
         if name.is_empty() || symbol.is_empty() {
+            tracing::warn!("[FLOW] token/create: name/symbol empty");
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
                 "Name and symbol are required".to_string(),
@@ -154,6 +173,7 @@ impl TokenHandler {
         }
 
         if symbol.len() > 10 {
+            tracing::warn!("[FLOW] token/create: symbol too long len={}", symbol.len());
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
                 "Symbol must be 10 characters or less".to_string(),
@@ -161,13 +181,16 @@ impl TokenHandler {
         }
 
         let token_id = generate_custom_token_id(&name, &symbol);
+        tracing::warn!("[FLOW] token/create token_id={}", hex::encode(token_id));
 
         if let Err(e) = self.submit_to_mempool(tx).await {
+            tracing::warn!("[FLOW] token/create submit_to_mempool FAILED: {}", e);
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
                 e.to_string(),
             ));
         }
+        tracing::warn!("[FLOW] token/create: submit_to_mempool OK");
 
         info!("Token creation submitted: {} ({})", name, symbol);
 
@@ -373,13 +396,18 @@ impl TokenHandler {
         let token_id_array: [u8; 32] = token_id.try_into().unwrap();
 
         let pubkey = self.identity_to_pubkey(address)?;
+        let target_key_id = pubkey.key_id;
 
         let blockchain = self.blockchain.read().await;
 
         let token = blockchain.get_token_contract(&token_id_array)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
-        let balance = token.balance_of(&pubkey);
+        // Look up balance by key_id (not full PublicKey comparison)
+        let balance = token.balances.iter()
+            .find(|(pk, _)| pk.key_id == target_key_id)
+            .map(|(_, bal)| *bal)
+            .unwrap_or(0);
 
         create_json_response(json!({
             "token_id": token_id_hex,
@@ -408,6 +436,67 @@ impl TokenHandler {
         create_json_response(json!({
             "tokens": tokens,
             "count": count
+        }))
+    }
+
+    /// GET /api/v1/token/balances/{address} - Get all token balances for an address
+    async fn handle_get_balances_for_address(&self, address: &str) -> Result<ZhtpResponse> {
+        let pubkey = self.identity_to_pubkey(address)?;
+        let target_key_id = pubkey.key_id;
+        let blockchain = self.blockchain.read().await;
+
+        info!(
+            "token/balances: address={}, target_key_id={}, token_count={}",
+            address,
+            hex::encode(&target_key_id),
+            blockchain.token_contracts.len()
+        );
+
+        let mut balances = Vec::new();
+
+        for (token_id, token) in &blockchain.token_contracts {
+            // Look up balance by key_id (not full PublicKey comparison)
+            // This handles the case where the stored PublicKey has full keys
+            // but the query only has key_id
+            let balance = token.balances.iter()
+                .find(|(pk, _)| pk.key_id == target_key_id)
+                .map(|(_, bal)| *bal)
+                .unwrap_or(0);
+
+            info!(
+                "token/balances: token={} ({}) balance_count={} found_balance={}",
+                token.name,
+                token.symbol,
+                token.balances.len(),
+                balance
+            );
+
+            // Debug: log all balance holders
+            for (pk, bal) in &token.balances {
+                info!(
+                    "token/balances:   holder key_id={} balance={}",
+                    hex::encode(&pk.key_id),
+                    bal
+                );
+            }
+
+            if balance > 0 {
+                let is_creator = token.creator.key_id == target_key_id;
+                balances.push(json!({
+                    "token_id": hex::encode(token_id),
+                    "name": token.name.clone(),
+                    "symbol": token.symbol.clone(),
+                    "decimals": token.decimals,
+                    "balance": balance,
+                    "is_creator": is_creator
+                }));
+            }
+        }
+
+        create_json_response(json!({
+            "address": address,
+            "balances": balances,
+            "count": balances.len()
         }))
     }
 
@@ -444,8 +533,10 @@ impl TokenHandler {
     }
 
     fn decode_signed_tx(&self, signed_tx: &str) -> Result<(Transaction, ContractCall)> {
+        tracing::warn!("[FLOW] decode_signed_tx: len={}", signed_tx.len());
         let tx_bytes = hex::decode(signed_tx)
             .map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
+        tracing::warn!("[FLOW] decode_signed_tx: hex decoded len={}", tx_bytes.len());
         let tx: Transaction = bincode::deserialize(&tx_bytes)
             .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
 
@@ -454,6 +545,11 @@ impl TokenHandler {
     }
 
     fn extract_contract_call(&self, tx: &Transaction) -> Result<ContractCall> {
+        tracing::warn!(
+            "[FLOW] extract_contract_call: type={:?}, memo_len={}",
+            tx.transaction_type,
+            tx.memo.len()
+        );
         if tx.transaction_type != lib_blockchain::TransactionType::ContractExecution {
             return Err(anyhow::anyhow!("Transaction type must be ContractExecution"));
         }
@@ -470,6 +566,12 @@ impl TokenHandler {
     }
 
     fn ensure_token_call(&self, call: &ContractCall, expected_method: &str) -> Result<()> {
+        tracing::warn!(
+            "[FLOW] ensure_token_call: contract_type={:?} method={} expected={}",
+            call.contract_type,
+            call.method,
+            expected_method
+        );
         if call.contract_type != lib_blockchain::types::ContractType::Token {
             return Err(anyhow::anyhow!("Transaction is not a token contract call"));
         }
@@ -485,9 +587,16 @@ impl TokenHandler {
     }
 
     async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {
+        tracing::warn!(
+            "[FLOW] token/create submit_to_mempool: tx_hash={}, size={}, fee={}",
+            hex::encode(tx.hash().as_bytes()),
+            tx.size(),
+            tx.fee
+        );
         let mut blockchain = self.blockchain.write().await;
         blockchain.add_pending_transaction(tx)
             .map_err(|e| anyhow::anyhow!("Failed to submit transaction to mempool: {}", e))?;
+        tracing::warn!("[FLOW] token/create submit_to_mempool: ok");
         Ok(())
     }
 }
@@ -518,8 +627,20 @@ impl ZhtpRequestHandler for TokenHandler {
             (ZhtpMethod::Get, "/api/v1/token/list") => {
                 self.handle_list_tokens().await
             }
+            // GET /api/v1/token/balances/{address} - Get all token balances for an address
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/balances/") => {
+                let address = path.strip_prefix("/api/v1/token/balances/").unwrap_or("");
+                if address.is_empty() {
+                    Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        "Address required".to_string()
+                    ))
+                } else {
+                    self.handle_get_balances_for_address(address).await
+                }
+            }
             // GET /api/v1/token/{id}
-            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/") && !path.contains("/balance/") => {
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/") && !path.contains("/balance") => {
                 let token_id = path.strip_prefix("/api/v1/token/").unwrap_or("");
                 if token_id.is_empty() || token_id == "list" {
                     self.handle_list_tokens().await

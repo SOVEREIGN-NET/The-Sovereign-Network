@@ -1094,17 +1094,30 @@ impl Blockchain {
         tracing::info!("Verifying transaction with identity verification enabled");
         tracing::info!("System transaction: {}", is_system_transaction);
         tracing::info!("Transaction type: {:?}", transaction.transaction_type);
-        
+        tracing::warn!(
+            "[FLOW] verify_transaction: tx_hash={}, size={}, memo_len={}, fee={}",
+            hex::encode(transaction.hash().as_bytes()),
+            transaction.size(),
+            transaction.memo.len(),
+            transaction.fee
+        );
+        tracing::warn!("SIMPLE_TRACE_A");
+        tracing::warn!("SIMPLE_TRACE_B");
+        tracing::warn!("SIMPLE_TRACE_C");
+
         let result = validator.validate_transaction_with_state(transaction);
+        tracing::warn!("[FLOW] verify_transaction: validate_transaction_with_state done");
         
         if let Err(ref error) = result {
             tracing::warn!("Transaction validation failed: {:?}", error);
-            tracing::warn!("Transaction details: inputs={}, outputs={}, fee={}, type={:?}, system={}", 
-                transaction.inputs.len(), 
-                transaction.outputs.len(), 
+            tracing::warn!("Transaction details: inputs={}, outputs={}, fee={}, type={:?}, system={}, memo_len={}, version={}",
+                transaction.inputs.len(),
+                transaction.outputs.len(),
                 transaction.fee,
                 transaction.transaction_type,
-                is_system_transaction);
+                is_system_transaction,
+                transaction.memo.len(),
+                transaction.version);
         } else {
             tracing::info!("Transaction validation passed with identity verification");
         }
@@ -1520,6 +1533,12 @@ impl Blockchain {
 
     /// Add a transaction to the pending pool
     pub fn add_pending_transaction(&mut self, transaction: Transaction) -> Result<()> {
+        tracing::warn!(
+            "[FLOW] add_pending_transaction: tx_hash={}, size={}, fee={}",
+            hex::encode(transaction.hash().as_bytes()),
+            transaction.size(),
+            transaction.fee
+        );
         self.verify_and_enqueue_transaction(transaction.clone())?;
 
         // Broadcast new transaction to mesh network (locally-originated only)
@@ -1543,11 +1562,19 @@ impl Blockchain {
     /// Core transaction processing: verify and add to pending pool.
     /// Does NOT broadcast — callers decide whether to broadcast.
     fn verify_and_enqueue_transaction(&mut self, transaction: Transaction) -> Result<()> {
+        tracing::warn!(
+            "[FLOW] verify_and_enqueue_transaction: tx_hash={}, type={:?}, inputs={}, outputs={}",
+            hex::encode(transaction.hash().as_bytes()),
+            transaction.transaction_type,
+            transaction.inputs.len(),
+            transaction.outputs.len()
+        );
         if !self.verify_transaction(&transaction)? {
             return Err(anyhow::anyhow!("Transaction verification failed"));
         }
 
         self.pending_transactions.push(transaction);
+        tracing::warn!("[FLOW] verify_and_enqueue_transaction: enqueued");
         Ok(())
     }
 
@@ -2301,7 +2328,7 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Process contract deployment transactions from a block
+    /// Process contract deployment and execution transactions from a block
     pub fn process_contract_transactions(&mut self, block: &Block) -> Result<()> {
         for transaction in &block.transactions {
             if transaction.transaction_type == TransactionType::ContractDeployment {
@@ -2313,7 +2340,7 @@ impl Blockchain {
                         let contract_id = lib_crypto::hash_blake3(web4_contract.domain.as_bytes());
                         self.register_web4_contract(contract_id, web4_contract, block.height());
                         info!(" Processed Web4Contract deployment in block {}", block.height());
-                    } 
+                    }
                     // Try to deserialize as TokenContract (bincode format)
                     else if let Ok(token_contract) = bincode::deserialize::<crate::contracts::TokenContract>(output.commitment.as_bytes()) {
                         let contract_id = token_contract.token_id;
@@ -2324,7 +2351,172 @@ impl Blockchain {
                     }
                 }
             }
+            // Handle ContractExecution transactions (token create/mint/transfer/burn)
+            else if transaction.transaction_type == TransactionType::ContractExecution {
+                if let Err(e) = self.process_contract_execution(transaction, block.height()) {
+                    warn!("Failed to process contract execution: {}", e);
+                }
+            }
         }
+        Ok(())
+    }
+
+    /// Process a ContractExecution transaction
+    fn process_contract_execution(&mut self, transaction: &Transaction, block_height: u64) -> Result<()> {
+        // Parse ContractCall from memo: "ZHTP" + bincode(ContractCall, Signature)
+        if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
+            return Err(anyhow::anyhow!("Invalid contract execution memo format"));
+        }
+
+        let call_data = &transaction.memo[4..];
+        let (call, _sig): (crate::types::ContractCall, crate::integration::crypto_integration::Signature) =
+            bincode::deserialize(call_data)
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize contract call: {}", e))?;
+
+        // Get caller identity from transaction signature public key
+        let caller = transaction.signature.public_key.clone();
+
+        match call.contract_type {
+            crate::types::ContractType::Token => {
+                self.execute_token_contract_call(&call, &caller, block_height)?;
+            }
+            _ => {
+                debug!("Skipping non-token contract execution: {:?}", call.contract_type);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Reprocess all ContractExecution transactions from historical blocks
+    /// This ensures tokens created before the contract execution code was added are recovered
+    fn reprocess_contract_executions(&mut self) -> Result<()> {
+        let block_count = self.blocks.len();
+        if block_count == 0 {
+            return Ok(());
+        }
+
+        info!("🔄 Reprocessing contract executions from {} blocks...", block_count);
+        let mut tokens_found = 0;
+
+        for block in &self.blocks.clone() {
+            for transaction in &block.transactions {
+                if transaction.transaction_type == TransactionType::ContractExecution {
+                    // Try to process as contract execution
+                    if let Ok(()) = self.process_contract_execution(transaction, block.height()) {
+                        tokens_found += 1;
+                    }
+                }
+            }
+        }
+
+        if tokens_found > 0 {
+            info!("🔄 Reprocessed {} contract executions, total tokens: {}",
+                tokens_found, self.token_contracts.len());
+        }
+
+        Ok(())
+    }
+
+    /// Execute a token contract call
+    fn execute_token_contract_call(
+        &mut self,
+        call: &crate::types::ContractCall,
+        caller: &lib_crypto::types::keys::PublicKey,
+        block_height: u64,
+    ) -> Result<()> {
+        match call.method.as_str() {
+            "create_custom_token" => {
+                let params: (String, String, u64) = bincode::deserialize(&call.params)
+                    .map_err(|e| anyhow::anyhow!("Invalid create_custom_token params: {}", e))?;
+                let (name, symbol, initial_supply) = params;
+
+                let token = crate::contracts::TokenContract::new_custom(
+                    name.clone(),
+                    symbol.clone(),
+                    initial_supply,
+                    caller.clone(),
+                );
+
+                let token_id = token.token_id;
+                if self.token_contracts.contains_key(&token_id) {
+                    return Err(anyhow::anyhow!("Token already exists"));
+                }
+
+                info!("Creating token contract: {} ({}) with supply {} at block {}",
+                    name, symbol, initial_supply, block_height);
+                self.token_contracts.insert(token_id, token);
+                info!("Token contract created: {} ({}), token_id: {}",
+                    name, symbol, hex::encode(token_id));
+            }
+            "mint" => {
+                // Accept (token_id, to_key_id, amount) - client sends just key_id, not full PublicKey
+                let params: ([u8; 32], [u8; 32], u64) = bincode::deserialize(&call.params)
+                    .map_err(|e| anyhow::anyhow!("Invalid mint params: {}", e))?;
+                let (token_id, to_key_id, amount) = params;
+
+                // Create a minimal PublicKey with just the key_id for balance tracking
+                let to = lib_crypto::types::keys::PublicKey {
+                    dilithium_pk: vec![],
+                    kyber_pk: vec![],
+                    key_id: to_key_id,
+                };
+
+                let token = self.token_contracts.get_mut(&token_id)
+                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
+
+                if token.creator != *caller {
+                    return Err(anyhow::anyhow!("Only token creator can mint"));
+                }
+
+                crate::contracts::tokens::functions::mint_tokens(token, &to, amount)
+                    .map_err(|e| anyhow::anyhow!("Mint failed: {}", e))?;
+                info!("Minted {} tokens to {:?}", amount, to.key_id);
+            }
+            "transfer" => {
+                // Accept (token_id, to_key_id, amount) - client sends just key_id, not full PublicKey
+                let params: ([u8; 32], [u8; 32], u64) = bincode::deserialize(&call.params)
+                    .map_err(|e| anyhow::anyhow!("Invalid transfer params: {}", e))?;
+                let (token_id, to_key_id, amount) = params;
+
+                // Create a minimal PublicKey with just the key_id for balance tracking
+                let to = lib_crypto::types::keys::PublicKey {
+                    dilithium_pk: vec![],
+                    kyber_pk: vec![],
+                    key_id: to_key_id,
+                };
+
+                let token = self.token_contracts.get_mut(&token_id)
+                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
+
+                // Direct balance transfer (bypass ExecutionContext requirement)
+                let source_balance = token.balance_of(caller);
+                if source_balance < amount {
+                    return Err(anyhow::anyhow!("Insufficient balance"));
+                }
+                token.balances.insert(caller.clone(), source_balance - amount);
+                let to_balance = token.balance_of(&to);
+                token.balances.insert(to.clone(), to_balance + amount);
+
+                info!("Transferred {} tokens from {:?} to {:?}", amount, caller.key_id, to.key_id);
+            }
+            "burn" => {
+                let params: ([u8; 32], u64) = bincode::deserialize(&call.params)
+                    .map_err(|e| anyhow::anyhow!("Invalid burn params: {}", e))?;
+                let (token_id, amount) = params;
+
+                let token = self.token_contracts.get_mut(&token_id)
+                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
+
+                crate::contracts::tokens::functions::burn_tokens(token, caller, amount)
+                    .map_err(|e| anyhow::anyhow!("Burn failed: {}", e))?;
+                info!("Burned {} tokens from {:?}", amount, caller.key_id);
+            }
+            _ => {
+                debug!("Unknown token method: {}", call.method);
+            }
+        }
+
         Ok(())
     }
 
@@ -5615,6 +5807,12 @@ impl Blockchain {
         // Also initialize event_publisher for migrated blockchains
         blockchain.event_publisher = crate::events::BlockchainEventPublisher::new();
 
+        // Reprocess any ContractExecution transactions that may have been missed
+        // (e.g., tokens created before the contract execution processing code was added)
+        if let Err(e) = blockchain.reprocess_contract_executions() {
+            warn!("Failed to reprocess contract executions: {}", e);
+        }
+
         let elapsed = start.elapsed();
         info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, UTXOs: {}, {:?})",
               blockchain.height, blockchain.identity_registry.len(),
@@ -6391,4 +6589,3 @@ impl Default for Blockchain {
         blockchain
     }
 }
-
