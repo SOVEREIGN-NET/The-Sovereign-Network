@@ -365,3 +365,66 @@ impl KeyPair {
     // use lib_proofs::zk_integration;
     // let proof = zk_integration::prove_identity(&keypair.private_key, age, ...)?;
 }
+
+/// Encrypt data using recipient public key (Kyber) + symmetric AEAD
+pub fn encrypt_with_public_key(
+    public_key: &crate::types::PublicKey,
+    plaintext: &[u8],
+    associated_data: &[u8],
+) -> Result<Vec<u8>> {
+    if public_key.kyber_pk.is_empty() {
+        return Err(anyhow::anyhow!("Recipient public key missing Kyber component"));
+    }
+
+    let kyber_pk = kyber1024::PublicKey::from_bytes(&public_key.kyber_pk)
+        .map_err(|_| anyhow::anyhow!("Invalid Kyber public key"))?;
+
+    let (shared_secret_bytes, ciphertext) = kyber1024::encapsulate(&kyber_pk);
+
+    let hk = Hkdf::<Sha3_256>::new(None, shared_secret_bytes.as_bytes());
+    let mut shared_secret = [0u8; 32];
+    let kdf_info = b"ZHTP-KEM-v2.0";
+    hk.expand(kdf_info, &mut shared_secret)
+        .map_err(|_| anyhow::anyhow!("HKDF expansion failed"))?;
+
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(&shared_secret));
+    let nonce = generate_nonce();
+
+    let mut ciphertext_out = Vec::new();
+    ciphertext_out.extend_from_slice(&ciphertext.as_bytes());
+    ciphertext_out.extend_from_slice(&nonce);
+
+    let mut combined_data = Vec::new();
+    combined_data.extend_from_slice(plaintext);
+    combined_data.extend_from_slice(associated_data);
+
+    let payload = Payload {
+        msg: &combined_data,
+        aad: b"",
+    };
+
+    let encrypted = cipher
+        .encrypt(Nonce::from_slice(&nonce), payload)
+        .map_err(|_| anyhow::anyhow!("Encryption failed"))?;
+
+    ciphertext_out.extend_from_slice(&encrypted);
+    Ok(ciphertext_out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keypair::generation::KeyPair;
+
+    #[test]
+    fn test_encrypt_with_public_key_roundtrip() -> Result<()> {
+        let recipient = KeyPair::generate()?;
+        let message = b"hello-recipient";
+        let ad = b"sender:recipient";
+
+        let ciphertext = encrypt_with_public_key(&recipient.public_key, message, ad)?;
+        let decrypted = recipient.decrypt(&ciphertext, ad)?;
+        assert_eq!(decrypted, message);
+        Ok(())
+    }
+}

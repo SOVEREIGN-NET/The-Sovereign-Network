@@ -107,6 +107,16 @@ impl PublicKey {
         }
     }
 
+    /// Create a public key from Kyber public key bytes only
+    pub fn from_kyber_public_key(kyber_pk: Vec<u8>) -> Self {
+        let key_id = hash_blake3(&kyber_pk);
+        PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk,
+            key_id,
+        }
+    }
+
     /// Get the size of this public key in bytes (pure PQC only)
     pub fn size(&self) -> usize {
         self.dilithium_pk.len() + self.kyber_pk.len() + 32 // key_id

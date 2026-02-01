@@ -1,0 +1,14 @@
+[package]
+name = "tools"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "identity_e2e_sim"
+path = "identity_e2e_sim.rs"
+
+[dependencies]
+lib-identity = { path = "../lib-identity" }
+lib-protocols = { path = "../lib-protocols" }
+lib-network = { path = "../lib-network" }
+lib-crypto = { path = "../lib-crypto" }

@@ -2,9 +2,11 @@
 // Decentralized Identity Document (DID) module exports
 
 pub mod document_generation;
+pub mod storage;
 
 // Re-export all DID types and functions
 pub use document_generation::*;
+pub use storage::{set_did_store_dir, set_did_store_memory};
 
 /// Parse DID string to identity ID hash
 ///
