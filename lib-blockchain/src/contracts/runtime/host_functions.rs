@@ -53,6 +53,16 @@ impl HostFunctions {
     /// Register all safe host functions with the linker
     #[cfg(feature = "wasmtime")]
     pub fn register_functions(linker: &mut wasmtime::Linker<Self>) -> Result<()> {
+        Self::register_logging_functions(linker)?;
+        Self::register_context_functions(linker)?;
+        Self::register_storage_functions(linker)?;
+        Self::register_event_functions(linker)?;
+        Ok(())
+    }
+
+    /// Register logging host functions
+    #[cfg(feature = "wasmtime")]
+    fn register_logging_functions(linker: &mut wasmtime::Linker<Self>) -> Result<()> {
         // Safe logging function
         linker.func_wrap("env", "zhtp_log", |mut caller: Caller<'_, Self>, ptr: i32, len: i32| -> i32 {
             if len < 0 || len > MAX_LOG_SIZE {
@@ -81,6 +91,12 @@ impl HostFunctions {
             0 // Success
         })?;
 
+        Ok(())
+    }
+
+    /// Register context/state access functions
+    #[cfg(feature = "wasmtime")]
+    fn register_context_functions(linker: &mut wasmtime::Linker<Self>) -> Result<()> {
         // Get caller public key
         linker.func_wrap("env", "zhtp_get_caller", |mut caller: Caller<'_, Self>, ptr: i32| -> i32 {
             let host_data = caller.data();
@@ -108,6 +124,12 @@ impl HostFunctions {
             caller.data().context.timestamp
         })?;
 
+        Ok(())
+    }
+
+    /// Register storage access functions
+    #[cfg(feature = "wasmtime")]
+    fn register_storage_functions(linker: &mut wasmtime::Linker<Self>) -> Result<()> {
         // Simple storage get function
         linker.func_wrap("env", "zhtp_storage_get", 
             |mut caller: Caller<'_, Self>, key_ptr: i32, key_len: i32, value_ptr: i32| -> i32 {
@@ -172,6 +194,12 @@ impl HostFunctions {
             0 // Success
         })?;
 
+        Ok(())
+    }
+
+    /// Register event emission functions
+    #[cfg(feature = "wasmtime")]
+    fn register_event_functions(linker: &mut wasmtime::Linker<Self>) -> Result<()> {
         // Emit event function
         linker.func_wrap("env", "zhtp_emit_event", 
             |mut caller: Caller<'_, Self>, event_ptr: i32, event_len: i32| -> i32 {
