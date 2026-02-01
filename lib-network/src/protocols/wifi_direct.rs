@@ -2,7 +2,7 @@
 //!
 //! Handles WiFi Direct mesh networking for medium-range peer connections
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
@@ -960,15 +960,20 @@ impl WiFiDirectMeshProtocol {
         {
             return self.get_linux_mac_address().await;
         }
-        
+
         #[cfg(target_os = "windows")]
         {
             return self.get_windows_mac_address().await;
         }
-        
+
         #[cfg(target_os = "macos")]
         {
             return self.get_macos_mac_address().await;
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            Err(anyhow!("Platform not supported for WiFi Direct MAC address retrieval"))
         }
     }
     
