@@ -2431,6 +2431,19 @@ impl Blockchain {
                     .map_err(|e| anyhow::anyhow!("Invalid create_custom_token params: {}", e))?;
                 let (name, symbol, initial_supply) = params;
 
+                // CRITICAL: Check for duplicate symbol across ALL existing tokens
+                // This prevents confusion where multiple tokens share the same symbol
+                let symbol_upper = symbol.to_uppercase();
+                for (_, existing_token) in &self.token_contracts {
+                    if existing_token.symbol.to_uppercase() == symbol_upper {
+                        return Err(anyhow::anyhow!(
+                            "Token symbol '{}' already exists (used by token '{}')",
+                            symbol,
+                            existing_token.name
+                        ));
+                    }
+                }
+
                 let token = crate::contracts::TokenContract::new_custom(
                     name.clone(),
                     symbol.clone(),
@@ -2440,7 +2453,7 @@ impl Blockchain {
 
                 let token_id = token.token_id;
                 if self.token_contracts.contains_key(&token_id) {
-                    return Err(anyhow::anyhow!("Token already exists"));
+                    return Err(anyhow::anyhow!("Token with same name and symbol already exists"));
                 }
 
                 info!("Creating token contract: {} ({}) with supply {} at block {}",

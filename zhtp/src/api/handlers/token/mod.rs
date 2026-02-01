@@ -439,6 +439,38 @@ impl TokenHandler {
         }))
     }
 
+    /// GET /api/v1/token/symbol/available/{symbol} - Check if symbol is available
+    async fn handle_check_symbol_available(&self, symbol: &str) -> Result<ZhtpResponse> {
+        let blockchain = self.blockchain.read().await;
+        let symbol_upper = symbol.to_uppercase();
+
+        // Check if any existing token uses this symbol (case-insensitive)
+        let existing_token = blockchain.token_contracts
+            .values()
+            .find(|token| token.symbol.to_uppercase() == symbol_upper);
+
+        match existing_token {
+            Some(token) => {
+                create_json_response(json!({
+                    "symbol": symbol,
+                    "available": false,
+                    "reason": format!("Symbol already used by token '{}'", token.name),
+                    "existing_token": {
+                        "token_id": hex::encode(token.token_id),
+                        "name": token.name.clone(),
+                        "symbol": token.symbol.clone()
+                    }
+                }))
+            }
+            None => {
+                create_json_response(json!({
+                    "symbol": symbol,
+                    "available": true
+                }))
+            }
+        }
+    }
+
     /// GET /api/v1/token/balances/{address} - Get all token balances for an address
     async fn handle_get_balances_for_address(&self, address: &str) -> Result<ZhtpResponse> {
         let pubkey = self.identity_to_pubkey(address)?;
@@ -626,6 +658,18 @@ impl ZhtpRequestHandler for TokenHandler {
             // GET /api/v1/token/list
             (ZhtpMethod::Get, "/api/v1/token/list") => {
                 self.handle_list_tokens().await
+            }
+            // GET /api/v1/token/symbol/available/{symbol} - Check if symbol is available
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/symbol/available/") => {
+                let symbol = path.strip_prefix("/api/v1/token/symbol/available/").unwrap_or("");
+                if symbol.is_empty() {
+                    Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        "Symbol required".to_string()
+                    ))
+                } else {
+                    self.handle_check_symbol_available(symbol).await
+                }
             }
             // GET /api/v1/token/balances/{address} - Get all token balances for an address
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/balances/") => {
