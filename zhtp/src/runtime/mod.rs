@@ -568,57 +568,41 @@ impl RuntimeOrchestrator {
             info!("  IdentityManager not yet initialized - identities will be loaded when IdentityComponent starts");
         }
         
-        // CRITICAL: Check if we're joining existing network - if so, DON'T create genesis!
-        // BUT: If the blockchain is empty after joining (sync failed), fall back to genesis creation
-        let joined_existing = *self.joined_existing_network.read().await;
-
-        if joined_existing {
-            // Check if the global blockchain actually has data (sync may have failed)
-            let blockchain_has_data = match crate::runtime::blockchain_provider::get_global_blockchain().await {
-                Ok(blockchain_arc) => {
-                    let blockchain = blockchain_arc.read().await;
-                    let has_data = blockchain.height > 0 || !blockchain.utxo_set.is_empty();
-                    if has_data {
-                        info!(" Joined network has blockchain data (height: {}, UTXOs: {})",
-                              blockchain.height, blockchain.utxo_set.len());
-                    } else {
-                        warn!("⚠ Joined network but blockchain is empty - sync may have failed");
-                    }
-                    has_data
+        // CRITICAL: Check if global blockchain already has data (loaded from disk or synced)
+        // This prevents double-loading and ensures we don't overwrite persisted data
+        let blockchain_has_data = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(blockchain_arc) => {
+                let blockchain = blockchain_arc.read().await;
+                let has_data = blockchain.height > 0 || !blockchain.utxo_set.is_empty() || !blockchain.token_contracts.is_empty();
+                if has_data {
+                    info!("✓ Global blockchain has data (height: {}, UTXOs: {}, tokens: {})",
+                          blockchain.height, blockchain.utxo_set.len(), blockchain.token_contracts.len());
                 }
-                Err(_) => {
-                    warn!("⚠ No global blockchain initialized - will create genesis");
-                    false
-                }
-            };
-
-            if blockchain_has_data {
-                // Successfully joined network with synced data
-                info!(" Joining existing network - skipping genesis creation");
-                info!("  User wallet will be added to synced blockchain after sync completes");
-
-                // Just store the wallet for later use, don't create blockchain
-                // The blockchain will be synced from network peers
-
-                // CRITICAL: Push wallet to BlockchainComponent if already registered
-                let components = self.components.read().await;
-                if let Some(component) = components.get(&ComponentId::Blockchain) {
-                    if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
-                        blockchain_comp.set_user_wallet(wallet).await;
-                        info!(" User wallet propagated to BlockchainComponent for sync");
-                    }
-                }
-
-                return Ok(());
-            } else {
-                // Sync failed - fall back to genesis creation
-                warn!("⚠ Network sync failed or incomplete - falling back to genesis creation");
-                info!(" This node will create its own genesis and become a new network origin");
-                // Continue to genesis creation below...
+                has_data
             }
+            Err(_) => false
+        };
+
+        if blockchain_has_data {
+            // Blockchain already loaded with data - don't create genesis
+            info!("✓ Using existing blockchain data - skipping genesis creation");
+
+            // Push wallet to BlockchainComponent if already registered
+            let components = self.components.read().await;
+            if let Some(component) = components.get(&ComponentId::Blockchain) {
+                if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
+                    blockchain_comp.set_user_wallet(wallet).await;
+                    info!("✓ User wallet propagated to BlockchainComponent");
+                }
+            }
+
+            return Ok(());
         }
-        
-        // Try to load existing blockchain from disk, or create new genesis
+
+        // No blockchain data - need to create genesis
+        info!("📂 No existing blockchain data - creating genesis network");
+
+        // Try to load from disk one more time (in case start_node didn't load it)
         let persist_path_string = self.config.environment.blockchain_data_path();
         let persist_path = std::path::Path::new(&persist_path_string);
         let (mut blockchain, was_loaded) = lib_blockchain::Blockchain::load_or_create(persist_path)?;
@@ -957,16 +941,40 @@ impl RuntimeOrchestrator {
         let joined_existing_network = network_info.is_some();
         self.set_joined_existing_network(joined_existing_network).await;
 
+        // CRITICAL FIX: Always try to load blockchain from disk FIRST
+        // This prevents data loss when peer discovery fails after a restart
+        let persist_path_string = self.config.environment.blockchain_data_path();
+        let persist_path = std::path::Path::new(&persist_path_string);
+
+        let (blockchain, was_loaded) = if persist_path.exists() {
+            match lib_blockchain::Blockchain::load_from_file(persist_path) {
+                Ok(bc) => {
+                    info!("📂 Loaded existing blockchain from disk (height: {}, tokens: {})",
+                          bc.height, bc.token_contracts.len());
+                    (bc, true)
+                }
+                Err(e) => {
+                    warn!("⚠ Failed to load blockchain from disk: {} - will create new", e);
+                    (lib_blockchain::Blockchain::new()?, false)
+                }
+            }
+        } else {
+            info!("📂 No blockchain.dat found - will create new blockchain");
+            (lib_blockchain::Blockchain::new()?, false)
+        };
+
+        let blockchain_arc = Arc::new(RwLock::new(blockchain));
+        set_global_blockchain(blockchain_arc.clone()).await?;
+
+        if was_loaded {
+            info!("✓ Blockchain provider initialized with persisted data");
+        } else {
+            info!("✓ Blockchain provider initialized with fresh blockchain");
+        }
+
         if let Some(ref net_info) = network_info {
             info!("✓ Found existing network with {} peers at height {}",
                   net_info.peer_count, net_info.blockchain_height);
-
-            // Initialize blockchain provider for sync reception
-            // This allows ProtocolsComponent to start the unified server
-            let blockchain = lib_blockchain::Blockchain::new()?;
-            let blockchain_arc = Arc::new(RwLock::new(blockchain));
-            set_global_blockchain(blockchain_arc.clone()).await?;
-            info!("✓ Blockchain provider initialized for network sync");
 
             // Store bootstrap peers for mesh sync
             if !net_info.bootstrap_peers.is_empty() {

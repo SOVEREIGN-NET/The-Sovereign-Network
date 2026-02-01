@@ -490,6 +490,7 @@ async fn bootstrap_identities_from_dht(
                                 if !bc.wallet_registry.contains_key(wid) {
                                     let wallet_bytes = hex::decode(wid).unwrap_or_default();
                                     if wallet_bytes.len() >= 32 {
+                                        const WELCOME_BONUS: u64 = 5000;
                                         let wallet_data = lib_blockchain::transaction::WalletTransactionData {
                                             wallet_id: lib_blockchain::Hash::from_slice(&wallet_bytes[..32]),
                                             wallet_type: "Primary".to_string(),
@@ -501,10 +502,12 @@ async fn bootstrap_identities_from_dht(
                                             created_at,
                                             registration_fee: 0,
                                             capabilities: 0xFF,
-                                            initial_balance: 5000, // Welcome bonus
+                                            initial_balance: WELCOME_BONUS,
                                         };
                                         if bc.register_wallet(wallet_data).is_ok() {
-                                            info!("💰 MIGRATED primary wallet {} with 5000 ZHTP welcome bonus", &wid[..16]);
+                                            // Create spendable UTXO (not just registry entry)
+                                            bc.create_funding_utxo(wid, &identity_hash.0, WELCOME_BONUS);
+                                            info!("💰 MIGRATED primary wallet {} with {} ZHTP (spendable)", &wid[..16], WELCOME_BONUS);
                                         }
                                     }
                                 }

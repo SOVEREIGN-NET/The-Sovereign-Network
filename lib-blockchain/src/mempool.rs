@@ -151,6 +151,14 @@ impl Mempool {
 
     /// Validate transaction for mempool inclusion
     fn validate_transaction(&self, transaction: &Transaction) -> Result<(), MempoolError> {
+        tracing::warn!(
+            "[FLOW] mempool::validate_transaction: tx_hash={}, size={}, fee={}, inputs={}, outputs={}",
+            hex::encode(transaction.hash().as_bytes()),
+            transaction.size(),
+            transaction.fee,
+            transaction.inputs.len(),
+            transaction.outputs.len()
+        );
         // Use transaction validator
         let validator = crate::transaction::validation::TransactionValidator::new();
         

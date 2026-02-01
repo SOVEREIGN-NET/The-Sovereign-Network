@@ -30,19 +30,19 @@ pub fn hash_transaction(transaction: &Transaction) -> Hash {
     let serialized = bincode::serialize(&tx_for_hash)
         .expect("Transaction serialization should never fail");
 
-    // Log serialized bytes for comparison with client
-    tracing::info!(
+    // Log serialized bytes for comparison with client (debug only)
+    debug!(
         "[hashing] Serialized tx for hashing, len={}",
         serialized.len()
     );
     if serialized.len() >= 64 {
-        tracing::info!(
+        debug!(
             "[hashing] First 64 bytes: {}",
             hex::encode(&serialized[..64])
         );
     }
     if serialized.len() > 97 {
-        tracing::info!(
+        debug!(
             "[hashing] Bytes 33-97 (signature struct): {}",
             hex::encode(&serialized[33..97])
         );
