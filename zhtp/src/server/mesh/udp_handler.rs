@@ -891,18 +891,26 @@ impl MeshRouter {
     ) -> Result<()> {
         info!("🔍 DHT FindNode request: target={} bytes, max_hops={}", target_id.len(), max_hops);
         
+        // Issue #846: Use QuicMeshProtocol as canonical connection store for DHT
         let closer_nodes: Vec<(PublicKey, String)> = if max_hops > 0 {
-            let connections = self.connections.read().await;
-            connections.iter()
-                .take(20)
-                .map(|(pk, conn)| {
-                    let addr = conn.peer_address
-                        .as_ref()
-                        .map(|a| a.to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-                    (pk.clone(), addr)
-                })
-                .collect()
+            let quic_guard = self.quic_protocol.read().await;
+            match quic_guard.as_ref() {
+                Some(quic) => {
+                    quic.connections
+                        .iter()
+                        .take(20)
+                        .map(|entry| {
+                            let peer_id = PublicKey::from_bytes(&entry.key()[..entry.key().len().min(32)]).unwrap_or_else(|_| PublicKey::new());
+                            let addr = "quic-peer".to_string();
+                            (peer_id, addr)
+                        })
+                        .collect()
+                }
+                None => {
+                    debug!("QUIC protocol not initialized for DHT");
+                    Vec::new()
+                }
+            }
         } else {
             Vec::new()
         };
