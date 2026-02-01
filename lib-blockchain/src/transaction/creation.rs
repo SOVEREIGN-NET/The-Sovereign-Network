@@ -396,20 +396,84 @@ pub mod utils {
 
     /// Calculate the minimum fee for a transaction based on effective size
     ///
+    /// # Overview
     /// Post-quantum signatures (Dilithium5) are ~7KB, dwarfing actual payload.
-    /// To avoid penalizing PQ crypto adoption, we cap witness overhead.
+    /// To avoid penalizing PQ crypto adoption, we cap witness overhead while still
+    /// charging something for large witnesses to discourage spam.
+    ///
+    /// # Fee Structure
+    /// - **BASE_FEE**: 100 ZHTP (reduced from 1000 to make transactions affordable)
+    /// - **Size Fee**: 1 ZHTP per 100 bytes of "effective size"
+    /// - **Effective Size**: payload_bytes + min(witness_bytes, WITNESS_CAP)
+    ///
+    /// # Economic Rationale
+    /// The BASE_FEE reduction from 1000 to 100 ZHTP makes small transactions 10x cheaper,
+    /// improving accessibility while still providing economic spam prevention. Combined
+    /// with the witness cap, this ensures post-quantum transactions remain affordable
+    /// without creating a spam vector through zero-cost large witnesses.
     pub fn calculate_minimum_fee(transaction_size: usize) -> u64 {
         // Post-quantum witness overhead (signature + pubkey)
-        const PQ_WITNESS_SIZE: usize = 7219; // Dilithium5 sig (4627) + pk (2592)
-        const WITNESS_CAP: usize = 500;      // Cap witness contribution to fee calc
-        const BASE_FEE: u64 = 100;           // Base transaction fee
+        // Dilithium5: 4627 byte sig + 2592 byte pk = 7219 bytes total
+        // Dilithium2: 2420 byte sig + 1312 byte pk = 3732 bytes total
+        // This constant assumes Dilithium5 as it's the highest-security variant.
+        const PQ_WITNESS_SIZE: usize = 7219;
+        
+        // Cap witness contribution to fee calculation at 500 bytes.
+        //
+        // Rationale for 500 bytes:
+        // - Classical signatures (Ed25519): ~64 bytes signature + 32 bytes pubkey = ~96 bytes
+        //   plus metadata (algorithm, timestamp) and message overhead = ~150-200 bytes.
+        // - A 500-byte cap comfortably covers classical crypto plus extensions without
+        //   overcharging, while being well below both Dilithium2 (~3.7KB) and Dilithium5
+        //   (~7.2KB) witness sizes.
+        // - For PQ transactions: Capping at 500 bytes means users pay only a bounded
+        //   premium (~5x classical) rather than 36-72x, encouraging PQ adoption.
+        // - Economic defense: Not treating witness size as completely free discourages
+        //   spam attacks with artificially inflated witnesses.
+        // - Empirically chosen as a conservative trade-off between fee fairness
+        //   (not linearly penalizing PQ size) and economic integrity (charging something
+        //   for large witnesses to prevent abuse).
+        const WITNESS_CAP: usize = 500;
+        
+        // Base transaction fee - reduced from 1000 to 100 ZHTP.
+        //
+        // Economic justification:
+        // - Makes small transactions affordable for everyday use (e.g., token transfers).
+        // - A 10x reduction still provides spam protection via computational + bandwidth costs.
+        // - Combined with size-based fees, prevents both tiny spam and large payload abuse.
+        // - Aligns with network goal of accessible, usable cryptocurrency vs. high-fee networks.
+        const BASE_FEE: u64 = 100;
+        
         const BYTES_PER_ZHTP: u64 = 100;     // 100 bytes per 1 ZHTP
 
         // Estimate payload vs witness
+        //
+        // This calculation assumes Dilithium5 post-quantum signatures (largest witness).
+        // For transaction_size >= PQ_WITNESS_SIZE (7219 bytes):
+        //   - payload_bytes = transaction_size - 7219
+        //   - witness_bytes = 7219
+        //
+        // For transaction_size < PQ_WITNESS_SIZE (small or non-PQ5 transactions):
+        //   - payload_bytes = 0 (saturating_sub floors at 0)
+        //   - witness_bytes = transaction_size (all bytes treated as witness)
+        //
+        // This means:
+        // - Small transactions (< 7219 bytes) have all bytes counted as witness
+        // - Dilithium2 transactions (~3732 byte witness) are treated as all-witness
+        // - Classical crypto transactions (~200 bytes) are treated as all-witness
+        // - BUT: witness is capped at WITNESS_CAP (500 bytes) for fee purposes
+        //
+        // Result: All transactions < 7219 bytes pay roughly the same base fee
+        // (BASE_FEE + ~5 ZHTP for capped witness), which simplifies economics and
+        // avoids penalizing Dilithium2 or classical signatures.
         let payload_bytes = transaction_size.saturating_sub(PQ_WITNESS_SIZE);
         let witness_bytes = transaction_size.saturating_sub(payload_bytes);
 
         // Effective size = payload + capped witness
+        // Examples:
+        // - 500 byte classical tx: 0 payload + 500 witness (capped) = 500 bytes → 105 ZHTP
+        // - 3732 byte D2 tx: 0 payload + 500 witness (capped) = 500 bytes → 105 ZHTP  
+        // - 10000 byte D5 tx: 2781 payload + 500 witness (capped) = 3281 bytes → 132 ZHTP
         let effective_size = payload_bytes + witness_bytes.min(WITNESS_CAP);
         let size_fee = (effective_size as u64 / BYTES_PER_ZHTP).max(1);
 
