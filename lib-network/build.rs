@@ -1,13 +1,11 @@
 // Build script to link macOS Core Bluetooth framework
 
-#[cfg(target_os = "macos")]
 fn main() {
-    // Link Core Bluetooth framework on macOS
-    println!("cargo:rustc-link-lib=framework=CoreBluetooth");
-    println!("cargo:rustc-link-lib=framework=Foundation");
-}
+    let target = std::env::var("TARGET").unwrap_or_default();
 
-#[cfg(not(target_os = "macos"))]
-fn main() {
-    // No framework linking needed on non-macOS platforms
+    // Only link frameworks when targeting macOS
+    if target.contains("darwin") || target.contains("macos") {
+        println!("cargo:rustc-link-lib=framework=CoreBluetooth");
+        println!("cargo:rustc-link-lib=framework=Foundation");
+    }
 }
