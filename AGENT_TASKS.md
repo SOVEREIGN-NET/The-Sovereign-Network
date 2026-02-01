@@ -3,13 +3,17 @@
 **Last Updated:** 2026-02-01 by Opus
 **Scope:** ONLY PRs by scasino983/casino
 
+**IMPORTANT:** When you complete a task, add `[DONE]` next to it and leave a note.
+When ALL tasks are done, add `## ALL TASKS COMPLETE` at the bottom.
+Opus will review your work.
+
 ---
 
 ## PR Status Summary - ALL PASSING CI
 
 | PR | Branch | CI | Ready |
 |----|--------|----|----|
-| #1035 | 846-fix-resubmit | PASS | YES |
+| #1035 | 846-fix-resubmit | PASS | NEEDS WORK (see below) |
 | #1036 | 878-phase1-resubmit | PASS | YES |
 | #1037 | 879-880-phase2-3-resubmit | PASS | YES |
 | #1038 | network-tests-resubmit | PASS | YES |
@@ -19,7 +23,27 @@
 
 ---
 
-## Task for Haiku: Delete Copilot Inline Comments
+## CRITICAL: PR #1035 Incomplete Fix (Priority: HIGH)
+
+**Problem Found by Opus:**
+PR #1035 only partially fixes Issue #846. It rewires `broadcast_to_peers_except()` to use 
+`QuicMeshProtocol.connections` but leaves other code still using the broken `MeshRouter.connections`.
+
+**Remaining broken usages in `zhtp/src/server/mesh/udp_handler.rs`:**
+- Line 229: `self.connections.read().await` - needs investigation
+- Line 895-896: `handle_dht_find_node` uses `connections.iter()` - DHT will fail to find QUIC peers
+
+**Fix Required:**
+Apply same pattern from `broadcast_to_peers_except()` to `handle_dht_find_node()`:
+1. Use `self.quic_protocol.read().await` instead of `self.connections.read().await`
+2. Iterate over `quic.connections.iter()` instead of `connections.iter()`
+
+**Branch:** `846-fix-resubmit`
+**After fixing:** Run `cargo check --workspace` and push
+
+---
+
+## Task 1: Delete Copilot Inline Comments
 
 Delete these Copilot comment IDs using:
 ```bash
@@ -69,10 +93,26 @@ Or manually request reviews in GitHub UI.
 
 PRs must be merged in this order (dependencies):
 
-1. #1035 (Block Sync - CRITICAL)
+1. #1035 (Block Sync - CRITICAL) - FIX DHT FIRST
 2. #1036 (Phase 1)
 3. #1037 (Phase 2+3)
 4. #1038 (Network Tests)
+5. #1041 (Phase 4)
+6. #1042 (Phase 5)
+7. #1043 (Dedup fix)
+
+**DO NOT MERGE AS AGENT** - Only human reviewers merge.
+
+---
+
+## Notes for Agents
+
+1. Check `agent_context.yaml` for session state
+2. Check `agent_db.json` for known fixes
+3. Only touch files in the PR you're fixing
+4. Run `cargo check --workspace` before pushing
+5. Mark tasks `[DONE]` when complete with brief note
+6. When ALL tasks done, add `## ALL TASKS COMPLETE` at bottom
 5. #1041 (Phase 4)
 6. #1042 (Phase 5)
 7. #1043 (Dedup fix - can merge anytime after #1035)
