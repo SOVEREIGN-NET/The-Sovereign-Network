@@ -443,11 +443,14 @@ impl TransactionValidator {
             timestamp: 0,
         };
         
-        let tx_hash = tx_for_verification.hash();
+        // CRITICAL FIX: Use signing_hash() to match client-side signing
+        // Client uses signing_hash() in ContractTransactionBuilder.build()
+        // Previously used .hash() which is a different function (hash_transaction vs hash_for_signature)
+        let tx_hash = tx_for_verification.signing_hash();
 
         // Log hash for comparison with client
         tracing::info!(
-            "[validation] Server computed tx_hash = {}",
+            "[validation] Server computed signing_hash = {}",
             hex::encode(tx_hash.as_bytes())
         );
 
@@ -1278,7 +1281,7 @@ fn calculate_minimum_fee(transaction_size: usize) -> u64 {
 
 /// Constants for validation
 const MAX_TRANSACTION_SIZE: usize = 1_048_576; // 1 MB
-const MAX_MEMO_SIZE: usize = 8192; // 8 KB - increased for post-quantum signatures (Dilithium5 pubkey = 2592 bytes)
+const MAX_MEMO_SIZE: usize = 16384; // 16 KB - increased for contract calls with post-quantum signatures (Dilithium signatures ~2.7KB each)
 
 /// Validation utility functions
 pub mod utils {

@@ -786,6 +786,211 @@ impl Blockchain {
         Ok(blockchain)
     }
 
+    /// Load blockchain state from a SledStore.
+    ///
+    /// This method opens the store, loads all blocks, and replays them to
+    /// reconstruct the full blockchain state (UTXOs, identities, wallets, tokens, etc.)
+    ///
+    /// # Arguments
+    /// * `store` - The SledStore to load from
+    ///
+    /// # Returns
+    /// * `Ok(Some(blockchain))` - If blocks exist in the store
+    /// * `Ok(None)` - If the store is empty (no blocks)
+    /// * `Err` - If loading fails
+    ///
+    /// # Example
+    /// ```ignore
+    /// use lib_blockchain::storage::SledStore;
+    /// let store = Arc::new(SledStore::open("./data/sled")?);
+    /// if let Some(blockchain) = Blockchain::load_from_store(store)? {
+    ///     println!("Loaded blockchain at height {}", blockchain.height);
+    /// }
+    /// ```
+    pub fn load_from_store(store: std::sync::Arc<dyn BlockchainStore>) -> Result<Option<Self>> {
+        info!("📂 Loading blockchain from SledStore...");
+
+        // Check if there's any data in the store
+        let latest_height = match store.get_latest_height() {
+            Ok(h) => h,
+            Err(e) => {
+                // If error getting height, store is probably empty
+                info!("📂 SledStore appears empty or uninitialized: {}", e);
+                return Ok(None);
+            }
+        };
+
+        // Height 0 with no genesis block means empty store
+        if latest_height == 0 {
+            if store.get_block_by_height(0).ok().flatten().is_none() {
+                info!("📂 SledStore has no blocks - returning None");
+                return Ok(None);
+            }
+        }
+
+        info!("📂 Found blockchain data up to height {} in SledStore", latest_height);
+
+        // Create a fresh blockchain (with genesis)
+        let mut blockchain = Self::new()?;
+        blockchain.store = Some(store.clone());
+        blockchain.auto_persist_enabled = false;
+
+        // Clear the default genesis - we'll load from store
+        blockchain.blocks.clear();
+        blockchain.height = 0;
+
+        // Load and replay all blocks to reconstruct state
+        for height in 0..=latest_height {
+            match store.get_block_by_height(height)? {
+                Some(block) => {
+                    // Process all transactions in block
+                    for tx in &block.transactions {
+                        // Remove spent UTXOs (nullifiers)
+                        for input in &tx.inputs {
+                            blockchain.nullifier_set.insert(input.nullifier);
+                            blockchain.utxo_set.remove(&input.previous_output);
+                        }
+
+                        // Add new UTXOs
+                        for output in &tx.outputs {
+                            let tx_hash = tx.hash();
+                            blockchain.utxo_set.insert(tx_hash, output.clone());
+                        }
+
+                        // Process identity registrations
+                        if let Some(identity_data) = &tx.identity_data {
+                            blockchain.identity_registry.insert(
+                                identity_data.did.clone(),
+                                identity_data.clone(),
+                            );
+                            blockchain.identity_blocks.insert(identity_data.did.clone(), height);
+                        }
+
+                        // Process wallet registrations
+                        if let Some(wallet_data) = &tx.wallet_data {
+                            let wallet_id = hex::encode(wallet_data.wallet_id.as_bytes());
+                            blockchain.wallet_registry.insert(wallet_id.clone(), wallet_data.clone());
+                            blockchain.wallet_blocks.insert(wallet_id, height);
+                        }
+
+                        // Process token contract deployments
+                        if tx.transaction_type == TransactionType::ContractExecution {
+                            if let Ok(Some(token_contract)) = blockchain.extract_token_contract_from_tx(tx) {
+                                let contract_id = token_contract.token_id;
+                                blockchain.token_contracts.insert(contract_id, token_contract);
+                                blockchain.contract_blocks.insert(contract_id, height);
+                            }
+                        }
+
+                        // Process validator registrations
+                        if let Some(validator_data) = &tx.validator_data {
+                            let status = match validator_data.operation {
+                                crate::transaction::ValidatorOperation::Register => "active",
+                                crate::transaction::ValidatorOperation::Update => "active",
+                                crate::transaction::ValidatorOperation::Unregister => "inactive",
+                            };
+                            let validator_info = ValidatorInfo {
+                                identity_id: validator_data.identity_id.clone(),
+                                stake: validator_data.stake,
+                                storage_provided: validator_data.storage_provided,
+                                consensus_key: validator_data.consensus_key.clone(),
+                                network_address: validator_data.network_address.clone(),
+                                commission_rate: validator_data.commission_rate,
+                                status: status.to_string(),
+                                registered_at: height,
+                                last_activity: height,
+                                blocks_validated: 0,
+                                slash_count: 0,
+                            };
+                            blockchain.validator_registry.insert(
+                                validator_data.identity_id.clone(),
+                                validator_info,
+                            );
+                            blockchain.validator_blocks.insert(validator_data.identity_id.clone(), height);
+                        }
+                    }
+
+                    blockchain.blocks.push(block);
+                    blockchain.height = height;
+                }
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "Missing block at height {} - store is corrupted",
+                        height
+                    ));
+                }
+            }
+        }
+
+        info!(
+            "📂 Loaded blockchain from SledStore: height={}, identities={}, wallets={}, tokens={}",
+            blockchain.height,
+            blockchain.identity_registry.len(),
+            blockchain.wallet_registry.len(),
+            blockchain.token_contracts.len()
+        );
+
+        Ok(Some(blockchain))
+    }
+
+    /// Helper to extract token contract from a contract execution transaction
+    fn extract_token_contract_from_tx(&self, tx: &Transaction) -> Result<Option<crate::contracts::TokenContract>> {
+        if tx.memo.len() <= 4 || &tx.memo[0..4] != b"ZHTP" {
+            return Ok(None);
+        }
+
+        let contract_data = &tx.memo[4..];
+        let (call, _sig): (crate::types::ContractCall, Signature) = match bincode::deserialize(contract_data) {
+            Ok(parsed) => parsed,
+            Err(_) => return Ok(None),
+        };
+
+        if call.contract_type != crate::types::ContractType::Token {
+            return Ok(None);
+        }
+
+        if call.method != "create_custom_token" {
+            return Ok(None);
+        }
+
+        // Deserialize token creation params
+        #[derive(serde::Deserialize)]
+        struct CreateTokenParams {
+            name: String,
+            symbol: String,
+            initial_supply: u64,
+            #[serde(default)]
+            decimals: u8,
+        }
+
+        let params: CreateTokenParams = match bincode::deserialize(&call.params) {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+
+        // Generate token ID from transaction hash
+        let token_id: [u8; 32] = tx.hash().into();
+
+        let token_contract = crate::contracts::TokenContract {
+            token_id,
+            name: params.name,
+            symbol: params.symbol,
+            decimals: if params.decimals == 0 { 8 } else { params.decimals },
+            total_supply: params.initial_supply,
+            max_supply: params.initial_supply, // Default max to initial
+            is_deflationary: false,
+            burn_rate: 0,
+            balances: std::collections::HashMap::new(),
+            allowances: std::collections::HashMap::new(),
+            creator: tx.signature.public_key.clone(),
+            kernel_mint_authority: None,
+            locked_balances: std::collections::HashMap::new(),
+            kernel_only_mode: false,
+        };
+
+        Ok(Some(token_contract))
+    }
+
     /// Set or replace the Phase 2 incremental store.
     ///
     /// This allows attaching a store to an existing blockchain instance.
@@ -1207,6 +1412,16 @@ impl Blockchain {
             }
         }
 
+        // Persist block to SledStore (Phase 3 incremental storage)
+        if let Some(ref store) = self.store {
+            if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
+                error!("Failed to persist block {} to SledStore: {}", block.height(), e);
+                // Don't fail block processing - log error but continue
+            } else {
+                debug!("Block {} persisted to SledStore", block.height());
+            }
+        }
+
         // Update persistence counter
         self.blocks_since_last_persist += 1;
 
@@ -1360,6 +1575,32 @@ impl Blockchain {
         // Auto-persist blockchain state if needed
         self.auto_persist_if_needed().await?;
 
+        Ok(())
+    }
+
+    /// Persist a block to the SledStore (Phase 3 incremental storage)
+    ///
+    /// This method atomically writes:
+    /// - The block itself
+    /// - Latest height metadata
+    fn persist_to_sled_store(
+        &self,
+        block: &Block,
+        store: std::sync::Arc<dyn BlockchainStore>,
+    ) -> Result<()> {
+        // Begin transaction
+        store.begin_block(block.header.height)
+            .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
+
+        // Append the block
+        store.append_block(block)
+            .map_err(|e| anyhow::anyhow!("Failed to append block to Sled: {}", e))?;
+
+        // Commit the transaction
+        store.commit_block()
+            .map_err(|e| anyhow::anyhow!("Failed to commit Sled transaction: {}", e))?;
+
+        info!("💾 Block {} persisted to SledStore", block.header.height);
         Ok(())
     }
 

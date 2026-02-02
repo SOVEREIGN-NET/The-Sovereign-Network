@@ -600,98 +600,77 @@ impl RuntimeOrchestrator {
         }
 
         // No blockchain data - need to create genesis
+        // IMPORTANT: Use the existing global blockchain (which has SledStore attached)
+        // instead of loading from file - Phase 3 uses SledStore exclusively
         info!("📂 No existing blockchain data - creating genesis network");
+        info!(" Using existing global blockchain with SledStore (Phase 3 storage)");
 
-        // Try to load from disk one more time (in case start_node didn't load it)
-        let persist_path_string = self.config.environment.blockchain_data_path();
-        let persist_path = std::path::Path::new(&persist_path_string);
-        let (mut blockchain, was_loaded) = lib_blockchain::Blockchain::load_or_create(persist_path)?;
-
-        if was_loaded {
-            info!("📂 Loaded existing blockchain from {} (height: {}, identities: {}, wallets: {})",
-                  persist_path.display(),
-                  blockchain.height,
-                  blockchain.identity_registry.len(),
-                  blockchain.wallet_registry.len());
-            info!("  Skipping genesis creation - using persisted state");
-
-            // Set the blockchain as global immediately since we loaded it
-            let blockchain_arc = Arc::new(RwLock::new(blockchain));
-            set_global_blockchain(blockchain_arc.clone()).await?;
-            info!(" Global blockchain provider initialized with loaded blockchain");
-
-            // Push wallet to BlockchainComponent if already registered
-            let components = self.components.read().await;
-            if let Some(component) = components.get(&ComponentId::Blockchain) {
-                if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
-                    blockchain_comp.set_user_wallet(wallet).await;
-                    info!(" User wallet propagated to BlockchainComponent");
-                }
-            }
-
-            return Ok(());
-        }
+        // Get the existing blockchain that was set up with SledStore in start_node()
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await
+            .map_err(|e| anyhow::anyhow!("Failed to get global blockchain for genesis: {}", e))?;
 
         // Creating NEW genesis network - no persisted blockchain found
         info!(" Creating NEW genesis network with user wallet funding...");
-        
-        // Set development difficulty (easy mining for testing)
-        // TODO: In production, keep the default INITIAL_DIFFICULTY (0x1d00ffff)
-        if matches!(self.config.environment, crate::config::Environment::Development) {
-            blockchain.difficulty = lib_blockchain::types::Difficulty::from_bits(0x1fffffff);
-            // Also update genesis block difficulty to match
-            if let Some(genesis) = blockchain.blocks.get_mut(0) {
-                genesis.header.difficulty = lib_blockchain::types::Difficulty::from_bits(0x1fffffff);
-            }
-            info!(" Development mode: Set blockchain difficulty to 0x1fffffff (easy mining)");
-        }
-        
-        // Create genesis validator from USER identity (not node identity)
-        // NOTE: A person can only be a validator once, regardless of how many nodes they own
-        // Nodes are just devices controlled by the user's identity
-        // Development mode: 1,000 SOV minimum stake (configurable in blockchain)
-        let genesis_validator = crate::runtime::components::GenesisValidator {
-            identity_id: wallet.user_identity.id.clone(), // Use USER identity, not node identity
-            stake: 1_000, // Development mode: 1k SOV meets minimum (blockchain validates based on mode)
-            storage_provided: 0, // Storage requirements enforced separately for production validators
-            commission_rate: 500, // 5% commission
 
-            node_device_id: Some(wallet.node_identity_id.clone()), // Track which node is running validator
-        };
-        
-        // Extract primary wallet ID and public key from user identity
-        let primary_wallet_info = {
-            let primary_wallet = wallet.user_identity.wallet_manager.wallets
-                .iter()
-                .find(|(_, w)| w.wallet_type == lib_identity::wallets::WalletType::Primary)
-                .map(|(id, w)| (id.clone(), w.public_key.clone()));
-            
-            if primary_wallet.is_none() {
-                warn!("  No primary wallet found in user identity - genesis will not fund user wallet");
+        // Get mutable access to the existing blockchain with SledStore attached
+        {
+            let mut blockchain = blockchain_arc.write().await;
+
+            // Set development difficulty (easy mining for testing)
+            // TODO: In production, keep the default INITIAL_DIFFICULTY (0x1d00ffff)
+            if matches!(self.config.environment, crate::config::Environment::Development) {
+                blockchain.difficulty = lib_blockchain::types::Difficulty::from_bits(0x1fffffff);
+                // Also update genesis block difficulty to match
+                if let Some(genesis) = blockchain.blocks.get_mut(0) {
+                    genesis.header.difficulty = lib_blockchain::types::Difficulty::from_bits(0x1fffffff);
+                }
+                info!(" Development mode: Set blockchain difficulty to 0x1fffffff (easy mining)");
             }
-            
-            primary_wallet
-        };
-        
-        // Get genesis private data for wallet registry initialization
-        let genesis_private_data = self.genesis_private_data.read().await.clone();
-        
-        // Fund the blockchain genesis with user wallet
-        crate::runtime::components::BlockchainComponent::create_genesis_funding(
-            &mut blockchain,
-            vec![genesis_validator],
-            &self.config.environment,
-            primary_wallet_info,
-            Some(wallet.user_identity.id.clone()), // Pass user identity ID
-            genesis_private_data, // Pass private data for Dilithium2 public key extraction
-        ).await?;
-        
-        let blockchain_arc = Arc::new(RwLock::new(blockchain));
-        
-        // Set in global provider BEFORE BlockchainComponent starts
-        set_global_blockchain(blockchain_arc.clone()).await?;
+
+            // Create genesis validator from USER identity (not node identity)
+            // NOTE: A person can only be a validator once, regardless of how many nodes they own
+            // Nodes are just devices controlled by the user's identity
+            // Development mode: 1,000 SOV minimum stake (configurable in blockchain)
+            let genesis_validator = crate::runtime::components::GenesisValidator {
+                identity_id: wallet.user_identity.id.clone(), // Use USER identity, not node identity
+                stake: 1_000, // Development mode: 1k SOV meets minimum (blockchain validates based on mode)
+                storage_provided: 0, // Storage requirements enforced separately for production validators
+                commission_rate: 500, // 5% commission
+
+                node_device_id: Some(wallet.node_identity_id.clone()), // Track which node is running validator
+            };
+
+            // Extract primary wallet ID and public key from user identity
+            let primary_wallet_info = {
+                let primary_wallet = wallet.user_identity.wallet_manager.wallets
+                    .iter()
+                    .find(|(_, w)| w.wallet_type == lib_identity::wallets::WalletType::Primary)
+                    .map(|(id, w)| (id.clone(), w.public_key.clone()));
+
+                if primary_wallet.is_none() {
+                    warn!("  No primary wallet found in user identity - genesis will not fund user wallet");
+                }
+
+                primary_wallet
+            };
+
+            // Get genesis private data for wallet registry initialization
+            let genesis_private_data = self.genesis_private_data.read().await.clone();
+
+            // Fund the blockchain genesis with user wallet
+            // Note: blockchain is already in global provider, this just funds it
+            crate::runtime::components::BlockchainComponent::create_genesis_funding(
+                &mut blockchain,
+                vec![genesis_validator],
+                &self.config.environment,
+                primary_wallet_info,
+                Some(wallet.user_identity.id.clone()), // Pass user identity ID
+                genesis_private_data, // Pass private data for Dilithium2 public key extraction
+            ).await?;
+        } // Release write lock
+
         info!(" Global blockchain provider initialized with user wallet funding");
-        
+
         // CRITICAL: Also push wallet to BlockchainComponent if already registered
         let components = self.components.read().await;
         if let Some(component) = components.get(&ComponentId::Blockchain) {
@@ -700,7 +679,7 @@ impl RuntimeOrchestrator {
                 info!(" User wallet propagated to BlockchainComponent");
             }
         }
-        
+
         Ok(())
     }
 
@@ -941,62 +920,50 @@ impl RuntimeOrchestrator {
         let joined_existing_network = network_info.is_some();
         self.set_joined_existing_network(joined_existing_network).await;
 
-        // CRITICAL FIX: Always try to load blockchain from disk FIRST
-        // This prevents data loss when peer discovery fails after a restart
-        let persist_path_string = self.config.environment.blockchain_data_path();
-        let persist_path = std::path::Path::new(&persist_path_string);
+        // Phase 3: Use SledStore for persistent blockchain storage
+        // This replaces the deprecated file-based storage with incremental Sled DB
+        let data_dir = self.config.environment.data_directory();
+        let sled_path = std::path::Path::new(&data_dir).join("sled");
 
-        let (blockchain, was_loaded) = if persist_path.exists() {
-            match lib_blockchain::Blockchain::load_from_file(persist_path) {
-                Ok(bc) => {
-                    info!("📂 Loaded existing blockchain from disk (height: {}, tokens: {})",
-                          bc.height, bc.token_contracts.len());
-                    (bc, true)
-                }
-                Err(e) => {
-                    // CRITICAL: Preserve corrupted file for recovery - NEVER overwrite
-                    let timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let corrupt_path = persist_path.with_extension(format!("dat.corrupt.{}", timestamp));
+        info!("📂 Opening SledStore at {:?}", sled_path);
 
-                    let preservation_note = match std::fs::rename(persist_path, &corrupt_path) {
-                        Ok(()) => {
-                            error!("❌ Corrupted blockchain file preserved as: {:?}", corrupt_path);
-                            format!(
-                                "The corrupted file has been preserved for potential recovery as: {:?}.",
-                                corrupt_path
-                            )
-                        }
-                        Err(rename_err) => {
-                            error!("❌ FATAL: Failed to preserve corrupted blockchain file: {}", rename_err);
-                            format!(
-                                "WARNING: Failed to preserve corrupted file for potential recovery: {}. \
-                                The original file at {:?} may still exist or be partially moved.",
-                                rename_err,
-                                persist_path
-                            )
-                        }
-                    };
+        // Create data directory if it doesn't exist
+        if let Some(parent) = sled_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
-                    // FATAL: Do NOT silently create new blockchain - this destroys data
-                    return Err(anyhow::anyhow!(
-                        "FATAL: Blockchain file corrupted: {}\n\
-                        {}\n\
-                        Options:\n\
-                        1. Restore from backup (if available)\n\
-                        2. Delete {:?} to start fresh (WARNING: loses all data)\n\
-                        3. Contact support for recovery assistance",
-                        e,
-                        preservation_note,
-                        persist_path
-                    ));
-                }
+        let store = std::sync::Arc::new(
+            lib_blockchain::storage::SledStore::open(&sled_path)
+                .map_err(|e| anyhow::anyhow!("Failed to open SledStore: {}", e))?
+        );
+
+        let (blockchain, was_loaded) = match lib_blockchain::Blockchain::load_from_store(store.clone())? {
+            Some(bc) => {
+                info!("📂 Loaded existing blockchain from SledStore (height: {}, tokens: {})",
+                      bc.height, bc.token_contracts.len());
+                (bc, true)
             }
-        } else {
-            info!("📂 No blockchain.dat found - will create new blockchain");
-            (lib_blockchain::Blockchain::new()?, false)
+            None => {
+                info!("📂 SledStore is empty - creating new blockchain");
+                let mut bc = lib_blockchain::Blockchain::new()?;
+                bc.set_store(store.clone());
+
+                // CRITICAL: Persist genesis block (height 0) to SledStore
+                // SledStore requires sequential block storage starting from 0
+                if let Some(genesis_block) = bc.blocks.first() {
+                    // Cast to trait object to access BlockchainStore methods
+                    let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
+                    store_ref.begin_block(0)
+                        .map_err(|e| anyhow::anyhow!("Failed to begin genesis block: {}", e))?;
+                    store_ref.append_block(genesis_block)
+                        .map_err(|e| anyhow::anyhow!("Failed to append genesis block: {}", e))?;
+                    store_ref.commit_block()
+                        .map_err(|e| anyhow::anyhow!("Failed to commit genesis block: {}", e))?;
+                    info!("💾 Genesis block (height 0) persisted to SledStore");
+                }
+
+                (bc, false)
+            }
         };
 
         let blockchain_arc = Arc::new(RwLock::new(blockchain));
