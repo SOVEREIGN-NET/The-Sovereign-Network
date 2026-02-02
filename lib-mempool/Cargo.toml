@@ -1,0 +1,17 @@
+[package]
+name = "lib-mempool"
+version = "0.1.0"
+edition = "2021"
+description = "ZHTP Mempool Admission - Pre-consensus transaction validation"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+
+# Internal dependencies
+lib-types = { path = "../lib-types" }
+lib-fees = { path = "../lib-fees" }
+
+[dev-dependencies]
+serde_json = "1.0"
