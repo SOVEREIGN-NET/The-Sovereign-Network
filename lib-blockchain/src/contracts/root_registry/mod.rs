@@ -60,8 +60,9 @@ pub use types::{
     // Core identity types
     PublicKey, Address, NameHash, DaoId, BlockHeight, Timestamp,
 
-    // Verification
+    // Verification (Phase 5: Issue #661)
     VerificationLevel,
+    VerificationProof, ZkProofData, VerificationError,
 
     // Classification
     NameClassification,
