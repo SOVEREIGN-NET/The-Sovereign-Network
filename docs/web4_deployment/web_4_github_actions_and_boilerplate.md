@@ -1,0 +1,149 @@
+# WEB4 GitHub Actions and Boilerplate
+
+This document explains how site builds and deployments work using GitHub Actions and provides a minimal boilerplate that deploys successfully.
+
+---
+
+## Scope
+
+This document covers:
+
+- What GitHub Actions does
+- How to create a deployment workflow
+- A minimal static-site boilerplate
+
+---
+
+## Minimal Boilerplate Repository
+
+Create the following files:
+
+```
+repo-root/
+├─ index.html
+├─ package.json
+└─ .github/
+   └─ workflows/
+      └─ deploy.yml
+```
+
+---
+
+### index.html
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WEB4 Site</title>
+</head>
+<body>
+  <h1>Deployment Successful</h1>
+</body>
+</html>
+```
+
+---
+
+### package.json
+
+```json
+{
+  "name": "web4-site",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "mkdir -p dist && cp index.html dist/index.html"
+  }
+}
+```
+
+---
+
+## GitHub Actions Workflow
+
+Create this file:
+
+```
+.github/workflows/deploy.yml
+```
+
+```yaml
+name: Deploy to Sovereign Network
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm run build
+
+      - run: |
+          curl -L https://github.com/SOVEREIGN-NET/The-Sovereign-Network/releases/latest/download/zhtp-cli-linux-x86_64.tar.gz -o zhtp-cli.tar.gz
+          tar -xzf zhtp-cli.tar.gz
+          sudo mv zhtp-cli /usr/local/bin/
+
+      - env:
+          ZHTP_KEYSTORE_B64: ${{ secrets.ZHTP_KEYSTORE_B64 }}
+          ZHTP_SERVER: ${{ secrets.ZHTP_SERVER }}
+          ZHTP_SERVER_SPKI: ${{ secrets.ZHTP_SERVER_SPKI }}
+        run: |
+          mkdir -p ~/.zhtp
+          echo "$ZHTP_KEYSTORE_B64" | base64 -d | tar -xzf - -C ~/.zhtp
+          zhtp-cli deploy site \
+            --domain your-site.sov \
+            --keystore ~/.zhtp/keystore \
+            --mode static \
+            dist/
+```
+
+---
+
+## Required Secrets
+
+Add the following repository secrets:
+
+| Secret | How to Create |
+|--------|---------------|
+| `ZHTP_KEYSTORE_B64` | `tar -czf - -C ~/.zhtp keystore \| base64 -w 0` |
+| `ZHTP_SERVER` | Provided by network administrator |
+| `ZHTP_SERVER_SPKI` | Provided by network administrator |
+
+The keystore is a **directory**, not a file. You must tar it before encoding:
+
+```bash
+tar -czf - -C ~/.zhtp keystore | base64 -w 0 > keystore.b64
+cat keystore.b64  # Paste this into ZHTP_KEYSTORE_B64 secret
+```
+
+---
+
+## Build Output Mapping
+
+| Framework | Output Directory |
+|---------|------------------|
+| Vite | `dist` |
+| Create React App | `build` |
+| Next.js (static export) | `out` |
+| Hugo / Jekyll | `public` |
+
+---
+
+## Verification
+
+After pushing to `main`:
+
+- GitHub Actions runs
+- Deployment step succeeds
+- Domain serves the site
+
