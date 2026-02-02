@@ -101,8 +101,8 @@ jobs:
 ```
 
 **Customize:**
-- Line 18: Change `dist/` to your build folder (`build/`, `out/`, `public/`)
-- Line 40: Change `mysite.sov` to your domain
+- Change `dist/` in the upload artifact step to your build folder (`build/`, `out/`, `public/`)
+- Change `mysite.sov` in the deploy step to your domain
 
 ## Step 5: Deploy (30 seconds)
 
