@@ -29,6 +29,7 @@ pub mod validation;
 pub mod fees;
 pub mod sync;
 pub mod protocol;
+pub mod resources;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]

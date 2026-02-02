@@ -45,6 +45,7 @@ use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
 use super::tx_apply::{self, StateMutator, TransferOutcome, CoinbaseOutcome};
 
 use crate::protocol::{ProtocolParams, fee_model};
+use crate::resources::{BlockAccumulator, BlockLimits};
 
 // Re-export lib-fees types for convenience
 pub use lib_fees::{
@@ -175,34 +176,6 @@ impl FeeModelV2 {
 }
 
 // =============================================================================
-// BLOCK LIMITS
-// =============================================================================
-
-/// Block resource limits - enforced during validate_block_resources
-#[derive(Debug, Clone)]
-pub struct BlockLimits {
-    /// Maximum block size in bytes
-    pub max_block_size: usize,
-    /// Maximum transactions per block
-    pub max_transactions: usize,
-    /// Maximum total witness size per block
-    pub max_total_witness_size: usize,
-    /// Whether to allow empty blocks (no transactions)
-    pub allow_empty_blocks: bool,
-}
-
-impl Default for BlockLimits {
-    fn default() -> Self {
-        Self {
-            max_block_size: 1_048_576,       // 1MB
-            max_transactions: 10_000,         // 10k txs max
-            max_total_witness_size: 524_288,  // 512KB total witness
-            allow_empty_blocks: true,
-        }
-    }
-}
-
-// =============================================================================
 // LEGACY CONFIG (for backwards compatibility)
 // =============================================================================
 
@@ -244,12 +217,17 @@ impl ExecutorConfig {
             protocol_params: self.protocol_params.clone(),
             ..Default::default()
         };
+        // Map legacy max_block_size to new max_payload_bytes
         let limits = BlockLimits {
-            max_block_size: self.max_block_size,
-            allow_empty_blocks: self.allow_empty_blocks,
+            max_payload_bytes: self.max_block_size as u64,
             ..Default::default()
         };
         (fee_model, limits)
+    }
+
+    /// Whether empty blocks are allowed (legacy field, now always true)
+    pub fn allows_empty_blocks(&self) -> bool {
+        self.allow_empty_blocks
     }
 }
 
@@ -444,43 +422,40 @@ impl BlockExecutor {
         Ok(())
     }
 
-    /// Step 2: Validate block resources against limits
+    /// Step 2: Validate block resources against limits (quick initial check)
     ///
     /// Checks:
-    /// - Block size within limits
+    /// - Block payload size within limits
     /// - Transaction count within limits
-    /// - Not empty (unless allowed)
     /// - Transaction count matches header
+    ///
+    /// Note: Detailed per-tx resource accounting is done by BlockAccumulator
+    /// in apply_block_inner, which can reject the block mid-execution.
     fn validate_block_resources(&self, block: &Block) -> BlockApplyResult<()> {
-        // Check block size
-        let size = block.size();
-        if size > self.limits.max_block_size {
+        // Check block payload size
+        let size = block.size() as u64;
+        if size > self.limits.max_payload_bytes {
             return Err(BlockApplyError::BlockTooLarge {
-                size,
-                max: self.limits.max_block_size,
+                size: size as usize,
+                max: self.limits.max_payload_bytes as usize,
             });
         }
 
         // Check transaction count
-        if block.transactions.len() > self.limits.max_transactions {
+        let tx_count = block.transactions.len() as u32;
+        if tx_count > self.limits.max_tx_count {
             return Err(BlockApplyError::ValidationFailed(format!(
                 "Block has {} transactions, max is {}",
-                block.transactions.len(),
-                self.limits.max_transactions
+                tx_count,
+                self.limits.max_tx_count
             )));
         }
 
-        // Check for empty blocks
-        if block.transactions.is_empty() && !self.limits.allow_empty_blocks {
-            return Err(BlockApplyError::EmptyBlock);
-        }
-
         // Transaction count must match header
-        let actual_tx_count = block.transactions.len() as u32;
-        if block.header.transaction_count != actual_tx_count {
+        if block.header.transaction_count != tx_count {
             return Err(BlockApplyError::ValidationFailed(format!(
                 "Transaction count mismatch: header says {} but block has {}",
-                block.header.transaction_count, actual_tx_count
+                block.header.transaction_count, tx_count
             )));
         }
 
@@ -497,6 +472,9 @@ impl BlockExecutor {
         let mutator = StateMutator::new(self.store.as_ref());
         let mut summary = StateChangesSummary::default();
         let mut total_fees: u64 = 0;
+
+        // Initialize block-level resource accumulator
+        let mut accumulator = BlockAccumulator::new();
 
         // =====================================================================
         // Pre-step: Coinbase position validation
@@ -546,6 +524,18 @@ impl BlockExecutor {
         for (rel_index, tx) in block.transactions[non_coinbase_start..].iter().enumerate() {
             let index = rel_index + non_coinbase_start;
 
+            // Resource accounting: accumulate tx resources BEFORE application
+            // Block is rejected if any limit exceeded
+            let (payload_bytes, witness_bytes, verify_units, state_write_bytes) =
+                self.calculate_tx_resources(tx);
+            accumulator.add_tx(
+                &self.limits,
+                payload_bytes,
+                witness_bytes,
+                verify_units,
+                state_write_bytes,
+            )?;
+
             // validate_tx_stateless
             self.validate_tx_stateless(tx)
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
@@ -577,6 +567,17 @@ impl BlockExecutor {
 
         // 4b: Process coinbase with collected fees (Phase 3C)
         if let Some(coinbase) = coinbase_tx {
+            // Coinbase also accumulates resources
+            let (payload_bytes, witness_bytes, verify_units, state_write_bytes) =
+                self.calculate_tx_resources(coinbase);
+            accumulator.add_tx(
+                &self.limits,
+                payload_bytes,
+                witness_bytes,
+                verify_units,
+                state_write_bytes,
+            )?;
+
             self.validate_tx_stateless(coinbase)
                 .map_err(|e| BlockApplyError::TxFailed { index: 0, reason: e })?;
 
@@ -811,6 +812,109 @@ impl BlockExecutor {
         }
 
         Ok(())
+    }
+
+    /// Calculate resource requirements for a transaction
+    ///
+    /// Returns (payload_bytes, witness_bytes, verify_units, state_write_bytes)
+    ///
+    /// This is used by BlockAccumulator to track cumulative resource usage
+    /// and reject the block if any limit is exceeded.
+    fn calculate_tx_resources(&self, tx: &crate::transaction::Transaction) -> (u64, u64, u64, u64) {
+        use crate::transaction::Transaction;
+
+        // Payload bytes: serialized tx size (excluding witnesses)
+        // Approximation: tx size minus signature/proof data
+        let payload_bytes = self.estimate_tx_payload_size(tx);
+
+        // Witness bytes: signatures + ZK proofs
+        let witness_bytes = self.estimate_tx_witness_size(tx);
+
+        // Verify units: cost of signature/proof verification
+        // Ed25519 = 1 unit, Groth16 = 100 units (example costs)
+        let verify_units = self.estimate_tx_verify_units(tx);
+
+        // State write bytes: estimated storage changes
+        // Inputs (deletions) + outputs (insertions) + token balance updates
+        let state_write_bytes = self.estimate_tx_state_writes(tx);
+
+        (payload_bytes, witness_bytes, verify_units, state_write_bytes)
+    }
+
+    /// Estimate payload size (serialized tx minus witnesses)
+    fn estimate_tx_payload_size(&self, tx: &crate::transaction::Transaction) -> u64 {
+        // Base size: version (4) + chain_id (1) + type (1) + fee (8) + memo length
+        let base = 14 + tx.memo.len();
+
+        // Inputs: each input is ~100 bytes (prev_output hash, index, nullifier)
+        // Exclude zk_proof from payload (it's witness data)
+        let inputs_payload = tx.inputs.len() * 68; // 32 + 4 + 32 = 68
+
+        // Outputs: each output is ~96 bytes (commitment, note, recipient)
+        let outputs = tx.outputs.len() * 96;
+
+        // Optional data fields (rough estimates)
+        let optional_data =
+            tx.identity_data.as_ref().map(|_| 256).unwrap_or(0) +
+            tx.wallet_data.as_ref().map(|_| 128).unwrap_or(0) +
+            tx.validator_data.as_ref().map(|_| 256).unwrap_or(0) +
+            tx.token_transfer_data.as_ref().map(|_| 104).unwrap_or(0); // 32+32+32+8
+
+        (base + inputs_payload + outputs + optional_data) as u64
+    }
+
+    /// Estimate witness size (signatures + ZK proofs)
+    fn estimate_tx_witness_size(&self, tx: &crate::transaction::Transaction) -> u64 {
+        // Main signature (Ed25519 = 64 bytes)
+        let sig_size = tx.signature.signature.len();
+
+        // ZK proofs in inputs: sum of all proof data from amount, balance, nullifier proofs
+        let proof_size: usize = tx.inputs.iter()
+            .map(|i| {
+                i.zk_proof.amount_proof.proof_data.len() +
+                i.zk_proof.balance_proof.proof_data.len() +
+                i.zk_proof.nullifier_proof.proof_data.len()
+            })
+            .sum();
+
+        (sig_size + proof_size) as u64
+    }
+
+    /// Estimate verification cost in units
+    fn estimate_tx_verify_units(&self, tx: &crate::transaction::Transaction) -> u64 {
+        // Ed25519 signature verification: 1 unit
+        let sig_units = 1u64;
+
+        // ZK proof verification: each proof in ZkTransactionProof costs units
+        // 3 proofs per input (amount, balance, nullifier), ~10 units each
+        let proof_units: u64 = tx.inputs.len() as u64 * 30;
+
+        sig_units + proof_units
+    }
+
+    /// Estimate state write bytes
+    fn estimate_tx_state_writes(&self, tx: &crate::transaction::Transaction) -> u64 {
+        match tx.transaction_type {
+            TransactionType::Transfer => {
+                // UTXO deletions (inputs) + UTXO creations (outputs)
+                // Each UTXO entry ~150 bytes (key + value)
+                let utxo_writes = (tx.inputs.len() + tx.outputs.len()) * 150;
+                utxo_writes as u64
+            }
+            TransactionType::Coinbase => {
+                // Only creates outputs
+                let utxo_writes = tx.outputs.len() * 150;
+                utxo_writes as u64
+            }
+            TransactionType::TokenTransfer => {
+                // Two balance updates (from + to), ~100 bytes each
+                200
+            }
+            _ => {
+                // Conservative estimate for unknown types
+                500
+            }
+        }
     }
 
     /// Apply a single transaction
