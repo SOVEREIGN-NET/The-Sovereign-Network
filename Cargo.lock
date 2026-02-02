@@ -2912,6 +2912,8 @@ dependencies = [
 name = "lib-governance"
 version = "0.1.0"
 dependencies = [
+ "bincode",
+ "blake3",
  "lib-types",
  "serde",
  "serde_json",

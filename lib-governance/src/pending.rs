@@ -50,18 +50,23 @@ impl PendingChange {
     }
 
     /// Get unique identifier for this change (target + field)
+    ///
+    /// Uses Blake3 hash for deterministic IDs across all nodes.
     pub fn change_id(&self) -> [u8; 32] {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use blake3::Hasher;
 
-        let mut hasher = DefaultHasher::new();
-        self.target.as_bytes().hash(&mut hasher);
-        self.field.hash(&mut hasher);
+        let mut hasher = Hasher::new();
 
-        let hash = hasher.finish();
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        id
+        // Domain separator for governance change IDs
+        hasher.update(b"ZHTP_GOVERNANCE_CHANGE_V1");
+        hasher.update(self.target.as_bytes());
+
+        // Serialize ConfigField deterministically
+        let field_bytes = bincode::serialize(&self.field)
+            .expect("ConfigField must be serializable");
+        hasher.update(&field_bytes);
+
+        *hasher.finalize().as_bytes()
     }
 }
 

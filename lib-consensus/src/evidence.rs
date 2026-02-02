@@ -80,29 +80,29 @@ impl Evidence {
     }
 
     /// Compute deterministic evidence ID for deduplication
+    ///
+    /// Uses Blake3 hash over a canonical encoding of the evidence fields
+    /// with a fixed domain separator to ensure determinism across nodes.
     pub fn evidence_id(&self) -> [u8; 32] {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use lib_crypto::hash_blake3;
 
-        let mut hasher = DefaultHasher::new();
+        // Domain separator for evidence IDs (consensus-critical)
+        let mut data = b"ZHTP_EVIDENCE_ID_V1".to_vec();
 
         match self {
             Evidence::DoubleSign { validator, height, .. } => {
-                "DoubleSign".hash(&mut hasher);
-                validator.as_bytes().hash(&mut hasher);
-                height.hash(&mut hasher);
+                data.extend_from_slice(b"DoubleSign");
+                data.extend_from_slice(validator.as_bytes());
+                data.extend_from_slice(&height.to_le_bytes());
             }
             Evidence::Replay { tx, original_height, .. } => {
-                "Replay".hash(&mut hasher);
-                tx.as_bytes().hash(&mut hasher);
-                original_height.hash(&mut hasher);
+                data.extend_from_slice(b"Replay");
+                data.extend_from_slice(tx.as_bytes());
+                data.extend_from_slice(&original_height.to_le_bytes());
             }
         }
 
-        let hash = hasher.finish();
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        id
+        hash_blake3(&data)
     }
 }
 
