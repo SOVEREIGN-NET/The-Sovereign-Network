@@ -230,7 +230,7 @@ impl SnapshotManager {
     /// * `NotInitialized` - If chain has no blocks
     pub fn snapshot_at(&self, height: u64) -> SnapshotResult<SnapshotId> {
         // Verify height exists
-        let latest_height = self.store.get_latest_height()
+        let latest_height = self.store.latest_height()
             .map_err(|e| match e {
                 StorageError::NotInitialized => SnapshotError::NotInitialized,
                 other => SnapshotError::Storage(other),
@@ -601,7 +601,7 @@ mod tests {
         manager.restore(&snapshot_id).unwrap();
 
         // Verify restoration
-        assert_eq!(store.get_latest_height().unwrap(), 2);
+        assert_eq!(store.latest_height().unwrap(), 2);
 
         // Verify all blocks are restored
         let restored_genesis = store.get_block_by_height(0).unwrap().unwrap();
@@ -637,8 +637,8 @@ mod tests {
         store.append_block(&genesis).unwrap();
         store.put_utxo(&outpoint1, &utxo1).unwrap();
         store.put_utxo(&outpoint2, &utxo2).unwrap();
-        store.set_token_balance(token, &alice, 1000).unwrap();
-        store.set_token_balance(token, &bob, 2000).unwrap();
+        store.set_token_balance(&token, &alice, 1000).unwrap();
+        store.set_token_balance(&token, &bob, 2000).unwrap();
         store.commit_block().unwrap();
 
         // Take snapshot
@@ -656,8 +656,8 @@ mod tests {
         manager.restore(&snapshot_id).unwrap();
 
         // Verify balances are restored
-        assert_eq!(store.get_token_balance(token, &alice).unwrap(), 1000);
-        assert_eq!(store.get_token_balance(token, &bob).unwrap(), 2000);
+        assert_eq!(store.get_token_balance(&token, &alice).unwrap(), 1000);
+        assert_eq!(store.get_token_balance(&token, &bob).unwrap(), 2000);
 
         // Verify UTXOs are restored
         let restored_utxo1 = store.get_utxo(&outpoint1).unwrap().unwrap();
@@ -701,7 +701,7 @@ mod tests {
         store.meta().clear().unwrap();
 
         manager.restore(&snapshot_id).unwrap();
-        assert_eq!(store.get_latest_height().unwrap(), 2);
+        assert_eq!(store.latest_height().unwrap(), 2);
 
         // Now add more blocks on top
         let block3 = create_block_at_height(3, block2.header.block_hash);
@@ -716,7 +716,7 @@ mod tests {
         store.commit_block().unwrap();
 
         // Verify final state
-        assert_eq!(store.get_latest_height().unwrap(), 4);
+        assert_eq!(store.latest_height().unwrap(), 4);
 
         // All blocks should be accessible
         assert!(store.get_block_by_height(0).unwrap().is_some());

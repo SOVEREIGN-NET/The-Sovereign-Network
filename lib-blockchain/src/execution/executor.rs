@@ -340,7 +340,7 @@ impl BlockExecutor {
 
     /// Get the expected next block height
     fn get_expected_height(&self) -> BlockApplyResult<u64> {
-        match self.store.get_latest_height() {
+        match self.store.latest_height() {
             Ok(h) => Ok(h + 1),
             Err(StorageError::NotInitialized) => Ok(0), // Genesis case
             Err(e) => Err(BlockApplyError::Storage(e)),
@@ -610,7 +610,7 @@ impl BlockExecutor {
                 // Apply the token transfer (debit from, credit to)
                 tx_apply::apply_token_transfer(
                     mutator,
-                    token,
+                    &token,
                     &from,
                     &to,
                     amount,
@@ -767,7 +767,7 @@ mod tests {
 
         assert_eq!(outcome.height, 0);
         assert_eq!(outcome.tx_count, 0);
-        assert_eq!(store.get_latest_height().unwrap(), 0);
+        assert_eq!(store.latest_height().unwrap(), 0);
     }
 
     #[test]
@@ -787,7 +787,7 @@ mod tests {
         let block2 = create_block_at_height(2, block1.header.block_hash);
         executor.apply_block(&block2).unwrap();
 
-        assert_eq!(store.get_latest_height().unwrap(), 2);
+        assert_eq!(store.latest_height().unwrap(), 2);
     }
 
     #[test]
@@ -983,7 +983,7 @@ mod tests {
         assert!(result.is_err(), "Block with invalid tx should fail");
 
         // Height should still be at genesis after rollback
-        assert_eq!(store.get_latest_height().unwrap(), 0);
+        assert_eq!(store.latest_height().unwrap(), 0);
     }
 
     /// T3: Double spend across blocks is rejected
@@ -1012,7 +1012,7 @@ mod tests {
 
         // First spend should succeed
         executor.apply_block(&block1).unwrap();
-        assert_eq!(store.get_latest_height().unwrap(), 1);
+        assert_eq!(store.latest_height().unwrap(), 1);
 
         // Try to spend the same UTXO again in block 2
         let double_spend_tx = create_transfer_tx(coinbase_tx_hash, 0);
@@ -1023,7 +1023,7 @@ mod tests {
         assert!(result.is_err(), "Double spend should be rejected");
 
         // Height should remain at block 1
-        assert_eq!(store.get_latest_height().unwrap(), 1);
+        assert_eq!(store.latest_height().unwrap(), 1);
     }
 
     /// T4: Token transfer with insufficient balance fails
@@ -1052,7 +1052,7 @@ mod tests {
         store.begin_block(1).unwrap();
 
         // Try to get balance of address with no tokens
-        let balance = store.get_token_balance(token, &addr).unwrap();
+        let balance = store.get_token_balance(&token, &addr).unwrap();
         assert_eq!(balance, 0);
 
         // In a real token transfer, we'd check:
@@ -1061,7 +1061,7 @@ mod tests {
         store.rollback_block().unwrap();
 
         // Verify state was not changed
-        assert_eq!(store.get_latest_height().unwrap(), 0);
+        assert_eq!(store.latest_height().unwrap(), 0);
     }
 
     /// T5: State persists across store restart
@@ -1084,7 +1084,7 @@ mod tests {
             let block1 = create_block_at_height(1, genesis.header.block_hash);
             executor.apply_block(&block1).unwrap();
 
-            assert_eq!(store.get_latest_height().unwrap(), 1);
+            assert_eq!(store.latest_height().unwrap(), 1);
 
             // Store is dropped here, should flush to disk
         }
@@ -1094,7 +1094,7 @@ mod tests {
             let store = Arc::new(SledStore::open(&store_path).unwrap()) as Arc<dyn BlockchainStore>;
 
             // Height should still be 1
-            assert_eq!(store.get_latest_height().unwrap(), 1);
+            assert_eq!(store.latest_height().unwrap(), 1);
 
             // Genesis block should be retrievable
             let genesis = store.get_block_by_height(0).unwrap();
@@ -1109,7 +1109,7 @@ mod tests {
             let block2 = create_block_at_height(2, block1.unwrap().header.block_hash);
             executor.apply_block(&block2).unwrap();
 
-            assert_eq!(store.get_latest_height().unwrap(), 2);
+            assert_eq!(store.latest_height().unwrap(), 2);
         }
     }
 }
