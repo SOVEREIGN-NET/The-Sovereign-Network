@@ -6,6 +6,7 @@ members = [
     "lib-fees",
     "lib-tokens",
     "lib-governance",
+    "lib-utxo",
     "lib-blockchain",
     "lib-client",
     "lib-consensus",
