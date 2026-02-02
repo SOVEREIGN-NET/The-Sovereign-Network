@@ -1,3 +1,148 @@
+#[derive(Debug, Clone)]
+pub enum MeshTestScenario {
+    FiveNodeMesh,
+    NodeDepartureAndRejoin,
+    RandomRestarts,
+    RoutingVerification,
+    ConvergenceTimeline,
+    PartitionRecovery,
+    StabilityMetrics,
+}
+
+pub fn mesh_scenario_nodes(scenario: &MeshTestScenario) -> Vec<(&'static str, [u8; 64])> {
+    match scenario {
+        MeshTestScenario::FiveNodeMesh => vec![
+            ("mesh-node-a", [0x11; 64]),
+            ("mesh-node-b", [0x22; 64]),
+            ("mesh-node-c", [0x33; 64]),
+            ("mesh-node-d", [0x44; 64]),
+            ("mesh-node-e", [0x55; 64]),
+        ],
+        MeshTestScenario::NodeDepartureAndRejoin => vec![
+            ("mesh-stable-a", [0x1A; 64]),
+            ("mesh-stable-b", [0x2B; 64]),
+            ("mesh-stable-c", [0x3C; 64]),
+            ("mesh-stable-d", [0x4D; 64]),
+        ],
+        MeshTestScenario::RandomRestarts => vec![
+            ("stable-mesh-1", [0xA1; 64]),
+            ("stable-mesh-2", [0xA2; 64]),
+            ("stable-mesh-3", [0xA3; 64]),
+            ("stable-mesh-4", [0xA4; 64]),
+            ("stable-mesh-5", [0xA5; 64]),
+        ],
+        MeshTestScenario::RoutingVerification => vec![
+            ("route-node-1", [0xF1; 64]),
+            ("route-node-2", [0xF2; 64]),
+            ("route-node-3", [0xF3; 64]),
+            ("route-node-4", [0xF4; 64]),
+        ],
+        MeshTestScenario::ConvergenceTimeline => vec![
+            ("join-mesh-1", [0x61; 64]),
+            ("join-mesh-2", [0x62; 64]),
+            ("join-mesh-3", [0x63; 64]),
+            ("join-mesh-4", [0x64; 64]),
+            ("join-mesh-5", [0x65; 64]),
+            ("join-mesh-6", [0x66; 64]),
+        ],
+        MeshTestScenario::PartitionRecovery => vec![
+            ("partition-1", [0x71; 64]),
+            ("partition-2", [0x72; 64]),
+            ("partition-3", [0x73; 64]),
+            ("partition-4", [0x74; 64]),
+            ("partition-5", [0x75; 64]),
+        ],
+        MeshTestScenario::StabilityMetrics => vec![
+            ("metrics-a", [0x8A; 64]),
+            ("metrics-b", [0x8B; 64]),
+            ("metrics-c", [0x8C; 64]),
+            ("metrics-d", [0x8D; 64]),
+        ],
+    }
+}
+
+pub fn run_mesh_scenario(scenario: MeshTestScenario) -> anyhow::Result<()> {
+    let nodes = mesh_scenario_nodes(&scenario);
+    match scenario {
+        MeshTestScenario::FiveNodeMesh => {
+            let (_identities, topology) = create_mesh_topology_from_nodes(&nodes)?;
+            assert!(verify_mesh_fully_connected(&topology, 4), "5-node mesh should be fully connected with 4 peers each");
+        }
+        MeshTestScenario::NodeDepartureAndRejoin => {
+            simulate_node_departure_and_rejoin(&nodes)?;
+        }
+        MeshTestScenario::RandomRestarts => {
+            simulate_random_restarts(&nodes, &[1, 3])?;
+        }
+        MeshTestScenario::RoutingVerification => {
+            simulate_routing_verification(&nodes)?;
+        }
+        MeshTestScenario::ConvergenceTimeline => {
+            let identities = create_identities_from_nodes(&nodes)?;
+            build_incremental_mesh_and_verify(&identities);
+        }
+        MeshTestScenario::PartitionRecovery => {
+            simulate_partition_and_recovery(&nodes, &[2, 3])?;
+        }
+        MeshTestScenario::StabilityMetrics => {
+            let (_identities, mut topology) = create_mesh_topology_from_nodes(&nodes)?;
+            simulate_stable_cycles_and_verify(&mut topology, 5, 4);
+        }
+    }
+    Ok(())
+}
+/// Simulate node departure and rejoin in a mesh
+pub fn simulate_node_departure_and_rejoin(nodes: &[(&str, [u8; 64])]) -> anyhow::Result<()> {
+    let (identities, mut topology) = create_mesh_topology_from_nodes(nodes)?;
+    assert!(topology.is_fully_connected(), "Initial mesh should be fully connected");
+    // Remove node B from network
+    topology.deactivate_node(1);
+    assert_eq!(topology.get_active_node_count(), nodes.len() - 1, "Should have {} active nodes", nodes.len() - 1);
+    // Node B rejoins with same NodeId
+    let node_b_restarted = create_test_identity_with_seed(nodes[1].0, nodes[1].1)?;
+    assert_eq!(identities[1].node_id, node_b_restarted.node_id, "Node B must have same NodeId after restart");
+    // Reactivate in topology
+    topology.reactivate_node(1);
+    assert!(topology.is_fully_connected(), "Mesh should be fully connected after node rejoin");
+    Ok(())
+}
+
+/// Simulate random node restarts in a mesh
+pub fn simulate_random_restarts(nodes: &[(&str, [u8; 64])], deactivate: &[usize]) -> anyhow::Result<()> {
+    let (_identities, mut topology) = create_mesh_topology_from_nodes(nodes)?;
+    assert!(topology.is_fully_connected(), "Initial mesh should be connected");
+    // Deactivate nodes
+    for &idx in deactivate { topology.deactivate_node(idx); }
+    assert_eq!(topology.get_active_node_count(), nodes.len() - deactivate.len(), "Should have {} active nodes after deactivation", nodes.len() - deactivate.len());
+    // Reactivate nodes
+    for &idx in deactivate { topology.reactivate_node(idx); }
+    // Verify all nodes reconnected
+    assert_eq!(topology.get_active_node_count(), nodes.len(), "All nodes should be active again");
+    assert!(verify_mesh_fully_connected(&topology, nodes.len() - 1), "Network should be fully connected after restarts");
+    Ok(())
+}
+
+/// Simulate mesh partition and recovery
+pub fn simulate_partition_and_recovery(nodes: &[(&str, [u8; 64])], partition: &[usize]) -> anyhow::Result<()> {
+    let (_identities, mut topology) = create_mesh_topology_from_nodes(nodes)?;
+    assert!(topology.is_fully_connected(), "Initial mesh fully connected");
+    // Simulate partition - remove nodes
+    for &idx in partition { topology.deactivate_node(idx); }
+    assert_eq!(topology.get_active_node_count(), nodes.len() - partition.len(), "{} nodes should remain active", nodes.len() - partition.len());
+    // Heal partition - reactivate nodes
+    for &idx in partition { topology.reactivate_node(idx); }
+    // Verify network is whole again
+    assert!(topology.is_fully_connected(), "Mesh should recover after partition healing");
+    assert_eq!(topology.get_active_node_count(), nodes.len(), "All nodes should be reconnected");
+    Ok(())
+}
+
+/// Simulate mesh routing verification
+pub fn simulate_routing_verification(nodes: &[(&str, [u8; 64])]) -> anyhow::Result<()> {
+    let (_identities, topology) = create_mesh_topology_from_nodes(nodes)?;
+    verify_all_routing_paths(&topology);
+    Ok(())
+}
 /// Build mesh incrementally and verify full connectivity after each addition
 pub fn build_incremental_mesh_and_verify(identities: &[lib_identity::ZhtpIdentity]) {
     let mut topology = MeshTopology::new();
