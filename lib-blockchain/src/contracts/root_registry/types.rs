@@ -478,6 +478,119 @@ pub struct VCReference {
 }
 
 // ============================================================================
+// Verification Proof for Domain Registration (Phase 5)
+// ============================================================================
+
+/// Zero-knowledge proof data for verification
+/// 
+/// This is a minimal representation - actual ZK proof data comes from lib-proofs
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZkProofData {
+    /// Proof bytes (format depends on proof system)
+    pub proof_data: Vec<u8>,
+    /// Public inputs to the proof
+    pub public_inputs: Vec<u8>,
+}
+
+/// Verification proof for domain registration operations
+///
+/// [Phase 5] Required for all .sov root issuance. Proves possession of
+/// identity credentials meeting the required verification level.
+///
+/// # Invariants
+/// - Proof is scoped to the specific registration operation (non-replayable)
+/// - Credential reference allows verification without embedding full credential
+/// - Context hash binds proof to domain name and operation
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationProof {
+    /// Reference to the credential (ID or hash)
+    pub credential_ref: [u8; 32],
+    /// ZK proof demonstrating possession and validity
+    pub zk_proof: ZkProofData,
+    /// Context hash: hash(domain_name || operation || nonce)
+    /// Ensures proof cannot be replayed for different operations
+    pub context: [u8; 32],
+    /// Nonce used in context hash (for verification)
+    pub nonce: u64,
+}
+
+impl VerificationProof {
+    /// Create a new verification proof
+    pub fn new(
+        credential_ref: [u8; 32],
+        proof_data: Vec<u8>,
+        public_inputs: Vec<u8>,
+        context: [u8; 32],
+        nonce: u64,
+    ) -> Self {
+        Self {
+            credential_ref,
+            zk_proof: ZkProofData {
+                proof_data,
+                public_inputs,
+            },
+            context,
+            nonce,
+        }
+    }
+
+    /// Check if the proof data is non-empty (basic validity)
+    pub fn has_proof_data(&self) -> bool {
+        !self.zk_proof.proof_data.is_empty()
+    }
+}
+
+/// Errors related to domain verification
+///
+/// [Phase 5] Explicit, typed errors for verification failures.
+/// Fails loudly and deterministically per invariant V7.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VerificationError {
+    /// Verification level insufficient for the domain class
+    InsufficientLevel {
+        required: VerificationLevel,
+        provided: VerificationLevel,
+    },
+    /// No verification proof provided
+    MissingProof,
+    /// Verification proof is invalid or malformed  
+    InvalidProof { reason: String },
+    /// Credential has expired
+    CredentialExpired { expired_at: Timestamp },
+    /// Context hash mismatch (potential replay attack)
+    ContextMismatch,
+    /// L0 (unverified) cannot register any .sov domain
+    L0NotAllowedForSov,
+}
+
+impl std::fmt::Display for VerificationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VerificationError::InsufficientLevel { required, provided } => {
+                write!(f, "Insufficient verification level: required {:?}, provided {:?}", required, provided)
+            }
+            VerificationError::MissingProof => {
+                write!(f, "Verification proof required for .sov domain registration")
+            }
+            VerificationError::InvalidProof { reason } => {
+                write!(f, "Invalid verification proof: {}", reason)
+            }
+            VerificationError::CredentialExpired { expired_at } => {
+                write!(f, "Credential expired at timestamp {}", expired_at)
+            }
+            VerificationError::ContextMismatch => {
+                write!(f, "Verification proof context mismatch (possible replay)")
+            }
+            VerificationError::L0NotAllowedForSov => {
+                write!(f, "L0 (unverified) identities cannot register .sov domains")
+            }
+        }
+    }
+}
+
+impl std::error::Error for VerificationError {}
+
+// ============================================================================
 // Transfer and Renewal History
 // ============================================================================
 

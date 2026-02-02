@@ -1,4 +1,8 @@
 //! Root registry contract implementation (authoritative on-chain state).
+//!
+//! [Phase 5] Implements verification requirements for .sov domain registration.
+//! Root-level issuance requires identity-anchored proofs with graduated access
+//! control based on domain classification.
 
 use std::collections::HashMap;
 
@@ -6,7 +10,8 @@ use super::delegation_tree::DelegationTree;
 use super::namespace_policy::NamespacePolicy;
 use super::types::{
     hash_name, normalize_name, DaoId, LegacyDomainRecord, NameClass, NameHash,
-    NameStatus, VerificationLevel, WelfareSector, ZoneController, PublicKey,
+    NameStatus, VerificationLevel, VerificationProof,
+    WelfareSector, ZoneController, PublicKey,
 };
 
 /// Simplified internal record for RootRegistry core operations
@@ -55,7 +60,84 @@ impl RootRegistry {
         self.records.get(name_hash).map(|stored| self.load_record(stored))
     }
 
+    /// Register a commercial .sov domain with verification
+    ///
+    /// [Phase 5] Root-level .sov issuance requires identity-anchored proofs.
+    /// Commercial roots require L2 (Verified Entity) minimum.
+    ///
+    /// # Arguments
+    /// * `name` - Domain name to register (e.g., "shoes.sov")
+    /// * `owner` - Owner's public key
+    /// * `verification_level` - Claimed verification level of the registrant
+    /// * `verification_proof` - ZK proof demonstrating claimed level
+    /// * `now` - Current timestamp
+    /// * `expires_at` - Expiration timestamp
+    ///
+    /// # Errors
+    /// * Returns error if verification level is insufficient (L0 always rejected)
+    /// * Returns error if verification proof is missing or invalid
+    /// * Returns error for reserved, welfare, or dao-prefixed names
+    ///
+    /// # Invariants (Phase 5)
+    /// * V1: .sov root issuance is impossible without verification
+    /// * V2: Verification requirements are name-class dependent
+    /// * V7: Missing verification fails loudly and deterministically
     pub fn register_commercial(
+        &mut self,
+        name: &str,
+        owner: PublicKey,
+        verification_level: VerificationLevel,
+        verification_proof: Option<&VerificationProof>,
+        now: u64,
+        expires_at: u64,
+    ) -> Result<NameHash, String> {
+        let normalized = normalize_name(name);
+        let classification = self.policy.classify_name(&normalized);
+
+        match classification {
+            NameClass::Reserved { .. } => {
+                return Err("Reserved namespaces cannot be registered via commercial path".to_string());
+            }
+            NameClass::WelfareChild { .. } => {
+                return Err("Welfare namespaces cannot be registered via commercial path".to_string());
+            }
+            NameClass::DaoPrefixed { .. } => {
+                // Phase 2 (Issue #657): dao.* names are VIRTUAL and cannot be registered
+                // They are resolved at query time from the parent's governance_pointer
+                return Err("dao.* names are virtual and cannot be registered. Use resolution to access governance.".to_string());
+            }
+            NameClass::Commercial { .. } => {}
+        }
+
+        // [Phase 5] Verify identity before registration
+        // This is the critical security gate - must happen BEFORE any state changes
+        self.policy
+            .verify(&classification, verification_level, verification_proof, now, None)
+            .map_err(|e| e.to_string())?;
+
+        self.insert_record_with_verification(
+            normalized,
+            owner,
+            classification,
+            verification_level,
+            now,
+            expires_at,
+            None,
+        )
+    }
+
+    /// Register a commercial domain without verification (for testing/migration only)
+    ///
+    /// # WARNING
+    /// This method bypasses Phase 5 verification requirements.
+    /// It exists ONLY for:
+    /// - Unit tests that don't need to test verification
+    /// - Migration of legacy records
+    /// - Internal use by other registration paths that handle verification themselves
+    ///
+    /// Production code should use `register_commercial()` which enforces verification.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn register_commercial_unverified(
         &mut self,
         name: &str,
         owner: PublicKey,
@@ -73,8 +155,6 @@ impl RootRegistry {
                 return Err("Welfare namespaces cannot be registered via commercial path".to_string());
             }
             NameClass::DaoPrefixed { .. } => {
-                // Phase 2 (Issue #657): dao.* names are VIRTUAL and cannot be registered
-                // They are resolved at query time from the parent's governance_pointer
                 return Err("dao.* names are virtual and cannot be registered. Use resolution to access governance.".to_string());
             }
             NameClass::Commercial { .. } => {}
@@ -316,6 +396,57 @@ impl RootRegistry {
         }
     }
 
+    /// Insert a record with verified verification level
+    ///
+    /// [Phase 5] This stores the verification level that was validated during registration.
+    fn insert_record_with_verification(
+        &mut self,
+        normalized_name: String,
+        owner: PublicKey,
+        classification: NameClass,
+        verification_level: VerificationLevel,
+        now: u64,
+        expires_at: u64,
+        governance_pointer: Option<DaoId>,
+    ) -> Result<NameHash, String> {
+        let name_hash = hash_name(&normalized_name);
+        if self.records.contains_key(&name_hash) {
+            return Err("Name already registered".to_string());
+        }
+
+        let parent_hash = parent_hash(&normalized_name);
+        let depth = parent_hash.map(|_| 1u8).unwrap_or(0);
+
+        let record = CoreNameRecord {
+            name_hash,
+            owner,
+            controller: None,
+            zone_controller: None,
+            parent: parent_hash,
+            depth,
+            classification,
+            verification_level, // [Phase 5] Store the verified level
+            governance_pointer,
+            status: NameStatus::Active,
+            expires_at,
+            grace_ends_at: None,
+        };
+
+        if let Some(parent) = record.parent {
+            self.delegation_tree.add_child(parent, name_hash);
+        }
+
+        self.records.insert(name_hash, CoreStoredRecord::V2(record));
+        let _ = now;
+        Ok(name_hash)
+    }
+
+    /// Insert a record without verification (legacy/test support)
+    ///
+    /// # Warning
+    /// This sets verification_level to L0. Only use for:
+    /// - Legacy record migration
+    /// - Tests that don't test verification
     fn insert_record(
         &mut self,
         normalized_name: String,
