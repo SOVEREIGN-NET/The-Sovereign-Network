@@ -254,20 +254,34 @@ impl BlockExecutor {
         }
 
         // =====================================================================
-        // Step 3: Apply transactions sequentially
+        // Step 3: Apply transactions (Phase 3C: two-pass for fee routing)
         // =====================================================================
 
-        for (index, tx) in block.transactions.iter().enumerate() {
-            // 3a: Stateless validation
+        // Phase 3C: Process non-coinbase transactions first to calculate fees
+        // Then process coinbase with the collected fees for proper routing.
+
+        let coinbase_tx = if coinbase_count == 1 {
+            Some(&block.transactions[0])
+        } else {
+            None
+        };
+
+        // 3a: Process non-coinbase transactions first
+        let non_coinbase_start = if coinbase_count == 1 { 1 } else { 0 };
+
+        for (rel_index, tx) in block.transactions[non_coinbase_start..].iter().enumerate() {
+            let index = rel_index + non_coinbase_start;
+
+            // Stateless validation
             self.validate_tx_stateless(tx)
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
 
-            // 3b: Stateful validation (reads only)
+            // Stateful validation (reads only)
             self.validate_tx_stateful(tx)
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
 
-            // 3c: Apply transaction (writes)
-            let tx_result = self.apply_transaction(&mutator, tx, block_height)
+            // Apply transaction (writes)
+            let tx_result = self.apply_non_coinbase_tx(&mutator, tx, block_height)
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
 
             // Accumulate results
@@ -280,10 +294,26 @@ impl BlockExecutor {
                 TxOutcome::TokenTransfer(_outcome) => {
                     summary.balance_changes += 2; // sender + receiver
                 }
-                TxOutcome::Coinbase(outcome) => {
-                    summary.utxos_created += outcome.outputs_created;
+                TxOutcome::Coinbase(_) => {
+                    // Should not happen - coinbase filtered out
+                    unreachable!("Coinbase should not be in non-coinbase pass");
                 }
             }
+        }
+
+        // 3b: Process coinbase with collected fees (Phase 3C)
+        if let Some(coinbase) = coinbase_tx {
+            self.validate_tx_stateless(coinbase)
+                .map_err(|e| BlockApplyError::TxFailed { index: 0, reason: e })?;
+
+            let coinbase_result = self.apply_coinbase_with_fees(
+                &mutator,
+                coinbase,
+                block_height,
+                total_fees,
+            ).map_err(|e| BlockApplyError::TxFailed { index: 0, reason: e })?;
+
+            summary.utxos_created += coinbase_result.outputs_created;
         }
 
         // =====================================================================
@@ -534,12 +564,16 @@ impl BlockExecutor {
                 Ok(TxOutcome::Transfer(outcome))
             }
             TransactionType::Coinbase => {
+                // Legacy path: no fees passed (for backwards compatibility in tests)
+                let fee_sink = self.config.protocol_params.fee_sink_address();
                 let outcome = tx_apply::apply_coinbase(
                     mutator,
                     tx,
                     &tx_hash,
                     block_height,
                     self.config.block_reward,
+                    0, // No fees in legacy path
+                    fee_sink,
                 )?;
                 Ok(TxOutcome::Coinbase(outcome))
             }
@@ -587,6 +621,58 @@ impl BlockExecutor {
                 format!("{:?}", tx.transaction_type)
             )),
         }
+    }
+
+    /// Apply a non-coinbase transaction (Phase 3C helper)
+    ///
+    /// This is used in the first pass to process all fee-paying transactions
+    /// before processing coinbase with the collected fees.
+    fn apply_non_coinbase_tx(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<TxOutcome, TxApplyError> {
+        // Coinbase should not be passed to this method
+        if tx.transaction_type == TransactionType::Coinbase {
+            return Err(TxApplyError::InvalidType(
+                "Coinbase should not be processed in non-coinbase pass".to_string()
+            ));
+        }
+
+        // Delegate to existing apply_transaction for non-coinbase types
+        self.apply_transaction(mutator, tx, block_height)
+    }
+
+    /// Apply coinbase transaction with collected fees (Phase 3C)
+    ///
+    /// This is called after all non-coinbase transactions are processed,
+    /// so we know the total fees to route to the fee sink.
+    fn apply_coinbase_with_fees(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+        fees_collected: u64,
+    ) -> Result<CoinbaseOutcome, TxApplyError> {
+        if tx.transaction_type != TransactionType::Coinbase {
+            return Err(TxApplyError::InvalidType(
+                "Expected coinbase transaction".to_string()
+            ));
+        }
+
+        let tx_hash = hash_transaction(tx);
+        let fee_sink_address = self.config.protocol_params.fee_sink_address();
+
+        tx_apply::apply_coinbase(
+            mutator,
+            tx,
+            &tx_hash,
+            block_height,
+            self.config.block_reward,
+            fees_collected,
+            fee_sink_address,
+        )
     }
 }
 
@@ -789,6 +875,7 @@ mod tests {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -815,6 +902,7 @@ mod tests {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 

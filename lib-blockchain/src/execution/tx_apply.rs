@@ -318,16 +318,31 @@ pub fn apply_token_transfer(
     mutator.transfer_token(token, from, to, amount)
 }
 
-/// Apply a coinbase transaction (block reward)
+/// Apply a coinbase transaction (block reward + fee collection)
 ///
 /// Coinbase creates new value - no inputs are spent.
-/// The reward is distributed equally among outputs.
+/// Phase 3C: Coinbase includes both block reward and collected fees.
+///
+/// # Arguments
+/// * `mutator` - State mutator for creating UTXOs
+/// * `tx` - The coinbase transaction
+/// * `tx_hash` - Hash of the transaction
+/// * `block_height` - Current block height
+/// * `block_reward` - Expected block reward amount
+/// * `fees_collected` - Total fees collected from non-coinbase transactions
+/// * `fee_sink_address` - Deterministic address for fee collection
+///
+/// # Validation (Phase 3C)
+/// - If fees_collected > 0, one output MUST go to fee_sink_address with that amount
+/// - Total coinbase output = block_reward + fees_collected
 pub fn apply_coinbase(
     mutator: &StateMutator<'_>,
     tx: &Transaction,
     tx_hash: &Hash,
     block_height: u64,
-    expected_reward: u64,
+    block_reward: u64,
+    fees_collected: u64,
+    fee_sink_address: &Address,
 ) -> TxApplyResult<CoinbaseOutcome> {
     use crate::storage::TxHash;
 
@@ -342,12 +357,54 @@ pub fn apply_coinbase(
         return Err(TxApplyError::Internal("Coinbase must have outputs".to_string()));
     }
 
-    // Distribute reward equally among outputs
-    let output_count = tx.outputs.len() as u64;
-    let amount_per_output = expected_reward / output_count;
-    let remainder = expected_reward % output_count;
+    let expected_total = block_reward.saturating_add(fees_collected);
+
+    // Phase 3C: Validate fee sink output if fees were collected
+    let mut fee_sink_output_found = false;
+    let mut fee_sink_output_amount: u64 = 0;
+
+    // First pass: validate structure and find fee sink output
+    for output in tx.outputs.iter() {
+        let output_address = Address::new(
+            output.recipient.as_bytes().try_into().unwrap_or([0u8; 32])
+        );
+
+        if &output_address == fee_sink_address {
+            fee_sink_output_found = true;
+            // For coinbase, amount is in the commitment or we derive from expected
+            // Since we're distributing, we'll track the fee sink output
+            fee_sink_output_amount = fees_collected;
+        }
+    }
+
+    // If fees were collected, fee sink output is mandatory
+    if fees_collected > 0 && !fee_sink_output_found {
+        return Err(TxApplyError::MissingField(format!(
+            "Coinbase must include fee sink output for {} collected fees",
+            fees_collected
+        )));
+    }
+
+    // Calculate distribution: reward goes to non-fee-sink outputs, fees go to fee sink
+    let reward_output_count = if fees_collected > 0 {
+        tx.outputs.len().saturating_sub(1) as u64
+    } else {
+        tx.outputs.len() as u64
+    };
+
+    let amount_per_reward_output = if reward_output_count > 0 {
+        block_reward / reward_output_count
+    } else {
+        0
+    };
+    let reward_remainder = if reward_output_count > 0 {
+        block_reward % reward_output_count
+    } else {
+        0
+    };
 
     let mut total_output: u64 = 0;
+    let mut reward_output_index = 0;
 
     for (index, output) in tx.outputs.iter().enumerate() {
         let outpoint = OutPoint::new(
@@ -355,16 +412,28 @@ pub fn apply_coinbase(
             index as u32,
         );
 
-        // First output gets remainder
-        let amount = if index == 0 {
-            amount_per_output + remainder
+        let output_address = Address::new(
+            output.recipient.as_bytes().try_into().unwrap_or([0u8; 32])
+        );
+
+        // Determine amount based on output type
+        let amount = if &output_address == fee_sink_address && fees_collected > 0 {
+            // This is the fee sink output
+            fees_collected
         } else {
-            amount_per_output
+            // This is a reward output
+            let amt = if reward_output_index == 0 {
+                amount_per_reward_output + reward_remainder
+            } else {
+                amount_per_reward_output
+            };
+            reward_output_index += 1;
+            amt
         };
 
         let utxo = Utxo {
             amount,
-            owner: Address::new(output.recipient.as_bytes().try_into().unwrap_or([0u8; 32])),
+            owner: output_address,
             token: TokenId::NATIVE,
             created_at_height: block_height,
             script: None,
@@ -374,9 +443,20 @@ pub fn apply_coinbase(
         total_output = total_output.saturating_add(amount);
     }
 
+    // Verify total output matches expected
+    if total_output != expected_total {
+        return Err(TxApplyError::ValueMismatch {
+            inputs: expected_total,
+            outputs: total_output,
+            fee: 0,
+        });
+    }
+
     Ok(CoinbaseOutcome {
         outputs_created: tx.outputs.len(),
-        total_reward: total_output,
+        total_reward: block_reward,
+        fees_collected,
+        fee_sink_credited: fee_sink_output_found && fees_collected > 0,
     })
 }
 
@@ -398,4 +478,8 @@ pub struct TransferOutcome {
 pub struct CoinbaseOutcome {
     pub outputs_created: usize,
     pub total_reward: u64,
+    /// Phase 3C: Fees collected and routed to fee sink
+    pub fees_collected: u64,
+    /// Phase 3C: Whether fee sink was credited
+    pub fee_sink_credited: bool,
 }

@@ -6,10 +6,14 @@
 use serde::{Serialize, Deserialize};
 
 /// Transaction types supported by ZHTP blockchain
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TransactionType {
     /// Standard value transfer between accounts
     Transfer,
+    /// Coinbase transaction (block reward, no inputs)
+    Coinbase,
+    /// Token transfer (balance model, not UTXO)
+    TokenTransfer,
     /// Identity registration on blockchain (delegates to lib-identity)
     IdentityRegistration,
     /// Identity update/modification (delegates to lib-identity)  
@@ -57,6 +61,15 @@ pub enum TransactionType {
     /// Validates that tribute_amount == profit_amount * 20 / 100.
     /// Integrates with TributeRouter for enforcement.
     ProfitDeclaration,
+    /// Token governance configuration update (Phase 3D)
+    ///
+    /// Allows authorized governance addresses to update specific token configuration:
+    /// - set_fee_schedule: Update fee parameters
+    /// - set_transfer_policy: Switch between supported policies (not ComplianceGated)
+    /// - pause/unpause: Emergency circuit breaker
+    ///
+    /// Requires: caller has Governance role in token's authorities
+    GovernanceConfigUpdate,
 }
 
 impl TransactionType {
@@ -82,6 +95,16 @@ impl TransactionType {
         matches!(self, TransactionType::Transfer)
     }
 
+    /// Check if this is a coinbase (block reward) transaction
+    pub fn is_coinbase(&self) -> bool {
+        matches!(self, TransactionType::Coinbase)
+    }
+
+    /// Check if this is a token transfer transaction
+    pub fn is_token_transfer(&self) -> bool {
+        matches!(self, TransactionType::TokenTransfer)
+    }
+
     /// Check if this transaction type relates to validator management
     pub fn is_validator_transaction(&self) -> bool {
         matches!(self,
@@ -105,6 +128,8 @@ impl TransactionType {
     pub fn description(&self) -> &'static str {
         match self {
             TransactionType::Transfer => "Standard value transfer",
+            TransactionType::Coinbase => "Block reward (coinbase)",
+            TransactionType::TokenTransfer => "Token transfer (balance model)",
             TransactionType::IdentityRegistration => "Identity registration",
             TransactionType::IdentityUpdate => "Identity update",
             TransactionType::IdentityRevocation => "Identity revocation",
@@ -124,6 +149,7 @@ impl TransactionType {
             TransactionType::DifficultyUpdate => "Difficulty parameter update (via DAO governance)",
             TransactionType::UBIClaim => "UBI claim - citizen-initiated claim from pool",
             TransactionType::ProfitDeclaration => "Profit declaration - enforces 20% tribute",
+            TransactionType::GovernanceConfigUpdate => "Token governance configuration update",
         }
     }
 
@@ -131,6 +157,8 @@ impl TransactionType {
     pub fn as_str(&self) -> &'static str {
         match self {
             TransactionType::Transfer => "transfer",
+            TransactionType::Coinbase => "coinbase",
+            TransactionType::TokenTransfer => "token_transfer",
             TransactionType::IdentityRegistration => "identity_registration",
             TransactionType::IdentityUpdate => "identity_update",
             TransactionType::IdentityRevocation => "identity_revocation",
@@ -150,6 +178,7 @@ impl TransactionType {
             TransactionType::DifficultyUpdate => "difficulty_update",
             TransactionType::UBIClaim => "ubi_claim",
             TransactionType::ProfitDeclaration => "profit_declaration",
+            TransactionType::GovernanceConfigUpdate => "governance_config_update",
         }
     }
 
@@ -157,6 +186,8 @@ impl TransactionType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "transfer" => Some(TransactionType::Transfer),
+            "coinbase" => Some(TransactionType::Coinbase),
+            "token_transfer" => Some(TransactionType::TokenTransfer),
             "identity_registration" => Some(TransactionType::IdentityRegistration),
             "identity_update" => Some(TransactionType::IdentityUpdate),
             "identity_revocation" => Some(TransactionType::IdentityRevocation),
@@ -176,8 +207,14 @@ impl TransactionType {
             "difficulty_update" => Some(TransactionType::DifficultyUpdate),
             "ubi_claim" => Some(TransactionType::UBIClaim),
             "profit_declaration" => Some(TransactionType::ProfitDeclaration),
+            "governance_config_update" => Some(TransactionType::GovernanceConfigUpdate),
             _ => None,
         }
+    }
+
+    /// Check if this transaction type is a governance config update
+    pub fn is_governance_config_update(&self) -> bool {
+        matches!(self, TransactionType::GovernanceConfigUpdate)
     }
 
     /// Check if this transaction type relates to UBI (pull-based claims vs system-initiated distribution)

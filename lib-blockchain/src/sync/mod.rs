@@ -1,4 +1,4 @@
-//! Block Synchronization Module (Phase 3A)
+//! Block Synchronization Module (Phase 3A/3E)
 //!
 //! Provides deterministic export/import for chain sync without genesis regeneration
 //! and without full memory loads.
@@ -10,7 +10,11 @@
 //! 3. **Atomic failure** - If any block fails, stop immediately; state reflects last committed block
 //! 4. **Deterministic** - Same blocks always produce same state
 //!
-//! # Usage
+//! # Phase 3E: Snapshot and Fast Sync
+//!
+//! The snapshot module provides fast sync via state snapshots:
+//! - `Snapshot::snapshot_at(height)` - Capture complete state at a height
+//! - `Snapshot::restore(snapshot_id)` - Restore state from a snapshot
 //!
 //! ```ignore
 //! // Export blocks from an existing chain
@@ -18,7 +22,17 @@
 //!
 //! // Import blocks to a fresh store
 //! chain_sync.import_blocks(blocks)?;
+//!
+//! // Or use snapshots for fast sync
+//! let snapshot_id = snapshot_manager.snapshot_at(1000)?;
+//! snapshot_manager.restore(&snapshot_id)?;
 //! ```
+
+pub mod snapshot;
+
+pub use snapshot::{
+    SnapshotError, SnapshotId, SnapshotInfo, SnapshotManager, SnapshotResult,
+};
 
 use std::sync::Arc;
 use thiserror::Error;

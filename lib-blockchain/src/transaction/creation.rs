@@ -181,6 +181,8 @@ impl TransactionBuilder {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         };
 
         // Sign the transaction
@@ -484,6 +486,25 @@ pub mod utils {
             TransactionType::ProfitDeclaration => {
                 // Profit declaration transactions - enforces 20% tribute (Week 7)
                 // Validation will be handled during transaction validation
+            }
+            TransactionType::Coinbase => {
+                // Coinbase transactions must have outputs but no inputs
+                if !inputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidInputs);
+                }
+                if outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidOutputs);
+                }
+            }
+            TransactionType::TokenTransfer => {
+                // Token transfers need outputs
+                if outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidOutputs);
+                }
+            }
+            TransactionType::GovernanceConfigUpdate => {
+                // Governance config updates - validation will be handled during transaction validation
+                // Requires governance_config_data and caller must have Governance role
             }
         }
 

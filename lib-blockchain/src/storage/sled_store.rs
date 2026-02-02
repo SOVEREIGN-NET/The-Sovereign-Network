@@ -167,6 +167,40 @@ impl SledStore {
         Ok(())
     }
 
+    // =========================================================================
+    // Tree Accessors (for snapshot module)
+    // =========================================================================
+
+    /// Get direct access to blocks_by_height tree (for snapshots)
+    pub fn blocks_by_height(&self) -> &Tree {
+        &self.blocks_by_height
+    }
+
+    /// Get direct access to blocks_by_hash tree (for snapshots)
+    pub fn blocks_by_hash(&self) -> &Tree {
+        &self.blocks_by_hash
+    }
+
+    /// Get direct access to utxos tree (for snapshots)
+    pub fn utxos(&self) -> &Tree {
+        &self.utxos
+    }
+
+    /// Get direct access to accounts tree (for snapshots)
+    pub fn accounts(&self) -> &Tree {
+        &self.accounts
+    }
+
+    /// Get direct access to token_balances tree (for snapshots)
+    pub fn token_balances(&self) -> &Tree {
+        &self.token_balances
+    }
+
+    /// Get direct access to meta tree (for snapshots)
+    pub fn meta(&self) -> &Tree {
+        &self.meta
+    }
+
     /// Check if a transaction is active
     fn require_transaction(&self) -> StorageResult<()> {
         if !self.tx_active.load(Ordering::SeqCst) {

@@ -18,6 +18,7 @@ pub use core::{
     UbiClaimData,
     ProfitDeclarationData,
     RevenueSource,
+    TokenTransferData,
     TransactionInput,
     TransactionOutput,
     IdentityTransactionData,

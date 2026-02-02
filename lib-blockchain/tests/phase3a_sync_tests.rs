@@ -136,6 +136,7 @@ fn create_token_transfer_tx(
             amount,
             nonce: 0,
         }),
+        governance_config_data: None,
     }
 }
 

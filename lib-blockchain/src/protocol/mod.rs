@@ -1,9 +1,9 @@
-//! Protocol Parameters Module (Phase 3B)
+//! Protocol Parameters Module (Phase 3B/3C)
 //!
 //! Defines consensus-critical protocol parameters that govern blockchain behavior.
 //! These parameters are set at genesis and can be updated through governance.
 //!
-//! # Fee Model Versioning
+//! # Fee Model Versioning (Phase 3B)
 //!
 //! The fee model version determines which fee calculation rules apply to a block:
 //!
@@ -14,6 +14,15 @@
 //! - At heights < activation: version 1 required, version 2 forbidden
 //! - At heights >= activation: version 2 required, version 1 forbidden
 //!
+//! # Fee Distribution (Phase 3C)
+//!
+//! All network fees are accumulated per block into a deterministic sink address.
+//! The coinbase transaction includes:
+//! - Block reward output (if any)
+//! - Fees collected output to `fee_sink_address`
+//!
+//! Invariant: sum(inputs) - sum(outputs excluding coinbase) == fees_collected
+//!
 //! # Design Principles
 //!
 //! 1. **Deterministic**: All nodes compute the same active version for any height
@@ -23,6 +32,8 @@
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::storage::Address;
 
 /// Fee model version constants
 pub mod fee_model {
@@ -63,6 +74,19 @@ pub struct ProtocolParams {
     ///
     /// Set to 0 for chains that start with v2 (Phase 2+).
     pub fee_model_active_from_height_v2: u64,
+
+    /// Deterministic sink address for all network fees (Phase 3C).
+    ///
+    /// All transaction fees collected in a block are sent to this address
+    /// as part of the coinbase transaction. This ensures deterministic
+    /// fee routing that all nodes can verify.
+    #[serde(default = "default_fee_sink_address")]
+    pub fee_sink_address: Address,
+}
+
+/// Default fee sink address (all zeros - must be set in genesis for production)
+fn default_fee_sink_address() -> Address {
+    Address::new([0u8; 32])
 }
 
 impl Default for ProtocolParams {
@@ -70,6 +94,7 @@ impl Default for ProtocolParams {
         Self {
             // Default: Fee Model v2 active from genesis (Phase 2+)
             fee_model_active_from_height_v2: 0,
+            fee_sink_address: default_fee_sink_address(),
         }
     }
 }
@@ -79,6 +104,7 @@ impl ProtocolParams {
     pub fn new_v2_from_genesis() -> Self {
         Self {
             fee_model_active_from_height_v2: 0,
+            fee_sink_address: default_fee_sink_address(),
         }
     }
 
@@ -86,7 +112,19 @@ impl ProtocolParams {
     pub fn new_with_v2_activation(activation_height: u64) -> Self {
         Self {
             fee_model_active_from_height_v2: activation_height,
+            fee_sink_address: default_fee_sink_address(),
         }
+    }
+
+    /// Create new protocol params with custom fee sink address
+    pub fn with_fee_sink(mut self, fee_sink_address: Address) -> Self {
+        self.fee_sink_address = fee_sink_address;
+        self
+    }
+
+    /// Get the fee sink address
+    pub fn fee_sink_address(&self) -> &Address {
+        &self.fee_sink_address
     }
 
     /// Get the required fee model version for a given block height.
