@@ -29,6 +29,8 @@ pub mod validation;
 pub mod fees;
 pub mod sync;
 pub mod protocol;
+pub mod resources;
+pub mod snapshot;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
@@ -85,6 +87,9 @@ pub use fork_recovery::{ForkPoint, ForkDetector, ForkDetection, ChainEvaluation,
 
 // Sync module (Phase 3A)
 pub use sync::{ChainSync, SyncError, SyncResult, ImportResult};
+
+// Snapshot module (Phase 11)
+pub use snapshot::{Snapshot, SnapshotError, SnapshotResult, snapshot, restore};
 
 // Protocol module (Phase 3B)
 pub use protocol::{ProtocolParams, ProtocolError, ProtocolResult, fee_model, PROTOCOL_PARAMS_KEY};

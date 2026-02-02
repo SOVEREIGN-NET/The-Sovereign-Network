@@ -30,7 +30,7 @@ fn create_executor_with_activation(store: Arc<dyn BlockchainStore>, activation_h
     let protocol_params = ProtocolParams::new_with_v2_activation(activation_height);
     let mut config = ExecutorConfig::default();
     config.protocol_params = protocol_params;
-    BlockExecutor::new(store, config)
+    BlockExecutor::from_config(store, config)
 }
 
 fn create_genesis_block(fee_model_version: u16) -> Block {

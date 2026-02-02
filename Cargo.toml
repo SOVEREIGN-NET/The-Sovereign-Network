@@ -3,6 +3,11 @@ resolver = "2"
 
 members = [
     "lib-types",
+    "lib-fees",
+    "lib-tokens",
+    "lib-governance",
+    "lib-utxo",
+    "lib-mempool",
     "lib-blockchain",
     "lib-client",
     "lib-consensus",
