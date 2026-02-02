@@ -127,6 +127,59 @@ pub fn token_contract_key(token: &TokenId) -> &[u8; 32] {
 }
 
 // =============================================================================
+// IDENTITY KEYS
+// =============================================================================
+// CONSENSUS CORE SPEC: All keys are fixed-size [u8; 32] or [u8; 40].
+// Callers MUST hash DID strings using `did_to_hash()` before calling these.
+// =============================================================================
+
+/// Key for identities tree: did_hash (32 bytes) → IdentityConsensus
+///
+/// The did_hash is blake3(did_string). Caller must hash first.
+/// This function just returns the key for use in sled operations.
+#[inline]
+pub fn identity_key(did_hash: &[u8; 32]) -> &[u8; 32] {
+    did_hash
+}
+
+/// Key for identity_by_owner index: owner address → did_hash
+#[inline]
+pub fn identity_by_owner_key(addr: &Address) -> &[u8; 32] {
+    addr.as_bytes()
+}
+
+/// Key for identity lookup by registration height
+///
+/// Layout: [height: 8 bytes BE][did_hash: 32 bytes] = 40 bytes total
+///
+/// This allows range scans over identities registered at a specific height.
+#[inline]
+pub fn identity_by_height_key(height: u64, did_hash: &[u8; 32]) -> [u8; 40] {
+    let mut key = [0u8; 40];
+    key[..8].copy_from_slice(&height.to_be_bytes());
+    key[8..].copy_from_slice(did_hash);
+    key
+}
+
+/// Get prefix for scanning all identities at a height
+#[inline]
+pub fn identity_height_prefix(height: u64) -> [u8; 8] {
+    height.to_be_bytes()
+}
+
+/// Parse did_hash from an identity_by_height key
+#[inline]
+pub fn parse_identity_by_height_key(key: &[u8]) -> Option<(u64, [u8; 32])> {
+    if key.len() != 40 {
+        return None;
+    }
+    let height = u64::from_be_bytes([key[0], key[1], key[2], key[3], key[4], key[5], key[6], key[7]]);
+    let mut did_hash = [0u8; 32];
+    did_hash.copy_from_slice(&key[8..40]);
+    Some((height, did_hash))
+}
+
+// =============================================================================
 // META KEYS
 // =============================================================================
 
@@ -231,5 +284,67 @@ mod tests {
         assert!(parse_utxo_key(&[0; 37]).is_none()); // too long
         assert!(parse_token_balance_key(&[0; 63]).is_none()); // too short
         assert!(parse_token_balance_key(&[0; 65]).is_none()); // too long
+    }
+
+    /// Helper to hash a DID string (simulates did_to_hash from mod.rs)
+    fn hash_did(did: &str) -> [u8; 32] {
+        blake3::hash(did.as_bytes()).into()
+    }
+
+    #[test]
+    fn test_identity_key_deterministic() {
+        let did = "did:zhtp:abc123def456";
+        let did_hash = hash_did(did);
+        let key1 = identity_key(&did_hash);
+        let key2 = identity_key(&did_hash);
+        assert_eq!(key1, key2);
+        assert_eq!(key1.len(), 32);
+    }
+
+    #[test]
+    fn test_identity_key_unique() {
+        let hash1 = hash_did("did:zhtp:abc123");
+        let hash2 = hash_did("did:zhtp:def456");
+        let key1 = identity_key(&hash1);
+        let key2 = identity_key(&hash2);
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_identity_by_height_key() {
+        let did_hash = hash_did("did:zhtp:test");
+        let key = identity_by_height_key(100, &did_hash);
+        assert_eq!(key.len(), 40);
+
+        // First 8 bytes should be height in BE
+        assert_eq!(&key[..8], &100u64.to_be_bytes());
+
+        // Last 32 bytes should be DID hash
+        assert_eq!(&key[8..], &did_hash);
+    }
+
+    #[test]
+    fn test_identity_by_height_key_roundtrip() {
+        let did_hash = hash_did("did:zhtp:roundtrip");
+        let height = 12345u64;
+        let key = identity_by_height_key(height, &did_hash);
+
+        let (parsed_height, parsed_hash) = parse_identity_by_height_key(&key).unwrap();
+        assert_eq!(parsed_height, height);
+        assert_eq!(parsed_hash, did_hash);
+    }
+
+    #[test]
+    fn test_identity_height_prefix() {
+        let prefix = identity_height_prefix(100);
+        let hash_a = hash_did("did:zhtp:a");
+        let hash_b = hash_did("did:zhtp:b");
+        let key1 = identity_by_height_key(100, &hash_a);
+        let key2 = identity_by_height_key(100, &hash_b);
+        let key3 = identity_by_height_key(101, &hash_a);
+
+        assert!(key1.starts_with(&prefix));
+        assert!(key2.starts_with(&prefix));
+        assert!(!key3.starts_with(&prefix));
     }
 }

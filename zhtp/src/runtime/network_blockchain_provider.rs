@@ -154,20 +154,51 @@ impl Default for ZhtpBlockchainProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::runtime::blockchain_provider::BlockchainProvider;
+
+    // Note: ZhtpBlockchainProvider uses global state via GLOBAL_BLOCKCHAIN_PROVIDER.
+    // Since OnceLock cannot be reset, tests that run after other tests that initialize
+    // the global provider will see different results. These tests verify the underlying
+    // BlockchainProvider logic directly, independent of global state.
 
     #[tokio::test]
-    async fn test_blockchain_not_available_initially() {
-        let provider = ZhtpBlockchainProvider::new();
-        
+    async fn test_blockchain_provider_not_available_initially() {
+        // Test BlockchainProvider directly - fresh instance with no blockchain set
+        let provider = BlockchainProvider::new();
+
         // Should fail gracefully when blockchain not set
-        let result = provider.get_current_height().await;
-        assert!(result.is_err());
+        let result = provider.get_blockchain().await;
+        assert!(result.is_err(), "Fresh provider should not have blockchain available");
+        assert!(result.unwrap_err().to_string().contains("not available"));
     }
 
     #[tokio::test]
-    async fn test_is_available_returns_false_initially() {
-        let provider = ZhtpBlockchainProvider::new();
-        assert!(!provider.is_available().await);
+    async fn test_blockchain_provider_is_available_returns_false_initially() {
+        // Test BlockchainProvider directly - fresh instance with no blockchain set
+        let provider = BlockchainProvider::new();
+        assert!(!provider.is_available().await, "Fresh provider should report not available");
+    }
+
+    #[tokio::test]
+    async fn test_blockchain_provider_available_after_set() {
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+
+        // Verify that setting blockchain makes it available
+        let provider = BlockchainProvider::new();
+        assert!(!provider.is_available().await, "Should start not available");
+
+        // Set a blockchain - use new() which creates a fresh blockchain
+        let blockchain = lib_blockchain::Blockchain::new()
+            .expect("Failed to create test blockchain");
+        let shared = Arc::new(RwLock::new(blockchain));
+        provider.set_blockchain(shared).await.expect("Failed to set blockchain");
+
+        // Now should be available
+        assert!(provider.is_available().await, "Should be available after setting");
+
+        // And get_blockchain should succeed
+        let result = provider.get_blockchain().await;
+        assert!(result.is_ok(), "Should be able to get blockchain after setting");
     }
 }

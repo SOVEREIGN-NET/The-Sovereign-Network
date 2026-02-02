@@ -1397,6 +1397,203 @@ impl ZhtpIdentity {
 
         Ok(())
     }
+
+    // ========================================================================
+    // PHASE 1: SEED RECOVERY METHODS
+    // ========================================================================
+
+    /// Recover identity from a 64-byte identity seed
+    ///
+    /// This is the symmetric counterpart to `new_unified()`. Given the same seed,
+    /// it will produce an identical DID, secrets, and wallet configuration.
+    ///
+    /// # Arguments
+    /// * `identity_seed` - 64-byte identity seed (derived from master seed via HKDF)
+    /// * `identity_type` - Type of identity to recover
+    /// * `age` - Age for Human identities (required for Human type)
+    /// * `jurisdiction` - Jurisdiction for Human identities (required for Human type)
+    /// * `primary_device` - Primary device identifier
+    ///
+    /// # Returns
+    /// Fully recovered ZhtpIdentity with all deterministic fields
+    ///
+    /// # Determinism
+    /// Same seed → same DID, same secrets, same NodeIds (always)
+    pub fn recover_from_seed(
+        identity_seed: [u8; 64],
+        identity_type: IdentityType,
+        age: Option<u64>,
+        jurisdiction: Option<String>,
+        primary_device: &str,
+    ) -> Result<Self> {
+        // Delegate to new_unified with the provided seed
+        // This ensures recovery produces identical results to creation
+        Self::new_unified(
+            identity_type,
+            age,
+            jurisdiction,
+            primary_device,
+            Some(identity_seed),
+        )
+    }
+
+    /// Set the master seed phrase for this identity
+    ///
+    /// This stores the 24-word BIP39 mnemonic that can be used to recover
+    /// the identity. The phrase is stored encrypted and never serialized.
+    ///
+    /// # Arguments
+    /// * `phrase` - The BIP39 recovery phrase
+    ///
+    /// # Security
+    /// - The phrase is stored in memory only (never serialized)
+    /// - Should be encrypted before persistent storage
+    pub fn set_master_seed_phrase(&mut self, phrase: crate::recovery::RecoveryPhrase) {
+        self.master_seed_phrase = Some(phrase);
+    }
+
+    /// Get the seed commitment for on-chain verification
+    ///
+    /// The seed commitment is calculated as:
+    /// Blake3(wallet_master_seed || "ZHTP_SEED_COMMITMENT_V2")
+    ///
+    /// This allows verification that an identity was created from a specific
+    /// seed without revealing the seed itself.
+    ///
+    /// # Returns
+    /// 32-byte seed commitment, or None if wallet_master_seed is zero
+    pub fn get_seed_commitment(&self) -> Option<[u8; 32]> {
+        // Check if wallet_master_seed is properly derived (not zero)
+        if self.wallet_master_seed == [0u8; 64] {
+            return None;
+        }
+
+        // Calculate commitment using same method as recovery module
+        Some(crate::recovery::calculate_seed_commitment(&self.wallet_master_seed))
+    }
+
+    /// Verify that this identity matches a given seed commitment
+    ///
+    /// # Arguments
+    /// * `commitment` - The seed commitment to verify against
+    ///
+    /// # Returns
+    /// `true` if this identity's seed produces the given commitment
+    pub fn verify_seed_commitment(&self, commitment: &[u8; 32]) -> bool {
+        match self.get_seed_commitment() {
+            Some(our_commitment) => {
+                // Constant-time comparison to prevent timing attacks
+                use subtle::ConstantTimeEq;
+                our_commitment.ct_eq(commitment).into()
+            }
+            None => false,
+        }
+    }
+
+    /// Check if this identity has a master seed phrase set
+    pub fn has_master_seed_phrase(&self) -> bool {
+        self.master_seed_phrase.is_some()
+    }
+
+    /// Check if this identity needs migration to V2 format (with seed commitment)
+    ///
+    /// V1 identities were created without seed commitment support.
+    /// V2 identities have seed commitment for on-chain recovery verification.
+    ///
+    /// # Returns
+    /// `true` if identity lacks seed commitment and should be migrated
+    pub fn needs_migration(&self) -> bool {
+        // Identity needs migration if:
+        // 1. It has a valid wallet_master_seed (not zero)
+        // 2. But no master_seed_phrase is set
+        // 3. This indicates it was created before seed phrase support
+        self.wallet_master_seed != [0u8; 64] && self.master_seed_phrase.is_none()
+    }
+
+    /// Migrate identity to V2 format with seed commitment
+    ///
+    /// This upgrades a V1 identity (without seed commitment) to V2 format.
+    /// A new seed phrase is generated or provided, and the seed commitment
+    /// is calculated for on-chain registration.
+    ///
+    /// # Arguments
+    /// * `new_phrase` - Optional BIP39 recovery phrase. If None, generates new one.
+    ///
+    /// # Returns
+    /// `MigrationResult` containing the new seed commitment and phrase
+    ///
+    /// # Note
+    /// The caller is responsible for updating the on-chain identity with
+    /// the new seed commitment returned in the result.
+    pub async fn migrate_to_v2(
+        &mut self,
+        new_phrase: Option<crate::recovery::RecoveryPhrase>,
+    ) -> Result<MigrationResult> {
+        // Check if migration is needed
+        if !self.needs_migration() {
+            return Err(anyhow!(
+                "Identity does not need migration (already has seed phrase or invalid state)"
+            ));
+        }
+
+        // Get or generate the seed phrase
+        let phrase = match new_phrase {
+            Some(p) => p,
+            None => {
+                // Generate a new 24-word seed phrase
+                let mut manager = crate::recovery::RecoveryPhraseManager::new();
+                manager.generate_recovery_phrase(
+                    &self.did,
+                    crate::recovery::PhraseGenerationOptions {
+                        word_count: 24,
+                        language: "english".to_string(),
+                        entropy_source: crate::recovery::EntropySource::SystemRandom,
+                        include_checksum: true,
+                        custom_wordlist: None,
+                    },
+                ).await?
+            }
+        };
+
+        // Store the phrase
+        self.master_seed_phrase = Some(phrase.clone());
+
+        // Calculate the seed commitment
+        let seed_commitment = self.get_seed_commitment()
+            .ok_or_else(|| anyhow!("Failed to calculate seed commitment after migration"))?;
+
+        let migrated_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        tracing::info!(
+            "🔄 Migrated identity {} to V2 format with seed commitment",
+            &self.did[..32.min(self.did.len())]
+        );
+
+        Ok(MigrationResult {
+            did: self.did.clone(),
+            seed_commitment,
+            phrase,
+            migrated_at,
+            wallets_count: self.wallet_manager.wallets.len() as u32,
+        })
+    }
+}
+
+/// Result of migrating an identity to V2 format
+#[derive(Debug, Clone)]
+pub struct MigrationResult {
+    /// The identity's DID
+    pub did: String,
+    /// New seed commitment for on-chain registration
+    pub seed_commitment: [u8; 32],
+    /// The BIP39 recovery phrase (show to user once, then discard)
+    pub phrase: crate::recovery::RecoveryPhrase,
+    /// Timestamp of migration
+    pub migrated_at: u64,
+    /// Number of wallets in the identity
+    pub wallets_count: u32,
 }
 
 #[cfg(test)]
