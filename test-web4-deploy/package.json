@@ -1,0 +1,7 @@
+{
+  "name": "web4-deployment-test",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "mkdir -p out && echo '<html><body><h1>Web4 Test Site - remote.sov</h1><p>Deployment test successful</p></body></html>' > out/index.html"
+  }
+}
