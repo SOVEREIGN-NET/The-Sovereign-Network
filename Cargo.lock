@@ -2769,6 +2769,7 @@ dependencies = [
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
+ "lib-fees",
  "lib-identity",
  "lib-proofs",
  "lib-storage",
@@ -2896,6 +2897,14 @@ dependencies = [
  "tracing",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "lib-fees"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
 ]
 
 [[package]]

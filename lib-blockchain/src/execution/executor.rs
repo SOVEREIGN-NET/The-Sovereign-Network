@@ -46,6 +46,12 @@ use super::tx_apply::{self, StateMutator, TransferOutcome, CoinbaseOutcome};
 
 use crate::protocol::{ProtocolParams, fee_model};
 
+// Re-export lib-fees types for convenience
+pub use lib_fees::{
+    compute_fee_v2, verify_fee, FeeDeficit,
+    FeeInput, FeeParams, TxKind, SigScheme,
+};
+
 // =============================================================================
 // FEE MODEL V2
 // =============================================================================
@@ -53,14 +59,15 @@ use crate::protocol::{ProtocolParams, fee_model};
 /// Fee Model V2 - Detailed computation with exec units, witness caps, etc.
 ///
 /// This is the canonical fee calculation model for Phase 2+.
+/// Uses lib_fees::compute_fee_v2 as the pure computation function.
+///
+/// # BlockExecutor Integration
+///
+/// BlockExecutor MUST reject: `tx.fee < compute_fee_v2(...)`
 #[derive(Debug, Clone)]
 pub struct FeeModelV2 {
-    /// Base fee per byte
-    pub base_fee_per_byte: Amount,
-    /// Fee per execution unit (for smart contracts)
-    pub fee_per_exec_unit: Amount,
-    /// Maximum witness size in bytes
-    pub max_witness_size: usize,
+    /// Fee computation parameters
+    pub fee_params: FeeParams,
     /// Block reward amount (for coinbase)
     pub block_reward: Amount,
     /// Protocol parameters for version checking
@@ -70,9 +77,7 @@ pub struct FeeModelV2 {
 impl Default for FeeModelV2 {
     fn default() -> Self {
         Self {
-            base_fee_per_byte: 1,           // 1 unit per byte
-            fee_per_exec_unit: 10,          // 10 units per exec unit
-            max_witness_size: 65_536,       // 64KB max witness
+            fee_params: FeeParams::default(),
             block_reward: 50_000_000,       // 50 tokens
             protocol_params: ProtocolParams::default(),
         }
@@ -86,9 +91,22 @@ impl FeeModelV2 {
         self
     }
 
+    /// Create with custom fee params
+    pub fn with_fee_params(mut self, params: FeeParams) -> Self {
+        self.fee_params = params;
+        self
+    }
+
     /// Calculate minimum required fee for a transaction
-    pub fn calculate_min_fee(&self, tx_size: usize) -> Amount {
-        (tx_size as Amount) * self.base_fee_per_byte
+    pub fn calculate_min_fee(&self, input: &FeeInput) -> u64 {
+        compute_fee_v2(input, &self.fee_params)
+    }
+
+    /// Verify transaction has paid sufficient fee
+    ///
+    /// Returns `Ok(())` if `paid_fee >= required_fee`, otherwise returns error.
+    pub fn verify_tx_fee(&self, input: &FeeInput, paid_fee: u64) -> Result<(), FeeDeficit> {
+        verify_fee(input, &self.fee_params, paid_fee)
     }
 
     /// Validate fee model version for a block
@@ -102,6 +120,57 @@ impl FeeModelV2 {
             });
         }
         Ok(())
+    }
+
+    /// Convert transaction to FeeInput for fee calculation
+    pub fn tx_to_fee_input(tx: &crate::transaction::Transaction) -> FeeInput {
+        // Determine TxKind from transaction type
+        let kind = match tx.transaction_type {
+            TransactionType::Transfer => TxKind::NativeTransfer,
+            TransactionType::TokenTransfer => TxKind::TokenTransfer,
+            TransactionType::Coinbase => TxKind::NativeTransfer, // Coinbase doesn't pay fees
+            TransactionType::IdentityRegistration |
+            TransactionType::IdentityUpdate |
+            TransactionType::IdentityRevocation => TxKind::Governance,
+            TransactionType::ValidatorRegistration |
+            TransactionType::ValidatorUpdate |
+            TransactionType::DaoProposal |
+            TransactionType::DaoVote |
+            TransactionType::DaoExecution |
+            TransactionType::GovernanceConfigUpdate => TxKind::Governance,
+            TransactionType::UbiDistribution => TxKind::NativeTransfer,
+            TransactionType::ContractDeployment |
+            TransactionType::ContractExecution => TxKind::ContractCall,
+            TransactionType::ContentUpload => TxKind::DataUpload,
+            // Other types default to NativeTransfer pricing
+            TransactionType::SessionCreation |
+            TransactionType::SessionTermination |
+            TransactionType::WalletRegistration => TxKind::NativeTransfer,
+            // Catch-all for any future types
+            _ => TxKind::NativeTransfer,
+        };
+
+        // Determine signature scheme (default to Dilithium5 for quantum safety)
+        let sig_scheme = SigScheme::Dilithium5;
+
+        // Calculate sizes
+        let envelope_bytes = 100; // Header overhead estimate
+        let payload_bytes = tx.memo.len() as u32;
+        // Witness is based on signature size, not ZK proof internals
+        let witness_bytes = (tx.inputs.len() as u32) * sig_scheme.signature_size();
+
+        FeeInput {
+            kind,
+            sig_scheme,
+            sig_count: tx.inputs.len().max(1) as u8,
+            envelope_bytes,
+            payload_bytes,
+            witness_bytes,
+            exec_units: 0,  // Would be set for contract calls
+            state_reads: (tx.inputs.len() + tx.outputs.len()) as u32,
+            state_writes: tx.outputs.len() as u32,
+            state_write_bytes: (tx.outputs.len() * 64) as u32, // Estimate per output
+        }
     }
 }
 
@@ -668,6 +737,48 @@ impl BlockExecutor {
             _ => {}
         }
 
+        // =========================================================================
+        // Fee Validation (Phase 4: Fee Model v2)
+        // =========================================================================
+        // BlockExecutor MUST reject: tx.fee < compute_fee_v2(...)
+        // Coinbase and zero-fee transactions (TokenTransfer in Phase 2) are exempt.
+        self.validate_tx_fee(tx)?;
+
+        Ok(())
+    }
+
+    /// Validate transaction has paid sufficient fee using Fee Model v2
+    ///
+    /// # Rule
+    ///
+    /// BlockExecutor MUST reject: `tx.fee < compute_fee_v2(...)`
+    ///
+    /// # Exemptions
+    ///
+    /// - Coinbase transactions (fee must be 0)
+    /// - TokenTransfer in Phase 2 (fee must be 0, subsidized)
+    fn validate_tx_fee(&self, tx: &crate::transaction::Transaction) -> Result<(), TxApplyError> {
+        // Exempt transactions that don't pay fees
+        match tx.transaction_type {
+            TransactionType::Coinbase => return Ok(()),       // Creates value, no fee
+            TransactionType::TokenTransfer => return Ok(()),  // Phase 2: subsidized
+            _ => {}
+        }
+
+        // Convert transaction to FeeInput
+        let fee_input = FeeModelV2::tx_to_fee_input(tx);
+
+        // Compute required fee using pure function
+        let required_fee = self.fee_model.calculate_min_fee(&fee_input);
+
+        // Verify paid fee >= required fee
+        if tx.fee < required_fee {
+            return Err(TxApplyError::InsufficientFee {
+                required: required_fee,
+                paid: tx.fee,
+            });
+        }
+
         Ok(())
     }
 
@@ -866,6 +977,16 @@ mod tests {
         Arc::new(SledStore::open_temporary().unwrap())
     }
 
+    /// Create executor with testing fee params (minimal fees for tests)
+    fn create_test_executor(store: Arc<dyn BlockchainStore>) -> BlockExecutor {
+        let fee_model = FeeModelV2 {
+            fee_params: FeeParams::for_testing(), // Minimal fees
+            block_reward: 50_000_000,
+            protocol_params: ProtocolParams::default(),
+        };
+        BlockExecutor::new(store, fee_model, BlockLimits::default())
+    }
+
     fn create_genesis_block() -> Block {
         let mut hash_bytes = [0u8; 32];
         hash_bytes[0] = 0x01; // Unique genesis hash
@@ -1022,7 +1143,7 @@ mod tests {
                 note: Hash::default(),
                 recipient: create_dummy_public_key(),
             }],
-            fee: 1,
+            fee: 10_000, // High enough for testing fee params
             signature: create_dummy_signature(),
             memo: vec![],
             identity_data: None,
@@ -1148,7 +1269,7 @@ mod tests {
         use crate::transaction::hashing::hash_transaction;
 
         let store = create_test_store();
-        let executor = BlockExecutor::with_store(store.clone());
+        let executor = create_test_executor(store.clone());
 
         // Apply funded genesis (contains coinbase) - UTXOs created via executor
         let genesis = create_funded_genesis_block();
@@ -1185,7 +1306,7 @@ mod tests {
         use crate::storage::{TokenId, Address};
 
         let store = create_test_store();
-        let executor = BlockExecutor::with_store(store.clone());
+        let executor = create_test_executor(store.clone());
 
         // Apply genesis
         let genesis = create_genesis_block();

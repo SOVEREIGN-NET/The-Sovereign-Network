@@ -1,0 +1,12 @@
+[package]
+name = "lib-fees"
+version = "0.1.0"
+edition = "2021"
+description = "ZHTP Fee Model v2 - Pure deterministic fee computation"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+proptest = "1.0"
