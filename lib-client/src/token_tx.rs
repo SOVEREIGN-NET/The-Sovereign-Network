@@ -120,7 +120,7 @@ fn build_token_transaction(
     // Server calculation: fee = ceil(transaction_size_bytes / 8.4)
     let estimated_tx_size = 200 // minimum fixed fields
         + memo.len() // memo variable size
-        + 2048; // conservative estimate for signature (Dilithium2 is ~2420 bytes)
+        + 3732; // Dilithium2 witness: 2420 byte sig + 1312 byte pk (from lib-blockchain)
 
     // Calculate fee using integer arithmetic: ceil(size / 8.4) = ceil(size * 10 / 84)
     // This ensures: 10083 bytes -> 1200 ZHTP (matches server requirement)
