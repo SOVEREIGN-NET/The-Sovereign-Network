@@ -26,12 +26,6 @@ on:
       ZHTP_KEYSTORE_B64:
         description: 'Base64-encoded tarball of keystore directory'
         required: true
-      ZHTP_SERVER:
-        description: 'QUIC server endpoint (ip:port)'
-        required: false
-      ZHTP_SERVER_SPKI:
-        description: 'Server SPKI pin for TLS verification'
-        required: false
 
 jobs:
   deploy:
@@ -69,15 +63,11 @@ jobs:
 
       - name: Deploy site
         run: |
-          TRUST_ARG="--trust-node"
-          if [ -n "$ZHTP_SERVER_SPKI" ]; then
-            TRUST_ARG="--pin-spki $ZHTP_SERVER_SPKI"
-          fi
           /tmp/zhtp-cli deploy site \
             --domain "${{ inputs.domain }}" \
             --keystore ~/.zhtp/keystore \
             --mode "${{ inputs.deployment_mode }}" \
-            $TRUST_ARG \
+            --pin-spki "$ZHTP_SERVER_SPKI" \
             out/
         env:
           ZHTP_SERVER: ${{ secrets.ZHTP_SERVER }}
