@@ -191,6 +191,18 @@ impl TokenHandler {
         let token_id = generate_custom_token_id(&name, &symbol);
         tracing::warn!("[FLOW] token/create token_id={}", hex::encode(token_id));
 
+        // Check if token already exists (duplicate name+symbol)
+        {
+            let blockchain = self.blockchain.read().await;
+            if blockchain.token_contracts.contains_key(&token_id) {
+                tracing::warn!("[FLOW] token/create: DUPLICATE token_id={}", hex::encode(token_id));
+                return Ok(create_error_response(
+                    ZhtpStatus::Conflict,
+                    format!("Token with name '{}' and symbol '{}' already exists", name, symbol),
+                ));
+            }
+        }
+
         if let Err(e) = self.submit_to_mempool(tx).await {
             tracing::warn!("[FLOW] token/create submit_to_mempool FAILED: {}", e);
             return Ok(create_error_response(
@@ -568,7 +580,9 @@ impl TokenHandler {
         tracing::warn!("[FLOW] decode_signed_tx: len={}", signed_tx.len());
         let tx_bytes = hex::decode(signed_tx)
             .map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
-        tracing::warn!("[FLOW] decode_signed_tx: hex decoded len={}", tx_bytes.len());
+        tracing::warn!("[FLOW] decode_signed_tx: hex decoded len={}, first 20 bytes={:02x?}",
+            tx_bytes.len(),
+            &tx_bytes[..20.min(tx_bytes.len())]);
         let tx: Transaction = bincode::deserialize(&tx_bytes)
             .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
 
