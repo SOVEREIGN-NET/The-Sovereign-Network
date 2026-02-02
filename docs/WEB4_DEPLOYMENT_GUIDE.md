@@ -147,9 +147,9 @@ jobs:
 
 Update these values in the workflow:
 
-1. **Build output path** (line 32): Change `dist/` to your framework's output directory
-2. **Domain** (line 58): Replace `your-site.sov` with your registered domain
-3. **Deployment mode** (line 60): Use `static` or `spa` depending on your site type
+1. **Build output path**: Change `dist/` in the upload artifacts step to your framework's output directory
+2. **Domain**: Replace `your-site.sov` in the deploy step with your registered domain
+3. **Deployment mode**: Use `static` or `spa` in the `--mode` flag depending on your site type
 
 ### 5. Deploy
 
