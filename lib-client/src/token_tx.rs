@@ -115,7 +115,15 @@ fn build_token_transaction(
     let mut memo = b"ZHTP".to_vec();
     memo.extend(call_data);
 
-    // Step 1: Build transaction with placeholder signature for hashing
+    // Step 1: Calculate dynamic fee based on estimated transaction size
+    // Fee formula: 0.119 ZHTP per byte (approximately 8.4 bytes per ZHTP)
+    // First, build with a conservative estimate to get the actual serialized size
+    let estimated_tx_size = 200 // minimum fixed fields
+        + memo.len() // memo variable size
+        + 2048; // conservative estimate for signature (Dilithium2 is ~2420 bytes)
+    let min_fee = ((estimated_tx_size as u64 + 7) / 8) + 100; // Slightly above minimum for safety
+
+    // Step 2: Build transaction with calculated fee for hashing
     // ALL fields must be present - signing_hash() includes all of them
     let mut tx = Transaction {
         version: 1,
@@ -123,7 +131,7 @@ fn build_token_transaction(
         transaction_type: TransactionType::ContractExecution,
         inputs: vec![],
         outputs: vec![],
-        fee: 1000,
+        fee: min_fee,
         signature: Signature {
             signature: vec![],
             public_key: PublicKey {
@@ -152,6 +160,8 @@ fn build_token_transaction(
     eprintln!("[token_tx] Chain ID: {}", chain_id);
     eprintln!("[token_tx] Memo length: {} bytes", memo.len());
     eprintln!("[token_tx] Public key size: {}", identity.public_key.len());
+    eprintln!("[token_tx] Estimated tx size: {} bytes", estimated_tx_size);
+    eprintln!("[token_tx] Calculated minimum fee: {} ZHTP", min_fee);
 
     // Step 2: Use signing_hash() - deterministic field-by-field hashing
     // This is the SAFE method that won't break when Transaction struct changes
@@ -180,7 +190,10 @@ fn build_token_transaction(
     let final_tx_bytes = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
-    eprintln!("[token_tx] Final tx size: {} bytes", final_tx_bytes.len());
+    eprintln!("[token_tx] Final tx size: {} bytes (estimated was {})", final_tx_bytes.len(), estimated_tx_size);
+    eprintln!("[token_tx] Fee verification: {} ZHTP for {} bytes = {:.3} ZHTP/byte",
+        min_fee, final_tx_bytes.len(),
+        min_fee as f64 / final_tx_bytes.len() as f64);
 
     // Hex encode for API
     Ok(hex::encode(final_tx_bytes))
