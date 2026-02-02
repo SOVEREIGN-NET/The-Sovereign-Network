@@ -31,9 +31,45 @@ jobs:
   deploy:
     name: Deploy to Web4
     needs: build
-    uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@feat/web4-deployment-simplification
-    with:
-      domain: remote.sov
-      deployment_mode: static
-    secrets:
-      ZHTP_KEYSTORE_B64: ${{ secrets.ZHTP_KEYSTORE_B64 }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: out/
+
+      - name: Verify build output
+        run: ls -la out/
+
+      - name: Download zhtp-cli
+        run: |
+          cd /tmp
+          gh release download cli-v0.2.0 \
+            --repo SOVEREIGN-NET/The-Sovereign-Network \
+            --pattern 'zhtp-cli-linux-x86_64.tar.gz' \
+            --pattern 'SHA256SUMS'
+          grep ' zhtp-cli-linux-x86_64.tar.gz' SHA256SUMS > SHA256SUMS.cli
+          sha256sum -c SHA256SUMS.cli
+          tar -xzf zhtp-cli-linux-x86_64.tar.gz -C /tmp
+          chmod +x /tmp/zhtp-cli
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Restore keystore
+        run: |
+          mkdir -p ~/.zhtp
+          echo "${{ secrets.ZHTP_KEYSTORE_B64 }}" | base64 --decode | tar -xzf - -C ~/.zhtp
+        shell: bash
+
+      - name: Deploy site
+        run: |
+          /tmp/zhtp-cli deploy site \
+            --domain "remote.sov" \
+            --keystore ~/.zhtp/keystore \
+            --mode "static" \
+            --pin-spki "$ZHTP_SERVER_SPKI" \
+            out/
+        env:
+          ZHTP_SERVER: ${{ secrets.ZHTP_SERVER }}
+          ZHTP_SERVER_SPKI: ${{ secrets.ZHTP_SERVER_SPKI }}
