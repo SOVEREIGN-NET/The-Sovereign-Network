@@ -2772,6 +2772,7 @@ dependencies = [
  "lib-identity",
  "lib-proofs",
  "lib-storage",
+ "lib-types",
  "log",
  "lru 0.12.5",
  "proptest",

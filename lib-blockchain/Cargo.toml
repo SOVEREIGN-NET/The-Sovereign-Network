@@ -35,6 +35,7 @@ lru = { version = "0.12", optional = true }
 sled = "0.34"
 
 # Internal ZHTP dependencies (Foundation Layer Only)
+lib-types = { path = "../lib-types" }
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }

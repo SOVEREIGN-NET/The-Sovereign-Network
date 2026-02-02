@@ -162,7 +162,7 @@ impl ChainSync {
     /// - `Storage` for underlying storage errors
     pub fn export_all_blocks(&self) -> SyncResult<Vec<Block>> {
         let latest_height = self.store
-            .get_latest_height()
+            .latest_height()
             .map_err(|e| match e {
                 StorageError::NotInitialized => SyncError::NotInitialized,
                 other => SyncError::Storage(other),
@@ -201,7 +201,7 @@ impl ChainSync {
         let executor = BlockExecutor::new(Arc::clone(&self.store), self.executor_config.clone());
 
         // Determine expected starting height
-        let expected_start = match self.store.get_latest_height() {
+        let expected_start = match self.store.latest_height() {
             Ok(h) => h + 1,
             Err(StorageError::NotInitialized) => 0,
             Err(e) => return Err(SyncError::Storage(e)),
@@ -261,7 +261,7 @@ impl ChainSync {
         let executor = BlockExecutor::new(Arc::clone(&self.store), self.executor_config.clone());
 
         // Determine expected starting height
-        let expected_start = match self.store.get_latest_height() {
+        let expected_start = match self.store.latest_height() {
             Ok(h) => h + 1,
             Err(StorageError::NotInitialized) => 0,
             Err(e) => return Err(SyncError::Storage(e)),
@@ -404,8 +404,8 @@ mod tests {
         assert_eq!(result2.final_height, Some(4));
 
         // Verify chains match
-        let latest1 = store1.get_latest_height().unwrap();
-        let latest2 = store2.get_latest_height().unwrap();
+        let latest1 = store1.latest_height().unwrap();
+        let latest2 = store2.latest_height().unwrap();
         assert_eq!(latest1, latest2);
 
         for height in 0..=4 {
@@ -467,7 +467,7 @@ mod tests {
         assert!(matches!(result, Err(SyncError::BlockApplyFailed { height: 1, .. })));
 
         // Verify state reflects only genesis
-        let latest = store.get_latest_height().unwrap();
+        let latest = store.latest_height().unwrap();
         assert_eq!(latest, 0);
     }
 
@@ -516,7 +516,7 @@ mod tests {
         sync.import_blocks(vec![genesis.clone(), block1.clone()]).unwrap();
 
         // Verify state at height 1
-        let height_before = store.get_latest_height().unwrap();
+        let height_before = store.latest_height().unwrap();
         assert_eq!(height_before, 1);
 
         // Try to import invalid block - should fail
@@ -524,14 +524,14 @@ mod tests {
         assert!(result.is_err());
 
         // Verify state is EXACTLY at height 1 (no partial state from failed block)
-        let height_after = store.get_latest_height().unwrap();
+        let height_after = store.latest_height().unwrap();
         assert_eq!(height_after, 1);
 
         // Can still continue with valid block
         let valid_block2 = create_block_at_height(2, block1.header.block_hash);
         sync.import_blocks(vec![valid_block2]).unwrap();
 
-        let final_height = store.get_latest_height().unwrap();
+        let final_height = store.latest_height().unwrap();
         assert_eq!(final_height, 2);
     }
 

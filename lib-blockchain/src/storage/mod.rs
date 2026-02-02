@@ -28,6 +28,14 @@
 //! - No `save_to_file`, `load_from_file`, or `serialize(Blockchain)` anywhere
 //! - Key encoding is protocol - see `keys.rs`
 //! - Types are canonical - no ad-hoc types cross the storage boundary
+//!
+//! # CONSENSUS CORE RULE
+//!
+//! **No String identifiers in consensus state. Ever.**
+//!
+//! All identifiers (DIDs, token names, etc.) must be represented as fixed-size
+//! byte arrays ([u8; 32]) in consensus-critical data structures. Human-readable
+//! strings are metadata, not consensus state.
 
 pub mod keys;
 pub mod sled_store;
@@ -38,6 +46,10 @@ use thiserror::Error;
 
 // Re-export the store implementation
 pub use sled_store::SledStore;
+
+// Import canonical type aliases from lib-types
+// These are the authoritative definitions for consensus-critical values
+pub use lib_types::primitives::{BlockHeight, Amount, Bps};
 
 // =============================================================================
 // CANONICAL TYPES
@@ -511,6 +523,10 @@ pub type StorageResult<T> = Result<T, StorageError>;
 /// - Durability: After commit_block returns, data survives crashes
 /// - Isolation: Reads see consistent state (no partial block updates)
 ///
+/// # Invariant
+///
+/// **No consensus logic reads or writes state outside this trait.**
+///
 /// # Usage Pattern
 ///
 /// ```ignore
@@ -538,18 +554,18 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Get a block by its height.
     ///
     /// Returns None if no block exists at that height.
-    fn get_block_by_height(&self, height: u64) -> StorageResult<Option<crate::block::Block>>;
+    fn get_block_by_height(&self, h: BlockHeight) -> StorageResult<Option<crate::block::Block>>;
 
     /// Get a block by its hash.
     ///
     /// Returns None if no block with that hash exists.
-    fn get_block_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<crate::block::Block>>;
+    fn get_block_by_hash(&self, h: &BlockHash) -> StorageResult<Option<crate::block::Block>>;
 
     /// Get the height of the latest block.
     ///
     /// Returns 0 if only genesis exists, or the height of the tip.
     /// Returns error if chain is empty (no genesis).
-    fn get_latest_height(&self) -> StorageResult<u64>;
+    fn latest_height(&self) -> StorageResult<BlockHeight>;
 
     /// Get just the block hash at a given height (without full deserialization).
     ///
@@ -557,8 +573,8 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// deserializing the entire block when only the hash is needed.
     ///
     /// Default implementation falls back to get_block_by_height.
-    fn get_block_hash_by_height(&self, height: u64) -> StorageResult<Option<BlockHash>> {
-        Ok(self.get_block_by_height(height)?
+    fn get_block_hash_by_height(&self, h: BlockHeight) -> StorageResult<Option<BlockHash>> {
+        Ok(self.get_block_by_height(h)?
             .map(|b| BlockHash::new(b.header.block_hash.as_array())))
     }
 
@@ -572,59 +588,23 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Get a UTXO by its outpoint.
     ///
     /// Returns None if the UTXO doesn't exist or has been spent.
-    fn get_utxo(&self, outpoint: &OutPoint) -> StorageResult<Option<Utxo>>;
+    fn get_utxo(&self, op: &OutPoint) -> StorageResult<Option<Utxo>>;
 
     /// Create or update a UTXO.
     ///
     /// # Requirements
     /// - MUST be called within begin_block/commit_block
-    fn put_utxo(&self, outpoint: &OutPoint, utxo: &Utxo) -> StorageResult<()>;
+    fn put_utxo(&self, op: &OutPoint, u: &Utxo) -> StorageResult<()>;
 
     /// Delete a UTXO (mark as spent).
     ///
     /// # Requirements
     /// - MUST be called within begin_block/commit_block
     /// - Deleting non-existent UTXO is a no-op (idempotent)
-    fn delete_utxo(&self, outpoint: &OutPoint) -> StorageResult<()>;
+    fn delete_utxo(&self, op: &OutPoint) -> StorageResult<()>;
 
     // =========================================================================
-    // Account State (Mutable)
-    // =========================================================================
-    // Accounts track identity, wallet, and validator state for addresses.
-    // =========================================================================
-
-    /// Get account state for an address.
-    ///
-    /// Returns None if no account exists at that address.
-    fn get_account(&self, addr: &Address) -> StorageResult<Option<AccountState>>;
-
-    /// Create or update account state.
-    ///
-    /// # Requirements
-    /// - MUST be called within begin_block/commit_block
-    fn put_account(&self, addr: &Address, acct: &AccountState) -> StorageResult<()>;
-
-    // =========================================================================
-    // Token Balances (Mutable, Hot Path)
-    // =========================================================================
-    // Token balances are separate from contract metadata for performance.
-    // This is the hot path - updated on every transfer.
-    // =========================================================================
-
-    /// Get token balance for an address.
-    ///
-    /// Returns 0 if no balance exists (not an error).
-    fn get_token_balance(&self, token: TokenId, addr: &Address) -> StorageResult<u128>;
-
-    /// Set token balance for an address.
-    ///
-    /// # Requirements
-    /// - MUST be called within begin_block/commit_block
-    /// - Setting balance to 0 may delete the entry (implementation detail)
-    fn set_token_balance(&self, token: TokenId, addr: &Address, balance: u128) -> StorageResult<()>;
-
-    // =========================================================================
-    // Token Contracts (Phase 2)
+    // Token Contracts
     // =========================================================================
     // Token contracts store the full token metadata, supply policy, and
     // economic configuration. This is the authoritative source for token rules.
@@ -633,21 +613,32 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Get a token contract by its ID.
     ///
     /// Returns None if no contract exists for that token.
-    fn get_token_contract(&self, token: &TokenId) -> StorageResult<Option<Vec<u8>>> {
-        // Default implementation returns None (not implemented)
-        Ok(None)
-    }
+    fn get_token_contract(&self, id: &TokenId) -> StorageResult<Option<crate::contracts::TokenContract>>;
 
     /// Store a token contract.
     ///
-    /// The contract is serialized to bytes by the caller.
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_token_contract(&self, c: &crate::contracts::TokenContract) -> StorageResult<()>;
+
+    // =========================================================================
+    // Token Balances (Hot Path)
+    // =========================================================================
+    // Token balances are separate from contract metadata for performance.
+    // This is the hot path - updated on every transfer.
+    // =========================================================================
+
+    /// Get token balance for an address.
+    ///
+    /// Returns 0 if no balance exists (not an error).
+    fn get_token_balance(&self, t: &TokenId, a: &Address) -> StorageResult<Amount>;
+
+    /// Set token balance for an address.
     ///
     /// # Requirements
     /// - MUST be called within begin_block/commit_block
-    fn put_token_contract(&self, token: &TokenId, contract: &[u8]) -> StorageResult<()> {
-        // Default implementation is a no-op
-        Ok(())
-    }
+    /// - Setting balance to 0 may delete the entry (implementation detail)
+    fn set_token_balance(&self, t: &TokenId, a: &Address, v: Amount) -> StorageResult<()>;
 
     // =========================================================================
     // Atomicity Control
@@ -664,7 +655,7 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// # Requirements
     /// - Height MUST be latest_height + 1 (or 0 for genesis)
     /// - MUST NOT be called if a transaction is already active
-    fn begin_block(&self, height: u64) -> StorageResult<()>;
+    fn begin_block(&self, height: BlockHeight) -> StorageResult<()>;
 
     /// Commit all buffered changes from the current block transaction.
     ///
@@ -681,4 +672,27 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// # Requirements
     /// - MUST have an active transaction from begin_block
     fn rollback_block(&self) -> StorageResult<()>;
+
+    // =========================================================================
+    // Account State (Legacy - Migrating to typed sub-stores)
+    // =========================================================================
+    // NOTE: Account state methods are being phased out in favor of typed
+    // accessors. New code should use get_token_balance/set_token_balance
+    // for balances, and future typed methods for identity/validator state.
+    // =========================================================================
+
+    /// Get account state for an address.
+    ///
+    /// Returns None if no account exists at that address.
+    ///
+    /// DEPRECATED: Use typed accessors (get_token_balance, etc.) instead.
+    fn get_account(&self, addr: &Address) -> StorageResult<Option<AccountState>>;
+
+    /// Create or update account state.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    ///
+    /// DEPRECATED: Use typed accessors (set_token_balance, etc.) instead.
+    fn put_account(&self, addr: &Address, acct: &AccountState) -> StorageResult<()>;
 }
