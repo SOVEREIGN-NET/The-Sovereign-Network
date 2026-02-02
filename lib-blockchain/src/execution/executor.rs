@@ -1,15 +1,23 @@
-//! Block Executor
+//! Block Executor (Single Authority)
 //!
-//! The BlockExecutor is the single entry point for applying blocks to state.
-//! It implements the canonical execution lifecycle:
+//! The BlockExecutor is the **single entry point** for applying blocks to state.
+//! No consensus logic reads or writes state outside this module.
 //!
-//! 1. Prechecks (height validation, structural checks)
-//! 2. begin_block
-//! 3. Apply transactions sequentially
-//! 4. append_block
-//! 5. commit_block
+//! # Execution Order (NON-NEGOTIABLE)
 //!
-//! On any error: rollback_block
+//! ```text
+//! validate_header
+//! validate_block_resources
+//! begin_block
+//!   for tx in block.txs:
+//!     validate_tx_stateless
+//!     validate_tx_stateful
+//!     apply_tx
+//! append_block
+//! commit_block
+//! ```
+//!
+//! **Any error → rollback_block()**
 //!
 //! # Authorization Invariant (Phase 2)
 //!
@@ -25,23 +33,111 @@
 //!
 //! This is **Option B** from the spec: "Ownership is enforced earlier and
 //! executor assumes validity."
-//!
-//! Rationale: ZK proof verification is computationally expensive and should
-//! be parallelizable. The executor focuses on state transitions only.
 
 use std::sync::Arc;
 
 use crate::block::Block;
-use crate::storage::{Address, BlockchainStore, BlockHash, StorageError, TokenId};
+use crate::storage::{Address, Amount, BlockchainStore, BlockHash, BlockHeight, StorageError, TokenId};
 use crate::transaction::hash_transaction;
 use crate::types::TransactionType;
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
 use super::tx_apply::{self, StateMutator, TransferOutcome, CoinbaseOutcome};
 
-use crate::protocol::ProtocolParams;
+use crate::protocol::{ProtocolParams, fee_model};
 
-/// Configuration for block execution
+// =============================================================================
+// FEE MODEL V2
+// =============================================================================
+
+/// Fee Model V2 - Detailed computation with exec units, witness caps, etc.
+///
+/// This is the canonical fee calculation model for Phase 2+.
+#[derive(Debug, Clone)]
+pub struct FeeModelV2 {
+    /// Base fee per byte
+    pub base_fee_per_byte: Amount,
+    /// Fee per execution unit (for smart contracts)
+    pub fee_per_exec_unit: Amount,
+    /// Maximum witness size in bytes
+    pub max_witness_size: usize,
+    /// Block reward amount (for coinbase)
+    pub block_reward: Amount,
+    /// Protocol parameters for version checking
+    pub protocol_params: ProtocolParams,
+}
+
+impl Default for FeeModelV2 {
+    fn default() -> Self {
+        Self {
+            base_fee_per_byte: 1,           // 1 unit per byte
+            fee_per_exec_unit: 10,          // 10 units per exec unit
+            max_witness_size: 65_536,       // 64KB max witness
+            block_reward: 50_000_000,       // 50 tokens
+            protocol_params: ProtocolParams::default(),
+        }
+    }
+}
+
+impl FeeModelV2 {
+    /// Create with custom protocol params
+    pub fn with_protocol_params(mut self, params: ProtocolParams) -> Self {
+        self.protocol_params = params;
+        self
+    }
+
+    /// Calculate minimum required fee for a transaction
+    pub fn calculate_min_fee(&self, tx_size: usize) -> Amount {
+        (tx_size as Amount) * self.base_fee_per_byte
+    }
+
+    /// Validate fee model version for a block
+    pub fn validate_version(&self, height: BlockHeight, version: u16) -> BlockApplyResult<()> {
+        let expected = self.protocol_params.active_fee_model_version(height);
+        if version != expected {
+            return Err(BlockApplyError::InvalidFeeModelVersion {
+                height,
+                actual: version,
+                expected,
+            });
+        }
+        Ok(())
+    }
+}
+
+// =============================================================================
+// BLOCK LIMITS
+// =============================================================================
+
+/// Block resource limits - enforced during validate_block_resources
+#[derive(Debug, Clone)]
+pub struct BlockLimits {
+    /// Maximum block size in bytes
+    pub max_block_size: usize,
+    /// Maximum transactions per block
+    pub max_transactions: usize,
+    /// Maximum total witness size per block
+    pub max_total_witness_size: usize,
+    /// Whether to allow empty blocks (no transactions)
+    pub allow_empty_blocks: bool,
+}
+
+impl Default for BlockLimits {
+    fn default() -> Self {
+        Self {
+            max_block_size: 1_048_576,       // 1MB
+            max_transactions: 10_000,         // 10k txs max
+            max_total_witness_size: 524_288,  // 512KB total witness
+            allow_empty_blocks: true,
+        }
+    }
+}
+
+// =============================================================================
+// LEGACY CONFIG (for backwards compatibility)
+// =============================================================================
+
+/// Configuration for block execution (legacy - use FeeModelV2 + BlockLimits)
 #[derive(Debug, Clone)]
 pub struct ExecutorConfig {
     /// Maximum block size in bytes
@@ -70,6 +166,21 @@ impl ExecutorConfig {
     pub fn with_protocol_params(mut self, params: ProtocolParams) -> Self {
         self.protocol_params = params;
         self
+    }
+
+    /// Convert to new FeeModelV2 + BlockLimits
+    pub fn to_fee_model_and_limits(&self) -> (FeeModelV2, BlockLimits) {
+        let fee_model = FeeModelV2 {
+            block_reward: self.block_reward as Amount,
+            protocol_params: self.protocol_params.clone(),
+            ..Default::default()
+        };
+        let limits = BlockLimits {
+            max_block_size: self.max_block_size,
+            allow_empty_blocks: self.allow_empty_blocks,
+            ..Default::default()
+        };
+        (fee_model, limits)
     }
 }
 
@@ -101,12 +212,18 @@ pub struct StateChangesSummary {
     pub account_updates: usize,
 }
 
-/// The main block executor
+/// The main block executor (Single Authority)
 ///
-/// This is the ONLY entry point for applying blocks to blockchain state.
+/// This is the **ONLY** entry point for applying blocks to blockchain state.
+/// No consensus logic reads or writes state outside this struct.
+///
+/// # Invariant
+///
+/// All state mutations happen through BlockExecutor. Period.
 pub struct BlockExecutor {
     store: Arc<dyn BlockchainStore>,
-    config: ExecutorConfig,
+    fee_model: FeeModelV2,
+    limits: BlockLimits,
 }
 
 /// Scope guard that ensures rollback_block is called if not disarmed.
@@ -141,14 +258,24 @@ impl<'a> Drop for RollbackGuard<'a> {
 }
 
 impl BlockExecutor {
-    /// Create a new block executor
-    pub fn new(store: Arc<dyn BlockchainStore>, config: ExecutorConfig) -> Self {
-        Self { store, config }
+    /// Create a new block executor with explicit fee model and limits
+    pub fn new(
+        store: Arc<dyn BlockchainStore>,
+        fee_model: FeeModelV2,
+        limits: BlockLimits,
+    ) -> Self {
+        Self { store, fee_model, limits }
     }
 
-    /// Create with default config
+    /// Create with legacy ExecutorConfig (converts internally)
+    pub fn from_config(store: Arc<dyn BlockchainStore>, config: ExecutorConfig) -> Self {
+        let (fee_model, limits) = config.to_fee_model_and_limits();
+        Self { store, fee_model, limits }
+    }
+
+    /// Create with default fee model and limits
     pub fn with_store(store: Arc<dyn BlockchainStore>) -> Self {
-        Self::new(store, ExecutorConfig::default())
+        Self::new(store, FeeModelV2::default(), BlockLimits::default())
     }
 
     /// Get reference to the store
@@ -156,59 +283,61 @@ impl BlockExecutor {
         &self.store
     }
 
+    /// Get reference to the fee model
+    pub fn fee_model(&self) -> &FeeModelV2 {
+        &self.fee_model
+    }
+
+    /// Get reference to the block limits
+    pub fn limits(&self) -> &BlockLimits {
+        &self.limits
+    }
+
     /// Apply a block to the blockchain
     ///
-    /// This is the canonical execution lifecycle:
-    /// 1. Prechecks
-    /// 2. begin_block
-    /// 3. Apply transactions
-    /// 4. append_block
-    /// 5. commit_block
+    /// # Execution Order (NON-NEGOTIABLE)
+    ///
+    /// ```text
+    /// validate_header
+    /// validate_block_resources
+    /// begin_block
+    ///   for tx in block.txs:
+    ///     validate_tx_stateless
+    ///     validate_tx_stateful
+    ///     apply_tx
+    /// append_block
+    /// commit_block
+    /// ```
+    ///
+    /// **Any error → rollback_block()**
     ///
     /// # Panic Safety
     ///
     /// Uses a scope guard to ensure rollback_block is called on both errors
-    /// AND panics. If a panic occurs after begin_block, the guard's Drop
-    /// implementation will automatically call rollback_block to prevent
-    /// partial state corruption.
+    /// AND panics after begin_block.
     pub fn apply_block(&self, block: &Block) -> BlockApplyResult<ApplyOutcome> {
-        // =====================================================================
-        // Step 1: Prechecks (before begin_block)
-        // =====================================================================
-
-        let expected_height = self.get_expected_height()?;
         let block_height = block.header.height;
 
-        if block_height != expected_height {
-            return Err(BlockApplyError::HeightMismatch {
-                expected: expected_height,
-                actual: block_height,
-            });
-        }
-
-        // Validate previous block hash (except for genesis)
-        if block_height > 0 {
-            self.validate_previous_hash(block, block_height)?;
-        }
-
-        // Structural validation
-        self.validate_block_structure(block)?;
-
-        // Validate fee model version (Phase 3B)
-        self.validate_fee_model_version(block)?;
+        // =====================================================================
+        // Step 1: validate_header
+        // =====================================================================
+        self.validate_header(block)?;
 
         // =====================================================================
-        // Step 2: Begin block transaction
+        // Step 2: validate_block_resources
         // =====================================================================
+        self.validate_block_resources(block)?;
 
+        // =====================================================================
+        // Step 3: begin_block
+        // =====================================================================
         self.store.begin_block(block_height)?;
 
         // Create rollback guard for panic safety.
         // The guard will call rollback_block on Drop unless disarmed.
-        // This ensures cleanup even if a panic occurs during block application.
         let guard = RollbackGuard::new(self.store.as_ref());
 
-        // Apply the block
+        // Apply the block (steps 4-6)
         let outcome = self.apply_block_inner(block)?;
 
         // Success - disarm the guard so it won't rollback on drop
@@ -217,7 +346,81 @@ impl BlockExecutor {
         Ok(outcome)
     }
 
-    /// Inner block application (after begin_block)
+    /// Step 1: Validate block header
+    ///
+    /// Checks:
+    /// - Height is expected next height
+    /// - Previous hash matches (except genesis)
+    /// - Fee model version is correct for height
+    fn validate_header(&self, block: &Block) -> BlockApplyResult<()> {
+        let expected_height = self.get_expected_height()?;
+        let block_height = block.header.height;
+
+        // Height must be sequential
+        if block_height != expected_height {
+            return Err(BlockApplyError::HeightMismatch {
+                expected: expected_height,
+                actual: block_height,
+            });
+        }
+
+        // Previous hash must match (except for genesis)
+        if block_height > 0 {
+            self.validate_previous_hash(block, block_height)?;
+        }
+
+        // Fee model version must be correct for this height
+        self.fee_model.validate_version(block_height, block.header.fee_model_version)?;
+
+        Ok(())
+    }
+
+    /// Step 2: Validate block resources against limits
+    ///
+    /// Checks:
+    /// - Block size within limits
+    /// - Transaction count within limits
+    /// - Not empty (unless allowed)
+    /// - Transaction count matches header
+    fn validate_block_resources(&self, block: &Block) -> BlockApplyResult<()> {
+        // Check block size
+        let size = block.size();
+        if size > self.limits.max_block_size {
+            return Err(BlockApplyError::BlockTooLarge {
+                size,
+                max: self.limits.max_block_size,
+            });
+        }
+
+        // Check transaction count
+        if block.transactions.len() > self.limits.max_transactions {
+            return Err(BlockApplyError::ValidationFailed(format!(
+                "Block has {} transactions, max is {}",
+                block.transactions.len(),
+                self.limits.max_transactions
+            )));
+        }
+
+        // Check for empty blocks
+        if block.transactions.is_empty() && !self.limits.allow_empty_blocks {
+            return Err(BlockApplyError::EmptyBlock);
+        }
+
+        // Transaction count must match header
+        let actual_tx_count = block.transactions.len() as u32;
+        if block.header.transaction_count != actual_tx_count {
+            return Err(BlockApplyError::ValidationFailed(format!(
+                "Transaction count mismatch: header says {} but block has {}",
+                block.header.transaction_count, actual_tx_count
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Steps 4-6: Apply transactions, append block, commit
+    ///
+    /// Called after begin_block. Guard ensures rollback on error.
     fn apply_block_inner(&self, block: &Block) -> BlockApplyResult<ApplyOutcome> {
         let block_height = block.header.height;
         let block_hash = BlockHash::new(block.header.block_hash.as_array());
@@ -227,7 +430,7 @@ impl BlockExecutor {
         let mut total_fees: u64 = 0;
 
         // =====================================================================
-        // Step 2.5: Block-level coinbase validation
+        // Pre-step: Coinbase position validation
         // =====================================================================
 
         // Count coinbase transactions and validate position
@@ -254,9 +457,11 @@ impl BlockExecutor {
         }
 
         // =====================================================================
-        // Step 3: Apply transactions (Phase 3C: two-pass for fee routing)
+        // Step 4: Apply transactions (Phase 3C: two-pass for fee routing)
         // =====================================================================
-
+        //
+        // For each tx: validate_tx_stateless → validate_tx_stateful → apply_tx
+        //
         // Phase 3C: Process non-coinbase transactions first to calculate fees
         // Then process coinbase with the collected fees for proper routing.
 
@@ -266,22 +471,22 @@ impl BlockExecutor {
             None
         };
 
-        // 3a: Process non-coinbase transactions first
+        // 4a: Process non-coinbase transactions first
         let non_coinbase_start = if coinbase_count == 1 { 1 } else { 0 };
 
         for (rel_index, tx) in block.transactions[non_coinbase_start..].iter().enumerate() {
             let index = rel_index + non_coinbase_start;
 
-            // Stateless validation
+            // validate_tx_stateless
             self.validate_tx_stateless(tx)
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
 
-            // Stateful validation (reads only)
+            // validate_tx_stateful (reads only)
             self.validate_tx_stateful(tx)
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
 
-            // Apply transaction (writes)
-            let tx_result = self.apply_non_coinbase_tx(&mutator, tx, block_height)
+            // apply_tx (writes)
+            let tx_result = self.apply_tx(&mutator, tx, block_height)
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
 
             // Accumulate results
@@ -301,7 +506,7 @@ impl BlockExecutor {
             }
         }
 
-        // 3b: Process coinbase with collected fees (Phase 3C)
+        // 4b: Process coinbase with collected fees (Phase 3C)
         if let Some(coinbase) = coinbase_tx {
             self.validate_tx_stateless(coinbase)
                 .map_err(|e| BlockApplyError::TxFailed { index: 0, reason: e })?;
@@ -317,14 +522,14 @@ impl BlockExecutor {
         }
 
         // =====================================================================
-        // Step 4: Append block to history
+        // Step 5: append_block
         // =====================================================================
 
         self.store.append_block(block)
             .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
 
         // =====================================================================
-        // Step 5: Commit all changes
+        // Step 6: commit_block
         // =====================================================================
 
         self.store.commit_block()?;
@@ -365,59 +570,6 @@ impl BlockExecutor {
             return Err(BlockApplyError::InvalidPreviousHash {
                 expected: expected_hash,
                 actual: actual_hash,
-            });
-        }
-
-        Ok(())
-    }
-
-    /// Validate block structure (before execution)
-    fn validate_block_structure(&self, block: &Block) -> BlockApplyResult<()> {
-        // Check block size
-        let size = block.size();
-        if size > self.config.max_block_size {
-            return Err(BlockApplyError::BlockTooLarge {
-                size,
-                max: self.config.max_block_size,
-            });
-        }
-
-        // Check for empty blocks
-        if block.transactions.is_empty() && !self.config.allow_empty_blocks {
-            return Err(BlockApplyError::EmptyBlock);
-        }
-
-        // Phase 2 structural validation: transaction count must match header
-        let actual_tx_count = block.transactions.len() as u32;
-        if block.header.transaction_count != actual_tx_count {
-            return Err(BlockApplyError::ValidationFailed(format!(
-                "Transaction count mismatch: header says {} but block has {}",
-                block.header.transaction_count, actual_tx_count
-            )));
-        }
-
-        // TODO: Merkle root validation would go here if implemented
-        // For Phase 2, we skip this as merkle root computation may not be mandatory
-
-        Ok(())
-    }
-
-    /// Validate fee model version is correct for block height (Phase 3B)
-    ///
-    /// # Rules
-    /// - Block must use the fee model version that is active at its height
-    /// - Before activation height: version 1 required
-    /// - At/after activation height: version 2 required
-    fn validate_fee_model_version(&self, block: &Block) -> BlockApplyResult<()> {
-        let height = block.header.height;
-        let version = block.header.fee_model_version;
-        let expected = self.config.protocol_params.active_fee_model_version(height);
-
-        if version != expected {
-            return Err(BlockApplyError::InvalidFeeModelVersion {
-                height,
-                actual: version,
-                expected,
             });
         }
 
@@ -571,13 +723,13 @@ impl BlockExecutor {
             }
             TransactionType::Coinbase => {
                 // Legacy path: no fees passed (for backwards compatibility in tests)
-                let fee_sink = self.config.protocol_params.fee_sink_address();
+                let fee_sink = self.fee_model.protocol_params.fee_sink_address();
                 let outcome = tx_apply::apply_coinbase(
                     mutator,
                     tx,
                     &tx_hash,
                     block_height,
-                    self.config.block_reward,
+                    self.fee_model.block_reward as u64,
                     0, // No fees in legacy path
                     fee_sink,
                 )?;
@@ -629,11 +781,12 @@ impl BlockExecutor {
         }
     }
 
-    /// Apply a non-coinbase transaction (Phase 3C helper)
+    /// Apply a transaction (non-coinbase)
     ///
-    /// This is used in the first pass to process all fee-paying transactions
+    /// This is the `apply_tx` step in the execution order.
+    /// Used in the first pass to process all fee-paying transactions
     /// before processing coinbase with the collected fees.
-    fn apply_non_coinbase_tx(
+    fn apply_tx(
         &self,
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
@@ -642,7 +795,7 @@ impl BlockExecutor {
         // Coinbase should not be passed to this method
         if tx.transaction_type == TransactionType::Coinbase {
             return Err(TxApplyError::InvalidType(
-                "Coinbase should not be processed in non-coinbase pass".to_string()
+                "Coinbase should not be processed in apply_tx pass".to_string()
             ));
         }
 
@@ -668,14 +821,14 @@ impl BlockExecutor {
         }
 
         let tx_hash = hash_transaction(tx);
-        let fee_sink_address = self.config.protocol_params.fee_sink_address();
+        let fee_sink_address = self.fee_model.protocol_params.fee_sink_address();
 
         tx_apply::apply_coinbase(
             mutator,
             tx,
             &tx_hash,
             block_height,
-            self.config.block_reward,
+            self.fee_model.block_reward as u64,
             fees_collected,
             fee_sink_address,
         )
