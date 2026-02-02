@@ -148,6 +148,7 @@ pub fn apply_native_transfer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_types::Address;
     use std::cell::RefCell;
     use std::collections::HashMap;
 
@@ -407,5 +408,190 @@ mod tests {
 
         let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100);
         assert!(matches!(result, Err(UtxoError::ValueMismatch { .. })));
+    }
+
+    // =========================================================================
+    // INVARIANT VIOLATION REJECTION TESTS
+    // =========================================================================
+
+    /// Invariant: Inputs must exist (no-create-from-nothing)
+    #[test]
+    fn invariant_inputs_must_exist() {
+        let store = MockUtxoStore::new();
+        // No UTXOs created
+
+        let inputs = vec![create_input(TxHash::new([1u8; 32]), 0)];
+        let outputs = vec![create_output(1000, Address::new([1u8; 32]))];
+        let tx_hash = TxHash::new([2u8; 32]);
+
+        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 0);
+        assert!(result.is_err(), "Must reject transfer from non-existent UTXO");
+    }
+
+    /// Invariant: No double-spend (same input twice in single tx)
+    #[test]
+    fn invariant_no_double_spend_same_tx() {
+        let store = MockUtxoStore::new();
+        let prev_tx = TxHash::default();
+        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+
+        // Same input twice
+        let inputs = vec![
+            create_input(prev_tx, 0),
+            create_input(prev_tx, 0),
+        ];
+        let outputs = vec![create_output(1900, Address::new([1u8; 32]))];
+        let tx_hash = TxHash::new([1u8; 32]);
+
+        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100);
+        assert!(matches!(result, Err(UtxoError::DuplicateInput(_))));
+    }
+
+    /// Invariant: No double-spend (across blocks)
+    #[test]
+    fn invariant_no_double_spend_across_blocks() {
+        let store = MockUtxoStore::new();
+        let prev_tx = TxHash::default();
+        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+
+        let inputs = vec![create_input(prev_tx, 0)];
+        let outputs = vec![create_output(900, Address::new([1u8; 32]))];
+
+        // First spend (block 10)
+        let tx_hash1 = TxHash::new([1u8; 32]);
+        apply_native_transfer(&store, &inputs, &outputs, tx_hash1, 10, 100).unwrap();
+
+        // Second spend attempt (block 20)
+        let tx_hash2 = TxHash::new([2u8; 32]);
+        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash2, 20, 100);
+        assert!(matches!(result, Err(UtxoError::AlreadySpent(_))));
+    }
+
+    /// Invariant: Conservation of value (inputs = outputs + fee)
+    #[test]
+    fn invariant_value_conservation() {
+        let store = MockUtxoStore::new();
+        let prev_tx = TxHash::default();
+        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+
+        let inputs = vec![create_input(prev_tx, 0)];
+        let tx_hash = TxHash::new([1u8; 32]);
+
+        // Case 1: outputs + fee > inputs (value creation - rejected)
+        let outputs1 = vec![create_output(1001, Address::new([1u8; 32]))];
+        let result = apply_native_transfer(&store, &inputs, &outputs1, tx_hash, 10, 0);
+        assert!(result.is_err(), "Must reject value creation");
+
+        // Case 2: outputs + fee < inputs (value destruction - rejected)
+        let store2 = MockUtxoStore::new();
+        store2.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+        let outputs2 = vec![create_output(500, Address::new([1u8; 32]))];
+        let result = apply_native_transfer(&store2, &inputs, &outputs2, tx_hash, 10, 100);
+        assert!(matches!(result, Err(UtxoError::ValueMismatch { .. })));
+    }
+
+    /// Invariant: Output indices are sequential starting from 0
+    #[test]
+    fn invariant_output_indices_sequential() {
+        let store = MockUtxoStore::new();
+        let prev_tx = TxHash::default();
+        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(3000, Address::default(), 0));
+
+        let inputs = vec![create_input(prev_tx, 0)];
+        let outputs = vec![
+            create_output(1000, Address::new([1u8; 32])),
+            create_output(1000, Address::new([2u8; 32])),
+            create_output(900, Address::new([3u8; 32])),
+        ];
+        let tx_hash = TxHash::new([1u8; 32]);
+
+        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).unwrap();
+
+        // Verify outputs are at indices 0, 1, 2
+        assert!(store.get_utxo(&OutPoint::new(tx_hash, 0)).unwrap().is_some());
+        assert!(store.get_utxo(&OutPoint::new(tx_hash, 1)).unwrap().is_some());
+        assert!(store.get_utxo(&OutPoint::new(tx_hash, 2)).unwrap().is_some());
+        assert!(store.get_utxo(&OutPoint::new(tx_hash, 3)).unwrap().is_none());
+    }
+
+    /// Invariant: Locked UTXOs cannot be spent before unlock height
+    #[test]
+    fn invariant_time_lock_enforced() {
+        let store = MockUtxoStore::new();
+        let prev_tx = TxHash::default();
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new_locked(1000, Address::default(), 0, 1000), // Locked until height 1000
+        );
+
+        let inputs = vec![create_input(prev_tx, 0)];
+        let outputs = vec![create_output(900, Address::new([1u8; 32]))];
+        let tx_hash = TxHash::new([1u8; 32]);
+
+        // Try at height 999 - must fail
+        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 999, 100);
+        assert!(matches!(result, Err(UtxoError::Locked { .. })));
+    }
+
+    // =========================================================================
+    // GOLDEN VECTORS
+    // =========================================================================
+
+    /// Golden vector: Standard transfer outcome
+    #[test]
+    fn golden_standard_transfer() {
+        let store = MockUtxoStore::new();
+        let prev_tx = TxHash::default();
+        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(10_000, Address::default(), 0));
+
+        let inputs = vec![create_input(prev_tx, 0)];
+        let outputs = vec![
+            create_output(5000, Address::new([1u8; 32])),
+            create_output(4000, Address::new([2u8; 32])),
+        ];
+        let tx_hash = TxHash::new([1u8; 32]);
+        let fee = 1000;
+
+        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 100, fee).unwrap();
+
+        // GOLDEN VECTOR: These exact values MUST NOT change
+        assert_eq!(result.total_input, 10_000);
+        assert_eq!(result.total_output, 9_000);
+        assert_eq!(result.fee, 1000);
+        assert_eq!(result.inputs_spent, 1);
+        assert_eq!(result.outputs_created, 2);
+    }
+
+    // =========================================================================
+    // DETERMINISM TESTS
+    // =========================================================================
+
+    /// Verify transfer is deterministic
+    #[test]
+    fn determinism_transfer_outcome() {
+        let create_scenario = || {
+            let store = MockUtxoStore::new();
+            let prev_tx = TxHash::default();
+            store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+            store
+        };
+
+        let inputs = vec![create_input(TxHash::default(), 0)];
+        let outputs = vec![create_output(900, Address::new([1u8; 32]))];
+        let tx_hash = TxHash::new([1u8; 32]);
+
+        // Run same transfer multiple times
+        let mut results = Vec::new();
+        for _ in 0..10 {
+            let store = create_scenario();
+            let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).unwrap();
+            results.push((result.total_input, result.total_output, result.fee));
+        }
+
+        // All results must be identical
+        let first = results[0];
+        for result in &results {
+            assert_eq!(*result, first, "Transfer must be deterministic");
+        }
     }
 }

@@ -827,4 +827,258 @@ mod tests {
         // State hashes should be identical
         assert_eq!(snap1.state_hash, snap2.state_hash);
     }
+
+    // =========================================================================
+    // RESTART PERSISTENCE TESTS
+    // =========================================================================
+
+    /// Test: Snapshot survives serialization/deserialization (simulates file save)
+    #[test]
+    fn persistence_snapshot_serialization_roundtrip() {
+        let (_dir, store) = create_test_store();
+
+        let genesis = create_genesis_block();
+        let alice = Address::new([1u8; 32]);
+        let token = TokenId::NATIVE;
+
+        store.begin_block(0).unwrap();
+        store.append_block(&genesis).unwrap();
+        store.set_token_balance(&token, &alice, 1_000_000).unwrap();
+        store.commit_block().unwrap();
+
+        // Take snapshot
+        let snap = snapshot(&store).unwrap();
+        let original_hash = snap.state_hash;
+
+        // Serialize to bytes (simulates saving to disk)
+        let bytes = bincode::serialize(&snap).unwrap();
+
+        // Deserialize (simulates loading from disk after restart)
+        let restored_snap: Snapshot = bincode::deserialize(&bytes).unwrap();
+
+        // State hash should be preserved
+        assert_eq!(restored_snap.state_hash, original_hash);
+        assert!(restored_snap.verify_state_hash());
+    }
+
+    /// Test: Full restart scenario (store closed, reopened, restored from snapshot)
+    #[test]
+    fn persistence_full_restart_scenario() {
+        let dir = TempDir::new().unwrap();
+
+        // Phase 1: Create chain and snapshot
+        let (snap_bytes, expected_height, expected_balance) = {
+            let store = Arc::new(SledStore::open(dir.path()).unwrap());
+
+            let genesis = create_genesis_block();
+            let block1 = create_block_at_height(1, genesis.header.block_hash);
+            let alice = Address::new([1u8; 32]);
+            let token = TokenId::NATIVE;
+
+            store.begin_block(0).unwrap();
+            store.append_block(&genesis).unwrap();
+            store.set_token_balance(&token, &alice, 5_000_000).unwrap();
+            store.commit_block().unwrap();
+
+            store.begin_block(1).unwrap();
+            store.append_block(&block1).unwrap();
+            store.set_token_balance(&token, &alice, 10_000_000).unwrap();
+            store.commit_block().unwrap();
+
+            let snap = snapshot(&store).unwrap();
+            let bytes = bincode::serialize(&snap).unwrap();
+
+            // Store is dropped here (simulates shutdown)
+            (bytes, 1u64, 10_000_000u128)
+        };
+
+        // Phase 2: "Restart" with fresh store and restore
+        {
+            let store = Arc::new(SledStore::open(dir.path()).unwrap());
+
+            // Simulate corruption or new instance
+            clear_all_trees(&store).unwrap();
+
+            // Restore from saved snapshot
+            let snap: Snapshot = bincode::deserialize(&snap_bytes).unwrap();
+            restore(&store, snap).unwrap();
+
+            // Verify state is fully restored
+            assert_eq!(store.latest_height().unwrap(), expected_height);
+
+            let alice = Address::new([1u8; 32]);
+            let token = TokenId::NATIVE;
+            assert_eq!(store.get_token_balance(&token, &alice).unwrap(), expected_balance);
+
+            // Verify can continue adding blocks
+            let block1 = store.get_block_by_height(1).unwrap().unwrap();
+            let block2 = create_block_at_height(2, block1.header.block_hash);
+
+            store.begin_block(2).unwrap();
+            store.append_block(&block2).unwrap();
+            store.commit_block().unwrap();
+
+            assert_eq!(store.latest_height().unwrap(), 2);
+        }
+    }
+
+    // =========================================================================
+    // ROLLBACK TESTS
+    // =========================================================================
+
+    /// Test: Restore acts as rollback to a previous state
+    #[test]
+    fn rollback_restore_to_previous_state() {
+        let (_dir, store) = create_test_store();
+
+        let genesis = create_genesis_block();
+        let block1 = create_block_at_height(1, genesis.header.block_hash);
+        let block2 = create_block_at_height(2, block1.header.block_hash);
+        let alice = Address::new([1u8; 32]);
+        let token = TokenId::NATIVE;
+
+        // Build chain to height 1
+        store.begin_block(0).unwrap();
+        store.append_block(&genesis).unwrap();
+        store.set_token_balance(&token, &alice, 1000).unwrap();
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        store.append_block(&block1).unwrap();
+        store.set_token_balance(&token, &alice, 2000).unwrap();
+        store.commit_block().unwrap();
+
+        // Snapshot at height 1
+        let snap_at_1 = snapshot(&store).unwrap();
+
+        // Continue building to height 2
+        store.begin_block(2).unwrap();
+        store.append_block(&block2).unwrap();
+        store.set_token_balance(&token, &alice, 5000).unwrap();
+        store.commit_block().unwrap();
+
+        // Verify at height 2
+        assert_eq!(store.latest_height().unwrap(), 2);
+        assert_eq!(store.get_token_balance(&token, &alice).unwrap(), 5000);
+
+        // "Rollback" to height 1 by restoring snapshot
+        restore(&store, snap_at_1).unwrap();
+
+        // Verify rolled back to height 1
+        assert_eq!(store.latest_height().unwrap(), 1);
+        assert_eq!(store.get_token_balance(&token, &alice).unwrap(), 2000);
+
+        // Block 2 should no longer exist
+        assert!(store.get_block_by_height(2).unwrap().is_none());
+    }
+
+    // =========================================================================
+    // INVARIANT VIOLATION TESTS
+    // =========================================================================
+
+    /// Invariant: Tampered snapshot must be rejected
+    #[test]
+    fn invariant_tampered_snapshot_rejected() {
+        let (_dir, store) = create_test_store();
+
+        let genesis = create_genesis_block();
+        store.begin_block(0).unwrap();
+        store.append_block(&genesis).unwrap();
+        store.commit_block().unwrap();
+
+        let mut snap = snapshot(&store).unwrap();
+
+        // Tamper with various fields and verify rejection
+
+        // Tamper height
+        let mut tampered = snap.clone();
+        tampered.height = 999;
+        assert!(!tampered.verify_state_hash());
+        assert!(restore(&store, tampered).is_err());
+
+        // Tamper block_hash
+        let mut tampered = snap.clone();
+        tampered.block_hash = [0xff; 32];
+        assert!(!tampered.verify_state_hash());
+        assert!(restore(&store, tampered).is_err());
+
+        // Tamper balance
+        let mut tampered = snap.clone();
+        tampered.token_balances.push(TokenBalanceEntry {
+            token: [0u8; 32],
+            address: [1u8; 32],
+            balance: 999999,
+        });
+        assert!(!tampered.verify_state_hash());
+        assert!(restore(&store, tampered).is_err());
+    }
+
+    /// Invariant: Empty snapshot must have valid state hash
+    #[test]
+    fn invariant_empty_snapshot_valid_hash() {
+        let snap = Snapshot::new(0, [0u8; 32]);
+        let mut finalized = snap.clone();
+        finalized.finalize();
+
+        // Empty snapshot should have a valid (non-zero) hash
+        assert_ne!(finalized.state_hash, [0u8; 32]);
+        assert!(finalized.verify_state_hash());
+    }
+
+    /// Invariant: After restore, block execution must work cleanly
+    #[test]
+    fn invariant_clean_execution_after_restore() {
+        let (_dir, store) = create_test_store();
+
+        let genesis = create_genesis_block();
+        let block1 = create_block_at_height(1, genesis.header.block_hash);
+
+        store.begin_block(0).unwrap();
+        store.append_block(&genesis).unwrap();
+        store.commit_block().unwrap();
+
+        let snap = snapshot(&store).unwrap();
+
+        // Clear and restore
+        clear_all_trees(&store).unwrap();
+        restore(&store, snap).unwrap();
+
+        // Block execution should work cleanly at height + 1
+        store.begin_block(1).unwrap();
+        store.append_block(&block1).unwrap();
+        store.commit_block().unwrap();
+
+        assert_eq!(store.latest_height().unwrap(), 1);
+    }
+
+    // =========================================================================
+    // GOLDEN VECTORS
+    // =========================================================================
+
+    /// Golden vector: Snapshot version
+    #[test]
+    fn golden_snapshot_version() {
+        assert_eq!(Snapshot::VERSION, 1, "Current snapshot version");
+    }
+
+    /// Golden vector: State hash is deterministic for same input
+    #[test]
+    fn golden_state_hash_determinism() {
+        let (_dir, store) = create_test_store();
+
+        let genesis = create_genesis_block();
+
+        store.begin_block(0).unwrap();
+        store.append_block(&genesis).unwrap();
+        store.commit_block().unwrap();
+
+        // Take multiple snapshots
+        let snap1 = snapshot(&store).unwrap();
+        let snap2 = snapshot(&store).unwrap();
+        let snap3 = snapshot(&store).unwrap();
+
+        // All state hashes must be identical
+        assert_eq!(snap1.state_hash, snap2.state_hash);
+        assert_eq!(snap2.state_hash, snap3.state_hash);
+    }
 }
