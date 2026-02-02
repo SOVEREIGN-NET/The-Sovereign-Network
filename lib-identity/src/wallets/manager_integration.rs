@@ -1082,15 +1082,28 @@ impl WalletManager {
         // Derive wallet seed from master seed
         let wallet_seed = self.derive_wallet_seed(derivation_index)?;
 
+        // Pre-allocate buffer for hash inputs to avoid repeated allocations from concat()
+        // Buffer size: wallet_seed (64 bytes) + longest suffix ("PUBLIC_KEY" = 10 bytes)
+        let mut hash_input = Vec::with_capacity(wallet_seed.len() + 10);
+
         // Generate deterministic wallet ID from derived seed
-        let wallet_id_bytes = lib_crypto::hash_blake3(&[&wallet_seed[..], b"WALLET_ID"].concat());
+        hash_input.clear();
+        hash_input.extend_from_slice(&wallet_seed);
+        hash_input.extend_from_slice(b"WALLET_ID");
+        let wallet_id_bytes = lib_crypto::hash_blake3(&hash_input);
         let wallet_id: WalletId = Hash(wallet_id_bytes);
 
         // Generate deterministic public key from derived seed
-        let public_key = lib_crypto::hash_blake3(&[&wallet_seed[..], b"PUBLIC_KEY"].concat()).to_vec();
+        hash_input.clear();
+        hash_input.extend_from_slice(&wallet_seed);
+        hash_input.extend_from_slice(b"PUBLIC_KEY");
+        let public_key = lib_crypto::hash_blake3(&hash_input).to_vec();
 
         // Generate seed commitment for recovery verification
-        let commitment_hash = lib_crypto::hash_blake3(&[&wallet_seed[..], b"COMMITMENT"].concat());
+        hash_input.clear();
+        hash_input.extend_from_slice(&wallet_seed);
+        hash_input.extend_from_slice(b"COMMITMENT");
+        let commitment_hash = lib_crypto::hash_blake3(&hash_input);
         let seed_commitment = format!("zhtp:hd:wallet:{}", hex::encode(commitment_hash));
 
         let current_time = std::time::SystemTime::now()

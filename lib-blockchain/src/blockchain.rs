@@ -2520,14 +2520,13 @@ impl Blockchain {
         identity_data: &IdentityTransactionData,
         block_height: u64,
     ) -> Result<()> {
-        use crate::storage::Address;
+        use crate::storage::derive_address_from_public_key;
         use crate::types::hash::blake3_hash;
 
         let did_hash = did_to_hash(&identity_data.did);
 
-        // Derive owner address from public key: Address = blake3(public_key)[0..32]
-        let owner_hash = blake3_hash(&identity_data.public_key);
-        let owner = Address::new(owner_hash.as_array());
+        // Derive owner address from public key using the canonical helper
+        let owner = derive_address_from_public_key(&identity_data.public_key);
 
         // Convert to consensus-compliant fixed-size format
         let consensus = IdentityConsensus {
@@ -2601,7 +2600,7 @@ impl Blockchain {
         if existing.owner != incoming_owner {
             return Err(anyhow::anyhow!("Immutable owner mismatch for identity update"));
         }
-        if existing.public_key_hash != *incoming_public_key_hash {
+        if existing.public_key_hash != incoming_public_key_hash {
             return Err(anyhow::anyhow!("Immutable public key mismatch for identity update"));
         }
         if existing.identity_type != incoming_identity_type {

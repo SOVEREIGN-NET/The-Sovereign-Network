@@ -115,10 +115,14 @@ impl FeeDistribution {
         let dev_grants = ((total_fees as u128 * DEV_ALLOCATION_PERCENT as u128) / 100) as u64;
 
         // Calculate remainder (dust from integer division)
-        let distributed = ubi_pool.saturating_add(dao_pool)
-            .saturating_add(emergency_reserve)
-            .saturating_add(dev_grants);
-        let remainder = total_fees.saturating_sub(distributed);
+        // Use checked arithmetic to detect potential overflow issues
+        let distributed = ubi_pool
+            .checked_add(dao_pool)
+            .and_then(|sum| sum.checked_add(emergency_reserve))
+            .and_then(|sum| sum.checked_add(dev_grants))
+            .expect("Fee distribution overflow: allocated pools exceed u64 max");
+        let remainder = total_fees.checked_sub(distributed)
+            .expect("Fee distribution error: distributed exceeds total fees");
 
         Self {
             ubi_pool,

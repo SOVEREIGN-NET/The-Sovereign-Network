@@ -306,12 +306,17 @@ fn test_stress_10k_citizens() {
     let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
 
     // Register 10K citizens
-    // Use wrapping_add to prevent overflow: (i % 245) gives 0-244, + 10 = 10-254
+    // Magic number explanation:
+    // - 245: Number of unique u8 values in range 10-254 (avoids 0-9 reserved, 255 overflow)
+    // - 10: Starting offset to avoid reserved key_ids 0-9
+    // - Result: (i % 245) gives 0-244, + 10 yields valid range 10-254
+    const UNIQUE_KEY_RANGE: usize = 245; // u8 values 10-254
+    const KEY_OFFSET: usize = 10;        // Skip reserved key_ids 0-9
     for i in 0..10_000 {
-        ubi.register(&test_key(((i % 245) + 10) as u8)).ok();
+        ubi.register(&test_key(((i % UNIQUE_KEY_RANGE) + KEY_OFFSET) as u8)).ok();
     }
 
-    assert_eq!(ubi.registered_count(), 245); // Limited by unique key_ids (10-254)
+    assert_eq!(ubi.registered_count(), UNIQUE_KEY_RANGE); // Limited by unique key_ids (10-254)
 }
 
 #[test]

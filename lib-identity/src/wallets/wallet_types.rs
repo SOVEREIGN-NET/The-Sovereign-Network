@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 use lib_crypto::Hash;
 use crate::types::IdentityId;
 use anyhow::{Result, anyhow};
+use zeroize::Zeroize;
 
 // Phase 4: Secure encryption imports
 use aes_gcm::{
-    aead::{Aead, KeyInit, OsRng},
+    aead::{Aead, KeyInit, OsRng, rand_core::RngCore},
     Aes256Gcm, Nonce,
 };
 use argon2::{Argon2, password_hash::SaltString};
@@ -537,8 +538,9 @@ impl QuantumWallet {
         let cipher = Aes256Gcm::new_from_slice(&key)
             .map_err(|e| anyhow!("Failed to create AES-GCM cipher: {}", e))?;
 
-        // Generate random 96-bit nonce
-        let nonce_bytes: [u8; 12] = rand::random();
+        // Generate random 96-bit nonce using cryptographically secure OsRng
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         // Encrypt the seed phrase
@@ -550,8 +552,12 @@ impl QuantumWallet {
         let mut output = Vec::with_capacity(1 + salt_bytes.len() + 12 + ciphertext.len());
         output.push(ENCRYPTION_VERSION_AES_GCM);
 
-        // Store salt length (1 byte) + salt
-        output.push(salt_bytes.len() as u8);
+        // Store salt length (1 byte) + salt - validate length fits in u8
+        let salt_len = salt_bytes.len();
+        if salt_len > u8::MAX as usize {
+            return Err(anyhow!("Salt length {} exceeds maximum of 255 bytes", salt_len));
+        }
+        output.push(salt_len as u8);
         output.extend_from_slice(salt_bytes);
 
         // Store nonce
@@ -560,8 +566,8 @@ impl QuantumWallet {
         // Store ciphertext
         output.extend_from_slice(&ciphertext);
 
-        // Zeroize sensitive data
-        key.iter_mut().for_each(|b| *b = 0);
+        // Zeroize sensitive data using zeroize crate for secure memory erasure
+        key.zeroize();
 
         Ok(hex::encode(&output))
     }
@@ -631,8 +637,8 @@ impl QuantumWallet {
             .decrypt(nonce, ciphertext)
             .map_err(|e| anyhow!("AES-GCM decryption failed (wrong key or tampered data): {}", e))?;
 
-        // Zeroize sensitive data
-        key.iter_mut().for_each(|b| *b = 0);
+        // Zeroize sensitive data using zeroize crate for secure memory erasure
+        key.zeroize();
 
         Ok(Some(String::from_utf8(plaintext)?))
     }
