@@ -186,52 +186,83 @@ pub fn create_encrypted_note(
 /// Hash transaction for signature (deterministic ordering)
 pub fn hash_for_signature(transaction: &Transaction) -> Hash {
     // Create signing hash with deterministic field ordering
+    // CRITICAL: This function defines the canonical signing format for ALL clients
+    // (server, CLI, mobile). Any changes here require updates to all clients.
+    //
+    // All fields MUST be included to prevent signature malleability attacks.
+    // Optional fields use 0x00 (absent) or 0x01 + data (present) markers.
     let mut hasher = blake3::Hasher::new();
-    
-    // Add version
+
+    // 1. Version (u32 LE)
     hasher.update(&transaction.version.to_le_bytes());
-    
-    // Add transaction type
+
+    // 2. Chain ID (u8) - CRITICAL for replay protection across networks
+    hasher.update(&[transaction.chain_id]);
+
+    // 3. Transaction type (u8 discriminant)
     let type_bytes = bincode::serialize(&transaction.transaction_type)
         .expect("TransactionType serialization should never fail");
     hasher.update(&type_bytes);
-    
-    // Add inputs (sorted by outpoint for determinism)
+
+    // 4. Inputs (sorted by outpoint for determinism)
     let mut sorted_inputs = transaction.inputs.clone();
     sorted_inputs.sort_by_key(|input| (input.previous_output, input.output_index));
-    
+    hasher.update(&(sorted_inputs.len() as u64).to_le_bytes());
     for input in &sorted_inputs {
         let input_bytes = bincode::serialize(input)
             .expect("TransactionInput serialization should never fail");
         hasher.update(&input_bytes);
     }
-    
-    // Add outputs (sorted by commitment for determinism)
+
+    // 5. Outputs (sorted by commitment for determinism)
     let mut sorted_outputs = transaction.outputs.clone();
     sorted_outputs.sort_by_key(|output| output.commitment);
-    
+    hasher.update(&(sorted_outputs.len() as u64).to_le_bytes());
     for output in &sorted_outputs {
         let output_bytes = bincode::serialize(output)
             .expect("TransactionOutput serialization should never fail");
         hasher.update(&output_bytes);
     }
-    
-    // Add fee
+
+    // 6. Fee (u64 LE)
     hasher.update(&transaction.fee.to_le_bytes());
-    
-    // Add memo
+
+    // 7. Memo (length-prefixed)
+    hasher.update(&(transaction.memo.len() as u64).to_le_bytes());
     hasher.update(&transaction.memo);
-    
-    // Add identity data if present
-    if let Some(identity_data) = &transaction.identity_data {
-        let identity_bytes = bincode::serialize(identity_data)
-            .expect("IdentityTransactionData serialization should never fail");
-        hasher.update(&identity_bytes);
-    }
-    
+
+    // 8-17. Optional data fields (0x00 = None, 0x01 + bincode = Some)
+    // Each field MUST be included to prevent malleability
+
+    hash_optional_field(&mut hasher, &transaction.identity_data);
+    hash_optional_field(&mut hasher, &transaction.wallet_data);
+    hash_optional_field(&mut hasher, &transaction.validator_data);
+    hash_optional_field(&mut hasher, &transaction.dao_proposal_data);
+    hash_optional_field(&mut hasher, &transaction.dao_vote_data);
+    hash_optional_field(&mut hasher, &transaction.dao_execution_data);
+    hash_optional_field(&mut hasher, &transaction.ubi_claim_data);
+    hash_optional_field(&mut hasher, &transaction.profit_declaration_data);
+    hash_optional_field(&mut hasher, &transaction.token_transfer_data);
+    hash_optional_field(&mut hasher, &transaction.governance_config_data);
+
     let mut hash_bytes = [0u8; 32];
     hash_bytes.copy_from_slice(hasher.finalize().as_bytes());
     Hash::new(hash_bytes)
+}
+
+/// Helper to hash optional fields with presence marker
+fn hash_optional_field<T: serde::Serialize>(hasher: &mut blake3::Hasher, field: &Option<T>) {
+    match field {
+        Some(data) => {
+            hasher.update(&[0x01]); // Present marker
+            let bytes = bincode::serialize(data)
+                .expect("Optional field serialization should never fail");
+            hasher.update(&bytes);
+        }
+        None => {
+            hasher.update(&[0x00]); // Absent marker
+        }
+    }
 }
 
 /// Implement Hash trait for Transaction

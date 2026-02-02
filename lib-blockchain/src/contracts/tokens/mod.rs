@@ -4,6 +4,7 @@ pub mod dao_token;
 pub mod token_id;
 pub mod sov;
 pub mod cbe_token;
+pub mod spec_v2;
 
 // Re-export core types and canonical token ID function
 pub use core::{TokenContract, TokenInfo};
@@ -23,4 +24,15 @@ pub use cbe_token::{
     CBE_TOTAL_SUPPLY, CBE_DECIMALS, CBE_SYMBOL, CBE_NAME,
     CBE_COMPENSATION_POOL, CBE_OPERATIONAL_TREASURY,
     CBE_PERFORMANCE_INCENTIVES, CBE_STRATEGIC_RESERVES,
+};
+
+// Re-export Phase 2 TokenContract (spec v2)
+pub use spec_v2::{
+    TokenContractV2, TokenCreationParams, TokenMetadata, EconomicConfig,
+    SupplyPolicy, EmissionModel, TransferPolicy, FeeSchedule,
+    Role, AuthoritySet, VestingSchedule as VestingScheduleV2,
+    ContractError as TokenContractError, ContractResult as TokenContractResult,
+    TransferResult,
+    create_sov_params, create_cbe_params,
+    Address as TokenAddress, TokenId as TokenIdV2, Amount, Decimals, Bps, BlockHeight, LockId,
 };

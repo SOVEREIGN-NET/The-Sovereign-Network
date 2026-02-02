@@ -58,7 +58,8 @@ pub struct TokenContract {
     pub creator: PublicKey,
     /// Kernel minting authority (for UBI distribution)
     /// If set, only this kernel can mint tokens via mint_kernel_only()
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// NOTE: Cannot use skip_serializing_if with bincode - it breaks deserialization
+    #[serde(default)]
     pub kernel_mint_authority: Option<PublicKey>,
     /// Locked balances per account (non-transferable until released)
     /// Used by Treasury Kernel for staking, vesting, escrow
