@@ -1270,6 +1270,32 @@ impl RuntimeOrchestrator {
                                     );
                                     blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
 
+                                    // Also credit ZHTP token contract balance for fee deduction
+                                    // This is separate from UTXOs - token contract tracks balances for token operations
+                                    let zhtp_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+                                    if let Some(zhtp_token) = blockchain_ref.token_contracts.get_mut(&zhtp_token_id) {
+                                        // Build PublicKey for the user from their identity
+                                        let user_pubkey = lib_blockchain::integration::crypto_integration::PublicKey {
+                                            dilithium_pk: wallet.public_key.clone(),
+                                            kyber_pk: vec![],
+                                            key_id: {
+                                                let hash = lib_blockchain::types::hash::blake3_hash(&wallet.public_key);
+                                                let mut arr = [0u8; 32];
+                                                arr.copy_from_slice(hash.as_bytes());
+                                                arr
+                                            },
+                                        };
+                                        // Mint welcome bonus to token contract balance
+                                        if let Err(e) = zhtp_token.mint(&user_pubkey, welcome_bonus) {
+                                            warn!("Failed to mint ZHTP token balance: {}", e);
+                                        } else {
+                                            info!("🪙 ZHTP token balance credited: {} to key_id {}",
+                                                welcome_bonus, hex::encode(&user_pubkey.key_id[..8]));
+                                        }
+                                    } else {
+                                        warn!("ZHTP token contract not found, skipping token balance credit");
+                                    }
+
                                     info!("🎁 Welcome bonus: {} ZHTP credited to wallet {} (UTXO created)",
                                         welcome_bonus, &wallet_id_hex[..16]);
                                 }

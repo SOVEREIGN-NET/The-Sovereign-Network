@@ -1773,7 +1773,13 @@ impl Blockchain {
 
         for tx in &block.transactions {
             // Skip system transactions (empty inputs = UBI, rewards, genesis)
-            if tx.inputs.is_empty() {
+            // BUT token contract executions are NOT system transactions - they must pay fees
+            let is_token_contract = tx.transaction_type == TransactionType::ContractExecution
+                && tx.memo.len() > 4
+                && &tx.memo[0..4] == b"ZHTP";
+            let is_system_transaction = tx.inputs.is_empty() && !is_token_contract;
+
+            if is_system_transaction {
                 continue;
             }
 
@@ -1819,7 +1825,13 @@ impl Blockchain {
                 "Block {} fee collection: {} total from {} transactions",
                 block.height(),
                 total_fees,
-                block.transactions.iter().filter(|tx| !tx.inputs.is_empty() && tx.fee > 0).count()
+                block.transactions.iter().filter(|tx| {
+                    let is_token_contract = tx.transaction_type == TransactionType::ContractExecution
+                        && tx.memo.len() > 4
+                        && &tx.memo[0..4] == b"ZHTP";
+                    let is_system = tx.inputs.is_empty() && !is_token_contract;
+                    !is_system && tx.fee > 0
+                }).count()
             );
         }
 
