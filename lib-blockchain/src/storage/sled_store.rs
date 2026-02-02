@@ -219,6 +219,14 @@ impl SledStore {
         &self.meta
     }
 
+    /// Get direct access to underlying sled database
+    ///
+    /// Used by snapshot module to access trees not yet in SledStore
+    /// (e.g., identities tree added by DID team in Phase 0)
+    pub fn db(&self) -> &Db {
+        &self.db
+    }
+
     /// Check if a transaction is active
     fn require_transaction(&self) -> StorageResult<()> {
         if !self.tx_active.load(Ordering::SeqCst) {
