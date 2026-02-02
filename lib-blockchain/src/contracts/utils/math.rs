@@ -1,7 +1,6 @@
 /// Integer square root using Newton's method
 ///
 /// Returns floor(sqrt(n)) for all u64 inputs using Newton's method for fast convergence.
-/// Uses saturating arithmetic to prevent overflow on large numbers.
 ///
 /// # Error bounds
 ///
@@ -9,33 +8,28 @@
 /// is exact when `n` is a perfect square (e.g., sqrt(100) = 10, sqrt(10000) = 100).
 /// For non-perfect squares, returns the floor of the true mathematical square root,
 /// with 0 error in integer terms (e.g., sqrt(99) = 9, sqrt(101) = 10).
-///
-/// This implementation prioritizes correctness for small and medium numbers (which are
-/// typical for LP position calculations and voting power computations) while maintaining
-/// safety through saturating arithmetic for very large inputs.
 pub fn integer_sqrt(n: u64) -> u64 {
     if n == 0 {
         return 0;
     }
-    if n < 4 {
+    if n == 1 {
         return 1;
     }
 
-    // For very large numbers, use bit-length based initial guess
-    // sqrt(n) ≈ 2^(floor(log2(n)/2))
-    let bit_length = (n.ilog2() + 1) as u64;
-    let initial = 1u64 << (bit_length / 2);
+    // Use bit-length based initial guess (overestimate to ensure convergence from above)
+    // sqrt(n) < 2^((log2(n) + 1) / 2)
+    let shift = (63 - n.leading_zeros()) / 2 + 1;
+    let mut x = 1u64 << shift;
 
-    let mut x = initial;
+    // Newton's method: x_{n+1} = (x_n + n/x_n) / 2
+    // Converges when x doesn't change (or oscillates between floor and ceiling)
     loop {
-        // Use saturating operations to prevent overflow
-        let next_x = x.saturating_add(n.saturating_div(x.max(1))) / 2;
+        let next_x = (x + n / x) / 2;
         if next_x >= x {
-            break;
+            return x;
         }
         x = next_x;
     }
-    x
 }
 
 #[cfg(test)]
