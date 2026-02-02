@@ -23,12 +23,12 @@ NC='\033[0m' # No Color
 # Configuration
 BUILD_TYPE="${1:-release}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUTPUT_DIR="$PROJECT_DIR/target/android"
 MIN_SDK_VERSION=26  # Android 8.0 (Oreo)
 
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║         Building ZHTP for Android ($BUILD_TYPE)                    ║${NC}"
+echo -e "${BLUE}║    Building lib-client for Android ($BUILD_TYPE)                  ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -90,10 +90,10 @@ mkdir -p "$OUTPUT_DIR/jniLibs"
 # Set build flags
 if [ "$BUILD_TYPE" = "release" ]; then
     BUILD_FLAG="--release"
-    PROFILE="mobile"
+    PROFILE="release"
 else
     BUILD_FLAG=""
-    PROFILE="dev"
+    PROFILE="debug"
 fi
 
 # Build for each architecture
@@ -110,10 +110,10 @@ echo -e "${BLUE} Building for ARM64 (aarch64-linux-android)...${NC}"
 cargo ndk \
     --target aarch64-linux-android \
     --platform $MIN_SDK_VERSION \
-    build $BUILD_FLAG --features android --lib
-    
+    build $BUILD_FLAG --package lib-client --lib
+
 mkdir -p "$OUTPUT_DIR/jniLibs/arm64-v8a"
-cp "target/aarch64-linux-android/$PROFILE/libzhtp_mobile.so" "$OUTPUT_DIR/jniLibs/arm64-v8a/"
+cp "target/aarch64-linux-android/$PROFILE/libzhtp_client.so" "$OUTPUT_DIR/jniLibs/arm64-v8a/libquic_jni.so"
 echo -e "${GREEN} ARM64 build complete${NC}"
 
 # ARMv7 (older devices)
@@ -122,10 +122,10 @@ echo -e "${BLUE} Building for ARMv7 (armv7-linux-androideabi)...${NC}"
 cargo ndk \
     --target armv7-linux-androideabi \
     --platform $MIN_SDK_VERSION \
-    build $BUILD_FLAG --features android --lib
-    
+    build $BUILD_FLAG --package lib-client --lib
+
 mkdir -p "$OUTPUT_DIR/jniLibs/armeabi-v7a"
-cp "target/armv7-linux-androideabi/$PROFILE/libzhtp_mobile.so" "$OUTPUT_DIR/jniLibs/armeabi-v7a/"
+cp "target/armv7-linux-androideabi/$PROFILE/libzhtp_client.so" "$OUTPUT_DIR/jniLibs/armeabi-v7a/libquic_jni.so"
 echo -e "${GREEN} ARMv7 build complete${NC}"
 
 # x86_64 (emulator)
@@ -134,10 +134,10 @@ echo -e "${BLUE} Building for x86_64 (emulator)...${NC}"
 cargo ndk \
     --target x86_64-linux-android \
     --platform $MIN_SDK_VERSION \
-    build $BUILD_FLAG --features android --lib
-    
+    build $BUILD_FLAG --package lib-client --lib
+
 mkdir -p "$OUTPUT_DIR/jniLibs/x86_64"
-cp "target/x86_64-linux-android/$PROFILE/libzhtp_mobile.so" "$OUTPUT_DIR/jniLibs/x86_64/"
+cp "target/x86_64-linux-android/$PROFILE/libzhtp_client.so" "$OUTPUT_DIR/jniLibs/x86_64/libquic_jni.so"
 echo -e "${GREEN} x86_64 build complete${NC}"
 
 # x86 (older emulator)
@@ -146,10 +146,10 @@ echo -e "${BLUE} Building for x86 (older emulator)...${NC}"
 cargo ndk \
     --target i686-linux-android \
     --platform $MIN_SDK_VERSION \
-    build $BUILD_FLAG --features android --lib
-    
+    build $BUILD_FLAG --package lib-client --lib
+
 mkdir -p "$OUTPUT_DIR/jniLibs/x86"
-cp "target/i686-linux-android/$PROFILE/libzhtp_mobile.so" "$OUTPUT_DIR/jniLibs/x86/"
+cp "target/i686-linux-android/$PROFILE/libzhtp_client.so" "$OUTPUT_DIR/jniLibs/x86/libquic_jni.so"
 echo -e "${GREEN} x86 build complete${NC}"
 
 # Display library sizes
@@ -158,10 +158,10 @@ echo -e "${BLUE}╔════════════════════�
 echo -e "${BLUE}║                    Library Sizes                           ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-du -h "$OUTPUT_DIR/jniLibs/arm64-v8a/libzhtp_mobile.so" | awk '{print "  ARM64:   " $1}'
-du -h "$OUTPUT_DIR/jniLibs/armeabi-v7a/libzhtp_mobile.so" | awk '{print "  ARMv7:   " $1}'
-du -h "$OUTPUT_DIR/jniLibs/x86_64/libzhtp_mobile.so" | awk '{print "  x86_64:  " $1}'
-du -h "$OUTPUT_DIR/jniLibs/x86/libzhtp_mobile.so" | awk '{print "  x86:     " $1}'
+du -h "$OUTPUT_DIR/jniLibs/arm64-v8a/libquic_jni.so" | awk '{print "  ARM64:   " $1}'
+du -h "$OUTPUT_DIR/jniLibs/armeabi-v7a/libquic_jni.so" | awk '{print "  ARMv7:   " $1}'
+du -h "$OUTPUT_DIR/jniLibs/x86_64/libquic_jni.so" | awk '{print "  x86_64:  " $1}'
+du -h "$OUTPUT_DIR/jniLibs/x86/libquic_jni.so" | awk '{print "  x86:     " $1}'
 
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
@@ -170,21 +170,12 @@ echo -e "${GREEN}╚════════════════════
 echo ""
 echo -e "${GREEN} Output: $OUTPUT_DIR/jniLibs${NC}"
 echo ""
-echo -e "${BLUE}To use in Android Studio:${NC}"
+echo -e "${BLUE}Next steps:${NC}"
 echo ""
-echo -e "  1. Copy jniLibs to your Android project:"
-echo -e "     ${YELLOW}cp -r $OUTPUT_DIR/jniLibs app/src/main/${NC}"
+echo -e "  1. Libraries have been built and are ready at:"
+echo -e "     ${YELLOW}$OUTPUT_DIR/jniLibs${NC}"
 echo ""
-echo -e "  2. Or configure in build.gradle:"
-echo -e "     ${YELLOW}android {${NC}"
-echo -e "     ${YELLOW}    sourceSets {${NC}"
-echo -e "     ${YELLOW}        main {${NC}"
-echo -e "     ${YELLOW}            jniLibs.srcDirs = ['$OUTPUT_DIR/jniLibs']${NC}"
-echo -e "     ${YELLOW}        }${NC}"
-echo -e "     ${YELLOW}    }${NC}"
-echo -e "     ${YELLOW}}${NC}"
-echo ""
-echo -e "  3. Load library in your app:"
-echo -e "     ${YELLOW}System.loadLibrary(\"zhtp_mobile\")${NC}"
+echo -e "  2. Copy to mobile app:"
+echo -e "     ${YELLOW}cp -r $OUTPUT_DIR/jniLibs/* /Users/supertramp/Dev/SovereignNetworkMobile/android/app/src/main/jniLibs/${NC}"
 echo ""
 echo -e "${GREEN} Done!${NC}"
