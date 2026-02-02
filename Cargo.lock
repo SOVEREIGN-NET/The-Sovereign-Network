@@ -3126,6 +3126,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lib-utxo"
+version = "0.1.0"
+dependencies = [
+ "lib-types",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.180"
 source = "registry+https://github.com/rust-lang/crates.io-index"
