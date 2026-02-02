@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "lib-types",
     "lib-fees",
+    "lib-tokens",
     "lib-blockchain",
     "lib-client",
     "lib-consensus",
