@@ -33,4 +33,7 @@
 
 pub mod model_v2;
 
+#[cfg(test)]
+mod golden_vectors;
+
 pub use model_v2::*;
