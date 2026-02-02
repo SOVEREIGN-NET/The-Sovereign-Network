@@ -198,8 +198,10 @@ impl GenesisFundingService {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         };
-        
+
         // Add genesis transaction to the genesis block
         genesis_block.transactions.push(genesis_tx.clone());
         
