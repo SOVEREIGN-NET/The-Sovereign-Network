@@ -180,7 +180,7 @@ impl NamespacePolicy {
             };
         }
 
-        if let Some(_sector) = welfare_sector_from_root(&normalized) {
+        if welfare_sector_from_root(&normalized).is_some() {
             return NameClass::Reserved {
                 reason: ReservedReason::WelfareRoot,
             };
