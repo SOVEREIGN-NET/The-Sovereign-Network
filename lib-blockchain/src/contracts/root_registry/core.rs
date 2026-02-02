@@ -437,7 +437,6 @@ impl RootRegistry {
         }
 
         self.records.insert(name_hash, CoreStoredRecord::V2(record));
-        let _ = now;
         Ok(name_hash)
     }
 
