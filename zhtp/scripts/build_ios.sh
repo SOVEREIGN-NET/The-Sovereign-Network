@@ -28,7 +28,7 @@ FRAMEWORK_NAME="ZhtpFramework"
 LIB_NAME="zhtp_mobile"
 
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║          Building ZHTP XCFramework for iOS ($BUILD_TYPE)          ║${NC}"
+echo -e "${BLUE}║       Building lib-client for iOS ($BUILD_TYPE)                   ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -97,19 +97,19 @@ echo -e "${BLUE}╚════════════════════�
 # iOS Device (ARM64)
 echo ""
 echo -e "${BLUE} Building for iOS device (aarch64-apple-ios)...${NC}"
-cargo build --target aarch64-apple-ios $BUILD_FLAG --features ios --lib
+IPHONEOS_DEPLOYMENT_TARGET=14.0 cargo build --target aarch64-apple-ios $BUILD_FLAG --package lib-client --lib
 echo -e "${GREEN} iOS device build complete${NC}"
 
 # iOS Simulator (Apple Silicon)
 echo ""
 echo -e "${BLUE} Building for iOS simulator ARM64 (aarch64-apple-ios-sim)...${NC}"
-cargo build --target aarch64-apple-ios-sim $BUILD_FLAG --features ios --lib
+IPHONEOS_DEPLOYMENT_TARGET=14.0 cargo build --target aarch64-apple-ios-sim $BUILD_FLAG --package lib-client --lib
 echo -e "${GREEN} iOS simulator ARM64 build complete${NC}"
 
 # iOS Simulator (Intel)
 echo ""
 echo -e "${BLUE} Building for iOS simulator x86_64 (x86_64-apple-ios)...${NC}"
-cargo build --target x86_64-apple-ios $BUILD_FLAG --features ios --lib
+IPHONEOS_DEPLOYMENT_TARGET=14.0 cargo build --target x86_64-apple-ios $BUILD_FLAG --package lib-client --lib
 echo -e "${GREEN} iOS simulator x86_64 build complete${NC}"
 
 # Create fat library for simulator (ARM64 + x86_64)
@@ -117,16 +117,16 @@ echo ""
 echo -e "${BLUE} Creating universal simulator library...${NC}"
 mkdir -p "$OUTPUT_DIR/simulator"
 lipo -create \
-    "$PROJECT_DIR/target/aarch64-apple-ios-sim/$PROFILE/lib${LIB_NAME}.a" \
-    "$PROJECT_DIR/target/x86_64-apple-ios/$PROFILE/lib${LIB_NAME}.a" \
-    -output "$OUTPUT_DIR/simulator/lib${LIB_NAME}.a"
+    "$PROJECT_DIR/target/aarch64-apple-ios-sim/$PROFILE/libzhtp_client.a" \
+    "$PROJECT_DIR/target/x86_64-apple-ios/$PROFILE/libzhtp_client.a" \
+    -output "$OUTPUT_DIR/simulator/libzhtp_client.a"
 echo -e "${GREEN} Universal simulator library created${NC}"
 
 # Copy device library
 echo ""
 echo -e "${BLUE} Copying device library...${NC}"
 mkdir -p "$OUTPUT_DIR/device"
-cp "$PROJECT_DIR/target/aarch64-apple-ios/$PROFILE/lib${LIB_NAME}.a" "$OUTPUT_DIR/device/"
+cp "$PROJECT_DIR/target/aarch64-apple-ios/$PROFILE/libzhtp_client.a" "$OUTPUT_DIR/device/"
 echo -e "${GREEN} Device library copied${NC}"
 
 # Generate C header file
@@ -176,7 +176,7 @@ echo -e "${BLUE}🏗️  Creating device framework...${NC}"
 DEVICE_FRAMEWORK="$OUTPUT_DIR/${FRAMEWORK_NAME}-device.framework"
 mkdir -p "$DEVICE_FRAMEWORK/Headers"
 mkdir -p "$DEVICE_FRAMEWORK/Modules"
-cp "$OUTPUT_DIR/device/lib${LIB_NAME}.a" "$DEVICE_FRAMEWORK/$FRAMEWORK_NAME"
+cp "$OUTPUT_DIR/device/libzhtp_client.a" "$DEVICE_FRAMEWORK/$FRAMEWORK_NAME"
 cp "$OUTPUT_DIR/zhtp.h" "$DEVICE_FRAMEWORK/Headers/"
 cp "$OUTPUT_DIR/module.modulemap" "$DEVICE_FRAMEWORK/Modules/"
 
@@ -215,7 +215,7 @@ echo -e "${BLUE}🏗️  Creating simulator framework...${NC}"
 SIMULATOR_FRAMEWORK="$OUTPUT_DIR/${FRAMEWORK_NAME}-simulator.framework"
 mkdir -p "$SIMULATOR_FRAMEWORK/Headers"
 mkdir -p "$SIMULATOR_FRAMEWORK/Modules"
-cp "$OUTPUT_DIR/simulator/lib${LIB_NAME}.a" "$SIMULATOR_FRAMEWORK/$FRAMEWORK_NAME"
+cp "$OUTPUT_DIR/simulator/libzhtp_client.a" "$SIMULATOR_FRAMEWORK/$FRAMEWORK_NAME"
 cp "$OUTPUT_DIR/zhtp.h" "$SIMULATOR_FRAMEWORK/Headers/"
 cp "$OUTPUT_DIR/module.modulemap" "$SIMULATOR_FRAMEWORK/Modules/"
 cp "$DEVICE_FRAMEWORK/Info.plist" "$SIMULATOR_FRAMEWORK/"
