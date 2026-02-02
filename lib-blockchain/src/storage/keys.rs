@@ -90,7 +90,7 @@ pub fn account_key(addr: &Address) -> &[u8; 32] {
 /// - Range scan over all holders of a token (prefix = token_id)
 /// - Point lookup for specific (token, address) pair
 #[inline]
-pub fn token_balance_key(token: TokenId, addr: &Address) -> [u8; 64] {
+pub fn token_balance_key(token: &TokenId, addr: &Address) -> [u8; 64] {
     let mut key = [0u8; 64];
     key[..32].copy_from_slice(token.as_bytes());
     key[32..].copy_from_slice(addr.as_bytes());
@@ -112,8 +112,18 @@ pub fn parse_token_balance_key(key: &[u8]) -> Option<(TokenId, Address)> {
 
 /// Get prefix for scanning all balances of a token
 #[inline]
-pub fn token_balances_prefix(token: TokenId) -> [u8; 32] {
+pub fn token_balances_prefix(token: &TokenId) -> [u8; 32] {
     *token.as_bytes()
+}
+
+// =============================================================================
+// TOKEN CONTRACT KEYS
+// =============================================================================
+
+/// Key for token_contracts tree: token_id (32 bytes) → contract_bytes
+#[inline]
+pub fn token_contract_key(token: &TokenId) -> &[u8; 32] {
+    token.as_bytes()
 }
 
 // =============================================================================
@@ -179,7 +189,7 @@ mod tests {
     fn test_token_balance_key_roundtrip() {
         let token = TokenId([0xcd; 32]);
         let addr = Address([0xef; 32]);
-        let key = token_balance_key(token, &addr);
+        let key = token_balance_key(&token, &addr);
         let (parsed_token, parsed_addr) = parse_token_balance_key(&key).unwrap();
 
         assert_eq!(parsed_token, token);
@@ -188,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_token_balance_key_length() {
-        let key = token_balance_key(TokenId::NATIVE, &Address::ZERO);
+        let key = token_balance_key(&TokenId::NATIVE, &Address::ZERO);
         assert_eq!(key.len(), 64);
     }
 
@@ -198,13 +208,21 @@ mod tests {
         let addr1 = Address([0x22; 32]);
         let addr2 = Address([0x33; 32]);
 
-        let key1 = token_balance_key(token, &addr1);
-        let key2 = token_balance_key(token, &addr2);
-        let prefix = token_balances_prefix(token);
+        let key1 = token_balance_key(&token, &addr1);
+        let key2 = token_balance_key(&token, &addr2);
+        let prefix = token_balances_prefix(&token);
 
         // Both keys should start with the token prefix
         assert!(key1.starts_with(&prefix));
         assert!(key2.starts_with(&prefix));
+    }
+
+    #[test]
+    fn test_token_contract_key() {
+        let token = TokenId([0xab; 32]);
+        let key = token_contract_key(&token);
+        assert_eq!(key.len(), 32);
+        assert_eq!(key, token.as_bytes());
     }
 
     #[test]

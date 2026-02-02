@@ -126,7 +126,7 @@ impl<'a> StateMutator<'a> {
     /// - `InsufficientBalance` if balance < amount
     pub fn debit_token(
         &self,
-        token: TokenId,
+        token: &TokenId,
         addr: &Address,
         amount: u128,
     ) -> TxApplyResult<()> {
@@ -140,7 +140,7 @@ impl<'a> StateMutator<'a> {
             return Err(TxApplyError::InsufficientBalance {
                 have: current,
                 need: amount,
-                token,
+                token: *token,
             });
         }
 
@@ -156,7 +156,7 @@ impl<'a> StateMutator<'a> {
     /// Returns `InvalidTokenAmount` on u128 overflow
     pub fn credit_token(
         &self,
-        token: TokenId,
+        token: &TokenId,
         addr: &Address,
         amount: u128,
     ) -> TxApplyResult<()> {
@@ -181,7 +181,7 @@ impl<'a> StateMutator<'a> {
     /// Atomic debit from sender, credit to receiver.
     pub fn transfer_token(
         &self,
-        token: TokenId,
+        token: &TokenId,
         from: &Address,
         to: &Address,
         amount: u128,
@@ -331,7 +331,7 @@ pub fn apply_native_transfer(
 /// Apply a token transfer transaction (balance model)
 pub fn apply_token_transfer(
     mutator: &StateMutator<'_>,
-    token: TokenId,
+    token: &TokenId,
     from: &Address,
     to: &Address,
     amount: u128,

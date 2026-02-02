@@ -11,9 +11,10 @@ use sled::{Db, Tree, Batch};
 
 use crate::block::Block;
 use super::{
-    keys, AccountState, Address, BlockchainStore, BlockHash, OutPoint,
-    StorageError, StorageResult, TokenId, Utxo,
+    keys, AccountState, Address, Amount, BlockchainStore, BlockHash, BlockHeight,
+    OutPoint, StorageError, StorageResult, TokenId, Utxo,
 };
+use crate::contracts::TokenContract;
 
 // =============================================================================
 // TREE NAMES (FIXED - DO NOT CHANGE)
@@ -26,6 +27,7 @@ const TREE_BLOCKS_BY_HASH: &str = "blocks_by_hash";
 const TREE_UTXOS: &str = "utxos";
 const TREE_ACCOUNTS: &str = "accounts";
 const TREE_TOKEN_BALANCES: &str = "token_balances";
+const TREE_TOKEN_CONTRACTS: &str = "token_contracts";
 const TREE_META: &str = "meta";
 
 /// Sled-based implementation of BlockchainStore
@@ -38,6 +40,7 @@ pub struct SledStore {
     utxos: Tree,
     accounts: Tree,
     token_balances: Tree,
+    token_contracts: Tree,
     meta: Tree,
 
     // Transaction state
@@ -53,6 +56,7 @@ struct PendingBatch {
     utxos: Batch,
     accounts: Batch,
     token_balances: Batch,
+    token_contracts: Batch,
     meta: Batch,
     block_data: Option<(u64, BlockHash, Vec<u8>)>, // (height, hash, serialized block)
 }
@@ -65,6 +69,7 @@ impl PendingBatch {
             utxos: Batch::default(),
             accounts: Batch::default(),
             token_balances: Batch::default(),
+            token_contracts: Batch::default(),
             meta: Batch::default(),
             block_data: None,
         }
@@ -100,6 +105,9 @@ impl SledStore {
         let token_balances = db
             .open_tree(TREE_TOKEN_BALANCES)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let token_contracts = db
+            .open_tree(TREE_TOKEN_CONTRACTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -111,6 +119,7 @@ impl SledStore {
             utxos,
             accounts,
             token_balances,
+            token_contracts,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -141,6 +150,9 @@ impl SledStore {
         let token_balances = db
             .open_tree(TREE_TOKEN_BALANCES)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let token_contracts = db
+            .open_tree(TREE_TOKEN_CONTRACTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -152,6 +164,7 @@ impl SledStore {
             utxos,
             accounts,
             token_balances,
+            token_contracts,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -196,9 +209,22 @@ impl SledStore {
         &self.token_balances
     }
 
+    /// Get direct access to token_contracts tree (for snapshots)
+    pub fn token_contracts(&self) -> &Tree {
+        &self.token_contracts
+    }
+
     /// Get direct access to meta tree (for snapshots)
     pub fn meta(&self) -> &Tree {
         &self.meta
+    }
+
+    /// Get direct access to underlying sled database
+    ///
+    /// Used by snapshot module to access trees not yet in SledStore
+    /// (e.g., identities tree added by DID team in Phase 0)
+    pub fn db(&self) -> &Db {
+        &self.db
     }
 
     /// Check if a transaction is active
@@ -271,9 +297,9 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
-    fn get_block_by_height(&self, height: u64) -> StorageResult<Option<Block>> {
+    fn get_block_by_height(&self, h: BlockHeight) -> StorageResult<Option<Block>> {
         // Get block hash from height index
-        let height_key = keys::block_height_key(height);
+        let height_key = keys::block_height_key(h);
         let hash_bytes = match self.blocks_by_height.get(height_key) {
             Ok(Some(bytes)) => bytes,
             Ok(None) => return Ok(None),
@@ -288,7 +314,7 @@ impl BlockchainStore for SledStore {
             }
             Ok(None) => Err(StorageError::CorruptedData(format!(
                 "Block hash exists at height {} but block data missing",
-                height
+                h
             ))),
             Err(e) => Err(StorageError::Database(e.to_string())),
         }
@@ -306,7 +332,7 @@ impl BlockchainStore for SledStore {
         }
     }
 
-    fn get_latest_height(&self) -> StorageResult<u64> {
+    fn latest_height(&self) -> StorageResult<BlockHeight> {
         self.get_latest_height_internal()?
             .ok_or(StorageError::NotInitialized)
     }
@@ -315,8 +341,8 @@ impl BlockchainStore for SledStore {
     // UTXO Operations
     // =========================================================================
 
-    fn get_utxo(&self, outpoint: &OutPoint) -> StorageResult<Option<Utxo>> {
-        let key = keys::utxo_key(outpoint);
+    fn get_utxo(&self, op: &OutPoint) -> StorageResult<Option<Utxo>> {
+        let key = keys::utxo_key(op);
         match self.utxos.get(key) {
             Ok(Some(bytes)) => {
                 let utxo: Utxo = Self::deserialize(&bytes)?;
@@ -327,11 +353,11 @@ impl BlockchainStore for SledStore {
         }
     }
 
-    fn put_utxo(&self, outpoint: &OutPoint, utxo: &Utxo) -> StorageResult<()> {
+    fn put_utxo(&self, op: &OutPoint, u: &Utxo) -> StorageResult<()> {
         self.require_transaction()?;
 
-        let key = keys::utxo_key(outpoint);
-        let value = Self::serialize(utxo)?;
+        let key = keys::utxo_key(op);
+        let value = Self::serialize(u)?;
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
@@ -341,14 +367,45 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
-    fn delete_utxo(&self, outpoint: &OutPoint) -> StorageResult<()> {
+    fn delete_utxo(&self, op: &OutPoint) -> StorageResult<()> {
         self.require_transaction()?;
 
-        let key = keys::utxo_key(outpoint);
+        let key = keys::utxo_key(op);
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
             batch.utxos.remove(key.as_ref());
+        }
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Token Contract Operations
+    // =========================================================================
+
+    fn get_token_contract(&self, id: &TokenId) -> StorageResult<Option<TokenContract>> {
+        let key = keys::token_contract_key(id);
+        match self.token_contracts.get(key) {
+            Ok(Some(bytes)) => {
+                let contract: TokenContract = Self::deserialize(&bytes)?;
+                Ok(Some(contract))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_token_contract(&self, c: &TokenContract) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let token_id = TokenId::new(c.token_id);
+        let key = keys::token_contract_key(&token_id);
+        let value = Self::serialize(c)?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.token_contracts.insert(key.as_ref(), value);
         }
 
         Ok(())
@@ -388,8 +445,8 @@ impl BlockchainStore for SledStore {
     // Token Balance Operations
     // =========================================================================
 
-    fn get_token_balance(&self, token: TokenId, addr: &Address) -> StorageResult<u128> {
-        let key = keys::token_balance_key(token, addr);
+    fn get_token_balance(&self, t: &TokenId, a: &Address) -> StorageResult<Amount> {
+        let key = keys::token_balance_key(t, a);
         match self.token_balances.get(key) {
             Ok(Some(bytes)) => {
                 if bytes.len() != 16 {
@@ -405,23 +462,18 @@ impl BlockchainStore for SledStore {
         }
     }
 
-    fn set_token_balance(
-        &self,
-        token: TokenId,
-        addr: &Address,
-        balance: u128,
-    ) -> StorageResult<()> {
+    fn set_token_balance(&self, t: &TokenId, a: &Address, v: Amount) -> StorageResult<()> {
         self.require_transaction()?;
 
-        let key = keys::token_balance_key(token, addr);
+        let key = keys::token_balance_key(t, a);
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            if balance == 0 {
+            if v == 0 {
                 // Optionally delete zero balances to save space
                 batch.token_balances.remove(key.as_ref());
             } else {
-                batch.token_balances.insert(key.as_ref(), &balance.to_be_bytes());
+                batch.token_balances.insert(key.as_ref(), &v.to_be_bytes());
             }
         }
 
@@ -432,7 +484,7 @@ impl BlockchainStore for SledStore {
     // Transaction Control
     // =========================================================================
 
-    fn begin_block(&self, height: u64) -> StorageResult<()> {
+    fn begin_block(&self, height: BlockHeight) -> StorageResult<()> {
         // Check if transaction already active
         if self.tx_active.swap(true, Ordering::SeqCst) {
             return Err(StorageError::TransactionAlreadyActive);
@@ -501,6 +553,10 @@ impl BlockchainStore for SledStore {
 
         self.token_balances
             .apply_batch(batch.token_balances)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.token_contracts
+            .apply_batch(batch.token_contracts)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
         // Update latest height
@@ -613,7 +669,7 @@ mod tests {
         assert_eq!(retrieved.header.height, 0);
 
         // Get latest height
-        assert_eq!(store.get_latest_height().unwrap(), 0);
+        assert_eq!(store.latest_height().unwrap(), 0);
     }
 
     #[test]
@@ -672,15 +728,15 @@ mod tests {
 
         store.begin_block(0).unwrap();
         store.append_block(&block).unwrap();
-        store.set_token_balance(token, &addr, 999_999).unwrap();
+        store.set_token_balance(&token, &addr, 999_999).unwrap();
         store.commit_block().unwrap();
 
         // Get balance
-        assert_eq!(store.get_token_balance(token, &addr).unwrap(), 999_999);
+        assert_eq!(store.get_token_balance(&token, &addr).unwrap(), 999_999);
 
         // Non-existent balance should be 0
         let other_addr = Address([0x33; 32]);
-        assert_eq!(store.get_token_balance(token, &other_addr).unwrap(), 0);
+        assert_eq!(store.get_token_balance(&token, &other_addr).unwrap(), 0);
     }
 
     #[test]
@@ -734,7 +790,7 @@ mod tests {
             Err(StorageError::NoActiveTransaction)
         ));
         assert!(matches!(
-            store.set_token_balance(TokenId::NATIVE, &Address::ZERO, 0),
+            store.set_token_balance(&TokenId::NATIVE, &Address::ZERO, 0),
             Err(StorageError::NoActiveTransaction)
         ));
     }
@@ -758,7 +814,7 @@ mod tests {
         store.append_block(&block2).unwrap();
         store.commit_block().unwrap();
 
-        assert_eq!(store.get_latest_height().unwrap(), 2);
+        assert_eq!(store.latest_height().unwrap(), 2);
         assert!(store.get_block_by_height(0).unwrap().is_some());
         assert!(store.get_block_by_height(1).unwrap().is_some());
         assert!(store.get_block_by_height(2).unwrap().is_some());

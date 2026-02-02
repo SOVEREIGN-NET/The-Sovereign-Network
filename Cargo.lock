@@ -2769,9 +2769,11 @@ dependencies = [
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
+ "lib-fees",
  "lib-identity",
  "lib-proofs",
  "lib-storage",
+ "lib-types",
  "log",
  "lru 0.12.5",
  "proptest",
@@ -2840,6 +2842,7 @@ dependencies = [
  "lib-identity",
  "lib-proofs",
  "lib-storage",
+ "lib-types",
  "proptest",
  "rand 0.8.5",
  "serde",
@@ -2898,6 +2901,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "lib-fees"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "lib-governance"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "lib-types",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "lib-identity"
 version = "0.1.0"
 dependencies = [
@@ -2922,6 +2945,17 @@ dependencies = [
  "tokio-test",
  "tracing",
  "zeroize",
+]
+
+[[package]]
+name = "lib-mempool"
+version = "0.1.0"
+dependencies = [
+ "lib-fees",
+ "lib-types",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -3086,12 +3120,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "lib-tokens"
+version = "0.1.0"
+dependencies = [
+ "lib-types",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "lib-types"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "blake3",
  "hex",
  "serde",
+]
+
+[[package]]
+name = "lib-utxo"
+version = "0.1.0"
+dependencies = [
+ "lib-types",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

@@ -811,7 +811,7 @@ impl Blockchain {
         info!("📂 Loading blockchain from SledStore...");
 
         // Check if there's any data in the store
-        let latest_height = match store.get_latest_height() {
+        let latest_height = match store.latest_height() {
             Ok(h) => h,
             Err(e) => {
                 // If error getting height, store is probably empty
