@@ -116,12 +116,15 @@ fn build_token_transaction(
     memo.extend(call_data);
 
     // Step 1: Calculate dynamic fee based on estimated transaction size
-    // Fee formula: 0.119 ZHTP per byte (approximately 8.4 bytes per ZHTP)
-    // First, build with a conservative estimate to get the actual serialized size
+    // Fee formula: ~0.119 ZHTP per byte, or 1 ZHTP per ~8.4 bytes
+    // Server calculation: fee = ceil(transaction_size_bytes / 8.4)
     let estimated_tx_size = 200 // minimum fixed fields
         + memo.len() // memo variable size
         + 2048; // conservative estimate for signature (Dilithium2 is ~2420 bytes)
-    let min_fee = ((estimated_tx_size as u64 + 7) / 8) + 100; // Slightly above minimum for safety
+
+    // Calculate fee using integer arithmetic: ceil(size / 8.4) = ceil(size * 10 / 84)
+    // This ensures: 10083 bytes -> 1200 ZHTP (matches server requirement)
+    let min_fee = ((estimated_tx_size as u64 * 10 + 83) / 84) + 50; // Buffer for rounding safety
 
     // Step 2: Build transaction with calculated fee for hashing
     // ALL fields must be present - signing_hash() includes all of them
