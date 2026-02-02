@@ -166,19 +166,19 @@ fn build_token_transaction(
     eprintln!("[token_tx] Estimated tx size: {} bytes", estimated_tx_size);
     eprintln!("[token_tx] Calculated minimum fee: {} ZHTP", min_fee);
 
-    // Step 2: Use signing_hash() - deterministic field-by-field hashing
+    // Step 3: Use signing_hash() - deterministic field-by-field hashing
     // This is the SAFE method that won't break when Transaction struct changes
     let tx_hash = tx.signing_hash();
 
     eprintln!("[token_tx] Signing hash: {}", hex::encode(tx_hash.as_bytes()));
 
-    // Step 3: Sign the hash with Dilithium
+    // Step 4: Sign the hash with Dilithium
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
 
     eprintln!("[token_tx] Signature size: {} bytes", signature_bytes.len());
 
-    // Step 4: Put real signature and public key back into transaction
+    // Step 5: Put real signature and public key back into transaction
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
@@ -189,7 +189,7 @@ fn build_token_transaction(
             .as_secs(),
     };
 
-    // Step 5: Serialize final transaction with signature for transmission
+    // Step 6: Serialize final transaction with signature for transmission
     let final_tx_bytes = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
