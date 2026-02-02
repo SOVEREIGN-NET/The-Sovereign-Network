@@ -14,6 +14,7 @@ pub mod chain_evaluation;
 pub mod dao;
 pub mod difficulty;
 pub mod engines;
+pub mod evidence;
 pub mod mempool;
 pub mod mining;
 pub mod network;
@@ -35,6 +36,7 @@ pub use proofs::*;
 pub use testing::NoOpBroadcaster;
 pub use types::*;
 pub use validators::{Validator, ValidatorManager};
+pub use evidence::{Evidence, EvidenceStore, EvidenceRecord, SlashingParams, IsolationAction, isolation_action};
 
 #[cfg(feature = "dao")]
 pub use dao::*;

@@ -2842,6 +2842,7 @@ dependencies = [
  "lib-identity",
  "lib-proofs",
  "lib-storage",
+ "lib-types",
  "proptest",
  "rand 0.8.5",
  "serde",
