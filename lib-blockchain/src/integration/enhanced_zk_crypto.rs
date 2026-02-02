@@ -292,8 +292,8 @@ impl EnhancedTransactionValidator {
             }
         }
         
-        // Check memo size (8KB for post-quantum signatures with Dilithium5 keys)
-        if transaction.memo.len() > 8192 {
+        // Check memo size (16KB for contract calls with post-quantum signatures)
+        if transaction.memo.len() > 16384 {
             return Err(anyhow::anyhow!("Memo too large"));
         }
         

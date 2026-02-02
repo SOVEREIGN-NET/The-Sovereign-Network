@@ -121,6 +121,8 @@ impl TransactionBuilder {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         })
     }
 
@@ -168,6 +170,8 @@ impl TransactionBuilder {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         };
 
         // Create signing hash using the exact same method as blockchain validation
