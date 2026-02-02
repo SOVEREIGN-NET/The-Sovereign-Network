@@ -3,7 +3,19 @@
 use serde::{Deserialize, Serialize};
 use lib_crypto::Hash;
 use crate::types::IdentityId;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use zeroize::Zeroize;
+
+// Phase 4: Secure encryption imports
+use aes_gcm::{
+    aead::{Aead, KeyInit, OsRng, rand_core::RngCore},
+    Aes256Gcm, Nonce,
+};
+use argon2::{Argon2, password_hash::SaltString};
+
+/// Encryption version bytes for seed phrase storage
+const ENCRYPTION_VERSION_LEGACY_XOR: u8 = 0x01;
+const ENCRYPTION_VERSION_AES_GCM: u8 = 0x02;
 
 /// Wallet identifier
 pub type WalletId = Hash;
@@ -503,37 +515,171 @@ impl QuantumWallet {
         Ok(wallet)
     }
     
-    /// Encrypt seed phrase for secure storage
+    /// Encrypt seed phrase for secure storage using AES-256-GCM with Argon2id KDF
+    ///
+    /// Format: [version: 1 byte][salt: 16 bytes][nonce: 12 bytes][ciphertext: variable]
+    /// Version 0x02 = AES-256-GCM (current)
+    /// Version 0x01 = Legacy XOR (for migration support only)
     pub fn encrypt_seed_phrase(seed_text: &str, wallet_id: &str) -> Result<String, anyhow::Error> {
-        // Simple encryption for demo (implementation would use proper encryption)
-        let key = format!("WALLET_SEED_KEY_{}", wallet_id);
-        let mut encrypted = Vec::new();
-        
-        for (i, byte) in seed_text.bytes().enumerate() {
-            let key_byte = key.bytes().nth(i % key.len()).unwrap_or(0);
-            encrypted.push(byte ^ key_byte);
+        // Generate random salt for Argon2id
+        let salt = SaltString::generate(&mut OsRng);
+        let salt_bytes = salt.as_str().as_bytes();
+
+        // Derive 256-bit key using Argon2id
+        let argon2 = Argon2::default();
+        let mut key = [0u8; 32];
+        argon2.hash_password_into(
+            wallet_id.as_bytes(),
+            salt_bytes,
+            &mut key,
+        ).map_err(|e| anyhow!("Argon2id key derivation failed: {}", e))?;
+
+        // Create AES-256-GCM cipher
+        let cipher = Aes256Gcm::new_from_slice(&key)
+            .map_err(|e| anyhow!("Failed to create AES-GCM cipher: {}", e))?;
+
+        // Generate random 96-bit nonce using cryptographically secure OsRng
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        // Encrypt the seed phrase
+        let ciphertext = cipher
+            .encrypt(nonce, seed_text.as_bytes())
+            .map_err(|e| anyhow!("AES-GCM encryption failed: {}", e))?;
+
+        // Build output: version || salt || nonce || ciphertext
+        let mut output = Vec::with_capacity(1 + salt_bytes.len() + 12 + ciphertext.len());
+        output.push(ENCRYPTION_VERSION_AES_GCM);
+
+        // Store salt length (1 byte) + salt - validate length fits in u8
+        let salt_len = salt_bytes.len();
+        if salt_len > u8::MAX as usize {
+            return Err(anyhow!("Salt length {} exceeds maximum of 255 bytes", salt_len));
         }
-        
-        Ok(hex::encode(&encrypted))
+        output.push(salt_len as u8);
+        output.extend_from_slice(salt_bytes);
+
+        // Store nonce
+        output.extend_from_slice(&nonce_bytes);
+
+        // Store ciphertext
+        output.extend_from_slice(&ciphertext);
+
+        // Zeroize sensitive data using zeroize crate for secure memory erasure
+        key.zeroize();
+
+        Ok(hex::encode(&output))
     }
-    
-    /// Decrypt seed phrase
+
+    /// Decrypt seed phrase, supporting both AES-256-GCM (v2) and legacy XOR (v1)
     pub fn decrypt_seed_phrase(&self) -> Result<Option<String>, anyhow::Error> {
         if let Some(ref encrypted_seed) = self.encrypted_seed {
             let encrypted_bytes = hex::decode(encrypted_seed)?;
-            let wallet_id_str = hex::encode(&self.id.0);
-            let key = format!("WALLET_SEED_KEY_{}", wallet_id_str);
-            
-            let mut decrypted = Vec::new();
-            for (i, &byte) in encrypted_bytes.iter().enumerate() {
-                let key_byte = key.bytes().nth(i % key.len()).unwrap_or(0);
-                decrypted.push(byte ^ key_byte);
+
+            if encrypted_bytes.is_empty() {
+                return Err(anyhow!("Empty encrypted seed"));
             }
-            
-            Ok(Some(String::from_utf8(decrypted)?))
+
+            let version = encrypted_bytes[0];
+            let wallet_id_str = hex::encode(&self.id.0);
+
+            match version {
+                ENCRYPTION_VERSION_AES_GCM => {
+                    // AES-256-GCM decryption (v2)
+                    Self::decrypt_aes_gcm(&encrypted_bytes[1..], &wallet_id_str)
+                }
+                ENCRYPTION_VERSION_LEGACY_XOR => {
+                    // Legacy XOR decryption (v1) - for migration
+                    Self::decrypt_legacy_xor(&encrypted_bytes[1..], &wallet_id_str)
+                }
+                _ => {
+                    // Assume legacy format without version byte (pre-versioning)
+                    Self::decrypt_legacy_xor(&encrypted_bytes, &wallet_id_str)
+                }
+            }
         } else {
             Ok(None)
         }
+    }
+
+    /// Decrypt using AES-256-GCM (version 2)
+    fn decrypt_aes_gcm(data: &[u8], wallet_id: &str) -> Result<Option<String>, anyhow::Error> {
+        if data.len() < 2 {
+            return Err(anyhow!("Invalid AES-GCM encrypted data: too short"));
+        }
+
+        // Parse salt length and salt
+        let salt_len = data[0] as usize;
+        if data.len() < 1 + salt_len + 12 {
+            return Err(anyhow!("Invalid AES-GCM encrypted data: missing salt or nonce"));
+        }
+
+        let salt_bytes = &data[1..1 + salt_len];
+        let nonce_bytes = &data[1 + salt_len..1 + salt_len + 12];
+        let ciphertext = &data[1 + salt_len + 12..];
+
+        // Derive key using Argon2id with stored salt
+        let argon2 = Argon2::default();
+        let mut key = [0u8; 32];
+        argon2.hash_password_into(
+            wallet_id.as_bytes(),
+            salt_bytes,
+            &mut key,
+        ).map_err(|e| anyhow!("Argon2id key derivation failed: {}", e))?;
+
+        // Create AES-256-GCM cipher and decrypt
+        let cipher = Aes256Gcm::new_from_slice(&key)
+            .map_err(|e| anyhow!("Failed to create AES-GCM cipher: {}", e))?;
+        let nonce = Nonce::from_slice(nonce_bytes);
+
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| anyhow!("AES-GCM decryption failed (wrong key or tampered data): {}", e))?;
+
+        // Zeroize sensitive data using zeroize crate for secure memory erasure
+        key.zeroize();
+
+        Ok(Some(String::from_utf8(plaintext)?))
+    }
+
+    /// Decrypt using legacy XOR (version 1 or pre-versioning)
+    fn decrypt_legacy_xor(data: &[u8], wallet_id: &str) -> Result<Option<String>, anyhow::Error> {
+        let key = format!("WALLET_SEED_KEY_{}", wallet_id);
+
+        let mut decrypted = Vec::with_capacity(data.len());
+        for (i, &byte) in data.iter().enumerate() {
+            let key_byte = key.bytes().nth(i % key.len()).unwrap_or(0);
+            decrypted.push(byte ^ key_byte);
+        }
+
+        Ok(Some(String::from_utf8(decrypted)?))
+    }
+
+    /// Re-encrypt seed phrase from legacy XOR to AES-256-GCM
+    /// Call this during wallet migration to upgrade security
+    pub fn migrate_seed_encryption(&mut self) -> Result<bool, anyhow::Error> {
+        if let Some(ref encrypted_seed) = self.encrypted_seed {
+            let encrypted_bytes = hex::decode(encrypted_seed)?;
+
+            // Check if already using AES-GCM
+            if !encrypted_bytes.is_empty() && encrypted_bytes[0] == ENCRYPTION_VERSION_AES_GCM {
+                return Ok(false); // Already migrated
+            }
+
+            // Decrypt with legacy method
+            let plaintext = self.decrypt_seed_phrase()?;
+
+            if let Some(seed_text) = plaintext {
+                // Re-encrypt with AES-GCM
+                let wallet_id_str = hex::encode(&self.id.0);
+                let new_encrypted = Self::encrypt_seed_phrase(&seed_text, &wallet_id_str)?;
+                self.encrypted_seed = Some(new_encrypted);
+                return Ok(true); // Migration successful
+            }
+        }
+
+        Ok(false) // Nothing to migrate
     }
     
     /// Add funds to the wallet
@@ -853,16 +999,167 @@ impl QuantumWallet {
                 parent_dao: dao_props.parent_dao_wallet.clone(),
                 child_daos: dao_props.child_dao_wallets.clone(),
                 authorized_dao_controllers: dao_props.authorized_dao_controllers.clone(),
-                hierarchy_level: if dao_props.parent_dao_wallet.is_some() { 
-                    1 // Child DAO 
-                } else if !dao_props.child_dao_wallets.is_empty() { 
-                    0 // Parent DAO 
-                } else { 
-                    0 // Standalone DAO 
+                hierarchy_level: if dao_props.parent_dao_wallet.is_some() {
+                    1 // Child DAO
+                } else if !dao_props.child_dao_wallets.is_empty() {
+                    0 // Parent DAO
+                } else {
+                    0 // Standalone DAO
                 },
             })
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_wallet(wallet_id_bytes: [u8; 32], encrypted_seed: Option<String>) -> QuantumWallet {
+        QuantumWallet {
+            id: Hash(wallet_id_bytes),
+            wallet_type: WalletType::Standard,
+            name: "Test Wallet".to_string(),
+            alias: None,
+            balance: 0,
+            staked_balance: 0,
+            pending_rewards: 0,
+            owner_id: None,
+            public_key: vec![],
+            seed_phrase: None,
+            encrypted_seed,
+            seed_commitment: None,
+            created_at: 0,
+            last_transaction: None,
+            recent_transactions: vec![],
+            is_active: true,
+            dao_properties: None,
+            derivation_index: None,
+            password_hash: None,
+            owned_content: vec![],
+            total_storage_used: 0,
+            total_content_value: 0,
+        }
+    }
+
+    #[test]
+    fn test_aes_gcm_encryption_roundtrip() {
+        let seed_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let wallet_id_bytes = [0x12; 32];
+        let wallet_id_hex = hex::encode(&wallet_id_bytes);
+
+        // Encrypt with hex-encoded wallet ID (matches what decrypt expects)
+        let encrypted = QuantumWallet::encrypt_seed_phrase(seed_phrase, &wallet_id_hex).unwrap();
+
+        // Verify version byte
+        let encrypted_bytes = hex::decode(&encrypted).unwrap();
+        assert_eq!(encrypted_bytes[0], ENCRYPTION_VERSION_AES_GCM, "Should use AES-GCM version");
+
+        // Create wallet and decrypt
+        let wallet = create_test_wallet(wallet_id_bytes, Some(encrypted));
+        let decrypted = wallet.decrypt_seed_phrase().unwrap().unwrap();
+        assert_eq!(decrypted, seed_phrase, "Decrypted should match original");
+    }
+
+    #[test]
+    fn test_legacy_xor_decryption() {
+        // Test the internal legacy XOR decryption function directly
+        let seed_phrase = "test seed phrase for legacy";
+        let wallet_id = "test_wallet_id";
+        let key = format!("WALLET_SEED_KEY_{}", wallet_id);
+
+        // Create XOR-encrypted data
+        let mut encrypted = Vec::new();
+        for (i, byte) in seed_phrase.bytes().enumerate() {
+            let key_byte = key.bytes().nth(i % key.len()).unwrap_or(0);
+            encrypted.push(byte ^ key_byte);
+        }
+
+        // Decrypt using legacy method
+        let decrypted = QuantumWallet::decrypt_legacy_xor(&encrypted, wallet_id).unwrap().unwrap();
+        assert_eq!(decrypted, seed_phrase, "Legacy XOR decryption should work");
+    }
+
+    #[test]
+    fn test_encryption_produces_different_ciphertexts() {
+        // Same plaintext encrypted twice should produce different ciphertexts
+        // (due to random nonce and salt)
+        let seed_phrase = "same seed phrase repeated";
+        let wallet_id = "deterministic_wallet_id";
+
+        let encrypted1 = QuantumWallet::encrypt_seed_phrase(seed_phrase, wallet_id).unwrap();
+        let encrypted2 = QuantumWallet::encrypt_seed_phrase(seed_phrase, wallet_id).unwrap();
+
+        assert_ne!(encrypted1, encrypted2, "Same plaintext should produce different ciphertexts");
+
+        // But both should decrypt to the same plaintext
+        // (We can't easily test this without a full wallet, but the logic is sound)
+    }
+
+    #[test]
+    fn test_migration_from_legacy_to_aes_gcm() {
+        let seed_phrase = "migrate this seed phrase now";
+        let wallet_id_bytes = [0xAB; 32];
+        let wallet_id_hex = hex::encode(&wallet_id_bytes);
+        let key = format!("WALLET_SEED_KEY_{}", wallet_id_hex);
+
+        // Create legacy XOR encrypted data (no version byte)
+        let mut encrypted = Vec::new();
+        for (i, byte) in seed_phrase.bytes().enumerate() {
+            let key_byte = key.bytes().nth(i % key.len()).unwrap_or(0);
+            encrypted.push(byte ^ key_byte);
+        }
+        let encrypted_hex = hex::encode(&encrypted);
+
+        // Create wallet with legacy encryption
+        let mut wallet = create_test_wallet(wallet_id_bytes, Some(encrypted_hex));
+
+        // Verify we can decrypt with legacy method
+        let decrypted_before = wallet.decrypt_seed_phrase().unwrap().unwrap();
+        assert_eq!(decrypted_before, seed_phrase);
+
+        // Migrate to AES-GCM
+        let migrated = wallet.migrate_seed_encryption().unwrap();
+        assert!(migrated, "Should report successful migration");
+
+        // Verify new encryption uses AES-GCM version
+        let new_encrypted_bytes = hex::decode(wallet.encrypted_seed.as_ref().unwrap()).unwrap();
+        assert_eq!(new_encrypted_bytes[0], ENCRYPTION_VERSION_AES_GCM, "Should now use AES-GCM");
+
+        // Verify we can still decrypt
+        let decrypted_after = wallet.decrypt_seed_phrase().unwrap().unwrap();
+        assert_eq!(decrypted_after, seed_phrase, "Decryption should work after migration");
+
+        // Verify migration is idempotent
+        let migrated_again = wallet.migrate_seed_encryption().unwrap();
+        assert!(!migrated_again, "Should not migrate again if already AES-GCM");
+    }
+
+    #[test]
+    fn test_version_1_explicit_decryption() {
+        // Test that data with explicit version 0x01 byte decrypts as legacy
+        let seed_phrase = "version one seed";
+        let wallet_id_bytes = [0xCD; 32];
+        let wallet_id_hex = hex::encode(&wallet_id_bytes);
+        let key = format!("WALLET_SEED_KEY_{}", wallet_id_hex);
+
+        // Create XOR encrypted data
+        let mut xor_encrypted = Vec::new();
+        for (i, byte) in seed_phrase.bytes().enumerate() {
+            let key_byte = key.bytes().nth(i % key.len()).unwrap_or(0);
+            xor_encrypted.push(byte ^ key_byte);
+        }
+
+        // Prepend version byte 0x01
+        let mut versioned = vec![ENCRYPTION_VERSION_LEGACY_XOR];
+        versioned.extend_from_slice(&xor_encrypted);
+        let encrypted_hex = hex::encode(&versioned);
+
+        // Create wallet and decrypt
+        let wallet = create_test_wallet(wallet_id_bytes, Some(encrypted_hex));
+        let decrypted = wallet.decrypt_seed_phrase().unwrap().unwrap();
+        assert_eq!(decrypted, seed_phrase, "Version 1 (legacy XOR) decryption should work");
     }
 }

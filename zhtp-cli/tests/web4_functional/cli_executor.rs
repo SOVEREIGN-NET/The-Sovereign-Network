@@ -104,18 +104,20 @@ impl CliExecutor {
     // ========================================================================
     
     /// Deploy a site to a domain
-    pub fn deploy_site(&self, domain: &str, site_path: &str) -> CliResult {
-        self.execute(&["domain", "deploy", domain, site_path])
+    pub fn deploy_site(&self, domain: &str, site_path: impl AsRef<std::path::Path>) -> CliResult {
+        let path_str = site_path.as_ref().to_string_lossy();
+        self.execute(&["domain", "deploy", domain, &path_str])
     }
-    
+
     /// Deploy with specific version
     pub fn deploy_site_with_version(
         &self,
         domain: &str,
-        site_path: &str,
+        site_path: impl AsRef<std::path::Path>,
         version: &str,
     ) -> CliResult {
-        self.execute(&["domain", "deploy", domain, site_path, "--version", version])
+        let path_str = site_path.as_ref().to_string_lossy();
+        self.execute(&["domain", "deploy", domain, &path_str, "--version", version])
     }
     
     // ========================================================================

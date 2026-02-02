@@ -375,41 +375,57 @@ pub struct WalletMetadata {
     pub wallet_type: Option<String>,
 }
 
-/// Identity state - DID and verifiable attributes
+/// Identity state - reference to identity in AccountState
+/// CONSENSUS CORE SPEC: Fixed-size only, no String fields
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentityState {
-    /// Decentralized Identifier (DID)
-    pub did: String,
-    /// Verifiable attributes/claims
-    pub attributes: Vec<IdentityAttribute>,
-    /// Identity status
+    /// Blake3 hash of DID string - reference to identities tree
+    pub did_hash: [u8; 32],
+    /// Identity status (cached from IdentityConsensus)
     pub status: IdentityStatus,
     /// Registration timestamp
     pub registered_at: u64,
 }
 
 impl IdentityState {
-    pub fn new(did: String, registered_at: u64) -> Self {
+    pub fn new(did_hash: [u8; 32], registered_at: u64) -> Self {
         Self {
-            did,
-            attributes: Vec::new(),
+            did_hash,
             status: IdentityStatus::Active,
             registered_at,
         }
     }
+
+    /// Create from a DID string by hashing it
+    pub fn from_did(did: &str, registered_at: u64) -> Self {
+        Self::new(blake3::hash(did.as_bytes()).into(), registered_at)
+    }
 }
 
-/// A single identity attribute/claim
+/// A single identity attribute/claim - FIXED-SIZE
+/// CONSENSUS CORE SPEC: No String fields in consensus state
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentityAttribute {
-    /// Attribute name (e.g., "email", "citizenship")
-    pub name: String,
+    /// Blake3 hash of attribute name
+    pub name_hash: [u8; 32],
     /// Attribute value (may be hashed for privacy)
     pub value: Vec<u8>,
     /// Issuer of this attribute
     pub issuer: Option<Address>,
     /// Expiration timestamp (0 = never)
     pub expires_at: u64,
+}
+
+impl IdentityAttribute {
+    /// Create from a name string by hashing it
+    pub fn new(name: &str, value: Vec<u8>, issuer: Option<Address>, expires_at: u64) -> Self {
+        Self {
+            name_hash: blake3::hash(name.as_bytes()).into(),
+            value,
+            issuer,
+            expires_at,
+        }
+    }
 }
 
 /// Identity status
@@ -463,6 +479,293 @@ pub enum ValidatorStatus {
 }
 
 // =============================================================================
+// IDENTITY CONSENSUS STATE (Fixed-Size Only)
+// =============================================================================
+// CONSENSUS CORE SPEC: No String identifiers in consensus state. Ever.
+//
+// This structure is stored in the `identities` tree and participates in
+// state hash computation. All fields MUST be fixed-size.
+// =============================================================================
+
+/// Identity type enum - NO STRINGS
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[repr(u8)]
+pub enum IdentityType {
+    #[default]
+    Human = 0,
+    Organization = 1,
+    Device = 2,
+    Agent = 3,
+}
+
+impl IdentityType {
+    /// Convert from string (for migration from legacy data)
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "human" => Self::Human,
+            "organization" | "org" => Self::Organization,
+            "device" => Self::Device,
+            "agent" => Self::Agent,
+            _ => Self::Human, // Default to human
+        }
+    }
+
+    /// Get the string representation (for display only, not storage)
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::Organization => "organization",
+            Self::Device => "device",
+            Self::Agent => "agent",
+        }
+    }
+}
+
+/// Identity consensus state - ALL FIELDS FIXED-SIZE
+///
+/// This is what goes in the `identities` tree and participates in state hash.
+/// Human-readable data (strings) is stored separately in IdentityMetadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityConsensus {
+    /// Blake3 hash of DID string - primary identifier
+    pub did_hash: [u8; 32],
+    /// Owner address (derived from public key)
+    pub owner: Address,
+    /// Blake3 hash of public key (full key in metadata)
+    pub public_key_hash: [u8; 32],
+    /// Blake3 hash of DID document
+    pub did_document_hash: [u8; 32],
+    /// Seed commitment for recovery verification
+    /// Blake3(seed || "ZHTP_SEED_COMMITMENT_V2")
+    pub seed_commitment: Option<[u8; 32]>,
+    /// Identity type as enum (not string)
+    pub identity_type: IdentityType,
+    /// Identity status
+    pub status: IdentityStatus,
+    /// Identity version (1=legacy, 2=with seed commitment)
+    pub version: u32,
+    /// Creation timestamp (unix seconds)
+    pub created_at: u64,
+    /// Registration block height
+    pub registered_at_height: u64,
+    /// Registration fee paid
+    pub registration_fee: u64,
+    /// DAO fee contribution
+    pub dao_fee: u64,
+    /// Number of controlled nodes (actual IDs in metadata)
+    pub controlled_node_count: u32,
+    /// Number of owned wallets (actual IDs in metadata)
+    pub owned_wallet_count: u32,
+    /// Number of attributes (actual data in metadata)
+    pub attribute_count: u32,
+}
+
+impl IdentityConsensus {
+    /// Create a new identity consensus state
+    pub fn new(
+        did_hash: [u8; 32],
+        owner: Address,
+        public_key: &[u8],
+        identity_type: IdentityType,
+    ) -> Self {
+        Self {
+            did_hash,
+            owner,
+            public_key_hash: blake3::hash(public_key).into(),
+            did_document_hash: [0u8; 32],
+            seed_commitment: None,
+            identity_type,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            registered_at_height: 0,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        }
+    }
+
+    /// Check if this identity has a seed commitment for recovery
+    pub fn has_seed_commitment(&self) -> bool {
+        self.seed_commitment.is_some()
+    }
+
+    /// Verify a seed commitment matches this identity's stored commitment
+    pub fn verify_seed_commitment(&self, commitment: &[u8; 32]) -> bool {
+        self.seed_commitment.as_ref() == Some(commitment)
+    }
+
+    /// Check if this identity needs migration to V2 format
+    pub fn needs_migration(&self) -> bool {
+        self.version < 2 || self.seed_commitment.is_none()
+    }
+
+    /// Set seed commitment and upgrade to V2
+    pub fn set_seed_commitment(&mut self, commitment: [u8; 32]) {
+        self.seed_commitment = Some(commitment);
+        self.version = 2;
+    }
+}
+
+impl Default for IdentityConsensus {
+    fn default() -> Self {
+        Self {
+            did_hash: [0u8; 32],
+            owner: Address::ZERO,
+            public_key_hash: [0u8; 32],
+            did_document_hash: [0u8; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Human,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 0,
+            registered_at_height: 0,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        }
+    }
+}
+
+// =============================================================================
+// IDENTITY METADATA (Non-Consensus, Strings Allowed)
+// =============================================================================
+// This structure is stored in the `identity_metadata` tree for DID resolution
+// and display purposes. It does NOT participate in consensus state hash.
+// =============================================================================
+
+/// Identity metadata - for resolution and display
+///
+/// Stored in separate `identity_metadata` tree, NOT part of consensus state hash.
+/// This allows human-readable strings without violating consensus requirements.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityMetadata {
+    /// The actual DID string (for resolution)
+    pub did: String,
+    /// Human-readable display name
+    pub display_name: String,
+    /// Full public key bytes
+    pub public_key: Vec<u8>,
+    /// Full ownership proof
+    pub ownership_proof: Vec<u8>,
+    /// Node IDs controlled by this identity
+    pub controlled_nodes: Vec<String>,
+    /// Wallet IDs owned by this identity
+    pub owned_wallets: Vec<String>,
+    /// Full attribute data with names
+    pub attributes: Vec<IdentityAttributeFull>,
+}
+
+impl IdentityMetadata {
+    pub fn new(did: String, display_name: String, public_key: Vec<u8>) -> Self {
+        Self {
+            did,
+            display_name,
+            public_key,
+            ownership_proof: Vec::new(),
+            controlled_nodes: Vec::new(),
+            owned_wallets: Vec::new(),
+            attributes: Vec::new(),
+        }
+    }
+}
+
+impl Default for IdentityMetadata {
+    fn default() -> Self {
+        Self {
+            did: String::new(),
+            display_name: String::new(),
+            public_key: Vec::new(),
+            ownership_proof: Vec::new(),
+            controlled_nodes: Vec::new(),
+            owned_wallets: Vec::new(),
+            attributes: Vec::new(),
+        }
+    }
+}
+
+/// Full attribute with string data (metadata only, non-consensus)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityAttributeFull {
+    /// Attribute name (e.g., "email", "citizenship")
+    pub name: String,
+    /// Attribute value
+    pub value: Vec<u8>,
+    /// Issuer of this attribute
+    pub issuer: Option<Address>,
+    /// Expiration timestamp (0 = never)
+    pub expires_at: u64,
+}
+
+// =============================================================================
+// HELPER: Hash a DID string for storage key
+// =============================================================================
+
+/// Hash a DID string to get the fixed-size storage key
+///
+/// Callers MUST use this before any identity storage operation.
+/// The DID string itself is stored in IdentityMetadata for resolution.
+#[inline]
+pub fn did_to_hash(did: &str) -> [u8; 32] {
+    blake3::hash(did.as_bytes()).into()
+}
+
+/// Derive an address from a public key (first 32 bytes of hash)
+#[inline]
+pub fn derive_address_from_public_key(public_key: &[u8]) -> Address {
+    Address::new(*blake3::hash(public_key).as_bytes())
+}
+
+// =============================================================================
+// LEGACY CONVERSION
+// =============================================================================
+
+/// Convert legacy IdentityTransactionData to consensus + metadata pair
+pub fn convert_legacy_identity(
+    legacy: &crate::transaction::IdentityTransactionData,
+) -> (IdentityConsensus, IdentityMetadata) {
+    let did_hash = did_to_hash(&legacy.did);
+    let owner = derive_address_from_public_key(&legacy.public_key);
+
+    let consensus = IdentityConsensus {
+        did_hash,
+        owner,
+        public_key_hash: blake3::hash(&legacy.public_key).into(),
+        did_document_hash: legacy.did_document_hash.into(),
+        seed_commitment: None, // Legacy identities don't have this
+        identity_type: IdentityType::from_str(&legacy.identity_type),
+        status: IdentityStatus::Active,
+        version: 1, // Mark as legacy
+        created_at: legacy.created_at,
+        registered_at_height: 0, // Unknown for legacy
+        registration_fee: legacy.registration_fee,
+        dao_fee: legacy.dao_fee,
+        controlled_node_count: legacy.controlled_nodes.len() as u32,
+        owned_wallet_count: legacy.owned_wallets.len() as u32,
+        attribute_count: 0,
+    };
+
+    let metadata = IdentityMetadata {
+        did: legacy.did.clone(),
+        display_name: legacy.display_name.clone(),
+        public_key: legacy.public_key.clone(),
+        ownership_proof: legacy.ownership_proof.clone(),
+        controlled_nodes: legacy.controlled_nodes.clone(),
+        owned_wallets: legacy.owned_wallets.clone(),
+        attributes: Vec::new(),
+    };
+
+    (consensus, metadata)
+}
+
+// =============================================================================
 // STORAGE ERROR
 // =============================================================================
 
@@ -485,6 +788,9 @@ pub enum StorageError {
 
     #[error("Account not found: {0}")]
     AccountNotFound(Address),
+
+    #[error("Identity not found: {}", hex::encode(.0))]
+    IdentityNotFound([u8; 32]),
 
     #[error("Invalid block height: expected {expected}, got {actual}")]
     InvalidBlockHeight { expected: u64, actual: u64 },
@@ -639,6 +945,103 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// - MUST be called within begin_block/commit_block
     /// - Setting balance to 0 may delete the entry (implementation detail)
     fn set_token_balance(&self, t: &TokenId, a: &Address, v: Amount) -> StorageResult<()>;
+
+    // =========================================================================
+    // Identity Consensus State (Phase 0 - DID Recovery)
+    // =========================================================================
+    // CONSENSUS CORE SPEC: All keys are [u8; 32], no String parameters.
+    //
+    // Two-layer storage:
+    // - identities tree: did_hash → IdentityConsensus (participates in state hash)
+    // - identity_metadata tree: did_hash → IdentityMetadata (non-consensus, for resolution)
+    // =========================================================================
+
+    /// Get identity consensus state by DID hash.
+    ///
+    /// Returns None if no identity exists with that DID hash.
+    /// Use `did_to_hash()` to convert a DID string to hash.
+    fn get_identity(&self, did_hash: &[u8; 32]) -> StorageResult<Option<IdentityConsensus>>;
+
+    /// Store identity consensus state.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_identity(&self, did_hash: &[u8; 32], identity: &IdentityConsensus) -> StorageResult<()>;
+
+    /// Delete an identity (revocation).
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    /// - Deleting non-existent identity is a no-op (idempotent)
+    fn delete_identity(&self, did_hash: &[u8; 32]) -> StorageResult<()>;
+
+    /// Get DID hash by owner address (secondary index).
+    ///
+    /// Returns the DID hash for the identity owned by this address.
+    /// Use get_identity() with the returned hash to get full consensus state.
+    fn get_identity_by_owner(&self, addr: &Address) -> StorageResult<Option<[u8; 32]>> {
+        // Default implementation returns None (requires secondary index)
+        let _ = addr;
+        Ok(None)
+    }
+
+    /// Store owner → did_hash index entry.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_identity_owner_index(&self, addr: &Address, did_hash: &[u8; 32]) -> StorageResult<()> {
+        // Default implementation is a no-op
+        let _ = (addr, did_hash);
+        Ok(())
+    }
+
+    /// Delete owner → did_hash index entry.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn delete_identity_owner_index(&self, addr: &Address) -> StorageResult<()> {
+        // Default implementation is a no-op
+        let _ = addr;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Identity Metadata (Non-Consensus, for DID Resolution)
+    // =========================================================================
+
+    /// Get identity metadata by DID hash.
+    ///
+    /// This is for DID resolution and display, NOT consensus.
+    fn get_identity_metadata(&self, did_hash: &[u8; 32]) -> StorageResult<Option<IdentityMetadata>> {
+        // Default implementation returns None
+        let _ = did_hash;
+        Ok(None)
+    }
+
+    /// Store identity metadata.
+    ///
+    /// This is for DID resolution and display, NOT consensus.
+    fn put_identity_metadata(&self, did_hash: &[u8; 32], metadata: &IdentityMetadata) -> StorageResult<()> {
+        // Default implementation is a no-op
+        let _ = (did_hash, metadata);
+        Ok(())
+    }
+
+    /// Delete identity metadata.
+    fn delete_identity_metadata(&self, did_hash: &[u8; 32]) -> StorageResult<()> {
+        // Default implementation is a no-op
+        let _ = did_hash;
+        Ok(())
+    }
+
+    /// List identity DID hashes registered at a specific block height.
+    ///
+    /// Useful for syncing and auditing identity registrations.
+    fn get_identities_at_height(&self, height: u64) -> StorageResult<Vec<[u8; 32]>> {
+        // Default implementation returns empty (requires height index)
+        let _ = height;
+        Ok(Vec::new())
+    }
 
     // =========================================================================
     // Atomicity Control

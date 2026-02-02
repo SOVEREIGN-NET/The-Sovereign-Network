@@ -274,6 +274,7 @@ mod tests {
         assert_eq!(services.len(), 1);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_parse_macos_gatt_data() {
         let proto = protocol();
@@ -282,6 +283,7 @@ mod tests {
         assert_eq!(data.unwrap(), vec![1, 2, 3]);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_extract_macos_services() {
         let proto = protocol();

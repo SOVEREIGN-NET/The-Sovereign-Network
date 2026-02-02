@@ -1225,6 +1225,197 @@ impl RecoveryPhraseManager {
     }
 }
 
+// =============================================================================
+// FULL RECOVERY RESULT (Phase 1: Core Recovery Infrastructure)
+// =============================================================================
+
+/// Complete result of seed-based identity recovery
+///
+/// Contains everything needed to resume using an identity after recovery.
+#[derive(Debug, Clone)]
+pub struct FullRecoveryResult {
+    /// The reconstructed identity
+    pub identity: crate::identity::ZhtpIdentity,
+    /// Master seed derived from mnemonic (64 bytes)
+    pub master_seed: [u8; 64],
+    /// The DID string
+    pub did: String,
+    /// Seed commitment (Blake3 hash for on-chain verification)
+    pub seed_commitment: [u8; 32],
+    /// Recovery metadata
+    pub recovery_metadata: RecoveryResultMetadata,
+}
+
+/// Metadata about the recovery operation
+#[derive(Debug, Clone)]
+pub struct RecoveryResultMetadata {
+    /// Whether the identity was found on-chain
+    pub found_on_chain: bool,
+    /// Block height where identity was registered (if found)
+    pub registration_block: Option<u64>,
+    /// Number of wallets recovered
+    pub wallets_recovered: u32,
+    /// Timestamp of recovery
+    pub recovered_at: u64,
+}
+
+/// Calculate seed commitment for on-chain verification
+///
+/// The seed commitment is: Blake3(master_seed || "ZHTP_SEED_COMMITMENT_V2")
+/// This allows verification without revealing the seed.
+pub fn calculate_seed_commitment(master_seed: &[u8; 64]) -> [u8; 32] {
+    lib_crypto::hash_blake3(&[master_seed.as_slice(), b"ZHTP_SEED_COMMITMENT_V2"].concat())
+}
+
+/// Convert a 24-word BIP39 mnemonic to a 64-byte master seed
+///
+/// Uses PBKDF2 with HMAC-SHA512 as per BIP39 standard:
+/// seed = PBKDF2(mnemonic_sentence, "mnemonic" + passphrase, 2048, 64)
+pub fn mnemonic_to_master_seed(words: &[String], passphrase: Option<&str>) -> Result<[u8; 64]> {
+    use sha2::Sha512;
+    use hmac::Hmac;
+    use pbkdf2::pbkdf2;
+
+    if words.len() != 24 && words.len() != 12 {
+        return Err(anyhow!("Mnemonic must be 12 or 24 words, got {}", words.len()));
+    }
+
+    let mnemonic = words.join(" ");
+    let salt = format!("mnemonic{}", passphrase.unwrap_or(""));
+
+    let mut seed = [0u8; 64];
+    pbkdf2::<Hmac<Sha512>>(
+        mnemonic.as_bytes(),
+        salt.as_bytes(),
+        2048,
+        &mut seed,
+    ).map_err(|e| anyhow!("PBKDF2 failed: {:?}", e))?;
+
+    Ok(seed)
+}
+
+/// Derive identity seed from master seed using HKDF
+///
+/// Uses HKDF-SHA256:
+/// identity_seed = HKDF-Expand(master_seed, "ZHTP_IDENTITY_SEED_V2", 64)
+pub fn derive_identity_seed(master_seed: &[u8; 64]) -> Result<[u8; 64]> {
+    use hkdf::Hkdf;
+    use sha2::Sha256;
+
+    let hk = Hkdf::<Sha256>::new(None, master_seed);
+    let mut identity_seed = [0u8; 64];
+    hk.expand(b"ZHTP_IDENTITY_SEED_V2", &mut identity_seed)
+        .map_err(|e| anyhow!("HKDF expand failed: {:?}", e))?;
+
+    Ok(identity_seed)
+}
+
+impl RecoveryPhraseManager {
+    /// Recover a complete identity from a 24-word BIP39 mnemonic
+    ///
+    /// This function:
+    /// 1. Validates the mnemonic format
+    /// 2. Converts mnemonic to 64-byte master seed (BIP39 PBKDF2)
+    /// 3. Derives identity seed via HKDF
+    /// 4. Derives DID deterministically from seed
+    /// 5. Calculates seed commitment for blockchain verification
+    /// 6. Reconstructs complete ZhtpIdentity
+    /// 7. Recovers all HD wallets from master seed
+    ///
+    /// # Arguments
+    /// * `mnemonic_words` - 24-word BIP39 mnemonic
+    /// * `passphrase` - Optional BIP39 passphrase (empty string if none)
+    /// * `identity_type` - Type of identity to recover
+    /// * `age` - Age for Human identities (required for Human type)
+    /// * `jurisdiction` - Jurisdiction for Human identities (required for Human type)
+    /// * `primary_device` - Primary device identifier
+    ///
+    /// # Returns
+    /// `FullRecoveryResult` containing the recovered identity and metadata
+    pub async fn recover_full_identity(
+        &self,
+        mnemonic_words: &[String],
+        passphrase: Option<&str>,
+        identity_type: crate::types::IdentityType,
+        age: Option<u64>,
+        jurisdiction: Option<String>,
+        primary_device: &str,
+    ) -> Result<FullRecoveryResult> {
+        // Step 1: Validate mnemonic format
+        if mnemonic_words.len() != 24 && mnemonic_words.len() != 12 {
+            return Err(anyhow!(
+                "Recovery phrase must be 12 or 24 words, got {}",
+                mnemonic_words.len()
+            ));
+        }
+
+        // Step 2: Convert mnemonic to master seed (BIP39 PBKDF2)
+        let master_seed = mnemonic_to_master_seed(mnemonic_words, passphrase)?;
+
+        // Step 3: Derive identity seed via HKDF
+        let identity_seed = derive_identity_seed(&master_seed)?;
+
+        // Step 4: Calculate seed commitment for on-chain verification
+        let seed_commitment = calculate_seed_commitment(&master_seed);
+
+        // Step 5: Reconstruct identity using new_unified with the derived seed
+        let identity = crate::identity::ZhtpIdentity::new_unified(
+            identity_type,
+            age,
+            jurisdiction.clone(),
+            primary_device,
+            Some(identity_seed),
+        )?;
+
+        let did = identity.did.clone();
+
+        // Step 6: Get current timestamp
+        let recovered_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        // Step 7: Count recovered wallets
+        let wallets_recovered = identity.wallet_manager.wallets.len() as u32;
+
+        tracing::info!(
+            "🔓 Full identity recovery complete: DID={}, wallets={}",
+            &did[..32.min(did.len())],
+            wallets_recovered
+        );
+
+        Ok(FullRecoveryResult {
+            identity,
+            master_seed,
+            did,
+            seed_commitment,
+            recovery_metadata: RecoveryResultMetadata {
+                found_on_chain: false, // Caller should verify against blockchain
+                registration_block: None,
+                wallets_recovered,
+                recovered_at,
+            },
+        })
+    }
+
+    /// Verify a seed commitment against the one stored on-chain
+    ///
+    /// # Arguments
+    /// * `master_seed` - The master seed to verify
+    /// * `on_chain_commitment` - The commitment stored on blockchain
+    ///
+    /// # Returns
+    /// `true` if the commitments match (same seed), `false` otherwise
+    pub fn verify_seed_commitment(
+        master_seed: &[u8; 64],
+        on_chain_commitment: &[u8; 32],
+    ) -> bool {
+        let computed = calculate_seed_commitment(master_seed);
+        // Constant-time comparison to prevent timing attacks
+        use subtle::ConstantTimeEq;
+        computed.ct_eq(on_chain_commitment).into()
+    }
+}
+
 impl Default for PhraseValidationRules {
     fn default() -> Self {
         Self {

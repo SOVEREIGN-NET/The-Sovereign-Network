@@ -10,10 +10,9 @@
 //! - No negative balances (enforced by debit_token)
 //! - All changes are deterministic and reproducible
 
-use crate::block::Block;
 use crate::storage::{
-    AccountState, Address, BlockchainStore, OutPoint, StorageResult,
-    TokenId, Utxo, WalletState,
+    AccountState, Address, BlockchainStore, IdentityConsensus, IdentityMetadata,
+    OutPoint, TokenId, Utxo, WalletState,
 };
 use crate::transaction::{Transaction, TransactionOutput};
 use crate::types::Hash;
@@ -231,6 +230,165 @@ impl<'a> StateMutator<'a> {
         let new_nonce = current + 1;
         self.set_nonce(addr, new_nonce)?;
         Ok(new_nonce)
+    }
+
+    // =========================================================================
+    // Identity Primitives (CONSENSUS CORE SPEC: Fixed-size keys only)
+    // =========================================================================
+
+    /// Register a new identity (consensus + metadata)
+    ///
+    /// Stores both consensus state (fixed-size, participates in state hash) and
+    /// metadata (strings allowed, for DID resolution) in separate trees.
+    ///
+    /// # Parameters
+    /// - `did_hash`: Blake3 hash of the DID string (32 bytes)
+    /// - `consensus`: Fixed-size consensus state
+    /// - `metadata`: Human-readable metadata for resolution
+    ///
+    /// # Errors
+    /// - Returns error if identity with this DID hash already exists
+    pub fn register_identity(
+        &self,
+        did_hash: &[u8; 32],
+        consensus: &IdentityConsensus,
+        metadata: &IdentityMetadata,
+    ) -> TxApplyResult<()> {
+        // Check if identity already exists
+        if self.store.get_identity(did_hash)?.is_some() {
+            return Err(TxApplyError::Internal(format!(
+                "Identity already registered: {}",
+                hex::encode(did_hash)
+            )));
+        }
+
+        // Store consensus state (participates in state hash)
+        self.store.put_identity(did_hash, consensus)?;
+
+        // Store metadata (for DID resolution, non-consensus)
+        self.store.put_identity_metadata(did_hash, metadata)?;
+
+        // Update owner index
+        self.store.put_identity_owner_index(&consensus.owner, did_hash)?;
+
+        Ok(())
+    }
+
+    /// Update an existing identity's consensus state
+    ///
+    /// Replaces only the consensus state. Used for:
+    /// - Adding seed commitment during migration
+    /// - Status changes
+    /// - Updating counts
+    ///
+    /// # Errors
+    /// - Returns error if identity doesn't exist
+    pub fn update_identity(
+        &self,
+        did_hash: &[u8; 32],
+        consensus: &IdentityConsensus,
+    ) -> TxApplyResult<()> {
+        // Verify identity exists
+        let existing = self.store.get_identity(did_hash)?.ok_or_else(|| {
+            TxApplyError::Internal(format!(
+                "Cannot update non-existent identity: {}",
+                hex::encode(did_hash)
+            ))
+        })?;
+
+        // Enforce immutable ownership/identity invariants
+        if existing.did_hash != consensus.did_hash {
+            return Err(TxApplyError::Internal("Immutable DID hash mismatch".to_string()));
+        }
+        if existing.owner != consensus.owner {
+            return Err(TxApplyError::Internal("Immutable owner mismatch".to_string()));
+        }
+        if existing.public_key_hash != consensus.public_key_hash {
+            return Err(TxApplyError::Internal("Immutable public key mismatch".to_string()));
+        }
+        if existing.registered_at_height != consensus.registered_at_height {
+            return Err(TxApplyError::Internal("Immutable registered_at_height mismatch".to_string()));
+        }
+        if existing.identity_type != consensus.identity_type {
+            return Err(TxApplyError::Internal("Immutable identity type mismatch".to_string()));
+        }
+
+        self.store.put_identity(did_hash, consensus)?;
+        Ok(())
+    }
+
+    /// Update identity metadata (non-consensus)
+    ///
+    /// Updates the human-readable metadata for DID resolution.
+    /// This does NOT affect the state hash.
+    pub fn update_identity_metadata(
+        &self,
+        did_hash: &[u8; 32],
+        metadata: &IdentityMetadata,
+    ) -> TxApplyResult<()> {
+        // Verify identity exists (consensus must exist for metadata to be valid)
+        if self.store.get_identity(did_hash)?.is_none() {
+            return Err(TxApplyError::Internal(format!(
+                "Cannot update metadata for non-existent identity: {}",
+                hex::encode(did_hash)
+            )));
+        }
+
+        self.store.put_identity_metadata(did_hash, metadata)?;
+        Ok(())
+    }
+
+    /// Revoke an identity
+    ///
+    /// Deletes the identity from all storage trees. This is a permanent operation.
+    ///
+    /// # Errors
+    /// - Returns error if identity doesn't exist
+    pub fn revoke_identity(&self, did_hash: &[u8; 32]) -> TxApplyResult<()> {
+        // Get identity to find owner for index deletion
+        let identity = self.store.get_identity(did_hash)?.ok_or_else(|| {
+            TxApplyError::Internal(format!(
+                "Cannot revoke non-existent identity: {}",
+                hex::encode(did_hash)
+            ))
+        })?;
+
+        // Remove from all trees
+        self.store.delete_identity(did_hash)?;
+        self.store.delete_identity_metadata(did_hash)?;
+        self.store.delete_identity_owner_index(&identity.owner)?;
+
+        Ok(())
+    }
+
+    /// Get identity consensus state by DID hash
+    ///
+    /// Returns the fixed-size consensus state.
+    /// Use `get_identity_metadata` for human-readable data.
+    pub fn get_identity(&self, did_hash: &[u8; 32]) -> TxApplyResult<Option<IdentityConsensus>> {
+        Ok(self.store.get_identity(did_hash)?)
+    }
+
+    /// Get identity metadata by DID hash
+    ///
+    /// Returns the human-readable metadata for DID resolution.
+    pub fn get_identity_metadata(&self, did_hash: &[u8; 32]) -> TxApplyResult<Option<IdentityMetadata>> {
+        Ok(self.store.get_identity_metadata(did_hash)?)
+    }
+
+    /// Check if an identity exists
+    pub fn identity_exists(&self, did_hash: &[u8; 32]) -> TxApplyResult<bool> {
+        Ok(self.store.get_identity(did_hash)?.is_some())
+    }
+
+    /// Get identity by owner address
+    ///
+    /// Looks up the DID hash from the owner index, then retrieves the identity.
+    pub fn get_identity_by_owner(&self, addr: &Address) -> TxApplyResult<Option<IdentityConsensus>> {
+        match self.store.get_identity_by_owner(addr)? {
+            Some(did_hash) => Ok(self.store.get_identity(&did_hash)?),
+            None => Ok(None),
+        }
     }
 }
 

@@ -16,7 +16,7 @@ use crate::integration::zk_integration::ZkTransactionProof;
 use crate::integration::economic_integration::{EconomicTransactionProcessor, TreasuryStats};
 use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, ConsensusStatus};
 use crate::integration::storage_integration::{BlockchainStorageManager, BlockchainStorageConfig, StorageOperationResult};
-use crate::storage::BlockchainStore;
+use crate::storage::{BlockchainStore, IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus, did_to_hash};
 use lib_storage::dht::storage::DhtStorage;
 
 /// Messages for real-time blockchain synchronization
@@ -2252,8 +2252,18 @@ impl Blockchain {
     /// Update an existing identity on the blockchain
     pub fn update_identity(&mut self, did: &str, updated_data: IdentityTransactionData) -> Result<Hash> {
         // Check if identity exists
-        if !self.identity_registry.contains_key(did) {
-            return Err(anyhow::anyhow!("Identity {} not found on blockchain", did));
+        let existing = self.identity_registry.get(did)
+            .ok_or_else(|| anyhow::anyhow!("Identity {} not found on blockchain", did))?;
+
+        // Enforce immutable ownership/identity invariants
+        if existing.did != updated_data.did {
+            return Err(anyhow::anyhow!("Immutable DID mismatch for identity update"));
+        }
+        if existing.public_key != updated_data.public_key {
+            return Err(anyhow::anyhow!("Immutable public key mismatch for identity update"));
+        }
+        if existing.identity_type != updated_data.identity_type {
+            return Err(anyhow::anyhow!("Immutable identity type mismatch for identity update"));
         }
 
         // Create update transaction with authorization
@@ -2365,6 +2375,10 @@ impl Blockchain {
     }
 
     /// Process identity transactions in a block
+    ///
+    /// This method:
+    /// 1. Stores to in-memory HashMap (for fast queries, backward compatibility)
+    /// 2. Persists to sled storage (for durability, consensus state)
     pub fn process_identity_transactions(&mut self, block: &Block) -> Result<()> {
         for transaction in &block.transactions {
             if transaction.transaction_type.is_identity_transaction() {
@@ -2378,6 +2392,7 @@ impl Blockchain {
                                 new_identity_data.controlled_nodes = existing_identity.controlled_nodes.clone();
                             }
 
+                            // Store in memory (backward compatibility + fast queries)
                             self.identity_registry.insert(
                                 identity_data.did.clone(),
                                 new_identity_data.clone()
@@ -2386,6 +2401,15 @@ impl Blockchain {
                                 identity_data.did.clone(),
                                 block.height()
                             );
+
+                            // PHASE 0: Persist to sled storage (consensus state)
+                            if let Some(ref store) = self.store {
+                                self.persist_identity_registration(
+                                    store.as_ref(),
+                                    &new_identity_data,
+                                    block.height(),
+                                )?;
+                            }
 
                             // Register for UBI if this is a citizen identity
                             if identity_data.identity_type == "verified_citizen"
@@ -2420,13 +2444,46 @@ impl Blockchain {
                                 // Preserve controlled_nodes from existing identity
                                 updated_identity_data.controlled_nodes = existing_identity.controlled_nodes.clone();
                             }
-                            
+
+                            // Enforce immutable ownership and identity invariants
+                            if let Some(existing_identity) = self.identity_registry.get(&identity_data.did) {
+                                if existing_identity.public_key != updated_identity_data.public_key {
+                                    return Err(anyhow::anyhow!(
+                                        "Immutable public key mismatch for identity update: {}",
+                                        identity_data.did
+                                    ));
+                                }
+                                if existing_identity.identity_type != updated_identity_data.identity_type {
+                                    return Err(anyhow::anyhow!(
+                                        "Immutable identity type mismatch for identity update: {}",
+                                        identity_data.did
+                                    ));
+                                }
+                            } else {
+                                return Err(anyhow::anyhow!(
+                                    "Cannot update non-existent identity: {}",
+                                    identity_data.did
+                                ));
+                            }
+
+                            // Store in memory (post-validation)
                             self.identity_registry.insert(
                                 identity_data.did.clone(),
-                                updated_identity_data
+                                updated_identity_data.clone()
                             );
+
+                            // PHASE 0: Persist update to sled storage
+                            if let Some(ref store) = self.store {
+                                self.persist_identity_update(
+                                    store.as_ref(),
+                                    &updated_identity_data,
+                                )?;
+                            }
                         }
                         TransactionType::IdentityRevocation => {
+                            let did_hash = did_to_hash(&identity_data.did);
+
+                            // Store revoked state in memory
                             let mut revoked_data = identity_data.clone();
                             revoked_data.identity_type = "revoked".to_string();
                             self.identity_registry.insert(
@@ -2434,12 +2491,146 @@ impl Blockchain {
                                 revoked_data
                             );
                             self.identity_registry.remove(&identity_data.did);
+
+                            // PHASE 0: Delete from sled storage (identity + indexes)
+                            if let Some(ref store) = self.store {
+                                if let Some(existing_identity) = store.get_identity(&did_hash)
+                                    .map_err(|e| anyhow::anyhow!("Failed to load identity for revocation: {}", e))? {
+                                    store.delete_identity_owner_index(&existing_identity.owner)
+                                        .map_err(|e| anyhow::anyhow!("Failed to delete identity owner index: {}", e))?;
+                                }
+                                store.delete_identity(&did_hash)
+                                    .map_err(|e| anyhow::anyhow!("Failed to delete identity from sled: {}", e))?;
+                                store.delete_identity_metadata(&did_hash)
+                                    .map_err(|e| anyhow::anyhow!("Failed to delete identity metadata from sled: {}", e))?;
+                            }
                         }
                         _ => {} // Other transaction types
                     }
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Persist a newly-registered identity to sled (registration only).
+    fn persist_identity_registration(
+        &self,
+        store: &dyn BlockchainStore,
+        identity_data: &IdentityTransactionData,
+        block_height: u64,
+    ) -> Result<()> {
+        use crate::storage::derive_address_from_public_key;
+        use crate::types::hash::blake3_hash;
+
+        let did_hash = did_to_hash(&identity_data.did);
+
+        // Derive owner address from public key using the canonical helper
+        let owner = derive_address_from_public_key(&identity_data.public_key);
+
+        // Convert to consensus-compliant fixed-size format
+        let consensus = IdentityConsensus {
+            did_hash,
+            owner,
+            public_key_hash: blake3_hash(&identity_data.public_key).as_array(),
+            did_document_hash: identity_data.did_document_hash.as_array(),
+            seed_commitment: None, // Will be set during migration if available
+            identity_type: IdentityType::from_str(&identity_data.identity_type),
+            status: IdentityStatus::Active,
+            version: 1, // Legacy format
+            created_at: identity_data.created_at,
+            registered_at_height: block_height,
+            registration_fee: identity_data.registration_fee,
+            dao_fee: identity_data.dao_fee,
+            controlled_node_count: identity_data.controlled_nodes.len() as u32,
+            owned_wallet_count: identity_data.owned_wallets.len() as u32,
+            attribute_count: 0,
+        };
+
+        // Convert to metadata (allows strings)
+        let metadata = IdentityMetadata {
+            did: identity_data.did.clone(),
+            display_name: identity_data.display_name.clone(),
+            public_key: identity_data.public_key.clone(),
+            ownership_proof: identity_data.ownership_proof.clone(),
+            controlled_nodes: identity_data.controlled_nodes.clone(),
+            owned_wallets: identity_data.owned_wallets.clone(),
+            attributes: Vec::new(),
+        };
+
+        // Persist to sled
+        store.put_identity(&did_hash, &consensus)
+            .map_err(|e| anyhow::anyhow!("Failed to store identity in sled: {}", e))?;
+        store.put_identity_metadata(&did_hash, &metadata)
+            .map_err(|e| anyhow::anyhow!("Failed to store identity metadata in sled: {}", e))?;
+        store.put_identity_owner_index(&consensus.owner, &did_hash)
+            .map_err(|e| anyhow::anyhow!("Failed to store identity owner index in sled: {}", e))?;
+
+        debug!("Persisted identity {} to sled storage (registration)", identity_data.did);
+        Ok(())
+    }
+
+    /// Persist an identity update to sled (update only).
+    fn persist_identity_update(
+        &self,
+        store: &dyn BlockchainStore,
+        identity_data: &IdentityTransactionData,
+    ) -> Result<()> {
+        use crate::storage::derive_address_from_public_key;
+        use crate::types::hash::blake3_hash;
+
+        let did_hash = did_to_hash(&identity_data.did);
+
+        let existing = store.get_identity(&did_hash)
+            .map_err(|e| anyhow::anyhow!("Failed to load identity for update: {}", e))?
+            .ok_or_else(|| anyhow::anyhow!("Cannot update non-existent identity: {}", identity_data.did))?;
+
+        let existing_metadata = store.get_identity_metadata(&did_hash)
+            .map_err(|e| anyhow::anyhow!("Failed to load identity metadata for update: {}", e))?
+            .ok_or_else(|| anyhow::anyhow!("Missing identity metadata for update: {}", identity_data.did))?;
+
+        // Enforce immutable ownership and identity invariants
+        let incoming_owner = derive_address_from_public_key(&identity_data.public_key);
+        let incoming_public_key_hash = blake3_hash(&identity_data.public_key).as_array();
+        let incoming_identity_type = IdentityType::from_str(&identity_data.identity_type);
+
+        if existing.did_hash != did_hash {
+            return Err(anyhow::anyhow!("Immutable DID hash mismatch for identity update"));
+        }
+        if existing.owner != incoming_owner {
+            return Err(anyhow::anyhow!("Immutable owner mismatch for identity update"));
+        }
+        if existing.public_key_hash != incoming_public_key_hash {
+            return Err(anyhow::anyhow!("Immutable public key mismatch for identity update"));
+        }
+        if existing.identity_type != incoming_identity_type {
+            return Err(anyhow::anyhow!("Immutable identity type mismatch for identity update"));
+        }
+        if existing_metadata.did != identity_data.did {
+            return Err(anyhow::anyhow!("Immutable DID mismatch for identity update"));
+        }
+        if existing_metadata.public_key != identity_data.public_key {
+            return Err(anyhow::anyhow!("Immutable public key mismatch for identity update"));
+        }
+
+        // Apply validated diff: consensus keeps immutable fields, update mutable fields only
+        let mut updated_consensus = existing.clone();
+        updated_consensus.did_document_hash = identity_data.did_document_hash.as_array();
+        updated_consensus.controlled_node_count = identity_data.controlled_nodes.len() as u32;
+        updated_consensus.owned_wallet_count = identity_data.owned_wallets.len() as u32;
+
+        let mut updated_metadata = existing_metadata.clone();
+        updated_metadata.display_name = identity_data.display_name.clone();
+        updated_metadata.ownership_proof = identity_data.ownership_proof.clone();
+        updated_metadata.controlled_nodes = identity_data.controlled_nodes.clone();
+        updated_metadata.owned_wallets = identity_data.owned_wallets.clone();
+
+        store.put_identity(&did_hash, &updated_consensus)
+            .map_err(|e| anyhow::anyhow!("Failed to update identity in sled: {}", e))?;
+        store.put_identity_metadata(&did_hash, &updated_metadata)
+            .map_err(|e| anyhow::anyhow!("Failed to update identity metadata in sled: {}", e))?;
+
+        debug!("Persisted identity {} to sled storage (update)", identity_data.did);
         Ok(())
     }
 

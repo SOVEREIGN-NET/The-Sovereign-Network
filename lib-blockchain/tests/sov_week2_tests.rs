@@ -33,6 +33,7 @@ const VOTER2: [u8; 32] = [6u8; 32];
 const VOTER3: [u8; 32] = [7u8; 32];
 
 const VOTING_POWER_BASE: u64 = 100_000 * 10_u64.pow(8); // 100k with 8 decimals
+const TEST_TOTAL_VOTING_POWER: u64 = 1_000_000; // Smaller value for easier test math
 
 // ============================================================================
 // GOVERNANCE TESTS
@@ -215,7 +216,7 @@ fn test_governance_voting_period_check() {
 fn test_governance_finalize_voting_majority_passes() {
     let mut governance = Governance::new();
     governance.init(ADMIN).unwrap();
-    governance.update_total_voting_power(VOTING_POWER_BASE * 10);
+    governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
     let proposal_id = governance.create_proposal(
@@ -226,9 +227,9 @@ fn test_governance_finalize_voting_majority_passes() {
         MIN_VOTING_POWER_FOR_PROPOSAL,
     ).unwrap();
 
-    // Vote: 60% for, 40% against
-    governance.vote(proposal_id, VOTER1, VoteType::For, 600 * 10_000).unwrap();
-    governance.vote(proposal_id, VOTER2, VoteType::Against, 400 * 10_000).unwrap();
+    // Vote: 60% for, 40% against (total = 100% meets quorum)
+    governance.vote(proposal_id, VOTER1, VoteType::For, 600_000).unwrap();
+    governance.vote(proposal_id, VOTER2, VoteType::Against, 400_000).unwrap();
 
     // Finalize after voting period
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
@@ -242,7 +243,7 @@ fn test_governance_finalize_voting_majority_passes() {
 fn test_governance_finalize_voting_majority_fails() {
     let mut governance = Governance::new();
     governance.init(ADMIN).unwrap();
-    governance.update_total_voting_power(VOTING_POWER_BASE * 10);
+    governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
     let proposal_id = governance.create_proposal(
@@ -253,9 +254,9 @@ fn test_governance_finalize_voting_majority_fails() {
         MIN_VOTING_POWER_FOR_PROPOSAL,
     ).unwrap();
 
-    // Vote: 40% for, 60% against (fails majority)
-    governance.vote(proposal_id, VOTER1, VoteType::For, 400 * 10_000).unwrap();
-    governance.vote(proposal_id, VOTER2, VoteType::Against, 600 * 10_000).unwrap();
+    // Vote: 40% for, 60% against (fails majority, total = 100% meets quorum)
+    governance.vote(proposal_id, VOTER1, VoteType::For, 400_000).unwrap();
+    governance.vote(proposal_id, VOTER2, VoteType::Against, 600_000).unwrap();
 
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
     governance.finalize_voting(proposal_id).unwrap();
@@ -268,7 +269,7 @@ fn test_governance_finalize_voting_majority_fails() {
 fn test_governance_timelock_enforcement() {
     let mut governance = Governance::new();
     governance.init(ADMIN).unwrap();
-    governance.update_total_voting_power(VOTING_POWER_BASE * 10);
+    governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
     let proposal_id = governance.create_proposal(
@@ -279,7 +280,8 @@ fn test_governance_timelock_enforcement() {
         MIN_VOTING_POWER_FOR_PROPOSAL,
     ).unwrap();
 
-    governance.vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE).unwrap();
+    // Vote with enough power to meet quorum (>50% of 1M = >500K)
+    governance.vote(proposal_id, VOTER1, VoteType::For, 600_000).unwrap();
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
     governance.finalize_voting(proposal_id).unwrap();
 
@@ -300,7 +302,7 @@ fn test_governance_timelock_enforcement() {
 fn test_governance_supermajority_threshold() {
     let mut governance = Governance::new();
     governance.init(ADMIN).unwrap();
-    governance.update_total_voting_power(VOTING_POWER_BASE * 10);
+    governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
     let proposal_id = governance.create_proposal(
@@ -311,9 +313,9 @@ fn test_governance_supermajority_threshold() {
         MIN_VOTING_POWER_FOR_PROPOSAL,
     ).unwrap();
 
-    // Vote: 65% for (below 66.67% supermajority)
-    governance.vote(proposal_id, VOTER1, VoteType::For, 650 * 10_000).unwrap();
-    governance.vote(proposal_id, VOTER2, VoteType::Against, 350 * 10_000).unwrap();
+    // Vote: 65% for (below 66.67% supermajority), total = 100% meets quorum
+    governance.vote(proposal_id, VOTER1, VoteType::For, 650_000).unwrap();
+    governance.vote(proposal_id, VOTER2, VoteType::Against, 350_000).unwrap();
 
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
     governance.finalize_voting(proposal_id).unwrap();
@@ -331,8 +333,8 @@ fn test_governance_supermajority_threshold() {
         MIN_VOTING_POWER_FOR_PROPOSAL,
     ).unwrap();
 
-    governance.vote(proposal_id2, VOTER1, VoteType::For, 670 * 10_000).unwrap();
-    governance.vote(proposal_id2, VOTER2, VoteType::Against, 330 * 10_000).unwrap();
+    governance.vote(proposal_id2, VOTER1, VoteType::For, 670_000).unwrap();
+    governance.vote(proposal_id2, VOTER2, VoteType::Against, 330_000).unwrap();
 
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
     governance.finalize_voting(proposal_id2).unwrap();
@@ -732,7 +734,7 @@ fn test_week2_complete_flow() {
     // Initialize all contracts
     let mut governance = Governance::new();
     governance.init(ADMIN).unwrap();
-    governance.update_total_voting_power(VOTING_POWER_BASE * 10);
+    governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
     let mut nonprofit = NonprofitTreasury::new();
@@ -762,8 +764,8 @@ fn test_week2_complete_flow() {
         MIN_VOTING_POWER_FOR_PROPOSAL,
     ).unwrap();
 
-    // 5. Vote on proposal
-    governance.vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE).unwrap();
+    // 5. Vote on proposal (>50% of TEST_TOTAL_VOTING_POWER to meet quorum)
+    governance.vote(proposal_id, VOTER1, VoteType::For, 600_000).unwrap();
 
     // 6. Finalize voting
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);

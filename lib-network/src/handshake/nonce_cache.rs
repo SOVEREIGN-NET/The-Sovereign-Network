@@ -973,22 +973,16 @@ impl NonceCache {
                 };
 
                 if stored_epoch != expected_epoch {
-                    warn!(
-                        "Network epoch mismatch (stored: 0x{:016x}, expected: 0x{:016x}). \
-                         Clearing stale nonces and updating epoch.",
+                    // SECURITY: Epoch mismatch is a hard error. Silently clearing
+                    // the database would be dangerous - it could accidentally
+                    // destroy replay protection data if connecting to wrong network.
+                    return Err(anyhow!(
+                        "Network epoch mismatch: stored epoch 0x{:016x} does not match \
+                         expected epoch 0x{:016x}. This database belongs to a different \
+                         network. Delete the database manually if you want to switch networks.",
                         stored_epoch.value(),
                         expected_epoch.value()
-                    );
-                    // Clear all nonce entries (they belong to the old network)
-                    db.clear()
-                        .map_err(|e| anyhow!("Failed to clear stale nonce DB: {}", e))?;
-                    // Store the correct epoch
-                    db.insert(Self::META_EPOCH_KEY, expected_epoch.to_bytes().as_slice())
-                        .map_err(|e| anyhow!("Failed to update network epoch: {}", e))?;
-                    db.flush()
-                        .map_err(|e| anyhow!("Failed to flush updated epoch: {}", e))?;
-                    info!("Epoch updated to 0x{:016x}, stale nonces cleared", expected_epoch.value());
-                    return Ok(());
+                    ));
                 }
                 info!("Verified network epoch: 0x{:016x}", stored_epoch.value());
             }
