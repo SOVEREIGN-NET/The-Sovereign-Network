@@ -439,8 +439,10 @@ impl EnhancedTransactionCreator {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         };
-        
+
         // Sign transaction using lib-crypto
         let tx_hash = transaction.hash();
         let signature = sign_message(sender_keypair, tx_hash.as_bytes())?;

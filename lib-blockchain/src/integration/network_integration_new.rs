@@ -176,6 +176,7 @@ mod tests {
         
         let transaction = Transaction {
             version: 1,
+            chain_id: 0x03, // development
             transaction_type: TransactionType::Transfer,
             inputs: Vec::new(),
             outputs: Vec::new(),
@@ -183,8 +184,17 @@ mod tests {
             signature: keypair.sign(b"test_data")?,
             memo: b"test memo".to_vec(),
             identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         };
-        
+
         let serialized = serialize_transaction_for_network(&transaction)?;
         let deserialized = deserialize_transaction_from_network(&serialized)?;
         

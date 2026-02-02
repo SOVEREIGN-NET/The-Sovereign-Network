@@ -2,61 +2,90 @@
 //!
 //! Defines the types of transactions supported by the ZHTP blockchain.
 //! Note: Identity transaction processing is handled by integration with lib-identity package.
+//!
+//! # Serialization Stability
+//!
+//! IMPORTANT: This enum uses explicit discriminant values via `#[repr(u8)]` to ensure
+//! stable serialization across versions. When adding new variants:
+//! 1. ALWAYS assign an explicit value (do NOT rely on implicit ordering)
+//! 2. NEVER reuse a value from a removed variant
+//! 3. NEVER change the value of an existing variant
+//!
+//! The explicit `#[repr(u8)]` ensures bincode serializes to a single byte with
+//! predictable values, making cross-platform compatibility reliable.
 
 use serde::{Serialize, Deserialize};
 
 /// Transaction types supported by ZHTP blockchain
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+///
+/// Uses explicit discriminant values (`#[repr(u8)]`) for stable serialization.
+/// Bincode will serialize these as single bytes with the assigned values.
+/// See module-level documentation for rules on adding new variants.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum TransactionType {
     /// Standard value transfer between accounts
-    Transfer,
+    Transfer = 0,
+    /// Coinbase transaction (block reward, no inputs)
+    Coinbase = 1,
+    /// Token transfer (balance model, not UTXO)
+    TokenTransfer = 2,
     /// Identity registration on blockchain (delegates to lib-identity)
-    IdentityRegistration,
-    /// Identity update/modification (delegates to lib-identity)  
-    IdentityUpdate,
+    IdentityRegistration = 3,
+    /// Identity update/modification (delegates to lib-identity)
+    IdentityUpdate = 4,
     /// Identity revocation (delegates to lib-identity)
-    IdentityRevocation,
+    IdentityRevocation = 5,
     /// Smart contract deployment (delegates to lib-contracts)
-    ContractDeployment,
+    ContractDeployment = 6,
     /// Smart contract execution (delegates to lib-contracts)
-    ContractExecution,
+    ContractExecution = 7,
     /// Session creation for audit/tracking purposes
-    SessionCreation,
+    SessionCreation = 8,
     /// Session termination for audit/tracking purposes
-    SessionTermination,
+    SessionTermination = 9,
     /// Content upload transaction
-    ContentUpload,
+    ContentUpload = 10,
     /// Universal Basic Income distribution
-    UbiDistribution,
+    UbiDistribution = 11,
     /// Wallet registration/creation on blockchain
-    WalletRegistration,
+    WalletRegistration = 12,
     /// Validator registration for consensus participation
-    ValidatorRegistration,
+    ValidatorRegistration = 13,
     /// Validator information update
-    ValidatorUpdate,
+    ValidatorUpdate = 14,
     /// Validator unregistration/exit from consensus
-    ValidatorUnregister,
+    ValidatorUnregister = 15,
     /// DAO governance proposal submission
-    DaoProposal,
+    DaoProposal = 16,
     /// DAO governance vote on a proposal
-    DaoVote,
+    DaoVote = 17,
     /// DAO proposal execution (treasury spending)
-    DaoExecution,
+    DaoExecution = 18,
     /// Difficulty parameter update (via DAO governance)
     ///
     /// Used to update the blockchain's difficulty adjustment parameters
     /// after a DifficultyParameterUpdate DAO proposal has been approved.
-    DifficultyUpdate,
+    DifficultyUpdate = 19,
     /// UBI claim - citizen-initiated claim from UBI pool (Week 7)
     ///
     /// Distinct from UbiDistribution (system-initiated push).
     /// This is a pull-based model where citizens claim their allocation.
-    UBIClaim,
+    UBIClaim = 20,
     /// Profit declaration - enforces 20% tribute from for-profit to nonprofit (Week 7)
     ///
     /// Validates that tribute_amount == profit_amount * 20 / 100.
     /// Integrates with TributeRouter for enforcement.
-    ProfitDeclaration,
+    ProfitDeclaration = 21,
+    /// Token governance configuration update (Phase 3D)
+    ///
+    /// Allows authorized governance addresses to update specific token configuration:
+    /// - set_fee_schedule: Update fee parameters
+    /// - set_transfer_policy: Switch between supported policies (not ComplianceGated)
+    /// - pause/unpause: Emergency circuit breaker
+    ///
+    /// Requires: caller has Governance role in token's authorities
+    GovernanceConfigUpdate = 22,
 }
 
 impl TransactionType {
@@ -82,6 +111,16 @@ impl TransactionType {
         matches!(self, TransactionType::Transfer)
     }
 
+    /// Check if this is a coinbase (block reward) transaction
+    pub fn is_coinbase(&self) -> bool {
+        matches!(self, TransactionType::Coinbase)
+    }
+
+    /// Check if this is a token transfer transaction
+    pub fn is_token_transfer(&self) -> bool {
+        matches!(self, TransactionType::TokenTransfer)
+    }
+
     /// Check if this transaction type relates to validator management
     pub fn is_validator_transaction(&self) -> bool {
         matches!(self,
@@ -105,6 +144,8 @@ impl TransactionType {
     pub fn description(&self) -> &'static str {
         match self {
             TransactionType::Transfer => "Standard value transfer",
+            TransactionType::Coinbase => "Block reward (coinbase)",
+            TransactionType::TokenTransfer => "Token transfer (balance model)",
             TransactionType::IdentityRegistration => "Identity registration",
             TransactionType::IdentityUpdate => "Identity update",
             TransactionType::IdentityRevocation => "Identity revocation",
@@ -124,6 +165,7 @@ impl TransactionType {
             TransactionType::DifficultyUpdate => "Difficulty parameter update (via DAO governance)",
             TransactionType::UBIClaim => "UBI claim - citizen-initiated claim from pool",
             TransactionType::ProfitDeclaration => "Profit declaration - enforces 20% tribute",
+            TransactionType::GovernanceConfigUpdate => "Token governance configuration update",
         }
     }
 
@@ -131,6 +173,8 @@ impl TransactionType {
     pub fn as_str(&self) -> &'static str {
         match self {
             TransactionType::Transfer => "transfer",
+            TransactionType::Coinbase => "coinbase",
+            TransactionType::TokenTransfer => "token_transfer",
             TransactionType::IdentityRegistration => "identity_registration",
             TransactionType::IdentityUpdate => "identity_update",
             TransactionType::IdentityRevocation => "identity_revocation",
@@ -150,6 +194,7 @@ impl TransactionType {
             TransactionType::DifficultyUpdate => "difficulty_update",
             TransactionType::UBIClaim => "ubi_claim",
             TransactionType::ProfitDeclaration => "profit_declaration",
+            TransactionType::GovernanceConfigUpdate => "governance_config_update",
         }
     }
 
@@ -157,6 +202,8 @@ impl TransactionType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "transfer" => Some(TransactionType::Transfer),
+            "coinbase" => Some(TransactionType::Coinbase),
+            "token_transfer" => Some(TransactionType::TokenTransfer),
             "identity_registration" => Some(TransactionType::IdentityRegistration),
             "identity_update" => Some(TransactionType::IdentityUpdate),
             "identity_revocation" => Some(TransactionType::IdentityRevocation),
@@ -176,8 +223,14 @@ impl TransactionType {
             "difficulty_update" => Some(TransactionType::DifficultyUpdate),
             "ubi_claim" => Some(TransactionType::UBIClaim),
             "profit_declaration" => Some(TransactionType::ProfitDeclaration),
+            "governance_config_update" => Some(TransactionType::GovernanceConfigUpdate),
             _ => None,
         }
+    }
+
+    /// Check if this transaction type is a governance config update
+    pub fn is_governance_config_update(&self) -> bool {
+        matches!(self, TransactionType::GovernanceConfigUpdate)
     }
 
     /// Check if this transaction type relates to UBI (pull-based claims vs system-initiated distribution)
