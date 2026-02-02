@@ -292,7 +292,7 @@ fn test_token_transfer_state_sync() {
     let transfer_tx = create_token_transfer_tx(token_id, alice, bob, 100);
     let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![transfer_tx]);
 
-    let executor1 = BlockExecutor::new(Arc::clone(&store1), ExecutorConfig::default());
+    let executor1 = BlockExecutor::from_config(Arc::clone(&store1), ExecutorConfig::default());
     executor1.apply_block(&block1).unwrap();
 
     // Verify balances in store1
@@ -316,7 +316,7 @@ fn test_token_transfer_state_sync() {
     store2.commit_block().unwrap();
 
     // Now apply block 1 via executor (which will replay the token transfer)
-    let executor2 = BlockExecutor::new(Arc::clone(&store2), ExecutorConfig::default());
+    let executor2 = BlockExecutor::from_config(Arc::clone(&store2), ExecutorConfig::default());
     executor2.apply_block(&exported[1]).unwrap();
 
     // Verify block hashes match

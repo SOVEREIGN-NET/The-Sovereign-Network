@@ -80,6 +80,9 @@ pub enum TxApplyError {
     #[error("Duplicate input: {0}")]
     DuplicateInput(OutPoint),
 
+    #[error("Insufficient fee: required {required}, paid {paid}")]
+    InsufficientFee { required: u64, paid: u64 },
+
     // =========================================================================
     // UTXO Errors (stateful)
     // =========================================================================

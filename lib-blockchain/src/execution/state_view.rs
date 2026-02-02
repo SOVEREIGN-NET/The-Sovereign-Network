@@ -32,7 +32,7 @@ impl<'a> StateView<'a> {
 
     /// Get the latest committed block height
     pub fn latest_height(&self) -> StorageResult<u64> {
-        self.store.get_latest_height()
+        self.store.latest_height()
     }
 
     /// Check if a block exists at the given height
@@ -78,19 +78,19 @@ impl<'a> StateView<'a> {
     /// Get token balance for an address
     ///
     /// Returns 0 if no balance exists.
-    pub fn get_balance(&self, token: TokenId, addr: &Address) -> StorageResult<u128> {
+    pub fn get_balance(&self, token: &TokenId, addr: &Address) -> StorageResult<u128> {
         self.store.get_token_balance(token, addr)
     }
 
     /// Get native token balance (TokenId::NATIVE)
     pub fn get_native_balance(&self, addr: &Address) -> StorageResult<u128> {
-        self.store.get_token_balance(TokenId::NATIVE, addr)
+        self.store.get_token_balance(&TokenId::NATIVE, addr)
     }
 
     /// Check if address has sufficient balance
     pub fn has_sufficient_balance(
         &self,
-        token: TokenId,
+        token: &TokenId,
         addr: &Address,
         required: u128,
     ) -> StorageResult<bool> {

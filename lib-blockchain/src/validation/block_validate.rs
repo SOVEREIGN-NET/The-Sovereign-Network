@@ -133,7 +133,7 @@ pub fn validate_block_context(
 
 /// Get the expected next block height
 fn get_expected_height(store: &dyn BlockchainStore) -> BlockValidateResult<u64> {
-    match store.get_latest_height() {
+    match store.latest_height() {
         Ok(h) => Ok(h + 1),
         Err(crate::storage::StorageError::NotInitialized) => Ok(0),
         Err(e) => Err(BlockValidateError::StorageError(e.to_string())),

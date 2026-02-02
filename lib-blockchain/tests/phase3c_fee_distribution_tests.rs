@@ -32,7 +32,7 @@ fn create_executor_with_fee_sink(store: Arc<dyn BlockchainStore>, fee_sink: Addr
     let protocol_params = ProtocolParams::default().with_fee_sink(fee_sink);
     let mut config = ExecutorConfig::default();
     config.protocol_params = protocol_params;
-    BlockExecutor::new(store, config)
+    BlockExecutor::from_config(store, config)
 }
 
 fn create_dummy_public_key() -> PublicKey {
