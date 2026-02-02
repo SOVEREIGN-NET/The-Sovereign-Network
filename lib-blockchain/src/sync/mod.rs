@@ -198,7 +198,7 @@ impl ChainSync {
             });
         }
 
-        let executor = BlockExecutor::new(Arc::clone(&self.store), self.executor_config.clone());
+        let executor = BlockExecutor::from_config(Arc::clone(&self.store), self.executor_config.clone());
 
         // Determine expected starting height
         let expected_start = match self.store.latest_height() {
@@ -258,7 +258,7 @@ impl ChainSync {
             });
         }
 
-        let executor = BlockExecutor::new(Arc::clone(&self.store), self.executor_config.clone());
+        let executor = BlockExecutor::from_config(Arc::clone(&self.store), self.executor_config.clone());
 
         // Determine expected starting height
         let expected_start = match self.store.latest_height() {
