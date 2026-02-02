@@ -1039,6 +1039,9 @@ pub enum TokenAction {
         /// Initial supply
         #[arg(long)]
         supply: u64,
+        /// Decimal places (default: 8)
+        #[arg(short, long, default_value = "8")]
+        decimals: u8,
         // NOTE: creator removed - now derived from authenticated session
     },
     /// Mint additional tokens (creator only)

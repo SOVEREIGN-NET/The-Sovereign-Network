@@ -491,8 +491,10 @@ impl Web4Handler {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         };
-        
+
         // Calculate transaction hash for signing
         let tx_hash = transaction.hash();
         info!(" Transaction hash for signing: {}", hex::encode(tx_hash.as_bytes()));
