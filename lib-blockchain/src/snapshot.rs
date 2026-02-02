@@ -82,9 +82,16 @@ pub type SnapshotResult<T> = Result<T, SnapshotError>;
 /// - `state_hash` MUST match `compute_state_hash()` after construction
 /// - `height` MUST match the latest block's height
 /// - `block_hash` MUST match the latest block's hash
+///
+/// # Version History
+///
+/// - V1: Initial version (blocks, utxos, token_balances, accounts)
+/// - V2: Added identities support for DID storage migration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
-    /// Snapshot format version (currently 1)
+    /// Snapshot format version
+    /// - 1 = original (no identities)
+    /// - 2 = with identities support
     pub version: u32,
 
     /// Block height at which snapshot was taken
@@ -110,6 +117,11 @@ pub struct Snapshot {
 
     /// All account states
     pub accounts: Vec<AccountEntry>,
+
+    /// All identities (DID data) - Added in V2
+    /// Empty for V1 snapshots, populated when identities tree exists
+    #[serde(default)]
+    pub identities: Vec<IdentityEntry>,
 }
 
 /// A block entry in the snapshot
@@ -152,9 +164,25 @@ pub struct AccountEntry {
     pub data: Vec<u8>,
 }
 
+/// An identity entry in the snapshot (DID data)
+///
+/// Added in snapshot V2 to support DID storage migration.
+/// See DID team's Phase 0: Identity Storage Migration plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityEntry {
+    /// DID key (blake3 hash of DID string, 32 bytes)
+    pub did_key: [u8; 32],
+    /// Serialized IdentityData
+    pub data: Vec<u8>,
+}
+
 impl Snapshot {
     /// Current snapshot format version
-    pub const VERSION: u32 = 1;
+    /// V2 adds identities support for DID storage migration
+    pub const VERSION: u32 = 2;
+
+    /// Minimum supported version for restore
+    pub const MIN_VERSION: u32 = 1;
 
     /// Create a new empty snapshot
     pub fn new(height: BlockHeight, block_hash: [u8; 32]) -> Self {
@@ -171,6 +199,7 @@ impl Snapshot {
             utxos: Vec::new(),
             token_balances: Vec::new(),
             accounts: Vec::new(),
+            identities: Vec::new(),
         }
     }
 
@@ -182,6 +211,7 @@ impl Snapshot {
     /// - All UTXOs (sorted by outpoint)
     /// - All token balances (sorted by token+address)
     /// - All accounts (sorted by address)
+    /// - All identities (sorted by did_key) - V2+
     pub fn compute_state_hash(&self) -> [u8; 32] {
         let mut data = Vec::new();
 
@@ -223,6 +253,14 @@ impl Snapshot {
         for acct in &accounts_sorted {
             data.extend_from_slice(&acct.address);
             data.extend_from_slice(&acct.data);
+        }
+
+        // Hash all identities (sort by did_key) - V2+
+        let mut identities_sorted = self.identities.clone();
+        identities_sorted.sort_by(|a, b| a.did_key.cmp(&b.did_key));
+        for identity in &identities_sorted {
+            data.extend_from_slice(&identity.did_key);
+            data.extend_from_slice(&identity.data);
         }
 
         blake3_hash(&data).as_array()
@@ -288,6 +326,10 @@ pub fn snapshot(store: &SledStore) -> SnapshotResult<Snapshot> {
     // Collect all accounts
     snap.accounts = collect_accounts(store)?;
 
+    // Collect all identities (V2+)
+    // Returns empty vec if identities tree doesn't exist yet
+    snap.identities = collect_identities(store)?;
+
     // Finalize with state hash
     snap.finalize();
 
@@ -320,8 +362,8 @@ pub fn snapshot(store: &SledStore) -> SnapshotResult<Snapshot> {
 /// Restore attempts to be atomic. If any step fails, the store may be
 /// left in an inconsistent state and should be re-initialized from scratch.
 pub fn restore(store: &SledStore, snap: Snapshot) -> SnapshotResult<()> {
-    // Verify version
-    if snap.version != Snapshot::VERSION {
+    // Verify version (accept V1 and V2)
+    if snap.version < Snapshot::MIN_VERSION || snap.version > Snapshot::VERSION {
         return Err(SnapshotError::InvalidVersion(snap.version));
     }
 
@@ -347,6 +389,12 @@ pub fn restore(store: &SledStore, snap: Snapshot) -> SnapshotResult<()> {
 
     // Restore accounts
     restore_accounts(store, &snap.accounts)?;
+
+    // Restore identities (V2+)
+    // For V1 snapshots, identities will be empty (no-op)
+    if !snap.identities.is_empty() {
+        restore_identities(store, &snap.identities)?;
+    }
 
     // Set the latest height
     let meta = store.meta();
@@ -472,6 +520,14 @@ fn clear_all_trees(store: &SledStore) -> SnapshotResult<()> {
     store.meta().clear()
         .map_err(|e| SnapshotError::Database(e.to_string()))?;
 
+    // Clear identities tree if it exists (V2+)
+    // DID team will add identities() method to SledStore in Phase 0
+    // For now, try to open the tree directly and clear if it exists
+    if let Ok(identities_tree) = store.db().open_tree("identities") {
+        identities_tree.clear()
+            .map_err(|e| SnapshotError::Database(e.to_string()))?;
+    }
+
     Ok(())
 }
 
@@ -538,6 +594,56 @@ fn restore_accounts(store: &SledStore, accounts: &[AccountEntry]) -> SnapshotRes
 
     for entry in accounts {
         account_tree.insert(&entry.address, entry.data.as_slice())
+            .map_err(|e| SnapshotError::Database(e.to_string()))?;
+    }
+
+    Ok(())
+}
+
+/// Collect identities from the identities tree (if it exists)
+///
+/// Added in V2 for DID storage migration support.
+/// Returns empty vec if the identities tree doesn't exist yet
+/// (backward compatible with pre-DID stores).
+fn collect_identities(store: &SledStore) -> SnapshotResult<Vec<IdentityEntry>> {
+    let mut identities = Vec::new();
+
+    // Try to open the identities tree - it may not exist yet
+    // (DID team adds this in Phase 0: Identity Storage Migration)
+    let identities_tree = match store.db().open_tree("identities") {
+        Ok(tree) => tree,
+        Err(_) => return Ok(identities), // Tree doesn't exist yet
+    };
+
+    for entry in identities_tree.iter() {
+        let (key, value) = entry.map_err(|e| SnapshotError::Database(e.to_string()))?;
+
+        // Key format: did_key (32 bytes - blake3 hash of DID string)
+        if key.len() >= 32 {
+            let mut did_key = [0u8; 32];
+            did_key.copy_from_slice(&key[..32]);
+
+            identities.push(IdentityEntry {
+                did_key,
+                data: value.to_vec(),
+            });
+        }
+    }
+
+    Ok(identities)
+}
+
+/// Restore identities to the identities tree
+///
+/// Added in V2 for DID storage migration support.
+/// Creates the identities tree if it doesn't exist.
+fn restore_identities(store: &SledStore, identities: &[IdentityEntry]) -> SnapshotResult<()> {
+    // Open or create the identities tree
+    let identities_tree = store.db().open_tree("identities")
+        .map_err(|e| SnapshotError::Database(e.to_string()))?;
+
+    for entry in identities {
+        identities_tree.insert(&entry.did_key, entry.data.as_slice())
             .map_err(|e| SnapshotError::Database(e.to_string()))?;
     }
 
@@ -1056,9 +1162,11 @@ mod tests {
     // =========================================================================
 
     /// Golden vector: Snapshot version
+    /// V2 adds identities support for DID storage migration
     #[test]
     fn golden_snapshot_version() {
-        assert_eq!(Snapshot::VERSION, 1, "Current snapshot version");
+        assert_eq!(Snapshot::VERSION, 2, "Current snapshot version (V2 with identities)");
+        assert_eq!(Snapshot::MIN_VERSION, 1, "Minimum supported version for restore");
     }
 
     /// Golden vector: State hash is deterministic for same input
@@ -1080,5 +1188,95 @@ mod tests {
         // All state hashes must be identical
         assert_eq!(snap1.state_hash, snap2.state_hash);
         assert_eq!(snap2.state_hash, snap3.state_hash);
+    }
+
+    // =========================================================================
+    // IDENTITY SNAPSHOT TESTS (V2)
+    // =========================================================================
+
+    /// Test: Snapshot with identities (V2 feature)
+    #[test]
+    fn test_snapshot_with_identities() {
+        let (_dir, store) = create_test_store();
+
+        let genesis = create_genesis_block();
+
+        store.begin_block(0).unwrap();
+        store.append_block(&genesis).unwrap();
+        store.commit_block().unwrap();
+
+        // Add identities directly to the identities tree
+        let identities_tree = store.db().open_tree("identities").unwrap();
+
+        let did_key_1 = [1u8; 32];
+        let did_key_2 = [2u8; 32];
+        let identity_data_1 = vec![0x01, 0x02, 0x03, 0x04];
+        let identity_data_2 = vec![0x05, 0x06, 0x07, 0x08];
+
+        identities_tree.insert(&did_key_1, identity_data_1.as_slice()).unwrap();
+        identities_tree.insert(&did_key_2, identity_data_2.as_slice()).unwrap();
+
+        // Take snapshot
+        let snap = snapshot(&store).unwrap();
+
+        assert_eq!(snap.version, 2);
+        assert_eq!(snap.identities.len(), 2);
+        assert!(snap.verify_state_hash());
+
+        // Clear and restore
+        clear_all_trees(&store).unwrap();
+
+        // Verify identities tree is cleared
+        let identities_tree = store.db().open_tree("identities").unwrap();
+        assert_eq!(identities_tree.len(), 0);
+
+        // Restore from snapshot
+        restore(&store, snap).unwrap();
+
+        // Verify identities restored
+        let identities_tree = store.db().open_tree("identities").unwrap();
+        assert_eq!(identities_tree.len(), 2);
+
+        let restored_1 = identities_tree.get(&did_key_1).unwrap().unwrap();
+        assert_eq!(restored_1.as_ref(), identity_data_1.as_slice());
+
+        let restored_2 = identities_tree.get(&did_key_2).unwrap().unwrap();
+        assert_eq!(restored_2.as_ref(), identity_data_2.as_slice());
+    }
+
+    /// Test: V1 snapshot (no identities) can be restored
+    #[test]
+    fn test_restore_v1_snapshot() {
+        let (_dir, store) = create_test_store();
+
+        // Create a V1 snapshot manually
+        let mut snap = Snapshot::new(0, [0u8; 32]);
+        snap.version = 1;
+        snap.identities = Vec::new(); // V1 has no identities
+        snap.finalize();
+
+        // Restore should succeed
+        let result = restore(&store, snap);
+        assert!(result.is_ok());
+    }
+
+    /// Test: State hash includes identities
+    #[test]
+    fn test_state_hash_includes_identities() {
+        // Create two snapshots with different identities
+        let mut snap1 = Snapshot::new(0, [0u8; 32]);
+        snap1.finalize();
+        let hash1 = snap1.state_hash;
+
+        let mut snap2 = Snapshot::new(0, [0u8; 32]);
+        snap2.identities.push(IdentityEntry {
+            did_key: [1u8; 32],
+            data: vec![0x01, 0x02],
+        });
+        snap2.finalize();
+        let hash2 = snap2.state_hash;
+
+        // Hashes should be different
+        assert_ne!(hash1, hash2, "State hash should change when identities differ");
     }
 }
