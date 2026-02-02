@@ -46,6 +46,7 @@ pub use validation::{
     ValidationResult,
     TransactionValidator,
     StatefulTransactionValidator,
+    is_token_contract_execution,
 };
 
 // Explicit re-exports from hashing module

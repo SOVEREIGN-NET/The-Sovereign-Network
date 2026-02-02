@@ -1667,9 +1667,8 @@ impl Blockchain {
         
         // Check if this is a system transaction (empty inputs indicates system transaction)
         // BUT token contract executions are NOT system transactions (they must pay fees)
-        let is_token_contract = transaction.transaction_type == TransactionType::ContractExecution
-            && transaction.memo.len() > 4
-            && &transaction.memo[0..4] == b"ZHTP";
+        // Use the full validation logic to ensure consistency with fee validation
+        let is_token_contract = crate::transaction::is_token_contract_execution(transaction);
         let is_system_transaction = transaction.inputs.is_empty() && !is_token_contract;
         
         tracing::info!("Verifying transaction with identity verification enabled");

@@ -910,7 +910,14 @@ impl TransactionValidator {
     }
 }
 
-fn is_token_contract_execution(transaction: &Transaction) -> bool {
+/// Check if a transaction is a token contract execution
+///
+/// Returns true if the transaction:
+/// 1. Has type ContractExecution
+/// 2. Has memo starting with "ZHTP"
+/// 3. Contains a valid ContractCall with contract_type Token
+/// 4. Has a valid token method (create_custom_token, mint, transfer, burn)
+pub fn is_token_contract_execution(transaction: &Transaction) -> bool {
     if transaction.transaction_type != TransactionType::ContractExecution {
         tracing::debug!("is_token_contract_execution: not ContractExecution type");
         return false;
