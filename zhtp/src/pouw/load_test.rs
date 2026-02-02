@@ -283,8 +283,10 @@ pub async fn run_load_test(config: LoadTestConfig) -> LoadTestResults {
     let mut latencies: Vec<u64> = Vec::new();
 
     // Calculate how many batches to generate
-    let total_receipts = config.receipts_per_second as u64 * config.duration.as_secs();
-    let num_batches = (total_receipts as usize + config.batch_size - 1) / config.batch_size;
+    // Use as_secs_f64() to handle sub-second durations correctly
+    let total_receipts = (config.receipts_per_second as f64 * config.duration.as_secs_f64()).ceil() as usize;
+    // Ensure at least one batch for short durations
+    let num_batches = std::cmp::max(1, (total_receipts + config.batch_size - 1) / config.batch_size);
 
     for _ in 0..num_batches {
         let batch_start = Instant::now();

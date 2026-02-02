@@ -12,7 +12,7 @@ use sled::{Db, Tree, Batch};
 use crate::block::Block;
 use super::{
     keys, AccountState, Address, Amount, BlockchainStore, BlockHash, BlockHeight,
-    OutPoint, StorageError, StorageResult, TokenId, Utxo,
+    IdentityConsensus, IdentityMetadata, OutPoint, StorageError, StorageResult, TokenId, Utxo,
 };
 use crate::contracts::TokenContract;
 
@@ -28,6 +28,9 @@ const TREE_UTXOS: &str = "utxos";
 const TREE_ACCOUNTS: &str = "accounts";
 const TREE_TOKEN_BALANCES: &str = "token_balances";
 const TREE_TOKEN_CONTRACTS: &str = "token_contracts";
+const TREE_IDENTITIES: &str = "identities";           // Consensus state (participates in state hash)
+const TREE_IDENTITY_METADATA: &str = "identity_meta"; // Non-consensus (for DID resolution)
+const TREE_IDENTITY_BY_OWNER: &str = "identity_owner"; // Index: owner → did_hash
 const TREE_META: &str = "meta";
 
 /// Sled-based implementation of BlockchainStore
@@ -41,6 +44,9 @@ pub struct SledStore {
     accounts: Tree,
     token_balances: Tree,
     token_contracts: Tree,
+    identities: Tree,          // Consensus: did_hash → IdentityConsensus
+    identity_metadata: Tree,   // Non-consensus: did_hash → IdentityMetadata
+    identity_by_owner: Tree,   // Index: owner_addr → did_hash
     meta: Tree,
 
     // Transaction state
@@ -57,6 +63,9 @@ struct PendingBatch {
     accounts: Batch,
     token_balances: Batch,
     token_contracts: Batch,
+    identities: Batch,
+    identity_metadata: Batch,
+    identity_by_owner: Batch,
     meta: Batch,
     block_data: Option<(u64, BlockHash, Vec<u8>)>, // (height, hash, serialized block)
 }
@@ -70,6 +79,9 @@ impl PendingBatch {
             accounts: Batch::default(),
             token_balances: Batch::default(),
             token_contracts: Batch::default(),
+            identities: Batch::default(),
+            identity_metadata: Batch::default(),
+            identity_by_owner: Batch::default(),
             meta: Batch::default(),
             block_data: None,
         }
@@ -108,6 +120,15 @@ impl SledStore {
         let token_contracts = db
             .open_tree(TREE_TOKEN_CONTRACTS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let identities = db
+            .open_tree(TREE_IDENTITIES)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let identity_metadata = db
+            .open_tree(TREE_IDENTITY_METADATA)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let identity_by_owner = db
+            .open_tree(TREE_IDENTITY_BY_OWNER)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -120,6 +141,9 @@ impl SledStore {
             accounts,
             token_balances,
             token_contracts,
+            identities,
+            identity_metadata,
+            identity_by_owner,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -153,6 +177,15 @@ impl SledStore {
         let token_contracts = db
             .open_tree(TREE_TOKEN_CONTRACTS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let identities = db
+            .open_tree(TREE_IDENTITIES)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let identity_metadata = db
+            .open_tree(TREE_IDENTITY_METADATA)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let identity_by_owner = db
+            .open_tree(TREE_IDENTITY_BY_OWNER)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -165,6 +198,9 @@ impl SledStore {
             accounts,
             token_balances,
             token_contracts,
+            identities,
+            identity_metadata,
+            identity_by_owner,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -225,6 +261,11 @@ impl SledStore {
     /// (e.g., identities tree added by DID team in Phase 0)
     pub fn db(&self) -> &Db {
         &self.db
+    }
+
+    /// Get direct access to identities tree (for snapshots)
+    pub fn identities(&self) -> &Tree {
+        &self.identities
     }
 
     /// Check if a transaction is active
@@ -481,6 +522,150 @@ impl BlockchainStore for SledStore {
     }
 
     // =========================================================================
+    // Identity Consensus Operations (fixed-size keys only)
+    // =========================================================================
+
+    fn get_identity(&self, did_hash: &[u8; 32]) -> StorageResult<Option<IdentityConsensus>> {
+        match self.identities.get(did_hash) {
+            Ok(Some(bytes)) => {
+                let identity: IdentityConsensus = Self::deserialize(&bytes)?;
+                Ok(Some(identity))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_identity(&self, did_hash: &[u8; 32], identity: &IdentityConsensus) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let value = Self::serialize(identity)?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.identities.insert(did_hash.as_ref(), value);
+        }
+
+        Ok(())
+    }
+
+    fn delete_identity(&self, did_hash: &[u8; 32]) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.identities.remove(did_hash.as_ref());
+        }
+
+        Ok(())
+    }
+
+    fn get_identity_by_owner(&self, addr: &Address) -> StorageResult<Option<[u8; 32]>> {
+        let key = keys::identity_by_owner_key(addr);
+        match self.identity_by_owner.get(key) {
+            Ok(Some(bytes)) => {
+                if bytes.len() != 32 {
+                    return Err(StorageError::CorruptedData(
+                        "Invalid did_hash length in identity_by_owner index".to_string(),
+                    ));
+                }
+                let mut did_hash = [0u8; 32];
+                did_hash.copy_from_slice(&bytes);
+                Ok(Some(did_hash))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_identity_owner_index(&self, addr: &Address, did_hash: &[u8; 32]) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let key = keys::identity_by_owner_key(addr);
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.identity_by_owner.insert(key.as_ref(), did_hash.as_ref());
+        }
+
+        Ok(())
+    }
+
+    fn delete_identity_owner_index(&self, addr: &Address) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let key = keys::identity_by_owner_key(addr);
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.identity_by_owner.remove(key.as_ref());
+        }
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Identity Metadata Operations (non-consensus)
+    // =========================================================================
+
+    fn get_identity_metadata(&self, did_hash: &[u8; 32]) -> StorageResult<Option<IdentityMetadata>> {
+        match self.identity_metadata.get(did_hash) {
+            Ok(Some(bytes)) => {
+                let metadata: IdentityMetadata = Self::deserialize(&bytes)?;
+                Ok(Some(metadata))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_identity_metadata(&self, did_hash: &[u8; 32], metadata: &IdentityMetadata) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let value = Self::serialize(metadata)?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.identity_metadata.insert(did_hash.as_ref(), value);
+        }
+
+        Ok(())
+    }
+
+    fn delete_identity_metadata(&self, did_hash: &[u8; 32]) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.identity_metadata.remove(did_hash.as_ref());
+        }
+
+        Ok(())
+    }
+
+    fn get_identities_at_height(&self, height: u64) -> StorageResult<Vec<[u8; 32]>> {
+        // Scan all identities and filter by registration height
+        // Returns did_hashes, not full identity data
+        let mut results = Vec::new();
+        for result in self.identities.iter() {
+            match result {
+                Ok((key, value)) => {
+                    let identity: IdentityConsensus = Self::deserialize(&value)?;
+                    if identity.registered_at_height == height {
+                        if key.len() == 32 {
+                            let mut did_hash = [0u8; 32];
+                            did_hash.copy_from_slice(&key);
+                            results.push(did_hash);
+                        }
+                    }
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+        Ok(results)
+    }
+
+    // =========================================================================
     // Transaction Control
     // =========================================================================
 
@@ -557,6 +742,18 @@ impl BlockchainStore for SledStore {
 
         self.token_contracts
             .apply_batch(batch.token_contracts)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.identities
+            .apply_batch(batch.identities)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.identity_metadata
+            .apply_batch(batch.identity_metadata)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.identity_by_owner
+            .apply_batch(batch.identity_by_owner)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
         // Update latest height
@@ -819,5 +1016,397 @@ mod tests {
         assert!(store.get_block_by_height(1).unwrap().is_some());
         assert!(store.get_block_by_height(2).unwrap().is_some());
         assert!(store.get_block_by_height(3).unwrap().is_none());
+    }
+
+    // =========================================================================
+    // Identity Tests (Consensus-Compliant Fixed-Size Types)
+    // =========================================================================
+
+    /// Helper to hash a DID string (simulates did_to_hash from mod.rs)
+    fn hash_did(did: &str) -> [u8; 32] {
+        blake3::hash(did.as_bytes()).into()
+    }
+
+    #[test]
+    fn test_identity_consensus_operations() {
+        use super::super::{IdentityConsensus, IdentityType, IdentityStatus};
+
+        let store = SledStore::open_temporary().unwrap();
+        let block = create_test_block(0, Hash::default());
+
+        let did = "did:zhtp:test123abc";
+        let did_hash = hash_did(did);
+        let owner = Address([0xaa; 32]);
+
+        let identity = IdentityConsensus {
+            did_hash,
+            owner,
+            public_key_hash: [0x01; 32],
+            did_document_hash: [0x02; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Human,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 1700000000,
+            registered_at_height: 0,
+            registration_fee: 1000,
+            dao_fee: 100,
+            controlled_node_count: 0,
+            owned_wallet_count: 1,
+            attribute_count: 0,
+        };
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block).unwrap();
+        store.put_identity(&did_hash, &identity).unwrap();
+        store.commit_block().unwrap();
+
+        // Get identity by DID hash
+        let retrieved = store.get_identity(&did_hash).unwrap().unwrap();
+        assert_eq!(retrieved.did_hash, did_hash);
+        assert_eq!(retrieved.owner, owner);
+        assert_eq!(retrieved.identity_type, IdentityType::Human);
+
+        // Non-existent identity should return None
+        let nonexistent_hash = hash_did("did:zhtp:nonexistent");
+        assert!(store.get_identity(&nonexistent_hash).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_identity_metadata_operations() {
+        use super::super::{IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus};
+
+        let store = SledStore::open_temporary().unwrap();
+        let block = create_test_block(0, Hash::default());
+
+        let did = "did:zhtp:metadata_test";
+        let did_hash = hash_did(did);
+        let owner = Address([0xbb; 32]);
+
+        let consensus = IdentityConsensus {
+            did_hash,
+            owner,
+            public_key_hash: [0x03; 32],
+            did_document_hash: [0x04; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Organization,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 1700000000,
+            registered_at_height: 0,
+            registration_fee: 2000,
+            dao_fee: 200,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        };
+
+        let metadata = IdentityMetadata {
+            did: did.to_string(),
+            display_name: "Test Organization".to_string(),
+            public_key: vec![0x05; 64],
+            ownership_proof: vec![0x06; 128],
+            controlled_nodes: vec![],
+            owned_wallets: vec!["wallet-1".to_string()],
+            attributes: vec![],
+        };
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block).unwrap();
+        store.put_identity(&did_hash, &consensus).unwrap();
+        store.put_identity_metadata(&did_hash, &metadata).unwrap();
+        store.commit_block().unwrap();
+
+        // Get consensus state (participates in state hash)
+        let retrieved_consensus = store.get_identity(&did_hash).unwrap().unwrap();
+        assert_eq!(retrieved_consensus.identity_type, IdentityType::Organization);
+
+        // Get metadata (for DID resolution, non-consensus)
+        let retrieved_metadata = store.get_identity_metadata(&did_hash).unwrap().unwrap();
+        assert_eq!(retrieved_metadata.did, did);
+        assert_eq!(retrieved_metadata.display_name, "Test Organization");
+        assert_eq!(retrieved_metadata.owned_wallets, vec!["wallet-1"]);
+    }
+
+    #[test]
+    fn test_identity_owner_index() {
+        use super::super::{IdentityConsensus, IdentityType, IdentityStatus};
+
+        let store = SledStore::open_temporary().unwrap();
+        let block = create_test_block(0, Hash::default());
+
+        let did = "did:zhtp:owner_index_test";
+        let did_hash = hash_did(did);
+        let owner = Address([0xcc; 32]);
+
+        let identity = IdentityConsensus {
+            did_hash,
+            owner,
+            public_key_hash: [0x07; 32],
+            did_document_hash: [0x08; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Human,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 1700000000,
+            registered_at_height: 0,
+            registration_fee: 1000,
+            dao_fee: 100,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        };
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block).unwrap();
+        store.put_identity(&did_hash, &identity).unwrap();
+        store.put_identity_owner_index(&owner, &did_hash).unwrap();
+        store.commit_block().unwrap();
+
+        // Lookup by owner
+        let found_did_hash = store.get_identity_by_owner(&owner).unwrap().unwrap();
+        assert_eq!(found_did_hash, did_hash);
+
+        // Non-existent owner should return None
+        let other_owner = Address([0xdd; 32]);
+        assert!(store.get_identity_by_owner(&other_owner).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_identity_with_seed_commitment() {
+        use super::super::{IdentityConsensus, IdentityType, IdentityStatus};
+
+        let store = SledStore::open_temporary().unwrap();
+        let block = create_test_block(0, Hash::default());
+
+        let did = "did:zhtp:recovery_test";
+        let did_hash = hash_did(did);
+        let seed_commitment = [0xab; 32];
+
+        let identity = IdentityConsensus {
+            did_hash,
+            owner: Address([0xee; 32]),
+            public_key_hash: [0x09; 32],
+            did_document_hash: [0x0a; 32],
+            seed_commitment: Some(seed_commitment),
+            identity_type: IdentityType::Human,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 1700000000,
+            registered_at_height: 0,
+            registration_fee: 1000,
+            dao_fee: 100,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        };
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block).unwrap();
+        store.put_identity(&did_hash, &identity).unwrap();
+        store.commit_block().unwrap();
+
+        // Verify seed commitment persisted
+        let retrieved = store.get_identity(&did_hash).unwrap().unwrap();
+        assert_eq!(retrieved.seed_commitment, Some(seed_commitment));
+        assert!(retrieved.verify_seed_commitment(&seed_commitment));
+        assert!(!retrieved.verify_seed_commitment(&[0xcd; 32]));
+    }
+
+    #[test]
+    fn test_identity_delete() {
+        use super::super::{IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus};
+
+        let store = SledStore::open_temporary().unwrap();
+        let block0 = create_test_block(0, Hash::default());
+        let block1 = create_test_block(1, block0.header.block_hash);
+
+        let did = "did:zhtp:to_be_deleted";
+        let did_hash = hash_did(did);
+        let owner = Address([0xff; 32]);
+
+        let consensus = IdentityConsensus {
+            did_hash,
+            owner,
+            public_key_hash: [0x0b; 32],
+            did_document_hash: [0x0c; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Device,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 1700000000,
+            registered_at_height: 0,
+            registration_fee: 500,
+            dao_fee: 50,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        };
+
+        let metadata = IdentityMetadata {
+            did: did.to_string(),
+            display_name: "Delete Me".to_string(),
+            public_key: vec![0x0d; 64],
+            ownership_proof: vec![],
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+            attributes: vec![],
+        };
+
+        // Create identity
+        store.begin_block(0).unwrap();
+        store.append_block(&block0).unwrap();
+        store.put_identity(&did_hash, &consensus).unwrap();
+        store.put_identity_metadata(&did_hash, &metadata).unwrap();
+        store.put_identity_owner_index(&owner, &did_hash).unwrap();
+        store.commit_block().unwrap();
+
+        assert!(store.get_identity(&did_hash).unwrap().is_some());
+        assert!(store.get_identity_metadata(&did_hash).unwrap().is_some());
+        assert!(store.get_identity_by_owner(&owner).unwrap().is_some());
+
+        // Delete identity (all trees)
+        store.begin_block(1).unwrap();
+        store.append_block(&block1).unwrap();
+        store.delete_identity(&did_hash).unwrap();
+        store.delete_identity_metadata(&did_hash).unwrap();
+        store.delete_identity_owner_index(&owner).unwrap();
+        store.commit_block().unwrap();
+
+        assert!(store.get_identity(&did_hash).unwrap().is_none());
+        assert!(store.get_identity_metadata(&did_hash).unwrap().is_none());
+        assert!(store.get_identity_by_owner(&owner).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_identity_rollback() {
+        use super::super::{IdentityConsensus, IdentityType, IdentityStatus};
+
+        let store = SledStore::open_temporary().unwrap();
+        let block = create_test_block(0, Hash::default());
+
+        let did = "did:zhtp:rollback_test";
+        let did_hash = hash_did(did);
+
+        let identity = IdentityConsensus {
+            did_hash,
+            owner: Address([0x11; 32]),
+            public_key_hash: [0x0e; 32],
+            did_document_hash: [0x0f; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Agent,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 1700000000,
+            registered_at_height: 0,
+            registration_fee: 1000,
+            dao_fee: 100,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        };
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block).unwrap();
+        store.put_identity(&did_hash, &identity).unwrap();
+        store.rollback_block().unwrap();
+
+        // Identity should not exist after rollback
+        assert!(store.get_identity(&did_hash).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_identities_at_height() {
+        use super::super::{IdentityConsensus, IdentityType, IdentityStatus};
+
+        let store = SledStore::open_temporary().unwrap();
+        let block0 = create_test_block(0, Hash::default());
+        let block1 = create_test_block(1, block0.header.block_hash);
+
+        // Create two identities at height 0
+        let did1 = "did:zhtp:height0_a";
+        let did_hash1 = hash_did(did1);
+        let id1 = IdentityConsensus {
+            did_hash: did_hash1,
+            owner: Address([0x21; 32]),
+            public_key_hash: [0x10; 32],
+            did_document_hash: [0x11; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Human,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 1700000000,
+            registered_at_height: 0,
+            registration_fee: 1000,
+            dao_fee: 100,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        };
+
+        let did2 = "did:zhtp:height0_b";
+        let did_hash2 = hash_did(did2);
+        let id2 = IdentityConsensus {
+            did_hash: did_hash2,
+            owner: Address([0x22; 32]),
+            public_key_hash: [0x12; 32],
+            did_document_hash: [0x13; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Human,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 1700000000,
+            registered_at_height: 0,
+            registration_fee: 1000,
+            dao_fee: 100,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        };
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block0).unwrap();
+        store.put_identity(&did_hash1, &id1).unwrap();
+        store.put_identity(&did_hash2, &id2).unwrap();
+        store.commit_block().unwrap();
+
+        // Create one identity at height 1
+        let did3 = "did:zhtp:height1";
+        let did_hash3 = hash_did(did3);
+        let id3 = IdentityConsensus {
+            did_hash: did_hash3,
+            owner: Address([0x23; 32]),
+            public_key_hash: [0x14; 32],
+            did_document_hash: [0x15; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Organization,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 1700000000,
+            registered_at_height: 1,
+            registration_fee: 2000,
+            dao_fee: 200,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        };
+
+        store.begin_block(1).unwrap();
+        store.append_block(&block1).unwrap();
+        store.put_identity(&did_hash3, &id3).unwrap();
+        store.commit_block().unwrap();
+
+        // Query by height - returns did_hashes, not full identity
+        let height0_hashes = store.get_identities_at_height(0).unwrap();
+        assert_eq!(height0_hashes.len(), 2);
+        assert!(height0_hashes.contains(&did_hash1));
+        assert!(height0_hashes.contains(&did_hash2));
+
+        let height1_hashes = store.get_identities_at_height(1).unwrap();
+        assert_eq!(height1_hashes.len(), 1);
+        assert_eq!(height1_hashes[0], did_hash3);
+
+        let height2_hashes = store.get_identities_at_height(2).unwrap();
+        assert!(height2_hashes.is_empty());
     }
 }

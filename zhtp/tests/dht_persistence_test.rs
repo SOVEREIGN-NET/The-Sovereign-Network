@@ -40,16 +40,17 @@ fn run_dht_persistence_metrics(nodes: &[(&str, [u8; 64])]) -> Result<()> {
     }
     Ok(())
 }
-//! DHT Persistence Test (Issue #70)
-//!
-//! Goal: Verify DHT routing tables rebuild correctly after network restart
-//! with deterministic NodeIds.
-//!
-//! Test Scenarios:
-//! - All nodes maintain same NodeIds after restart
-//! - DHT routing tables repopulate with same entries
-//! - Network converges within 30 seconds
-//! - All nodes can communicate after restart
+
+// DHT Persistence Test (Issue #70)
+//
+// Goal: Verify DHT routing tables rebuild correctly after network restart
+// with deterministic NodeIds.
+//
+// Test Scenarios:
+// - All nodes maintain same NodeIds after restart
+// - DHT routing tables repopulate with same entries
+// - Network converges within 30 seconds
+// - All nodes can communicate after restart
 
 mod common_network_test;
 use common_network_test::{

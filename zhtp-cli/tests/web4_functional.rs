@@ -650,13 +650,13 @@ fn integration_multiple_domains_isolation() {
     let site_v2 = SiteGenerator::simple("iso1.web4.test", "2.0");
     let path_v2 = env.temp_dir.path().join("site_v2");
     site_v2.write_to(&path_v2).expect("Failed to write v2");
-    cli.deploy_site("iso1.web4.test", &path_v2);
-    
+    cli.deploy_site("iso1.web4.test", path_v2.to_str().unwrap());
+
     // Verify others unchanged
     let manifest_iso2 = verify.get_manifest("iso2.web4.test").expect("iso2 manifest missing");
     let manifest_iso3 = verify.get_manifest("iso3.web4.test").expect("iso3 manifest missing");
-    
-    // Should have same v1.0 configuration
-    assert!(manifest_iso2.to_string().contains("1.0") || !manifest_iso2.is_empty());
-    assert!(manifest_iso3.to_string().contains("1.0") || !manifest_iso3.is_empty());
+
+    // Should have same v1.0 configuration (use serde_json to format)
+    assert!(serde_json::to_string(&manifest_iso2).unwrap_or_default().contains("1.0") || !manifest_iso2.is_empty());
+    assert!(serde_json::to_string(&manifest_iso3).unwrap_or_default().contains("1.0") || !manifest_iso3.is_empty());
 }
