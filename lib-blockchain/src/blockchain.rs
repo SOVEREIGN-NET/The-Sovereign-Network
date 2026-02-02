@@ -875,10 +875,20 @@ impl Blockchain {
 
                         // Process token contract deployments
                         if tx.transaction_type == TransactionType::ContractExecution {
-                            if let Ok(Some(token_contract)) = blockchain.extract_token_contract_from_tx(tx) {
-                                let contract_id = token_contract.token_id;
-                                blockchain.token_contracts.insert(contract_id, token_contract);
-                                blockchain.contract_blocks.insert(contract_id, height);
+                            debug!("📦 Found ContractExecution tx at height {}, memo_len={}", height, tx.memo.len());
+                            match blockchain.extract_token_contract_from_tx(tx) {
+                                Ok(Some(token_contract)) => {
+                                    info!("🪙 Extracted token from block {}: {} ({})", height, token_contract.name, token_contract.symbol);
+                                    let contract_id = token_contract.token_id;
+                                    blockchain.token_contracts.insert(contract_id, token_contract);
+                                    blockchain.contract_blocks.insert(contract_id, height);
+                                }
+                                Ok(None) => {
+                                    debug!("📦 ContractExecution tx is not a token creation");
+                                }
+                                Err(e) => {
+                                    warn!("⚠️ Failed to extract token from tx at height {}: {}", height, e);
+                                }
                             }
                         }
 
@@ -968,19 +978,23 @@ impl Blockchain {
             Err(_) => return Ok(None),
         };
 
-        // Generate token ID from transaction hash
-        let token_id: [u8; 32] = tx.hash().into();
+        // Generate token ID from name+symbol (MUST match runtime creation)
+        let token_id = crate::contracts::utils::generate_custom_token_id(&params.name, &params.symbol);
+
+        // Credit initial supply to creator
+        let mut balances = std::collections::HashMap::new();
+        balances.insert(tx.signature.public_key.clone(), params.initial_supply);
 
         let token_contract = crate::contracts::TokenContract {
             token_id,
-            name: params.name,
-            symbol: params.symbol,
+            name: params.name.clone(),
+            symbol: params.symbol.clone(),
             decimals: if params.decimals == 0 { 8 } else { params.decimals },
             total_supply: params.initial_supply,
             max_supply: params.initial_supply, // Default max to initial
             is_deflationary: false,
             burn_rate: 0,
-            balances: std::collections::HashMap::new(),
+            balances,
             allowances: std::collections::HashMap::new(),
             creator: tx.signature.public_key.clone(),
             kernel_mint_authority: None,
