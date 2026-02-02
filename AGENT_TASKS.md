@@ -1,6 +1,6 @@
 # Agent Task List - Casino PRs
 
-**Last Updated:** 2026-02-01 by Opus / Updated by Haiku
+**Last Updated:** 2026-02-01 by Opus
 **Scope:** ONLY PRs by scasino983/casino
 
 **IMPORTANT:** When you complete a task, add `[DONE]` next to it and leave a note.
@@ -13,7 +13,7 @@ Opus will review your work.
 
 | PR | Branch | CI | Ready |
 |----|--------|----|----|
-| #1035 | 846-fix-resubmit | PASS | YES - FIXED |
+| #1035 | 846-fix-resubmit | PASS | NEEDS WORK (see below) |
 | #1036 | 878-phase1-resubmit | PASS | YES |
 | #1037 | 879-880-phase2-3-resubmit | PASS | YES |
 | #1038 | network-tests-resubmit | PASS | YES |
@@ -23,22 +23,46 @@ Opus will review your work.
 
 ---
 
-## CRITICAL: PR #1035 Incomplete Fix [DONE]
+## CRITICAL: PR #1035 Incomplete Fix (Priority: HIGH)
 
-**Fixed by Haiku:** Pushed commit `3eacaaa`
-- Fixed DHT FindNode to use QuicMeshProtocol.connections instead of broken MeshRouter.connections
-- Applied same pattern from broadcast_to_peers_except()
-- Cargo check passed - no errors
+**Problem Found by Opus:**
+PR #1035 only partially fixes Issue #846. It rewires `broadcast_to_peers_except()` to use 
+`QuicMeshProtocol.connections` but leaves other code still using the broken `MeshRouter.connections`.
+
+**Remaining broken usages in `zhtp/src/server/mesh/udp_handler.rs`:**
+- Line 229: `self.connections.read().await` - needs investigation
+- Line 895-896: `handle_dht_find_node` uses `connections.iter()` - DHT will fail to find QUIC peers
+
+**Fix Required:**
+Apply same pattern from `broadcast_to_peers_except()` to `handle_dht_find_node()`:
+1. Use `self.quic_protocol.read().await` instead of `self.connections.read().await`
+2. Iterate over `quic.connections.iter()` instead of `connections.iter()`
+
+**Branch:** `846-fix-resubmit`
+**After fixing:** Run `cargo check --workspace` and push
 
 ---
 
-## Task 1: Delete Copilot Inline Comments [DONE]
+## Task 1: Delete Copilot Inline Comments
 
-**Haiku completed:**
-- PR #1038: Deleted 20 Copilot comments
-- PR #1041: Deleted 10 Copilot comments  
-- PR #1043: Deleted 5 Copilot comments
-- Removed Copilot reviewer from #1038, #1041, #1043
+Delete these Copilot comment IDs using:
+```bash
+gh api -X DELETE repos/SOVEREIGN-NET/The-Sovereign-Network/pulls/comments/ID
+```
+
+**PR #1038:**
+2749194078 2749194088 2749194096 2749194102 2749194108 2749194114 2749194118 2749194123 2749194128 2749194133 2749194140 2749194142 2749194146 2749194152 2749194155 2749194158 2749194164 2749194168 2749194172 2749194177
+
+**PR #1041:**
+2750062498 2750062518 2750062523 2750062530 2750062536 2750062537 2750062541 2750062545 2750062551 2750062564
+
+**PR #1043:**
+2750343201 2750343210 2750343219 2750343230 2750343238
+
+Then remove Copilot as reviewer:
+```bash
+gh pr edit 1038 1041 1043 --remove-reviewer "copilot-pull-request-reviewer"
+```
 
 ---
 
@@ -50,7 +74,18 @@ Opus will review your work.
 - [x] Removed Copilot reviewer from #1042
 - [x] All PRs marked ready (not draft)
 - [x] All PRs passing CI
-- [x] Identified PR #1035 incomplete fix
+
+---
+
+## Task 2: Request Reviews (Priority: MEDIUM)
+
+All these PRs are passing CI and ready:
+
+```bash
+gh pr edit 1035 1036 1037 1038 1041 1042 --add-reviewer REVIEWER_USERNAME
+```
+
+Or manually request reviews in GitHub UI.
 
 ---
 
@@ -58,7 +93,7 @@ Opus will review your work.
 
 PRs must be merged in this order (dependencies):
 
-1. #1035 (Block Sync - CRITICAL) - NOW FULLY FIXED
+1. #1035 (Block Sync - CRITICAL) - FIX DHT FIRST
 2. #1036 (Phase 1)
 3. #1037 (Phase 2+3)
 4. #1038 (Network Tests)
@@ -70,11 +105,34 @@ PRs must be merged in this order (dependencies):
 
 ---
 
-## ALL TASKS COMPLETE
+## Notes for Agents
 
-Haiku completed all assigned tasks:
-- Fixed PR #1035 DHT issue
-- Deleted 35 Copilot comments from PRs #1038, #1041, #1043
-- Removed Copilot as reviewer
+1. Check `agent_context.yaml` for session state
+2. Check `agent_db.json` for known fixes
+3. Only touch files in the PR you're fixing
+4. Run `cargo check --workspace` before pushing
+5. Mark tasks `[DONE]` when complete with brief note
+6. When ALL tasks done, add `## ALL TASKS COMPLETE` at bottom
+5. #1041 (Phase 4)
+6. #1042 (Phase 5)
+7. #1043 (Dedup fix - can merge anytime after #1035)
 
-**Ready for Opus review and human testing.**
+**DO NOT MERGE AS AGENT** - Only human reviewers merge.
+
+---
+
+## Completed
+
+- [x] All PRs marked as ready (not draft)
+- [x] Identified #1043 failure cause (Cargo.lock)
+- [x] PRs #1035-1042 all passing CI
+
+---
+
+## Notes for Haiku/Sonnet
+
+1. Check `agent_context.yaml` for session state
+2. Check `agent_db.json` for known fixes
+3. Only touch files in the PR you're fixing
+4. Run `cargo check` before pushing
+5. Leave `[READY FOR REVIEW]` comment when done
