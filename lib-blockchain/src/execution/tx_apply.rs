@@ -289,11 +289,28 @@ impl<'a> StateMutator<'a> {
         consensus: &IdentityConsensus,
     ) -> TxApplyResult<()> {
         // Verify identity exists
-        if self.store.get_identity(did_hash)?.is_none() {
-            return Err(TxApplyError::Internal(format!(
+        let existing = self.store.get_identity(did_hash)?.ok_or_else(|| {
+            TxApplyError::Internal(format!(
                 "Cannot update non-existent identity: {}",
                 hex::encode(did_hash)
-            )));
+            ))
+        })?;
+
+        // Enforce immutable ownership/identity invariants
+        if existing.did_hash != consensus.did_hash {
+            return Err(TxApplyError::Internal("Immutable DID hash mismatch".to_string()));
+        }
+        if existing.owner != consensus.owner {
+            return Err(TxApplyError::Internal("Immutable owner mismatch".to_string()));
+        }
+        if existing.public_key_hash != consensus.public_key_hash {
+            return Err(TxApplyError::Internal("Immutable public key mismatch".to_string()));
+        }
+        if existing.registered_at_height != consensus.registered_at_height {
+            return Err(TxApplyError::Internal("Immutable registered_at_height mismatch".to_string()));
+        }
+        if existing.identity_type != consensus.identity_type {
+            return Err(TxApplyError::Internal("Immutable identity type mismatch".to_string()));
         }
 
         self.store.put_identity(did_hash, consensus)?;
