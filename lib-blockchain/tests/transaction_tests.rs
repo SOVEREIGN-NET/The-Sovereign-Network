@@ -206,18 +206,14 @@ fn test_transaction_validation() -> Result<()> {
         },
         "validation test".as_bytes().to_vec(),
     );
-    
-    // Test basic validation
-    let validator = validation::TransactionValidator::new();
-    
-    // Note: Full validation might fail due to missing blockchain context
-    // but we can test basic structure validation
-    let basic_result = validator.validate_transaction(&transaction);
-    
-    // The transaction should at least have valid basic structure
-    assert!(validation::utils::quick_validate(&transaction));
-    assert!(validation::utils::validate_type_consistency(&transaction));
-    
+
+    // Test stateless validation using the Phase 2 validation API
+    // This validates basic structure without needing blockchain state
+    let validation_result = lib_blockchain::validation::validate_stateless(&transaction);
+
+    // Should pass stateless validation (has inputs, has outputs, no duplicate outpoints)
+    assert!(validation_result.is_ok(), "Stateless validation should pass for well-formed transaction: {:?}", validation_result);
+
     Ok(())
 }
 

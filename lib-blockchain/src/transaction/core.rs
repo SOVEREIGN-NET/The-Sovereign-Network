@@ -50,6 +50,12 @@ pub struct Transaction {
     /// Profit declaration data (only for profit declaration transactions - Week 7)
     /// This data is processed by lib-contracts package
     pub profit_declaration_data: Option<ProfitDeclarationData>,
+    /// Token transfer data (Phase 2 - balance model transfers)
+    /// Required for TransactionType::TokenTransfer
+    pub token_transfer_data: Option<TokenTransferData>,
+    /// Governance config update data (Phase 3D - restricted config changes)
+    /// Required for TransactionType::GovernanceConfigUpdate
+    pub governance_config_data: Option<GovernanceConfigUpdateData>,
 }
 
 /// DAO proposal transaction data (processed by lib-consensus package)
@@ -178,6 +184,146 @@ pub struct RevenueSource {
     pub category: String,
     /// Amount from this source
     pub amount: u64,
+}
+
+/// Token transfer data for Phase 2 balance-model transfers
+///
+/// This struct contains the canonical representation of a token transfer.
+/// All fields are explicit - no derivation from other transaction fields.
+///
+/// # Invariants (Phase 2)
+/// - `amount` must be > 0
+/// - `from` must have sufficient balance
+/// - If `fee > 0`, fee is paid in native token from `from` address
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenTransferData {
+    /// Token identifier (32-byte hash, or TokenId::NATIVE for native)
+    pub token_id: [u8; 32],
+    /// Sender address (32-byte public key hash)
+    pub from: [u8; 32],
+    /// Recipient address (32-byte public key hash)
+    pub to: [u8; 32],
+    /// Amount to transfer (in smallest token unit)
+    pub amount: u128,
+    /// Nonce for replay protection (must equal sender's current nonce)
+    pub nonce: u64,
+}
+
+/// Governance config update data for Phase 3D
+///
+/// Allows authorized governance addresses to update specific token configuration.
+/// Only allowlisted fields can be updated to prevent unauthorized changes.
+///
+/// # Allowlisted operations (Phase 3D)
+/// - `SetFeeSchedule` - Update fee parameters
+/// - `SetTransferPolicy` - Switch between supported policies (not ComplianceGated)
+/// - `SetPaused` - Emergency circuit breaker (pause/unpause)
+///
+/// # NOT allowed in Phase 3
+/// - EmissionModel updates (requires budget window enforcement)
+///
+/// # Validation rules
+/// - Caller must be in authorities[Governance] for target token
+/// - Target token must exist
+/// - Update must be on an allowlisted field
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceConfigUpdateData {
+    /// Target token identifier (32-byte hash)
+    pub token_id: [u8; 32],
+    /// Caller address (must have Governance role)
+    pub caller: [u8; 32],
+    /// The specific governance operation to perform
+    pub operation: GovernanceConfigOperation,
+    /// Nonce for replay protection
+    pub nonce: u64,
+    /// Timestamp when update was created
+    pub timestamp: u64,
+}
+
+/// Allowlisted governance config operations (Phase 3D)
+///
+/// These are the only operations allowed for governance config updates.
+/// Each operation is deterministic and consensus-safe.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GovernanceConfigOperation {
+    /// Update fee schedule parameters
+    ///
+    /// Changes transfer_fee_bps, burn_fee_bps, fee_cap_amount, min_fee_amount.
+    /// Validated: all bps values <= 10000 (100%)
+    SetFeeSchedule {
+        /// Transfer fee in basis points (0-10000)
+        transfer_fee_bps: u16,
+        /// Burn fee in basis points (0-10000)
+        burn_fee_bps: u16,
+        /// Maximum fee amount (cap)
+        fee_cap_amount: u128,
+        /// Minimum fee amount
+        min_fee_amount: u128,
+    },
+    /// Update transfer policy
+    ///
+    /// Switch between: Free, AllowlistOnly, NonTransferable
+    /// ComplianceGated is NOT allowed in Phase 2/3
+    SetTransferPolicy {
+        /// New transfer policy (serialized as string for determinism)
+        /// Valid values: "Free", "AllowlistOnly", "NonTransferable"
+        policy: String,
+    },
+    /// Pause or unpause the token contract
+    ///
+    /// When paused, all state-mutating operations EXCEPT unpause REVERT.
+    SetPaused {
+        /// true to pause, false to unpause
+        paused: bool,
+    },
+}
+
+impl GovernanceConfigUpdateData {
+    /// Validate governance config update data
+    ///
+    /// # Returns
+    /// true if valid, false if invalid
+    ///
+    /// # Checks
+    /// - Operation is valid and within bounds
+    /// - For SetFeeSchedule: bps values <= 10000
+    /// - For SetTransferPolicy: policy is one of allowed values
+    pub fn validate(&self) -> bool {
+        match &self.operation {
+            GovernanceConfigOperation::SetFeeSchedule {
+                transfer_fee_bps,
+                burn_fee_bps,
+                ..
+            } => {
+                // Basis points must be <= 10000 (100%)
+                *transfer_fee_bps <= 10_000 && *burn_fee_bps <= 10_000
+            }
+            GovernanceConfigOperation::SetTransferPolicy { policy } => {
+                // Only allowed policies (not ComplianceGated)
+                matches!(policy.as_str(), "Free" | "AllowlistOnly" | "NonTransferable")
+            }
+            GovernanceConfigOperation::SetPaused { .. } => {
+                // Always valid
+                true
+            }
+        }
+    }
+
+    /// Get the operation type as a string (for logging/events)
+    pub fn operation_type(&self) -> &'static str {
+        match &self.operation {
+            GovernanceConfigOperation::SetFeeSchedule { .. } => "set_fee_schedule",
+            GovernanceConfigOperation::SetTransferPolicy { .. } => "set_transfer_policy",
+            GovernanceConfigOperation::SetPaused { .. } => "set_paused",
+        }
+    }
+}
+
+impl TokenTransferData {
+    /// Check if this transfer is for the native token
+    pub fn is_native(&self) -> bool {
+        self.token_id == [0u8; 32]
+    }
 }
 
 /// Transaction input referencing a previous output
@@ -354,6 +500,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -381,6 +529,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -410,6 +560,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -455,6 +607,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -482,6 +636,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -509,6 +665,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -538,6 +696,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -567,6 +727,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -596,6 +758,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -625,6 +789,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -654,6 +820,8 @@ impl Transaction {
             dao_execution_data: Some(execution_data),
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -695,6 +863,8 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: Some(claim_data),
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -743,6 +913,56 @@ impl Transaction {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: Some(declaration_data),
+            token_transfer_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    /// Create a new governance config update transaction (Phase 3D)
+    ///
+    /// Authorized governance addresses can update specific token configuration:
+    /// - set_fee_schedule: Update fee parameters
+    /// - set_transfer_policy: Switch between supported policies (not ComplianceGated)
+    /// - pause/unpause: Emergency circuit breaker
+    ///
+    /// # Arguments
+    /// * `config_data` - Governance config update data with operation and target token
+    /// * `fee` - Transaction fee in micro-ZHTP
+    /// * `signature` - Authorization signature from governance address
+    /// * `memo` - Optional transaction memo
+    ///
+    /// # Returns
+    /// New Transaction with TransactionType::GovernanceConfigUpdate set
+    ///
+    /// # Validation (at execution time)
+    /// - Caller must be in authorities[Governance] for target token
+    /// - Target token must exist
+    /// - Operation must be valid and within bounds
+    pub fn new_governance_config_update(
+        config_data: GovernanceConfigUpdateData,
+        fee: u64,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 1,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GovernanceConfigUpdate,
+            inputs: Vec::new(), // Governance updates don't need inputs
+            outputs: Vec::new(),
+            fee,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: Some(config_data),
         }
     }
 

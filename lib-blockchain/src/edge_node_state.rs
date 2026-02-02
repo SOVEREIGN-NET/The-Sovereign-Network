@@ -702,6 +702,7 @@ mod tests {
             transaction_count: 0,
             block_size: 0,
             cumulative_difficulty: crate::types::Difficulty::from_bits((height * 1000) as u32),
+            fee_model_version: 2, // Phase 2+ uses v2
         };
         // Calculate and set the correct block hash
         header.block_hash = header.calculate_hash();

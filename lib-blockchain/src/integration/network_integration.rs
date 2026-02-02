@@ -191,8 +191,10 @@ mod tests {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         };
-        
+
         let serialized = serialize_transaction_for_network(&transaction)?;
         let deserialized = deserialize_transaction_from_network(&serialized)?;
         

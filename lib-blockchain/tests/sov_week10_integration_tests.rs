@@ -77,6 +77,8 @@ mod sov_week10_integration_tests {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -107,6 +109,7 @@ mod sov_week10_integration_tests {
             transaction_count: transactions.len() as u32,
             block_size: 1024,
             cumulative_difficulty: Difficulty::from_bits(0x1fffffff),
+            fee_model_version: 2, // Phase 2+ uses v2
         };
 
         Block {

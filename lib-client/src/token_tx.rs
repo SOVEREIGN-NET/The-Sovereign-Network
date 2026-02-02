@@ -72,12 +72,15 @@ pub struct BurnParams {
 
 /// Build a signed token transaction
 ///
-/// CRITICAL: The signing process must match lib-blockchain's verification exactly:
-/// 1. Build tx with ZEROED signature (empty public_key, timestamp 0)
-/// 2. Serialize with bincode
-/// 3. Hash with blake3
-/// 4. Sign the HASH (not the raw serialized bytes)
-/// 5. Put real signature and public key back
+/// CRITICAL: Uses lib-blockchain's signing_hash() for deterministic, version-safe signing.
+/// This ensures compatibility between server, CLI, and mobile clients.
+///
+/// Signing process:
+/// 1. Build tx with placeholder signature
+/// 2. Call tx.signing_hash() - uses deterministic field-by-field hashing
+/// 3. Sign the hash with Dilithium
+/// 4. Put real signature back into transaction
+/// 5. Serialize with bincode for transmission
 fn build_token_transaction(
     identity: &Identity,
     method: &str,
@@ -101,7 +104,7 @@ fn build_token_transaction(
     let memo_sig = Signature {
         signature: vec![],
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::Dilithium2, // Use Dilithium2 to match identity key type
         timestamp: 0,
     };
 
@@ -112,8 +115,8 @@ fn build_token_transaction(
     let mut memo = b"ZHTP".to_vec();
     memo.extend(call_data);
 
-    // Step 1: Build transaction with ZEROED signature for hashing
-    // This MUST match lib-blockchain/src/transaction/hashing.rs:hash_transaction()
+    // Step 1: Build transaction with placeholder signature for hashing
+    // ALL fields must be present - signing_hash() includes all of them
     let mut tx = Transaction {
         version: 1,
         chain_id,
@@ -123,18 +126,16 @@ fn build_token_transaction(
         fee: 1000,
         signature: Signature {
             signature: vec![],
-            // CRITICAL: Must use all-zero key_id, NOT blake3(empty)
-            // PublicKey::new(vec![]) computes key_id = blake3([]) = af1349b9...
-            // For zeroed signature, key_id must be [0u8; 32] to match server
             public_key: PublicKey {
                 dilithium_pk: vec![],
                 kyber_pk: vec![],
-                key_id: [0u8; 32],  // All zeros - must match server's hash_transaction()
+                key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium5,
-            timestamp: 0,  // ZERO - must match server
+            algorithm: SignatureAlgorithm::Dilithium2,
+            timestamp: 0,
         },
         memo: memo.clone(),
+        // ALL optional fields must be present (even if None)
         identity_data: None,
         wallet_data: None,
         validator_data: None,
@@ -143,60 +144,45 @@ fn build_token_transaction(
         dao_execution_data: None,
         ubi_claim_data: None,
         profit_declaration_data: None,
+        token_transfer_data: None,        // Added - was missing
+        governance_config_data: None,     // Added - was missing
     };
 
     eprintln!("[token_tx] Method: {}", method);
+    eprintln!("[token_tx] Chain ID: {}", chain_id);
     eprintln!("[token_tx] Memo length: {} bytes", memo.len());
     eprintln!("[token_tx] Public key size: {}", identity.public_key.len());
 
-    // Debug: Log the zeroed signature structure
-    eprintln!("[token_tx] Zeroed sig.signature.len={}", tx.signature.signature.len());
-    eprintln!("[token_tx] Zeroed sig.public_key.dilithium_pk.len={}", tx.signature.public_key.dilithium_pk.len());
-    eprintln!("[token_tx] Zeroed sig.public_key.kyber_pk.len={}", tx.signature.public_key.kyber_pk.len());
-    eprintln!("[token_tx] Zeroed sig.public_key.key_id={}", hex::encode(&tx.signature.public_key.key_id));
-    eprintln!("[token_tx] Zeroed sig.timestamp={}", tx.signature.timestamp);
-    eprintln!("[token_tx] Memo hex (first 100): {}", hex::encode(&memo[..std::cmp::min(100, memo.len())]));
+    // Step 2: Use signing_hash() - deterministic field-by-field hashing
+    // This is the SAFE method that won't break when Transaction struct changes
+    let tx_hash = tx.signing_hash();
 
+    eprintln!("[token_tx] Signing hash: {}", hex::encode(tx_hash.as_bytes()));
 
-    // Step 2: Serialize for hashing
-    let tx_bytes_for_hashing = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize tx: {}", e))?;
-
-    eprintln!("[token_tx] Serialized tx size: {} bytes", tx_bytes_for_hashing.len());
-    eprintln!("[token_tx] Serialized tx hex (first 100): {}", hex::encode(&tx_bytes_for_hashing[..std::cmp::min(100, tx_bytes_for_hashing.len())]));
-    // Log signature struct position (after fee at offset ~33) for comparison with server
-    if tx_bytes_for_hashing.len() > 97 {
-        eprintln!("[token_tx] Bytes 33-97 (signature struct): {}", hex::encode(&tx_bytes_for_hashing[33..97]));
-    }
-
-    // Step 3: Hash with blake3 (matching lib-blockchain's hash_transaction)
-    let tx_hash = blake3::hash(&tx_bytes_for_hashing);
-
-    eprintln!("[token_tx] Tx hash: {}", hex::encode(tx_hash.as_bytes()));
-
-    // Step 4: Sign the HASH (not the raw bytes)
+    // Step 3: Sign the hash with Dilithium
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
 
     eprintln!("[token_tx] Signature size: {} bytes", signature_bytes.len());
 
-    // Step 5: Put real signature and public key back into transaction
+    // Step 4: Put real signature and public key back into transaction
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::Dilithium2,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
     };
 
-
-    // Step 6: Serialize final transaction with signature
+    // Step 5: Serialize final transaction with signature for transmission
     let final_tx_bytes = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
-    // Hex encode
+    eprintln!("[token_tx] Final tx size: {} bytes", final_tx_bytes.len());
+
+    // Hex encode for API
     Ok(hex::encode(final_tx_bytes))
 }
 

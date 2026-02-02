@@ -259,6 +259,7 @@ mod tests {
                 transaction_count: 0,
                 block_size: 0,
                 cumulative_difficulty: Difficulty::from_bits(work_bits),
+                fee_model_version: 2, // Phase 2+ uses v2
             },
             transactions: vec![],
         }

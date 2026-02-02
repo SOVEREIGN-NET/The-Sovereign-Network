@@ -153,7 +153,26 @@ impl TransactionValidator {
             TransactionType::ProfitDeclaration => {
                 // Profit declaration transactions - enforce 20% tribute (Week 7)
                 self.validate_profit_declaration_transaction(transaction)?;
-            }}
+            }
+            TransactionType::Coinbase => {
+                // Coinbase must have no inputs
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::TokenTransfer => {
+                // Token transfer - outputs required
+                if transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+            }
+            TransactionType::GovernanceConfigUpdate => {
+                // Governance config updates - validate governance_config_data exists
+                if transaction.governance_config_data.is_none() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+        }
 
         // Signature validation (skip for system transactions - they don't have real signatures)
         // System transactions include: genesis, UBI distribution, identity/wallet registration from node
@@ -240,7 +259,24 @@ impl TransactionValidator {
             TransactionType::ProfitDeclaration => {
                 // Profit declaration transactions - enforce 20% tribute (Week 7)
                 self.validate_profit_declaration_transaction(transaction)?;
-            }}
+            }
+            TransactionType::Coinbase => {
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::TokenTransfer => {
+                if transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+            }
+            TransactionType::GovernanceConfigUpdate => {
+                // Governance config updates - validate governance_config_data exists
+                if transaction.governance_config_data.is_none() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+        }
 
         // Signature validation (skip for system transactions - they don't have real signatures)
         // System transactions include: genesis, UBI distribution, identity/wallet registration from node
@@ -407,11 +443,14 @@ impl TransactionValidator {
             timestamp: 0,
         };
         
-        let tx_hash = tx_for_verification.hash();
+        // CRITICAL FIX: Use signing_hash() to match client-side signing
+        // Client uses signing_hash() in ContractTransactionBuilder.build()
+        // Previously used .hash() which is a different function (hash_transaction vs hash_for_signature)
+        let tx_hash = tx_for_verification.signing_hash();
 
         // Log hash for comparison with client
         tracing::info!(
-            "[validation] Server computed tx_hash = {}",
+            "[validation] Server computed signing_hash = {}",
             hex::encode(tx_hash.as_bytes())
         );
 
@@ -1000,7 +1039,24 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::ProfitDeclaration => {
                 // Profit declaration transactions - enforce 20% tribute (Week 7)
                 self.validate_profit_declaration_transaction(transaction)?;
-            }}
+            }
+            TransactionType::Coinbase => {
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::TokenTransfer => {
+                if transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+            }
+            TransactionType::GovernanceConfigUpdate => {
+                // Governance config updates - validate governance_config_data exists
+                if transaction.governance_config_data.is_none() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+        }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
         // This is the missing check that was allowing transactions from non-existent identities
@@ -1225,7 +1281,7 @@ fn calculate_minimum_fee(transaction_size: usize) -> u64 {
 
 /// Constants for validation
 const MAX_TRANSACTION_SIZE: usize = 1_048_576; // 1 MB
-const MAX_MEMO_SIZE: usize = 8192; // 8 KB - increased for post-quantum signatures (Dilithium5 pubkey = 2592 bytes)
+const MAX_MEMO_SIZE: usize = 16384; // 16 KB - increased for contract calls with post-quantum signatures (Dilithium signatures ~2.7KB each)
 
 /// Validation utility functions
 pub mod utils {
@@ -1278,6 +1334,18 @@ pub mod utils {
             TransactionType::ProfitDeclaration => {
                 // Profit declaration transactions should have profit_declaration_data (Week 7)
                 transaction.profit_declaration_data.is_some()
+            }
+            TransactionType::Coinbase => {
+                // Coinbase must have no inputs but have outputs
+                transaction.inputs.is_empty() && !transaction.outputs.is_empty()
+            }
+            TransactionType::TokenTransfer => {
+                // Token transfers need outputs
+                !transaction.outputs.is_empty()
+            }
+            TransactionType::GovernanceConfigUpdate => {
+                // Governance config updates should have governance_config_data
+                transaction.governance_config_data.is_some()
             }
         }
     }
@@ -1368,6 +1436,8 @@ mod tests {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -1434,6 +1504,8 @@ mod tests {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         };
 
         assert!(
@@ -1527,6 +1599,8 @@ mod tests {
                 dao_execution_data: None,
                 ubi_claim_data: None,
                 profit_declaration_data: None,
+                token_transfer_data: None,
+                governance_config_data: None,
             };
 
             assert!(
@@ -1560,6 +1634,8 @@ mod tests {
             dao_execution_data: None,
             ubi_claim_data: None,
             profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
         };
 
         assert!(

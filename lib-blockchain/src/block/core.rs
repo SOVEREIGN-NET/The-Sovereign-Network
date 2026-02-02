@@ -40,6 +40,20 @@ pub struct BlockHeader {
     pub block_size: u32,
     /// Cumulative difficulty from genesis
     pub cumulative_difficulty: Difficulty,
+    /// Fee model version for this block (Phase 3B)
+    ///
+    /// - Version 1: Legacy fee model (before activation height)
+    /// - Version 2: Fee Model v2 (at and after activation height)
+    ///
+    /// This field is consensus-critical. A block MUST use the correct
+    /// fee model version for its height per the activation rules.
+    #[serde(default = "default_fee_model_version")]
+    pub fee_model_version: u16,
+}
+
+/// Default fee model version for backwards compatibility
+fn default_fee_model_version() -> u16 {
+    1 // Legacy default for deserializing old blocks
 }
 
 impl Block {
@@ -213,6 +227,7 @@ impl BlockHeader {
             transaction_count,
             block_size,
             cumulative_difficulty,
+            fee_model_version: 1, // Default to v1 for backwards compatibility
         };
 
         // Calculate and set the block hash
