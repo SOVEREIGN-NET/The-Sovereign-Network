@@ -93,9 +93,18 @@ impl<'a> StateMutator<'a> {
                 index as u32,
             );
 
+            // Convert recipient public key to address bytes
+            // IMPORTANT: Must not silently fall back to zero address on conversion failure
+            let owner_bytes: [u8; 32] = output.recipient.as_bytes()
+                .try_into()
+                .map_err(|_| TxApplyError::Internal(format!(
+                    "Failed to convert recipient public key to address at output index {}",
+                    index
+                )))?;
+
             let utxo = Utxo {
                 amount,
-                owner: Address::new(output.recipient.as_bytes().try_into().unwrap_or([0u8; 32])),
+                owner: Address::new(owner_bytes),
                 token: TokenId::NATIVE,
                 created_at_height: block_height,
                 script: None,
@@ -143,8 +152,8 @@ impl<'a> StateMutator<'a> {
 
     /// Credit tokens to an address
     ///
-    /// # Panics
-    /// Panics on u128 overflow (should never happen in practice)
+    /// # Errors
+    /// Returns `InvalidTokenAmount` on u128 overflow
     pub fn credit_token(
         &self,
         token: TokenId,
@@ -157,7 +166,10 @@ impl<'a> StateMutator<'a> {
 
         let current = self.store.get_token_balance(token, addr)?;
         let new_balance = current.checked_add(amount)
-            .expect("Token balance overflow - this should never happen");
+            .ok_or_else(|| TxApplyError::InvalidTokenAmount(format!(
+                "Token balance overflow: {} + {} exceeds u128::MAX",
+                current, amount
+            )))?;
 
         self.store.set_token_balance(token, addr, new_balance)?;
 
@@ -287,9 +299,18 @@ pub fn apply_native_transfer(
             amount_per_output
         };
 
+        // Convert recipient public key to address bytes
+        // IMPORTANT: Must not silently fall back to zero address on conversion failure
+        let owner_bytes: [u8; 32] = output.recipient.as_bytes()
+            .try_into()
+            .map_err(|_| TxApplyError::Internal(format!(
+                "Failed to convert recipient public key to address at output index {}",
+                index
+            )))?;
+
         let utxo = Utxo {
             amount,
-            owner: Address::new(output.recipient.as_bytes().try_into().unwrap_or([0u8; 32])),
+            owner: Address::new(owner_bytes),
             token: TokenId::NATIVE,
             created_at_height: block_height,
             script: None,
@@ -364,10 +385,14 @@ pub fn apply_coinbase(
     let mut fee_sink_output_amount: u64 = 0;
 
     // First pass: validate structure and find fee sink output
-    for output in tx.outputs.iter() {
-        let output_address = Address::new(
-            output.recipient.as_bytes().try_into().unwrap_or([0u8; 32])
-        );
+    for (index, output) in tx.outputs.iter().enumerate() {
+        // Convert recipient public key to address bytes
+        // Note: In first pass we can use unwrap_or for checking fee sink,
+        // but the second pass (below) will properly error on conversion failure
+        let addr_bytes: [u8; 32] = output.recipient.as_bytes()
+            .try_into()
+            .unwrap_or([0u8; 32]);
+        let output_address = Address::new(addr_bytes);
 
         if &output_address == fee_sink_address {
             fee_sink_output_found = true;
@@ -412,9 +437,15 @@ pub fn apply_coinbase(
             index as u32,
         );
 
-        let output_address = Address::new(
-            output.recipient.as_bytes().try_into().unwrap_or([0u8; 32])
-        );
+        // Convert recipient public key to address bytes
+        // IMPORTANT: Must not silently fall back to zero address on conversion failure
+        let addr_bytes: [u8; 32] = output.recipient.as_bytes()
+            .try_into()
+            .map_err(|_| TxApplyError::Internal(format!(
+                "Failed to convert recipient public key to address at coinbase output index {}",
+                index
+            )))?;
+        let output_address = Address::new(addr_bytes);
 
         // Determine amount based on output type
         let amount = if &output_address == fee_sink_address && fees_collected > 0 {

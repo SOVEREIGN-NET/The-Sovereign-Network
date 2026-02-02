@@ -2,65 +2,81 @@
 //!
 //! Defines the types of transactions supported by the ZHTP blockchain.
 //! Note: Identity transaction processing is handled by integration with lib-identity package.
+//!
+//! # Serialization Stability
+//!
+//! IMPORTANT: This enum uses explicit discriminant values via `#[repr(u8)]` to ensure
+//! stable serialization across versions. When adding new variants:
+//! 1. ALWAYS assign an explicit value (do NOT rely on implicit ordering)
+//! 2. NEVER reuse a value from a removed variant
+//! 3. NEVER change the value of an existing variant
+//!
+//! The explicit `#[repr(u8)]` ensures bincode serializes to a single byte with
+//! predictable values, making cross-platform compatibility reliable.
 
 use serde::{Serialize, Deserialize};
 
 /// Transaction types supported by ZHTP blockchain
+///
+/// Uses explicit discriminant values (`#[repr(u8)]`) for stable serialization.
+/// Bincode will serialize these as single bytes with the assigned values.
+/// See module-level documentation for rules on adding new variants.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum TransactionType {
     /// Standard value transfer between accounts
-    Transfer,
+    Transfer = 0,
     /// Coinbase transaction (block reward, no inputs)
-    Coinbase,
+    Coinbase = 1,
     /// Token transfer (balance model, not UTXO)
-    TokenTransfer,
+    TokenTransfer = 2,
     /// Identity registration on blockchain (delegates to lib-identity)
-    IdentityRegistration,
-    /// Identity update/modification (delegates to lib-identity)  
-    IdentityUpdate,
+    IdentityRegistration = 3,
+    /// Identity update/modification (delegates to lib-identity)
+    IdentityUpdate = 4,
     /// Identity revocation (delegates to lib-identity)
-    IdentityRevocation,
+    IdentityRevocation = 5,
     /// Smart contract deployment (delegates to lib-contracts)
-    ContractDeployment,
+    ContractDeployment = 6,
     /// Smart contract execution (delegates to lib-contracts)
-    ContractExecution,
+    ContractExecution = 7,
     /// Session creation for audit/tracking purposes
-    SessionCreation,
+    SessionCreation = 8,
     /// Session termination for audit/tracking purposes
-    SessionTermination,
+    SessionTermination = 9,
     /// Content upload transaction
-    ContentUpload,
+    ContentUpload = 10,
     /// Universal Basic Income distribution
-    UbiDistribution,
+    UbiDistribution = 11,
     /// Wallet registration/creation on blockchain
-    WalletRegistration,
+    WalletRegistration = 12,
     /// Validator registration for consensus participation
-    ValidatorRegistration,
+    ValidatorRegistration = 13,
     /// Validator information update
-    ValidatorUpdate,
+    ValidatorUpdate = 14,
     /// Validator unregistration/exit from consensus
-    ValidatorUnregister,
+    ValidatorUnregister = 15,
     /// DAO governance proposal submission
-    DaoProposal,
+    DaoProposal = 16,
     /// DAO governance vote on a proposal
-    DaoVote,
+    DaoVote = 17,
     /// DAO proposal execution (treasury spending)
-    DaoExecution,
+    DaoExecution = 18,
     /// Difficulty parameter update (via DAO governance)
     ///
     /// Used to update the blockchain's difficulty adjustment parameters
     /// after a DifficultyParameterUpdate DAO proposal has been approved.
-    DifficultyUpdate,
+    DifficultyUpdate = 19,
     /// UBI claim - citizen-initiated claim from UBI pool (Week 7)
     ///
     /// Distinct from UbiDistribution (system-initiated push).
     /// This is a pull-based model where citizens claim their allocation.
-    UBIClaim,
+    UBIClaim = 20,
     /// Profit declaration - enforces 20% tribute from for-profit to nonprofit (Week 7)
     ///
     /// Validates that tribute_amount == profit_amount * 20 / 100.
     /// Integrates with TributeRouter for enforcement.
-    ProfitDeclaration,
+    ProfitDeclaration = 21,
     /// Token governance configuration update (Phase 3D)
     ///
     /// Allows authorized governance addresses to update specific token configuration:
@@ -69,7 +85,7 @@ pub enum TransactionType {
     /// - pause/unpause: Emergency circuit breaker
     ///
     /// Requires: caller has Governance role in token's authorities
-    GovernanceConfigUpdate,
+    GovernanceConfigUpdate = 22,
 }
 
 impl TransactionType {

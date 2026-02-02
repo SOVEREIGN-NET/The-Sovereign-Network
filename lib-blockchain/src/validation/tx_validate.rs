@@ -116,12 +116,21 @@ fn validate_transfer_stateless(tx: &Transaction) -> TxValidateResult<()> {
 
 /// Stateless validation for TokenTransfer transactions
 fn validate_token_transfer_stateless(tx: &Transaction) -> TxValidateResult<()> {
-    // Token transfers need outputs
-    if tx.outputs.is_empty() {
-        return Err(TxValidateError::EmptyOutputs);
+    // Token transfer MUST have token_transfer_data field
+    // This matches the executor's requirement at executor.rs:489-495
+    let data = tx.token_transfer_data.as_ref()
+        .ok_or_else(|| TxValidateError::MissingField(
+            "TokenTransfer requires token_transfer_data field".to_string()
+        ))?;
+
+    // Amount must be > 0
+    if data.amount == 0 {
+        return Err(TxValidateError::InvalidAmount(
+            "Token transfer amount must be greater than 0".to_string()
+        ));
     }
 
-    // Note: Amount validation for token transfers happens during execution
+    // Note: Balance sufficiency is validated during execution
     // when balances are actually debited/credited.
 
     Ok(())
@@ -240,7 +249,7 @@ pub fn validate_fee(tx: &Transaction, params: &FeeParamsV2) -> TxValidateResult<
             if let Some(fee_input) = classify_transaction(tx) {
                 // Validate against block limits first
                 if let Err(e) = validate_block_limits(&fee_input, params) {
-                    return Err(TxValidateError::UnsupportedType(e));
+                    return Err(TxValidateError::BlockLimitExceeded(e));
                 }
 
                 // Compute minimum fee

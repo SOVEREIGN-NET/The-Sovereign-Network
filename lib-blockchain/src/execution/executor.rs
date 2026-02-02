@@ -425,6 +425,12 @@ impl BlockExecutor {
     }
 
     /// Stateless transaction validation
+    ///
+    /// NOTE: This duplicates some logic from crate::validation::tx_validate module.
+    /// This is INTENTIONAL - the executor needs to own its validation to ensure
+    /// execution-time checks are consistent with what it expects. The validation
+    /// module is for pre-execution filtering (e.g., mempool acceptance), while
+    /// executor validation is the authoritative check during block application.
     fn validate_tx_stateless(&self, tx: &crate::transaction::Transaction) -> Result<(), TxApplyError> {
         // Check transaction type is supported in Phase 2
         match tx.transaction_type {
