@@ -22,7 +22,7 @@ NC='\033[0m' # No Color
 # Configuration
 BUILD_TYPE="${1:-release}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUTPUT_DIR="$PROJECT_DIR/target/ios"
 FRAMEWORK_NAME="ZhtpFramework"
 LIB_NAME="zhtp_mobile"
@@ -80,10 +80,10 @@ mkdir -p "$OUTPUT_DIR"
 # Set build flags
 if [ "$BUILD_TYPE" = "release" ]; then
     BUILD_FLAG="--release"
-    PROFILE="mobile"
+    PROFILE="release"
 else
     BUILD_FLAG=""
-    PROFILE="dev"
+    PROFILE="debug"
 fi
 
 cd "$PROJECT_DIR"

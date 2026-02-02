@@ -23,7 +23,7 @@ NC='\033[0m' # No Color
 # Configuration
 BUILD_TYPE="${1:-release}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUTPUT_DIR="$PROJECT_DIR/target/android"
 MIN_SDK_VERSION=26  # Android 8.0 (Oreo)
 
@@ -90,10 +90,10 @@ mkdir -p "$OUTPUT_DIR/jniLibs"
 # Set build flags
 if [ "$BUILD_TYPE" = "release" ]; then
     BUILD_FLAG="--release"
-    PROFILE="mobile"
+    PROFILE="release"
 else
     BUILD_FLAG=""
-    PROFILE="dev"
+    PROFILE="debug"
 fi
 
 # Build for each architecture
