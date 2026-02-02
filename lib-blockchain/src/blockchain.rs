@@ -1666,7 +1666,10 @@ impl Blockchain {
         let validator = crate::transaction::validation::StatefulTransactionValidator::new(self);
         
         // Check if this is a system transaction (empty inputs indicates system transaction)
-        let is_system_transaction = transaction.inputs.is_empty();
+        // BUT token contract executions are NOT system transactions (they must pay fees)
+        // Use the full validation logic to ensure consistency with fee validation
+        let is_token_contract = crate::transaction::is_token_contract_execution(transaction);
+        let is_system_transaction = transaction.inputs.is_empty() && !is_token_contract;
         
         tracing::info!("Verifying transaction with identity verification enabled");
         tracing::info!("System transaction: {}", is_system_transaction);
