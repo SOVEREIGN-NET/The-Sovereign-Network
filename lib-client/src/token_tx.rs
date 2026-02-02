@@ -115,7 +115,18 @@ fn build_token_transaction(
     let mut memo = b"ZHTP".to_vec();
     memo.extend(call_data);
 
-    // Step 1: Build transaction with placeholder signature for hashing
+    // Step 1: Calculate dynamic fee based on estimated transaction size
+    // Fee formula: ~0.119 ZHTP per byte, or 1 ZHTP per ~8.4 bytes
+    // Server calculation: fee = ceil(transaction_size_bytes / 8.4)
+    let estimated_tx_size = 200 // minimum fixed fields
+        + memo.len() // memo variable size
+        + 3732; // Dilithium2 witness: 2420 byte sig + 1312 byte pk (from lib-blockchain)
+
+    // Calculate fee using integer arithmetic: ceil(size / 8.4) = ceil(size * 10 / 84)
+    // This ensures: 10083 bytes -> 1200 ZHTP (matches server requirement)
+    let min_fee = ((estimated_tx_size as u64 * 10 + 83) / 84) + 50; // Buffer for rounding safety
+
+    // Step 2: Build transaction with calculated fee for hashing
     // ALL fields must be present - signing_hash() includes all of them
     let mut tx = Transaction {
         version: 1,
@@ -123,7 +134,7 @@ fn build_token_transaction(
         transaction_type: TransactionType::ContractExecution,
         inputs: vec![],
         outputs: vec![],
-        fee: 1000,
+        fee: min_fee,
         signature: Signature {
             signature: vec![],
             public_key: PublicKey {
@@ -152,20 +163,22 @@ fn build_token_transaction(
     eprintln!("[token_tx] Chain ID: {}", chain_id);
     eprintln!("[token_tx] Memo length: {} bytes", memo.len());
     eprintln!("[token_tx] Public key size: {}", identity.public_key.len());
+    eprintln!("[token_tx] Estimated tx size: {} bytes", estimated_tx_size);
+    eprintln!("[token_tx] Calculated minimum fee: {} ZHTP", min_fee);
 
-    // Step 2: Use signing_hash() - deterministic field-by-field hashing
+    // Step 3: Use signing_hash() - deterministic field-by-field hashing
     // This is the SAFE method that won't break when Transaction struct changes
     let tx_hash = tx.signing_hash();
 
     eprintln!("[token_tx] Signing hash: {}", hex::encode(tx_hash.as_bytes()));
 
-    // Step 3: Sign the hash with Dilithium
+    // Step 4: Sign the hash with Dilithium
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
 
     eprintln!("[token_tx] Signature size: {} bytes", signature_bytes.len());
 
-    // Step 4: Put real signature and public key back into transaction
+    // Step 5: Put real signature and public key back into transaction
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
@@ -176,11 +189,14 @@ fn build_token_transaction(
             .as_secs(),
     };
 
-    // Step 5: Serialize final transaction with signature for transmission
+    // Step 6: Serialize final transaction with signature for transmission
     let final_tx_bytes = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
-    eprintln!("[token_tx] Final tx size: {} bytes", final_tx_bytes.len());
+    eprintln!("[token_tx] Final tx size: {} bytes (estimated was {})", final_tx_bytes.len(), estimated_tx_size);
+    eprintln!("[token_tx] Fee verification: {} ZHTP for {} bytes = {:.3} ZHTP/byte",
+        min_fee, final_tx_bytes.len(),
+        min_fee as f64 / final_tx_bytes.len() as f64);
 
     // Hex encode for API
     Ok(hex::encode(final_tx_bytes))
