@@ -108,13 +108,16 @@ impl FeeDistribution {
     pub fn from_fees(total_fees: u64) -> Self {
         // Calculate each allocation using integer division
         // Order matters for rounding consistency
-        let ubi_pool = total_fees * UBI_ALLOCATION_PERCENT as u64 / 100;
-        let dao_pool = total_fees * DAO_ALLOCATION_PERCENT as u64 / 100;
-        let emergency_reserve = total_fees * EMERGENCY_ALLOCATION_PERCENT as u64 / 100;
-        let dev_grants = total_fees * DEV_ALLOCATION_PERCENT as u64 / 100;
+        // Use u128 intermediate to prevent overflow with large fee values
+        let ubi_pool = ((total_fees as u128 * UBI_ALLOCATION_PERCENT as u128) / 100) as u64;
+        let dao_pool = ((total_fees as u128 * DAO_ALLOCATION_PERCENT as u128) / 100) as u64;
+        let emergency_reserve = ((total_fees as u128 * EMERGENCY_ALLOCATION_PERCENT as u128) / 100) as u64;
+        let dev_grants = ((total_fees as u128 * DEV_ALLOCATION_PERCENT as u128) / 100) as u64;
 
         // Calculate remainder (dust from integer division)
-        let distributed = ubi_pool + dao_pool + emergency_reserve + dev_grants;
+        let distributed = ubi_pool.saturating_add(dao_pool)
+            .saturating_add(emergency_reserve)
+            .saturating_add(dev_grants);
         let remainder = total_fees.saturating_sub(distributed);
 
         Self {

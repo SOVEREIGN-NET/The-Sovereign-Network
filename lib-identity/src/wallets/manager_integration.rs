@@ -68,6 +68,9 @@ pub struct WalletManager {
     /// Optional master seed for deterministic wallet recovery (not serialized)
     #[serde(skip)]
     pub master_seed: Option<[u8; 64]>,
+    /// Next derivation index for HD wallets
+    #[serde(skip, default)]
+    pub next_derivation_index: u32,
 }
 
 impl WalletManager {
@@ -86,6 +89,7 @@ impl WalletManager {
             created_at: current_time,
             wallet_password_manager: WalletPasswordManager::new(),
             master_seed: None,
+            next_derivation_index: 0,
         }
     }
 
@@ -1003,5 +1007,232 @@ impl WalletManager {
     /// Get count of password-protected wallets
     pub fn password_protected_wallet_count(&self) -> usize {
         self.wallet_password_manager.password_protected_count()
+    }
+
+    // ========================================================================
+    // PHASE 3: HD WALLET DERIVATION
+    // ========================================================================
+
+    /// Derive a wallet seed from the master seed using HD derivation
+    ///
+    /// Uses BIP32-style derivation: HKDF(master_seed, "ZHTP_HD_WALLET_V1" || index)
+    ///
+    /// # Arguments
+    /// * `index` - The derivation index (0-based)
+    ///
+    /// # Returns
+    /// 64-byte wallet seed derived from master seed at given index
+    ///
+    /// # Errors
+    /// Returns error if master_seed is not set
+    pub fn derive_wallet_seed(&self, index: u32) -> Result<[u8; 64]> {
+        let master_seed = self.master_seed
+            .ok_or_else(|| anyhow!("Master seed not set - cannot derive HD wallet"))?;
+
+        // Use HKDF to derive wallet seed from master seed + index
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+
+        let info = format!("ZHTP_HD_WALLET_V1:{}", index);
+        let hk = Hkdf::<Sha256>::new(None, &master_seed);
+        let mut wallet_seed = [0u8; 64];
+        hk.expand(info.as_bytes(), &mut wallet_seed)
+            .map_err(|e| anyhow!("HKDF derivation failed: {:?}", e))?;
+
+        Ok(wallet_seed)
+    }
+
+    /// Create a new HD wallet with deterministic derivation
+    ///
+    /// This creates a wallet that can be recovered from the master seed.
+    /// The derivation index is automatically assigned and stored.
+    ///
+    /// # Arguments
+    /// * `wallet_type` - Type of wallet to create
+    /// * `name` - Human-readable wallet name
+    /// * `alias` - Optional alias for quick lookup
+    ///
+    /// # Returns
+    /// Tuple of (WalletId, derivation_index) for the new wallet
+    ///
+    /// # Determinism
+    /// Same master_seed + same index → same wallet keys (always)
+    pub async fn create_hd_wallet(
+        &mut self,
+        wallet_type: WalletType,
+        name: String,
+        alias: Option<String>,
+    ) -> Result<(WalletId, u32)> {
+        // Ensure master seed is set
+        if self.master_seed.is_none() {
+            return Err(anyhow!("Master seed not set - cannot create HD wallet"));
+        }
+
+        // Check if alias already exists
+        if let Some(ref alias) = alias {
+            if self.alias_map.contains_key(alias) {
+                return Err(anyhow!("Wallet alias '{}' already exists", alias));
+            }
+        }
+
+        // Get next derivation index and increment
+        let derivation_index = self.next_derivation_index;
+        self.next_derivation_index += 1;
+
+        // Derive wallet seed from master seed
+        let wallet_seed = self.derive_wallet_seed(derivation_index)?;
+
+        // Generate deterministic wallet ID from derived seed
+        let wallet_id_bytes = lib_crypto::hash_blake3(&[&wallet_seed[..], b"WALLET_ID"].concat());
+        let wallet_id: WalletId = Hash(wallet_id_bytes);
+
+        // Generate deterministic public key from derived seed
+        let public_key = lib_crypto::hash_blake3(&[&wallet_seed[..], b"PUBLIC_KEY"].concat()).to_vec();
+
+        // Generate seed commitment for recovery verification
+        let commitment_hash = lib_crypto::hash_blake3(&[&wallet_seed[..], b"COMMITMENT"].concat());
+        let seed_commitment = format!("zhtp:hd:wallet:{}", hex::encode(commitment_hash));
+
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Create the HD wallet
+        let wallet = QuantumWallet {
+            id: wallet_id.clone(),
+            wallet_type: wallet_type.clone(),
+            name: name.clone(),
+            alias: alias.clone(),
+            balance: 0,
+            staked_balance: 0,
+            pending_rewards: 0,
+            owner_id: self.owner_id.clone(),
+            public_key,
+            seed_phrase: None, // HD wallets don't store individual seed phrases
+            encrypted_seed: None,
+            seed_commitment: Some(seed_commitment),
+            created_at: current_time,
+            last_transaction: None,
+            recent_transactions: Vec::new(),
+            is_active: true,
+            dao_properties: None,
+            derivation_index: Some(derivation_index),
+            password_hash: None,
+            owned_content: Vec::new(),
+            total_storage_used: 0,
+            total_content_value: 0,
+        };
+
+        // Store wallet
+        self.wallets.insert(wallet_id.clone(), wallet);
+
+        // Store alias mapping if provided
+        if let Some(alias) = alias {
+            self.alias_map.insert(alias, wallet_id.clone());
+        }
+
+        tracing::info!(
+            "🔐 Created HD wallet {} at index {} for identity {:?}",
+            hex::encode(&wallet_id.0[..8]),
+            derivation_index,
+            self.owner_id.as_ref().map(|id| hex::encode(&id.0[..8]))
+        );
+
+        Ok((wallet_id, derivation_index))
+    }
+
+    /// Recover all HD wallets up to a given index
+    ///
+    /// Scans derivation indices from 0 to max_index and recovers any
+    /// wallets that were previously created.
+    ///
+    /// # Arguments
+    /// * `max_index` - Maximum derivation index to scan
+    ///
+    /// # Returns
+    /// Number of wallets recovered
+    pub async fn recover_hd_wallets(&mut self, max_index: u32) -> Result<u32> {
+        if self.master_seed.is_none() {
+            return Err(anyhow!("Master seed not set - cannot recover HD wallets"));
+        }
+
+        let mut recovered = 0;
+
+        for index in 0..=max_index {
+            // Derive wallet seed and ID
+            let wallet_seed = self.derive_wallet_seed(index)?;
+            let wallet_id_bytes = lib_crypto::hash_blake3(&[&wallet_seed[..], b"WALLET_ID"].concat());
+            let wallet_id: WalletId = Hash(wallet_id_bytes);
+
+            // Skip if wallet already exists
+            if self.wallets.contains_key(&wallet_id) {
+                continue;
+            }
+
+            // Create recovered wallet
+            let public_key = lib_crypto::hash_blake3(&[&wallet_seed[..], b"PUBLIC_KEY"].concat()).to_vec();
+            let commitment_hash = lib_crypto::hash_blake3(&[&wallet_seed[..], b"COMMITMENT"].concat());
+            let seed_commitment = format!("zhtp:hd:wallet:{}", hex::encode(commitment_hash));
+
+            let current_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            let wallet = QuantumWallet {
+                id: wallet_id.clone(),
+                wallet_type: WalletType::Standard, // Default type for recovered
+                name: format!("Recovered HD Wallet {}", index),
+                alias: None,
+                balance: 0, // Will be synced from blockchain
+                staked_balance: 0,
+                pending_rewards: 0,
+                owner_id: self.owner_id.clone(),
+                public_key,
+                seed_phrase: None,
+                encrypted_seed: None,
+                seed_commitment: Some(seed_commitment),
+                created_at: current_time,
+                last_transaction: None,
+                recent_transactions: Vec::new(),
+                is_active: true,
+                dao_properties: None,
+                derivation_index: Some(index),
+                password_hash: None,
+                owned_content: Vec::new(),
+                total_storage_used: 0,
+                total_content_value: 0,
+            };
+
+            self.wallets.insert(wallet_id, wallet);
+            recovered += 1;
+
+            // Update next_derivation_index if needed
+            if index >= self.next_derivation_index {
+                self.next_derivation_index = index + 1;
+            }
+        }
+
+        if recovered > 0 {
+            tracing::info!("🔓 Recovered {} HD wallets from master seed", recovered);
+        }
+
+        Ok(recovered)
+    }
+
+    /// Get all HD wallets sorted by derivation index
+    pub fn list_hd_wallets(&self) -> Vec<&QuantumWallet> {
+        let mut hd_wallets: Vec<&QuantumWallet> = self.wallets.values()
+            .filter(|w| w.derivation_index.is_some())
+            .collect();
+
+        hd_wallets.sort_by_key(|w| w.derivation_index.unwrap_or(u32::MAX));
+        hd_wallets
+    }
+
+    /// Get the next available derivation index
+    pub fn get_next_derivation_index(&self) -> u32 {
+        self.next_derivation_index
     }
 }

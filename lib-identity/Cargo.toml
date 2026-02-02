@@ -21,6 +21,9 @@ tracing = "0.1"
 bincode = "1.3"
 md5 = "0.7"
 sha2 = "0.10"
+hmac = "0.12"
+pbkdf2 = "0.12"
+hkdf = "0.12"
 names = { version = "0.14", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 lib-crypto = { path = "../lib-crypto" }

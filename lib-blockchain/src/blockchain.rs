@@ -16,7 +16,7 @@ use crate::integration::zk_integration::ZkTransactionProof;
 use crate::integration::economic_integration::{EconomicTransactionProcessor, TreasuryStats};
 use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, ConsensusStatus};
 use crate::integration::storage_integration::{BlockchainStorageManager, BlockchainStorageConfig, StorageOperationResult};
-use crate::storage::BlockchainStore;
+use crate::storage::{BlockchainStore, IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus, did_to_hash};
 use lib_storage::dht::storage::DhtStorage;
 
 /// Messages for real-time blockchain synchronization
@@ -2365,6 +2365,10 @@ impl Blockchain {
     }
 
     /// Process identity transactions in a block
+    ///
+    /// This method:
+    /// 1. Stores to in-memory HashMap (for fast queries, backward compatibility)
+    /// 2. Persists to sled storage (for durability, consensus state)
     pub fn process_identity_transactions(&mut self, block: &Block) -> Result<()> {
         for transaction in &block.transactions {
             if transaction.transaction_type.is_identity_transaction() {
@@ -2378,6 +2382,7 @@ impl Blockchain {
                                 new_identity_data.controlled_nodes = existing_identity.controlled_nodes.clone();
                             }
 
+                            // Store in memory (backward compatibility + fast queries)
                             self.identity_registry.insert(
                                 identity_data.did.clone(),
                                 new_identity_data.clone()
@@ -2386,6 +2391,18 @@ impl Blockchain {
                                 identity_data.did.clone(),
                                 block.height()
                             );
+
+                            // PHASE 0: Persist to sled storage (consensus state)
+                            if let Some(ref store) = self.store {
+                                if let Err(e) = self.persist_identity_to_sled(
+                                    store.as_ref(),
+                                    &new_identity_data,
+                                    block.height(),
+                                    false, // is_update
+                                ) {
+                                    warn!("Failed to persist identity {} to sled: {}", identity_data.did, e);
+                                }
+                            }
 
                             // Register for UBI if this is a citizen identity
                             if identity_data.identity_type == "verified_citizen"
@@ -2420,13 +2437,29 @@ impl Blockchain {
                                 // Preserve controlled_nodes from existing identity
                                 updated_identity_data.controlled_nodes = existing_identity.controlled_nodes.clone();
                             }
-                            
+
+                            // Store in memory
                             self.identity_registry.insert(
                                 identity_data.did.clone(),
-                                updated_identity_data
+                                updated_identity_data.clone()
                             );
+
+                            // PHASE 0: Persist update to sled storage
+                            if let Some(ref store) = self.store {
+                                if let Err(e) = self.persist_identity_to_sled(
+                                    store.as_ref(),
+                                    &updated_identity_data,
+                                    block.height(),
+                                    true, // is_update
+                                ) {
+                                    warn!("Failed to persist identity update {} to sled: {}", identity_data.did, e);
+                                }
+                            }
                         }
                         TransactionType::IdentityRevocation => {
+                            let did_hash = did_to_hash(&identity_data.did);
+
+                            // Store revoked state in memory
                             let mut revoked_data = identity_data.clone();
                             revoked_data.identity_type = "revoked".to_string();
                             self.identity_registry.insert(
@@ -2434,12 +2467,93 @@ impl Blockchain {
                                 revoked_data
                             );
                             self.identity_registry.remove(&identity_data.did);
+
+                            // PHASE 0: Delete from sled storage
+                            if let Some(ref store) = self.store {
+                                if let Err(e) = store.delete_identity(&did_hash) {
+                                    warn!("Failed to delete identity {} from sled: {}", identity_data.did, e);
+                                }
+                                if let Err(e) = store.delete_identity_metadata(&did_hash) {
+                                    warn!("Failed to delete identity metadata {} from sled: {}", identity_data.did, e);
+                                }
+                            }
                         }
                         _ => {} // Other transaction types
                     }
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Helper: Convert IdentityTransactionData to IdentityConsensus and persist to sled
+    fn persist_identity_to_sled(
+        &self,
+        store: &dyn BlockchainStore,
+        identity_data: &IdentityTransactionData,
+        block_height: u64,
+        is_update: bool,
+    ) -> Result<()> {
+        use crate::storage::Address;
+        use crate::types::hash::blake3_hash;
+
+        let did_hash = did_to_hash(&identity_data.did);
+
+        // Derive owner address from public key: Address = blake3(public_key)[0..32]
+        let owner_hash = blake3_hash(&identity_data.public_key);
+        let owner = Address::new(owner_hash.as_array());
+
+        // Convert to consensus-compliant fixed-size format
+        let consensus = IdentityConsensus {
+            did_hash,
+            owner,
+            public_key_hash: blake3_hash(&identity_data.public_key).as_array(),
+            did_document_hash: identity_data.did_document_hash.as_array(),
+            seed_commitment: None, // Will be set during migration if available
+            identity_type: IdentityType::from_str(&identity_data.identity_type),
+            status: if identity_data.identity_type == "revoked" {
+                IdentityStatus::Revoked
+            } else {
+                IdentityStatus::Active
+            },
+            version: 1, // Legacy format
+            created_at: identity_data.created_at,
+            registered_at_height: block_height,
+            registration_fee: identity_data.registration_fee,
+            dao_fee: identity_data.dao_fee,
+            controlled_node_count: identity_data.controlled_nodes.len() as u32,
+            owned_wallet_count: identity_data.owned_wallets.len() as u32,
+            attribute_count: 0,
+        };
+
+        // Convert to metadata (allows strings)
+        let metadata = IdentityMetadata {
+            did: identity_data.did.clone(),
+            display_name: identity_data.identity_type.clone(), // Use type as display name for now
+            public_key: identity_data.public_key.clone(),
+            ownership_proof: identity_data.ownership_proof.clone(),
+            controlled_nodes: identity_data.controlled_nodes.clone(),
+            owned_wallets: identity_data.owned_wallets.clone(),
+            attributes: Vec::new(),
+        };
+
+        // Persist to sled
+        if is_update {
+            store.put_identity(&did_hash, &consensus)
+                .map_err(|e| anyhow::anyhow!("Failed to update identity in sled: {}", e))?;
+            store.put_identity_metadata(&did_hash, &metadata)
+                .map_err(|e| anyhow::anyhow!("Failed to update identity metadata in sled: {}", e))?;
+        } else {
+            // For new registration, also set owner index
+            store.put_identity(&did_hash, &consensus)
+                .map_err(|e| anyhow::anyhow!("Failed to store identity in sled: {}", e))?;
+            store.put_identity_metadata(&did_hash, &metadata)
+                .map_err(|e| anyhow::anyhow!("Failed to store identity metadata in sled: {}", e))?;
+            store.put_identity_owner_index(&consensus.owner, &did_hash)
+                .map_err(|e| anyhow::anyhow!("Failed to store identity owner index in sled: {}", e))?;
+        }
+
+        debug!("Persisted identity {} to sled storage (is_update={})", identity_data.did, is_update);
         Ok(())
     }
 

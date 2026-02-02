@@ -306,11 +306,12 @@ fn test_stress_10k_citizens() {
     let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
 
     // Register 10K citizens
+    // Use wrapping_add to prevent overflow: (i % 245) gives 0-244, + 10 = 10-254
     for i in 0..10_000 {
-        ubi.register(&test_key((i % 255) as u8 + 10)).ok();
+        ubi.register(&test_key(((i % 245) + 10) as u8)).ok();
     }
 
-    assert_eq!(ubi.registered_count(), 255); // Limited by unique key_ids
+    assert_eq!(ubi.registered_count(), 245); // Limited by unique key_ids (10-254)
 }
 
 #[test]
