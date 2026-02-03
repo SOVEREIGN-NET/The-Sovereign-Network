@@ -848,22 +848,18 @@ pub struct NameRecord {
 
 impl NameRecord {
     // ========================================================================
-    // Phase 6: Effective Status Computation
+    // Phase 6: Lifecycle Methods
     // ========================================================================
+    //
+    // Note: Core lifecycle logic is primarily implemented in CoreNameRecord
+    // (core.rs), which is the operational type used by RootRegistry.
+    // These lightweight methods are provided for compatibility.
 
-    /// Compute the effective status from timestamps + explicit states
+    /// Compute effective status (simplified for NameRecord)
     ///
-    /// # Phase 6: Hybrid State Model
-    /// Order of evaluation matters - evaluate top to bottom:
-    /// 1. Terminal states (Released, ReturnedToGovernance)
-    /// 2. Revocation path (governance-initiated)
-    /// 3. Suspension (dominates resolution)
-    /// 4. Normal expiry path
-    ///
-    /// # Invariant L6: No Zombies
-    /// This function is called on every touch to ensure deterministic transitions.
+    /// For authoritative lifecycle logic, use CoreNameRecord in core.rs.
     pub fn effective_status(&self, current_height: BlockHeight) -> EffectiveStatus {
-        // 1. Terminal states - already finalized
+        // Terminal states
         if matches!(self.status, NameStatus::Released) {
             return EffectiveStatus::Released;
         }
@@ -871,108 +867,31 @@ impl NameRecord {
             return EffectiveStatus::ReturnedToGovernance;
         }
 
-        // 2. Revocation path (governance-initiated)
+        // Revocation path
         if matches!(self.status, NameStatus::RevocationPending { .. }) {
             if let Some(grace_until) = self.revoke_grace_until_height {
                 if current_height <= grace_until {
                     return EffectiveStatus::RevokedInGrace;
-                } else {
-                    // Past revocation grace - needs finalization
-                    // Caller should call finalize_revocation()
-                    return self.terminal_status_for_class();
                 }
             }
         }
 
-        // 3. Suspension dominates resolution (may also be expired)
+        // Suspension
         if matches!(self.status, NameStatus::Suspended { .. } | NameStatus::SuspendedByParent) {
             return EffectiveStatus::Suspended;
         }
 
-        // 4. Normal expiry path
+        // Normal expiry path
         if current_height <= self.expires_at_height {
             EffectiveStatus::Active
         } else if current_height <= self.renew_grace_until_height {
             EffectiveStatus::ExpiredInGrace
         } else {
-            // Past grace period - needs finalization
-            // Caller should call finalize_release_or_return()
-            self.terminal_status_for_class()
-        }
-    }
-
-    /// Determine terminal status based on domain classification
-    fn terminal_status_for_class(&self) -> EffectiveStatus {
-        match self.classification {
-            NameClassification::Commercial => EffectiveStatus::Released,
-            NameClassification::WelfareDelegated => EffectiveStatus::ReturnedToGovernance,
-            NameClassification::ReservedWelfare => EffectiveStatus::ReturnedToGovernance,
-            NameClassification::ReservedMeta => EffectiveStatus::ReturnedToGovernance,
-            NameClassification::ReservedByRule => EffectiveStatus::ReturnedToGovernance,
-        }
-    }
-
-    /// Finalize domain release or return based on classification
-    ///
-    /// # Phase 6: Post-Grace Finalization
-    /// - Commercial: Released (available for registration)
-    /// - Welfare children: Return to sector DAO
-    /// - Reserved/Welfare roots: Return to RootGovernance
-    ///
-    /// # Invariant L3, L4
-    /// Post-grace commercial domains are immediately released.
-    /// Post-grace welfare/reserved domains return to appropriate custodian.
-    pub fn finalize_release_or_return(&mut self, sector_dao_id: Option<DaoId>) -> EffectiveStatus {
-        match self.classification {
-            NameClassification::Commercial => {
-                self.status = NameStatus::Released;
-                self.owner = [0u8; 32]; // Clear ownership
-                self.controller = None;
-                self.custodian = None;
-                self.governance_pointer = None;
-                self.governance_config = None;
-                self.governance_delegate = None;
-                EffectiveStatus::Released
-            }
-            NameClassification::WelfareDelegated => {
-                self.status = NameStatus::Revoked {
-                    tombstone: RevokedRecord {
-                        revoked_at: self.renew_grace_until_height,
-                        reason_code: ReasonCode::ExpirationLapsed,
-                        revoking_authority: [0u8; 32], // System
-                        appeal_status: None,
-                    },
-                };
-                self.custodian = Some(CustodianId::SectorDao(
-                    sector_dao_id.unwrap_or([0u8; 32]),
-                ));
-                EffectiveStatus::ReturnedToGovernance
-            }
-            NameClassification::ReservedWelfare
-            | NameClassification::ReservedMeta
-            | NameClassification::ReservedByRule => {
-                self.status = NameStatus::Revoked {
-                    tombstone: RevokedRecord {
-                        revoked_at: self.renew_grace_until_height,
-                        reason_code: ReasonCode::ExpirationLapsed,
-                        revoking_authority: [0u8; 32], // System
-                        appeal_status: None,
-                    },
-                };
-                self.custodian = Some(CustodianId::RootGovernance);
-                EffectiveStatus::ReturnedToGovernance
+            match self.classification {
+                NameClassification::Commercial => EffectiveStatus::Released,
+                _ => EffectiveStatus::ReturnedToGovernance,
             }
         }
-    }
-
-    /// Finalize revocation (governance-initiated)
-    ///
-    /// # Invariant L5
-    /// Revocation grace only applies to governance-initiated actions,
-    /// not to voluntary release or expiration.
-    pub fn finalize_revocation(&mut self, sector_dao_id: Option<DaoId>) -> EffectiveStatus {
-        // Same logic as finalize_release_or_return but reason differs
-        self.finalize_release_or_return(sector_dao_id)
     }
 
     // ========================================================================
