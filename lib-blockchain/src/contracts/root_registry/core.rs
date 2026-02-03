@@ -14,6 +14,7 @@ use super::types::{
     NameStatus, PublicKey, ReasonCode, RevokedRecord, VerificationLevel,
     WelfareSector, ZoneController, timing,
 };
+use crate::impl_lifecycle_fields_accessors;
 
 /// Simplified internal record for RootRegistry core operations
 ///
@@ -796,36 +797,7 @@ impl CoreNameRecord {
     }
 }
 
-/// Implementation of LifecycleFields for CoreNameRecord
-///
-/// Provides shared lifecycle methods via trait default implementations,
-/// eliminating code duplication with NameRecord (types.rs).
-impl LifecycleFields for CoreNameRecord {
-    fn status(&self) -> &NameStatus {
-        &self.status
-    }
-
-    fn expires_at_height(&self) -> BlockHeight {
-        self.expires_at_height
-    }
-
-    fn renewal_window_start_height(&self) -> BlockHeight {
-        self.renewal_window_start_height
-    }
-
-    fn renew_grace_until_height(&self) -> BlockHeight {
-        self.renew_grace_until_height
-    }
-
-    fn revoke_grace_until_height(&self) -> Option<BlockHeight> {
-        self.revoke_grace_until_height
-    }
-
-    fn custodian(&self) -> Option<&CustodianId> {
-        self.custodian.as_ref()
-    }
-
-    fn terminal_status_for_classification(&self) -> EffectiveStatus {
-        self.terminal_status_for_class()
-    }
-}
+// Use the macro for CoreNameRecord implementation
+impl_lifecycle_fields_accessors!(CoreNameRecord, |record: &CoreNameRecord| {
+    record.terminal_status_for_class()
+});

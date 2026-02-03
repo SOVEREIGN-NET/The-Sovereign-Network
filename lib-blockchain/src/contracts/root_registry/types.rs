@@ -496,6 +496,54 @@ pub trait LifecycleFields {
     }
 }
 
+/// Macro to implement the common LifecycleFields accessors for a type.
+///
+/// This eliminates duplication between CoreNameRecord and NameRecord implementations.
+/// The `terminal_expr` parameter is a closure/expression that returns the terminal status.
+#[macro_export]
+macro_rules! impl_lifecycle_fields_accessors {
+    ($type:ty, $terminal_expr:expr) => {
+        impl LifecycleFields for $type {
+            fn status(&self) -> &NameStatus {
+                &self.status
+            }
+
+            fn expires_at_height(&self) -> BlockHeight {
+                self.expires_at_height
+            }
+
+            fn renewal_window_start_height(&self) -> BlockHeight {
+                self.renewal_window_start_height
+            }
+
+            fn renew_grace_until_height(&self) -> BlockHeight {
+                self.renew_grace_until_height
+            }
+
+            fn revoke_grace_until_height(&self) -> Option<BlockHeight> {
+                self.revoke_grace_until_height
+            }
+
+            fn custodian(&self) -> Option<&CustodianId> {
+                self.custodian.as_ref()
+            }
+
+            fn terminal_status_for_classification(&self) -> EffectiveStatus {
+                #[allow(clippy::redundant_closure_call)]
+                ($terminal_expr)(self)
+            }
+        }
+    };
+}
+
+// Use the macro for NameRecord implementation
+impl_lifecycle_fields_accessors!(NameRecord, |record: &NameRecord| {
+    match record.classification {
+        NameClassification::Commercial => EffectiveStatus::Released,
+        _ => EffectiveStatus::ReturnedToGovernance,
+    }
+});
+
 impl From<NameStatus> for EffectiveStatus {
     /// Convert NameStatus to EffectiveStatus (basic conversion)
     ///
@@ -1064,42 +1112,6 @@ impl NameRecord {
     /// Get the depth of this name in the hierarchy (0 for root-level)
     pub fn get_depth(&self) -> usize {
         self.name.matches('.').count().saturating_sub(1) // -1 for .sov TLD
-    }
-}
-
-/// Implementation of LifecycleFields for NameRecord
-///
-/// Provides shared lifecycle methods via trait default implementations.
-impl LifecycleFields for NameRecord {
-    fn status(&self) -> &NameStatus {
-        &self.status
-    }
-
-    fn expires_at_height(&self) -> BlockHeight {
-        self.expires_at_height
-    }
-
-    fn renewal_window_start_height(&self) -> BlockHeight {
-        self.renewal_window_start_height
-    }
-
-    fn renew_grace_until_height(&self) -> BlockHeight {
-        self.renew_grace_until_height
-    }
-
-    fn revoke_grace_until_height(&self) -> Option<BlockHeight> {
-        self.revoke_grace_until_height
-    }
-
-    fn custodian(&self) -> Option<&CustodianId> {
-        self.custodian.as_ref()
-    }
-
-    fn terminal_status_for_classification(&self) -> EffectiveStatus {
-        match self.classification {
-            NameClassification::Commercial => EffectiveStatus::Released,
-            _ => EffectiveStatus::ReturnedToGovernance,
-        }
     }
 }
 
