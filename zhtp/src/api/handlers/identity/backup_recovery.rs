@@ -296,13 +296,37 @@ pub async fn handle_recover_identity(
         ));
     }
 
-    // Restore identity from phrase using RecoveryPhraseManager
-    let phrase_manager = recovery_phrase_manager.read().await;
-    let (identity_id, _private_key, _public_key, _seed) = phrase_manager
-        .restore_from_phrase(&words)
-        .await
-        .map_err(|e| anyhow::anyhow!("Identity recovery failed: {}", e))?;
-    drop(phrase_manager);
+    // Restore identity from phrase using appropriate method based on word count
+    let identity_id = if words.len() == 24 {
+        // 24-word BIP39 standard - derive identity_id using proper BIP39 PBKDF2
+        // Step 1: Convert mnemonic to master seed (BIP39 PBKDF2)
+        let master_seed = lib_identity::recovery::mnemonic_to_master_seed(&words, None)
+            .map_err(|e| anyhow::anyhow!("Failed to derive master seed: {}", e))?;
+
+        // Step 2: Derive identity seed via HKDF
+        let identity_seed = lib_identity::recovery::derive_identity_seed(&master_seed)
+            .map_err(|e| anyhow::anyhow!("Failed to derive identity seed: {}", e))?;
+
+        // Step 3: Derive DID from seed (same as ZhtpIdentity::derive_did_from_seed)
+        // Per seed-anchored architecture: DID = did:zhtp:{Blake3(seed || "ZHTP_DID_V1")}
+        let did_hash = lib_crypto::hash_blake3(&[identity_seed.as_slice(), b"ZHTP_DID_V1"].concat());
+        let did = format!("did:zhtp:{}", hex::encode(did_hash));
+
+        // Step 4: Extract identity_id from DID
+        let id_hex = did.strip_prefix("did:zhtp:")
+            .ok_or_else(|| anyhow::anyhow!("Invalid DID format"))?;
+        lib_crypto::Hash::from_hex(id_hex)
+            .map_err(|e| anyhow::anyhow!("Invalid identity hash: {}", e))?
+    } else {
+        // 20-word custom format - use legacy Blake3 derivation
+        let phrase_manager = recovery_phrase_manager.read().await;
+        let (id, _private_key, _public_key, _seed) = phrase_manager
+            .restore_from_phrase(&words)
+            .await
+            .map_err(|e| anyhow::anyhow!("Identity recovery failed: {}", e))?;
+        drop(phrase_manager);
+        id
+    };
 
     // Verify identity exists in IdentityManager
     let manager = identity_manager.read().await;
