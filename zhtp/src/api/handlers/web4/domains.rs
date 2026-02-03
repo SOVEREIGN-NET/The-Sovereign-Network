@@ -71,8 +71,7 @@ pub struct SimpleDomainRegistrationRequest {
     pub signature: String,
     /// Request timestamp (Unix seconds) - for replay protection
     pub timestamp: u64,
-    /// Fee amount the user is willing to pay (in ZHTP tokens)
-    /// This must be >= the minimum required fee for the transaction size
+    /// Fee amount in SOV tokens (fixed: 10 SOV for domain registration)
     #[serde(default)]
     pub fee: Option<u64>,
 }
@@ -162,28 +161,23 @@ impl Web4Handler {
             owner_identity.metadata.get("display_name").map(|s| s.as_str()).unwrap_or("no name")
         );
 
-        // Calculate MINIMUM registration fee required
-        // Domain registration transactions with ZK proofs are ~5344 bytes, requiring ~1053 ZHTP minimum fee
-        let estimated_tx_size = 5400u64; // Estimated transaction size in bytes (ZK proofs + signatures)
-        let fee_per_byte = 1u64; // 1 ZHTP per 5 bytes (0.2 ZHTP/byte)
-        let minimum_required_fee = (estimated_tx_size * fee_per_byte) / 5; // ~1080 ZHTP minimum
-        
-        // Get the fee the user is willing to pay
-        let user_provided_fee = simple_request.fee.unwrap_or(0);
-        
-        // Validate user's fee is sufficient
-        if user_provided_fee < minimum_required_fee {
+        // Domain registration fee: fixed 10 SOV
+        const DOMAIN_REGISTRATION_FEE_SOV: u64 = 10;
+
+        // Get the fee the user provided (should be 10 SOV)
+        let user_provided_fee = simple_request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV);
+
+        // Validate user's fee matches required amount
+        if user_provided_fee < DOMAIN_REGISTRATION_FEE_SOV {
             return Err(anyhow!(
-                "Insufficient fee: provided {} ZHTP, minimum required {} ZHTP for {}byte transaction",
-                user_provided_fee, minimum_required_fee, estimated_tx_size
+                "Insufficient fee: provided {} SOV, required {} SOV for domain registration",
+                user_provided_fee, DOMAIN_REGISTRATION_FEE_SOV
             ));
         }
-        
-        info!(" User provided fee: {} ZHTP (minimum required: {} ZHTP)", 
-            user_provided_fee, minimum_required_fee);
-        
-        // Use the user's provided fee for the transaction
-        let registration_fee_tokens = user_provided_fee;
+
+        info!(" Domain registration fee: {} SOV", DOMAIN_REGISTRATION_FEE_SOV);
+
+        let registration_fee_sov = DOMAIN_REGISTRATION_FEE_SOV;
 
         // ========== SECURITY: SIGNATURE VERIFICATION ==========
         // Verify that the request was signed by the owner's private key
@@ -209,9 +203,8 @@ impl Web4Handler {
         }
         
         // Create the message that should have been signed
-        // Format: domain|timestamp|fee_amount
-        // The user signs with THEIR fee amount (not our calculated minimum)
-        let signed_message = format!("{}|{}|{}", 
+        // Format: domain|timestamp|fee_amount (fee in SOV)
+        let signed_message = format!("{}|{}|{}",
             simple_request.domain,
             simple_request.timestamp,
             user_provided_fee
@@ -248,310 +241,92 @@ impl Web4Handler {
         info!(" Signature verified successfully - owner authenticated");
         // ========== END SIGNATURE VERIFICATION ==========
         
-        info!(" Calculated registration fee: {} ZHTP tokens (domain length: {} chars, estimated tx size: ~5400 bytes)", 
-            registration_fee_tokens, simple_request.domain.len());
+        info!(" Registration fee: {} SOV (domain: {})",
+            registration_fee_sov, simple_request.domain);
 
-        // Check wallet balance before payment
-        // Use the already-retrieved owner_identity (no need for second lookup)
-        let (wallet_dilithium_pubkey, wallet_utxo_hash, wallet_id_hex) = {
-            let check_identity = &owner_identity;
-            // Find the PRIMARY wallet (not Staking wallet)
-            let primary_wallet = check_identity.wallet_manager.wallets.values()
-                .find(|w| w.wallet_type == lib_identity::WalletType::Primary)
-                .ok_or_else(|| anyhow!("No PRIMARY wallet found for owner identity {}. Found {} wallets total.",
-                    owner_did, check_identity.wallet_manager.wallets.len()))?;
+        // ========================================================================
+        // SOV TOKEN PAYMENT FOR DOMAIN REGISTRATION
+        // ========================================================================
+        // Domain registration costs 10 SOV, paid via SOV token contract transfer
+        // to the network treasury
 
-            let wallet_id_hex = hex::encode(&primary_wallet.id.0);
-            let wallet_id_short = hex::encode(&primary_wallet.id.0[..8]);
-            let inmem_balance = primary_wallet.balance;
+        info!("💳 Processing SOV token payment for domain registration ({} SOV)", registration_fee_sov);
 
-            // Check blockchain wallet registry for this wallet
-            // Use blockchain registry balance as source of truth (has welcome bonus etc)
+        // Get the owner's public key for SOV balance lookup
+        let owner_pubkey = lib_blockchain::integration::crypto_integration::PublicKey::new(
+            owner_identity.public_key.dilithium_pk.clone()
+        );
+
+        // Get SOV token contract and check balance
+        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+
+        {
             let blockchain = self.blockchain.read().await;
-            let in_registry = blockchain.wallet_registry.contains_key(&wallet_id_hex);
-            let registry_balance = blockchain.wallet_registry.get(&wallet_id_hex)
-                .map(|w| w.initial_balance)
-                .unwrap_or(0);
 
-            // Use the MAX of in-memory and registry balance
-            // Registry has welcome bonus, in-memory might have other funds
-            let current_balance = std::cmp::max(inmem_balance, registry_balance);
+            // Check if SOV token contract exists
+            let sov_token = blockchain.token_contracts.get(&sov_token_id)
+                .ok_or_else(|| anyhow!("SOV token contract not initialized. Network may still be bootstrapping."))?;
 
-            info!(" DEBUG WALLET STATE:");
-            info!("   Wallet ID (full): {}", wallet_id_hex);
-            info!("   Wallet ID (short): {}", wallet_id_short);
-            info!("   In-memory balance: {} ZHTP", inmem_balance);
-            info!("   In blockchain registry: {}", in_registry);
-            info!("   Registry initial_balance: {} ZHTP", registry_balance);
-            info!("   Effective balance (max): {} ZHTP", current_balance);
-            info!("   Total wallet_registry entries: {}", blockchain.wallet_registry.len());
-            drop(blockchain);
+            // Check user's SOV balance
+            let user_sov_balance = sov_token.balance_of(&owner_pubkey);
 
-            info!("💳 Checking wallet {} balance: {} ZHTP (need {} ZHTP)",
-                wallet_id_short, current_balance, registration_fee_tokens);
-            info!("   Full wallet ID: {}", wallet_id_hex);
+            info!(" User SOV balance: {} SOV (need {} SOV)", user_sov_balance, registration_fee_sov);
 
-            if current_balance < registration_fee_tokens {
+            if user_sov_balance < registration_fee_sov {
                 return Err(anyhow!(
-                    "Insufficient balance. Required: {} ZHTP, Available: {} ZHTP in wallet {}. \
-                    HINT: Your genesis wallet should have 5000 ZHTP. Check if wallet balance sync ran at startup.",
-                    registration_fee_tokens, current_balance, wallet_id_short
+                    "Insufficient SOV balance. Required: {} SOV, Available: {} SOV. \
+                    You need SOV tokens to register domains.",
+                    registration_fee_sov, user_sov_balance
                 ));
             }
-
-            // CRITICAL: Get the FULL Dilithium2 public key from the identity (1312 bytes)
-            // This must match what's stored in wallet_registry for transaction validation
-            // P1-7: Get public key directly from identity
-            let identity_dilithium_pubkey = check_identity.public_key.dilithium_pk.clone();
-
-            // For UTXO matching, use the 32-byte identity hash (what's in UTXO recipients)
-            let identity_hash_for_utxo = check_identity.id.0.to_vec();
-
-            info!(" TRANSACTION IDENTITY DEBUG:");
-            info!("   - Identity ID: {}", hex::encode(&check_identity.id.0));
-            info!("   - Dilithium2 public key: {} bytes", identity_dilithium_pubkey.len());
-            info!("   - Public key (first 32): {}", hex::encode(&identity_dilithium_pubkey[..32.min(identity_dilithium_pubkey.len())]));
-            info!("   - Identity hash: {} bytes for UTXO matching", identity_hash_for_utxo.len());
-
-            (identity_dilithium_pubkey, identity_hash_for_utxo, wallet_id_hex)
-        };
-
-        let payment_purpose = format!("domain_registration:{}", simple_request.domain);
-
-        info!("💳 Creating UTXO payment transaction ({} ZHTP to treasury)", registration_fee_tokens);
-        
-        // ========================================================================
-        // NOTE: Wallet ownership validation now happens in transaction validation
-        // No need to check wallet identity registration here - the validation
-        // will follow: wallet → owner_identity_id → identity_registry
-        // ========================================================================
-        
-        // ========================================================================
-        // STEP 1: Scan blockchain.utxo_set for UTXOs owned by wallet
-        // ========================================================================
-        info!(" Scanning blockchain UTXO set for wallet's spendable outputs...");
-        
-        let blockchain = self.blockchain.read().await;
-        let mut wallet_utxos: Vec<(lib_blockchain::Hash, u32, u64)> = Vec::new();
-        
-        // wallet_utxo_hash is the 32-byte identity hash used in UTXO recipients
-        let wallet_utxo_hash: Vec<u8> = wallet_utxo_hash;
-        
-        info!(" Scanning {} UTXOs for wallet pubkey: {}",
-              blockchain.utxo_set.len(),
-              hex::encode(&wallet_utxo_hash[..8.min(wallet_utxo_hash.len())]));
-
-        // DEBUG: Show what UTXOs exist in blockchain
-        if blockchain.utxo_set.is_empty() {
-            info!("  WARNING: UTXO set is EMPTY - no UTXOs in blockchain");
-        } else {
-            info!("  First few UTXOs in blockchain:");
-            for (i, (hash, output)) in blockchain.utxo_set.iter().take(3).enumerate() {
-                info!("    UTXO {}: recipient={}", i, hex::encode(output.recipient.as_bytes()));
-            }
         }
 
-        for (utxo_hash, output) in &blockchain.utxo_set {
-            // Check if this UTXO belongs to our wallet by comparing identity hashes
-            if output.recipient.as_bytes() == wallet_utxo_hash.as_slice() {
-                // NOTE: Amount is hidden in Pedersen commitment
-                // For genesis UTXOs, we know the amount is 5000 ZHTP
-                // In production, wallet would track amounts or decrypt notes
-                let utxo_amount = 5000u64; // Genesis wallet funding amount
-                
-                wallet_utxos.push((*utxo_hash, 0, utxo_amount));
-                info!("    Found UTXO: {}", hex::encode(utxo_hash.as_bytes()));
-            }
-        }
-        
-        if wallet_utxos.is_empty() {
-            drop(blockchain);
-            return Err(anyhow!("No UTXOs found for wallet. Wallet may not have received genesis funding yet."));
-        }
-        
-        info!(" Found {} UTXOs for wallet", wallet_utxos.len());
-        
-        // ========================================================================
-        // STEP 2: Select UTXOs to cover payment amount + fee
-        // ========================================================================
-        // The registration_fee_tokens (1080 ZHTP) is used ONLY as transaction fee
-        // This covers the transaction size (~5344 bytes requiring ~1053 ZHTP minimum)
-        // There is NO separate payment to treasury - the fee itself funds the treasury
-        let fee = registration_fee_tokens; // Transaction fee = registration cost
-        let required_amount = fee; // Only need to cover the transaction fee
-        
-        let mut selected_utxos = Vec::new();
-        let mut total_selected = 0u64;
-        
-        for utxo in wallet_utxos {
-            selected_utxos.push(utxo.clone());
-            total_selected += utxo.2;
-            
-            if total_selected >= required_amount {
-                break;
-            }
-        }
-        
-        if total_selected < required_amount {
-            drop(blockchain);
-            return Err(anyhow!(
-                "Insufficient UTXO balance: need {} ZHTP (payment {} + fee {}), have {} ZHTP",
-                required_amount, registration_fee_tokens, fee, total_selected
-            ));
-        }
-        
-        let change_amount = total_selected.saturating_sub(required_amount);
-        info!(" Selected {} UTXOs totaling {} ZHTP (payment: {}, fee: {}, change: {})", 
-              selected_utxos.len(), total_selected, registration_fee_tokens, fee, change_amount);
-        
-        drop(blockchain); // Release read lock
-        
-        // ========================================================================
-        // STEP 3: Create transaction inputs from selected UTXOs
-        // ========================================================================
-        let mut inputs = Vec::new();
-        for (utxo_hash, output_index, _amount) in &selected_utxos {
-            // Generate nullifier for this UTXO
-            let nullifier_data = [utxo_hash.as_bytes(), &output_index.to_le_bytes()].concat();
-            let nullifier = lib_blockchain::Hash::from_slice(&lib_crypto::hash_blake3(&nullifier_data)[..32]);
-            
-            // Create ZK proof (simplified for now)
-            let zk_proof = lib_blockchain::integration::zk_integration::ZkTransactionProof::prove_transaction(
-                total_selected,          // sender_balance
-                0,                       // receiver_balance (not needed for input)
-                registration_fee_tokens, // amount
-                fee,                     // fee
-                [0u8; 32],              // sender_blinding (placeholder)
-                [0u8; 32],              // receiver_blinding
-                [0u8; 32],              // nullifier
-            ).unwrap_or_else(|_| {
-                // Fallback to default proof if generation fails
-                lib_blockchain::integration::zk_integration::ZkTransactionProof::default()
-            });
-            
-            let input = lib_blockchain::TransactionInput {
-                previous_output: *utxo_hash,  //  CORRECT: Use actual UTXO hash from blockchain.utxo_set
-                output_index: *output_index,
-                nullifier,
-                zk_proof,
-            };
-            inputs.push(input);
-        }
-        
-        // ========================================================================
-        // STEP 4: Create transaction outputs (only change, no treasury payment)
-        // ========================================================================
-        // NOTE: Domain registration fee is paid via transaction fee (not a separate output)
-        // The fee goes to miners/validators who process the transaction
-        let mut outputs = Vec::new();
-        
-        // Output 1: Change back to wallet (if any)
-        if change_amount > 0 {
-            let change_commitment = lib_blockchain::Hash::from_slice(
-                &lib_crypto::hash_blake3(&[&b"commitment:"[..], &wallet_utxo_hash[..], &change_amount.to_le_bytes()].concat())[..32]
+        // Perform SOV token transfer to treasury
+        {
+            let mut blockchain = self.blockchain.write().await;
+
+            // Get height before mutable borrow of token_contracts
+            let current_block_number = blockchain.height;
+
+            // Get treasury public key (network fee collection address)
+            let treasury_pubkey = lib_blockchain::integration::crypto_integration::PublicKey::new(
+                b"genesis_system_treasury".to_vec()
             );
-            let change_note = lib_blockchain::Hash::from_slice(
-                &lib_crypto::hash_blake3(&[&b"note:"[..], b"change"].concat())[..32]
-            );
-            let change_output = lib_blockchain::TransactionOutput {
-                commitment: change_commitment,
-                note: change_note,
-                recipient: lib_blockchain::integration::crypto_integration::PublicKey::new(wallet_utxo_hash.clone()),
+
+            // Create execution context for the transfer
+            let ctx = lib_blockchain::contracts::executor::ExecutionContext {
+                caller: owner_pubkey.clone(),
+                contract: owner_pubkey.clone(),
+                call_origin: lib_blockchain::contracts::executor::CallOrigin::User,
+                block_number: current_block_number,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                gas_limit: 100_000,
+                gas_used: 0,
+                tx_hash: [0u8; 32],
+                call_depth: 0,
+                max_call_depth: 10,
             };
-            outputs.push(change_output);
-            info!("   → Change output: {} ZHTP back to wallet", change_amount);
+
+            let sov_token = blockchain.token_contracts.get_mut(&sov_token_id)
+                .ok_or_else(|| anyhow!("SOV token contract not found"))?;
+
+            // Transfer SOV to treasury
+            sov_token.transfer(&ctx, &treasury_pubkey, registration_fee_sov)
+                .map_err(|e| anyhow!("SOV transfer failed: {}", e))?;
+
+            info!(" SOV payment successful: {} SOV transferred to treasury", registration_fee_sov);
         }
-        
-        // ========================================================================
-        // STEP 5: Build unsigned transaction first
-        // ========================================================================
-        use lib_blockchain::types::transaction_type::TransactionType;
-        use lib_blockchain::integration::crypto_integration::{Signature, PublicKey as BlockchainPublicKey, SignatureAlgorithm};
-        
-        // Build transaction WITHOUT signature first (needed to calculate hash)
-        let mut transaction = lib_blockchain::Transaction {
-            version: 1,
-            chain_id: 0x03, // Development network
-            transaction_type: TransactionType::Transfer,
-            inputs,
-            outputs,
-            fee,
-            signature: Signature {
-                signature: Vec::new(),
-                public_key: BlockchainPublicKey::new(Vec::new()),
-                algorithm: SignatureAlgorithm::Dilithium2,
-                timestamp: simple_request.timestamp,
-            },
-            memo: payment_purpose.as_bytes().to_vec(),
-            validator_data: None,
-            identity_data: None,
-            wallet_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            governance_config_data: None,
-        };
 
-        // Calculate transaction signing hash (excludes signature for deterministic signing)
-        let tx_hash = transaction.signing_hash();
-        info!(" Transaction signing hash: {}", hex::encode(tx_hash.as_bytes()));
-        
-        // ========================================================================
-        // STEP 6: Sign the transaction hash with identity keypair
-        // ========================================================================
-        // Get private key from identity (P1-7: private keys stored in identity)
-        // We already have owner_identity from earlier retrieval - use it directly
-        let private_key = owner_identity.private_key.as_ref()
-            .ok_or_else(|| anyhow!("Identity missing private key"))?;
+        // Generate a transaction hash for tracking (based on domain + timestamp)
+        let tx_hash_data = format!("domain_reg:{}:{}:{}", simple_request.domain, simple_request.timestamp, registration_fee_sov);
+        let tx_hash = lib_blockchain::Hash::from_slice(&lib_crypto::hash_blake3(tx_hash_data.as_bytes())[..32]);
 
-        // Create keypair for signing
-        let keypair = lib_crypto::KeyPair {
-            private_key: private_key.clone(),
-            public_key: owner_identity.public_key.clone(),
-        };
-
-        // Sign the TRANSACTION HASH (not a custom message!)
-        let keypair_signature = lib_crypto::sign_message(&keypair, tx_hash.as_bytes())
-            .map_err(|e| anyhow!("Failed to sign transaction: {}", e))?;
-        
-        info!(" Transaction hash signed with identity keypair (Dilithium2 signature)");
-        
-        // ========================================================================
-        // STEP 7: Attach signature to transaction
-        // ========================================================================
-        // CRITICAL: Use the IDENTITY's FULL Dilithium2 public key in the signature
-        // This must match what's stored in wallet_registry for validation
-        let public_key_for_signature: BlockchainPublicKey = BlockchainPublicKey::new(wallet_dilithium_pubkey.clone());
-        
-        transaction.signature = Signature {
-            signature: keypair_signature.signature.clone(),
-            public_key: public_key_for_signature,
-            algorithm: SignatureAlgorithm::Dilithium2,
-            timestamp: simple_request.timestamp,
-        };
-        
-        info!(" Transaction created with signature: {}", hex::encode(tx_hash.as_bytes()));
-        
-        // ========================================================================
-        // STEP 8: Submit transaction to blockchain mempool
-        // ========================================================================
-        // Log Arc pointer for debugging shared state (convert to usize to keep it Send-safe)
-        let blockchain_ptr_addr = std::sync::Arc::as_ptr(&self.blockchain) as usize;
-        let mut blockchain = self.blockchain.write().await;
-        let pending_before = blockchain.pending_transactions.len();
-        blockchain.add_pending_transaction(transaction.clone())
-            .map_err(|e| anyhow!("Failed to submit transaction to mempool: {}", e))?;
-        let pending_after = blockchain.pending_transactions.len();
-        drop(blockchain);
-        
-        info!(" Domain registration transaction submitted to blockchain mempool!");
-        info!("    Mempool size: {} → {} transactions [ptr: 0x{:x}]", pending_before, pending_after, blockchain_ptr_addr);
-        info!("   Transaction will be included in next mined block");
-        info!("   Transaction fee: {} ZHTP (covers domain registration + processing)", fee);
-        info!("   Change returned to wallet: {} ZHTP", change_amount);
+        info!(" Domain registration payment complete!");
+        info!("   Fee paid: {} SOV", registration_fee_sov);
+        info!("   Transaction ref: {}", hex::encode(tx_hash.as_bytes()));
 
         // Prepare content mappings WITH RICH METADATA for storage
         let mut initial_content = HashMap::new();
@@ -610,7 +385,7 @@ impl Web4Handler {
                 ],
                 
                 // Economics: 1 year Web4 hosting
-                cost_per_day: 10,  // 10 ZHTP per day for web content
+                cost_per_day: 10,  // 10 SOV per day for web content
                 created_at: current_time,
                 last_accessed: current_time,
                 access_count: 0,
@@ -661,7 +436,7 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Domain registration failed: {}", e))?;
 
         let total_fees = registration_response.fees_charged;
-        info!(" Domain {} registered with {} ZHTP fees", simple_request.domain, total_fees);
+        info!(" Domain {} registered with {} SOV fees", simple_request.domain, total_fees);
 
         // Get the ACTUAL content mappings from domain registry (with correct DHT hashes)
         let actual_content_mappings = match self.name_resolver.resolve(&simple_request.domain).await {
@@ -675,9 +450,8 @@ impl Web4Handler {
         }
 
         // ========================================================================
-        // NOTE: Contract deployment is now handled as an OUTPUT in the payment transaction above
-        // This ensures proper UTXO-based validation with real fees and signatures
-        // The improper deploy_web4_contract() system transaction bypass has been removed
+        // NOTE: Domain registration fees are paid via SOV token transfer above
+        // Contract deployment handled separately from fee payment
         // ========================================================================
         let domain_tx_hash = Some(hex::encode(tx_hash.as_bytes()));
         info!(" Web4 domain registration transaction completed: {:?}", domain_tx_hash);
@@ -734,7 +508,7 @@ impl Web4Handler {
         let response_json = serde_json::to_vec(&response)
             .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
 
-        info!(" Domain {} registered successfully with {} ZHTP fees", simple_request.domain, total_fees);
+        info!(" Domain {} registered successfully with {} SOV fees", simple_request.domain, total_fees);
 
         Ok(ZhtpResponse::success_with_content_type(
             response_json,
