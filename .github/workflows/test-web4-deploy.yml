@@ -1,0 +1,39 @@
+name: Test Web4 Deployment
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build test site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build
+        run: |
+          cd test-web4-deploy
+          npm run build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: test-web4-deploy/out/
+          retention-days: 1
+
+  deploy:
+    name: Deploy to Web4
+    needs: build
+    uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@b3aa0fc97457fa7aa0ba14e050e20ab1e0247274
+    with:
+      domain: remote.sov
+      deployment_mode: static
+    secrets:
+      ZHTP_KEYSTORE_B64: ${{ secrets.ZHTP_KEYSTORE_B64 }}
