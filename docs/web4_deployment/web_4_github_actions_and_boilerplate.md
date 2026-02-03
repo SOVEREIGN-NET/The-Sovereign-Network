@@ -147,3 +147,37 @@ After pushing to `main`:
 - Deployment step succeeds
 - Domain serves the site
 
+---
+
+## Security Best Practices
+
+### Use Full Commit SHAs for External Workflows
+
+When referencing external or reusable workflows, **always use the full commit SHA** instead of branch names or tags. This prevents supply chain attacks where a malicious actor could push changes to a branch or move a tag.
+
+**WRONG - Branch reference (vulnerable):**
+```yaml
+uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@main
+uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@feat/some-branch
+```
+
+**WRONG - Tag reference (vulnerable to tag reassignment):**
+```yaml
+uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@v1.0.0
+```
+
+**CORRECT - Full commit SHA (immutable):**
+```yaml
+uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@4a53b4af5a6d3bc6f28c3125bae611958e15bdc8
+```
+
+To get the SHA for a branch:
+```bash
+git ls-remote origin refs/heads/development | cut -f1
+# or
+git rev-parse origin/development
+```
+
+This is enforced by SonarCloud security scanning (rule S7637).
+
+
