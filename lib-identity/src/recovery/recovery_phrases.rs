@@ -99,13 +99,64 @@ impl RecoveryPhrase {
         use rand::RngCore;
         let mut entropy = vec![0u8; 32]; // 256 bits
         rand::rngs::OsRng.fill_bytes(&mut entropy);
-        
+
         Ok(Self {
             word_count: words.len(),
             checksum: format!("{:x}", sha2::Sha256::digest(words.join(" ").as_bytes())),
             language: "english".to_string(),
             words,
             entropy,
+        })
+    }
+
+    /// Create a 24-word BIP39 recovery phrase from 32 bytes of entropy
+    ///
+    /// Uses standard BIP39 algorithm: 256 bits entropy + 8 bit checksum = 264 bits = 24 words
+    pub fn from_entropy(entropy: &[u8]) -> Result<Self> {
+        use sha2::Digest;
+
+        if entropy.len() != 32 {
+            return Err(anyhow::anyhow!("Entropy must be exactly 32 bytes for 24-word phrase"));
+        }
+
+        // BIP39 wordlist (first 2048 words)
+        let wordlist = crate::recovery::get_bip39_wordlist();
+
+        // Calculate checksum: first byte of SHA256(entropy)
+        let checksum_byte = sha2::Sha256::digest(entropy)[0];
+
+        // Combine entropy (256 bits) + checksum (8 bits) = 264 bits
+        // 264 bits / 11 bits per word = 24 words
+        let mut bits = Vec::with_capacity(264);
+        for byte in entropy {
+            for i in (0..8).rev() {
+                bits.push((byte >> i) & 1);
+            }
+        }
+        for i in (0..8).rev() {
+            bits.push((checksum_byte >> i) & 1);
+        }
+
+        // Convert bits to word indices (11 bits each)
+        let mut words = Vec::with_capacity(24);
+        for chunk in bits.chunks(11) {
+            let mut index: usize = 0;
+            for (i, &bit) in chunk.iter().enumerate() {
+                index |= (bit as usize) << (10 - i);
+            }
+            if index < wordlist.len() {
+                words.push(wordlist[index].clone());
+            } else {
+                return Err(anyhow::anyhow!("Invalid word index: {}", index));
+            }
+        }
+
+        Ok(Self {
+            word_count: 24,
+            checksum: format!("{:02x}", checksum_byte),
+            language: "english".to_string(),
+            words,
+            entropy: entropy.to_vec(),
         })
     }
 }
@@ -620,7 +671,7 @@ impl RecoveryPhraseManager {
     }
 
     /// Get English BIP39 wordlist (standard 2048 words)
-    fn get_english_wordlist(&self) -> Vec<String> {
+    pub(crate) fn get_english_wordlist(&self) -> Vec<String> {
         // Standard BIP39 English wordlist - complete 2048 words for proper entropy
         vec![
             "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract",
@@ -1223,6 +1274,12 @@ impl RecoveryPhraseManager {
         
         Ok((identity_id, private_key_material, public_key, seed))
     }
+}
+
+/// Get the English BIP39 wordlist (2048 words).
+/// Used by recovery phrase generation and validation helpers.
+pub fn get_bip39_wordlist() -> Vec<String> {
+    RecoveryPhraseManager::new().get_english_wordlist()
 }
 
 // =============================================================================

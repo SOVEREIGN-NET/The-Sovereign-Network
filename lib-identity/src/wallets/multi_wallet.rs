@@ -4,37 +4,64 @@ use anyhow::Result;
 use crate::wallets::{WalletManager, WalletType, WalletId, WalletSummary};
 
 impl WalletManager {
-    /// Create multiple wallets for a new citizen with proper seed phrase recovery
-    pub async fn create_citizen_wallets_with_seed_phrases(&mut self) -> Result<CitizenWalletSetWithSeeds> {
-        // Create primary wallet with seed phrase
-        let (primary_id, primary_seed) = self.create_wallet_with_seed_phrase(
+    /// Create multiple wallets for a new citizen with HD derivation from master seed
+    ///
+    /// Uses a single master seed phrase to derive all 3 wallets:
+    /// - Index 0 → Primary wallet
+    /// - Index 1 → UBI wallet
+    /// - Index 2 → Savings wallet
+    ///
+    /// Returns the master seed phrase and derivation indices for recovery.
+    pub async fn create_citizen_wallets_with_hd_derivation(&mut self) -> Result<CitizenWalletSetHD> {
+        // Generate master seed (64 bytes) for HD derivation
+        let mut master_seed = [0u8; 64];
+        use rand::RngCore;
+        rand::rngs::OsRng.fill_bytes(&mut master_seed);
+
+        // Set master seed for HD derivation
+        self.master_seed = Some(master_seed);
+        self.next_derivation_index = 0;
+
+        // Create HD wallets at fixed indices
+        let (primary_id, _) = self.create_hd_wallet(
             WalletType::Primary,
             "Primary Wallet".to_string(),
             Some("primary".to_string()),
         ).await?;
-        
-        // Create UBI wallet with seed phrase
-        let (ubi_id, ubi_seed) = self.create_wallet_with_seed_phrase(
+
+        let (ubi_id, _) = self.create_hd_wallet(
             WalletType::UBI,
             "UBI Wallet".to_string(),
             Some("ubi".to_string()),
         ).await?;
-        
-        // Create savings wallet with seed phrase
-        let (savings_id, savings_seed) = self.create_wallet_with_seed_phrase(
+
+        let (savings_id, _) = self.create_hd_wallet(
             WalletType::Savings,
             "Savings Wallet".to_string(),
             Some("savings".to_string()),
         ).await?;
-        
-        Ok(CitizenWalletSetWithSeeds {
+
+        // Generate 24-word master seed phrase from first 32 bytes
+        let master_seed_phrase = crate::recovery::RecoveryPhrase::from_entropy(&master_seed[..32])?;
+
+        Ok(CitizenWalletSetHD {
             primary_wallet_id: primary_id,
             ubi_wallet_id: ubi_id,
             savings_wallet_id: savings_id,
-            primary_seed_phrase: primary_seed,
-            ubi_seed_phrase: ubi_seed,
-            savings_seed_phrase: savings_seed,
+            master_seed_phrase,
+            derivation_indices: HdDerivationIndices {
+                primary: 0,
+                ubi: 1,
+                savings: 2,
+            },
         })
+    }
+
+    /// Legacy: Create multiple wallets with separate seed phrases (deprecated)
+    #[deprecated(note = "Use create_citizen_wallets_with_hd_derivation instead")]
+    pub async fn create_citizen_wallets_with_seed_phrases(&mut self) -> Result<CitizenWalletSetHD> {
+        // Use HD derivation under the hood (single master seed phrase)
+        self.create_citizen_wallets_with_hd_derivation().await
     }
     
     /// Get all wallet summaries grouped by type
@@ -104,7 +131,31 @@ impl WalletManager {
     }
 }
 
-/// Set of wallets created for a new citizen with seed phrases for recovery
+/// Set of wallets created for a new citizen with HD derivation from master seed
+///
+/// This is the preferred struct for new citizen wallet creation.
+/// All 3 wallets derive from a single master seed phrase.
+#[derive(Debug, Clone)]
+pub struct CitizenWalletSetHD {
+    pub primary_wallet_id: WalletId,
+    pub ubi_wallet_id: WalletId,
+    pub savings_wallet_id: WalletId,
+    /// Single master seed phrase (24 words) that derives all wallets
+    pub master_seed_phrase: crate::recovery::RecoveryPhrase,
+    /// Derivation indices for wallet recovery
+    pub derivation_indices: HdDerivationIndices,
+}
+
+/// HD derivation indices for citizen wallets
+#[derive(Debug, Clone)]
+pub struct HdDerivationIndices {
+    pub primary: u32,
+    pub ubi: u32,
+    pub savings: u32,
+}
+
+/// Legacy: Set of wallets created for a new citizen with separate seed phrases
+#[deprecated(note = "Use CitizenWalletSetHD instead - single master seed")]
 #[derive(Debug, Clone)]
 pub struct CitizenWalletSetWithSeeds {
     pub primary_wallet_id: WalletId,
@@ -115,7 +166,8 @@ pub struct CitizenWalletSetWithSeeds {
     pub savings_seed_phrase: crate::recovery::RecoveryPhrase,
 }
 
-/// Legacy struct - use CitizenWalletSetWithSeeds for new code
+/// Legacy struct - use CitizenWalletSetHD for new code
+#[deprecated(note = "Use CitizenWalletSetHD instead")]
 #[derive(Debug, Clone)]
 pub struct CitizenWalletSet {
     pub primary_wallet_id: WalletId,
