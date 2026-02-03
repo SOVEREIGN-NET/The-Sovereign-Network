@@ -61,7 +61,19 @@ pub use request::{
     ZhtpRequest, ZhtpResponse,
 };
 pub use session::Session;
-pub use token_tx::{build_burn_tx, build_create_token_tx, build_mint_tx, build_transfer_tx};
+pub use token_tx::{
+    // Generic contract transaction builder
+    build_contract_transaction,
+    // Token-specific (backward compatible)
+    build_burn_tx, build_create_token_tx, build_mint_tx, build_transfer_tx,
+    // Domain-specific
+    build_domain_register_tx, build_domain_update_tx, build_domain_transfer_tx,
+    // Param types for serialization
+    CreateTokenParams, MintParams, TransferParams, BurnParams,
+    DomainRegisterParams, DomainUpdateParams, DomainTransferParams,
+};
+// Re-export ContractType for FFI callers
+pub use lib_blockchain::types::ContractType;
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
