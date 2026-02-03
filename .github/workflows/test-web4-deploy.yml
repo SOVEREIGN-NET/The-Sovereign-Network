@@ -31,7 +31,7 @@ jobs:
   deploy:
     name: Deploy to Web4
     needs: build
-    uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@b3aa0fc97457fa7aa0ba14e050e20ab1e0247274
+    uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@4a53b4af5a6d3bc6f28c3125bae611958e15bdc8
     with:
       domain: remote.sov
       deployment_mode: static
