@@ -31,9 +31,12 @@ jobs:
   deploy:
     name: Deploy to Web4
     needs: build
-    uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@4a53b4af5a6d3bc6f28c3125bae611958e15bdc8
+    # Using commit SHA for security (SonarCloud rule S7637)
+    uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@b452e1754c84b9dc877bfeff5c9b1f8c9af5e8c5
     with:
       domain: remote.sov
       deployment_mode: static
     secrets:
       ZHTP_KEYSTORE_B64: ${{ secrets.ZHTP_KEYSTORE_B64 }}
+      ZHTP_SERVER: ${{ secrets.ZHTP_SERVER }}
+      ZHTP_SERVER_SPKI: ${{ secrets.ZHTP_SERVER_SPKI }}

@@ -180,4 +180,35 @@ git rev-parse origin/development
 
 This is enforced by SonarCloud security scanning (rule S7637).
 
+### Pass Only Required Secrets to Reusable Workflows
+
+When calling reusable workflows, **explicitly pass only the secrets the workflow needs** instead of using `secrets: inherit`. This follows the principle of least privilege and prevents accidentally exposing unrelated secrets.
+
+**WRONG - Passes ALL repository secrets:**
+```yaml
+jobs:
+  deploy:
+    uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@abc123...
+    with:
+      domain: my-site.sov
+    secrets: inherit  # Exposes ALL secrets to the called workflow
+```
+
+**CORRECT - Pass only required secrets:**
+```yaml
+jobs:
+  deploy:
+    uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@abc123...
+    with:
+      domain: my-site.sov
+    secrets:
+      ZHTP_KEYSTORE_B64: ${{ secrets.ZHTP_KEYSTORE_B64 }}
+      ZHTP_SERVER: ${{ secrets.ZHTP_SERVER }}
+      ZHTP_SERVER_SPKI: ${{ secrets.ZHTP_SERVER_SPKI }}
+```
+
+The deployment workflow requires exactly three secrets:
+- `ZHTP_KEYSTORE_B64` - Base64-encoded keystore tarball
+- `ZHTP_SERVER` - Server address for deployment
+- `ZHTP_SERVER_SPKI` - Server public key for certificate pinning
 
