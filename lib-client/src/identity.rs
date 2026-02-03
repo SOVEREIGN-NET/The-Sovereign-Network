@@ -200,6 +200,14 @@ pub fn restore_identity_from_seed(master_seed: Vec<u8>, device_id: String) -> Re
     })
 }
 
+/// Restore an identity from a 24-word BIP39 seed phrase
+///
+/// This derives the 32-byte master seed from the phrase and restores the identity.
+pub fn restore_identity_from_phrase(phrase: &str, device_id: String) -> Result<Identity> {
+    let entropy = entropy_from_mnemonic(phrase)?;
+    restore_identity_from_seed(entropy, device_id)
+}
+
 /// Extract public portion of identity (safe to send to server)
 ///
 /// This function returns only the public parts of the identity
@@ -218,6 +226,60 @@ pub fn get_public_identity(identity: &Identity) -> PublicIdentity {
 /// Convert the master seed into a 24-word BIP39 mnemonic (English)
 pub fn get_seed_phrase(identity: &Identity) -> Result<String> {
     mnemonic_from_entropy(&identity.master_seed).map(|words| words.join(" "))
+}
+
+fn entropy_from_mnemonic(phrase: &str) -> Result<Vec<u8>> {
+    let words: Vec<String> = phrase
+        .split_whitespace()
+        .map(|w| w.to_lowercase())
+        .collect();
+
+    if words.len() != 24 {
+        return Err(ClientError::CryptoError(
+            "Seed phrase must be exactly 24 words".into(),
+        ));
+    }
+
+    let mut bits = Vec::with_capacity(words.len() * 11);
+    for word in words {
+        let index = BIP39_WORDLIST
+            .iter()
+            .position(|w| *w == word)
+            .ok_or_else(|| ClientError::CryptoError("Invalid BIP39 word".into()))? as u16;
+
+        for i in (0..11).rev() {
+            bits.push(((index >> i) & 1) as u8);
+        }
+    }
+
+    if bits.len() != 264 {
+        return Err(ClientError::CryptoError(
+            "Invalid mnemonic length".into(),
+        ));
+    }
+
+    let mut entropy = vec![0u8; 32];
+    for i in 0..32 {
+        let mut byte = 0u8;
+        for j in 0..8 {
+            byte = (byte << 1) | bits[i * 8 + j];
+        }
+        entropy[i] = byte;
+    }
+
+    let mut checksum_byte = 0u8;
+    for j in 0..8 {
+        checksum_byte = (checksum_byte << 1) | bits[256 + j];
+    }
+
+    let expected_checksum = Sha256::digest(&entropy)[0];
+    if checksum_byte != expected_checksum {
+        return Err(ClientError::CryptoError(
+            "Invalid seed phrase checksum".into(),
+        ));
+    }
+
+    Ok(entropy)
 }
 
 fn mnemonic_from_entropy(entropy: &[u8]) -> Result<Vec<&'static str>> {
