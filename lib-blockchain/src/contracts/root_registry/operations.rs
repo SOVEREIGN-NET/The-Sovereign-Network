@@ -188,16 +188,16 @@ impl RegisterGuard {
         let name_hash = super::validation::compute_name_hash(&parsed.full_name);
 
         // Phase 6: Calculate lifecycle heights from duration
-        // Convert duration_secs to blocks (approximately)
-        let duration_blocks = duration_secs / 10; // 10 seconds per block
-        let expires_at_height = current_block + duration_blocks;
+        // Convert duration_secs to blocks (approximately, 10 seconds per block)
+        let duration_blocks = duration_secs.saturating_div(10);
+        let expires_at_height = current_block.saturating_add(duration_blocks);
         let renewal_window_start_height = expires_at_height.saturating_sub(timing::RENEWAL_WINDOW_BLOCKS);
-        let renew_grace_until_height = expires_at_height + timing::EXPIRATION_GRACE_BLOCKS;
-        let transfer_lock_until = current_block + timing::TRANSFER_LOCK_BLOCKS;
+        let renew_grace_until_height = expires_at_height.saturating_add(timing::EXPIRATION_GRACE_BLOCKS);
+        let transfer_lock_until = current_block.saturating_add(timing::TRANSFER_LOCK_BLOCKS);
 
         // Legacy fields (deprecated, for display only)
         #[allow(deprecated)]
-        let expires_at = current_time + duration_secs;
+        let expires_at = current_time.saturating_add(duration_secs);
 
         #[allow(deprecated)]
         NameRecord {

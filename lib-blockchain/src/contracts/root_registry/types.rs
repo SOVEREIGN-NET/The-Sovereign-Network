@@ -378,14 +378,140 @@ impl EffectiveStatus {
     }
 }
 
+// ============================================================================
+// Lifecycle Fields Trait (Phase 6: Shared Lifecycle Logic)
+// ============================================================================
+
+/// Trait for types that have lifecycle fields and can compute effective status
+///
+/// # Phase 6: Shared Lifecycle Logic
+/// This trait unifies lifecycle method implementations across `NameRecord` and
+/// `CoreNameRecord`, eliminating code duplication while maintaining type safety.
+///
+/// Implementors must provide access to their lifecycle fields and specify
+/// how to determine terminal status based on domain classification.
+pub trait LifecycleFields {
+    /// Get current explicit status
+    fn status(&self) -> &NameStatus;
+    /// Get expiry height
+    fn expires_at_height(&self) -> BlockHeight;
+    /// Get renewal window start height
+    fn renewal_window_start_height(&self) -> BlockHeight;
+    /// Get grace period end height
+    fn renew_grace_until_height(&self) -> BlockHeight;
+    /// Get revocation grace end height (if in revocation)
+    fn revoke_grace_until_height(&self) -> Option<BlockHeight>;
+    /// Get custodian (if returned to governance)
+    fn custodian(&self) -> Option<&CustodianId>;
+    /// Determine terminal status based on classification (Released vs ReturnedToGovernance)
+    fn terminal_status_for_classification(&self) -> EffectiveStatus;
+
+    /// Compute the effective status from timestamps + explicit states
+    ///
+    /// # Phase 6: Hybrid State Model
+    /// Order of evaluation matters - evaluate top to bottom:
+    /// 1. Terminal states (Released, ReturnedToGovernance)
+    /// 2. Revocation path (governance-initiated)
+    /// 3. Suspension (dominates resolution)
+    /// 4. Normal expiry path
+    ///
+    /// # Invariant L6: No Zombies
+    /// This function is called on every touch to ensure deterministic transitions.
+    fn effective_status(&self, current_height: BlockHeight) -> EffectiveStatus {
+        // 1. Terminal states - already finalized
+        if matches!(self.status(), NameStatus::Released) {
+            return EffectiveStatus::Released;
+        }
+        if self.custodian().is_some() && matches!(self.status(), NameStatus::Revoked { .. }) {
+            return EffectiveStatus::ReturnedToGovernance;
+        }
+
+        // 2. Revocation path (governance-initiated)
+        if matches!(self.status(), NameStatus::RevocationPending { .. }) {
+            if let Some(grace_until) = self.revoke_grace_until_height() {
+                if current_height <= grace_until {
+                    return EffectiveStatus::RevokedInGrace;
+                } else {
+                    // Past revocation grace - needs finalization
+                    return self.terminal_status_for_classification();
+                }
+            }
+        }
+
+        // 3. Suspension dominates resolution (may also be expired)
+        if matches!(self.status(), NameStatus::Suspended { .. } | NameStatus::SuspendedByParent) {
+            return EffectiveStatus::Suspended;
+        }
+
+        // 4. Normal expiry path
+        if current_height <= self.expires_at_height() {
+            EffectiveStatus::Active
+        } else if current_height <= self.renew_grace_until_height() {
+            EffectiveStatus::ExpiredInGrace
+        } else {
+            // Past grace period - needs finalization
+            self.terminal_status_for_classification()
+        }
+    }
+
+    /// Check if this domain is in its grace period (block height)
+    fn is_in_grace_period(&self, current_height: BlockHeight) -> bool {
+        current_height > self.expires_at_height()
+            && current_height <= self.renew_grace_until_height()
+    }
+
+    /// Check if this domain has expired (past grace period)
+    fn has_fully_expired(&self, current_height: BlockHeight) -> bool {
+        current_height > self.renew_grace_until_height()
+    }
+
+    /// Check if domain can be renewed at current height
+    fn can_renew_at(&self, current_height: BlockHeight) -> bool {
+        let effective = self.effective_status(current_height);
+        effective.can_renew()
+            && current_height >= self.renewal_window_start_height()
+    }
+
+    /// Calculate renewal fee with optional late penalty
+    ///
+    /// # Invariant L8
+    /// Renewal in grace incurs penalty fee (standard + late_penalty_percent).
+    fn calculate_renewal_fee(
+        &self,
+        current_height: BlockHeight,
+        base_fee: u64,
+        late_penalty_percent: u8,
+    ) -> u64 {
+        if current_height <= self.expires_at_height() {
+            // Before expiry: standard fee
+            base_fee
+        } else if current_height <= self.renew_grace_until_height() {
+            // In grace period: standard + penalty
+            let penalty = base_fee * late_penalty_percent as u64 / 100;
+            base_fee.saturating_add(penalty)
+        } else {
+            // Past grace: cannot renew
+            0
+        }
+    }
+}
+
 impl From<NameStatus> for EffectiveStatus {
+    /// Convert NameStatus to EffectiveStatus (basic conversion)
+    ///
+    /// # Warning
+    /// This conversion does NOT have access to the custodian field, so it cannot
+    /// distinguish between Released and ReturnedToGovernance for Revoked status.
+    /// For accurate lifecycle state, use `NameRecord::effective_status(height)` or
+    /// `CoreNameRecord::effective_status(height)` instead.
     fn from(status: NameStatus) -> Self {
         match status {
             NameStatus::Active => EffectiveStatus::Active,
             NameStatus::Suspended { .. } => EffectiveStatus::Suspended,
             NameStatus::SuspendedByParent => EffectiveStatus::Suspended,
             NameStatus::RevocationPending { .. } => EffectiveStatus::RevokedInGrace,
-            NameStatus::Revoked { .. } => EffectiveStatus::Released, // Revoked domains become available
+            // Note: This assumes Released; use effective_status() for custodian-aware logic
+            NameStatus::Revoked { .. } => EffectiveStatus::Released,
             NameStatus::Expired { .. } => EffectiveStatus::ExpiredInGrace,
             NameStatus::Released => EffectiveStatus::Released,
         }
@@ -848,55 +974,11 @@ pub struct NameRecord {
 
 impl NameRecord {
     // ========================================================================
-    // Phase 6: Lifecycle Methods
+    // Phase 6: Lifecycle Queries (Unique to NameRecord)
     // ========================================================================
     //
-    // Note: Core lifecycle logic is primarily implemented in CoreNameRecord
-    // (core.rs), which is the operational type used by RootRegistry.
-    // These lightweight methods are provided for compatibility.
-
-    /// Compute effective status (simplified for NameRecord)
-    ///
-    /// For authoritative lifecycle logic, use CoreNameRecord in core.rs.
-    pub fn effective_status(&self, current_height: BlockHeight) -> EffectiveStatus {
-        // Terminal states
-        if matches!(self.status, NameStatus::Released) {
-            return EffectiveStatus::Released;
-        }
-        if self.custodian.is_some() && matches!(self.status, NameStatus::Revoked { .. }) {
-            return EffectiveStatus::ReturnedToGovernance;
-        }
-
-        // Revocation path
-        if matches!(self.status, NameStatus::RevocationPending { .. }) {
-            if let Some(grace_until) = self.revoke_grace_until_height {
-                if current_height <= grace_until {
-                    return EffectiveStatus::RevokedInGrace;
-                }
-            }
-        }
-
-        // Suspension
-        if matches!(self.status, NameStatus::Suspended { .. } | NameStatus::SuspendedByParent) {
-            return EffectiveStatus::Suspended;
-        }
-
-        // Normal expiry path
-        if current_height <= self.expires_at_height {
-            EffectiveStatus::Active
-        } else if current_height <= self.renew_grace_until_height {
-            EffectiveStatus::ExpiredInGrace
-        } else {
-            match self.classification {
-                NameClassification::Commercial => EffectiveStatus::Released,
-                _ => EffectiveStatus::ReturnedToGovernance,
-            }
-        }
-    }
-
-    // ========================================================================
-    // Phase 6: Lifecycle Queries (Block Height)
-    // ========================================================================
+    // Note: Core lifecycle methods (effective_status, is_in_grace_period, etc.)
+    // are provided by the LifecycleFields trait implementation below.
 
     /// Check if this domain has an active transfer lock (block height)
     pub fn has_transfer_lock(&self, current_height: BlockHeight) -> bool {
@@ -911,12 +993,6 @@ impl NameRecord {
             && current_height <= self.renew_grace_until_height
     }
 
-    /// Check if this domain is in its grace period (block height)
-    pub fn is_in_grace_period(&self, current_height: BlockHeight) -> bool {
-        current_height > self.expires_at_height
-            && current_height <= self.renew_grace_until_height
-    }
-
     /// Check if this domain is in revocation grace period
     pub fn is_in_revocation_grace(&self, current_height: BlockHeight) -> bool {
         if let Some(grace_until) = self.revoke_grace_until_height {
@@ -927,49 +1003,10 @@ impl NameRecord {
         }
     }
 
-    /// Check if this domain has expired (past grace period)
-    pub fn has_fully_expired(&self, current_height: BlockHeight) -> bool {
-        current_height > self.renew_grace_until_height
-    }
-
-    /// Check if domain can be renewed at current height
-    pub fn can_renew_at(&self, current_height: BlockHeight) -> bool {
-        let effective = self.effective_status(current_height);
-        effective.can_renew()
-            && current_height >= self.renewal_window_start_height
-    }
-
     /// Check if domain can be transferred at current height
     pub fn can_transfer_at(&self, current_height: BlockHeight) -> bool {
         let effective = self.effective_status(current_height);
         effective.can_transfer() && !self.has_transfer_lock(current_height)
-    }
-
-    // ========================================================================
-    // Renewal Fee Calculation (Phase 6)
-    // ========================================================================
-
-    /// Calculate renewal fee with optional late penalty
-    ///
-    /// # Invariant L8
-    /// Renewal in grace incurs penalty fee (standard + late_penalty_percent).
-    pub fn calculate_renewal_fee(
-        &self,
-        current_height: BlockHeight,
-        base_fee: u64,
-        late_penalty_percent: u8,
-    ) -> u64 {
-        if current_height <= self.expires_at_height {
-            // Before expiry: standard fee
-            base_fee
-        } else if current_height <= self.renew_grace_until_height {
-            // In grace period: standard + penalty
-            let penalty = base_fee * late_penalty_percent as u64 / 100;
-            base_fee.saturating_add(penalty)
-        } else {
-            // Past grace: cannot renew
-            0
-        }
     }
 
     // ========================================================================
@@ -1027,6 +1064,42 @@ impl NameRecord {
     /// Get the depth of this name in the hierarchy (0 for root-level)
     pub fn get_depth(&self) -> usize {
         self.name.matches('.').count().saturating_sub(1) // -1 for .sov TLD
+    }
+}
+
+/// Implementation of LifecycleFields for NameRecord
+///
+/// Provides shared lifecycle methods via trait default implementations.
+impl LifecycleFields for NameRecord {
+    fn status(&self) -> &NameStatus {
+        &self.status
+    }
+
+    fn expires_at_height(&self) -> BlockHeight {
+        self.expires_at_height
+    }
+
+    fn renewal_window_start_height(&self) -> BlockHeight {
+        self.renewal_window_start_height
+    }
+
+    fn renew_grace_until_height(&self) -> BlockHeight {
+        self.renew_grace_until_height
+    }
+
+    fn revoke_grace_until_height(&self) -> Option<BlockHeight> {
+        self.revoke_grace_until_height
+    }
+
+    fn custodian(&self) -> Option<&CustodianId> {
+        self.custodian.as_ref()
+    }
+
+    fn terminal_status_for_classification(&self) -> EffectiveStatus {
+        match self.classification {
+            NameClassification::Commercial => EffectiveStatus::Released,
+            _ => EffectiveStatus::ReturnedToGovernance,
+        }
     }
 }
 
@@ -1144,9 +1217,17 @@ pub fn is_zero_name_hash(name_hash: &NameHash) -> bool {
 /// Contract determinism requires block height. Wall-clock seconds create
 /// nondeterministic forks when nodes disagree on time.
 pub mod timing {
-    /// Blocks per day (assuming 10-second block time)
+    /// Blocks per day (ideal, assuming 10-second block time)
     /// 86,400 seconds / 10 = 8,640 blocks
-    /// Rounded to 8,600 for epoch alignment (100 blocks/epoch)
+    ///
+    /// We intentionally use 8,600 blocks/day instead of 8,640 to get an
+    /// integer number of 100-block epochs per day:
+    /// - 100 blocks/epoch
+    /// - 8,600 blocks/day = 86 epochs/day
+    ///
+    /// This introduces a ~0.46% drift from the ideal 10-second-based day,
+    /// which is acceptable because block height is the authoritative time
+    /// source and wall-clock seconds are advisory only.
     pub const BLOCKS_PER_DAY: u64 = 8_600;
 
     /// Renewal window: 90 days before expiry (in blocks)
