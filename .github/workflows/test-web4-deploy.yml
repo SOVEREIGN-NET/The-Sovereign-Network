@@ -32,7 +32,7 @@ jobs:
     name: Deploy to Web4
     needs: build
     # Using commit SHA for security (SonarCloud rule S7637)
-    uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@b452e1754c84b9dc877bfeff5c9b1f8c9af5e8c5
+    uses: SOVEREIGN-NET/The-Sovereign-Network/.github/workflows/deploy-site.yml@d4c653a6f0e2709b53c9196469b9b19f6bde3651
     with:
       domain: remote.sov
       deployment_mode: static
