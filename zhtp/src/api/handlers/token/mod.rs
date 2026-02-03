@@ -280,6 +280,10 @@ impl TokenHandler {
     }
 
     /// POST /api/v1/token/transfer - Transfer tokens
+    ///
+    /// The `to` field can be:
+    /// - 32 bytes: wallet_id (will be resolved to public key via wallet_registry)
+    /// - 2592 bytes: full Dilithium5 public key (used directly)
     async fn handle_transfer_token(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let transfer_req: TransferTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
@@ -301,7 +305,7 @@ impl TokenHandler {
         #[derive(serde::Deserialize)]
         struct TransferParams {
             token_id: [u8; 32],
-            to: Vec<u8>,
+            to: Vec<u8>,  // Can be wallet_id (32 bytes) or full public key (2592 bytes)
             amount: u64,
         }
         let params: TransferParams = match bincode::deserialize(&call.params) {
@@ -315,21 +319,89 @@ impl TokenHandler {
         };
         let TransferParams { token_id, to, amount } = params;
 
-        if let Err(e) = self.submit_to_mempool(tx).await {
+        // Resolve wallet_id to public key if needed
+        let resolved_to = if to.len() == 32 {
+            // This is a wallet_id - look up the public key from wallet_registry
+            let wallet_id_hex = hex::encode(&to);
+            let blockchain = self.blockchain.read().await;
+
+            match blockchain.wallet_registry.get(&wallet_id_hex) {
+                Some(wallet_data) => {
+                    info!("Resolved wallet_id {} to public key ({} bytes)",
+                        &wallet_id_hex[..16], wallet_data.public_key.len());
+                    wallet_data.public_key.clone()
+                }
+                None => {
+                    return Ok(create_error_response(
+                        ZhtpStatus::NotFound,
+                        format!("Wallet not found: {}", wallet_id_hex),
+                    ));
+                }
+            }
+        } else if to.len() >= 2000 {
+            // This is already a full public key
+            to.clone()
+        } else {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                e.to_string(),
+                format!("Invalid 'to' field: expected 32 bytes (wallet_id) or ~2592 bytes (public key), got {} bytes", to.len()),
             ));
+        };
+
+        // Execute the transfer directly on the token contract
+        // (The mempool/block processing will also validate, but we do it here for immediate feedback)
+        {
+            let mut blockchain = self.blockchain.write().await;
+
+            // Get sender from transaction signature
+            let sender_pk = &tx.signature.public_key;
+
+            // Build recipient PublicKey from resolved bytes
+            let recipient_pk = PublicKey::new(resolved_to.clone());
+
+            // Execute transfer on token contract
+            if let Some(token_contract) = blockchain.token_contracts.get_mut(&token_id) {
+                // Check sender balance
+                let sender_balance = token_contract.balance_of(sender_pk);
+                if sender_balance < amount {
+                    return Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        format!("Insufficient balance: have {}, need {}", sender_balance, amount),
+                    ));
+                }
+
+                // Debit sender
+                token_contract.balances.insert(sender_pk.clone(), sender_balance - amount);
+
+                // Credit recipient
+                let recipient_balance = token_contract.balance_of(&recipient_pk);
+                token_contract.balances.insert(recipient_pk.clone(), recipient_balance + amount);
+
+                info!("Token transfer executed: {} {} from {} to {}",
+                    amount, token_contract.symbol,
+                    hex::encode(&sender_pk.key_id[..8]),
+                    hex::encode(&recipient_pk.key_id[..8]));
+            } else {
+                return Ok(create_error_response(
+                    ZhtpStatus::NotFound,
+                    format!("Token not found: {}", hex::encode(token_id)),
+                ));
+            }
         }
 
-        info!("Transfer submitted for token {}", hex::encode(token_id));
+        // Also submit to mempool for block inclusion
+        if let Err(e) = self.submit_to_mempool(tx).await {
+            warn!("Failed to submit transfer to mempool (transfer already executed): {}", e);
+        }
+
+        info!("Transfer completed for token {}", hex::encode(token_id));
 
         create_json_response(json!({
             "success": true,
             "token_id": hex::encode(token_id),
-            "to": format!("0x{}", hex::encode(&to)),
+            "to": if to.len() == 32 { format!("wallet:{}", hex::encode(&to)) } else { format!("0x{}", hex::encode(&to[..32.min(to.len())])) },
             "amount": amount,
-            "tx_status": "submitted_to_mempool"
+            "status": "completed"
         }))
     }
 

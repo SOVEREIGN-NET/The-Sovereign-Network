@@ -5,6 +5,7 @@
 pub mod login_handlers;
 pub mod password_reset;
 pub mod backup_recovery;
+pub mod bip39;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -77,8 +78,20 @@ impl IdentityHandler {
 impl ZhtpRequestHandler for IdentityHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::info!("Identity handler: {} {}", request.method, request.uri);
-        
-        let response = match (request.method, request.uri.as_str()) {
+        tracing::info!("AAAAA second log line test");
+
+        // Normalize URI: strip trailing slashes for consistent matching
+        // iOS sends "/api/v1/identity/recover/" but routes expect "/api/v1/identity/recover"
+        let normalized_uri = request.uri.trim_end_matches('/');
+        let normalized_uri = if normalized_uri.is_empty() { "/" } else { normalized_uri };
+
+        // Strip query string for matching (keep original for handlers that need it)
+        let match_uri = normalized_uri.split('?').next().unwrap_or(normalized_uri);
+
+        tracing::info!("ZZZZZ IDENTITY HANDLER DEBUG: method={:?}, raw_uri='{}', normalized='{}', match_uri='{}'",
+            request.method, request.uri, normalized_uri, match_uri);
+
+        let response = match (request.method, match_uri) {
             (ZhtpMethod::Post, "/api/v1/identity/create") => {
                 self.handle_create_identity(request).await
             }
@@ -98,6 +111,7 @@ impl ZhtpRequestHandler for IdentityHandler {
                 self.handle_verify_recovery_phrase(request).await
             }
             (ZhtpMethod::Post, "/api/v1/identity/recover") => {
+                eprintln!(">>> MOD.RS: Routing to handle_recover_identity");
                 self.handle_recover_identity(request).await
             }
             (ZhtpMethod::Get, "/api/v1/identity/backup/status") => {
