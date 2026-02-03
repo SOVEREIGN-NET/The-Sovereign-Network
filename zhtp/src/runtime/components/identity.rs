@@ -294,6 +294,223 @@ async fn rebuild_index_from_backup(
     Ok(indexed)
 }
 
+/// One-time migration: Register identities from backup file to blockchain
+///
+/// Enable by setting environment variable: ZHTP_MIGRATE_IDENTITIES=1
+/// This reads ~/.zhtp/backup/identities.json and registers any identities
+/// that are not yet on the blockchain.
+///
+/// SAFE: Only adds missing identities, never overwrites existing ones.
+async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
+    use std::io::BufReader;
+
+    // Check if migration is enabled
+    let migrate_enabled = std::env::var("ZHTP_MIGRATE_IDENTITIES")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    if !migrate_enabled {
+        return Ok((0, 0));
+    }
+
+    info!("🔄 MIGRATION MODE: ZHTP_MIGRATE_IDENTITIES=1 detected");
+
+    let backup_path = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".zhtp")
+        .join("backup")
+        .join("identities.json");
+
+    if !backup_path.exists() {
+        info!("⚠️  No backup file found at {:?}", backup_path);
+        return Ok((0, 0));
+    }
+
+    info!("📂 Reading identities from {:?}", backup_path);
+
+    let file = std::fs::File::open(&backup_path)
+        .map_err(|e| anyhow::anyhow!("Failed to open backup: {}", e))?;
+    let reader = BufReader::new(file);
+    let backup: serde_json::Map<String, serde_json::Value> = serde_json::from_reader(reader)
+        .map_err(|e| anyhow::anyhow!("Failed to parse backup: {}", e))?;
+
+    info!("📋 Found {} identities in backup file", backup.len());
+
+    // Get blockchain for registration
+    let blockchain_arc = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+        Ok(bc) => bc,
+        Err(e) => {
+            info!("⚠️  Blockchain not available for migration: {}", e);
+            return Ok((0, 0));
+        }
+    };
+
+    let mut migrated = 0u32;
+    let mut skipped = 0u32;
+
+    for (identity_id, entry) in &backup {
+        let id_preview = truncate_for_display(identity_id, 16);
+
+        // Navigate nested structure: entry.data.data contains actual identity
+        let identity_data = match entry.get("data").and_then(|d| d.get("data")) {
+            Some(data) => data,
+            None => {
+                debug!("Skipping {} - invalid structure", id_preview);
+                continue;
+            }
+        };
+
+        // Extract identity fields
+        let did = match identity_data.get("did").and_then(|v| v.as_str()) {
+            Some(d) => d,
+            None => {
+                debug!("Skipping {} - no DID", id_preview);
+                continue;
+            }
+        };
+
+        // Check if already on blockchain
+        {
+            let bc = blockchain_arc.read().await;
+            if bc.identity_registry.contains_key(did) {
+                debug!("Identity {} already on blockchain, skipping", id_preview);
+                skipped += 1;
+                continue;
+            }
+        }
+
+        // Extract required fields for registration
+        let display_name = identity_data.get("display_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Migrated User");
+
+        let identity_type = identity_data.get("identity_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("human");
+
+        let created_at = identity_data.get("created_at")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        // Get public key (try dilithium_public_key first, then public_key)
+        let public_key_data = identity_data.get("dilithium_public_key")
+            .or_else(|| identity_data.get("public_key"))
+            .and_then(|v| v.as_str());
+
+        let public_key_bytes = match public_key_data {
+            Some(pk_str) => {
+                // Try base64 first (iOS format), then hex
+                if pk_str.contains('+') || pk_str.contains('/') || pk_str.ends_with('=') {
+                    use base64::{Engine, engine::general_purpose::STANDARD};
+                    STANDARD.decode(pk_str).unwrap_or_default()
+                } else {
+                    hex::decode(pk_str).unwrap_or_default()
+                }
+            }
+            None => {
+                debug!("Skipping {} - no public key", id_preview);
+                continue;
+            }
+        };
+
+        if public_key_bytes.is_empty() {
+            debug!("Skipping {} - empty public key", id_preview);
+            continue;
+        }
+
+        // Create identity transaction data
+        let identity_tx_data = lib_blockchain::transaction::IdentityTransactionData {
+            did: did.to_string(),
+            display_name: display_name.to_string(),
+            public_key: public_key_bytes,
+            ownership_proof: vec![],
+            identity_type: identity_type.to_string(),
+            did_document_hash: lib_blockchain::Hash::zero(),
+            created_at,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+        };
+
+        // Register on blockchain
+        let mut bc = blockchain_arc.write().await;
+        match bc.register_identity(identity_tx_data) {
+            Ok(_) => {
+                info!("✅ Migrated identity: {} ({})", id_preview, display_name);
+                migrated += 1;
+            }
+            Err(e) => {
+                debug!("Failed to migrate {}: {}", id_preview, e);
+            }
+        }
+    }
+
+    info!("🎉 Migration complete: {} migrated, {} already existed", migrated, skipped);
+
+    // Mine a block to persist the identity transactions to sled
+    if migrated > 0 {
+        info!("⛏️  Mining migration block to persist identities to sled...");
+
+        let mut bc = blockchain_arc.write().await;
+        let pending_count = bc.pending_transactions.len();
+
+        if pending_count > 0 {
+            // Use BlockBuilder to create and mine a block
+            let mining_config = lib_blockchain::types::MiningConfig::bootstrap();
+
+            // Get previous block info
+            let prev_hash = bc.blocks.last()
+                .map(|b| b.hash())
+                .unwrap_or(lib_blockchain::Hash::zero());
+            let height = bc.height + 1;
+            let difficulty = bc.difficulty.clone();
+
+            // Create block using BlockBuilder
+            let transactions = bc.pending_transactions.clone();
+            let block = lib_blockchain::block::BlockBuilder::new(prev_hash, height, difficulty)
+                .transactions(transactions)
+                .build();
+
+            match block {
+                Ok(block) => {
+                    // Mine the block
+                    match lib_blockchain::block::creation::mine_block_with_config(block, &mining_config) {
+                        Ok(mined_block) => {
+                            let block_height = mined_block.height();
+                            // Add block - this handles sled persistence internally
+                            if let Err(e) = bc.add_block(mined_block).await {
+                                info!("⚠️  Failed to add migration block: {}", e);
+                                // Fallback: save to file
+                                if let Err(e2) = bc.save_to_file(std::path::Path::new("./data/testnet/blockchain.dat")) {
+                                    info!("⚠️  Fallback save also failed: {}", e2);
+                                }
+                            } else {
+                                info!("✅ Migration block mined at height {} with {} identity transactions",
+                                    block_height, pending_count);
+                            }
+                        }
+                        Err(e) => {
+                            info!("⚠️  Failed to mine migration block: {}", e);
+                            // Fallback: save to file
+                            if let Err(e2) = bc.save_to_file(std::path::Path::new("./data/testnet/blockchain.dat")) {
+                                info!("⚠️  Fallback save also failed: {}", e2);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    info!("⚠️  Failed to build migration block: {}", e);
+                }
+            }
+        } else {
+            info!("📋 No pending transactions to mine");
+        }
+    }
+
+    Ok((migrated, skipped))
+}
+
 /// Bootstrap identities and wallets from DHT storage
 ///
 /// This function loads all identities and their wallets from the persistent
@@ -340,6 +557,26 @@ async fn bootstrap_identities_from_dht(
     if let Err(e) = rebuild_index_from_backup(&mut *guard).await {
         debug!("Backup index rebuild skipped: {}", e);
     }
+
+    // Drop storage lock before blockchain migration (needs blockchain lock)
+    drop(guard);
+
+    // One-time migration: register identities from backup to blockchain
+    // Enable with: ZHTP_MIGRATE_IDENTITIES=1
+    match migrate_identities_to_blockchain().await {
+        Ok((migrated, skipped)) if migrated > 0 => {
+            info!("🔄 Blockchain migration: {} new, {} existing", migrated, skipped);
+        }
+        Ok(_) => {
+            // Migration disabled or no new identities
+        }
+        Err(e) => {
+            debug!("Blockchain migration skipped: {}", e);
+        }
+    }
+
+    // Re-acquire storage lock for rest of bootstrap
+    let mut guard = storage.write().await;
 
     // 1. Load identity index
     let mut identity_ids = match guard.list_identity_ids().await {

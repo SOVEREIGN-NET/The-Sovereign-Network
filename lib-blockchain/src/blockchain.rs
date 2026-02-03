@@ -1374,6 +1374,13 @@ impl Blockchain {
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
 
+        // Begin sled transaction BEFORE processing identity/wallet transactions
+        // This ensures any sled writes during processing have an active transaction
+        if let Some(ref store) = self.store {
+            store.begin_block(block.header.height)
+                .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
+        }
+
         // Process identity transactions
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
@@ -1588,9 +1595,8 @@ impl Blockchain {
         block: &Block,
         store: std::sync::Arc<dyn BlockchainStore>,
     ) -> Result<()> {
-        // Begin transaction
-        store.begin_block(block.header.height)
-            .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
+        // Note: begin_block() is called earlier in process_and_commit_block()
+        // to ensure identity/wallet sled writes have an active transaction
 
         // Append the block
         store.append_block(block)

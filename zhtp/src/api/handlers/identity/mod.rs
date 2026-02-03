@@ -346,6 +346,9 @@ impl IdentityHandler {
             // Create and submit wallet transactions for all 3 wallets
             use lib_blockchain::transaction::WalletTransactionData;
             
+            // Seed commitment removed for mobile flow (client manages master seed).
+            let master_seed_commitment = lib_blockchain::Hash::from_slice(&[0u8; 32]);
+
             // Primary Wallet
             let primary_wallet_tx = WalletTransactionData {
                 wallet_id: lib_blockchain::Hash::from(citizenship_result.primary_wallet_id.0),
@@ -354,17 +357,17 @@ impl IdentityHandler {
                 alias: None,
                 public_key: keypair.public_key.dilithium_pk.to_vec(),
                 owner_identity_id: Some(lib_blockchain::Hash::from(citizenship_result.identity_id.0)),
-                seed_commitment: lib_crypto::hash_blake3(citizenship_result.wallet_seed_phrases.primary_wallet_seeds.words.join(" ").as_bytes()).into(),
+                seed_commitment: master_seed_commitment,
                 created_at: citizenship_result.dao_registration.registered_at,
                 registration_fee: 0,  // System wallets are free
                 capabilities: 0xFFFF,  // Full capabilities
                 initial_balance: citizenship_result.welcome_bonus.bonus_amount,  // Welcome bonus goes to primary
             };
-            
+
             if let Err(e) = self.submit_wallet_to_blockchain(primary_wallet_tx).await {
                 tracing::warn!("Failed to submit primary wallet to blockchain: {}", e);
             }
-            
+
             // UBI Wallet
             let ubi_wallet_tx = WalletTransactionData {
                 wallet_id: lib_blockchain::Hash::from(citizenship_result.ubi_wallet_id.0),
@@ -373,17 +376,17 @@ impl IdentityHandler {
                 alias: None,
                 public_key: keypair.public_key.dilithium_pk.to_vec(),
                 owner_identity_id: Some(lib_blockchain::Hash::from(citizenship_result.identity_id.0)),
-                seed_commitment: lib_crypto::hash_blake3(citizenship_result.wallet_seed_phrases.ubi_wallet_seeds.words.join(" ").as_bytes()).into(),
+                seed_commitment: master_seed_commitment,
                 created_at: citizenship_result.dao_registration.registered_at,
                 registration_fee: 0,  // System wallets are free
                 capabilities: 0xFFFF,  // Full capabilities
                 initial_balance: 0,  // UBI payments come later
             };
-            
+
             if let Err(e) = self.submit_wallet_to_blockchain(ubi_wallet_tx).await {
                 tracing::warn!("Failed to submit UBI wallet to blockchain: {}", e);
             }
-            
+
             // Savings Wallet
             let savings_wallet_tx = WalletTransactionData {
                 wallet_id: lib_blockchain::Hash::from(citizenship_result.savings_wallet_id.0),
@@ -392,7 +395,7 @@ impl IdentityHandler {
                 alias: None,
                 public_key: keypair.public_key.dilithium_pk.to_vec(),
                 owner_identity_id: Some(lib_blockchain::Hash::from(citizenship_result.identity_id.0)),
-                seed_commitment: lib_crypto::hash_blake3(citizenship_result.wallet_seed_phrases.savings_wallet_seeds.words.join(" ").as_bytes()).into(),
+                seed_commitment: master_seed_commitment,
                 created_at: citizenship_result.dao_registration.registered_at,
                 registration_fee: 0,  // System wallets are free
                 capabilities: 0xFFFF,  // Full capabilities
@@ -1710,12 +1713,7 @@ impl IdentityHandler {
             "pqc_enabled": req_data.kyber_public_key.is_some(),
             "primary_wallet_id": primary_wallet_id,
             "ubi_wallet_id": ubi_wallet_id,
-            "savings_wallet_id": savings_wallet_id,
-            "wallet_seed_phrases": {
-                "primary": citizenship_result.wallet_seed_phrases.primary_wallet_seeds.words.join(" "),
-                "ubi": citizenship_result.wallet_seed_phrases.ubi_wallet_seeds.words.join(" "),
-                "savings": citizenship_result.wallet_seed_phrases.savings_wallet_seeds.words.join(" ")
-            }
+            "savings_wallet_id": savings_wallet_id
         });
 
         Ok(ZhtpResponse::json(&response_body, None)?)

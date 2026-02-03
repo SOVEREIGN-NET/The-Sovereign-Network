@@ -55,7 +55,7 @@ pub mod wasm;
 pub use crypto::{Blake3, Dilithium5, Kyber1024};
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};
-pub use identity::{generate_identity, get_public_identity, get_seed_phrase, sign_registration_proof, Identity, PublicIdentity};
+pub use identity::{generate_identity, get_public_identity, get_seed_phrase, restore_identity_from_phrase, sign_registration_proof, Identity, PublicIdentity};
 pub use request::{
     create_zhtp_frame, deserialize_response, parse_zhtp_frame, serialize_request, ZhtpHeaders,
     ZhtpRequest, ZhtpResponse,

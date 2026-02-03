@@ -618,11 +618,6 @@ async fn create_identity_direct(
             "primary_wallet_id": hex::encode(&identity_result.primary_wallet_id.0),
             "ubi_wallet_id": hex::encode(&identity_result.ubi_wallet_id.0),
             "savings_wallet_id": hex::encode(&identity_result.savings_wallet_id.0),
-            "wallet_seed_phrases": {
-                "primary": identity_result.wallet_seed_phrases.primary_wallet_seeds.words.join(" "),
-                "ubi": identity_result.wallet_seed_phrases.ubi_wallet_seeds.words.join(" "),
-                "savings": identity_result.wallet_seed_phrases.savings_wallet_seeds.words.join(" ")
-            },
             "privacy_credentials": {
                 "public_key": hex::encode(&public_key.as_bytes()),
                 "ownership_proof": hex::encode(&ownership_proof_bytes)
@@ -665,11 +660,6 @@ async fn create_identity_direct(
             "primary_wallet_id": identity_result.primary_wallet_id,
             "ubi_wallet_id": identity_result.ubi_wallet_id,
             "savings_wallet_id": identity_result.savings_wallet_id,
-            "wallet_seed_phrases": {
-                "primary": identity_result.wallet_seed_phrases.primary_wallet_seeds,
-                "ubi": identity_result.wallet_seed_phrases.ubi_wallet_seeds,
-                "savings": identity_result.wallet_seed_phrases.savings_wallet_seeds
-            },
             "dao_registration": identity_result.dao_registration,
             "ubi_registration": identity_result.ubi_registration,
             "web4_access": identity_result.web4_access,
@@ -1226,9 +1216,9 @@ async fn record_identity_on_blockchain(identity_result: &serde_json::Value) -> R
     
     // Register all wallets
     if let Some(citizenship_result) = identity_result.get("citizenship_result") {
-        register_wallet_on_blockchain(&mut blockchain_guard, citizenship_result, &identity_hash, "Primary", "primary_wallet_id", "primary_wallet_pubkey", "primary", created_at)?;
-        register_wallet_on_blockchain(&mut blockchain_guard, citizenship_result, &identity_hash, "UBI", "ubi_wallet_id", "ubi_wallet_pubkey", "ubi", created_at)?;
-        register_wallet_on_blockchain(&mut blockchain_guard, citizenship_result, &identity_hash, "Savings", "savings_wallet_id", "savings_wallet_pubkey", "savings", created_at)?;
+        register_wallet_on_blockchain(&mut blockchain_guard, citizenship_result, &identity_hash, "Primary", "primary_wallet_id", "primary_wallet_pubkey", created_at)?;
+        register_wallet_on_blockchain(&mut blockchain_guard, citizenship_result, &identity_hash, "UBI", "ubi_wallet_id", "ubi_wallet_pubkey", created_at)?;
+        register_wallet_on_blockchain(&mut blockchain_guard, citizenship_result, &identity_hash, "Savings", "savings_wallet_id", "savings_wallet_pubkey", created_at)?;
     }
     
     info!("✅ Successfully recorded identity and wallets on blockchain");
@@ -1243,7 +1233,6 @@ fn register_wallet_on_blockchain(
     wallet_type: &str,
     wallet_id_key: &str,
     pubkey_key: &str,
-    seed_key: &str,
     created_at: u64
 ) -> Result<()> {
     if let Some(wallet_id_val) = citizenship_result.get(wallet_id_key) {
@@ -1261,14 +1250,7 @@ fn register_wallet_on_blockchain(
             .and_then(|hex_str| hex::decode(hex_str).ok())
             .unwrap_or_else(|| vec![0u8; 32]);
         
-        let seed_commitment = citizenship_result.get("wallet_seed_phrases")
-            .and_then(|wsp| wsp.get(seed_key))
-            .and_then(|v| v.as_str())
-            .map(|seed_str| {
-                let hash_result = lib_crypto::hash_blake3(seed_str.as_bytes());
-                lib_blockchain::Hash::from_slice(&hash_result)
-            })
-            .unwrap_or_else(|| lib_blockchain::Hash::from_slice(&[0u8; 32]));
+        let seed_commitment = lib_blockchain::Hash::from_slice(&[0u8; 32]);
         
         // Welcome bonus (5000 ZHTP) goes to Primary wallet
         let initial_balance = if wallet_type == "Primary" {
@@ -1284,7 +1266,7 @@ fn register_wallet_on_blockchain(
             wallet_id: wallet_hash,
             wallet_type: wallet_type.to_string(),
             wallet_name: format!("{} Wallet", wallet_type),
-            alias: Some(seed_key.to_string()),
+            alias: Some(wallet_type.to_lowercase()),
             public_key: wallet_pubkey,
             owner_identity_id: Some(lib_blockchain::Hash::new(identity_hash.0)),
             seed_commitment,
