@@ -295,10 +295,12 @@ impl DaoPrefixRouter {
 mod tests {
     use super::*;
     use crate::contracts::root_registry::types::{
-        NameClassification, NameStatus, SuspensionReason, VerificationLevel,
+        NameClassification, NameStatus, SuspensionReason, VerificationLevel, timing,
     };
 
     fn make_test_record(name: &str, status: NameStatus) -> NameRecord {
+        let expires_at_height = 1000000u64;
+        #[allow(deprecated)]
         NameRecord {
             name: name.to_string(),
             name_hash: hash_name(name),
@@ -316,10 +318,17 @@ mod tests {
             governance_delegate: None,
             status,
             registered_at: 100,
+            // Phase 6: Block height fields
+            expires_at_height,
+            renewal_window_start_height: expires_at_height.saturating_sub(timing::RENEWAL_WINDOW_BLOCKS),
+            renew_grace_until_height: expires_at_height + timing::EXPIRATION_GRACE_BLOCKS,
+            revoke_grace_until_height: None,
+            // Legacy fields (deprecated)
             expires_at: 1000000,
             grace_ends_at: None,
             suspended_at: None,
             suspended_by: None,
+            custodian: None,
             transfer_lock_until: None,
             transfer_history: vec![],
             renewal_history: vec![],

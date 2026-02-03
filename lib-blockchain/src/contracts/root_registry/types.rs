@@ -308,6 +308,228 @@ impl Default for NameStatus {
 }
 
 // ============================================================================
+// Effective Status (Phase 6: Derived Lifecycle State)
+// ============================================================================
+
+/// Effective status derived from timestamps + explicit states
+///
+/// # Phase 6: Hybrid State Model
+/// This is the **derived** status computed from:
+/// 1. Explicit governance states (suspension, revocation)
+/// 2. Timestamp-derived lifecycle (expiry, grace periods)
+///
+/// Unlike `NameStatus` which is stored, `EffectiveStatus` is computed
+/// at query time via `effective_status(current_height)`.
+///
+/// # Resolver Semantics
+/// | Status              | Content | Operations Allowed      |
+/// |---------------------|---------|-------------------------|
+/// | Active              | Enabled | Transfer, Renew, Update |
+/// | ExpiredInGrace      | Disabled| Renew only              |
+/// | RevokedInGrace      | Disabled| Appeal only             |
+/// | Suspended           | Disabled| None (governance)       |
+/// | ReturnedToGovernance| None    | Custodian only          |
+/// | Released            | None    | New registration        |
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EffectiveStatus {
+    /// Domain is active and fully operational
+    Active,
+    /// Domain has expired but is within grace period
+    /// Content serving disabled, renewal allowed with penalty
+    ExpiredInGrace,
+    /// Domain is pending revocation with grace period for appeal
+    /// Content serving disabled, operations blocked
+    RevokedInGrace,
+    /// Domain is suspended (governance action)
+    /// Content serving disabled until lifted
+    Suspended,
+    /// Domain returned to governance custodian (welfare/reserved)
+    /// No content, awaiting custodian action
+    ReturnedToGovernance,
+    /// Domain released and available for registration (commercial)
+    /// NXDOMAIN equivalent
+    Released,
+}
+
+impl EffectiveStatus {
+    /// Check if domain content should be served
+    pub fn is_content_enabled(&self) -> bool {
+        matches!(self, EffectiveStatus::Active)
+    }
+
+    /// Check if domain can be renewed
+    pub fn can_renew(&self) -> bool {
+        matches!(self, EffectiveStatus::Active | EffectiveStatus::ExpiredInGrace)
+    }
+
+    /// Check if domain can be transferred
+    pub fn can_transfer(&self) -> bool {
+        matches!(self, EffectiveStatus::Active)
+    }
+
+    /// Check if domain is in a terminal state
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, EffectiveStatus::Released | EffectiveStatus::ReturnedToGovernance)
+    }
+
+    /// Check if domain is available for new registration
+    pub fn is_available_for_registration(&self) -> bool {
+        matches!(self, EffectiveStatus::Released)
+    }
+}
+
+impl From<NameStatus> for EffectiveStatus {
+    fn from(status: NameStatus) -> Self {
+        match status {
+            NameStatus::Active => EffectiveStatus::Active,
+            NameStatus::Suspended { .. } => EffectiveStatus::Suspended,
+            NameStatus::SuspendedByParent => EffectiveStatus::Suspended,
+            NameStatus::RevocationPending { .. } => EffectiveStatus::RevokedInGrace,
+            NameStatus::Revoked { .. } => EffectiveStatus::Released, // Revoked domains become available
+            NameStatus::Expired { .. } => EffectiveStatus::ExpiredInGrace,
+            NameStatus::Released => EffectiveStatus::Released,
+        }
+    }
+}
+
+// ============================================================================
+// Custodian Types (Phase 6: Post-Grace Governance)
+// ============================================================================
+
+/// Custodian identifier for domains returned to governance
+///
+/// # Phase 6: Post-Grace Behavior
+/// - Commercial domains → Released (available for registration)
+/// - Welfare children → Return to sector DAO control
+/// - Reserved/Welfare roots → Return to RootGovernance control
+///
+/// # Invariant L3, L4
+/// Post-grace finalization depends on domain classification.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CustodianId {
+    /// Root governance (for reserved roots, welfare sector roots)
+    RootGovernance,
+    /// Sector DAO (for welfare children like *.food.sov)
+    SectorDao(DaoId),
+}
+
+impl CustodianId {
+    /// Check if this is root governance
+    pub fn is_root_governance(&self) -> bool {
+        matches!(self, CustodianId::RootGovernance)
+    }
+
+    /// Get the DAO ID if this is a sector DAO custodian
+    pub fn sector_dao_id(&self) -> Option<&DaoId> {
+        match self {
+            CustodianId::SectorDao(id) => Some(id),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
+// Lifecycle Parameters (Phase 6: Governable Durations)
+// ============================================================================
+
+/// Governable lifecycle parameters
+///
+/// # Phase 6: Governance Control
+/// These parameters can be modified via RootGovernance proposal
+/// with timelock, but cannot go below constitutional floors.
+///
+/// # Invariant L7
+/// Grace durations are governable but have constitutional floors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LifecycleParams {
+    /// Renewal window before expiry (in blocks)
+    pub renewal_window_blocks: BlockHeight,
+    /// Expiration grace period (in blocks)
+    pub expiry_grace_blocks: BlockHeight,
+    /// Revocation grace period (in blocks)
+    pub revocation_grace_blocks: BlockHeight,
+    /// Late renewal penalty percentage (0-50)
+    pub late_renewal_penalty_percent: u8,
+}
+
+impl LifecycleParams {
+    /// Create new params, enforcing constitutional floors
+    pub fn new(
+        renewal_window_blocks: BlockHeight,
+        expiry_grace_blocks: BlockHeight,
+        revocation_grace_blocks: BlockHeight,
+        late_renewal_penalty_percent: u8,
+    ) -> Self {
+        Self {
+            renewal_window_blocks,
+            expiry_grace_blocks: expiry_grace_blocks.max(timing::MIN_EXPIRATION_GRACE_BLOCKS),
+            revocation_grace_blocks: revocation_grace_blocks.max(timing::MIN_REVOCATION_GRACE_BLOCKS),
+            late_renewal_penalty_percent: late_renewal_penalty_percent.min(timing::MAX_LATE_RENEWAL_PENALTY_PERCENT),
+        }
+    }
+
+    /// Validate params against constitutional floors
+    pub fn validate(&self) -> Result<(), String> {
+        if self.expiry_grace_blocks < timing::MIN_EXPIRATION_GRACE_BLOCKS {
+            return Err(format!(
+                "Expiry grace {} below constitutional floor {}",
+                self.expiry_grace_blocks,
+                timing::MIN_EXPIRATION_GRACE_BLOCKS
+            ));
+        }
+        if self.revocation_grace_blocks < timing::MIN_REVOCATION_GRACE_BLOCKS {
+            return Err(format!(
+                "Revocation grace {} below constitutional floor {}",
+                self.revocation_grace_blocks,
+                timing::MIN_REVOCATION_GRACE_BLOCKS
+            ));
+        }
+        if self.late_renewal_penalty_percent > timing::MAX_LATE_RENEWAL_PENALTY_PERCENT {
+            return Err(format!(
+                "Late penalty {}% exceeds maximum {}%",
+                self.late_renewal_penalty_percent,
+                timing::MAX_LATE_RENEWAL_PENALTY_PERCENT
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for LifecycleParams {
+    fn default() -> Self {
+        Self {
+            renewal_window_blocks: timing::RENEWAL_WINDOW_BLOCKS,
+            expiry_grace_blocks: timing::EXPIRATION_GRACE_BLOCKS,
+            revocation_grace_blocks: timing::REVOCATION_GRACE_BLOCKS,
+            late_renewal_penalty_percent: timing::DEFAULT_LATE_RENEWAL_PENALTY_PERCENT,
+        }
+    }
+}
+
+/// Per-class lifecycle parameter overrides
+///
+/// Different domain classifications may have different lifecycle rules.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClassLifecycleParams {
+    /// Parameters for commercial domains
+    pub commercial: LifecycleParams,
+    /// Parameters for welfare child domains (*.food.sov, etc.)
+    pub welfare_child: LifecycleParams,
+    /// Parameters for welfare/reserved roots
+    pub welfare_root: LifecycleParams,
+}
+
+impl Default for ClassLifecycleParams {
+    fn default() -> Self {
+        Self {
+            commercial: LifecycleParams::default(),
+            welfare_child: LifecycleParams::default(),
+            welfare_root: LifecycleParams::default(),
+        }
+    }
+}
+
+// ============================================================================
 // Governance Types
 // ============================================================================
 
@@ -573,23 +795,49 @@ pub struct NameRecord {
     /// Allows owner to delegate governance authority to another contract/DID
     pub governance_delegate: Option<GovernanceDelegation>,
 
-    // === Lifecycle ===
-    /// Current status in the lifecycle
+    // === Lifecycle (Phase 6: Block Height Authority) ===
+    /// Current explicit status in the lifecycle
+    /// Note: Use `effective_status(height)` for derived status
     pub status: NameStatus,
     /// Block height when registered
     pub registered_at: BlockHeight,
-    /// When the registration expires (unix timestamp)
+
+    // --- Authoritative Block Heights (Phase 6) ---
+    /// When the registration expires (block height) - AUTHORITATIVE
+    pub expires_at_height: BlockHeight,
+    /// When renewal window opens (block height)
+    /// Calculated as: expires_at_height - renewal_window_blocks
+    pub renewal_window_start_height: BlockHeight,
+    /// When expiry grace period ends (block height)
+    /// Calculated as: expires_at_height + expiry_grace_blocks
+    pub renew_grace_until_height: BlockHeight,
+    /// When revocation grace period ends (block height)
+    /// Only set for governance-initiated revocations (Invariant L5)
+    pub revoke_grace_until_height: Option<BlockHeight>,
+
+    // --- Legacy/Display Fields ---
+    /// When the registration expires (unix timestamp) - DISPLAY ONLY
+    /// Derived in clients/indexers, not authoritative on-chain
+    #[deprecated(note = "Use expires_at_height for on-chain logic")]
     pub expires_at: Timestamp,
-    /// Grace period end (when in grace state)
+    /// Grace period end (when in grace state) - DISPLAY ONLY
+    #[deprecated(note = "Use renew_grace_until_height for on-chain logic")]
     pub grace_ends_at: Option<Timestamp>,
-    /// When suspended (if applicable)
-    pub suspended_at: Option<Timestamp>,
+
+    // --- Suspension ---
+    /// When suspended (block height)
+    pub suspended_at: Option<BlockHeight>,
     /// Who suspended (if applicable)
     pub suspended_by: Option<SuspensionAuthority>,
 
+    // --- Custodian (Phase 6: Post-Grace Governance) ---
+    /// Custodian for domains returned to governance
+    /// Set when domain transitions to ReturnedToGovernance state
+    pub custodian: Option<CustodianId>,
+
     // === Transfer Lock ===
-    /// When the transfer lock expires (24h after registration/renewal)
-    pub transfer_lock_until: Option<Timestamp>,
+    /// When the transfer lock expires (block height)
+    pub transfer_lock_until: Option<BlockHeight>,
 
     // === Audit Trail ===
     /// History of ownership transfers
@@ -599,15 +847,247 @@ pub struct NameRecord {
 }
 
 impl NameRecord {
-    /// Check if this domain has an active transfer lock
-    pub fn has_transfer_lock(&self, current_time: Timestamp) -> bool {
+    // ========================================================================
+    // Phase 6: Effective Status Computation
+    // ========================================================================
+
+    /// Compute the effective status from timestamps + explicit states
+    ///
+    /// # Phase 6: Hybrid State Model
+    /// Order of evaluation matters - evaluate top to bottom:
+    /// 1. Terminal states (Released, ReturnedToGovernance)
+    /// 2. Revocation path (governance-initiated)
+    /// 3. Suspension (dominates resolution)
+    /// 4. Normal expiry path
+    ///
+    /// # Invariant L6: No Zombies
+    /// This function is called on every touch to ensure deterministic transitions.
+    pub fn effective_status(&self, current_height: BlockHeight) -> EffectiveStatus {
+        // 1. Terminal states - already finalized
+        if matches!(self.status, NameStatus::Released) {
+            return EffectiveStatus::Released;
+        }
+        if self.custodian.is_some() && matches!(self.status, NameStatus::Revoked { .. }) {
+            return EffectiveStatus::ReturnedToGovernance;
+        }
+
+        // 2. Revocation path (governance-initiated)
+        if matches!(self.status, NameStatus::RevocationPending { .. }) {
+            if let Some(grace_until) = self.revoke_grace_until_height {
+                if current_height <= grace_until {
+                    return EffectiveStatus::RevokedInGrace;
+                } else {
+                    // Past revocation grace - needs finalization
+                    // Caller should call finalize_revocation()
+                    return self.terminal_status_for_class();
+                }
+            }
+        }
+
+        // 3. Suspension dominates resolution (may also be expired)
+        if matches!(self.status, NameStatus::Suspended { .. } | NameStatus::SuspendedByParent) {
+            return EffectiveStatus::Suspended;
+        }
+
+        // 4. Normal expiry path
+        if current_height <= self.expires_at_height {
+            EffectiveStatus::Active
+        } else if current_height <= self.renew_grace_until_height {
+            EffectiveStatus::ExpiredInGrace
+        } else {
+            // Past grace period - needs finalization
+            // Caller should call finalize_release_or_return()
+            self.terminal_status_for_class()
+        }
+    }
+
+    /// Determine terminal status based on domain classification
+    fn terminal_status_for_class(&self) -> EffectiveStatus {
+        match self.classification {
+            NameClassification::Commercial => EffectiveStatus::Released,
+            NameClassification::WelfareDelegated => EffectiveStatus::ReturnedToGovernance,
+            NameClassification::ReservedWelfare => EffectiveStatus::ReturnedToGovernance,
+            NameClassification::ReservedMeta => EffectiveStatus::ReturnedToGovernance,
+            NameClassification::ReservedByRule => EffectiveStatus::ReturnedToGovernance,
+        }
+    }
+
+    /// Finalize domain release or return based on classification
+    ///
+    /// # Phase 6: Post-Grace Finalization
+    /// - Commercial: Released (available for registration)
+    /// - Welfare children: Return to sector DAO
+    /// - Reserved/Welfare roots: Return to RootGovernance
+    ///
+    /// # Invariant L3, L4
+    /// Post-grace commercial domains are immediately released.
+    /// Post-grace welfare/reserved domains return to appropriate custodian.
+    pub fn finalize_release_or_return(&mut self, sector_dao_id: Option<DaoId>) -> EffectiveStatus {
+        match self.classification {
+            NameClassification::Commercial => {
+                self.status = NameStatus::Released;
+                self.owner = [0u8; 32]; // Clear ownership
+                self.controller = None;
+                self.custodian = None;
+                self.governance_pointer = None;
+                self.governance_config = None;
+                self.governance_delegate = None;
+                EffectiveStatus::Released
+            }
+            NameClassification::WelfareDelegated => {
+                self.status = NameStatus::Revoked {
+                    tombstone: RevokedRecord {
+                        revoked_at: self.renew_grace_until_height,
+                        reason_code: ReasonCode::ExpirationLapsed,
+                        revoking_authority: [0u8; 32], // System
+                        appeal_status: None,
+                    },
+                };
+                self.custodian = Some(CustodianId::SectorDao(
+                    sector_dao_id.unwrap_or([0u8; 32]),
+                ));
+                EffectiveStatus::ReturnedToGovernance
+            }
+            NameClassification::ReservedWelfare
+            | NameClassification::ReservedMeta
+            | NameClassification::ReservedByRule => {
+                self.status = NameStatus::Revoked {
+                    tombstone: RevokedRecord {
+                        revoked_at: self.renew_grace_until_height,
+                        reason_code: ReasonCode::ExpirationLapsed,
+                        revoking_authority: [0u8; 32], // System
+                        appeal_status: None,
+                    },
+                };
+                self.custodian = Some(CustodianId::RootGovernance);
+                EffectiveStatus::ReturnedToGovernance
+            }
+        }
+    }
+
+    /// Finalize revocation (governance-initiated)
+    ///
+    /// # Invariant L5
+    /// Revocation grace only applies to governance-initiated actions,
+    /// not to voluntary release or expiration.
+    pub fn finalize_revocation(&mut self, sector_dao_id: Option<DaoId>) -> EffectiveStatus {
+        // Same logic as finalize_release_or_return but reason differs
+        self.finalize_release_or_return(sector_dao_id)
+    }
+
+    // ========================================================================
+    // Phase 6: Lifecycle Queries (Block Height)
+    // ========================================================================
+
+    /// Check if this domain has an active transfer lock (block height)
+    pub fn has_transfer_lock(&self, current_height: BlockHeight) -> bool {
         self.transfer_lock_until
-            .map(|lock_until| current_time < lock_until)
+            .map(|lock_until| current_height < lock_until)
             .unwrap_or(false)
     }
 
-    /// Check if this domain is in its grace period
-    pub fn is_in_grace_period(&self, current_time: Timestamp) -> bool {
+    /// Check if this domain is in renewal window
+    pub fn is_in_renewal_window(&self, current_height: BlockHeight) -> bool {
+        current_height >= self.renewal_window_start_height
+            && current_height <= self.renew_grace_until_height
+    }
+
+    /// Check if this domain is in its grace period (block height)
+    pub fn is_in_grace_period(&self, current_height: BlockHeight) -> bool {
+        current_height > self.expires_at_height
+            && current_height <= self.renew_grace_until_height
+    }
+
+    /// Check if this domain is in revocation grace period
+    pub fn is_in_revocation_grace(&self, current_height: BlockHeight) -> bool {
+        if let Some(grace_until) = self.revoke_grace_until_height {
+            matches!(self.status, NameStatus::RevocationPending { .. })
+                && current_height <= grace_until
+        } else {
+            false
+        }
+    }
+
+    /// Check if this domain has expired (past grace period)
+    pub fn has_fully_expired(&self, current_height: BlockHeight) -> bool {
+        current_height > self.renew_grace_until_height
+    }
+
+    /// Check if domain can be renewed at current height
+    pub fn can_renew_at(&self, current_height: BlockHeight) -> bool {
+        let effective = self.effective_status(current_height);
+        effective.can_renew()
+            && current_height >= self.renewal_window_start_height
+    }
+
+    /// Check if domain can be transferred at current height
+    pub fn can_transfer_at(&self, current_height: BlockHeight) -> bool {
+        let effective = self.effective_status(current_height);
+        effective.can_transfer() && !self.has_transfer_lock(current_height)
+    }
+
+    // ========================================================================
+    // Renewal Fee Calculation (Phase 6)
+    // ========================================================================
+
+    /// Calculate renewal fee with optional late penalty
+    ///
+    /// # Invariant L8
+    /// Renewal in grace incurs penalty fee (standard + late_penalty_percent).
+    pub fn calculate_renewal_fee(
+        &self,
+        current_height: BlockHeight,
+        base_fee: u64,
+        late_penalty_percent: u8,
+    ) -> u64 {
+        if current_height <= self.expires_at_height {
+            // Before expiry: standard fee
+            base_fee
+        } else if current_height <= self.renew_grace_until_height {
+            // In grace period: standard + penalty
+            let penalty = base_fee * late_penalty_percent as u64 / 100;
+            base_fee.saturating_add(penalty)
+        } else {
+            // Past grace: cannot renew
+            0
+        }
+    }
+
+    // ========================================================================
+    // Renewal Execution (Phase 6)
+    // ========================================================================
+
+    /// Extend registration by duration, recalculating lifecycle heights
+    pub fn extend_registration(
+        &mut self,
+        duration_blocks: BlockHeight,
+        params: &LifecycleParams,
+        current_height: BlockHeight,
+    ) {
+        // Extend from current expiry (not current time)
+        let new_expiry = self.expires_at_height.saturating_add(duration_blocks);
+
+        self.expires_at_height = new_expiry;
+        self.renewal_window_start_height = new_expiry.saturating_sub(params.renewal_window_blocks);
+        self.renew_grace_until_height = new_expiry.saturating_add(params.expiry_grace_blocks);
+
+        // Reset transfer lock
+        self.transfer_lock_until = Some(current_height.saturating_add(timing::TRANSFER_LOCK_BLOCKS));
+
+        // Clear expired state if was in grace
+        if matches!(self.status, NameStatus::Expired { .. }) {
+            self.status = NameStatus::Active;
+        }
+    }
+
+    // ========================================================================
+    // Legacy/Compatibility Methods
+    // ========================================================================
+
+    /// Check if this domain is in its grace period (legacy: unix timestamp)
+    /// DEPRECATED: Use is_in_grace_period(block_height) instead
+    #[deprecated(note = "Use is_in_grace_period(block_height) for on-chain logic")]
+    pub fn is_in_grace_period_legacy(&self, current_time: Timestamp) -> bool {
         match &self.status {
             NameStatus::Expired { grace_ends } => current_time < *grace_ends,
             NameStatus::RevocationPending { grace_ends, .. } => current_time < *grace_ends,
@@ -615,8 +1095,10 @@ impl NameRecord {
         }
     }
 
-    /// Check if this domain has expired (past grace period)
-    pub fn has_fully_expired(&self, current_time: Timestamp) -> bool {
+    /// Check if this domain has expired (legacy: unix timestamp)
+    /// DEPRECATED: Use has_fully_expired(block_height) instead
+    #[deprecated(note = "Use has_fully_expired(block_height) for on-chain logic")]
+    pub fn has_fully_expired_legacy(&self, current_time: Timestamp) -> bool {
         match &self.status {
             NameStatus::Expired { grace_ends } => current_time >= *grace_ends,
             _ => false,
@@ -734,24 +1216,79 @@ pub fn is_zero_name_hash(name_hash: &NameHash) -> bool {
 // ============================================================================
 
 /// Timing parameters for domain lifecycle management
+///
+/// # Phase 6: Block Height Authority
+/// All lifecycle timestamps use block height (never wall-clock on-chain).
+/// Wall-clock seconds are kept for display/client compatibility only.
+///
+/// # Invariant L1
+/// Contract determinism requires block height. Wall-clock seconds create
+/// nondeterministic forks when nodes disagree on time.
 pub mod timing {
-    /// Renewal window: 90 days before expiry (in seconds)
+    /// Blocks per day (assuming 10-second block time)
+    /// 86,400 seconds / 10 = 8,640 blocks
+    /// Rounded to 8,600 for epoch alignment (100 blocks/epoch)
+    pub const BLOCKS_PER_DAY: u64 = 8_600;
+
+    /// Renewal window: 90 days before expiry (in blocks)
+    pub const RENEWAL_WINDOW_BLOCKS: u64 = 90 * BLOCKS_PER_DAY;
+
+    /// Expiration grace period: 30 days after expiry (in blocks)
+    /// Invariant L2: Expired-in-grace domains resolve but with content disabled
+    pub const EXPIRATION_GRACE_BLOCKS: u64 = 30 * BLOCKS_PER_DAY;
+
+    /// Revocation grace period (dispute): 7 days minimum (in blocks)
+    /// Invariant L5: Only applies to governance-initiated revocations
+    pub const REVOCATION_GRACE_BLOCKS: u64 = 7 * BLOCKS_PER_DAY;
+
+    /// Transfer lock duration: 24 hours after registration/renewal (in blocks)
+    pub const TRANSFER_LOCK_BLOCKS: u64 = BLOCKS_PER_DAY;
+
+    /// Governance timelock minimum: 7 days (in blocks)
+    pub const GOVERNANCE_TIMELOCK_BLOCKS: u64 = 7 * BLOCKS_PER_DAY;
+
+    /// Sector addition timelock: 30 days (in blocks)
+    pub const SECTOR_ADDITION_TIMELOCK_BLOCKS: u64 = 30 * BLOCKS_PER_DAY;
+
+    // === Legacy constants (for display/migration only) ===
+
+    /// Renewal window: 90 days before expiry (in seconds) - DEPRECATED
+    #[deprecated(note = "Use RENEWAL_WINDOW_BLOCKS for on-chain logic")]
     pub const RENEWAL_WINDOW_SECS: u64 = 90 * 24 * 60 * 60;
 
-    /// Expiration grace period: 30 days after expiry (in seconds)
+    /// Expiration grace period: 30 days after expiry (in seconds) - DEPRECATED
+    #[deprecated(note = "Use EXPIRATION_GRACE_BLOCKS for on-chain logic")]
     pub const EXPIRATION_GRACE_SECS: u64 = 30 * 24 * 60 * 60;
 
-    /// Revocation grace period (dispute): 7 days minimum (in seconds)
+    /// Revocation grace period: 7 days (in seconds) - DEPRECATED
+    #[deprecated(note = "Use REVOCATION_GRACE_BLOCKS for on-chain logic")]
     pub const REVOCATION_GRACE_SECS: u64 = 7 * 24 * 60 * 60;
 
-    /// Transfer lock duration: 24 hours after registration/renewal (in seconds)
+    /// Transfer lock duration: 24 hours (in seconds) - DEPRECATED
+    #[deprecated(note = "Use TRANSFER_LOCK_BLOCKS for on-chain logic")]
     pub const TRANSFER_LOCK_SECS: u64 = 24 * 60 * 60;
 
-    /// Governance timelock minimum: 7 days (in seconds)
+    /// Governance timelock: 7 days (in seconds) - DEPRECATED
+    #[deprecated(note = "Use GOVERNANCE_TIMELOCK_BLOCKS for on-chain logic")]
     pub const GOVERNANCE_TIMELOCK_SECS: u64 = 7 * 24 * 60 * 60;
 
-    /// Sector addition timelock: 30 days (in seconds)
+    /// Sector addition timelock: 30 days (in seconds) - DEPRECATED
+    #[deprecated(note = "Use SECTOR_ADDITION_TIMELOCK_BLOCKS for on-chain logic")]
     pub const SECTOR_ADDITION_TIMELOCK_SECS: u64 = 30 * 24 * 60 * 60;
+
+    // === Constitutional Floors (minimum values, governance cannot reduce) ===
+
+    /// Minimum expiration grace period: 7 days (in blocks)
+    pub const MIN_EXPIRATION_GRACE_BLOCKS: u64 = 7 * BLOCKS_PER_DAY;
+
+    /// Minimum revocation grace period: 3 days (in blocks)
+    pub const MIN_REVOCATION_GRACE_BLOCKS: u64 = 3 * BLOCKS_PER_DAY;
+
+    /// Maximum late renewal penalty: 50%
+    pub const MAX_LATE_RENEWAL_PENALTY_PERCENT: u8 = 50;
+
+    /// Default late renewal penalty: 20%
+    pub const DEFAULT_LATE_RENEWAL_PENALTY_PERCENT: u8 = 20;
 }
 
 /// Depth and length limits
@@ -847,6 +1384,7 @@ mod tests {
 
     #[test]
     fn test_transfer_lock() {
+        #[allow(deprecated)]
         let record = NameRecord {
             name: "test.sov".to_string(),
             name_hash: [0u8; 32],
@@ -864,10 +1402,17 @@ mod tests {
             governance_delegate: None,
             status: NameStatus::Active,
             registered_at: 100,
-            expires_at: 1000000,
+            // Phase 6: Block height fields
+            expires_at_height: 1000000,
+            renewal_window_start_height: 1000000 - timing::RENEWAL_WINDOW_BLOCKS,
+            renew_grace_until_height: 1000000 + timing::EXPIRATION_GRACE_BLOCKS,
+            revoke_grace_until_height: None,
+            // Legacy fields (deprecated)
+            expires_at: 0,
             grace_ends_at: None,
             suspended_at: None,
             suspended_by: None,
+            custodian: None,
             transfer_lock_until: Some(200),
             transfer_history: vec![],
             renewal_history: vec![],
@@ -875,6 +1420,161 @@ mod tests {
 
         assert!(record.has_transfer_lock(150));
         assert!(!record.has_transfer_lock(250));
+    }
+
+    #[test]
+    fn test_effective_status_active() {
+        #[allow(deprecated)]
+        let record = NameRecord {
+            name: "test.sov".to_string(),
+            name_hash: [0u8; 32],
+            owner: [1u8; 32],
+            controller: None,
+            zone_controller: None,
+            parent: None,
+            depth: 0,
+            classification: NameClassification::Commercial,
+            verification_level: VerificationLevel::L2VerifiedEntity,
+            verification_proof: None,
+            issuer: [1u8; 32],
+            governance_pointer: None,
+            governance_config: None,
+            governance_delegate: None,
+            status: NameStatus::Active,
+            registered_at: 100,
+            expires_at_height: 1000000,
+            renewal_window_start_height: 1000000 - timing::RENEWAL_WINDOW_BLOCKS,
+            renew_grace_until_height: 1000000 + timing::EXPIRATION_GRACE_BLOCKS,
+            revoke_grace_until_height: None,
+            expires_at: 0,
+            grace_ends_at: None,
+            suspended_at: None,
+            suspended_by: None,
+            custodian: None,
+            transfer_lock_until: None,
+            transfer_history: vec![],
+            renewal_history: vec![],
+        };
+
+        // Before expiry: Active
+        assert_eq!(record.effective_status(500000), EffectiveStatus::Active);
+        assert!(record.effective_status(500000).is_content_enabled());
+
+        // After expiry but in grace: ExpiredInGrace
+        let in_grace = record.expires_at_height + 1000;
+        assert_eq!(record.effective_status(in_grace), EffectiveStatus::ExpiredInGrace);
+        assert!(!record.effective_status(in_grace).is_content_enabled());
+        assert!(record.effective_status(in_grace).can_renew());
+
+        // Past grace: Released (commercial)
+        let past_grace = record.renew_grace_until_height + 1;
+        assert_eq!(record.effective_status(past_grace), EffectiveStatus::Released);
+    }
+
+    #[test]
+    fn test_effective_status_welfare() {
+        #[allow(deprecated)]
+        let record = NameRecord {
+            name: "farm.food.dao.sov".to_string(),
+            name_hash: [0u8; 32],
+            owner: [1u8; 32],
+            controller: None,
+            zone_controller: None,
+            parent: Some([2u8; 32]),
+            depth: 1,
+            classification: NameClassification::WelfareDelegated,
+            verification_level: VerificationLevel::L1BasicDID,
+            verification_proof: None,
+            issuer: [1u8; 32],
+            governance_pointer: None,
+            governance_config: None,
+            governance_delegate: None,
+            status: NameStatus::Active,
+            registered_at: 100,
+            expires_at_height: 1000000,
+            renewal_window_start_height: 1000000 - timing::RENEWAL_WINDOW_BLOCKS,
+            renew_grace_until_height: 1000000 + timing::EXPIRATION_GRACE_BLOCKS,
+            revoke_grace_until_height: None,
+            expires_at: 0,
+            grace_ends_at: None,
+            suspended_at: None,
+            suspended_by: None,
+            custodian: None,
+            transfer_lock_until: None,
+            transfer_history: vec![],
+            renewal_history: vec![],
+        };
+
+        // Past grace: ReturnedToGovernance (welfare)
+        let past_grace = record.renew_grace_until_height + 1;
+        assert_eq!(record.effective_status(past_grace), EffectiveStatus::ReturnedToGovernance);
+    }
+
+    #[test]
+    fn test_renewal_fee_calculation() {
+        #[allow(deprecated)]
+        let record = NameRecord {
+            name: "test.sov".to_string(),
+            name_hash: [0u8; 32],
+            owner: [1u8; 32],
+            controller: None,
+            zone_controller: None,
+            parent: None,
+            depth: 0,
+            classification: NameClassification::Commercial,
+            verification_level: VerificationLevel::L2VerifiedEntity,
+            verification_proof: None,
+            issuer: [1u8; 32],
+            governance_pointer: None,
+            governance_config: None,
+            governance_delegate: None,
+            status: NameStatus::Active,
+            registered_at: 100,
+            expires_at_height: 1000000,
+            renewal_window_start_height: 1000000 - timing::RENEWAL_WINDOW_BLOCKS,
+            renew_grace_until_height: 1000000 + timing::EXPIRATION_GRACE_BLOCKS,
+            revoke_grace_until_height: None,
+            expires_at: 0,
+            grace_ends_at: None,
+            suspended_at: None,
+            suspended_by: None,
+            custodian: None,
+            transfer_lock_until: None,
+            transfer_history: vec![],
+            renewal_history: vec![],
+        };
+
+        let base_fee = 1000;
+        let penalty = 20; // 20%
+
+        // Before expiry: base fee only
+        assert_eq!(record.calculate_renewal_fee(500000, base_fee, penalty), 1000);
+
+        // In grace period: base + penalty (1000 + 200 = 1200)
+        let in_grace = record.expires_at_height + 1000;
+        assert_eq!(record.calculate_renewal_fee(in_grace, base_fee, penalty), 1200);
+
+        // Past grace: cannot renew (returns 0)
+        let past_grace = record.renew_grace_until_height + 1;
+        assert_eq!(record.calculate_renewal_fee(past_grace, base_fee, penalty), 0);
+    }
+
+    #[test]
+    fn test_lifecycle_params_validation() {
+        // Valid params
+        let params = LifecycleParams::default();
+        assert!(params.validate().is_ok());
+
+        // Below floor - should be clamped in constructor
+        let clamped = LifecycleParams::new(
+            timing::RENEWAL_WINDOW_BLOCKS,
+            1000, // Below MIN_EXPIRATION_GRACE_BLOCKS
+            1000, // Below MIN_REVOCATION_GRACE_BLOCKS
+            100,  // Above MAX_LATE_RENEWAL_PENALTY_PERCENT
+        );
+        assert_eq!(clamped.expiry_grace_blocks, timing::MIN_EXPIRATION_GRACE_BLOCKS);
+        assert_eq!(clamped.revocation_grace_blocks, timing::MIN_REVOCATION_GRACE_BLOCKS);
+        assert_eq!(clamped.late_renewal_penalty_percent, timing::MAX_LATE_RENEWAL_PENALTY_PERCENT);
     }
 
     #[test]

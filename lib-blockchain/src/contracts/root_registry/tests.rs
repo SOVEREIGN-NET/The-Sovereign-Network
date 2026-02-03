@@ -87,15 +87,20 @@ fn test_dao_prefixed_requires_parent_ownership() {
 fn test_parent_expiry_propagates_suspension() {
     let mut registry = RootRegistry::new();
     let owner = test_public_key(1);
+    let current_height = 0;
+    let duration_blocks = 100;
 
     let parent_hash = registry
-        .register_commercial("parent.sov", owner.clone(), 0, 100)
+        .register_commercial("parent.sov", owner.clone(), current_height, duration_blocks)
         .expect("register parent");
     let child_hash = registry
-        .register_commercial("child.parent.sov", owner, 0, 100)
+        .register_commercial("child.parent.sov", owner, current_height, duration_blocks)
         .expect("register child");
 
-    registry.expire_name(&parent_hash).expect("expire parent");
+    // Expire at a height after the expiry period
+    let past_expiry = current_height + duration_blocks + 1;
+    #[allow(deprecated)]
+    registry.expire_name(&parent_hash, past_expiry).expect("expire parent");
 
     let child = registry.get_record(&child_hash).expect("child record");
     assert_eq!(child.status, NameStatus::SuspendedByParent);
