@@ -260,8 +260,19 @@ impl Web4Handler {
         // Get SOV token contract and check balance
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
+        // Ensure SOV token contract exists (auto-migration for older blockchain data)
         {
-            let blockchain = self.blockchain.read().await;
+            let mut blockchain = self.blockchain.write().await;
+            if !blockchain.token_contracts.contains_key(&sov_token_id) {
+                let sov_token = lib_blockchain::contracts::TokenContract::new_zhtp();
+                blockchain.token_contracts.insert(sov_token_id, sov_token);
+                info!("🪙 SOV token contract auto-initialized during domain registration");
+            }
+        }
+
+        // Check SOV balance and apply late welcome bonus if needed (migration for pre-existing users)
+        {
+            let mut blockchain = self.blockchain.write().await;
 
             // Check if SOV token contract exists
             let sov_token = blockchain.token_contracts.get(&sov_token_id)
@@ -271,6 +282,41 @@ impl Web4Handler {
             let user_sov_balance = sov_token.balance_of(&owner_pubkey);
 
             info!(" User SOV balance: {} SOV (need {} SOV)", user_sov_balance, registration_fee_sov);
+
+            // MIGRATION: If user has 0 SOV balance, they registered before SOV welcome bonus was implemented
+            // Credit them the 5000 SOV welcome bonus now (lazy migration)
+            let mut minted_bonus = false;
+            if user_sov_balance == 0 {
+                info!("🪙 User has 0 SOV - applying late welcome bonus (migration for pre-existing users)");
+                let welcome_bonus = 5000u64;
+
+                if let Some(sov_token_mut) = blockchain.token_contracts.get_mut(&sov_token_id) {
+                    match sov_token_mut.mint(&owner_pubkey, welcome_bonus) {
+                        Ok(()) => {
+                            info!("🪙 Late SOV welcome bonus credited: {} SOV to user", welcome_bonus);
+                            minted_bonus = true;
+                        }
+                        Err(e) => {
+                            warn!("Failed to mint late SOV welcome bonus: {}", e);
+                        }
+                    }
+                }
+            }
+
+            // Persist SOV token contract if we minted (separate borrow scope)
+            if minted_bonus {
+                if let (Some(store), Some(sov_token)) = (&blockchain.store, blockchain.token_contracts.get(&sov_token_id)) {
+                    let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
+                    if let Err(e) = store_ref.put_token_contract(sov_token) {
+                        warn!("Failed to persist SOV token after late minting: {}", e);
+                    }
+                }
+            }
+
+            // Re-check balance after potential minting
+            let sov_token = blockchain.token_contracts.get(&sov_token_id)
+                .ok_or_else(|| anyhow!("SOV token contract not found"))?;
+            let user_sov_balance = sov_token.balance_of(&owner_pubkey);
 
             if user_sov_balance < registration_fee_sov {
                 return Err(anyhow!(
@@ -318,6 +364,19 @@ impl Web4Handler {
                 .map_err(|e| anyhow!("SOV transfer failed: {}", e))?;
 
             info!(" SOV payment successful: {} SOV transferred to treasury", registration_fee_sov);
+        }
+
+        // Persist SOV token contract to SledStore after transfer (separate borrow scope)
+        {
+            let blockchain = self.blockchain.read().await;
+            if let (Some(store), Some(sov_token)) = (&blockchain.store, blockchain.token_contracts.get(&sov_token_id)) {
+                let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
+                if let Err(e) = store_ref.put_token_contract(sov_token) {
+                    warn!("Failed to persist SOV token after transfer: {}", e);
+                } else {
+                    info!("🪙 SOV token contract persisted after fee deduction");
+                }
+            }
         }
 
         // Generate a transaction hash for tracking (based on domain + timestamp)
