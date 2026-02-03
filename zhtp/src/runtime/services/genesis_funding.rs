@@ -44,7 +44,15 @@ impl GenesisFundingService {
         }
         
         info!("Multi-validator mode: {} validators for production network", genesis_validators.len());
-        
+
+        // Initialize ZHTP token contract FIRST so we can credit balances during genesis
+        let zhtp_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+        if !blockchain.token_contracts.contains_key(&zhtp_token_id) {
+            let zhtp_token = lib_blockchain::contracts::TokenContract::new_zhtp();
+            blockchain.token_contracts.insert(zhtp_token_id, zhtp_token);
+            info!("🪙 ZHTP token contract initialized: {}", hex::encode(&zhtp_token_id[..8]));
+        }
+
         // Initialize outputs vector for genesis transaction
         let mut genesis_outputs = Vec::new();
         let mut total_validator_stake = 0u64;
@@ -161,7 +169,28 @@ impl GenesisFundingService {
             };
             
             blockchain.wallet_registry.insert(hex::encode(&wallet_id.0), wallet_data);
-            
+
+            // Also credit ZHTP token contract balance for fee deduction
+            // Build PublicKey for the user from their Dilithium2 public key
+            let user_pubkey = lib_blockchain::integration::crypto_integration::PublicKey {
+                dilithium_pk: identity_dilithium_pubkey.clone(),
+                kyber_pk: vec![],
+                key_id: {
+                    let hash = lib_blockchain::types::hash::blake3_hash(&identity_dilithium_pubkey);
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(hash.as_bytes());
+                    arr
+                },
+            };
+            // Mint welcome bonus to ZHTP token contract balance
+            if let Some(zhtp_token) = blockchain.token_contracts.get_mut(&zhtp_token_id) {
+                if let Err(e) = zhtp_token.mint(&user_pubkey, 5000) {
+                    warn!("Failed to mint genesis ZHTP token balance: {}", e);
+                } else {
+                    info!("🪙 Genesis ZHTP token balance credited: 5000 to key_id {}", hex::encode(&user_pubkey.key_id[..8]));
+                }
+            }
+
             info!(" Genesis user wallet funded and registered: {} ZHTP", 5000);
             info!("   - Wallet ID: {}", hex::encode(&wallet_id.0));
             info!("   - Owner Identity ID: {}", hex::encode(&user_identity_id.as_ref().unwrap().0));
@@ -238,12 +267,12 @@ impl GenesisFundingService {
         
         // Register validators AFTER USER identity exists in blockchain
         Self::register_validators(blockchain, genesis_validators).await?;
-        
+
         // Genesis block stays at height 0 - pending transactions will mine into block 1
-        info!("   Genesis block finalized - Height: {}, UTXOs: {}, Identities: {}, Pending: {}", 
+        info!("   Genesis block finalized - Height: {}, UTXOs: {}, Identities: {}, Pending: {}",
               blockchain.height, blockchain.utxo_set.len(), blockchain.identity_registry.len(),
               blockchain.pending_transactions.len());
-        
+
         Ok(())
     }
     

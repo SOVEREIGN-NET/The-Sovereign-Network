@@ -495,9 +495,9 @@ impl Web4Handler {
             governance_config_data: None,
         };
 
-        // Calculate transaction hash for signing
-        let tx_hash = transaction.hash();
-        info!(" Transaction hash for signing: {}", hex::encode(tx_hash.as_bytes()));
+        // Calculate transaction signing hash (excludes signature for deterministic signing)
+        let tx_hash = transaction.signing_hash();
+        info!(" Transaction signing hash: {}", hex::encode(tx_hash.as_bytes()));
         
         // ========================================================================
         // STEP 6: Sign the transaction hash with identity keypair
