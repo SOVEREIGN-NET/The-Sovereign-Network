@@ -273,7 +273,7 @@ impl WalletHandler {
 
             let wallet_info = WalletInfo {
                 wallet_type: format!("{:?}", summary.wallet_type),
-                wallet_id: self.generate_wallet_id(&summary.wallet_type, identity_id),
+                wallet_id: wallet_id_hex.clone(),  // Full 64-char hex wallet_id for transfers
                 available_balance: effective_balance.saturating_sub(staked_balance),
                 staked_balance,
                 pending_rewards,
