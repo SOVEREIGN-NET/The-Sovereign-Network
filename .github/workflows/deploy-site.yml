@@ -26,6 +26,12 @@ on:
       ZHTP_KEYSTORE_B64:
         description: 'Base64-encoded tarball of keystore directory'
         required: true
+      ZHTP_SERVER:
+        description: 'ZHTP server address'
+        required: true
+      ZHTP_SERVER_SPKI:
+        description: 'ZHTP server SPKI for certificate pinning'
+        required: true
 
 jobs:
   deploy:
