@@ -587,6 +587,23 @@ impl RuntimeOrchestrator {
             // Blockchain already loaded with data - don't create genesis
             info!("✓ Using existing blockchain data - skipping genesis creation");
 
+            // CRITICAL: Ensure SOV token contract is always initialized
+            // This handles upgrades from older blockchain data that didn't have the SOV token
+            {
+                let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await
+                    .map_err(|e| anyhow::anyhow!("Failed to get global blockchain: {}", e))?;
+                let mut blockchain = blockchain_arc.write().await;
+
+                let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+                if !blockchain.token_contracts.contains_key(&sov_token_id) {
+                    let sov_token = lib_blockchain::contracts::TokenContract::new_zhtp();
+                    blockchain.token_contracts.insert(sov_token_id, sov_token);
+                    info!("🪙 SOV token contract initialized (upgrade migration): {}", hex::encode(&sov_token_id[..8]));
+                } else {
+                    info!("✓ SOV token contract already present: {}", hex::encode(&sov_token_id[..8]));
+                }
+            }
+
             // Push wallet to BlockchainComponent if already registered
             let components = self.components.read().await;
             if let Some(component) = components.get(&ComponentId::Blockchain) {
@@ -667,6 +684,20 @@ impl RuntimeOrchestrator {
                 Some(wallet.user_identity.id.clone()), // Pass user identity ID
                 genesis_private_data, // Pass private data for Dilithium2 public key extraction
             ).await?;
+
+            // CRITICAL: Persist SOV token contract to SledStore after genesis funding
+            // This ensures the minted balances are preserved across restarts
+            let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+            if let Some(sov_token) = blockchain.token_contracts.get(&sov_token_id) {
+                if let Some(store) = &blockchain.store {
+                    let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
+                    if let Err(e) = store_ref.put_token_contract(sov_token) {
+                        warn!("Failed to persist SOV token contract after genesis: {}", e);
+                    } else {
+                        info!("🪙 SOV token contract persisted to SledStore (with {} balances)", sov_token.balances.len());
+                    }
+                }
+            }
         } // Release write lock
 
         info!(" Global blockchain provider initialized with user wallet funding");
@@ -1019,9 +1050,26 @@ impl RuntimeOrchestrator {
         );
 
         let (blockchain, was_loaded) = match lib_blockchain::Blockchain::load_from_store(store.clone())? {
-            Some(bc) => {
+            Some(mut bc) => {
                 info!("📂 Loaded existing blockchain from SledStore (height: {}, tokens: {})",
                       bc.height, bc.token_contracts.len());
+
+                // CRITICAL: Ensure SOV token contract is always initialized
+                // This handles upgrades from older blockchain data that didn't have the SOV token
+                let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+                if !bc.token_contracts.contains_key(&sov_token_id) {
+                    let sov_token = lib_blockchain::contracts::TokenContract::new_zhtp();
+                    bc.token_contracts.insert(sov_token_id, sov_token.clone());
+
+                    // Persist to SledStore so it's loaded on next startup
+                    let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
+                    if let Err(e) = store_ref.put_token_contract(&sov_token) {
+                        warn!("Failed to persist SOV token contract to SledStore: {}", e);
+                    } else {
+                        info!("🪙 SOV token contract initialized and persisted (upgrade migration): {}", hex::encode(&sov_token_id[..8]));
+                    }
+                }
+
                 (bc, true)
             }
             None => {

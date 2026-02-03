@@ -210,11 +210,11 @@ pub async fn handle_verify_recovery_phrase(
         .map(|s| s.to_string())
         .collect();
 
-    // Validate word count
-    if words.len() != 20 {
+    // Validate word count (accept both 20-word custom and 24-word BIP39 standard)
+    if words.len() != 20 && words.len() != 24 {
         return Ok(ZhtpResponse::error(
             ZhtpStatus::BadRequest,
-            "Recovery phrase must be 20 words".to_string(),
+            format!("Recovery phrase must be 20 or 24 words, got {}", words.len()),
         ));
     }
 
@@ -288,11 +288,11 @@ pub async fn handle_recover_identity(
         .map(|s| s.to_string())
         .collect();
 
-    // Validate word count
-    if words.len() != 20 {
+    // Validate word count (accept both 20-word custom and 24-word BIP39 standard)
+    if words.len() != 20 && words.len() != 24 {
         return Ok(ZhtpResponse::error(
             ZhtpStatus::BadRequest,
-            "Recovery phrase must be 20 words".to_string(),
+            format!("Recovery phrase must be 20 or 24 words, got {}", words.len()),
         ));
     }
 

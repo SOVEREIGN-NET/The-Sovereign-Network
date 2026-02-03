@@ -825,11 +825,15 @@ impl DomainRegistry {
         Ok(())
     }
 
-    /// Store domain content in DHT - NOT IMPLEMENTED in stub
-    /// Real implementation provided by application layer (zhtp) with actual storage integration
-    async fn store_domain_content(&self, domain: &str, path: &str, _content: Vec<u8>) -> Result<String> {
-        // Stub implementation - just return error
-        Err(anyhow!("Content storage not implemented in protocol-only lib-network. Use zhtp application layer for storage integration."))
+    /// Store domain content using content-addressed storage
+    async fn store_domain_content(&self, domain: &str, path: &str, content: Vec<u8>) -> Result<String> {
+        info!(" Storing content for {}{} ({} bytes)", domain, path, content.len());
+
+        // Use the content-addressed storage method
+        let cid = self.store_content_by_cid(content).await?;
+
+        info!(" Content stored with CID: {}", cid);
+        Ok(cid)
     }
 
     /// Store domain record to persistent storage

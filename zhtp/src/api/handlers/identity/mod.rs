@@ -126,6 +126,9 @@ impl ZhtpRequestHandler for IdentityHandler {
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/exists/") => {
                 self.handle_identity_exists(request).await
             }
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/username/available/") => {
+                self.handle_username_available(request).await
+            }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/get/") => {
                 self.handle_get_identity_by_did(request).await
             }
@@ -900,7 +903,7 @@ impl IdentityHandler {
     async fn handle_restore_from_seed(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         #[derive(Deserialize)]
         struct RestoreSeedRequest {
-            seed_phrase: String,  // Space-separated 20 words
+            seed_phrase: String,  // Space-separated 20 or 24 words (BIP39)
             display_name: Option<String>,
         }
 
@@ -913,10 +916,11 @@ impl IdentityHandler {
             .map(|s| s.to_string())
             .collect();
 
-        if seed_words.len() != 20 {
+        // Accept both 20-word custom and 24-word BIP39 standard
+        if seed_words.len() != 20 && seed_words.len() != 24 {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
-                format!("Invalid seed phrase: expected 20 words, got {}", seed_words.len()),
+                format!("Invalid seed phrase: expected 20 or 24 words, got {}", seed_words.len()),
             ));
         }
 
@@ -988,6 +992,44 @@ impl IdentityHandler {
             "identity_id": identity_id_str,
             "exists": exists
         });
+
+        Ok(ZhtpResponse::json(&response_body, None)?)
+    }
+
+    /// Check if username (display_name) is available
+    /// GET /api/v1/identity/username/available/{username}
+    async fn handle_username_available(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Extract username from path: /api/v1/identity/username/available/{username}
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        let username = path_parts.get(6)
+            .ok_or_else(|| anyhow::anyhow!("Username required"))?;
+
+        // URL decode the username (handles spaces, special chars)
+        let username = urlencoding::decode(username)
+            .map_err(|e| anyhow::anyhow!("Invalid username encoding: {}", e))?
+            .to_string();
+
+        tracing::info!("🔍 Checking username availability: {}", username);
+
+        let identity_manager = self.identity_manager.read().await;
+
+        // Check if any identity has this display_name (case-insensitive)
+        let username_lower = username.to_lowercase();
+        let is_taken = identity_manager.list_identities()
+            .iter()
+            .any(|identity| {
+                identity.metadata
+                    .get("display_name")
+                    .map(|name| name.to_lowercase() == username_lower)
+                    .unwrap_or(false)
+            });
+
+        let response_body = json!({
+            "username": username,
+            "available": !is_taken
+        });
+
+        tracing::info!("🔍 Username '{}' available: {}", username, !is_taken);
 
         Ok(ZhtpResponse::json(&response_body, None)?)
     }
@@ -1654,6 +1696,48 @@ impl IdentityHandler {
             }
 
             tracing::info!("✅ All 3 wallets registered in blockchain wallet_registry");
+
+            // Mint 5000 SOV welcome bonus to new user
+            let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+            let sov_welcome_bonus = 5000u64;
+            let user_pubkey = lib_blockchain::integration::crypto_integration::PublicKey::new(
+                public_key_bytes.clone()
+            );
+
+            // Ensure SOV token contract exists
+            if !blockchain.token_contracts.contains_key(&sov_token_id) {
+                let sov_token = lib_blockchain::contracts::TokenContract::new_zhtp();
+                blockchain.token_contracts.insert(sov_token_id, sov_token);
+                tracing::info!("🪙 SOV token contract initialized during identity registration");
+            }
+
+            // Mint welcome bonus (separate scope to release mutable borrow)
+            let mint_success = if let Some(sov_token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+                match sov_token.mint(&user_pubkey, sov_welcome_bonus) {
+                    Ok(()) => {
+                        tracing::info!("🪙 SOV welcome bonus credited: {} SOV to new user", sov_welcome_bonus);
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to mint SOV welcome bonus: {}", e);
+                        false
+                    }
+                }
+            } else {
+                false
+            };
+
+            // Persist SOV token contract to SledStore (separate borrow)
+            if mint_success {
+                if let (Some(store), Some(sov_token)) = (&blockchain.store, blockchain.token_contracts.get(&sov_token_id)) {
+                    let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
+                    if let Err(e) = store_ref.put_token_contract(sov_token) {
+                        tracing::warn!("Failed to persist SOV token after minting: {}", e);
+                    } else {
+                        tracing::info!("🪙 SOV token contract persisted after welcome bonus mint");
+                    }
+                }
+            }
         }
 
         // Persist to DHT for fast lookups
