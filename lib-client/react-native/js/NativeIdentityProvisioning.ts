@@ -52,6 +52,7 @@ interface NativeIdentityProvisioningInterface {
   exportIdentityEncrypted(passwordBase64: string): Promise<string>; // base64 encrypted
   importIdentityEncrypted(encryptedBase64: string, passwordBase64: string): Promise<IdentityInfo>;
   getMasterSeedForBackup(): Promise<string>; // base64 seed
+  getSeedPhraseForBackup(): Promise<string>; // 24-word phrase
 
   // Utility
   hasIdentity(): Promise<boolean>;
@@ -218,6 +219,13 @@ export class IdentityProvisioning {
   async exportEncrypted(password: string): Promise<string> {
     const passwordBase64 = Buffer.from(password, 'utf-8').toString('base64');
     return NativeIdentityProvisioningModule.exportIdentityEncrypted(passwordBase64);
+  }
+
+  /**
+   * Get the 24-word seed phrase for backup.
+   */
+  async getSeedPhraseForBackup(): Promise<string> {
+    return NativeIdentityProvisioningModule.getSeedPhraseForBackup();
   }
 
   /**

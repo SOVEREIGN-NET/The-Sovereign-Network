@@ -32,17 +32,16 @@ pub struct CitizenshipResult {
     pub welcome_bonus: WelcomeBonus,
 }
 
-/// Wallet recovery seed phrases - MUST BE STORED SECURELY!
+/// Wallet recovery seed phrase - MUST BE STORED SECURELY!
+///
+/// Single master seed phrase that derives all 3 citizen wallets via HD derivation:
+/// - Index 0 → Primary wallet
+/// - Index 1 → UBI wallet
+/// - Index 2 → Savings wallet
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSeedPhrases {
-    /// Primary wallet 20-word seed phrase
-    pub primary_wallet_seeds: crate::recovery::RecoveryPhrase,
-    /// UBI wallet 20-word seed phrase
-    pub ubi_wallet_seeds: crate::recovery::RecoveryPhrase,
-    /// Savings wallet 20-word seed phrase
-    pub savings_wallet_seeds: crate::recovery::RecoveryPhrase,
-    /// Timestamp when seed phrases were generated
-    pub generated_at: u64,
+    /// Master 24-word seed phrase (derives all wallets)
+    pub master_seed_phrase: crate::recovery::RecoveryPhrase,
 }
 
 /// Privacy-preserving credentials setup

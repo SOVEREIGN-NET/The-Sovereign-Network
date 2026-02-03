@@ -441,6 +441,7 @@ class NativeIdentityProvisioning: NSObject {
     }
 
     /// Get master seed for backup (SENSITIVE - show warning to user!)
+    /// This is the single master seed used to derive all wallets.
     @objc
     func getMasterSeedForBackup(
         _ resolve: @escaping RCTPromiseResolveBlock,
@@ -453,6 +454,25 @@ class NativeIdentityProvisioning: NSObject {
 
         // Return master seed as base64
         resolve(self.dataToBase64(identity.masterSeed))
+    }
+
+    /// Get 24-word seed phrase for backup (SENSITIVE - show warning to user!)
+    @objc
+    func getSeedPhraseForBackup(
+        _ resolve: @escaping RCTPromiseResolveBlock,
+        rejecter reject: @escaping RCTPromiseRejectBlock
+    ) {
+        guard let identity = currentIdentity else {
+            reject("NO_IDENTITY", "No identity loaded.", nil)
+            return
+        }
+
+        do {
+            let phrase = try ZhtpClient.getSeedPhrase(identity: identity)
+            resolve(phrase)
+        } catch {
+            reject("SEED_PHRASE_ERROR", "Failed to get seed phrase: \(error.localizedDescription)", error)
+        }
     }
 
     // MARK: - Utility Functions

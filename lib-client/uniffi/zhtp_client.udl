@@ -21,6 +21,10 @@ namespace zhtp_client {
     [Throws=ClientError]
     Identity restore_identity_from_seed(sequence<u8> master_seed, string device_id);
 
+    /// Restore identity from 24-word BIP39 seed phrase (for recovery)
+    [Throws=ClientError]
+    Identity restore_identity_from_phrase(string phrase, string device_id);
+
     /// Extract public portion of identity (safe to send to server)
     PublicIdentity get_public_identity([ByRef] Identity identity);
 
@@ -44,6 +48,10 @@ namespace zhtp_client {
     /// Deserialize identity from JSON
     [Throws=ClientError]
     Identity deserialize_identity(string json);
+
+    /// Get the 24-word BIP39 seed phrase for backup
+    [Throws=ClientError]
+    string get_seed_phrase([ByRef] Identity identity);
 
     // ============================================================================
     // Request/Response Functions

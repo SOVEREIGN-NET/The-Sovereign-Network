@@ -83,30 +83,35 @@ impl IdentityManager {
 
         // Generate ownership proof
         let ownership_proof = self.generate_ownership_proof(&private_key_bytes, &public_key).await?;
-        
-        // Create primary wallets for citizen WITH seed phrases
-        let mut wallet_manager = crate::wallets::WalletManager::new(id.clone());
-        
-        // Create primary spending wallet with seed phrase
-        let (primary_wallet_id, primary_seed_phrase) = wallet_manager.create_wallet_with_seed_phrase(
+
+        // Generate master seed for HD wallet derivation (64 bytes)
+        let mut master_seed = [0u8; 64];
+        rand::rngs::OsRng.fill_bytes(&mut master_seed);
+
+        // Create wallet manager with master seed for HD derivation
+        let mut wallet_manager = crate::wallets::WalletManager::from_master_seed(id.clone(), master_seed);
+
+        // Create HD wallets at fixed indices: 0=Primary, 1=UBI, 2=Savings
+        let (primary_wallet_id, _) = wallet_manager.create_hd_wallet(
             WalletType::Primary,
             "Primary Wallet".to_string(),
-            None
+            Some("primary".to_string()),
         ).await?;
-        
-        // Create UBI receiving wallet with seed phrase
-        let (ubi_wallet_id, ubi_seed_phrase) = wallet_manager.create_wallet_with_seed_phrase(
+
+        let (ubi_wallet_id, _) = wallet_manager.create_hd_wallet(
             WalletType::UBI,
             "UBI Wallet".to_string(),
-            None
+            Some("ubi".to_string()),
         ).await?;
-        
-        // Create savings wallet with seed phrase
-        let (savings_wallet_id, savings_seed_phrase) = wallet_manager.create_wallet_with_seed_phrase(
+
+        let (savings_wallet_id, _) = wallet_manager.create_hd_wallet(
             WalletType::Savings,
             "Savings Wallet".to_string(),
-            None
+            Some("savings".to_string()),
         ).await?;
+
+        // Generate 24-word master seed phrase from first 32 bytes of master seed
+        let master_seed_phrase = crate::recovery::RecoveryPhrase::from_entropy(&master_seed[..32])?;
         
         // Create identity with citizen benefits
         let mut identity = ZhtpIdentity::from_legacy_fields(
@@ -181,14 +186,9 @@ impl IdentityManager {
             hex::encode(&id.0[..8])
         );
 
-        // Compile seed phrases for secure storage
+        // Compile master seed phrase for secure storage (single phrase derives all wallets)
         let wallet_seed_phrases = crate::citizenship::onboarding::WalletSeedPhrases {
-            primary_wallet_seeds: primary_seed_phrase,
-            ubi_wallet_seeds: ubi_seed_phrase,
-            savings_wallet_seeds: savings_seed_phrase,
-            generated_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
+            master_seed_phrase,
         };
 
         Ok(CitizenshipResult::new(
@@ -317,24 +317,37 @@ impl IdentityManager {
         identity.metadata.insert("kyber_public_key".to_string(), hex::encode(&kyber_public_key));
         identity.metadata.insert("registration_type".to_string(), "external_citizen".to_string());
 
-        // Create 3 wallets WITH seed phrases
-        let (primary_wallet_id, primary_seed_phrase) = identity.wallet_manager.create_wallet_with_seed_phrase(
+        // Generate master seed for HD wallet derivation (64 bytes)
+        let mut master_seed = [0u8; 64];
+        {
+            use rand::RngCore;
+            rand::rngs::OsRng.fill_bytes(&mut master_seed);
+        }
+
+        // Initialize wallet manager with master seed for HD derivation
+        identity.wallet_manager = crate::wallets::WalletManager::from_master_seed(id.clone(), master_seed);
+
+        // Create HD wallets at fixed indices: 0=Primary, 1=UBI, 2=Savings
+        let (primary_wallet_id, _) = identity.wallet_manager.create_hd_wallet(
             WalletType::Primary,
             "Primary Wallet".to_string(),
-            None
+            Some("primary".to_string()),
         ).await?;
 
-        let (ubi_wallet_id, ubi_seed_phrase) = identity.wallet_manager.create_wallet_with_seed_phrase(
+        let (ubi_wallet_id, _) = identity.wallet_manager.create_hd_wallet(
             WalletType::UBI,
             "UBI Wallet".to_string(),
-            None
+            Some("ubi".to_string()),
         ).await?;
 
-        let (savings_wallet_id, savings_seed_phrase) = identity.wallet_manager.create_wallet_with_seed_phrase(
+        let (savings_wallet_id, _) = identity.wallet_manager.create_hd_wallet(
             WalletType::Savings,
             "Savings Wallet".to_string(),
-            None
+            Some("savings".to_string()),
         ).await?;
+
+        // Generate 24-word master seed phrase from first 32 bytes of master seed
+        let master_seed_phrase = crate::recovery::RecoveryPhrase::from_entropy(&master_seed[..32])?;
 
         // Register for DAO governance
         let dao_registration = crate::citizenship::DaoRegistration::register_for_dao_governance(&id, economic_model).await?;
@@ -386,12 +399,9 @@ impl IdentityManager {
             hex::encode(&id.0[..8])
         );
 
-        // Compile seed phrases
+        // Compile master seed phrase for secure storage (single phrase derives all wallets)
         let wallet_seed_phrases = crate::citizenship::onboarding::WalletSeedPhrases {
-            primary_wallet_seeds: primary_seed_phrase,
-            ubi_wallet_seeds: ubi_seed_phrase,
-            savings_wallet_seeds: savings_seed_phrase,
-            generated_at: current_time,
+            master_seed_phrase,
         };
 
         Ok(CitizenshipResult::new(
