@@ -186,9 +186,20 @@ impl RegisterGuard {
         parent_hash: Option<NameHash>,
     ) -> NameRecord {
         let name_hash = super::validation::compute_name_hash(&parsed.full_name);
-        let expires_at = current_time + duration_secs;
-        let transfer_lock_until = current_time + timing::TRANSFER_LOCK_SECS;
 
+        // Phase 6: Calculate lifecycle heights from duration
+        // Convert duration_secs to blocks (approximately)
+        let duration_blocks = duration_secs / 10; // 10 seconds per block
+        let expires_at_height = current_block + duration_blocks;
+        let renewal_window_start_height = expires_at_height.saturating_sub(timing::RENEWAL_WINDOW_BLOCKS);
+        let renew_grace_until_height = expires_at_height + timing::EXPIRATION_GRACE_BLOCKS;
+        let transfer_lock_until = current_block + timing::TRANSFER_LOCK_BLOCKS;
+
+        // Legacy fields (deprecated, for display only)
+        #[allow(deprecated)]
+        let expires_at = current_time + duration_secs;
+
+        #[allow(deprecated)]
         NameRecord {
             name: parsed.full_name.clone(),
             name_hash,
@@ -206,10 +217,17 @@ impl RegisterGuard {
             governance_delegate: None,
             status: NameStatus::Active,
             registered_at: current_block,
+            // Phase 6: Block height fields (authoritative)
+            expires_at_height,
+            renewal_window_start_height,
+            renew_grace_until_height,
+            revoke_grace_until_height: None,
+            // Legacy fields (deprecated, display only)
             expires_at,
             grace_ends_at: None,
             suspended_at: None,
             suspended_by: None,
+            custodian: None,
             transfer_lock_until: Some(transfer_lock_until),
             transfer_history: vec![],
             renewal_history: vec![],
