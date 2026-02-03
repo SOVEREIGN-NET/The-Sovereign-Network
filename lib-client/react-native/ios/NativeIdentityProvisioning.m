@@ -64,6 +64,9 @@ RCT_EXTERN_METHOD(importIdentityEncrypted:(NSString *)encryptedBase64
 RCT_EXTERN_METHOD(getMasterSeedForBackup:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(getSeedPhraseForBackup:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 // MARK: - Utility
 
 RCT_EXTERN_METHOD(hasIdentity:(RCTPromiseResolveBlock)resolve
