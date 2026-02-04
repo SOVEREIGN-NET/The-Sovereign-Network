@@ -932,6 +932,17 @@ impl Blockchain {
             }
         }
 
+        // CRITICAL: Load persisted SOV token contract from SledStore if not reconstructed from transactions
+        // The genesis token contract (with user balances) may not be in ContractExecution transactions
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        if !blockchain.token_contracts.contains_key(&sov_token_id) {
+            let token_id = crate::storage::TokenId(sov_token_id);
+            if let Ok(Some(sov_token)) = store.get_token_contract(&token_id) {
+                info!("🪙 Loaded SOV token contract from SledStore (balances preserved)");
+                blockchain.token_contracts.insert(sov_token_id, sov_token);
+            }
+        }
+
         info!(
             "📂 Loaded blockchain from SledStore: height={}, identities={}, wallets={}, tokens={}",
             blockchain.height,

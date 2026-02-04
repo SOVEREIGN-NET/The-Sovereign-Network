@@ -25,6 +25,10 @@ use lib_identity::{IdentityManager, RecoveryPhraseManager, PhraseGenerationOptio
 // Session management
 use crate::session_manager::SessionManager;
 
+// BIP39 and deterministic key generation for recovery
+use super::bip39::entropy_from_mnemonic;
+use crystals_dilithium::dilithium5::Keypair as DilithiumKeypair;
+
 /// Request for generating recovery phrase
 #[derive(Debug, Deserialize)]
 pub struct GenerateRecoveryPhraseRequest {
@@ -210,11 +214,11 @@ pub async fn handle_verify_recovery_phrase(
         .map(|s| s.to_string())
         .collect();
 
-    // Validate word count
-    if words.len() != 20 {
+    // Validate word count (accept both 20-word custom and 24-word BIP39 standard)
+    if words.len() != 20 && words.len() != 24 {
         return Ok(ZhtpResponse::error(
             ZhtpStatus::BadRequest,
-            "Recovery phrase must be 20 words".to_string(),
+            format!("Recovery phrase must be 20 or 24 words, got {}", words.len()),
         ));
     }
 
@@ -258,6 +262,13 @@ pub async fn handle_recover_identity(
     rate_limiter: Arc<crate::api::middleware::RateLimiter>,
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
+    // Debug: write to file to verify code execution
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/recovery_debug.log") {
+        let _ = writeln!(f, "RECOVERY HANDLER ENTERED - body len: {} at {:?}", request_body.len(), std::time::SystemTime::now());
+    }
+    tracing::info!("🔑🔑🔑 RECOVERY HANDLER ENTERED - body len: {}", request_body.len());
+
     // Extract client IP for rate limiting
     let client_ip = request.headers.get("X-Real-IP")
         .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
@@ -288,27 +299,83 @@ pub async fn handle_recover_identity(
         .map(|s| s.to_string())
         .collect();
 
-    // Validate word count
-    if words.len() != 20 {
+    // Validate word count (accept both 20-word custom and 24-word BIP39 standard)
+    if words.len() != 20 && words.len() != 24 {
         return Ok(ZhtpResponse::error(
             ZhtpStatus::BadRequest,
-            "Recovery phrase must be 20 words".to_string(),
+            format!("Recovery phrase must be 20 or 24 words, got {}", words.len()),
         ));
     }
 
-    // Restore identity from phrase using RecoveryPhraseManager
-    let phrase_manager = recovery_phrase_manager.read().await;
-    let (identity_id, _private_key, _public_key, _seed) = phrase_manager
-        .restore_from_phrase(&words)
-        .await
-        .map_err(|e| anyhow::anyhow!("Identity recovery failed: {}", e))?;
-    drop(phrase_manager);
+    // Restore identity from phrase using appropriate method based on word count
+    eprintln!("🔑🔑🔑 Recovery attempt: {} words received", words.len());
+
+    let identity_id = if words.len() == 24 {
+        // 24-word BIP39 standard - derive identity using lib-client's method:
+        // 1. Extract 32-byte entropy from mnemonic (NOT BIP39 PBKDF2)
+        // 2. Generate Dilithium keypair from entropy (deterministic)
+        // 3. Hash public key to get DID
+
+        let phrase_str = words.join(" ");
+        eprintln!("🔑🔑🔑 Extracting entropy from phrase...");
+
+        // Step 1: Extract 32-byte entropy from mnemonic
+        let entropy = match entropy_from_mnemonic(&phrase_str) {
+            Ok(e) => {
+                eprintln!("🔑🔑🔑 Entropy extracted OK: {:02x?}", &e[..8]);
+                e
+            }
+            Err(e) => {
+                eprintln!("🔑🔑🔑 Entropy extraction FAILED: {}", e);
+                return Err(anyhow::anyhow!("Failed to extract entropy: {}", e));
+            }
+        };
+
+        // Step 2: Generate Dilithium5 keypair from entropy (deterministic)
+        eprintln!("🔑🔑🔑 Generating Dilithium keypair...");
+        let keypair = DilithiumKeypair::generate(Some(&entropy));
+        let dilithium_pk = keypair.public.to_bytes();
+        eprintln!("🔑🔑🔑 Dilithium5 public key generated ({} bytes)", dilithium_pk.len());
+
+        // Step 3: Hash public key to get DID (same as lib-client)
+        // lib-client: let pk_hash = Blake3::hash(&dilithium_pk);
+        let pk_hash = lib_crypto::hash_blake3(&dilithium_pk);
+        let did = format!("did:zhtp:{}", hex::encode(pk_hash));
+        eprintln!("🔑🔑🔑 Derived DID from public key: {}", &did);
+
+        // Step 4: Extract identity_id from DID
+        let id_hex = did.strip_prefix("did:zhtp:")
+            .ok_or_else(|| anyhow::anyhow!("Invalid DID format"))?;
+        lib_crypto::Hash::from_hex(id_hex)
+            .map_err(|e| anyhow::anyhow!("Invalid identity hash: {}", e))?
+    } else {
+        // 20-word custom format - use legacy Blake3 derivation
+        let phrase_manager = recovery_phrase_manager.read().await;
+        let (id, _private_key, _public_key, _seed) = phrase_manager
+            .restore_from_phrase(&words)
+            .await
+            .map_err(|e| anyhow::anyhow!("Identity recovery failed: {}", e))?;
+        drop(phrase_manager);
+        id
+    };
+
+    eprintln!("🔑🔑🔑 Looking for identity_id: {}", identity_id);
 
     // Verify identity exists in IdentityManager
     let manager = identity_manager.read().await;
+
+    // Log all stored identities for debugging
+    let stored_ids: Vec<String> = manager.list_identities()
+        .iter()
+        .map(|id| id.did.clone())
+        .collect();
+    eprintln!("🔑🔑🔑 Stored identities ({} total): {:?}", stored_ids.len(),
+        stored_ids.iter().take(10).collect::<Vec<_>>());
+
     let identity = match manager.get_identity(&identity_id) {
         Some(id) => id,
         None => {
+            eprintln!("🔑🔑🔑 Identity NOT FOUND: {}", identity_id);
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 "Identity not found in storage".to_string(),
