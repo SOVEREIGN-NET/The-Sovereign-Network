@@ -25,9 +25,8 @@ use lib_identity::{IdentityManager, RecoveryPhraseManager, PhraseGenerationOptio
 // Session management
 use crate::session_manager::SessionManager;
 
-// BIP39 and deterministic key generation for recovery
-use super::bip39::entropy_from_mnemonic;
-use crystals_dilithium::dilithium5::Keypair as DilithiumKeypair;
+// Handler constants
+use super::super::constants::RECOVERY_PHRASE_WORD_COUNT;
 
 /// Request for generating recovery phrase
 #[derive(Debug, Deserialize)]
@@ -214,11 +213,11 @@ pub async fn handle_verify_recovery_phrase(
         .map(|s| s.to_string())
         .collect();
 
-    // Validate word count (accept both 20-word custom and 24-word BIP39 standard)
-    if words.len() != 20 && words.len() != 24 {
+    // Validate word count (BIP39 standard - 24 words only)
+    if words.len() != RECOVERY_PHRASE_WORD_COUNT {
         return Ok(ZhtpResponse::error(
             ZhtpStatus::BadRequest,
-            format!("Recovery phrase must be 20 or 24 words, got {}", words.len()),
+            format!("Recovery phrase must be {} words, got {}", RECOVERY_PHRASE_WORD_COUNT, words.len()),
         ));
     }
 
@@ -299,11 +298,11 @@ pub async fn handle_recover_identity(
         .map(|s| s.to_string())
         .collect();
 
-    // Validate word count (accept both 20-word custom and 24-word BIP39 standard)
-    if words.len() != 20 && words.len() != 24 {
+    // Validate word count (BIP39 standard - 24 words only)
+    if words.len() != RECOVERY_PHRASE_WORD_COUNT {
         return Ok(ZhtpResponse::error(
             ZhtpStatus::BadRequest,
-            format!("Recovery phrase must be 20 or 24 words, got {}", words.len()),
+            format!("Recovery phrase must be {} words, got {}", RECOVERY_PHRASE_WORD_COUNT, words.len()),
         ));
     }
 

@@ -1,0 +1,20 @@
+[package]
+name = "zhtp-client-core"
+version = "0.1.0"
+edition = "2021"
+description = "Client-focused core logic for ZHTP mobile/edge"
+license = "MIT"
+
+[dependencies]
+zhtp-client-crypto-types = { path = "../zhtp-client-crypto-types" }
+zhtp-client-tx-types = { path = "../zhtp-client-tx-types" }
+
+[features]
+default = ["identity", "tx", "handshake"]
+identity = []
+tx = []
+handshake = []
+
+[lib]
+name = "zhtp_client_core"
+path = "src/lib.rs"

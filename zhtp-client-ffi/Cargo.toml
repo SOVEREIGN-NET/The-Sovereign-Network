@@ -1,0 +1,20 @@
+[package]
+name = "zhtp-client-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "FFI bindings for ZHTP mobile client core"
+license = "MIT"
+
+[dependencies]
+zhtp-client-core = { path = "../zhtp-client-core" }
+libc = "0.2"
+
+[features]
+default = ["ffi-c"]
+ffi-c = []
+ffi-uniffi = []
+
+[lib]
+name = "zhtp_client_ffi"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib"]
