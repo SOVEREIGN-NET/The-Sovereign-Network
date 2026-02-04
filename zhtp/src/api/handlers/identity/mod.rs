@@ -29,13 +29,14 @@ use lib_identity::{
 
 // Blockchain imports for transaction creation
 use lib_blockchain::{
-    Transaction, 
+    Transaction,
     transaction::core::IdentityTransactionData,
     integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm},
     Hash,
 };
 
-// Removed unused cryptographic imports
+// Handler constants
+use super::constants::{SOV_WELCOME_BONUS, ZHTP_RECOVERY_PHRASE_WORD_COUNT, BIP39_WORD_COUNT};
 
 /// Clean identity handler implementation
 pub struct IdentityHandler {
@@ -913,10 +914,11 @@ impl IdentityHandler {
             .map(|s| s.to_string())
             .collect();
 
-        if seed_words.len() != 20 {
+        // Accept both 20-word custom and 24-word BIP39 standard formats
+        if seed_words.len() != ZHTP_RECOVERY_PHRASE_WORD_COUNT && seed_words.len() != BIP39_WORD_COUNT {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
-                format!("Invalid seed phrase: expected 20 words, got {}", seed_words.len()),
+                format!("Invalid seed phrase: expected {} or {} words, got {}", ZHTP_RECOVERY_PHRASE_WORD_COUNT, BIP39_WORD_COUNT, seed_words.len()),
             ));
         }
 
@@ -1530,7 +1532,7 @@ impl IdentityHandler {
 
         use lib_blockchain::transaction::TransactionOutput;
 
-        let welcome_bonus_amount = 5000u64; // Citizens always get welcome bonus
+        let welcome_bonus_amount = SOV_WELCOME_BONUS; // Citizens always get welcome bonus
 
         let outputs = vec![TransactionOutput {
             commitment: lib_blockchain::types::hash::blake3_hash(

@@ -2,6 +2,7 @@
 //!
 //! Clean, minimal handler modules for ZHTP API
 
+pub mod constants;
 pub mod identity;
 pub mod guardian;
 pub mod zkp;

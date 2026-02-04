@@ -122,6 +122,39 @@ pub extern "C" fn zhtp_client_generate_identity(
     }
 }
 
+/// Restore identity from a 24-word seed phrase. Returns a pointer to IdentityHandle.
+/// Caller must free with `zhtp_client_identity_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_restore_identity_from_phrase(
+    phrase: *const std::ffi::c_char,
+    device_id: *const std::ffi::c_char,
+) -> *mut IdentityHandle {
+    let phrase = unsafe {
+        if phrase.is_null() {
+            return std::ptr::null_mut();
+        }
+        match std::ffi::CStr::from_ptr(phrase).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    let device_id = unsafe {
+        if device_id.is_null() {
+            return std::ptr::null_mut();
+        }
+        match std::ffi::CStr::from_ptr(device_id).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    match restore_identity_from_phrase(&phrase, device_id) {
+        Ok(identity) => Box::into_raw(Box::new(IdentityHandle { inner: identity })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Free an identity handle
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_free(handle: *mut IdentityHandle) {
