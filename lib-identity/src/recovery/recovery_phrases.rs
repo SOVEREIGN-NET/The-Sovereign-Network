@@ -1226,9 +1226,9 @@ impl RecoveryPhraseManager {
         use lib_crypto::{hash_blake3, derive_keys};
         
         
-        // Validate phrase format
-        if phrase_words.len() != 20 {
-            return Err(anyhow!("Recovery phrase must be exactly 20 words, got {}", phrase_words.len()));
+        // Validate phrase format (accept both 20-word custom and 24-word BIP39 standard)
+        if phrase_words.len() != 20 && phrase_words.len() != 24 {
+            return Err(anyhow!("Recovery phrase must be 20 or 24 words, got {}", phrase_words.len()));
         }
         
         // Join words to create seed material
