@@ -122,6 +122,39 @@ pub extern "C" fn zhtp_client_generate_identity(
     }
 }
 
+/// Restore identity from a 24-word seed phrase. Returns a pointer to IdentityHandle.
+/// Caller must free with `zhtp_client_identity_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_restore_identity_from_phrase(
+    phrase: *const std::ffi::c_char,
+    device_id: *const std::ffi::c_char,
+) -> *mut IdentityHandle {
+    let phrase = unsafe {
+        if phrase.is_null() {
+            return std::ptr::null_mut();
+        }
+        match std::ffi::CStr::from_ptr(phrase).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    let device_id = unsafe {
+        if device_id.is_null() {
+            return std::ptr::null_mut();
+        }
+        match std::ffi::CStr::from_ptr(device_id).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    match restore_identity_from_phrase(&phrase, device_id) {
+        Ok(identity) => Box::into_raw(Box::new(IdentityHandle { inner: identity })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Free an identity handle
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_free(handle: *mut IdentityHandle) {
@@ -662,6 +695,133 @@ pub extern "C" fn zhtp_client_build_token_burn(
     token_id_arr.copy_from_slice(token_id_slice);
 
     match token_tx::build_burn_tx(identity, &token_id_arr, amount, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed domain registration transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/web4/domains/register
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (becomes domain owner)
+/// - domain: Domain name (e.g., "example.sov") (null-terminated C string)
+/// - content_cid: Optional content CID (null-terminated C string, can be NULL)
+/// - chain_id: Network chain ID
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_domain_register(
+    handle: *const IdentityHandle,
+    domain: *const std::ffi::c_char,
+    content_cid: *const std::ffi::c_char,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || domain.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let domain_str = unsafe {
+        match std::ffi::CStr::from_ptr(domain).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    let content_cid_opt = if content_cid.is_null() {
+        None
+    } else {
+        match unsafe { std::ffi::CStr::from_ptr(content_cid).to_str() } {
+            Ok(s) => Some(s),
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    match token_tx::build_domain_register_tx(identity, domain_str, content_cid_opt, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed domain update transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/web4/domains/update
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (domain owner)
+/// - domain: Domain name (e.g., "example.sov") (null-terminated C string)
+/// - content_cid: Content CID (null-terminated C string)
+/// - chain_id: Network chain ID
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_domain_update(
+    handle: *const IdentityHandle,
+    domain: *const std::ffi::c_char,
+    content_cid: *const std::ffi::c_char,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || domain.is_null() || content_cid.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let domain_str = unsafe {
+        match std::ffi::CStr::from_ptr(domain).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let content_cid_str = unsafe {
+        match std::ffi::CStr::from_ptr(content_cid).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    match token_tx::build_domain_update_tx(identity, domain_str, content_cid_str, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed domain transfer transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/web4/domains/transfer
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (current domain owner)
+/// - domain: Domain name (e.g., "example.sov") (null-terminated C string)
+/// - to_pubkey: New owner's public key bytes (32 bytes)
+/// - chain_id: Network chain ID
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_domain_transfer(
+    handle: *const IdentityHandle,
+    domain: *const std::ffi::c_char,
+    to_pubkey: *const u8,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || domain.is_null() || to_pubkey.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let domain_str = unsafe {
+        match std::ffi::CStr::from_ptr(domain).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let to_pubkey_slice = unsafe { std::slice::from_raw_parts(to_pubkey, 1312) };
+
+    match token_tx::build_domain_transfer_tx(identity, domain_str, to_pubkey_slice, chain_id) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
