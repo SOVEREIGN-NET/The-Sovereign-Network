@@ -766,8 +766,9 @@ impl IdentityManager {
             .map(|s| s.to_string())
             .collect();
         
-        if phrase_words.len() != 20 {
-            return Err(anyhow!("Recovery phrase must be exactly 20 words"));
+        // Accept both 20-word custom and 24-word BIP39 standard
+        if phrase_words.len() != 20 && phrase_words.len() != 24 {
+            return Err(anyhow!("Recovery phrase must be 20 or 24 words, got {}", phrase_words.len()));
         }
         
         // Derive identity from recovery phrase
