@@ -49,6 +49,7 @@ uniffi = { version = "0.25", optional = true }
 pqcrypto-dilithium = "0.5"
 pqcrypto-kyber = "0.8"
 pqcrypto-traits = "0.3"
+crystals-dilithium = "1.0"  # For deterministic keypair generation from seed
 
 # WASM: Pure Rust PQC implementations
 [target.'cfg(target_arch = "wasm32")'.dependencies]

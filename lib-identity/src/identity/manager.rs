@@ -243,6 +243,17 @@ impl IdentityManager {
         display_name: Option<String>,
         created_at: u64,
     ) -> Result<()> {
+        // Enforce identity invariants: DID must encode the provided identity_id.
+        // This prevents registering identities where DID and ID diverge.
+        let expected_id = crate::did::parse_did_to_identity_id(&did)?;
+        if expected_id != identity_id {
+            return Err(anyhow!(
+                "Identity ID does not match DID (expected {}, got {})",
+                expected_id,
+                identity_id
+            ));
+        }
+
         // Check for duplicate
         if self.identities.contains_key(&identity_id) {
             return Err(anyhow!("Identity already registered: {}", identity_id));
@@ -260,13 +271,20 @@ impl IdentityManager {
 
         // Get the actual identity ID from the created identity (derived from DID)
         let actual_id = identity.id.clone();
+        if actual_id != identity_id {
+            return Err(anyhow!(
+                "Identity ID mismatch after creation (expected {}, got {})",
+                identity_id,
+                actual_id
+            ));
+        }
 
         // Store identity
-        self.identities.insert(actual_id.clone(), identity);
+        self.identities.insert(identity_id.clone(), identity);
 
         tracing::info!(
             "📱 External identity registered: {} (type: {:?})",
-            &actual_id.to_string()[..16.min(actual_id.to_string().len())],
+            &identity_id.to_string()[..16.min(identity_id.to_string().len())],
             identity_type
         );
 
