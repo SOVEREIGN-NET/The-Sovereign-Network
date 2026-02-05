@@ -31,7 +31,15 @@ pub struct DomainRegistry {
     /// Registry statistics
     stats: Arc<RwLock<Web4Statistics>>,
     /// Manifest history per domain (domain -> list of manifests, oldest first)
-    manifest_history: Arc<RwLock<HashMap<String, Vec<Web4Manifest>>>>,
+    manifest_history: Arc<RwLock<HashMap<String, Vec<StoredWeb4Manifest>>>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct StoredWeb4Manifest {
+    /// Stable CID captured at store-time.
+    cid: String,
+    /// The manifest payload.
+    manifest: Web4Manifest,
 }
 
 impl DomainRegistry {
@@ -202,27 +210,94 @@ impl DomainRegistry {
         for domain in &domains_to_load {
             match self.storage.load_manifest(domain).await {
                 Ok(Some(manifest_data)) => {
+                    // Preferred (new) persisted format
+                    if let Ok(stored) = serde_json::from_slice::<Vec<StoredWeb4Manifest>>(&manifest_data) {
+                        {
+                            let mut history = self.manifest_history.write().await;
+                            history.insert(domain.clone(), stored.clone());
+                        }
+
+                        {
+                            let mut cache = self.content_cache.write().await;
+                            for entry in &stored {
+                                let manifest_bytes = match serde_json::to_vec(&entry.manifest) {
+                                    Ok(bytes) => bytes,
+                                    Err(e) => {
+                                        warn!("Failed to serialize manifest for caching: {}", e);
+                                        continue;
+                                    }
+                                };
+                                cache.insert(entry.cid.clone(), manifest_bytes);
+                            }
+                        }
+
+                        loaded_manifests += 1;
+                        continue;
+                    }
+
+                    // Legacy format: Vec<Web4Manifest>
                     match serde_json::from_slice::<Vec<Web4Manifest>>(&manifest_data) {
                         Ok(manifests) => {
-                            // Store in manifest_history and cache manifest content
-                            {
-                                let mut history = self.manifest_history.write().await;
-                                history.insert(domain.clone(), manifests.clone());
+                            // Reconstruct stable CIDs without recomputing.
+                            // Reason: Web4Manifest::compute_cid() hashes JSON bytes which include a HashMap (`files`),
+                            // and HashMap serialization order can change across restarts.
+                            let current_cid = {
+                                let records = self.domain_records.read().await;
+                                records
+                                    .get(domain)
+                                    .map(|r| r.current_web4_manifest_cid.clone())
+                                    .unwrap_or_default()
+                            };
+
+                            let mut by_version: std::collections::BTreeMap<u64, Web4Manifest> = std::collections::BTreeMap::new();
+                            for m in manifests {
+                                by_version.insert(m.version, m);
                             }
 
-                            // FIX (Content Not Found Bug): Also cache the manifest content for fast CID lookup
+                            let highest_version = by_version.keys().next_back().copied().unwrap_or(0);
+                            if highest_version == 0 {
+                                continue;
+                            }
+
+                            let mut cid_by_version: std::collections::BTreeMap<u64, String> = std::collections::BTreeMap::new();
+                            if !current_cid.is_empty() {
+                                cid_by_version.insert(highest_version, current_cid);
+                            }
+
+                            for v in (2..=highest_version).rev() {
+                                if let Some(m) = by_version.get(&v) {
+                                    if let Some(prev_cid) = m.previous_manifest.clone() {
+                                        cid_by_version.insert(v - 1, prev_cid);
+                                    }
+                                }
+                            }
+
+                            let mut stored: Vec<StoredWeb4Manifest> = Vec::new();
+                            for (v, m) in by_version {
+                                let cid = cid_by_version
+                                    .get(&v)
+                                    .cloned()
+                                    // Fallback only for malformed legacy histories; best-effort.
+                                    .unwrap_or_else(|| m.compute_cid());
+                                stored.push(StoredWeb4Manifest { cid, manifest: m });
+                            }
+
+                            {
+                                let mut history = self.manifest_history.write().await;
+                                history.insert(domain.clone(), stored.clone());
+                            }
+
                             {
                                 let mut cache = self.content_cache.write().await;
-                                for manifest in &manifests {
-                                    let cid = manifest.compute_cid();
-                                    let manifest_bytes = match serde_json::to_vec(manifest) {
+                                for entry in &stored {
+                                    let manifest_bytes = match serde_json::to_vec(&entry.manifest) {
                                         Ok(bytes) => bytes,
                                         Err(e) => {
                                             warn!("Failed to serialize manifest for caching: {}", e);
                                             continue;
                                         }
                                     };
-                                    cache.insert(cid, manifest_bytes);
+                                    cache.insert(entry.cid.clone(), manifest_bytes);
                                 }
                             }
 
@@ -961,7 +1036,9 @@ impl DomainRegistry {
                 domain: record.domain.clone(),
                 version: record.version,
                 current_web4_manifest_cid: record.current_web4_manifest_cid.clone(),
-                owner_did: format!("did:zhtp:{}", hex::encode(&record.owner.0[..16])),
+                // IMPORTANT: Owner DID must round-trip to the full IdentityId.
+                // Truncating breaks update authorization and identity lookup.
+                owner_did: format!("did:zhtp:{}", hex::encode(&record.owner.0)),
                 updated_at: record.updated_at,
                 expires_at: record.expires_at,
                 build_hash: hex::encode(&hash_blake3(record.current_web4_manifest_cid.as_bytes())[..16]),
@@ -1093,14 +1170,14 @@ impl DomainRegistry {
         let mut versions = Vec::new();
 
         if let Some(domain_manifests) = manifests.get(domain) {
-            for manifest in domain_manifests.iter().rev().take(limit) {
+            for entry in domain_manifests.iter().rev().take(limit) {
                 versions.push(DomainVersionEntry {
-                    version: manifest.version,
-                    web4_manifest_cid: manifest.compute_cid(),
-                    created_at: manifest.created_at,
-                    created_by: manifest.created_by.clone(),
-                    message: manifest.message.clone(),
-                    build_hash: manifest.build_hash.clone(),
+                    version: entry.manifest.version,
+                    web4_manifest_cid: entry.cid.clone(),
+                    created_at: entry.manifest.created_at,
+                    created_by: entry.manifest.created_by.clone(),
+                    message: entry.manifest.message.clone(),
+                    build_hash: entry.manifest.build_hash.clone(),
                 });
             }
         } else {
@@ -1223,18 +1300,46 @@ impl DomainRegistry {
         let manifest_bytes = serde_json::to_vec(&manifest)
             .map_err(|e| anyhow!("Failed to serialize manifest: {}", e))?;
 
-        // Validate manifest chain if we have the previous one
-        if manifest.version > 1 {
+        // Validate manifest chain WITHOUT recomputing previous CID.
+        // Recomputing via JSON serialization is not stable because `files` is a HashMap.
+        if manifest.version == 1 {
+            if manifest.previous_manifest.is_some() {
+                return Err(anyhow!(
+                    "Manifest chain validation failed: Version 1 manifest must not have previous_manifest"
+                ));
+            }
+        } else {
+            let prev_cid = manifest
+                .previous_manifest
+                .as_ref()
+                .ok_or_else(|| anyhow!(
+                    "Manifest chain validation failed: Version > 1 must have previous_manifest"
+                ))?;
+
             let manifests = self.manifest_history.read().await;
             if let Some(domain_manifests) = manifests.get(&domain) {
                 if let Some(prev) = domain_manifests.last() {
-                    manifest.validate_chain(Some(prev))
-                        .map_err(|e| anyhow!("Manifest chain validation failed: {}", e))?;
+                    if prev_cid != &prev.cid {
+                        return Err(anyhow!(
+                            "Manifest chain validation failed: previous_manifest mismatch: expected {}, got {}",
+                            prev.cid,
+                            prev_cid
+                        ));
+                    }
+                    if manifest.version != prev.manifest.version + 1 {
+                        return Err(anyhow!(
+                            "Manifest chain validation failed: Version must be previous + 1: expected {}, got {}",
+                            prev.manifest.version + 1,
+                            manifest.version
+                        ));
+                    }
+                    if manifest.domain != prev.manifest.domain {
+                        return Err(anyhow!(
+                            "Manifest chain validation failed: Domain mismatch in manifest chain"
+                        ));
+                    }
                 }
             }
-        } else {
-            manifest.validate_chain(None)
-                .map_err(|e| anyhow!("Manifest validation failed: {}", e))?;
         }
 
         // Store manifest in memory
@@ -1242,7 +1347,10 @@ impl DomainRegistry {
         manifests
             .entry(domain.clone())
             .or_insert_with(Vec::new)
-            .push(manifest);
+            .push(StoredWeb4Manifest {
+                cid: cid.clone(),
+                manifest,
+            });
 
         // FIX (Phantom Domain Bug): Also persist manifest history to storage
         // Get the updated history for this domain
@@ -1272,9 +1380,9 @@ impl DomainRegistry {
         let manifests = self.manifest_history.read().await;
 
         if let Some(domain_manifests) = manifests.get(domain) {
-            for manifest in domain_manifests {
-                if manifest.compute_cid() == cid {
-                    return Ok(Some(manifest.clone()));
+            for entry in domain_manifests {
+                if entry.cid == cid {
+                    return Ok(Some(entry.manifest.clone()));
                 }
             }
         } else {
@@ -1304,13 +1412,13 @@ impl DomainRegistry {
             .ok_or_else(|| anyhow!("No history found for domain: {}", domain))?;
 
         let target_manifest = domain_manifests.iter()
-            .find(|m| m.version == target_version)
+            .find(|m| m.manifest.version == target_version)
             .ok_or_else(|| anyhow!("Version {} not found for domain {}", target_version, domain))?
             .clone();
 
         drop(manifests);
 
-        let target_cid = target_manifest.compute_cid();
+        let target_cid = target_manifest.cid;
 
         // Get current state
         let records = self.domain_records.read().await;
