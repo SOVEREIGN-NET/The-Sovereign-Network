@@ -407,6 +407,34 @@ pub extern "C" fn zhtp_client_sign_uhp_challenge(
     }
 }
 
+/// Sign arbitrary message bytes. Returns signature bytes.
+/// Use for migration, custom auth, etc. Caller must free with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_sign_message(
+    handle: *const IdentityHandle,
+    message: *const u8,
+    message_len: usize,
+) -> ByteBuffer {
+    if handle.is_null() || message.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let message_bytes = unsafe { std::slice::from_raw_parts(message, message_len) };
+
+    match identity::sign_message(identity, message_bytes) {
+        Ok(mut sig) => {
+            let buf = ByteBuffer {
+                data: sig.as_mut_ptr(),
+                len: sig.len(),
+            };
+            std::mem::forget(sig);
+            buf
+        }
+        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+    }
+}
+
 /// Serialize identity to JSON. Caller must free with `zhtp_client_string_free`.
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_serialize(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
