@@ -69,19 +69,22 @@ pub fn dilithium5_verify(message: &[u8], signature: &[u8], public_key: &[u8]) ->
 const DILITHIUM2_PUBLICKEY_BYTES: usize = 1312;
 const DILITHIUM5_PUBLICKEY_BYTES: usize = 2592;
 const DILITHIUM2_SECRETKEY_BYTES: usize = 2560; // pqcrypto_dilithium uses 2560, not 2528
-const DILITHIUM5_SECRETKEY_BYTES: usize = 4896;
+const DILITHIUM5_SECRETKEY_BYTES: usize = 4896; // crystals-dilithium (new)
+const DILITHIUM5_SECRETKEY_BYTES_LEGACY: usize = 4864; // pqcrypto-dilithium (old/legacy)
 
 /// Auto-detecting Dilithium signing
 /// Chooses Dilithium2 or Dilithium5 based on secret key size
+/// Supports both legacy (4864-byte) and new (4896-byte) Dilithium5 keys
 pub fn dilithium_sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
     if secret_key.len() == DILITHIUM2_SECRETKEY_BYTES {
         dilithium2_sign(message, secret_key)
-    } else if secret_key.len() == DILITHIUM5_SECRETKEY_BYTES {
+    } else if secret_key.len() == DILITHIUM5_SECRETKEY_BYTES || secret_key.len() == DILITHIUM5_SECRETKEY_BYTES_LEGACY {
+        // Both new (4896) and legacy (4864) sizes are Dilithium5
         dilithium5_sign(message, secret_key)
     } else {
         Err(anyhow::anyhow!(
-            "Unknown Dilithium secret key size: {} (expected {} for D2 or {} for D5)",
-            secret_key.len(), DILITHIUM2_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES
+            "Unknown Dilithium secret key size: {} (expected {} for D2 or {}/{} for D5)",
+            secret_key.len(), DILITHIUM2_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES_LEGACY
         ))
     }
 }
@@ -386,6 +389,25 @@ mod tests {
         let expected_size = message.len() + 4627;
         assert_eq!(signature.len(), expected_size,
             "D5 signature size should be message_len + 4627 = {}", expected_size);
+    }
+
+    #[test]
+    fn test_legacy_key_sizes() {
+        // Test if pqcrypto_dilithium can parse different key sizes
+        // This documents the library's size requirements
+
+        // Secret key sizes
+        let legacy_sk = vec![0u8; 4864];
+        let current_sk = vec![0u8; 4896];
+        println!("Secret key 4864 bytes accepted: {}",
+            pqcrypto_dilithium::dilithium5::SecretKey::from_bytes(&legacy_sk).is_ok());
+        println!("Secret key 4896 bytes accepted: {}",
+            pqcrypto_dilithium::dilithium5::SecretKey::from_bytes(&current_sk).is_ok());
+
+        // Public key - should be same size (2592) regardless of library version
+        let pk = vec![0u8; 2592];
+        println!("Public key 2592 bytes accepted: {}",
+            pqcrypto_dilithium::dilithium5::PublicKey::from_bytes(&pk).is_ok());
     }
 
 }
