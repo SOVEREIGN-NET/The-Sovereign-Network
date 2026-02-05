@@ -823,15 +823,10 @@ pub async fn handle_verify_seed_phrase(
 /// Request for migrating identity with broken seed to new deterministic identity
 #[derive(Debug, Deserialize)]
 pub struct MigrateIdentityRequest {
-    /// The display_name to claim from old identity
-    pub display_name: String,
     /// New DID (derived from new deterministic seed on client)
     pub new_did: String,
     /// New Dilithium5 public key (hex encoded)
     pub new_public_key: String,
-    /// New Kyber1024 public key (hex encoded, optional)
-    #[serde(default)]
-    pub new_kyber_public_key: Option<String>,
     /// Device ID
     pub device_id: String,
 }
@@ -850,19 +845,60 @@ pub struct MigrateIdentityResponse {
 ///
 /// One-time migration for users with broken seed phrases.
 /// Transfers display_name from old identity to new deterministic identity.
+///
+/// SECURITY: Requires UHP authentication. The authenticated identity (from request.requester)
+/// is the old identity being migrated. This proves ownership via cryptographic signature.
+///
+/// NOTE: IdentityManager changes are in-memory. The caller (server) is responsible for
+/// persisting state if needed.
 pub async fn handle_migrate_identity(
     request_body: &[u8],
     identity_manager: Arc<RwLock<IdentityManager>>,
+    rate_limiter: Arc<crate::api::middleware::RateLimiter>,
+    request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
+    // Extract client IP for rate limiting and audit logging
+    let client_ip = request.headers.get("X-Real-IP")
+        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
+            f.split(',').next().map(|s| s.trim().to_string())
+        }))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let user_agent = request.headers.get("User-Agent")
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // SECURITY: Rate limit migration attempts (3 per hour per IP)
+    // Migrations are one-time operations, aggressive limiting is appropriate
+    if let Err(_) = rate_limiter.check_rate_limit_aggressive(&client_ip, 3, 3600).await {
+        tracing::warn!(
+            "🔄 Migration rate limit exceeded for IP: {} user_agent: {}",
+            &client_ip, &user_agent
+        );
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::TooManyRequests,
+            "Too many migration attempts. Please try again later.".to_string(),
+        ));
+    }
+
+    // SECURITY: Require UHP authentication - request.requester must be set
+    // This is populated by the QUIC handler when the request comes via authenticated ALPN
+    let authenticated_identity_id = match &request.requester {
+        Some(id) => id.clone(),
+        None => {
+            tracing::warn!(
+                "🔄 Migration rejected: no authentication from IP: {} user_agent: {}",
+                &client_ip, &user_agent
+            );
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Unauthorized,
+                "Migration requires authenticated connection (UHP). Sign in with your old identity first.".to_string(),
+            ));
+        }
+    };
+
     // Parse request
     let req: MigrateIdentityRequest = serde_json::from_slice(request_body)
         .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
-
-    tracing::info!(
-        "🔄 Migration request: display_name='{}' new_did='{}'",
-        req.display_name,
-        &req.new_did
-    );
 
     // Validate new DID format
     if !req.new_did.starts_with("did:zhtp:") {
@@ -871,12 +907,6 @@ pub async fn handle_migrate_identity(
             "Invalid DID format - must start with did:zhtp:".to_string(),
         ));
     }
-
-    // Extract identity_id from DID
-    let id_hex = req.new_did.strip_prefix("did:zhtp:")
-        .ok_or_else(|| anyhow::anyhow!("Invalid DID format"))?;
-    let identity_id = lib_crypto::Hash::from_hex(id_hex)
-        .map_err(|e| anyhow::anyhow!("Invalid identity hash in DID: {}", e))?;
 
     // Decode new public key
     let new_public_key_bytes = hex::decode(&req.new_public_key)
@@ -894,37 +924,36 @@ pub async fn handle_migrate_identity(
 
     let mut manager = identity_manager.write().await;
 
-    // Find old identity by display_name
-    let old_identity = manager.list_identities()
-        .into_iter()
-        .find(|id| {
-            id.metadata.get("display_name")
-                .map(|n| n == &req.display_name)
-                .unwrap_or(false)
-        })
-        .cloned();
-
-    let old_identity = match old_identity {
-        Some(id) => id,
+    // SECURITY: Get the authenticated identity - this is the old identity being migrated
+    let old_identity = match manager.get_identity(&authenticated_identity_id) {
+        Some(id) => id.clone(),
         None => {
             tracing::warn!(
-                "🔄 Migration failed: display_name '{}' not found",
-                req.display_name
+                "🔄 Migration failed: authenticated identity not found: {} from IP: {}",
+                authenticated_identity_id, &client_ip
             );
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
-                format!("No identity found with display_name '{}'", req.display_name),
+                "Authenticated identity not found".to_string(),
             ));
         }
     };
 
     let old_did = old_identity.did.clone();
+    let display_name = old_identity.metadata.get("display_name").cloned()
+        .unwrap_or_else(|| "unnamed".to_string());
+
+    // AUDIT LOG: Record migration attempt
+    tracing::info!(
+        "🔄 MIGRATION ATTEMPT: old_did={} new_did={} display_name='{}' ip={} user_agent={}",
+        &old_did, &req.new_did, &display_name, &client_ip, &user_agent
+    );
 
     // Check if already migrated
-    if old_identity.metadata.get("migrated_to").is_some() {
+    if let Some(migrated_to) = old_identity.metadata.get("migrated_to") {
         tracing::warn!(
-            "🔄 Migration blocked: '{}' already migrated",
-            req.display_name
+            "🔄 Migration blocked: {} already migrated to {} - ip={} user_agent={}",
+            &old_did, migrated_to, &client_ip, &user_agent
         );
         return Ok(ZhtpResponse::error(
             ZhtpStatus::Conflict,
@@ -934,26 +963,38 @@ pub async fn handle_migrate_identity(
 
     // Check if new DID already exists
     if manager.get_identity_by_did(&req.new_did).is_some() {
+        tracing::warn!(
+            "🔄 Migration blocked: new DID {} already registered - ip={} user_agent={}",
+            &req.new_did, &client_ip, &user_agent
+        );
         return Ok(ZhtpResponse::error(
             ZhtpStatus::Conflict,
             "New DID already registered".to_string(),
         ));
     }
 
-    // Register new identity with the display_name
+    // Extract identity_id from new DID for registration
+    let new_id_hex = req.new_did.strip_prefix("did:zhtp:")
+        .ok_or_else(|| anyhow::anyhow!("Invalid DID format"))?;
+    let new_identity_id = lib_crypto::Hash::from_hex(new_id_hex)
+        .map_err(|e| anyhow::anyhow!("Invalid identity hash in DID: {}", e))?;
+
+    // Register new identity with the display_name from old identity
     let created_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
     // Register external identity (client-side generated keys)
+    // Note: register_external_identity derives its own identity_id internally,
+    // but we pass it for consistency with the API contract
     manager.register_external_identity(
-        identity_id,
+        new_identity_id,
         req.new_did.clone(),
         new_public_key,
         lib_identity::IdentityType::Human,
         req.device_id.clone(),
-        Some(req.display_name.clone()),
+        Some(display_name.clone()),
         created_at,
     ).map_err(|e| anyhow::anyhow!("Failed to register new identity: {}", e))?;
 
@@ -961,23 +1002,23 @@ pub async fn handle_migrate_identity(
     if let Some(old_id) = manager.get_identity_mut(&old_identity.id) {
         old_id.metadata.insert("migrated_to".to_string(), req.new_did.clone());
         old_id.metadata.insert("migrated_at".to_string(), created_at.to_string());
+        old_id.metadata.insert("migrated_ip".to_string(), client_ip.clone());
         old_id.metadata.remove("display_name"); // Remove display_name from old
     }
 
     drop(manager);
 
+    // AUDIT LOG: Record successful migration
     tracing::info!(
-        "🔄 Migration successful: '{}' moved from {} to {}",
-        req.display_name,
-        old_did,
-        req.new_did
+        "🔄 MIGRATION SUCCESS: old_did={} new_did={} display_name='{}' ip={} user_agent={}",
+        &old_did, &req.new_did, &display_name, &client_ip, &user_agent
     );
 
     let response = MigrateIdentityResponse {
         status: "success".to_string(),
         new_did: req.new_did,
         old_did,
-        display_name: req.display_name,
+        display_name,
         message: "Identity migrated successfully. Save your new seed phrase!".to_string(),
     };
 

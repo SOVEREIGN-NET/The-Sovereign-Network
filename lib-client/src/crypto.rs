@@ -52,8 +52,13 @@ mod native {
         }
 
         pub fn generate_keypair_from_seed(seed: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-            // Use crystals-dilithium for deterministic generation from seed
-            // This ensures same seed always produces same keypair (for recovery)
+            // Use crystals-dilithium for deterministic generation from seed.
+            // This ensures the same seed always produces the same Dilithium5 keypair (for recovery).
+            //
+            // NOTE/TODO: Kyber1024::generate_keypair_from_seed below still uses random key
+            // generation and ignores the seed. It should be updated to use deterministic
+            // generation from the seed as well so identity recovery is fully reproducible.
+            // For now, only Dilithium (signing) keys are deterministic.
             let keypair = DilithiumKeypair::generate(Some(seed));
             Ok((keypair.public.to_bytes().to_vec(), keypair.secret.to_bytes().to_vec()))
         }

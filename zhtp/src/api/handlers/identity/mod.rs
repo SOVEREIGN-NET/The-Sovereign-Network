@@ -860,10 +860,13 @@ impl IdentityHandler {
 
     /// Handle identity migration (one-time fix for broken seed phrases)
     /// POST /api/v1/identity/migrate
+    /// SECURITY: Requires UHP authentication (user must sign with old private key)
     async fn handle_migrate_identity(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         backup_recovery::handle_migrate_identity(
             &request.body,
             self.identity_manager.clone(),
+            self.rate_limiter.clone(),
+            &request,
         )
         .await
     }
