@@ -1179,7 +1179,9 @@ impl Web4Handler {
             ));
         }
 
-        let domain = path_parts[6];
+        // Extract domain and remove any query parameters
+        let domain_with_query = path_parts[6];
+        let domain = domain_with_query.split('?').next().unwrap_or(domain_with_query);
 
         // Parse optional limit from query string
         let limit = request.uri
@@ -1271,10 +1273,8 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid update signature hex encoding: {}", e))?;
 
         let identity_mgr = self.identity_manager.read().await;
-        let owner_id = lib_identity::did::parse_did_to_identity_id(owner_did)
-            .map_err(|e| anyhow!("Invalid owner DID format: {}", e))?;
         let owner_identity = identity_mgr
-            .get_identity(&owner_id)
+            .get_identity_by_did(owner_did)
             .ok_or_else(|| anyhow!("Owner identity not found: {}", owner_did))?;
 
         let is_valid = lib_crypto::verify_signature(
@@ -1288,13 +1288,58 @@ impl Web4Handler {
             return Err(anyhow!("Invalid update signature"));
         }
 
-        let _manifest = self
+        let manifest = self
             .load_and_verify_manifest(&update_request.domain, &update_request.new_manifest_cid)
             .await
             .map_err(|e| anyhow!("Manifest verification failed: {}", e))?;
 
+        // CANONICALIZE: convert the CLI DeployManifest (provenance) into a canonical Web4Manifest
+        // and store its CID as the runtime-truth pointer.
+        let mut manifest_files = std::collections::HashMap::new();
+        for entry in &manifest.files {
+            manifest_files.insert(
+                entry.path.clone(),
+                lib_network::web4::ManifestFile {
+                    cid: entry.hash.clone(),
+                    size: entry.size,
+                    content_type: entry.mime_type.clone(),
+                    hash: entry.hash.clone(),
+                },
+            );
+        }
 
-        match self.domain_registry.update_domain(update_request).await {
+        let new_version = status.version.saturating_add(1);
+        let previous_manifest = if status.version == 0 {
+            None
+        } else {
+            Some(status.current_web4_manifest_cid.clone())
+        };
+
+        let web4_manifest = lib_network::web4::Web4Manifest {
+            domain: update_request.domain.clone(),
+            version: new_version,
+            previous_manifest,
+            build_hash: hex::encode(manifest.root_hash),
+            files: manifest_files,
+            created_at: current_time,
+            created_by: manifest.author_did.clone(),
+            message: Some(format!(
+                "Domain {} updated with {} files",
+                update_request.domain,
+                manifest.files.len()
+            )),
+        };
+
+        let canonical_web4_manifest_cid = self
+            .domain_registry
+            .store_manifest(web4_manifest)
+            .await
+            .map_err(|e| anyhow!("Failed to store canonical Web4Manifest: {}", e))?;
+
+        let mut canonical_update_request = update_request.clone();
+        canonical_update_request.new_manifest_cid = canonical_web4_manifest_cid;
+
+        match self.domain_registry.update_domain(canonical_update_request).await {
             Ok(response) => {
                 if response.success {
                     let version = response.new_version;
@@ -1362,9 +1407,8 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid manifest signature encoding: {}", e))?;
 
         let identity_mgr = self.identity_manager.read().await;
-        let author_id = lib_identity::did::parse_did_to_identity_id(&manifest.author_did)
-            .map_err(|e| anyhow!("Invalid author DID format: {}", e))?;
-        let author_identity = identity_mgr.get_identity(&author_id)
+        let author_identity = identity_mgr
+            .get_identity_by_did(&manifest.author_did)
             .ok_or_else(|| anyhow!("Author identity not found: {}", manifest.author_did))?;
 
         let is_valid = lib_crypto::verify_signature(
