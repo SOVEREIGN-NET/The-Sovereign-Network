@@ -59,6 +59,12 @@ mod native {
             // generation and ignores the seed. It should be updated to use deterministic
             // generation from the seed as well so identity recovery is fully reproducible.
             // For now, only Dilithium (signing) keys are deterministic.
+            if seed.len() != 32 {
+                return Err(ClientError::CryptoError(format!(
+                    "Invalid Dilithium5 seed length: expected 32 bytes, got {}",
+                    seed.len()
+                )));
+            }
             let keypair = DilithiumKeypair::generate(Some(seed));
             Ok((keypair.public.to_bytes().to_vec(), keypair.secret.to_bytes().to_vec()))
         }
@@ -368,4 +374,12 @@ mod tests {
         let (pk3, _) = Dilithium5::generate_keypair_from_seed(&different_seed).unwrap();
         assert_ne!(pk1, pk3, "Different seeds must produce different keys");
     }
+
+    #[test]
+    fn test_dilithium5_seed_length_validation() {
+        let bad_seed = [7u8; 31];
+        let err = Dilithium5::generate_keypair_from_seed(&bad_seed).unwrap_err();
+        assert!(err.to_string().contains("Invalid Dilithium5 seed length"));
+    }
+
 }

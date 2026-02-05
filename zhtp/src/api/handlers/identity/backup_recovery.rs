@@ -821,18 +821,16 @@ pub async fn handle_verify_seed_phrase(
 // =============================================================================
 
 /// Request for migrating identity with broken seed to new deterministic identity
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct MigrateIdentityRequest {
-    /// New DID (derived from new deterministic seed on client)
-    pub new_did: String,
-    /// New Dilithium5 public key (hex encoded)
+    /// New Dilithium5 public key (hex encoded). Server derives DID from this.
     pub new_public_key: String,
     /// Device ID
     pub device_id: String,
 }
 
 /// Response for migration
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MigrateIdentityResponse {
     pub status: String,
     pub new_did: String,
@@ -857,8 +855,11 @@ pub async fn handle_migrate_identity(
     rate_limiter: Arc<crate::api::middleware::RateLimiter>,
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
-    // Extract client IP for rate limiting and audit logging
-    let client_ip = request.headers.get("X-Real-IP")
+    // Extract client IP for rate limiting and audit logging.
+    // Prefer authoritative peer address if provided by the server.
+    let peer_addr = request.headers.get("peer_addr");
+    // Reported IPs are untrusted unless the connection is from a trusted proxy.
+    let reported_ip = request.headers.get("X-Real-IP")
         .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
             f.split(',').next().map(|s| s.trim().to_string())
         }))
@@ -866,19 +867,8 @@ pub async fn handle_migrate_identity(
 
     let user_agent = request.headers.get("User-Agent")
         .unwrap_or_else(|| "unknown".to_string());
-
-    // SECURITY: Rate limit migration attempts (3 per hour per IP)
-    // Migrations are one-time operations, aggressive limiting is appropriate
-    if let Err(_) = rate_limiter.check_rate_limit_aggressive(&client_ip, 3, 3600).await {
-        tracing::warn!(
-            "🔄 Migration rate limit exceeded for IP: {} user_agent: {}",
-            &client_ip, &user_agent
-        );
-        return Ok(ZhtpResponse::error(
-            ZhtpStatus::TooManyRequests,
-            "Too many migration attempts. Please try again later.".to_string(),
-        ));
-    }
+    let audit_ip = peer_addr.clone().unwrap_or_else(|| reported_ip.clone());
+    let pre_auth_rate_key = audit_ip.clone();
 
     // SECURITY: Require UHP authentication - request.requester must be set
     // This is populated by the QUIC handler when the request comes via authenticated ALPN
@@ -886,9 +876,10 @@ pub async fn handle_migrate_identity(
         Some(id) => id.clone(),
         None => {
             tracing::warn!(
-                "🔄 Migration rejected: no authentication from IP: {} user_agent: {}",
-                &client_ip, &user_agent
+                "🔄 Migration rejected: no authentication user_agent: {} reported_ip: {} audit_ip: {}",
+                &user_agent, &reported_ip, &audit_ip
             );
+            rate_limiter.record_failed_attempt(&pre_auth_rate_key).await;
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::Unauthorized,
                 "Migration requires authenticated connection (UHP). Sign in with your old identity first.".to_string(),
@@ -896,31 +887,41 @@ pub async fn handle_migrate_identity(
         }
     };
 
+    // SECURITY: Rate limit migration attempts (3 per hour per key)
+    // Use authoritative peer address when available; otherwise fall back to authenticated identity.
+    // Migrations are one-time operations, aggressive limiting is appropriate.
+    let rate_limit_key = peer_addr.clone()
+        .unwrap_or_else(|| authenticated_identity_id.to_string());
+    if let Err(_) = rate_limiter.check_rate_limit_aggressive(&rate_limit_key, 3, 3600).await {
+        tracing::warn!(
+            "🔄 Migration rate limit exceeded for key: {} user_agent: {} reported_ip: {} audit_ip: {}",
+            &rate_limit_key, &user_agent, &reported_ip, &audit_ip
+        );
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::TooManyRequests,
+            "Too many migration attempts. Please try again later.".to_string(),
+        ));
+    }
+
     // Parse request
     let req: MigrateIdentityRequest = serde_json::from_slice(request_body)
         .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
-
-    // Validate new DID format
-    if !req.new_did.starts_with("did:zhtp:") {
-        return Ok(ZhtpResponse::error(
-            ZhtpStatus::BadRequest,
-            "Invalid DID format - must start with did:zhtp:".to_string(),
-        ));
-    }
 
     // Decode new public key
     let new_public_key_bytes = hex::decode(&req.new_public_key)
         .map_err(|_| anyhow::anyhow!("Invalid public key hex"))?;
 
     if new_public_key_bytes.len() != 2592 {
+        rate_limiter.record_failed_attempt(&rate_limit_key).await;
         return Ok(ZhtpResponse::error(
             ZhtpStatus::BadRequest,
             format!("Invalid Dilithium5 public key size: expected 2592, got {}", new_public_key_bytes.len()),
         ));
     }
 
-    // Convert to lib_crypto::PublicKey
+    // Convert to lib_crypto::PublicKey (computes key_id = Blake3(dilithium_pk))
     let new_public_key = lib_crypto::PublicKey::new(new_public_key_bytes);
+    let new_did = format!("did:zhtp:{}", hex::encode(new_public_key.key_id));
 
     let mut manager = identity_manager.write().await;
 
@@ -929,9 +930,10 @@ pub async fn handle_migrate_identity(
         Some(id) => id.clone(),
         None => {
             tracing::warn!(
-                "🔄 Migration failed: authenticated identity not found: {} from IP: {}",
-                authenticated_identity_id, &client_ip
+                "🔄 Migration failed: authenticated identity not found: {} key={} reported_ip: {} audit_ip: {}",
+                authenticated_identity_id, &rate_limit_key, &reported_ip, &audit_ip
             );
+            rate_limiter.record_failed_attempt(&rate_limit_key).await;
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 "Authenticated identity not found".to_string(),
@@ -945,16 +947,17 @@ pub async fn handle_migrate_identity(
 
     // AUDIT LOG: Record migration attempt
     tracing::info!(
-        "🔄 MIGRATION ATTEMPT: old_did={} new_did={} display_name='{}' ip={} user_agent={}",
-        &old_did, &req.new_did, &display_name, &client_ip, &user_agent
+        "🔄 MIGRATION ATTEMPT: old_did={} new_did={} display_name='{}' key={} reported_ip={} audit_ip={} user_agent={}",
+        &old_did, &new_did, &display_name, &rate_limit_key, &reported_ip, &audit_ip, &user_agent
     );
 
     // Check if already migrated
     if let Some(migrated_to) = old_identity.metadata.get("migrated_to") {
         tracing::warn!(
-            "🔄 Migration blocked: {} already migrated to {} - ip={} user_agent={}",
-            &old_did, migrated_to, &client_ip, &user_agent
+            "🔄 Migration blocked: {} already migrated to {} - key={} reported_ip={} audit_ip={} user_agent={}",
+            &old_did, migrated_to, &rate_limit_key, &reported_ip, &audit_ip, &user_agent
         );
+        rate_limiter.record_failed_attempt(&rate_limit_key).await;
         return Ok(ZhtpResponse::error(
             ZhtpStatus::Conflict,
             "This identity has already been migrated. Only one migration allowed.".to_string(),
@@ -962,22 +965,20 @@ pub async fn handle_migrate_identity(
     }
 
     // Check if new DID already exists
-    if manager.get_identity_by_did(&req.new_did).is_some() {
+    if manager.get_identity_by_did(&new_did).is_some() {
         tracing::warn!(
-            "🔄 Migration blocked: new DID {} already registered - ip={} user_agent={}",
-            &req.new_did, &client_ip, &user_agent
+            "🔄 Migration blocked: new DID {} already registered - key={} reported_ip={} audit_ip={} user_agent={}",
+            &new_did, &rate_limit_key, &reported_ip, &audit_ip, &user_agent
         );
+        rate_limiter.record_failed_attempt(&rate_limit_key).await;
         return Ok(ZhtpResponse::error(
             ZhtpStatus::Conflict,
             "New DID already registered".to_string(),
         ));
     }
 
-    // Extract identity_id from new DID for registration
-    let new_id_hex = req.new_did.strip_prefix("did:zhtp:")
-        .ok_or_else(|| anyhow::anyhow!("Invalid DID format"))?;
-    let new_identity_id = lib_crypto::Hash::from_hex(new_id_hex)
-        .map_err(|e| anyhow::anyhow!("Invalid identity hash in DID: {}", e))?;
+    // Identity ID is the key_id encoded in the DID
+    let new_identity_id = lib_crypto::Hash::from_bytes(&new_public_key.key_id);
 
     // Register new identity with the display_name from old identity
     let created_at = std::time::SystemTime::now()
@@ -986,23 +987,24 @@ pub async fn handle_migrate_identity(
         .unwrap_or(0);
 
     // Register external identity (client-side generated keys)
-    // Note: register_external_identity derives its own identity_id internally,
-    // but we pass it for consistency with the API contract
-    manager.register_external_identity(
+    if let Err(e) = manager.register_external_identity(
         new_identity_id,
-        req.new_did.clone(),
+        new_did.clone(),
         new_public_key,
         lib_identity::IdentityType::Human,
         req.device_id.clone(),
         Some(display_name.clone()),
         created_at,
-    ).map_err(|e| anyhow::anyhow!("Failed to register new identity: {}", e))?;
+    ) {
+        rate_limiter.record_failed_attempt(&rate_limit_key).await;
+        return Err(anyhow::anyhow!("Failed to register new identity: {}", e));
+    }
 
     // Mark old identity as migrated
     if let Some(old_id) = manager.get_identity_mut(&old_identity.id) {
-        old_id.metadata.insert("migrated_to".to_string(), req.new_did.clone());
+        old_id.metadata.insert("migrated_to".to_string(), new_did.clone());
         old_id.metadata.insert("migrated_at".to_string(), created_at.to_string());
-        old_id.metadata.insert("migrated_ip".to_string(), client_ip.clone());
+        old_id.metadata.insert("migrated_ip".to_string(), audit_ip.clone());
         old_id.metadata.remove("display_name"); // Remove display_name from old
     }
 
@@ -1010,13 +1012,13 @@ pub async fn handle_migrate_identity(
 
     // AUDIT LOG: Record successful migration
     tracing::info!(
-        "🔄 MIGRATION SUCCESS: old_did={} new_did={} display_name='{}' ip={} user_agent={}",
-        &old_did, &req.new_did, &display_name, &client_ip, &user_agent
+        "🔄 MIGRATION SUCCESS: old_did={} new_did={} display_name='{}' key={} reported_ip={} audit_ip={} user_agent={}",
+        &old_did, &new_did, &display_name, &rate_limit_key, &reported_ip, &audit_ip, &user_agent
     );
 
     let response = MigrateIdentityResponse {
         status: "success".to_string(),
-        new_did: req.new_did,
+        new_did,
         old_did,
         display_name,
         message: "Identity migrated successfully. Save your new seed phrase!".to_string(),
@@ -1033,6 +1035,59 @@ pub async fn handle_migrate_identity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpStatus, ZHTP_VERSION};
+
+    fn build_identity_manager(
+        old_pk_byte: u8,
+        device_id: &str,
+        display_name: &str,
+    ) -> (IdentityManager, lib_crypto::Hash, String) {
+        let old_pk_bytes = vec![old_pk_byte; 2592];
+        let public_key = lib_crypto::PublicKey::new(old_pk_bytes);
+        let did = format!("did:zhtp:{}", hex::encode(public_key.key_id));
+        let identity_id = lib_crypto::Hash::from_bytes(&public_key.key_id);
+        let identity = lib_identity::ZhtpIdentity::new_external(
+            did.clone(),
+            public_key,
+            lib_identity::IdentityType::Human,
+            device_id.to_string(),
+            Some(display_name.to_string()),
+            0,
+        )
+        .expect("failed to create identity");
+
+        let mut manager = IdentityManager::new();
+        manager.add_identity(identity);
+        (manager, identity_id, did)
+    }
+
+    fn build_request(
+        body: Vec<u8>,
+        requester: Option<lib_crypto::Hash>,
+        peer_addr: Option<&str>,
+        forwarded_for: Option<&str>,
+    ) -> ZhtpRequest {
+        let mut headers = ZhtpHeaders::new();
+        if let Some(addr) = peer_addr {
+            headers = headers.with_custom_header("peer_addr".to_string(), addr.to_string());
+        }
+        if let Some(xff) = forwarded_for {
+            headers = headers.with_custom_header("x-forwarded-for".to_string(), xff.to_string());
+        }
+
+        ZhtpRequest {
+            method: ZhtpMethod::Post,
+            uri: "/api/v1/identity/migrate".to_string(),
+            version: ZHTP_VERSION.to_string(),
+            headers,
+            body,
+            timestamp: 0,
+            requester,
+            auth_proof: None,
+        }
+    }
 
     #[test]
     fn test_generate_request_parsing() {
@@ -1055,5 +1110,109 @@ mod tests {
         let json = r#"{"recovery_phrase": "word1 word2 ... word20"}"#;
         let req: RecoverIdentityRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.recovery_phrase, "word1 word2 ... word20");
+    }
+
+    #[tokio::test]
+    async fn test_migrate_requires_authentication() {
+        let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
+        let (manager, _identity_id, _did) = build_identity_manager(1, "device-old", "alice");
+        let manager = Arc::new(RwLock::new(manager));
+
+        let req = MigrateIdentityRequest {
+            new_public_key: hex::encode(vec![2u8; 2592]),
+            device_id: "device-new".to_string(),
+        };
+        let body = serde_json::to_vec(&req).unwrap();
+        let request = build_request(body, None, Some("10.0.0.1:1234"), None);
+
+        let response = handle_migrate_identity(
+            &request.body,
+            manager,
+            rate_limiter,
+            &request,
+        )
+        .await
+        .expect("handler failed");
+
+        assert_eq!(response.status, ZhtpStatus::Unauthorized);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_derives_did_from_public_key() {
+        let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
+        let (manager, identity_id, _did) = build_identity_manager(3, "device-old", "alice");
+        let manager = Arc::new(RwLock::new(manager));
+
+        let new_pk_bytes = vec![5u8; 2592];
+        let expected_new_did = {
+            let pk = lib_crypto::PublicKey::new(new_pk_bytes.clone());
+            format!("did:zhtp:{}", hex::encode(pk.key_id))
+        };
+
+        let req = MigrateIdentityRequest {
+            new_public_key: hex::encode(new_pk_bytes),
+            device_id: "device-new".to_string(),
+        };
+        let body = serde_json::to_vec(&req).unwrap();
+        let request = build_request(body, Some(identity_id.clone()), Some("10.0.0.2:5678"), None);
+
+        let response = handle_migrate_identity(
+            &request.body,
+            manager.clone(),
+            rate_limiter,
+            &request,
+        )
+        .await
+        .expect("handler failed");
+
+        assert_eq!(response.status, ZhtpStatus::Ok);
+        let parsed: MigrateIdentityResponse = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(parsed.new_did, expected_new_did);
+
+        let mgr = manager.read().await;
+        let old_identity = mgr.get_identity(&identity_id).expect("old identity missing");
+        assert!(old_identity.metadata.get("display_name").is_none());
+        assert_eq!(
+            old_identity.metadata.get("migrated_to"),
+            Some(&parsed.new_did)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_migrate_rate_limit_uses_peer_addr_not_forwarded_for() {
+        let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
+
+        for i in 0..4u8 {
+            let (manager, identity_id, _did) = build_identity_manager(10 + i, "device-old", "alice");
+            let manager = Arc::new(RwLock::new(manager));
+
+            let req = MigrateIdentityRequest {
+                // Invalid length to force failure and record rate limit attempts.
+                new_public_key: hex::encode(vec![50 + i; 10]),
+                device_id: "device-new".to_string(),
+            };
+            let body = serde_json::to_vec(&req).unwrap();
+            let request = build_request(
+                body,
+                Some(identity_id),
+                Some("192.0.2.1:4242"),
+                Some(&format!("198.51.100.{}", i)),
+            );
+
+            let response = handle_migrate_identity(
+                &request.body,
+                manager,
+                rate_limiter.clone(),
+                &request,
+            )
+            .await
+            .expect("handler failed");
+
+            if i < 3 {
+                assert_eq!(response.status, ZhtpStatus::BadRequest);
+            } else {
+                assert_eq!(response.status, ZhtpStatus::TooManyRequests);
+            }
+        }
     }
 }
