@@ -35,6 +35,8 @@ mod native {
     use pqcrypto_traits::sign::{
         DetachedSignature, PublicKey as SignPublicKey, SecretKey as SignSecretKey,
     };
+    // crystals-dilithium for deterministic key generation from seed
+    use crystals_dilithium::dilithium5::Keypair as DilithiumKeypair;
 
     /// Dilithium5 post-quantum digital signatures
     pub struct Dilithium5;
@@ -49,10 +51,11 @@ mod native {
             Ok((pk.as_bytes().to_vec(), sk.as_bytes().to_vec()))
         }
 
-        pub fn generate_keypair_from_seed(_seed: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-            // For now, generate random keypair
-            // TODO: Implement deterministic generation using seed
-            Self::generate_keypair()
+        pub fn generate_keypair_from_seed(seed: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+            // Use crystals-dilithium for deterministic generation from seed
+            // This ensures same seed always produces same keypair (for recovery)
+            let keypair = DilithiumKeypair::generate(Some(seed));
+            Ok((keypair.public.to_bytes().to_vec(), keypair.secret.to_bytes().to_vec()))
         }
 
         pub fn sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
@@ -342,5 +345,22 @@ mod tests {
 
         assert_eq!(bytes1.len(), 32);
         assert_ne!(bytes1, bytes2); // Should be different (with overwhelming probability)
+    }
+
+    #[test]
+    fn test_dilithium5_deterministic_keygen() {
+        // Same seed should produce same keys (critical for recovery)
+        let seed = [42u8; 32];
+
+        let (pk1, sk1) = Dilithium5::generate_keypair_from_seed(&seed).unwrap();
+        let (pk2, sk2) = Dilithium5::generate_keypair_from_seed(&seed).unwrap();
+
+        assert_eq!(pk1, pk2, "Same seed must produce same public key");
+        assert_eq!(sk1, sk2, "Same seed must produce same secret key");
+
+        // Different seed should produce different keys
+        let different_seed = [43u8; 32];
+        let (pk3, _) = Dilithium5::generate_keypair_from_seed(&different_seed).unwrap();
+        assert_ne!(pk1, pk3, "Different seeds must produce different keys");
     }
 }

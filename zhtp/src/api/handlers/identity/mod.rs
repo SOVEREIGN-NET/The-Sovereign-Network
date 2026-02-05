@@ -126,6 +126,9 @@ impl ZhtpRequestHandler for IdentityHandler {
             (ZhtpMethod::Post, "/api/v1/identity/seed/verify") => {
                 self.handle_verify_seed_phrase(request).await
             }
+            (ZhtpMethod::Post, "/api/v1/identity/migrate") => {
+                self.handle_migrate_identity(request).await
+            }
             // New endpoints (Issue #348)
             (ZhtpMethod::Post, "/api/v1/identity/restore/seed") => {
                 self.handle_restore_from_seed(request).await
@@ -851,6 +854,16 @@ impl IdentityHandler {
             self.recovery_phrase_manager.clone(),
             self.rate_limiter.clone(),
             &request,
+        )
+        .await
+    }
+
+    /// Handle identity migration (one-time fix for broken seed phrases)
+    /// POST /api/v1/identity/migrate
+    async fn handle_migrate_identity(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_migrate_identity(
+            &request.body,
+            self.identity_manager.clone(),
         )
         .await
     }

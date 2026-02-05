@@ -816,6 +816,179 @@ pub async fn handle_verify_seed_phrase(
     ))
 }
 
+// =============================================================================
+// MIGRATION ENDPOINT - One-time fix for users with broken seed phrases
+// =============================================================================
+
+/// Request for migrating identity with broken seed to new deterministic identity
+#[derive(Debug, Deserialize)]
+pub struct MigrateIdentityRequest {
+    /// The display_name to claim from old identity
+    pub display_name: String,
+    /// New DID (derived from new deterministic seed on client)
+    pub new_did: String,
+    /// New Dilithium5 public key (hex encoded)
+    pub new_public_key: String,
+    /// New Kyber1024 public key (hex encoded, optional)
+    #[serde(default)]
+    pub new_kyber_public_key: Option<String>,
+    /// Device ID
+    pub device_id: String,
+}
+
+/// Response for migration
+#[derive(Debug, Serialize)]
+pub struct MigrateIdentityResponse {
+    pub status: String,
+    pub new_did: String,
+    pub old_did: String,
+    pub display_name: String,
+    pub message: String,
+}
+
+/// Handle POST /api/v1/identity/migrate
+///
+/// One-time migration for users with broken seed phrases.
+/// Transfers display_name from old identity to new deterministic identity.
+pub async fn handle_migrate_identity(
+    request_body: &[u8],
+    identity_manager: Arc<RwLock<IdentityManager>>,
+) -> ZhtpResult<ZhtpResponse> {
+    // Parse request
+    let req: MigrateIdentityRequest = serde_json::from_slice(request_body)
+        .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+    tracing::info!(
+        "🔄 Migration request: display_name='{}' new_did='{}'",
+        req.display_name,
+        &req.new_did
+    );
+
+    // Validate new DID format
+    if !req.new_did.starts_with("did:zhtp:") {
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::BadRequest,
+            "Invalid DID format - must start with did:zhtp:".to_string(),
+        ));
+    }
+
+    // Extract identity_id from DID
+    let id_hex = req.new_did.strip_prefix("did:zhtp:")
+        .ok_or_else(|| anyhow::anyhow!("Invalid DID format"))?;
+    let identity_id = lib_crypto::Hash::from_hex(id_hex)
+        .map_err(|e| anyhow::anyhow!("Invalid identity hash in DID: {}", e))?;
+
+    // Decode new public key
+    let new_public_key_bytes = hex::decode(&req.new_public_key)
+        .map_err(|_| anyhow::anyhow!("Invalid public key hex"))?;
+
+    if new_public_key_bytes.len() != 2592 {
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::BadRequest,
+            format!("Invalid Dilithium5 public key size: expected 2592, got {}", new_public_key_bytes.len()),
+        ));
+    }
+
+    // Convert to lib_crypto::PublicKey
+    let new_public_key = lib_crypto::PublicKey::new(new_public_key_bytes);
+
+    let mut manager = identity_manager.write().await;
+
+    // Find old identity by display_name
+    let old_identity = manager.list_identities()
+        .into_iter()
+        .find(|id| {
+            id.metadata.get("display_name")
+                .map(|n| n == &req.display_name)
+                .unwrap_or(false)
+        })
+        .cloned();
+
+    let old_identity = match old_identity {
+        Some(id) => id,
+        None => {
+            tracing::warn!(
+                "🔄 Migration failed: display_name '{}' not found",
+                req.display_name
+            );
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                format!("No identity found with display_name '{}'", req.display_name),
+            ));
+        }
+    };
+
+    let old_did = old_identity.did.clone();
+
+    // Check if already migrated
+    if old_identity.metadata.get("migrated_to").is_some() {
+        tracing::warn!(
+            "🔄 Migration blocked: '{}' already migrated",
+            req.display_name
+        );
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::Conflict,
+            "This identity has already been migrated. Only one migration allowed.".to_string(),
+        ));
+    }
+
+    // Check if new DID already exists
+    if manager.get_identity_by_did(&req.new_did).is_some() {
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::Conflict,
+            "New DID already registered".to_string(),
+        ));
+    }
+
+    // Register new identity with the display_name
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Register external identity (client-side generated keys)
+    manager.register_external_identity(
+        identity_id,
+        req.new_did.clone(),
+        new_public_key,
+        lib_identity::IdentityType::Human,
+        req.device_id.clone(),
+        Some(req.display_name.clone()),
+        created_at,
+    ).map_err(|e| anyhow::anyhow!("Failed to register new identity: {}", e))?;
+
+    // Mark old identity as migrated
+    if let Some(old_id) = manager.get_identity_mut(&old_identity.id) {
+        old_id.metadata.insert("migrated_to".to_string(), req.new_did.clone());
+        old_id.metadata.insert("migrated_at".to_string(), created_at.to_string());
+        old_id.metadata.remove("display_name"); // Remove display_name from old
+    }
+
+    drop(manager);
+
+    tracing::info!(
+        "🔄 Migration successful: '{}' moved from {} to {}",
+        req.display_name,
+        old_did,
+        req.new_did
+    );
+
+    let response = MigrateIdentityResponse {
+        status: "success".to_string(),
+        new_did: req.new_did,
+        old_did,
+        display_name: req.display_name,
+        message: "Identity migrated successfully. Save your new seed phrase!".to_string(),
+    };
+
+    let json_response = serde_json::to_vec(&response)?;
+    Ok(ZhtpResponse::success_with_content_type(
+        json_response,
+        "application/json".to_string(),
+        None,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
