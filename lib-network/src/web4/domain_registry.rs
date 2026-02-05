@@ -43,6 +43,55 @@ struct StoredWeb4Manifest {
 }
 
 impl DomainRegistry {
+    // ========================================================================
+    // Private Helper Methods - DRY refactoring
+    // ========================================================================
+
+    /// Cache stored manifests in history and content cache.
+    /// Extracted to avoid duplication in load_persisted_manifests.
+    async fn cache_stored_manifests(&self, domain: &str, stored: Vec<StoredWeb4Manifest>) {
+        {
+            let mut history = self.manifest_history.write().await;
+            history.insert(domain.to_string(), stored.clone());
+        }
+        {
+            let mut cache = self.content_cache.write().await;
+            for entry in &stored {
+                let manifest_bytes = match serde_json::to_vec(&entry.manifest) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        warn!("Failed to serialize manifest for caching: {}", e);
+                        continue;
+                    }
+                };
+                cache.insert(entry.cid.clone(), manifest_bytes);
+            }
+        }
+    }
+
+    /// Create an empty Web4Manifest with standard fields.
+    /// Extracted to avoid duplication in register_domain fallback paths.
+    fn create_empty_manifest(
+        domain: &str,
+        version: u64,
+        previous_manifest: Option<String>,
+        current_time: u64,
+        created_by: &str,
+        message: Option<String>,
+    ) -> Web4Manifest {
+        Web4Manifest {
+            domain: domain.to_string(),
+            version,
+            previous_manifest,
+            build_hash: hex::encode(lib_crypto::hash_blake3(
+                format!("{}:v{}:{}", domain, version, current_time).as_bytes()
+            )),
+            files: std::collections::BTreeMap::new(),
+            created_at: current_time,
+            created_by: created_by.to_string(),
+            message,
+        }
+    }
     /// Create new domain registry with injected storage
     ///
     /// INVARIANT: storage must not be a stub in production.
@@ -212,25 +261,7 @@ impl DomainRegistry {
                 Ok(Some(manifest_data)) => {
                     // Preferred (new) persisted format
                     if let Ok(stored) = serde_json::from_slice::<Vec<StoredWeb4Manifest>>(&manifest_data) {
-                        {
-                            let mut history = self.manifest_history.write().await;
-                            history.insert(domain.clone(), stored.clone());
-                        }
-
-                        {
-                            let mut cache = self.content_cache.write().await;
-                            for entry in &stored {
-                                let manifest_bytes = match serde_json::to_vec(&entry.manifest) {
-                                    Ok(bytes) => bytes,
-                                    Err(e) => {
-                                        warn!("Failed to serialize manifest for caching: {}", e);
-                                        continue;
-                                    }
-                                };
-                                cache.insert(entry.cid.clone(), manifest_bytes);
-                            }
-                        }
-
+                        self.cache_stored_manifests(domain, stored).await;
                         loaded_manifests += 1;
                         continue;
                     }
@@ -239,8 +270,9 @@ impl DomainRegistry {
                     match serde_json::from_slice::<Vec<Web4Manifest>>(&manifest_data) {
                         Ok(manifests) => {
                             // Reconstruct stable CIDs without recomputing.
-                            // Reason: Web4Manifest::compute_cid() hashes JSON bytes which include a HashMap (`files`),
-                            // and HashMap serialization order can change across restarts.
+                            // Reason: Old manifests may have been serialized with HashMap `files` field,
+                            // and HashMap serialization order was non-deterministic. We now use BTreeMap
+                            // but must handle legacy data gracefully.
                             let current_cid = {
                                 let records = self.domain_records.read().await;
                                 records
@@ -264,11 +296,26 @@ impl DomainRegistry {
                                 cid_by_version.insert(highest_version, current_cid);
                             }
 
+                            // Walk backwards from highest version to reconstruct CID chain
                             for v in (2..=highest_version).rev() {
                                 if let Some(m) = by_version.get(&v) {
                                     if let Some(prev_cid) = m.previous_manifest.clone() {
                                         cid_by_version.insert(v - 1, prev_cid);
                                     }
+                                }
+                            }
+
+                            // Ensure version 1 has a stable CID if it exists
+                            // If version 2 doesn't reference version 1, we must compute it
+                            // (this is legacy data, so we accept the computed CID as canonical going forward)
+                            if by_version.contains_key(&1) && !cid_by_version.contains_key(&1) {
+                                if let Some(v1_manifest) = by_version.get(&1) {
+                                    let v1_cid = v1_manifest.compute_cid();
+                                    warn!(
+                                        "Legacy migration: Version 1 CID for domain {} not found in chain, computed: {}",
+                                        domain, v1_cid
+                                    );
+                                    cid_by_version.insert(1, v1_cid);
                                 }
                             }
 
@@ -278,29 +325,14 @@ impl DomainRegistry {
                                     .get(&v)
                                     .cloned()
                                     // Fallback only for malformed legacy histories; best-effort.
-                                    .unwrap_or_else(|| m.compute_cid());
+                                    .unwrap_or_else(|| {
+                                        warn!("Legacy migration: CID for version {} not found, computing (may be unstable)", v);
+                                        m.compute_cid()
+                                    });
                                 stored.push(StoredWeb4Manifest { cid, manifest: m });
                             }
 
-                            {
-                                let mut history = self.manifest_history.write().await;
-                                history.insert(domain.clone(), stored.clone());
-                            }
-
-                            {
-                                let mut cache = self.content_cache.write().await;
-                                for entry in &stored {
-                                    let manifest_bytes = match serde_json::to_vec(&entry.manifest) {
-                                        Ok(bytes) => bytes,
-                                        Err(e) => {
-                                            warn!("Failed to serialize manifest for caching: {}", e);
-                                            continue;
-                                        }
-                                    };
-                                    cache.insert(entry.cid.clone(), manifest_bytes);
-                                }
-                            }
-
+                            self.cache_stored_manifests(domain, stored).await;
                             loaded_manifests += 1;
                         }
                         Err(e) => {
@@ -403,8 +435,9 @@ impl DomainRegistry {
                     if let Ok(cli_manifest_data) = serde_json::from_slice::<serde_json::Value>(&manifest_bytes) {
 
                         // Convert CLI manifest format to Web4Manifest
-                        // CLI manifest has files as Vec<FileEntry>, we need HashMap<String, ManifestFile>
-                        let mut manifest_files = HashMap::new();
+                        // CLI manifest has files as Vec<FileEntry>, we need BTreeMap<String, ManifestFile>
+                        // IMPORTANT: BTreeMap ensures deterministic iteration order for stable CID computation
+                        let mut manifest_files = std::collections::BTreeMap::new();
 
                         if let Some(files_array) = cli_manifest_data.get("files").and_then(|f| f.as_array()) {
                             for file_entry in files_array {
@@ -457,75 +490,57 @@ impl DomainRegistry {
                         self.store_manifest(converted_manifest).await?
                     } else {
                         warn!("Failed to parse CLI manifest as JSON, creating empty manifest");
-                        // Fallback to empty manifest if parse fails
-                        let empty_manifest = Web4Manifest {
-                            domain: request.domain.clone(),
+                        let empty_manifest = Self::create_empty_manifest(
+                            &request.domain,
                             version,
                             previous_manifest,
-                            build_hash: hex::encode(lib_crypto::hash_blake3(
-                                format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
-                            )),
-                            files: HashMap::new(),
-                            created_at: current_time,
-                            created_by: format!("{}", request.owner.id),
-                            message: Some(format!("Domain {} registered", request.domain)),
-                        };
+                            current_time,
+                            &format!("{}", request.owner.id),
+                            Some(format!("Domain {} registered", request.domain)),
+                        );
                         self.store_manifest(empty_manifest).await?
                     }
                 }
                 Ok(None) => {
                     warn!("DeployManifest content not found for CID {}, creating empty manifest", deploy_manifest_cid);
-                    // Fallback to empty manifest if content not found
-                    let empty_manifest = Web4Manifest {
-                        domain: request.domain.clone(),
+                    let empty_manifest = Self::create_empty_manifest(
+                        &request.domain,
                         version,
-                        previous_manifest,
-                        build_hash: hex::encode(lib_crypto::hash_blake3(
-                            format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
-                        )),
-                        files: HashMap::new(),
-                        created_at: current_time,
-                        created_by: format!("{}", request.owner.id),
-                        message: Some(format!("Domain {} registered", request.domain)),
-                    };
+                        previous_manifest.clone(),
+                        current_time,
+                        &format!("{}", request.owner.id),
+                        Some(format!("Domain {} registered", request.domain)),
+                    );
                     self.store_manifest(empty_manifest).await?
                 }
                 Err(e) => {
                     warn!("Error loading DeployManifest for CID {}: {}, creating empty manifest", deploy_manifest_cid, e);
-                    // Fallback to empty manifest on error
-                    let empty_manifest = Web4Manifest {
-                        domain: request.domain.clone(),
+                    let empty_manifest = Self::create_empty_manifest(
+                        &request.domain,
                         version,
-                        previous_manifest,
-                        build_hash: hex::encode(lib_crypto::hash_blake3(
-                            format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
-                        )),
-                        files: HashMap::new(),
-                        created_at: current_time,
-                        created_by: format!("{}", request.owner.id),
-                        message: Some(format!("Domain {} registered", request.domain)),
-                    };
+                        previous_manifest.clone(),
+                        current_time,
+                        &format!("{}", request.owner.id),
+                        Some(format!("Domain {} registered", request.domain)),
+                    );
                     self.store_manifest(empty_manifest).await?
                 }
             }
         } else {
             // No deploy_manifest_cid provided, create empty Web4Manifest as before
-            let initial_manifest = Web4Manifest {
-                domain: request.domain.clone(),
+            let message = if existing_record.is_some() {
+                Some(format!("Domain {} updated", request.domain))
+            } else {
+                Some(format!("Domain {} registered", request.domain))
+            };
+            let initial_manifest = Self::create_empty_manifest(
+                &request.domain,
                 version,
                 previous_manifest,
-                build_hash: hex::encode(lib_crypto::hash_blake3(
-                    format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
-                )),
-                files: HashMap::new(),
-                created_at: current_time,
-                created_by: format!("{}", request.owner.id),
-                message: if existing_record.is_some() {
-                    Some(format!("Domain {} updated", request.domain))
-                } else {
-                    Some(format!("Domain {} registered", request.domain))
-                },
-            };
+                current_time,
+                &format!("{}", request.owner.id),
+                message,
+            );
 
             // Store manifest and get its real CID
             self.store_manifest(initial_manifest).await?
@@ -1338,7 +1353,21 @@ impl DomainRegistry {
                             "Manifest chain validation failed: Domain mismatch in manifest chain"
                         ));
                     }
+                } else {
+                    // History exists but is empty - critical error
+                    return Err(anyhow!(
+                        "Manifest chain validation failed: Version {} requires previous manifest, but history is empty for domain {}",
+                        manifest.version,
+                        domain
+                    ));
                 }
+            } else {
+                // No history at all for version > 1 - critical error
+                return Err(anyhow!(
+                    "Manifest chain validation failed: Version {} requires previous manifest, but no history found for domain {}",
+                    manifest.version,
+                    domain
+                ));
             }
         }
 

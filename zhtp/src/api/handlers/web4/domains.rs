@@ -1187,6 +1187,15 @@ impl Web4Handler {
             ));
         }
 
+        // SIGNATURE VERIFICATION
+        // The owner signs a message containing the DeployManifest CID (new_manifest_cid).
+        // This proves the owner authorized THIS SPECIFIC deployment content.
+        // 
+        // SECURITY MODEL:
+        // - DeployManifest CID = signed by owner, proves content authorization
+        // - Web4Manifest CID = derived deterministically from DeployManifest, used for resolution
+        // - The transform from DeployManifest → Web4Manifest is deterministic and auditable
+        // - Both CIDs are stored: DeployManifest for audit, Web4Manifest for runtime
         let signed_message = format!(
             "{}|{}|{}|{}",
             update_request.domain,
@@ -1220,7 +1229,8 @@ impl Web4Handler {
 
         // CANONICALIZE: convert the CLI DeployManifest (provenance) into a canonical Web4Manifest
         // and store its CID as the runtime-truth pointer.
-        let mut manifest_files = std::collections::HashMap::new();
+        // IMPORTANT: Using BTreeMap for deterministic iteration order to ensure stable CID computation.
+        let mut manifest_files = std::collections::BTreeMap::new();
         for entry in &manifest.files {
             manifest_files.insert(
                 entry.path.clone(),
@@ -1255,12 +1265,18 @@ impl Web4Handler {
             )),
         };
 
+        // Store the canonical Web4Manifest and get its CID.
+        // NOTE: This CID differs from update_request.new_manifest_cid (DeployManifest CID) because:
+        // - DeployManifest CID = signed by owner, content authorization proof
+        // - Web4Manifest CID = canonical runtime format, deterministically derived
+        // The DeployManifest CID remains in the request for audit trail purposes.
         let canonical_web4_manifest_cid = self
             .domain_registry
             .store_manifest(web4_manifest)
             .await
             .map_err(|e| anyhow!("Failed to store canonical Web4Manifest: {}", e))?;
 
+        // Update the request with the canonical Web4Manifest CID for domain record update
         let mut canonical_update_request = update_request.clone();
         canonical_update_request.new_manifest_cid = canonical_web4_manifest_cid;
 
