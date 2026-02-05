@@ -823,10 +823,17 @@ pub async fn handle_verify_seed_phrase(
 /// Request for migrating identity with broken seed to new deterministic identity
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MigrateIdentityRequest {
-    /// New Dilithium5 public key (hex encoded). Server derives DID from this.
+    /// Old DID (the identity being migrated FROM)
+    pub old_did: String,
+    /// New Dilithium5 public key (hex encoded). Server derives new DID from this.
     pub new_public_key: String,
     /// Device ID
     pub device_id: String,
+    /// Timestamp for signature freshness (unix seconds)
+    pub timestamp: u64,
+    /// Signature over "MIGRATE:{old_did}:{new_public_key}:{timestamp}" using OLD private key (hex encoded)
+    /// This proves ownership of the old identity without requiring UHP handshake
+    pub signature: String,
 }
 
 /// Response for migration
@@ -844,8 +851,9 @@ pub struct MigrateIdentityResponse {
 /// One-time migration for users with broken seed phrases.
 /// Transfers display_name from old identity to new deterministic identity.
 ///
-/// SECURITY: Requires UHP authentication. The authenticated identity (from request.requester)
-/// is the old identity being migrated. This proves ownership via cryptographic signature.
+/// SECURITY: This is a PUBLIC endpoint (no UHP required) because old clients can't
+/// complete UHP handshake with legacy 4864-byte keys. Instead, authentication is done
+/// via a signature in the request body, verified against the old identity's public key.
 ///
 /// NOTE: IdentityManager changes are in-memory. The caller (server) is responsible for
 /// persisting state if needed.
@@ -856,9 +864,7 @@ pub async fn handle_migrate_identity(
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
     // Extract client IP for rate limiting and audit logging.
-    // Prefer authoritative peer address if provided by the server.
     let peer_addr = request.headers.get("peer_addr");
-    // Reported IPs are untrusted unless the connection is from a trusted proxy.
     let reported_ip = request.headers.get("X-Real-IP")
         .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
             f.split(',').next().map(|s| s.trim().to_string())
@@ -868,30 +874,10 @@ pub async fn handle_migrate_identity(
     let user_agent = request.headers.get("User-Agent")
         .unwrap_or_else(|| "unknown".to_string());
     let audit_ip = peer_addr.clone().unwrap_or_else(|| reported_ip.clone());
-    let pre_auth_rate_key = audit_ip.clone();
 
-    // SECURITY: Require UHP authentication - request.requester must be set
-    // This is populated by the QUIC handler when the request comes via authenticated ALPN
-    let authenticated_identity_id = match &request.requester {
-        Some(id) => id.clone(),
-        None => {
-            tracing::warn!(
-                "🔄 Migration rejected: no authentication user_agent: {} reported_ip: {} audit_ip: {}",
-                &user_agent, &reported_ip, &audit_ip
-            );
-            rate_limiter.record_failed_attempt(&pre_auth_rate_key).await;
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::Unauthorized,
-                "Migration requires authenticated connection (UHP). Sign in with your old identity first.".to_string(),
-            ));
-        }
-    };
-
-    // SECURITY: Rate limit migration attempts (3 per hour per key)
-    // Use authoritative peer address when available; otherwise fall back to authenticated identity.
+    // SECURITY: Rate limit migration attempts (3 per hour per IP)
     // Migrations are one-time operations, aggressive limiting is appropriate.
-    let rate_limit_key = peer_addr.clone()
-        .unwrap_or_else(|| authenticated_identity_id.to_string());
+    let rate_limit_key = audit_ip.clone();
     if let Err(_) = rate_limiter.check_rate_limit_aggressive(&rate_limit_key, 3, 3600).await {
         tracing::warn!(
             "🔄 Migration rate limit exceeded for key: {} user_agent: {} reported_ip: {} audit_ip: {}",
@@ -907,9 +893,22 @@ pub async fn handle_migrate_identity(
     let req: MigrateIdentityRequest = serde_json::from_slice(request_body)
         .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
+    // Validate timestamp freshness (within 5 minutes)
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if req.timestamp > now + 60 || req.timestamp < now.saturating_sub(300) {
+        rate_limiter.record_failed_attempt(&rate_limit_key).await;
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::BadRequest,
+            "Timestamp out of range (must be within 5 minutes)".to_string(),
+        ));
+    }
+
     // Decode new public key
     let new_public_key_bytes = hex::decode(&req.new_public_key)
-        .map_err(|_| anyhow::anyhow!("Invalid public key hex"))?;
+        .map_err(|_| anyhow::anyhow!("Invalid new public key hex"))?;
 
     if new_public_key_bytes.len() != 2592 {
         rate_limiter.record_failed_attempt(&rate_limit_key).await;
@@ -919,28 +918,57 @@ pub async fn handle_migrate_identity(
         ));
     }
 
+    // Decode signature
+    let signature_bytes = hex::decode(&req.signature)
+        .map_err(|_| anyhow::anyhow!("Invalid signature hex"))?;
+
     // Convert to lib_crypto::PublicKey (computes key_id = Blake3(dilithium_pk))
-    let new_public_key = lib_crypto::PublicKey::new(new_public_key_bytes);
+    let new_public_key = lib_crypto::PublicKey::new(new_public_key_bytes.clone());
     let new_did = format!("did:zhtp:{}", hex::encode(new_public_key.key_id));
 
-    let mut manager = identity_manager.write().await;
+    let manager = identity_manager.read().await;
 
-    // SECURITY: Get the authenticated identity - this is the old identity being migrated
-    let old_identity = match manager.get_identity(&authenticated_identity_id) {
+    // Look up old identity by DID
+    let old_identity = match manager.get_identity_by_did(&req.old_did) {
         Some(id) => id.clone(),
         None => {
             tracing::warn!(
-                "🔄 Migration failed: authenticated identity not found: {} key={} reported_ip: {} audit_ip: {}",
-                authenticated_identity_id, &rate_limit_key, &reported_ip, &audit_ip
+                "🔄 Migration failed: old identity not found: {} key={} reported_ip={} audit_ip={}",
+                &req.old_did, &rate_limit_key, &reported_ip, &audit_ip
             );
             rate_limiter.record_failed_attempt(&rate_limit_key).await;
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
-                "Authenticated identity not found".to_string(),
+                "Old identity not found".to_string(),
             ));
         }
     };
+    drop(manager);
 
+    // SECURITY: Verify signature using old identity's public key
+    // Message format: "MIGRATE:{old_did}:{new_public_key_hex}:{timestamp}"
+    let signed_message = format!("MIGRATE:{}:{}:{}", req.old_did, req.new_public_key, req.timestamp);
+    let old_public_key_bytes = &old_identity.public_key.dilithium_pk;
+
+    let signature_valid = lib_crypto::post_quantum::dilithium::dilithium5_verify(
+        signed_message.as_bytes(),
+        &signature_bytes,
+        old_public_key_bytes,
+    ).unwrap_or(false);
+
+    if !signature_valid {
+        tracing::warn!(
+            "🔄 Migration failed: invalid signature for {} key={} reported_ip={} audit_ip={}",
+            &req.old_did, &rate_limit_key, &reported_ip, &audit_ip
+        );
+        rate_limiter.record_failed_attempt(&rate_limit_key).await;
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::Unauthorized,
+            "Invalid signature - could not verify ownership of old identity".to_string(),
+        ));
+    }
+
+    let mut manager = identity_manager.write().await;
     let old_did = old_identity.did.clone();
     let display_name = old_identity.metadata.get("display_name").cloned()
         .unwrap_or_else(|| "unnamed".to_string());
