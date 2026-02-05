@@ -817,16 +817,25 @@ pub async fn handle_verify_seed_phrase(
 }
 
 // =============================================================================
-// MIGRATION ENDPOINT - One-time fix for users with broken seed phrases
+// SEED-ONLY MIGRATION ENDPOINT
+// One-time fix for users with broken seed phrases who lost their old private key.
+// This is NOT proving ownership of old identity - it's controlled re-registration.
 // =============================================================================
 
-/// Request for migrating identity with broken seed to new deterministic identity
+/// Request for seed-only migration (user has seed but no old private key)
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MigrateIdentityRequest {
-    /// New Dilithium5 public key (hex encoded). Server derives DID from this.
+    /// Display name to claim from existing identity
+    pub display_name: String,
+    /// New Dilithium5 public key (hex encoded, derived from seed on client)
     pub new_public_key: String,
     /// Device ID
     pub device_id: String,
+    /// Timestamp for signature freshness (unix seconds)
+    pub timestamp: u64,
+    /// Signature over "SEED_MIGRATE:{display_name}:{new_public_key}:{timestamp}"
+    /// using the NEW seed-derived private key (proves control of seed)
+    pub signature: String,
 }
 
 /// Response for migration
@@ -841,14 +850,21 @@ pub struct MigrateIdentityResponse {
 
 /// Handle POST /api/v1/identity/migrate
 ///
-/// One-time migration for users with broken seed phrases.
-/// Transfers display_name from old identity to new deterministic identity.
+/// Seed-only migration for users who have their seed phrase but lost access to old private key.
+/// This is NOT proving ownership of old identity - it's controlled re-registration.
 ///
-/// SECURITY: Requires UHP authentication. The authenticated identity (from request.requester)
-/// is the old identity being migrated. This proves ownership via cryptographic signature.
+/// Flow:
+/// 1. Client derives NEW keypair from seed phrase
+/// 2. Client signs request with NEW key (proves control of seed)
+/// 3. Server finds identity by display_name
+/// 4. Server creates new identity, transfers display_name
+/// 5. Old identity is marked as migrated/abandoned
 ///
-/// NOTE: IdentityManager changes are in-memory. The caller (server) is responsible for
-/// persisting state if needed.
+/// SECURITY:
+/// - Signature verified with NEW public key (proves seed control)
+/// - Rate limited: 3 attempts/hour per IP
+/// - One migration per display_name ever
+/// - 5-minute timestamp window prevents replay
 pub async fn handle_migrate_identity(
     request_body: &[u8],
     identity_manager: Arc<RwLock<IdentityManager>>,
@@ -856,9 +872,7 @@ pub async fn handle_migrate_identity(
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
     // Extract client IP for rate limiting and audit logging.
-    // Prefer authoritative peer address if provided by the server.
     let peer_addr = request.headers.get("peer_addr");
-    // Reported IPs are untrusted unless the connection is from a trusted proxy.
     let reported_ip = request.headers.get("X-Real-IP")
         .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
             f.split(',').next().map(|s| s.trim().to_string())
@@ -868,30 +882,10 @@ pub async fn handle_migrate_identity(
     let user_agent = request.headers.get("User-Agent")
         .unwrap_or_else(|| "unknown".to_string());
     let audit_ip = peer_addr.clone().unwrap_or_else(|| reported_ip.clone());
-    let pre_auth_rate_key = audit_ip.clone();
 
-    // SECURITY: Require UHP authentication - request.requester must be set
-    // This is populated by the QUIC handler when the request comes via authenticated ALPN
-    let authenticated_identity_id = match &request.requester {
-        Some(id) => id.clone(),
-        None => {
-            tracing::warn!(
-                "🔄 Migration rejected: no authentication user_agent: {} reported_ip: {} audit_ip: {}",
-                &user_agent, &reported_ip, &audit_ip
-            );
-            rate_limiter.record_failed_attempt(&pre_auth_rate_key).await;
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::Unauthorized,
-                "Migration requires authenticated connection (UHP). Sign in with your old identity first.".to_string(),
-            ));
-        }
-    };
-
-    // SECURITY: Rate limit migration attempts (3 per hour per key)
-    // Use authoritative peer address when available; otherwise fall back to authenticated identity.
+    // SECURITY: Rate limit migration attempts (3 per hour per IP)
     // Migrations are one-time operations, aggressive limiting is appropriate.
-    let rate_limit_key = peer_addr.clone()
-        .unwrap_or_else(|| authenticated_identity_id.to_string());
+    let rate_limit_key = audit_ip.clone();
     if let Err(_) = rate_limiter.check_rate_limit_aggressive(&rate_limit_key, 3, 3600).await {
         tracing::warn!(
             "🔄 Migration rate limit exceeded for key: {} user_agent: {} reported_ip: {} audit_ip: {}",
@@ -907,9 +901,22 @@ pub async fn handle_migrate_identity(
     let req: MigrateIdentityRequest = serde_json::from_slice(request_body)
         .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
+    // Validate timestamp freshness (within 5 minutes)
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if req.timestamp > now + 60 || req.timestamp < now.saturating_sub(300) {
+        rate_limiter.record_failed_attempt(&rate_limit_key).await;
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::BadRequest,
+            "Timestamp out of range (must be within 5 minutes)".to_string(),
+        ));
+    }
+
     // Decode new public key
     let new_public_key_bytes = hex::decode(&req.new_public_key)
-        .map_err(|_| anyhow::anyhow!("Invalid public key hex"))?;
+        .map_err(|_| anyhow::anyhow!("Invalid new public key hex"))?;
 
     if new_public_key_bytes.len() != 2592 {
         rate_limiter.record_failed_attempt(&rate_limit_key).await;
@@ -919,28 +926,65 @@ pub async fn handle_migrate_identity(
         ));
     }
 
+    // Decode signature
+    let signature_bytes = hex::decode(&req.signature)
+        .map_err(|_| anyhow::anyhow!("Invalid signature hex"))?;
+
     // Convert to lib_crypto::PublicKey (computes key_id = Blake3(dilithium_pk))
-    let new_public_key = lib_crypto::PublicKey::new(new_public_key_bytes);
+    let new_public_key = lib_crypto::PublicKey::new(new_public_key_bytes.clone());
     let new_did = format!("did:zhtp:{}", hex::encode(new_public_key.key_id));
 
-    let mut manager = identity_manager.write().await;
+    // SECURITY: Verify signature using NEW public key (proves control of seed-derived key)
+    // Message format: "SEED_MIGRATE:{display_name}:{new_public_key}:{timestamp}"
+    let signed_message = format!("SEED_MIGRATE:{}:{}:{}", req.display_name, req.new_public_key, req.timestamp);
 
-    // SECURITY: Get the authenticated identity - this is the old identity being migrated
-    let old_identity = match manager.get_identity(&authenticated_identity_id) {
-        Some(id) => id.clone(),
+    let signature_valid = lib_crypto::post_quantum::dilithium::dilithium5_verify(
+        signed_message.as_bytes(),
+        &signature_bytes,
+        &new_public_key_bytes,
+    ).unwrap_or(false);
+
+    if !signature_valid {
+        tracing::warn!(
+            "🔄 Migration failed: invalid signature for display_name='{}' key={} reported_ip={} audit_ip={}",
+            &req.display_name, &rate_limit_key, &reported_ip, &audit_ip
+        );
+        rate_limiter.record_failed_attempt(&rate_limit_key).await;
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::Unauthorized,
+            "Invalid signature - could not verify control of seed-derived key".to_string(),
+        ));
+    }
+
+    let manager = identity_manager.read().await;
+
+    // Look up old identity by display_name
+    let old_identity = manager.list_identities()
+        .into_iter()
+        .find(|id| {
+            id.metadata.get("display_name")
+                .map(|n| n == &req.display_name)
+                .unwrap_or(false)
+        })
+        .cloned();
+
+    let old_identity = match old_identity {
+        Some(id) => id,
         None => {
             tracing::warn!(
-                "🔄 Migration failed: authenticated identity not found: {} key={} reported_ip: {} audit_ip: {}",
-                authenticated_identity_id, &rate_limit_key, &reported_ip, &audit_ip
+                "🔄 Migration failed: display_name '{}' not found key={} reported_ip={} audit_ip={}",
+                &req.display_name, &rate_limit_key, &reported_ip, &audit_ip
             );
             rate_limiter.record_failed_attempt(&rate_limit_key).await;
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
-                "Authenticated identity not found".to_string(),
+                format!("No identity found with display_name '{}'", req.display_name),
             ));
         }
     };
+    drop(manager);
 
+    let mut manager = identity_manager.write().await;
     let old_did = old_identity.did.clone();
     let display_name = old_identity.metadata.get("display_name").cloned()
         .unwrap_or_else(|| "unnamed".to_string());
