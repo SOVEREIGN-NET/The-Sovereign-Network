@@ -446,7 +446,7 @@ impl QuicHandler {
                     debug!("Accepted new stream {} for v2 request", stream_id.index());
 
                     tokio::spawn(async move {
-                        if let Err(e) = handler.handle_authenticated_v2_stream(recv, send, &session).await {
+                        if let Err(e) = handler.handle_authenticated_v2_stream(recv, send, &session, peer_addr).await {
                             warn!("⚠️ Control plane v2 stream {} error from {}: {:?}", stream_id.index(), peer_addr, e);
                         }
                     });
@@ -480,6 +480,7 @@ impl QuicHandler {
         mut recv: RecvStream,
         mut send: SendStream,
         session: &lib_network::protocols::types::session::V2Session,
+        peer_addr: SocketAddr,
     ) -> Result<()> {
         use lib_protocols::wire::{read_request, write_response, ZhtpResponseWire};
         use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
@@ -618,6 +619,9 @@ impl QuicHandler {
         // Route request through ZHTP router
         let mut request = wire_request.request;
         request.requester = Some(lib_crypto::Hash(lib_crypto::hash_blake3(session.peer_did().as_bytes())));
+        // Attach authoritative peer address for handlers (prevents spoofed forwarded headers).
+        request.headers.custom.insert("peer_addr".to_string(), peer_addr.to_string());
+        request.headers.custom.insert("peer_addr_source".to_string(), "quic".to_string());
 
         let router = self.zhtp_router.read().await;
         let response = router.route_request(request).await

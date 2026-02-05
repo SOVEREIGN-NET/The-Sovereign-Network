@@ -126,6 +126,9 @@ impl ZhtpRequestHandler for IdentityHandler {
             (ZhtpMethod::Post, "/api/v1/identity/seed/verify") => {
                 self.handle_verify_seed_phrase(request).await
             }
+            (ZhtpMethod::Post, "/api/v1/identity/migrate") => {
+                self.handle_migrate_identity(request).await
+            }
             // New endpoints (Issue #348)
             (ZhtpMethod::Post, "/api/v1/identity/restore/seed") => {
                 self.handle_restore_from_seed(request).await
@@ -855,6 +858,19 @@ impl IdentityHandler {
         .await
     }
 
+    /// Handle identity migration (one-time fix for broken seed phrases)
+    /// POST /api/v1/identity/migrate
+    /// SECURITY: Requires UHP authentication (user must sign with old private key)
+    async fn handle_migrate_identity(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_migrate_identity(
+            &request.body,
+            self.identity_manager.clone(),
+            self.rate_limiter.clone(),
+            &request,
+        )
+        .await
+    }
+
     /// Handle backup status request (Issue #100)
     /// GET /api/v1/identity/backup/status
     async fn handle_backup_status(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
@@ -1358,20 +1374,16 @@ impl IdentityHandler {
     /// POST /api/v1/identity/register
     async fn handle_register_client_identity(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         /// Request structure for client-side identity registration
+        /// NOTE: DID and node_id are derived server-side from public_key for security.
+        /// Client signs "ZHTP_REGISTER:{timestamp}" to prove private key ownership.
         #[derive(Deserialize)]
         struct RegisterIdentityRequest {
-            /// Decentralized Identifier: "did:zhtp:{hash}"
-            did: String,
-
             /// Base64-encoded Dilithium5 public key (~2592 bytes)
             public_key: String,
 
             /// Base64-encoded Kyber1024 public key (~1568 bytes) - optional for PQC
             #[serde(default)]
             kyber_public_key: Option<String>,
-
-            /// Base64-encoded node ID: Blake3(did || device_id)
-            node_id: String,
 
             /// Device identifier (e.g., "iphone-uuid-abc123")
             device_id: String,
@@ -1385,7 +1397,7 @@ impl IdentityHandler {
             identity_type: String,
 
             /// Signature proving ownership of private key
-            /// Signs: "ZHTP_REGISTER:{did}:{timestamp}"
+            /// Signs: "ZHTP_REGISTER:{timestamp}"
             registration_proof: String,
 
             /// Timestamp when signature was created (Unix seconds)
@@ -1400,17 +1412,8 @@ impl IdentityHandler {
         let req_data: RegisterIdentityRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid register request: {}", e))?;
 
-        tracing::info!("📱 Client-side identity registration: {} (device: {})",
-            &req_data.did[..req_data.did.len().min(32)],
+        tracing::info!("📱 Client-side identity registration (device: {})",
             &req_data.device_id[..req_data.device_id.len().min(16)]);
-
-        // Validate DID format
-        if !req_data.did.starts_with("did:zhtp:") {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                "Invalid DID format: must start with 'did:zhtp:'".to_string(),
-            ));
-        }
 
         // Validate timestamp (within 5 minutes)
         let now = std::time::SystemTime::now()
@@ -1430,37 +1433,32 @@ impl IdentityHandler {
             &req_data.public_key
         ).map_err(|e| anyhow::anyhow!("Invalid base64 for public_key: {}", e))?;
 
-        // Validate Dilithium5 public key size (~2592 bytes)
-        if public_key_bytes.len() < 2000 || public_key_bytes.len() > 3000 {
+        // Validate Dilithium5 public key size (exactly 2592 bytes)
+        if public_key_bytes.len() != 2592 {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
-                format!("Invalid Dilithium5 public key size: {} bytes (expected ~2592)", public_key_bytes.len()),
+                format!("Invalid Dilithium5 public key size: {} bytes (expected 2592)", public_key_bytes.len()),
             ));
         }
 
-        // Decode node_id from base64
-        let node_id_bytes = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &req_data.node_id
-        ).map_err(|e| anyhow::anyhow!("Invalid base64 for node_id: {}", e))?;
+        // Create PublicKey struct from raw bytes - this computes key_id = Blake3(dilithium_pk)
+        let public_key = lib_crypto::PublicKey::new(public_key_bytes.clone());
 
-        if node_id_bytes.len() != 32 {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                format!("Invalid node_id size: {} bytes (expected 32)", node_id_bytes.len()),
-            ));
-        }
+        // SECURITY: Derive DID server-side from public key (single source of truth)
+        // DID = did:zhtp:{hex(Blake3(dilithium_public_key))}
+        let did = format!("did:zhtp:{}", hex::encode(public_key.key_id));
 
-        // Verify node_id = Blake3(did || device_id)
-        let expected_node_id = lib_crypto::hash_blake3(
-            format!("{}{}", req_data.did, req_data.device_id).as_bytes()
+        // Derive node_id server-side: Blake3(did || device_id)
+        let node_id_bytes = lib_crypto::hash_blake3(
+            format!("{}{}", did, req_data.device_id).as_bytes()
         );
-        if node_id_bytes != expected_node_id {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                "node_id verification failed: does not match Blake3(did || device_id)".to_string(),
-            ));
-        }
+
+        // Identity ID is the key_id (same bytes as in DID)
+        let identity_id = lib_crypto::Hash::from_bytes(&public_key.key_id);
+
+        tracing::info!("📱 Derived DID: {} for device: {}",
+            &did[..did.len().min(32)],
+            &req_data.device_id[..req_data.device_id.len().min(16)]);
 
         // Decode and verify registration proof signature
         let proof_bytes = base64::Engine::decode(
@@ -1468,11 +1466,11 @@ impl IdentityHandler {
             &req_data.registration_proof
         ).map_err(|e| anyhow::anyhow!("Invalid base64 for registration_proof: {}", e))?;
 
-        // Message that was signed: "ZHTP_REGISTER:{did}:{timestamp}"
-        let signed_message = format!("ZHTP_REGISTER:{}:{}", req_data.did, req_data.timestamp);
+        // Message that was signed: "ZHTP_REGISTER:{timestamp}"
+        // Client signs timestamp to prove ownership of private key
+        let signed_message = format!("ZHTP_REGISTER:{}", req_data.timestamp);
 
         // Verify signature using Dilithium
-        // The verify_signature function takes (message, signature, public_key) as raw bytes
         tracing::info!("🔐 Verifying registration proof: pk_len={}, sig_len={}, msg='{}'",
             public_key_bytes.len(), proof_bytes.len(), &signed_message);
 
@@ -1487,10 +1485,7 @@ impl IdentityHandler {
             ));
         }
 
-        tracing::info!("✅ Registration proof verified for {}", &req_data.did[..32.min(req_data.did.len())]);
-
-        // Create PublicKey struct from raw bytes
-        let public_key = lib_crypto::PublicKey::new(public_key_bytes.clone());
+        tracing::info!("✅ Registration proof verified for {}", &did[..32.min(did.len())]);
 
         // Decode optional Kyber public key
         let kyber_public_key = if let Some(kyber_b64) = &req_data.kyber_public_key {
@@ -1499,11 +1494,11 @@ impl IdentityHandler {
                 kyber_b64
             ).map_err(|e| anyhow::anyhow!("Invalid base64 for kyber_public_key: {}", e))?;
 
-            // Validate Kyber1024 public key size (~1568 bytes)
-            if kyber_bytes.len() < 1500 || kyber_bytes.len() > 1700 {
+            // Validate Kyber1024 public key size (exactly 1568 bytes)
+            if kyber_bytes.len() != 1568 {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
-                    format!("Invalid Kyber1024 public key size: {} bytes (expected ~1568)", kyber_bytes.len()),
+                    format!("Invalid Kyber1024 public key size: {} bytes (expected 1568)", kyber_bytes.len()),
                 ));
             }
             Some(kyber_bytes)
@@ -1523,11 +1518,6 @@ impl IdentityHandler {
                 ));
             }
         };
-
-        // Extract identity hash from DID
-        let did_hash_str = req_data.did.strip_prefix("did:zhtp:").unwrap();
-        let identity_id = lib_crypto::Hash::from_hex(did_hash_str)
-            .map_err(|e| anyhow::anyhow!("Invalid DID hash: {}", e))?;
 
         // Check if identity already exists
         {
@@ -1552,7 +1542,7 @@ impl IdentityHandler {
 
             // Register as citizen with 3 wallets
             identity_manager.register_external_citizen_identity(
-                req_data.did.clone(),
+                did.clone(),
                 public_key.clone(),
                 kyber_public_key.clone().unwrap_or_default(),
                 req_data.device_id.clone(),
@@ -1568,7 +1558,7 @@ impl IdentityHandler {
         let savings_wallet_id = hex::encode(&citizenship_result.savings_wallet_id.0);
 
         // Create blockchain transaction for identity registration
-        let did_string = req_data.did.clone();
+        let did_string = did.clone();
 
         let ownership_proof_data = format!("{}:{}", did_string, identity_id);
         let ownership_proof = ownership_proof_data.as_bytes().to_vec();
@@ -1757,10 +1747,10 @@ impl IdentityHandler {
         // Persist to DHT for fast lookups
         let identity_id_str = identity_id.to_string();
         let identity_record = json!({
-            "did": req_data.did,
+            "did": did,
             "public_key": req_data.public_key,
             "kyber_public_key": req_data.kyber_public_key,
-            "node_id": req_data.node_id,
+            "node_id": hex::encode(&node_id_bytes),
             "device_id": req_data.device_id,
             "display_name": req_data.display_name,
             "identity_type": req_data.identity_type,
@@ -1796,13 +1786,15 @@ impl IdentityHandler {
         }
 
         tracing::info!("✅ Client citizen registered: {} with 3 wallets",
-            &req_data.did[..32.min(req_data.did.len())]);
+            &did[..32.min(did.len())]);
 
-        // Return success response with wallet IDs and seed phrases
+        // Return success response with server-derived DID, node_id, and wallet IDs
+        // IMPORTANT: Client must use the DID and node_id from this response (server-derived)
         let response_body = json!({
             "status": "registered",
             "identity_id": identity_id.to_string(),
-            "did": req_data.did,
+            "did": did,
+            "node_id": hex::encode(&node_id_bytes),
             "device_id": req_data.device_id,
             "identity_type": req_data.identity_type,
             "blockchain_tx": blockchain_tx_hash,
