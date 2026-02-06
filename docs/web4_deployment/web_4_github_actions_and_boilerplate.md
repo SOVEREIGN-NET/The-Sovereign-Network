@@ -126,6 +126,13 @@ tar -czf - -C ~/.zhtp keystore | base64 -w 0 > keystore.b64
 cat keystore.b64  # Paste this into ZHTP_KEYSTORE_B64 secret
 ```
 
+Alternatively, use the CLI to base64-encode your keystore file for secrets:
+
+```bash
+zhtp pubkey to-base64 --input ~/.zhtp/keystore > keystore.b64
+cat keystore.b64
+```
+
 ---
 
 ## Build Output Mapping
