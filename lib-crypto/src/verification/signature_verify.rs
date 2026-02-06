@@ -91,22 +91,41 @@ pub fn verify_signature(message: &[u8], signature: &[u8], public_key: &[u8]) -> 
         // Try Dilithium5 verification (NIST Level 5 - highest security)
         else if public_key.len() == DILITHIUM5_PUBLICKEY_BYTES {
             println!("Using Dilithium5 verification (pk_len={})", public_key.len());
+
+            // Try crystals-dilithium detached signature FIRST (4595 bytes)
+            // This is what lib-client produces with seed-derived keys
+            use crystals_dilithium::dilithium5::{PublicKey as CrystalsPublicKey, SIGNBYTES};
+            if signature.len() == SIGNBYTES {
+                println!("Trying crystals-dilithium detached signature (sig_len={})", signature.len());
+                let pk = CrystalsPublicKey::from_bytes(public_key);
+                let mut sig_arr = [0u8; SIGNBYTES];
+                sig_arr.copy_from_slice(signature);
+                if pk.verify(message, &sig_arr) {
+                    println!("crystals-dilithium detached signature verified!");
+                    return Ok(true);
+                } else {
+                    println!("crystals-dilithium verification failed");
+                    return Ok(false);
+                }
+            }
+
+            // Fall back to pqcrypto-dilithium formats
             match dilithium5::PublicKey::from_bytes(public_key) {
                 Ok(pk) => {
-                    // Try detached signature first (what lib-client produces)
-                    println!("Trying Dilithium5 DetachedSignature (sig_len={})", signature.len());
+                    // Try detached signature (pqcrypto format)
+                    println!("Trying pqcrypto Dilithium5 DetachedSignature (sig_len={})", signature.len());
                     if let Ok(detached_sig) = dilithium5::DetachedSignature::from_bytes(signature) {
                         match dilithium5::verify_detached_signature(&detached_sig, message, &pk) {
                             Ok(()) => {
-                                println!("Dilithium5 DetachedSignature verified!");
+                                println!("pqcrypto Dilithium5 DetachedSignature verified!");
                                 return Ok(true);
                             }
                             Err(e) => {
-                                println!("Dilithium5 DetachedSignature verify failed: {:?}", e);
+                                println!("pqcrypto Dilithium5 DetachedSignature verify failed: {:?}", e);
                             }
                         }
                     } else {
-                        println!("Dilithium5 DetachedSignature::from_bytes failed");
+                        println!("pqcrypto Dilithium5 DetachedSignature::from_bytes failed");
                     }
                     // Fall back to SignedMessage format
                     println!("Trying Dilithium5 SignedMessage format");

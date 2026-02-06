@@ -71,3 +71,8 @@ docs/sov_final/SOV_TOKENOMICS_CORRECTED.md
 docs/sov_final/SOV_COMPREHENSIVE_REFERENCE.md
 docs/sov_final/SOV_UNIFIED_IMPLEMENTATION_GUIDE.md
 gold
+
+# Deploy scripts
+deploy-dev-2.sh
+deploy-prod.sh
+deploy-prod-1.sh

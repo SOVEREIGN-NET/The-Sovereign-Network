@@ -2862,6 +2862,7 @@ dependencies = [
  "blake3",
  "chacha20poly1305",
  "criterion",
+ "crystals-dilithium",
  "curve25519-dalek",
  "ed25519-dalek",
  "hex",

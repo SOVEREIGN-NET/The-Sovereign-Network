@@ -30,12 +30,28 @@ pub fn dilithium2_sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Sign message with Dilithium5
+/// Supports both pqcrypto-dilithium (4896-byte SK) and crystals-dilithium (4864-byte SK)
 pub fn dilithium5_sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
-    let sk = dilithium5::SecretKey::from_bytes(secret_key)
-        .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 secret key"))?;
-    
-    let signature = dilithium5::sign(message, &sk);
-    Ok(signature.as_bytes().to_vec())
+    // crystals-dilithium format (4864-byte secret key from seed-derived keys)
+    if secret_key.len() == 4864 {
+        use crystals_dilithium::dilithium5::SecretKey;
+        let sk = SecretKey::from_bytes(secret_key);
+        let signature = sk.sign(message);
+        return Ok(signature.to_vec());
+    }
+
+    // pqcrypto-dilithium format (4896-byte secret key from random keygen)
+    if secret_key.len() == 4896 {
+        let sk = dilithium5::SecretKey::from_bytes(secret_key)
+            .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 secret key"))?;
+        let signature = dilithium5::sign(message, &sk);
+        return Ok(signature.as_bytes().to_vec());
+    }
+
+    Err(anyhow::anyhow!(
+        "Invalid Dilithium5 secret key size: {} bytes (expected 4864 or 4896)",
+        secret_key.len()
+    ))
 }
 
 /// Verify Dilithium2 signature
@@ -51,12 +67,29 @@ pub fn dilithium2_verify(message: &[u8], signature: &[u8], public_key: &[u8]) ->
     }
 }
 
-/// Verify Dilithium5 signature (SignedMessage format - message embedded in signature)
+/// Verify Dilithium5 signature - auto-detects format
+/// Tries crystals-dilithium detached format first (4595 bytes), then pqcrypto SignedMessage
 pub fn dilithium5_verify(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
+    use crystals_dilithium::dilithium5::{PublicKey as CrystalsPublicKey, SIGNBYTES};
+
+    // Try crystals-dilithium detached signature first (4595 bytes)
+    // This is what lib-client produces with seed-derived keys
+    if signature.len() == SIGNBYTES {
+        let pk = CrystalsPublicKey::from_bytes(public_key);
+        let mut sig_arr = [0u8; SIGNBYTES];
+        sig_arr.copy_from_slice(signature);
+        if pk.verify(message, &sig_arr) {
+            return Ok(true);
+        }
+        // If crystals-dilithium fails, don't try pqcrypto - signatures are incompatible
+        return Ok(false);
+    }
+
+    // Fall back to pqcrypto-dilithium SignedMessage format (message embedded in signature)
     let pk = dilithium5::PublicKey::from_bytes(public_key)
         .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
     let sig = dilithium5::SignedMessage::from_bytes(signature)
-        .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 signature"))?;
+        .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 signature (not 4595-byte detached, not valid SignedMessage)"))?;
 
     match dilithium5::open(&sig, &pk) {
         Ok(verified_message) => Ok(verified_message == message),
@@ -64,8 +97,9 @@ pub fn dilithium5_verify(message: &[u8], signature: &[u8], public_key: &[u8]) ->
     }
 }
 
-/// Verify Dilithium5 detached signature (signature separate from message)
-/// Use this for signatures from crystals-dilithium or lib-client
+/// Verify Dilithium5 detached signature using pqcrypto-dilithium
+/// NOTE: This is NOT compatible with signatures from crystals-dilithium!
+/// Use dilithium5_verify_crystals() for lib-client/seed-derived signatures.
 pub fn dilithium5_verify_detached(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
     let pk = dilithium5::PublicKey::from_bytes(public_key)
         .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
@@ -79,27 +113,47 @@ pub fn dilithium5_verify_detached(message: &[u8], signature: &[u8], public_key: 
     }
 }
 
+/// Verify Dilithium5 signature using crystals-dilithium (pure Rust)
+/// Use this for signatures from lib-client with seed-derived keys (4864-byte SK)
+/// This is compatible with crystals-dilithium signatures from mobile/WASM clients.
+pub fn dilithium5_verify_crystals(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
+    use crystals_dilithium::dilithium5::{PublicKey, SIGNBYTES};
+
+    if public_key.len() != 2592 {
+        return Err(anyhow::anyhow!("Invalid Dilithium5 public key length: {}", public_key.len()));
+    }
+    if signature.len() != SIGNBYTES {
+        return Err(anyhow::anyhow!("Invalid Dilithium5 signature length: {} (expected {})", signature.len(), SIGNBYTES));
+    }
+
+    let pk = PublicKey::from_bytes(public_key);
+
+    let mut sig_arr = [0u8; SIGNBYTES];
+    sig_arr.copy_from_slice(signature);
+
+    Ok(pk.verify(message, &sig_arr))
+}
+
 // Key size constants for auto-detection
-// These values come from pqcrypto_dilithium library
 const DILITHIUM2_PUBLICKEY_BYTES: usize = 1312;
 const DILITHIUM5_PUBLICKEY_BYTES: usize = 2592;
-const DILITHIUM2_SECRETKEY_BYTES: usize = 2560; // pqcrypto_dilithium uses 2560, not 2528
-const DILITHIUM5_SECRETKEY_BYTES: usize = 4896; // crystals-dilithium (new)
-const DILITHIUM5_SECRETKEY_BYTES_LEGACY: usize = 4864; // pqcrypto-dilithium (old/legacy)
+const DILITHIUM2_SECRETKEY_BYTES: usize = 2560;
+const DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO: usize = 4896;  // pqcrypto-dilithium (random keygen)
+const DILITHIUM5_SECRETKEY_BYTES_CRYSTALS: usize = 4864;  // crystals-dilithium (seed-derived)
 
 /// Auto-detecting Dilithium signing
 /// Chooses Dilithium2 or Dilithium5 based on secret key size
-/// Supports both legacy (4864-byte) and new (4896-byte) Dilithium5 keys
+/// Supports both pqcrypto (4896-byte) and crystals (4864-byte) Dilithium5 keys
 pub fn dilithium_sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
     if secret_key.len() == DILITHIUM2_SECRETKEY_BYTES {
         dilithium2_sign(message, secret_key)
-    } else if secret_key.len() == DILITHIUM5_SECRETKEY_BYTES || secret_key.len() == DILITHIUM5_SECRETKEY_BYTES_LEGACY {
-        // Both new (4896) and legacy (4864) sizes are Dilithium5
+    } else if secret_key.len() == DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO || secret_key.len() == DILITHIUM5_SECRETKEY_BYTES_CRYSTALS {
+        // Both pqcrypto (4896) and crystals (4864) are Dilithium5 - dilithium5_sign handles both
         dilithium5_sign(message, secret_key)
     } else {
         Err(anyhow::anyhow!(
-            "Unknown Dilithium secret key size: {} (expected {} for D2 or {}/{} for D5)",
-            secret_key.len(), DILITHIUM2_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES_LEGACY
+            "Unknown Dilithium secret key size: {} (expected {} for D2, {} or {} for D5)",
+            secret_key.len(), DILITHIUM2_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO, DILITHIUM5_SECRETKEY_BYTES_CRYSTALS
         ))
     }
 }
@@ -136,7 +190,8 @@ mod tests {
     fn test_dilithium5_key_sizes() {
         let (pk, sk) = dilithium5_keypair();
         assert_eq!(pk.len(), DILITHIUM5_PUBLICKEY_BYTES, "D5 public key should be {} bytes", DILITHIUM5_PUBLICKEY_BYTES);
-        assert_eq!(sk.len(), DILITHIUM5_SECRETKEY_BYTES, "D5 secret key should be {} bytes", DILITHIUM5_SECRETKEY_BYTES);
+        // dilithium5_keypair uses pqcrypto which produces 4896-byte keys
+        assert_eq!(sk.len(), DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO, "D5 secret key should be {} bytes", DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO);
     }
 
     // ==================== DILITHIUM2 SIGN/VERIFY TESTS ====================
