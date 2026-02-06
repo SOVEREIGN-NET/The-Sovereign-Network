@@ -55,7 +55,7 @@ pub mod wasm;
 pub use crypto::{Blake3, Dilithium5, Kyber1024};
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};
-pub use identity::{generate_identity, get_public_identity, get_seed_phrase, restore_identity_from_phrase, sign_registration_proof, Identity, PublicIdentity};
+pub use identity::{generate_identity, get_public_identity, get_seed_phrase, restore_identity_from_phrase, sign_registration_proof, export_keystore_base64, Identity, PublicIdentity};
 pub use request::{
     create_zhtp_frame, deserialize_response, parse_zhtp_frame, serialize_request, ZhtpHeaders,
     ZhtpRequest, ZhtpResponse,
@@ -466,6 +466,29 @@ pub extern "C" fn zhtp_client_identity_deserialize(json: *const std::ffi::c_char
 
     match identity::deserialize_identity(json) {
         Ok(identity) => Box::into_raw(Box::new(IdentityHandle { inner: identity })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Export identity as base64-encoded keystore tarball for CI/CD deployment.
+///
+/// Creates a tar.gz archive containing keystore files compatible with zhtp-cli
+/// and the deploy-site GitHub Action.
+///
+/// SECURITY: The output contains private keys! Store as a GitHub secret.
+///
+/// Caller must free with `zhtp_client_string_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_export_keystore_base64(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let identity = unsafe { &(*handle).inner };
+    match identity::export_keystore_base64(identity) {
+        Ok(b64) => match std::ffi::CString::new(b64) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
         Err(_) => std::ptr::null_mut(),
     }
 }

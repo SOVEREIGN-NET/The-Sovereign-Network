@@ -475,6 +475,28 @@ class NativeIdentityProvisioning: NSObject {
         }
     }
 
+    /// Export keystore for CI/CD deployment (SENSITIVE - contains private keys!)
+    /// Returns base64-encoded tarball ready to use as GitHub secret ZHTP_KEYSTORE_B64
+    @objc
+    func exportKeystoreForCICD(
+        _ resolve: @escaping RCTPromiseResolveBlock,
+        rejecter reject: @escaping RCTPromiseRejectBlock
+    ) {
+        guard let identity = currentIdentity else {
+            reject("NO_IDENTITY", "No identity loaded.", nil)
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let keystoreB64 = try ZhtpClient.exportKeystoreBase64(identity: identity)
+                resolve(keystoreB64)
+            } catch {
+                reject("EXPORT_ERROR", "Failed to export keystore: \(error.localizedDescription)", error)
+            }
+        }
+    }
+
     // MARK: - Utility Functions
 
     /// Check if identity is loaded

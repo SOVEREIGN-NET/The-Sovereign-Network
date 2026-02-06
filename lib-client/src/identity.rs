@@ -122,11 +122,11 @@ pub fn generate_identity(device_id: String) -> Result<Identity> {
     // 1. Generate master seed (32 random bytes)
     let master_seed = random_bytes(32);
 
-    // 2. Generate Dilithium5 keypair for signing
-    let (dilithium_pk, dilithium_sk) = Dilithium5::generate_keypair()?;
+    // 2. Generate Dilithium5 keypair from seed (deterministic - enables recovery)
+    let (dilithium_pk, dilithium_sk) = Dilithium5::generate_keypair_from_seed(&master_seed)?;
 
-    // 3. Generate Kyber1024 keypair for key exchange
-    let (kyber_pk, kyber_sk) = Kyber1024::generate_keypair()?;
+    // 3. Generate Kyber1024 keypair from seed (deterministic - enables recovery)
+    let (kyber_pk, kyber_sk) = Kyber1024::generate_keypair_from_seed(&master_seed)?;
 
     // 4. Derive DID from public key
     let pk_hash = Blake3::hash(&dilithium_pk);
@@ -369,6 +369,174 @@ pub fn serialize_public_identity(identity: &PublicIdentity) -> Result<String> {
     serde_json::to_string(identity).map_err(|e| ClientError::SerializationError(e.to_string()))
 }
 
+/// Export identity as base64-encoded keystore tarball for CI/CD deployment
+///
+/// Creates a tar.gz archive containing:
+/// - keystore/user_identity.json (ZhtpIdentity format for CLI)
+/// - keystore/user_private_key.json (private keys)
+///
+/// The output can be stored as a GitHub secret (ZHTP_KEYSTORE_B64) and used
+/// with the deploy-site GitHub Action.
+///
+/// # Security
+/// The output contains private keys! Treat it as a secret.
+///
+/// # Example
+/// ```ignore
+/// let identity = generate_identity("device-123".into())?;
+/// let keystore_b64 = export_keystore_base64(&identity)?;
+/// // User copies this to GitHub secrets as ZHTP_KEYSTORE_B64
+/// ```
+pub fn export_keystore_base64(identity: &Identity) -> Result<String> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use tar::{Builder, Header};
+
+    // 1. Create user_identity.json (ZhtpIdentity format)
+    let user_identity_json = create_zhtp_identity_json(identity)?;
+
+    // 2. Create user_private_key.json (KeystorePrivateKey format)
+    let user_private_key_json = create_keystore_private_key_json(identity)?;
+
+    // 3. Create tar.gz archive in memory
+    let mut archive_data = Vec::new();
+    {
+        let encoder = GzEncoder::new(&mut archive_data, Compression::default());
+        let mut archive = Builder::new(encoder);
+
+        // Add keystore/user_identity.json
+        let identity_bytes = user_identity_json.as_bytes();
+        let mut header = Header::new_gnu();
+        header.set_path("keystore/user_identity.json")
+            .map_err(|e| ClientError::SerializationError(format!("Failed to set path: {}", e)))?;
+        header.set_size(identity_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive.append(&header, identity_bytes)
+            .map_err(|e| ClientError::SerializationError(format!("Failed to add identity: {}", e)))?;
+
+        // Add keystore/user_private_key.json
+        let private_key_bytes = user_private_key_json.as_bytes();
+        let mut header = Header::new_gnu();
+        header.set_path("keystore/user_private_key.json")
+            .map_err(|e| ClientError::SerializationError(format!("Failed to set path: {}", e)))?;
+        header.set_size(private_key_bytes.len() as u64);
+        header.set_mode(0o600); // Restrictive permissions for private key
+        header.set_cksum();
+        archive.append(&header, private_key_bytes)
+            .map_err(|e| ClientError::SerializationError(format!("Failed to add private key: {}", e)))?;
+
+        // Finalize archive
+        let encoder = archive.into_inner()
+            .map_err(|e| ClientError::SerializationError(format!("Failed to finalize archive: {}", e)))?;
+        encoder.finish()
+            .map_err(|e| ClientError::SerializationError(format!("Failed to finish compression: {}", e)))?;
+    }
+
+    // 4. Base64 encode
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    Ok(STANDARD.encode(&archive_data))
+}
+
+/// Create ZhtpIdentity JSON format expected by the CLI
+fn create_zhtp_identity_json(identity: &Identity) -> Result<String> {
+    use crate::crypto::Blake3;
+
+    // Compute key_id = Blake3(dilithium_public_key)
+    let key_id = Blake3::hash(&identity.public_key);
+
+    // Extract identity ID from DID (format: "did:zhtp:{id_hex}")
+    let id_hex = identity.did.strip_prefix("did:zhtp:").unwrap_or(&identity.did);
+    let id_bytes: Vec<u8> = hex::decode(id_hex).unwrap_or_else(|_| key_id.to_vec());
+
+    // Generate dao_member_id from DID (deterministic)
+    let dao_member_id = format!("dao:{}", id_hex);
+
+    // NodeId struct format
+    let node_id_bytes: [u8; 32] = if identity.node_id.len() >= 32 {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&identity.node_id[..32]);
+        arr
+    } else {
+        let mut arr = [0u8; 32];
+        arr[..identity.node_id.len()].copy_from_slice(&identity.node_id);
+        arr
+    };
+
+    let zero_bytes: [u8; 32] = [0u8; 32];
+    let node_id_struct = serde_json::json!({
+        "bytes": node_id_bytes,
+        "creation_nonce": zero_bytes,
+        "network_genesis": zero_bytes
+    });
+
+    // Convert key_id to [u8; 32] array format
+    let key_id_arr: [u8; 32] = {
+        let mut arr = [0u8; 32];
+        let len = std::cmp::min(key_id.len(), 32);
+        arr[..len].copy_from_slice(&key_id[..len]);
+        arr
+    };
+
+    // Build ZhtpIdentity format (matches lib-identity expectations)
+    let zhtp_identity = serde_json::json!({
+        "id": id_bytes,
+        "did": identity.did,
+        "identity_type": "Device",
+        "public_key": {
+            "dilithium_pk": identity.public_key,
+            "kyber_pk": identity.kyber_public_key,
+            "key_id": key_id_arr
+        },
+        "node_id": node_id_struct,
+        "device_node_ids": {
+            identity.device_id.clone(): node_id_struct
+        },
+        "primary_device": identity.device_id,
+        "dao_member_id": dao_member_id,
+        "ownership_proof": {
+            "proof_system": "dilithium-pop-placeholder-v0",
+            "proof_data": [],
+            "public_inputs": id_bytes.clone(),
+            "verification_key": identity.public_key.clone(),
+            "plonky2_proof": null,
+            "proof": []
+        },
+        "credentials": {},
+        "metadata": {},
+        "attestations": [],
+        "reputation": 100,
+        "access_level": "Standard",
+        "age": null,
+        "jurisdiction": null,
+        "citizenship_verified": false,
+        "dao_voting_power": 0,
+        "private_data_id": null,
+        "created_at": identity.created_at,
+        "last_active": identity.created_at,
+        "recovery_keys": [],
+        "did_document_hash": null,
+        "owner_identity_id": null,
+        "reward_wallet_id": null
+    });
+
+    serde_json::to_string_pretty(&zhtp_identity)
+        .map_err(|e| ClientError::SerializationError(e.to_string()))
+}
+
+/// Create KeystorePrivateKey JSON format expected by the CLI
+fn create_keystore_private_key_json(identity: &Identity) -> Result<String> {
+    let keystore_key = serde_json::json!({
+        "dilithium_sk": identity.private_key,
+        "dilithium_pk": identity.public_key,
+        "kyber_sk": identity.kyber_secret_key,
+        "master_seed": identity.master_seed
+    });
+
+    serde_json::to_string_pretty(&keystore_key)
+        .map_err(|e| ClientError::SerializationError(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,7 +547,8 @@ mod tests {
 
         assert!(identity.did.starts_with("did:zhtp:"));
         assert_eq!(identity.public_key.len(), Dilithium5::PUBLIC_KEY_SIZE);
-        assert_eq!(identity.private_key.len(), Dilithium5::SECRET_KEY_SIZE);
+        // Seeded keys use crystals-dilithium (4864 bytes)
+        assert_eq!(identity.private_key.len(), Dilithium5::SECRET_KEY_SIZE_SEEDED);
         assert_eq!(identity.kyber_public_key.len(), Kyber1024::PUBLIC_KEY_SIZE);
         assert_eq!(identity.kyber_secret_key.len(), Kyber1024::SECRET_KEY_SIZE);
         assert_eq!(identity.node_id.len(), 32);
@@ -430,5 +599,73 @@ mod tests {
 
         let phrase = get_seed_phrase(&identity).unwrap();
         assert_eq!(phrase.split_whitespace().count(), 24);
+    }
+
+    #[test]
+    fn test_seed_recovery_produces_same_did() {
+        // Generate a new identity
+        let identity = generate_identity("test-device".into()).unwrap();
+        let original_did = identity.did.clone();
+        let original_public_key = identity.public_key.clone();
+
+        // Get the seed phrase
+        let phrase = get_seed_phrase(&identity).unwrap();
+
+        // Restore from seed phrase
+        let restored = restore_identity_from_phrase(&phrase, "new-device".into()).unwrap();
+
+        // DIDs MUST match (this is the critical test)
+        assert_eq!(restored.did, original_did, "Restored DID must match original");
+        assert_eq!(restored.public_key, original_public_key, "Restored public key must match");
+    }
+
+    #[test]
+    fn test_seed_recovery_deterministic() {
+        // Same seed should always produce same keys
+        let seed = vec![42u8; 32];
+
+        let id1 = restore_identity_from_seed(seed.clone(), "device1".into()).unwrap();
+        let id2 = restore_identity_from_seed(seed.clone(), "device2".into()).unwrap();
+
+        // Same keys regardless of device_id
+        assert_eq!(id1.did, id2.did);
+        assert_eq!(id1.public_key, id2.public_key);
+        assert_eq!(id1.private_key, id2.private_key);
+    }
+
+    #[test]
+    fn test_export_keystore_base64() {
+        let identity = generate_identity("test-device".into()).unwrap();
+
+        // Export should succeed
+        let keystore_b64 = export_keystore_base64(&identity).unwrap();
+
+        // Should be valid base64
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let decoded = STANDARD.decode(&keystore_b64).expect("Should be valid base64");
+
+        // Should be a valid gzip (starts with 0x1f 0x8b)
+        assert!(decoded.len() > 2, "Archive should have content");
+        assert_eq!(decoded[0], 0x1f, "Should start with gzip magic byte 1");
+        assert_eq!(decoded[1], 0x8b, "Should start with gzip magic byte 2");
+
+        // Decompress and verify tar structure
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(&decoded[..]);
+        let mut tar_data = Vec::new();
+        decoder.read_to_end(&mut tar_data).expect("Should decompress");
+
+        // Check that tar contains expected files
+        use tar::Archive;
+        let mut archive = Archive::new(&tar_data[..]);
+        let entries: Vec<_> = archive.entries().unwrap()
+            .map(|e| e.unwrap().path().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert!(entries.contains(&"keystore/user_identity.json".to_string()),
+            "Should contain user_identity.json, got: {:?}", entries);
+        assert!(entries.contains(&"keystore/user_private_key.json".to_string()),
+            "Should contain user_private_key.json, got: {:?}", entries);
     }
 }
