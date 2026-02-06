@@ -14,6 +14,8 @@ use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 use base64::{Engine as _, engine::general_purpose};
+use lib_storage;
+use lib_blockchain;
 
 // ZHTP protocol imports
 use lib_protocols::zhtp::ZhtpResult;
@@ -870,6 +872,7 @@ pub async fn handle_migrate_identity(
     identity_manager: Arc<RwLock<IdentityManager>>,
     rate_limiter: Arc<crate::api::middleware::RateLimiter>,
     request: &lib_protocols::types::ZhtpRequest,
+    storage_system: Arc<RwLock<lib_storage::PersistentStorageSystem>>,
 ) -> ZhtpResult<ZhtpResponse> {
     // Extract client IP for rate limiting and audit logging.
     let peer_addr = request.headers.get("peer_addr");
@@ -938,7 +941,14 @@ pub async fn handle_migrate_identity(
     // Message format: "SEED_MIGRATE:{display_name}:{new_public_key}:{timestamp}"
     let signed_message = format!("SEED_MIGRATE:{}:{}:{}", req.display_name, req.new_public_key, req.timestamp);
 
-    let signature_valid = lib_crypto::post_quantum::dilithium::dilithium5_verify_detached(
+    tracing::info!(
+        "🔄 MIGRATION DEBUG: msg_len={} sig_len={} pk_len={} msg_preview='{}'",
+        signed_message.len(), signature_bytes.len(), new_public_key_bytes.len(),
+        &signed_message[..std::cmp::min(80, signed_message.len())]
+    );
+
+    // Use crystals-dilithium verification for seed-derived signatures from lib-client
+    let signature_valid = lib_crypto::post_quantum::dilithium::dilithium5_verify_crystals(
         signed_message.as_bytes(),
         &signature_bytes,
         &new_public_key_bytes,
@@ -946,8 +956,8 @@ pub async fn handle_migrate_identity(
 
     if !signature_valid {
         tracing::warn!(
-            "🔄 Migration failed: invalid signature for display_name='{}' key={} reported_ip={} audit_ip={}",
-            &req.display_name, &rate_limit_key, &reported_ip, &audit_ip
+            "🔄 Migration failed: invalid signature for display_name='{}' sig_len={} pk_len={} msg_len={} key={} reported_ip={} audit_ip={}",
+            &req.display_name, signature_bytes.len(), new_public_key_bytes.len(), signed_message.len(), &rate_limit_key, &reported_ip, &audit_ip
         );
         rate_limiter.record_failed_attempt(&rate_limit_key).await;
         return Ok(ZhtpResponse::error(
@@ -1032,7 +1042,7 @@ pub async fn handle_migrate_identity(
 
     // Register external identity (client-side generated keys)
     if let Err(e) = manager.register_external_identity(
-        new_identity_id,
+        new_identity_id.clone(),
         new_did.clone(),
         new_public_key,
         lib_identity::IdentityType::Human,
@@ -1044,15 +1054,136 @@ pub async fn handle_migrate_identity(
         return Err(anyhow::anyhow!("Failed to register new identity: {}", e));
     }
 
-    // Mark old identity as migrated
+    // Mark old identity as migrated and collect wallet info for transfer
+    let mut wallet_ids_to_transfer: Vec<(lib_identity::wallets::WalletId, String, u64)> = Vec::new();
+    let mut old_wallet_manager: Option<lib_identity::wallets::WalletManager> = None;
+
     if let Some(old_id) = manager.get_identity_mut(&old_identity.id) {
         old_id.metadata.insert("migrated_to".to_string(), new_did.clone());
         old_id.metadata.insert("migrated_at".to_string(), created_at.to_string());
         old_id.metadata.insert("migrated_ip".to_string(), audit_ip.clone());
         old_id.metadata.remove("display_name"); // Remove display_name from old
+
+        // Collect wallet IDs from old identity for transfer
+        for (wallet_id, wallet) in &old_id.wallet_manager.wallets {
+            let wallet_type = format!("{:?}", wallet.wallet_type);
+            let balance = wallet.balance;
+            wallet_ids_to_transfer.push((wallet_id.clone(), wallet_type.clone(), balance));
+            tracing::info!(
+                "🔄 Wallet to transfer: id={} type={} balance={}",
+                hex::encode(wallet_id.0),
+                wallet_type,
+                balance
+            );
+        }
+
+        // Clone wallet_manager for transfer
+        old_wallet_manager = Some(old_id.wallet_manager.clone());
+    }
+
+    // Transfer wallets to new identity
+    if let Some(mut wallet_manager) = old_wallet_manager {
+        // Update owner_id to new identity (IdentityId is a type alias for Hash)
+        wallet_manager.owner_id = Some(new_identity_id.clone());
+
+        if let Some(new_id) = manager.get_identity_mut(&new_identity_id) {
+            new_id.wallet_manager = wallet_manager;
+            tracing::info!(
+                "🔄 Transferred {} wallets to new identity",
+                new_id.wallet_manager.wallets.len()
+            );
+        }
     }
 
     drop(manager);
+
+    // Persist the new identity to storage (survives server restart)
+    let identity_id_str = hex::encode(new_identity_id.as_bytes());
+
+    // Build wallet ID list for persistence
+    let wallet_id_strs: Vec<String> = wallet_ids_to_transfer.iter()
+        .map(|(wid, _, _)| hex::encode(wid.0))
+        .collect();
+    let primary_wallet_id = wallet_ids_to_transfer.iter()
+        .find(|(_, t, _)| t.contains("Primary"))
+        .map(|(wid, _, _)| hex::encode(wid.0));
+    let ubi_wallet_id = wallet_ids_to_transfer.iter()
+        .find(|(_, t, _)| t.contains("UBI"))
+        .map(|(wid, _, _)| hex::encode(wid.0));
+    let savings_wallet_id = wallet_ids_to_transfer.iter()
+        .find(|(_, t, _)| t.contains("Savings"))
+        .map(|(wid, _, _)| hex::encode(wid.0));
+
+    let identity_record = serde_json::json!({
+        "did": new_did.clone(),
+        "public_key": hex::encode(&new_public_key_bytes),
+        "display_name": display_name.clone(),
+        "device_id": req.device_id.clone(),
+        "identity_type": "Human",
+        "created_at": created_at,
+        "migrated_from": old_did.clone(),
+        "primary_wallet_id": primary_wallet_id,
+        "ubi_wallet_id": ubi_wallet_id,
+        "savings_wallet_id": savings_wallet_id,
+    });
+
+    if let Ok(identity_data) = serde_json::to_vec(&identity_record) {
+        let mut storage = storage_system.write().await;
+        if let Err(e) = storage.store_identity_record(&identity_id_str, &identity_data).await {
+            tracing::warn!("Failed to persist migrated identity to storage (non-fatal): {}", e);
+        } else {
+            tracing::info!("🔄 Migrated identity {} persisted to storage", &new_did);
+        }
+        if let Err(e) = storage.add_to_identity_index(&identity_id_str).await {
+            tracing::warn!("Failed to add migrated identity to index (non-fatal): {}", e);
+        }
+    }
+
+    // Update wallet ownership on blockchain
+    if !wallet_ids_to_transfer.is_empty() {
+        tracing::info!("🔄 Updating {} wallets on blockchain...", wallet_ids_to_transfer.len());
+
+        match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(shared_blockchain) => {
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(10),
+                    shared_blockchain.write()
+                ).await {
+                    Ok(mut blockchain) => {
+                        for (wallet_id, wallet_type, balance) in &wallet_ids_to_transfer {
+                            // Update wallet in registry with new owner
+                            let wallet_id_str = hex::encode(wallet_id.0);
+                            if let Some(wallet_data) = blockchain.wallet_registry.get_mut(&wallet_id_str) {
+                                let old_owner = wallet_data.owner_identity_id.clone();
+                                wallet_data.owner_identity_id = Some(lib_blockchain::Hash::from_slice(new_identity_id.as_bytes()));
+                                wallet_data.public_key = new_public_key_bytes.clone();
+                                tracing::info!(
+                                    "🔄 Blockchain wallet {} ({}) ownership updated: {:?} -> {}",
+                                    &wallet_id_str[..16],
+                                    wallet_type,
+                                    old_owner.map(|h| hex::encode(h.as_bytes())[..16].to_string()),
+                                    &hex::encode(new_identity_id.as_bytes())[..16]
+                                );
+                            } else {
+                                tracing::warn!(
+                                    "🔄 Wallet {} not found in blockchain registry (may not have been registered)",
+                                    &wallet_id_str[..16]
+                                );
+                            }
+                        }
+                        drop(blockchain);
+                        tracing::info!("🔄 Blockchain wallet updates complete");
+                    }
+                    Err(_) => {
+                        tracing::warn!("🔄 Timeout acquiring blockchain lock for wallet update (non-fatal)");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("🔄 Failed to get blockchain for wallet update (non-fatal): {}", e);
+            }
+        }
+    }
 
     // AUDIT LOG: Record successful migration
     tracing::info!(

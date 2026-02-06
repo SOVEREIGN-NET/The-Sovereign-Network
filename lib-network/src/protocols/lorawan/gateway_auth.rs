@@ -74,7 +74,7 @@ impl LoRaWANGatewayAuth {
     ///
     /// # Arguments
     /// * `public_key` - Dilithium5 public key (2592 bytes)
-    /// * `secret_key` - Dilithium5 secret key (4896 bytes)
+    /// * `secret_key` - Dilithium5 secret key (4864 or 4896 bytes)
     ///
     /// # Errors
     /// Returns error if key lengths are invalid
@@ -85,9 +85,9 @@ impl LoRaWANGatewayAuth {
                 public_key.len()
             ));
         }
-        if secret_key.len() != 4896 {
+        if secret_key.len() != 4864 && secret_key.len() != 4896 {
             return Err(anyhow::anyhow!(
-                "Invalid Dilithium5 secret key length: {} bytes (expected 4896)",
+                "Invalid Dilithium5 secret key length: {} bytes (expected 4864 or 4896)",
                 secret_key.len()
             ));
         }
@@ -100,7 +100,7 @@ impl LoRaWANGatewayAuth {
     ///
     /// # Arguments
     /// * `public_key` - Dilithium5 public key (2592 bytes)
-    /// * `secret_key` - Dilithium5 secret key (4896 bytes)
+    /// * `secret_key` - Dilithium5 secret key (4864 or 4896 bytes)
     pub fn with_keypair(public_key: Vec<u8>, secret_key: Vec<u8>) -> Result<Self> {
         if public_key.len() != 2592 {
             return Err(anyhow::anyhow!(
@@ -108,9 +108,9 @@ impl LoRaWANGatewayAuth {
                 public_key.len()
             ));
         }
-        if secret_key.len() != 4896 {
+        if secret_key.len() != 4864 && secret_key.len() != 4896 {
             return Err(anyhow::anyhow!(
-                "Invalid Dilithium5 secret key length: {} bytes (expected 4896)",
+                "Invalid Dilithium5 secret key length: {} bytes (expected 4864 or 4896)",
                 secret_key.len()
             ));
         }
