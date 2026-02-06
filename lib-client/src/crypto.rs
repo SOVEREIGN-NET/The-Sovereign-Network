@@ -398,4 +398,36 @@ mod tests {
         assert!(err.to_string().contains("Invalid Dilithium5 seed length"));
     }
 
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_cross_library_sign_verify() {
+        // This tests the EXACT flow used in production:
+        // 1. lib-client generates keypair from seed (crystals-dilithium, 4864-byte SK)
+        // 2. lib-client signs message (crystals-dilithium)
+        // 3. lib-crypto verifies signature (pqcrypto-dilithium)
+
+        let seed = [42u8; 32];
+        let (pk, sk) = Dilithium5::generate_keypair_from_seed(&seed).unwrap();
+
+        println!("Cross-library test: pk_len={}, sk_len={}", pk.len(), sk.len());
+        assert_eq!(pk.len(), 2592, "Public key should be 2592 bytes");
+        assert_eq!(sk.len(), 4864, "Secret key from seed should be 4864 bytes (crystals-dilithium)");
+
+        // Sign with lib-client (uses crystals-dilithium for 4864-byte keys)
+        let message = b"SEED_MIGRATE:supertramp:abc123hex:1234567890";
+        let signature = Dilithium5::sign(message, &sk).expect("Signing should succeed");
+
+        println!("Signature length: {}", signature.len());
+        assert_eq!(signature.len(), 4595, "Dilithium5 signature should be 4595 bytes");
+
+        // Verify with lib-crypto using crystals-dilithium (compatible!)
+        let valid = lib_crypto::post_quantum::dilithium::dilithium5_verify_crystals(
+            message,
+            &signature,
+            &pk,
+        ).expect("Verification should not error");
+
+        assert!(valid, "crystals-dilithium signature MUST verify with crystals-dilithium");
+    }
+
 }
