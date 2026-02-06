@@ -938,7 +938,14 @@ pub async fn handle_migrate_identity(
     // Message format: "SEED_MIGRATE:{display_name}:{new_public_key}:{timestamp}"
     let signed_message = format!("SEED_MIGRATE:{}:{}:{}", req.display_name, req.new_public_key, req.timestamp);
 
-    let signature_valid = lib_crypto::post_quantum::dilithium::dilithium5_verify_detached(
+    tracing::info!(
+        "🔄 MIGRATION DEBUG: msg_len={} sig_len={} pk_len={} msg_preview='{}'",
+        signed_message.len(), signature_bytes.len(), new_public_key_bytes.len(),
+        &signed_message[..std::cmp::min(80, signed_message.len())]
+    );
+
+    // Use crystals-dilithium verification for seed-derived signatures from lib-client
+    let signature_valid = lib_crypto::post_quantum::dilithium::dilithium5_verify_crystals(
         signed_message.as_bytes(),
         &signature_bytes,
         &new_public_key_bytes,
@@ -946,8 +953,8 @@ pub async fn handle_migrate_identity(
 
     if !signature_valid {
         tracing::warn!(
-            "🔄 Migration failed: invalid signature for display_name='{}' key={} reported_ip={} audit_ip={}",
-            &req.display_name, &rate_limit_key, &reported_ip, &audit_ip
+            "🔄 Migration failed: invalid signature for display_name='{}' sig_len={} pk_len={} msg_len={} key={} reported_ip={} audit_ip={}",
+            &req.display_name, signature_bytes.len(), new_public_key_bytes.len(), signed_message.len(), &rate_limit_key, &reported_ip, &audit_ip
         );
         rate_limiter.record_failed_attempt(&rate_limit_key).await;
         return Ok(ZhtpResponse::error(

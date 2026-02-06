@@ -24,22 +24,39 @@ use super::KeyPair;
 // Constants for CRYSTALS key sizes (from pqcrypto_dilithium)
 const KYBER1024_CIPHERTEXT_BYTES: usize = 1568;
 const DILITHIUM2_SECRETKEY_BYTES: usize = 2560; // Actual pqcrypto_dilithium size
-const DILITHIUM5_SECRETKEY_BYTES: usize = 4896;
+const DILITHIUM5_SECRETKEY_BYTES: usize = 4896; // pqcrypto-dilithium
+const DILITHIUM5_SECRETKEY_BYTES_CRYSTALS: usize = 4864; // crystals-dilithium (seed-derived)
 
 impl KeyPair {
     /// Sign a message with CRYSTALS-Dilithium post-quantum signature
     /// Auto-detects Dilithium2 vs Dilithium5 based on secret key size
+    /// Supports both pqcrypto-dilithium (4896 bytes) and crystals-dilithium (4864 bytes)
     pub fn sign(&self, message: &[u8]) -> Result<Signature> {
         let sk_len = self.private_key.dilithium_sk.len();
 
         if sk_len == DILITHIUM5_SECRETKEY_BYTES {
-            // Dilithium5 (NIST Level 5 - highest security)
+            // Dilithium5 (NIST Level 5 - highest security) - pqcrypto format
             let dilithium_sk = dilithium5::SecretKey::from_bytes(&self.private_key.dilithium_sk)
                 .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 secret key"))?;
             let signature = dilithium5::sign(message, &dilithium_sk);
 
             Ok(Signature {
                 signature: signature.as_bytes().to_vec(),
+                public_key: self.public_key.clone(),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            })
+        } else if sk_len == DILITHIUM5_SECRETKEY_BYTES_CRYSTALS {
+            // Dilithium5 (NIST Level 5) - crystals-dilithium format (seed-derived keys)
+            use crystals_dilithium::dilithium5::SecretKey;
+            let sk = SecretKey::from_bytes(&self.private_key.dilithium_sk);
+            let signature = sk.sign(message);
+
+            Ok(Signature {
+                signature: signature.to_vec(),
                 public_key: self.public_key.clone(),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: std::time::SystemTime::now()
@@ -64,8 +81,8 @@ impl KeyPair {
             })
         } else {
             Err(anyhow::anyhow!(
-                "Invalid Dilithium secret key size: {} bytes (expected {} for Dilithium5 or {} for Dilithium2)",
-                sk_len, DILITHIUM5_SECRETKEY_BYTES, DILITHIUM2_SECRETKEY_BYTES
+                "Invalid Dilithium secret key size: {} bytes (expected {} or {} for Dilithium5, {} for Dilithium2)",
+                sk_len, DILITHIUM5_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES_CRYSTALS, DILITHIUM2_SECRETKEY_BYTES
             ))
         }
     }
@@ -92,14 +109,27 @@ impl KeyPair {
                 }
             },
             SignatureAlgorithm::Dilithium5 => {
-                let dilithium_pk = dilithium5::PublicKey::from_bytes(&signature.public_key.dilithium_pk)
-                    .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
-                let sig = dilithium5::SignedMessage::from_bytes(&signature.signature)
-                    .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 signature"))?;
-                
-                match dilithium5::open(&sig, &dilithium_pk) {
-                    Ok(verified_message) => Ok(verified_message == message),
-                    Err(_) => Ok(false),
+                // Try crystals-dilithium (detached signature) first, then pqcrypto (SignedMessage)
+                // crystals-dilithium produces 4595-byte detached signatures
+                use crystals_dilithium::dilithium5::{PublicKey as CrystalsPublicKey, SIGNBYTES};
+
+                if signature.signature.len() == SIGNBYTES {
+                    // Detached signature from crystals-dilithium
+                    let pk = CrystalsPublicKey::from_bytes(&signature.public_key.dilithium_pk);
+                    let mut sig_arr = [0u8; SIGNBYTES];
+                    sig_arr.copy_from_slice(&signature.signature);
+                    Ok(pk.verify(message, &sig_arr))
+                } else {
+                    // Try pqcrypto SignedMessage format
+                    let dilithium_pk = dilithium5::PublicKey::from_bytes(&signature.public_key.dilithium_pk)
+                        .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
+                    let sig = dilithium5::SignedMessage::from_bytes(&signature.signature)
+                        .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 signature"))?;
+
+                    match dilithium5::open(&sig, &dilithium_pk) {
+                        Ok(verified_message) => Ok(verified_message == message),
+                        Err(_) => Ok(false),
+                    }
                 }
             },
             // Removed duplicate Dilithium2 arm - already handled above

@@ -64,8 +64,9 @@ pub fn dilithium5_verify(message: &[u8], signature: &[u8], public_key: &[u8]) ->
     }
 }
 
-/// Verify Dilithium5 detached signature (signature separate from message)
-/// Use this for signatures from crystals-dilithium or lib-client
+/// Verify Dilithium5 detached signature using pqcrypto-dilithium
+/// NOTE: This is NOT compatible with signatures from crystals-dilithium!
+/// Use dilithium5_verify_crystals() for lib-client/seed-derived signatures.
 pub fn dilithium5_verify_detached(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
     let pk = dilithium5::PublicKey::from_bytes(public_key)
         .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
@@ -77,6 +78,27 @@ pub fn dilithium5_verify_detached(message: &[u8], signature: &[u8], public_key: 
         Ok(()) => Ok(true),
         Err(_) => Ok(false),
     }
+}
+
+/// Verify Dilithium5 signature using crystals-dilithium (pure Rust)
+/// Use this for signatures from lib-client with seed-derived keys (4864-byte SK)
+/// This is compatible with crystals-dilithium signatures from mobile/WASM clients.
+pub fn dilithium5_verify_crystals(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
+    use crystals_dilithium::dilithium5::{PublicKey, SIGNBYTES};
+
+    if public_key.len() != 2592 {
+        return Err(anyhow::anyhow!("Invalid Dilithium5 public key length: {}", public_key.len()));
+    }
+    if signature.len() != SIGNBYTES {
+        return Err(anyhow::anyhow!("Invalid Dilithium5 signature length: {} (expected {})", signature.len(), SIGNBYTES));
+    }
+
+    let pk = PublicKey::from_bytes(public_key);
+
+    let mut sig_arr = [0u8; SIGNBYTES];
+    sig_arr.copy_from_slice(signature);
+
+    Ok(pk.verify(message, &sig_arr))
 }
 
 // Key size constants for auto-detection
