@@ -37,6 +37,7 @@ interface NativeIdentityProvisioningInterface {
   getPublicIdentity(): Promise<PublicIdentity>;
   signRegistrationProof(timestamp: number): Promise<string>; // base64 signature
   signMessage(messageBase64: string): Promise<string>; // base64 signature
+  exportKeystoreForCICD(): Promise<string>; // base64 keystore tarball for GitHub Actions
 
   // UHP v2 Handshake
   initHandshake(channelBindingBase64: string): Promise<boolean>;
@@ -242,6 +243,15 @@ export class IdentityProvisioning {
    */
   async getMasterSeedForBackup(): Promise<string> {
     return NativeIdentityProvisioningModule.getMasterSeedForBackup();
+  }
+
+  /**
+   * Export keystore for CI/CD deployment (GitHub Actions).
+   * Returns base64-encoded tarball to store as ZHTP_KEYSTORE_B64 secret.
+   * WARNING: This contains private keys! Handle with care.
+   */
+  async exportKeystoreForCICD(): Promise<string> {
+    return NativeIdentityProvisioningModule.exportKeystoreForCICD();
   }
 
   // ---------------------------------------------------------------------------

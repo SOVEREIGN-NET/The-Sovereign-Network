@@ -53,6 +53,12 @@ namespace zhtp_client {
     [Throws=ClientError]
     string get_seed_phrase([ByRef] Identity identity);
 
+    /// Export identity as base64-encoded keystore tarball for CI/CD deployment.
+    /// Creates tar.gz containing keystore files compatible with zhtp-cli.
+    /// SECURITY: Output contains private keys! Store as GitHub secret (ZHTP_KEYSTORE_B64).
+    [Throws=ClientError]
+    string export_keystore_base64([ByRef] Identity identity);
+
     // ============================================================================
     // Request/Response Functions
     // ============================================================================
