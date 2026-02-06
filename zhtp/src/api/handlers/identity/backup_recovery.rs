@@ -938,7 +938,7 @@ pub async fn handle_migrate_identity(
     // Message format: "SEED_MIGRATE:{display_name}:{new_public_key}:{timestamp}"
     let signed_message = format!("SEED_MIGRATE:{}:{}:{}", req.display_name, req.new_public_key, req.timestamp);
 
-    let signature_valid = lib_crypto::post_quantum::dilithium::dilithium5_verify(
+    let signature_valid = lib_crypto::post_quantum::dilithium::dilithium5_verify_detached(
         signed_message.as_bytes(),
         &signature_bytes,
         &new_public_key_bytes,
