@@ -28,6 +28,10 @@ hex = "0.4"
 base64 = "0.21"
 tracing = "0.1"
 
+# Archive creation for keystore export
+tar = "0.4"
+flate2 = "1.0"
+
 # Workspace dependencies for correct transaction serialization
 lib-blockchain = { path = "../lib-blockchain" }
 lib-crypto = { path = "../lib-crypto" }
