@@ -5,7 +5,7 @@
 use anyhow::Result;
 use pqcrypto_dilithium::{dilithium2, dilithium5};
 use pqcrypto_traits::{
-    sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey, SignedMessage},
+    sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey, SignedMessage, DetachedSignature},
 };
 
 /// Generate Dilithium2 keypair (Level 2 security)
@@ -51,7 +51,7 @@ pub fn dilithium2_verify(message: &[u8], signature: &[u8], public_key: &[u8]) ->
     }
 }
 
-/// Verify Dilithium5 signature
+/// Verify Dilithium5 signature (SignedMessage format - message embedded in signature)
 pub fn dilithium5_verify(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
     let pk = dilithium5::PublicKey::from_bytes(public_key)
         .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
@@ -60,6 +60,21 @@ pub fn dilithium5_verify(message: &[u8], signature: &[u8], public_key: &[u8]) ->
 
     match dilithium5::open(&sig, &pk) {
         Ok(verified_message) => Ok(verified_message == message),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Verify Dilithium5 detached signature (signature separate from message)
+/// Use this for signatures from crystals-dilithium or lib-client
+pub fn dilithium5_verify_detached(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
+    let pk = dilithium5::PublicKey::from_bytes(public_key)
+        .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
+
+    let sig = dilithium5::DetachedSignature::from_bytes(signature)
+        .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 signature"))?;
+
+    match dilithium5::verify_detached_signature(&sig, message, &pk) {
+        Ok(()) => Ok(true),
         Err(_) => Ok(false),
     }
 }

@@ -70,11 +70,27 @@ mod native {
         }
 
         pub fn sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
-            let sk = dilithium5::SecretKey::from_bytes(secret_key)
-                .map_err(|_| ClientError::CryptoError("Invalid Dilithium5 secret key".into()))?;
-
-            let sig = dilithium5::detached_sign(message, &sk);
-            Ok(sig.as_bytes().to_vec())
+            // Auto-detect key format based on size:
+            // - 4864 bytes: crystals-dilithium (from seed)
+            // - 4896 bytes: pqcrypto-dilithium (random keygen)
+            if secret_key.len() == 4864 {
+                // Use crystals-dilithium for keys generated from seed
+                use crystals_dilithium::dilithium5::SecretKey;
+                let sk = SecretKey::from_bytes(secret_key);
+                let signature = sk.sign(message);
+                Ok(signature.to_vec())
+            } else if secret_key.len() == 4896 {
+                // Use pqcrypto-dilithium for randomly generated keys
+                let sk = dilithium5::SecretKey::from_bytes(secret_key)
+                    .map_err(|_| ClientError::CryptoError("Invalid Dilithium5 secret key".into()))?;
+                let sig = dilithium5::detached_sign(message, &sk);
+                Ok(sig.as_bytes().to_vec())
+            } else {
+                Err(ClientError::CryptoError(format!(
+                    "Invalid Dilithium5 secret key size: {} (expected 4864 or 4896)",
+                    secret_key.len()
+                )))
+            }
         }
 
         pub fn verify(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
