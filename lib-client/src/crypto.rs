@@ -43,7 +43,8 @@ mod native {
 
     impl Dilithium5 {
         pub const PUBLIC_KEY_SIZE: usize = 2592;
-        pub const SECRET_KEY_SIZE: usize = 4896;
+        pub const SECRET_KEY_SIZE: usize = 4896;  // pqcrypto-dilithium (random)
+        pub const SECRET_KEY_SIZE_SEEDED: usize = 4864;  // crystals-dilithium (from seed)
         pub const SIGNATURE_SIZE: usize = 4595;
 
         pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>)> {
@@ -94,6 +95,14 @@ mod native {
         }
 
         pub fn verify(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
+            // Try crystals-dilithium first (both crates use same NIST standard)
+            use crystals_dilithium::dilithium5::PublicKey as CrystalsPublicKey;
+            let crystals_pk = CrystalsPublicKey::from_bytes(public_key);
+            if crystals_pk.verify(message, signature) {
+                return Ok(true);
+            }
+
+            // Try pqcrypto-dilithium
             let pk = dilithium5::PublicKey::from_bytes(public_key)
                 .map_err(|_| ClientError::CryptoError("Invalid Dilithium5 public key".into()))?;
 
