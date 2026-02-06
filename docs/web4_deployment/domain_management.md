@@ -97,3 +97,19 @@ Result:
 - Base64 encoding is not encryption
 - Protect the keystore like a private key
 
+---
+
+## Preparing Keystore for CI/CD
+
+When using CI/CD, you may need to encode your keystore for use as a secret. Use the CLI to automate this:
+
+```bash
+zhtp pubkey to-base64 --input ~/.zhtp/keystore > keystore.b64
+```
+
+Or, for a keystore directory:
+
+```bash
+tar -czf - -C ~/.zhtp keystore | base64 -w 0 > keystore.b64
+```
+
