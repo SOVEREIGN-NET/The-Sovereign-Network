@@ -867,6 +867,7 @@ impl IdentityHandler {
             self.identity_manager.clone(),
             self.rate_limiter.clone(),
             &request,
+            self.storage_system.clone(),
         )
         .await
     }
