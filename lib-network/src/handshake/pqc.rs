@@ -103,6 +103,11 @@ pub fn create_pqc_offer(suite: PqcCapability) -> Result<(PqcHandshakeOffer, PqcH
         kyber_sk = %fp8("kyber_sk", &kyber_sk),
         "PQC offer created (ephemeral keypair)"
     );
+    eprintln!(
+        "PQC offer created debug {} {}",
+        fp8("kyber_pk", &kyber_pk_vec),
+        fp8("kyber_sk", &kyber_sk)
+    );
 
     let binder = binder_bytes(suite.as_str(), &kyber_pk_vec);
     let signature = dilithium_sign(&binder, &dilithium_sk)?;
@@ -162,6 +167,12 @@ pub fn encapsulate_pqc(offer: &PqcHandshakeOffer) -> Result<(Vec<u8>, [u8; 32])>
         ciphertext_len = result.0.len(),
         "PQC encapsulate (initiator)"
     );
+    eprintln!(
+        "PQC encapsulate debug {} {} shared_prefix={}",
+        fp8("kyber_pk", &offer.kyber_public_key),
+        fp8("ct", &result.0),
+        hex::encode(&result.1[..8])
+    );
     Ok(result)
 }
 
@@ -178,6 +189,12 @@ pub fn decapsulate_pqc(ciphertext: &[u8], state: &PqcHandshakeState) -> Result<[
         pqc_shared_prefix = ?hex::encode(&shared[..8]),
         ciphertext_len = ciphertext.len(),
         "PQC decapsulate (responder)"
+    );
+    eprintln!(
+        "PQC decapsulate debug {} {} shared_prefix={}",
+        fp8("kyber_sk", &state.kyber_secret_key),
+        fp8("ct", ciphertext),
+        hex::encode(&shared[..8])
     );
     Ok(shared)
 }
