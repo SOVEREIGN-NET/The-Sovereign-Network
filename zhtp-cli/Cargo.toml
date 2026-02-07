@@ -51,6 +51,7 @@ lib-network = { path = "../lib-network" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts"] }
 lib-protocols = { path = "../lib-protocols" }
 lib-proofs = { path = "../lib-proofs" }
+zhtp_client = { package = "lib-client", path = "../lib-client" }
 
 # zhtp library as a dependency (core orchestrator)
 zhtp = { path = "../zhtp", default-features = false, features = ["full-blockchain"] }
