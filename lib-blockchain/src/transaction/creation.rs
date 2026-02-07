@@ -538,6 +538,10 @@ pub mod utils {
                 // Wallet registration transactions should have wallet data
                 // Validation will be handled during transaction validation
             }
+            TransactionType::WalletUpdate => {
+                // Wallet update transactions should have wallet data
+                // Validation will be handled during transaction validation
+            }
             TransactionType::ValidatorRegistration |
             TransactionType::ValidatorUpdate |
             TransactionType::ValidatorUnregister => {

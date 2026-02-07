@@ -509,7 +509,7 @@ impl ZdnsServer {
     }
 
     /// Get query statistics
-    pub(crate) fn get_stats(&self) -> QueryStats {
+    pub fn get_stats(&self) -> QueryStats {
         self.query_stats.read().unwrap().clone()
     }
 

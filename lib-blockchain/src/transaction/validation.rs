@@ -121,6 +121,9 @@ impl TransactionValidator {
                 // Wallet registration transactions - validate wallet data and ownership
                 self.validate_wallet_registration_transaction(transaction)?;
             },
+            TransactionType::WalletUpdate => {
+                self.validate_wallet_update_transaction(transaction, is_system_transaction)?;
+            },
             TransactionType::ValidatorRegistration => {
                 // Validator registration - validate validator data exists
                 if transaction.validator_data.is_none() {
@@ -226,6 +229,9 @@ impl TransactionValidator {
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
                 self.validate_wallet_registration_transaction(transaction)?;
+            },
+            TransactionType::WalletUpdate => {
+                self.validate_wallet_update_transaction(transaction, is_system_transaction)?;
             },
             TransactionType::ValidatorRegistration => {
                 // Validator registration - validate validator data exists
@@ -844,6 +850,53 @@ impl TransactionValidator {
         Ok(())
     }
 
+    /// Validate wallet update transaction.
+    ///
+    /// Today this is only permitted as a system transaction on the development/testnet chain,
+    /// used for controlled migrations and administrative recovery. Future authorization (DAO/validator)
+    /// should be enforced here as rules evolve.
+    fn validate_wallet_update_transaction(
+        &self,
+        transaction: &Transaction,
+        is_system_transaction: bool,
+    ) -> ValidationResult {
+        // Must carry wallet_data
+        self.validate_wallet_registration_transaction(transaction)?;
+
+        // Restrict to system transactions for now (no user-auth path implemented yet).
+        if !is_system_transaction {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Restrict to testnet mode using an out-of-band chain id signal.
+        // NOTE: tx.chain_id is not currently a reliable network source of truth across the codebase.
+        let chain_id = std::env::var("ZHTP_CHAIN_ID")
+            .ok()
+            .and_then(|v| v.parse::<u8>().ok())
+            .unwrap_or(0x03); // default dev/testnet
+        if chain_id != 0x03 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Require an explicit server-side flag to enable this operation.
+        if std::env::var("ZHTP_ENABLE_IDENTITY_MIGRATION")
+            .ok()
+            .map(|v| v == "1")
+            .unwrap_or(false)
+            != true
+        {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Require an explicit memo prefix for auditability.
+        const PREFIX: &[u8] = b"WALLET_UPDATE_V1:";
+        if !transaction.memo.starts_with(PREFIX) {
+            return Err(ValidationError::InvalidMemo);
+        }
+
+        Ok(())
+    }
+
     /// Validate UBI claim transaction (Week 7)
     ///
     /// Checks that:
@@ -1024,6 +1077,9 @@ impl<'a> StatefulTransactionValidator<'a> {
             },
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
+                stateless_validator.validate_transaction(transaction)?;
+            },
+            TransactionType::WalletUpdate => {
                 stateless_validator.validate_transaction(transaction)?;
             },
             TransactionType::ValidatorRegistration |
@@ -1318,6 +1374,10 @@ pub mod utils {
             },
             TransactionType::WalletRegistration => {
                 // Wallet registration should have wallet_data
+                transaction.wallet_data.is_some()
+            }
+            TransactionType::WalletUpdate => {
+                // Wallet update should have wallet_data
                 transaction.wallet_data.is_some()
             }
             TransactionType::ValidatorRegistration |

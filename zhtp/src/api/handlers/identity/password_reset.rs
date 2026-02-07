@@ -13,6 +13,7 @@ use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
 
 // Identity management imports
 use lib_identity::IdentityManager;
+use lib_identity::recovery::RecoveryPhraseManager;
 
 // Session management
 use crate::session_manager::SessionManager;
@@ -82,6 +83,39 @@ pub async fn handle_password_recovery(
         .map_err(|e| anyhow::anyhow!("Invalid identity ID hex: {}", e))?;
     let identity_id = lib_crypto::Hash::from_bytes(&identity_id_bytes);
 
+    // Validate recovery phrase BEFORE leaking whether the identity exists.
+    // This endpoint is intended for "imported" identities, where the server can
+    // deterministically derive the IdentityId from the phrase.
+    let phrase_words: Vec<String> = _recovery_phrase
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+
+    // Accept both 20-word custom and 24-word BIP39 standard (matches lib-identity behavior).
+    if phrase_words.len() != 20 && phrase_words.len() != 24 {
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::BadRequest,
+            format!(
+                "Recovery phrase must be 20 or 24 words, got {}",
+                phrase_words.len()
+            ),
+        ));
+    }
+
+    let recovery_manager = RecoveryPhraseManager::new();
+    let (derived_identity_id, _derived_sk, _derived_pk, _derived_seed) = recovery_manager
+        .restore_from_phrase(&phrase_words)
+        .await
+        .map_err(|e| anyhow::anyhow!("Invalid recovery phrase: {}", e))?;
+
+    if derived_identity_id.0 != identity_id.0 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::Unauthorized,
+            "Invalid recovery phrase or identity not found".to_string(),
+        ));
+    }
+
     // Validate recovery phrase and reset password
     let mut manager = identity_manager.write().await;
 
@@ -95,10 +129,6 @@ pub async fn handle_password_recovery(
             "Invalid recovery phrase or identity not found".to_string(),
         ));
     }
-
-    // Validate recovery phrase (implementation depends on lib-identity)
-    // For now, we'll set the password if the identity exists
-    // TODO: Implement actual recovery phrase validation in lib-identity
 
     // Set new password
     match manager.set_identity_password(&identity_id, &new_password) {
@@ -134,11 +164,11 @@ pub async fn handle_password_recovery(
             ))
         }
         Err(e) => {
-            tracing::error!("Password reset failed: {}", e);
-
+            // Password validation / eligibility errors are client-visible.
+            tracing::warn!("Password reset rejected: {}", e);
             Ok(ZhtpResponse::error(
-                ZhtpStatus::InternalServerError,
-                "Password reset failed".to_string(),
+                ZhtpStatus::BadRequest,
+                format!("Password reset rejected: {}", e),
             ))
         }
     }

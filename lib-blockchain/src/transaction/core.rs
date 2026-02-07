@@ -641,6 +641,38 @@ impl Transaction {
         }
     }
 
+    /// Create a wallet update transaction.
+    ///
+    /// Used to update wallet metadata/ownership on-chain. In testnet migrations this may be used
+    /// as a system transaction (no inputs). In production, authorization rules must be enforced.
+    pub fn new_wallet_update(
+        wallet_data: WalletTransactionData,
+        outputs: Vec<TransactionOutput>,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 1,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::WalletUpdate,
+            inputs: Vec::new(), // Update authorization is consensus-defined; system updates use empty inputs
+            outputs,
+            fee: 0, // System-style update: zero fee (registration_fee remains for historical record only)
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: Some(wallet_data),
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            governance_config_data: None,
+        }
+    }
+
     /// Create a new validator registration transaction
     pub fn new_validator_registration(
         validator_data: ValidatorTransactionData,
