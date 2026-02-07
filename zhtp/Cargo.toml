@@ -148,45 +148,4 @@ edge = ["minimal-blockchain"]  # Edge node (routing only)
 # Raspberry Pi optimized profile - minimal features for low-memory compilation
 rpi = ["basic-blockchain", "relay"]  # Raspberry Pi optimized build (no WASM runtime)
 
-[profile.dev]
-# Faster compilation, less memory usage
-opt-level = 0
-debug = true
-split-debuginfo = "unpacked"
-incremental = true
-
-[profile.release]
-# Standard release profile
-opt-level = 3
-lto = "thin"
-codegen-units = 16
-
-[profile.rpi]
-# Raspberry Pi optimized: lower memory usage during compilation
-inherits = "release"
-opt-level = 2           # Lower optimization = less memory
-lto = false             # Disable LTO = much faster, less memory
-codegen-units = 256     # More codegen units = more parallelism, less memory per unit
-debug = false
-strip = true            # Strip symbols to reduce binary size
-
-[profile.edge]
-# Edge node: ultra-lightweight for mesh routing
-inherits = "release"
-opt-level = "s"         # Optimize for SIZE not speed
-lto = false             # No LTO
-codegen-units = 256
-debug = false
-strip = true
-panic = "abort"         # No unwinding = smaller binary
-overflow-checks = false # Disable overflow checks for smaller code
-
-[profile.dev-fast]
-# Fast development iteration
-inherits = "dev"
-opt-level = 1           # Minimal optimization
-incremental = true
-debug = true
-split-debuginfo = "unpacked"
-
-# Mobile profiles (android, ios) removed - see archive/mobile-ffi-stubs branch when needed
+# Build profiles live at the workspace root `Cargo.toml`.

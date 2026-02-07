@@ -1030,7 +1030,7 @@ impl RuntimeOrchestrator {
         let network_info = self.discover_network_with_retry(is_edge_node).await.ok().flatten();
 
         let joined_existing_network = network_info.is_some();
-        self.set_joined_existing_network(joined_existing_network).await;
+        self.set_joined_existing_network(joined_existing_network).await?;
 
         // Phase 3: Use SledStore for persistent blockchain storage
         // This replaces the deprecated file-based storage with incremental Sled DB
@@ -2558,11 +2558,11 @@ impl RuntimeOrchestrator {
         };
         
         let identity_mgr_opt = identity_mgr_arc.read().await;
-        let identity_mgr: &lib_identity::IdentityManager = identity_mgr_opt.as_ref()
+        let _identity_mgr: &lib_identity::IdentityManager = identity_mgr_opt.as_ref()
             .ok_or_else(|| anyhow::anyhow!("IdentityManager not initialized"))?;
         
         // Convert lib_blockchain::Hash to lib_crypto::Hash for IdentityManager
-        let selected_utxos_crypto: Vec<(lib_crypto::Hash, u32, u64)> = selected_utxos
+        let _selected_utxos_crypto: Vec<(lib_crypto::Hash, u32, u64)> = selected_utxos
             .iter()
             .map(|(hash, idx, amt)| {
                 (lib_crypto::Hash::from_bytes(hash.as_bytes()), *idx, *amt)

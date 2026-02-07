@@ -7,6 +7,8 @@
 //! 3. No private keys are transmitted or stored on the server
 //! 4. Identity verification is performed against the blockchain state
 
+#![allow(dead_code)]
+
 use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod, ZhtpHeaders};
 use crate::zhtp::{ZhtpResult, ZhtpRequestHandler};
 use serde::{Deserialize, Serialize};

@@ -103,11 +103,4 @@ relay = ["zhtp/relay"]
 edge = ["zhtp/edge"]
 rpi = ["zhtp/rpi"]
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-
-[profile.dev]
-opt-level = 0
-debug = true
+# Build profiles live at the workspace root `Cargo.toml`.

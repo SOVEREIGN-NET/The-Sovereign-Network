@@ -774,7 +774,7 @@ impl DhtHandler {
     }
 
     /// Send smart contract DHT packet - Direct blockchain integration
-    async fn send_contract_packet(&self, request_body: Vec<u8>) -> ZhtpResult<ZhtpResponse> {
+    async fn send_contract_packet(&self, _request_body: Vec<u8>) -> ZhtpResult<ZhtpResponse> {
         info!(" Processing contract deployment via direct blockchain integration");
         
         // Skip JSON parsing - create contract directly
@@ -1030,7 +1030,7 @@ impl DhtHandler {
     /// - "SYSTEM_CONTRACT_DEPLOYER" as public key (not real)
     /// 
     /// This would be REJECTED by blockchain validation.
-    async fn deploy_smart_contract_to_blockchain(&self, contract_id: String, operation: &str) -> Result<String, anyhow::Error> {
+    async fn deploy_smart_contract_to_blockchain(&self, _contract_id: String, _operation: &str) -> Result<String, anyhow::Error> {
         Err(anyhow::anyhow!(
             "Smart contract deployment via DHT disabled: requires proper deployer identity and signature. \
              Contract deployment should use proper TransactionBuilder with deployer's private key, \

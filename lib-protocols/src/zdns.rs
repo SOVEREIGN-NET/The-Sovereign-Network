@@ -10,6 +10,8 @@
 //! - Supports .zhtp domains and Web4 addressing
 //! - Enables  through mesh routing
 
+#![allow(dead_code, private_interfaces)]
+
 use crate::{ProtocolError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -507,7 +509,7 @@ impl ZdnsServer {
     }
 
     /// Get query statistics
-    pub fn get_stats(&self) -> QueryStats {
+    pub(crate) fn get_stats(&self) -> QueryStats {
         self.query_stats.read().unwrap().clone()
     }
 
@@ -564,7 +566,7 @@ impl ZdnsServer {
         Ok(())
     }
 
-    async fn process_dao_fee(&self, query: &ZdnsQuery, records: &[ZdnsRecord]) -> Result<EconomicTransaction> {
+    async fn process_dao_fee(&self, query: &ZdnsQuery, _records: &[ZdnsRecord]) -> Result<EconomicTransaction> {
         let fee_amount = query.dao_fee.unwrap_or(0.01); // Default minimal fee
         
         // Calculate fee distribution

@@ -238,7 +238,7 @@ impl NetworkOutputHandler for AppNetworkOutputHandler {
                     }
                 }
             }
-            BlockchainRequestType::BootstrapWithHeaders { current_height } => {
+            BlockchainRequestType::BootstrapWithHeaders { current_height: _ } => {
                 // This is for edge nodes - send a proof + recent headers
                 warn!("BootstrapWithHeaders not fully implemented yet (edge node sync)");
                 // TODO: Generate ChainRecursiveProof and recent headers

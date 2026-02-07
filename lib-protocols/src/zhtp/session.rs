@@ -5,6 +5,8 @@
 //! session storage, and Web4-specific session features including DAO governance
 //! and identity verification.
 
+#![allow(dead_code)]
+
 use crate::types::ZhtpRequest;
 use crate::zhtp::ZhtpResult;
 

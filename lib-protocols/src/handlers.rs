@@ -4,6 +4,8 @@
 //! with zero-knowledge proof validation, economic fee processing, and
 //! post-quantum cryptographic security.
 
+#![allow(dead_code)]
+
 use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 use crate::zhtp::{ZhtpResult, ServerCapabilities};
 

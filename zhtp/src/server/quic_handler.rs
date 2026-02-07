@@ -366,7 +366,7 @@ impl QuicHandler {
         info!("🔐 Control plane connection from {} - starting UHP v2 handshake", peer_addr);
 
         // Perform UHP+Kyber handshake (same as v1, but we'll derive keys differently)
-        let (identity, handshake_result) = self.perform_uhp_handshake(
+        let (_identity, handshake_result) = self.perform_uhp_handshake(
             &connection,
             &peer_addr,
         ).await?;
@@ -1001,7 +1001,7 @@ impl QuicHandler {
                 // Continue accepting more streams on this connection
                 self.accept_additional_streams(connection, None);
             }
-            ProtocolType::MeshMessage(initial_data) => {
+            ProtocolType::MeshMessage(_initial_data) => {
                 warn!("📨 Mesh message on first stream from {} - should be after handshake", peer_addr);
                 // Treat as unknown since handshake should come first
                 self.send_error_response(send, "Expected PQC handshake first").await?;
@@ -1317,6 +1317,7 @@ impl Clone for QuicHandler {
 }
 
 // Extension trait for BufferedStream compatibility
+#[allow(async_fn_in_trait)]
 pub trait BufferedStreamExt {
     async fn handle_zhtp_stream_buffered(
         &self,

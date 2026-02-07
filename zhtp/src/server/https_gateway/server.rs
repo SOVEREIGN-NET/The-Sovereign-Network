@@ -99,7 +99,7 @@ impl RateLimitState {
         // Fast path: check with read lock first
         {
             let requests = self.requests.read().await;
-            if let Some((count, timestamp)) = requests.get(&ip) {
+            if let Some((_count, timestamp)) = requests.get(&ip) {
                 // Check if window is still valid
                 if now.duration_since(*timestamp).as_secs() < RATE_LIMIT_WINDOW_SECS {
                     // Need write lock to increment, but we know this IP exists

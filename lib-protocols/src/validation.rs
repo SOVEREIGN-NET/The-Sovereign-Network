@@ -4,6 +4,8 @@
 //! Includes zero-knowledge proof validation, economic model validation, content integrity,
 //! and protocol compliance checks.
 
+#![allow(dead_code)]
+
 use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpHeaders, AccessPolicy};
 use crate::{ProtocolError, Result};
 use serde::{Deserialize, Serialize};
@@ -658,7 +660,7 @@ impl ZhtpValidator {
                 }
 
                 // Validate fee payment proof
-                if let Some(fee_proof) = request.headers.get("X-DAO-Fee-Proof") {
+                if request.headers.get("X-DAO-Fee-Proof").is_some() {
                     // Use request's built-in validation
                     let economic_model = lib_economy::EconomicModel::new();
                     return request.validate_dao_fee(&economic_model)

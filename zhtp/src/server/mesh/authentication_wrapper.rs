@@ -61,6 +61,7 @@ impl MeshRouter {
     ///
     /// Kept for API compatibility but marked deprecated.
     #[deprecated(note = "QUIC is the only supported transport. TCP connections are not accepted.")]
+    #[allow(unreachable_code, unused_variables)]
     pub async fn handle_tcp_mesh(&self, stream: TcpStream, addr: SocketAddr) -> Result<()> {
         error!("❌ TCP connections are no longer supported - QUIC is required");
         error!("   Connection from {} rejected", addr);
@@ -230,7 +231,16 @@ impl MeshRouter {
                     
                     // SECURITY: Register authenticated peer for blockchain sync
                     if authenticated {
-                        self.sync_manager.register_authenticated_peer(&peer_pubkey).await;
+                        if let Err(e) = self
+                            .sync_manager
+                            .register_authenticated_peer(&peer_pubkey)
+                            .await
+                        {
+                            warn!(
+                                "Failed to register peer {} for secure blockchain sync: {}",
+                                handshake.node_id, e
+                            );
+                        }
                         info!("🔐 Peer {} registered for secure blockchain sync", handshake.node_id);
                     }
                 }
@@ -448,11 +458,11 @@ impl MeshRouter {
                                         }
                                         Ok(_) => {
                                             warn!("⚠️ Peer {} authentication failed (signature invalid)", node_id);
-                                            self.connections.write().await.remove(&unified_peer);
+                                            self.connections.write().await.remove(&unified_peer).await;
                                         }
                                         Err(e) => {
                                             warn!("Error verifying peer {} authentication: {}", node_id, e);
-                                            self.connections.write().await.remove(&unified_peer);
+                                            self.connections.write().await.remove(&unified_peer).await;
                                         }
                                     }
                                 }

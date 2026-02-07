@@ -54,7 +54,7 @@ pub async fn handle_password_recovery(
         .map_err(|e| anyhow::anyhow!("Invalid recovery request: {}", e))?;
 
     // Use zeroizing for sensitive data
-    let recovery_phrase = Zeroizing::new(recovery_req.recovery_phrase.clone());
+    let _recovery_phrase = Zeroizing::new(recovery_req.recovery_phrase.clone());
     let new_password = Zeroizing::new(recovery_req.new_password.clone());
     recovery_req.recovery_phrase.zeroize();
     recovery_req.new_password.zeroize();

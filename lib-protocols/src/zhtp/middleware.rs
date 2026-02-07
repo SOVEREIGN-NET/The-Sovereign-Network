@@ -4,6 +4,8 @@
 //! authorization, compression, CORS, logging, economic validation, rate limiting,
 //! security headers, and Web4-specific middleware components.
 
+#![allow(dead_code)]
+
 use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use crate::zhtp::{ZhtpMiddleware, ZhtpResult};
 use crate::zhtp::config::ServerConfig;
@@ -806,7 +808,7 @@ impl ZhtpMiddleware for RateLimitMiddleware {
 
 impl RateLimitMiddleware {
     /// Check if request should be rate limited
-    fn is_rate_limited(&self, _key: &str, current_time: u64) -> bool {
+    fn is_rate_limited(&self, _key: &str, _current_time: u64) -> bool {
         // This is a simplified implementation
         // In production, would use a more sophisticated algorithm like token bucket
         // and would need to be thread-safe with proper synchronization

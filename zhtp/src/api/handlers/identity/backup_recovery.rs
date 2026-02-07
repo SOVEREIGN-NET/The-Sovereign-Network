@@ -1126,10 +1126,6 @@ pub async fn handle_migrate_identity(
     // Persist the new identity to storage (survives server restart)
     let identity_id_str = hex::encode(new_identity_id.as_bytes());
 
-    // Build wallet ID list for persistence
-    let wallet_id_strs: Vec<String> = wallet_ids_to_transfer.iter()
-        .map(|(wid, _, _)| hex::encode(wid.0))
-        .collect();
     let primary_wallet_id = wallet_ids_to_transfer.iter()
         .find(|(_, t, _)| t.contains("Primary"))
         .map(|(wid, _, _)| hex::encode(wid.0));
@@ -1176,7 +1172,7 @@ pub async fn handle_migrate_identity(
                     shared_blockchain.write()
                 ).await {
                     Ok(mut blockchain) => {
-                        for (wallet_id, wallet_type, balance) in &wallet_ids_to_transfer {
+                        for (wallet_id, wallet_type, _balance) in &wallet_ids_to_transfer {
                             // Update wallet in registry with new owner
                             let wallet_id_str = hex::encode(wallet_id.0);
                             if let Some(wallet_data) = blockchain.wallet_registry.get_mut(&wallet_id_str) {
@@ -1334,7 +1330,10 @@ mod tests {
         let manager = Arc::new(RwLock::new(manager));
         let storage_system = build_persistent_storage().await;
 
-        let timestamp = 1234567890u64;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let req = MigrateIdentityRequest {
             display_name: "alice".to_string(),
             new_public_key: hex::encode(vec![2u8; 2592]),
@@ -1375,7 +1374,10 @@ mod tests {
             format!("did:zhtp:{}", hex::encode(pk.key_id))
         };
 
-        let timestamp = 1234567890u64;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let signed_message = format!(
             "SEED_MIGRATE:{}:{}:{}",
             "alice",
