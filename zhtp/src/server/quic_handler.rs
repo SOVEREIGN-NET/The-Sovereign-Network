@@ -531,6 +531,27 @@ impl QuicHandler {
             return Ok(());
         }
 
+        // 1b. Verify session_id matches the session established by UHP v2 handshake.
+        //
+        // If this fails, MAC verification will also fail (session_id is part of the MAC input),
+        // but this produces a clearer diagnostic than a generic MAC mismatch.
+        if auth_ctx.session_id != *session.session_id() {
+            warn!(
+                request_id = %wire_request.request_id_hex(),
+                peer_did = %session.peer_did(),
+                received_session_id_prefix = ?hex::encode(&auth_ctx.session_id[..8]),
+                expected_session_id_prefix = ?hex::encode(&session.session_id()[..8]),
+                "V2 session_id mismatch between request auth context and active session"
+            );
+            let error_response = ZhtpResponseWire::error(
+                wire_request.request_id,
+                ZhtpStatus::Unauthorized,
+                "Invalid session".to_string(),
+            );
+            write_response(&mut send, &error_response).await?;
+            return Ok(());
+        }
+
         // 2. Build canonical request for MAC verification
         // Method mapping: Get=0, Post=1, Put=2, Delete=3, etc.
         let counter = auth_ctx.sequence;
