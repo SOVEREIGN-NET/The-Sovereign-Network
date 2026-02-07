@@ -2813,7 +2813,7 @@ dependencies = [
  "lib-identity-core",
  "pqc_kyber",
  "pqcrypto-dilithium",
- "pqcrypto-kyber 0.8.1",
+ "pqcrypto-kyber",
  "pqcrypto-traits",
  "rand 0.8.5",
  "serde",
@@ -2870,8 +2870,8 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "hkdf",
+ "pqc_kyber",
  "pqcrypto-dilithium",
- "pqcrypto-kyber 0.7.9",
  "pqcrypto-traits",
  "rand 0.8.5",
  "serde",
@@ -4198,19 +4198,6 @@ dependencies = [
  "dunce",
  "getrandom 0.3.4",
  "libc",
-]
-
-[[package]]
-name = "pqcrypto-kyber"
-version = "0.7.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c32fe9d5c9913b1aed1ba92b3449eb2d7cf7ca29741b11455dfa34c711b95776"
-dependencies = [
- "cc",
- "glob",
- "libc",
- "pqcrypto-internals",
- "pqcrypto-traits",
 ]
 
 [[package]]

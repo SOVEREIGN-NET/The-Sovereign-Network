@@ -225,10 +225,21 @@ async fn test_node_id_determinism_golden_vector() -> Result<()> {
     // Create identity with known parameters
     let identity = create_test_identity("test-device", Some(seed))?;
     
-    // Verify DID is deterministic
-    let expected_did_hash = lib_crypto::hash_blake3(&[&seed[..], b"ZHTP_DID_V1"].concat());
+    // Breaking invariant: DID is anchored to the root signing public key (Dilithium),
+    // not derived directly from raw seed bytes.
+    let expected_did_hash = lib_crypto::hash_blake3(&identity.public_key.dilithium_pk);
     let expected_did = format!("did:zhtp:{}", hex::encode(expected_did_hash));
-    assert_eq!(identity.did, expected_did, "DID should be deterministic from seed");
+
+    // Assert internal consistency: DID must match root signing public key hash.
+    assert_eq!(identity.did, expected_did, "DID must be anchored to root signing public key");
+
+    // Golden value (update when DID derivation invariant changes intentionally).
+    let expected_did_golden =
+        "did:zhtp:52df4781270bd2f22d53324aca920ac0bef33c902c6d42ba126bd6801ef65c11";
+    assert_eq!(
+        identity.did, expected_did_golden,
+        "DID golden vector changed; update expected_did_golden if intentional"
+    );
     
     // Verify NodeId derivation
     let expected_node_id = NodeId::from_did_device(&expected_did, "test-device")?;
