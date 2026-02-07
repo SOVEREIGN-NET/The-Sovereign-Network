@@ -651,9 +651,23 @@ impl Transaction {
         signature: Signature,
         memo: Vec<u8>,
     ) -> Self {
+        Self::new_wallet_update_with_chain_id(0x03, wallet_data, outputs, signature, memo)
+    }
+
+    /// Create a wallet update transaction with an explicit chain id.
+    ///
+    /// This is preferred for node-side transaction construction where the chain id is known
+    /// from configuration/state.
+    pub fn new_wallet_update_with_chain_id(
+        chain_id: u8,
+        wallet_data: WalletTransactionData,
+        outputs: Vec<TransactionOutput>,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
         Transaction {
             version: 1,
-            chain_id: 0x03, // Default to development network
+            chain_id,
             transaction_type: TransactionType::WalletUpdate,
             inputs: Vec::new(), // Update authorization is consensus-defined; system updates use empty inputs
             outputs,

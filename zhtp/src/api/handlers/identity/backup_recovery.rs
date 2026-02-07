@@ -887,6 +887,23 @@ pub async fn handle_migrate_identity(
             "Migration endpoint disabled".to_string(),
         ));
     }
+    // Safety: never allow this endpoint on mainnet.
+    let chain_id = std::env::var("ZHTP_CHAIN_ID")
+        .ok()
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(0x03);
+    if chain_id == 0x01 {
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::NotFound,
+            "Migration endpoint disabled".to_string(),
+        ));
+    }
+
+    // Load the migration authority (validator) signing keypair.
+    // This is used to sign on-chain WalletUpdate transactions so they are durable and replay-safe.
+    let migration_authority_kp = load_migration_authority_keypair()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load migration authority keypair: {}", e))?;
 
     // Extract client IP for rate limiting and audit logging.
     let peer_addr = request.headers.get("peer_addr");
@@ -1179,17 +1196,26 @@ pub async fn handle_migrate_identity(
                         updated.owner_identity_id = Some(lib_blockchain::Hash::from_slice(new_identity_id.as_bytes()));
                         updated.public_key = new_public_key_bytes.clone();
 
-                        let tx = lib_blockchain::transaction::Transaction::new_wallet_update(
+                        // Ensure consensus-level chain_id matches the running chain configuration.
+                        let mut tx = lib_blockchain::transaction::Transaction::new_wallet_update_with_chain_id(
+                            chain_id,
                             updated.clone(),
                             vec![],
+                            // Placeholder signature gets replaced below (WalletUpdate requires real signature).
                             lib_blockchain::integration::crypto_integration::Signature {
-                                signature: updated.public_key.clone(), // placeholder for system tx
-                                public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(updated.public_key.clone()),
-                                algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                                signature: Vec::new(),
+                                public_key: migration_authority_kp.public_key.clone(),
+                                algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
                                 timestamp: created_at,
                             },
                             format!("WALLET_UPDATE_V1:migrate:{}:{}:{}", old_did, new_did, wallet_id_str).into_bytes(),
                         );
+
+                        // Sign the transaction hash (signing_hash excludes the signature field).
+                        let signing_hash = tx.signing_hash();
+                        let sig = lib_crypto::sign_message(&migration_authority_kp, signing_hash.as_bytes())
+                            .map_err(|e| anyhow::anyhow!("Failed to sign WalletUpdate: {}", e))?;
+                        tx.signature = sig;
 
                         if let Err(e) = blockchain.add_system_transaction(tx) {
                             tracing::warn!("🔄 Failed to enqueue wallet update tx for {} ({}): {}", &wallet_id_str[..16.min(wallet_id_str.len())], wallet_type, e);
@@ -1344,6 +1370,44 @@ pub async fn handle_migrate_identity(
         "application/json".to_string(),
         None,
     ))
+}
+
+async fn load_migration_authority_keypair() -> anyhow::Result<lib_crypto::KeyPair> {
+    use crate::keystore_names::{KeystorePrivateKey, NODE_PRIVATE_KEY_FILENAME};
+    use std::path::PathBuf;
+
+    let keystore_dir = std::env::var("ZHTP_KEYSTORE_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| {
+            dirs::home_dir().map(|h| h.join(".zhtp").join("keystore"))
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let key_path = keystore_dir.join(NODE_PRIVATE_KEY_FILENAME);
+    let key_json = tokio::fs::read_to_string(&key_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", key_path, e))?;
+
+    let ks: KeystorePrivateKey = serde_json::from_str(&key_json)
+        .map_err(|e| anyhow::anyhow!("Invalid keystore key JSON {:?}: {}", key_path, e))?;
+
+    if ks.dilithium_sk.is_empty() || ks.dilithium_pk.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Keystore key {:?} missing dilithium_sk/dilithium_pk",
+            key_path
+        ));
+    }
+
+    let public_key = lib_crypto::PublicKey::new(ks.dilithium_pk.clone());
+    let private_key = lib_crypto::PrivateKey {
+        dilithium_sk: ks.dilithium_sk,
+        dilithium_pk: ks.dilithium_pk,
+        kyber_sk: ks.kyber_sk,
+        master_seed: ks.master_seed,
+    };
+
+    Ok(lib_crypto::KeyPair { public_key, private_key })
 }
 
 #[cfg(test)]
@@ -1587,6 +1651,25 @@ mod tests {
         let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
         let storage_system = build_persistent_storage().await;
 
+        // Migration authority (validator) keypair + keystore wiring.
+        // The handler loads `node_private_key.json` from `ZHTP_KEYSTORE_DIR`.
+        let validator_kp = lib_crypto::KeyPair::generate().expect("validator keypair");
+        let keystore_dir = tempfile::tempdir().expect("keystore tempdir");
+        std::env::set_var("ZHTP_KEYSTORE_DIR", keystore_dir.path());
+        let keystore_key = crate::keystore_names::KeystorePrivateKey {
+            dilithium_sk: validator_kp.private_key.dilithium_sk.clone(),
+            dilithium_pk: validator_kp.public_key.dilithium_pk.clone(),
+            kyber_sk: validator_kp.private_key.kyber_sk.clone(),
+            master_seed: validator_kp.private_key.master_seed.clone(),
+        };
+        std::fs::write(
+            keystore_dir
+                .path()
+                .join(crate::keystore_names::NODE_PRIVATE_KEY_FILENAME),
+            serde_json::to_vec(&keystore_key).expect("serialize keystore key"),
+        )
+        .expect("write node_private_key.json");
+
         // Old identity that currently owns display_name + wallets.
         let (mut manager, old_identity_id, old_did) = build_identity_manager(42, "device-old", "alice");
         let mut wallet_summaries: Vec<(lib_identity::wallets::WalletId, lib_identity::wallets::WalletType, String, Option<String>, Vec<u8>, u64, u64)> = Vec::new();
@@ -1669,6 +1752,29 @@ mod tests {
         // the rebind as an on-chain WalletUpdate + mined block.
         crate::runtime::blockchain_provider::initialize_global_blockchain_provider();
         let mut bc = lib_blockchain::Blockchain::new().expect("new blockchain");
+
+        // Register an "active" validator so stateful WalletUpdate validation can authorize.
+        let validator_did = {
+            let pk = lib_crypto::PublicKey::new(validator_kp.public_key.dilithium_pk.clone());
+            format!("did:zhtp:{}", hex::encode(pk.key_id))
+        };
+        bc.validator_registry.insert(
+            validator_did.clone(),
+            lib_blockchain::ValidatorInfo {
+                identity_id: validator_did,
+                stake: 1_000,
+                storage_provided: 0,
+                consensus_key: validator_kp.public_key.dilithium_pk.clone(),
+                network_address: "127.0.0.1:0".to_string(),
+                commission_rate: 0,
+                status: "active".to_string(),
+                registered_at: 0,
+                last_activity: 0,
+                blocks_validated: 0,
+                slash_count: 0,
+            },
+        );
+
         for (wid, wtype, name, alias, pk, created_at, balance) in &wallet_summaries {
             let wallet_id_hex = hex::encode(wid.0);
             let wallet_bytes = wid.0.clone();

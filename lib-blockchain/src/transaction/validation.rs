@@ -177,9 +177,11 @@ impl TransactionValidator {
             }
         }
 
-        // Signature validation (skip for system transactions - they don't have real signatures)
-        // System transactions include: genesis, UBI distribution, identity/wallet registration from node
-        if !is_system_transaction {
+        // Signature validation:
+        // - Historically, "system transactions" (empty inputs) skipped signatures.
+        // - WalletUpdate must always be signed (it's a privileged state mutation).
+        let require_signature = !is_system_transaction || matches!(transaction.transaction_type, TransactionType::WalletUpdate);
+        if require_signature {
             self.validate_signature(transaction)?;
         }
 
@@ -284,9 +286,11 @@ impl TransactionValidator {
             }
         }
 
-        // Signature validation (skip for system transactions - they don't have real signatures)
-        // System transactions include: genesis, UBI distribution, identity/wallet registration from node
-        if !is_system_transaction {
+        // Signature validation:
+        // - Historically, "system transactions" (empty inputs) skipped signatures.
+        // - WalletUpdate must always be signed (it's a privileged state mutation).
+        let require_signature = !is_system_transaction || matches!(transaction.transaction_type, TransactionType::WalletUpdate);
+        if require_signature {
             self.validate_signature(transaction)?;
         }
 
@@ -868,23 +872,14 @@ impl TransactionValidator {
             return Err(ValidationError::InvalidTransaction);
         }
 
-        // Restrict to testnet mode using an out-of-band chain id signal.
-        // NOTE: tx.chain_id is not currently a reliable network source of truth across the codebase.
-        let chain_id = std::env::var("ZHTP_CHAIN_ID")
-            .ok()
-            .and_then(|v| v.parse::<u8>().ok())
-            .unwrap_or(0x03); // default dev/testnet
-        if chain_id != 0x03 {
+        // Must not move value: this transaction is metadata/ownership-only.
+        if !transaction.outputs.is_empty() || !transaction.inputs.is_empty() || transaction.fee != 0 {
             return Err(ValidationError::InvalidTransaction);
         }
 
-        // Require an explicit server-side flag to enable this operation.
-        if std::env::var("ZHTP_ENABLE_IDENTITY_MIGRATION")
-            .ok()
-            .map(|v| v == "1")
-            .unwrap_or(false)
-            != true
-        {
+        // Restrict to non-mainnet chains (dev/bootstrap=0x03, testnet=0x02).
+        // This is consensus-critical: do not gate on env flags that may differ across nodes.
+        if !matches!(transaction.chain_id, 0x02 | 0x03) {
             return Err(ValidationError::InvalidTransaction);
         }
 
@@ -1081,6 +1076,18 @@ impl<'a> StatefulTransactionValidator<'a> {
             },
             TransactionType::WalletUpdate => {
                 stateless_validator.validate_transaction(transaction)?;
+
+                // Authority check: WalletUpdate must be signed by an active validator consensus key.
+                // This is a stateful rule (depends on validator_registry).
+                let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+                let signer_pk = transaction.signature.public_key.as_bytes();
+                let is_active_validator = blockchain
+                    .validator_registry
+                    .values()
+                    .any(|v| v.status == "active" && v.consensus_key == signer_pk);
+                if !is_active_validator {
+                    return Err(ValidationError::InvalidTransaction);
+                }
             },
             TransactionType::ValidatorRegistration |
             TransactionType::ValidatorUpdate |
