@@ -102,7 +102,7 @@ fn test_v1_accepted_before_activation() {
     }
 
     // Verify chain height
-    assert_eq!(store.get_latest_height().unwrap(), activation_height - 1);
+    assert_eq!(store.latest_height().unwrap(), activation_height - 1);
 }
 
 /// Test: Block at height H-1 with v2 rejected (before activation)
@@ -164,7 +164,7 @@ fn test_v2_accepted_at_activation() {
     executor.apply_block(&block_at_h).expect("Block at H with v2 should be accepted");
 
     // Verify chain height
-    assert_eq!(store.get_latest_height().unwrap(), activation_height);
+    assert_eq!(store.latest_height().unwrap(), activation_height);
 }
 
 /// Test: Block at height H with v1 rejected (at activation)
@@ -227,7 +227,7 @@ fn test_v2_accepted_after_activation() {
         prev_hash = block.hash();
     }
 
-    assert_eq!(store.get_latest_height().unwrap(), activation_height + 2);
+    assert_eq!(store.latest_height().unwrap(), activation_height + 2);
 }
 
 /// Test: Block after activation with v1 rejected
@@ -310,7 +310,7 @@ fn test_chain_import_validates_v1_before_activation() {
     let dest_sync = ChainSync::with_protocol_params(dest_store.clone(), protocol_params);
 
     dest_sync.import_blocks(blocks).expect("Import should succeed with correct versions");
-    assert_eq!(dest_store.get_latest_height().unwrap(), activation_height - 1);
+    assert_eq!(dest_store.latest_height().unwrap(), activation_height - 1);
 }
 
 /// Test: Chain import rejects v2 at H-1 (before activation)
@@ -356,7 +356,7 @@ fn test_chain_import_validates_v2_at_activation() {
     let dest_sync = ChainSync::with_protocol_params(dest_store.clone(), protocol_params);
 
     dest_sync.import_blocks(blocks).expect("Import should succeed");
-    assert_eq!(dest_store.get_latest_height().unwrap(), activation_height);
+    assert_eq!(dest_store.latest_height().unwrap(), activation_height);
 }
 
 /// Test: Chain import rejects v1 at H (at activation)

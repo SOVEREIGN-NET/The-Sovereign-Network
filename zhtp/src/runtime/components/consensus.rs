@@ -433,6 +433,11 @@ pub struct ConsensusComponent {
     validator_manager: Arc<RwLock<ValidatorManager>>,
     blockchain: Arc<RwLock<Option<Arc<RwLock<Blockchain>>>>>,
     environment: crate::config::Environment,
+    // Consensus safety parameters are config-driven; keep them immutable once constructed.
+    min_stake: u64,
+    // Local validator identity and signing keypair (loaded from keystore when validator-enabled).
+    local_validator_identity: Arc<RwLock<Option<IdentityId>>>,
+    local_validator_keypair: Arc<RwLock<Option<lib_crypto::KeyPair>>>,
     /// Node role determines whether this node participates in consensus validation
     /// This is IMMUTABLE and set at construction time based on configuration
     /// The role cannot change after the component is created
@@ -457,16 +462,8 @@ impl std::fmt::Debug for ConsensusComponent {
 impl ConsensusComponent {
     /// Create a new ConsensusComponent with the specified node role
     /// CRITICAL: node_role must be derived from configuration before calling this
-    pub fn new(environment: crate::config::Environment, node_role: NodeRole) -> Self {
+    pub fn new(environment: crate::config::Environment, node_role: NodeRole, min_stake: u64) -> Self {
         let development_mode = matches!(environment, crate::config::Environment::Development);
-        let is_testnet = matches!(environment, crate::config::Environment::Testnet);
-
-        // Low stake for development and testnet, high stake for production
-        let min_stake = if development_mode || is_testnet {
-            1_000  // 1000 micro-ZHTP for dev/testnet
-        } else {
-            100_000_000  // 100M micro-ZHTP for production
-        };
 
         let validator_manager = ValidatorManager::new_with_development_mode(
             100,
@@ -481,13 +478,16 @@ impl ConsensusComponent {
             validator_manager: Arc::new(RwLock::new(validator_manager)),
             blockchain: Arc::new(RwLock::new(None)),
             environment,
+            min_stake,
+            local_validator_identity: Arc::new(RwLock::new(None)),
+            local_validator_keypair: Arc::new(RwLock::new(None)),
             node_role: Arc::new(node_role),
         }
     }
 
     #[deprecated = "Use new(environment, node_role) instead to properly initialize node role from config"]
     pub fn new_deprecated(environment: crate::config::Environment) -> Self {
-        Self::new(environment, NodeRole::Observer)
+        Self::new(environment, NodeRole::Observer, 0)
     }
 
     /// Get the current node role (immutable)
@@ -521,7 +521,7 @@ impl ConsensusComponent {
             .into_iter()
             .map(|v| BlockchainValidatorAdapter(v.clone()))
             .collect();
-        
+
         let mut validator_manager = self.validator_manager.write().await;
         let (synced_count, skipped_count) = validator_manager
             .sync_from_validator_list(validator_adapters)
@@ -531,6 +531,34 @@ impl ConsensusComponent {
             "Validator sync complete: {} new validators registered, {} already registered",
             synced_count, skipped_count
         );
+
+        // Also sync into the running consensus engine so remote votes/proposals verify against
+        // the real on-chain validator set.
+        {
+            let mut engine_guard = self.consensus_engine.write().await;
+            if let Some(engine) = engine_guard.as_mut() {
+                let active_validators = bc.get_active_validators();
+                let adapters_for_engine: Vec<BlockchainValidatorAdapter> = active_validators
+                    .into_iter()
+                    .map(|v| BlockchainValidatorAdapter(v.clone()))
+                    .collect();
+                let _ = engine
+                    .sync_validators_from_list(adapters_for_engine)
+                    .map_err(|e| anyhow::anyhow!("Consensus engine validator sync failed: {}", e))?;
+
+                // If this node is a validator, set local identity so it can propose/vote.
+                if self.node_role.can_validate() {
+                    let local_id = self.local_validator_identity.read().await.clone();
+                    if let Some(id) = local_id {
+                        engine
+                            .set_local_validator_identity(id)
+                            .map_err(|e| anyhow::anyhow!("Failed to set local validator identity: {}", e))?;
+                    } else {
+                        warn!("Local validator identity not loaded; consensus will not propose/vote");
+                    }
+                }
+            }
+        }
         
         Ok(())
     }
@@ -538,6 +566,57 @@ impl ConsensusComponent {
     pub async fn get_validator_manager(&self) -> Arc<RwLock<ValidatorManager>> {
         self.validator_manager.clone()
     }
+}
+
+async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto::KeyPair)> {
+    use crate::keystore_names::{KeystorePrivateKey, NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
+    use std::path::PathBuf;
+
+    let keystore_dir = std::env::var("ZHTP_KEYSTORE_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".zhtp").join("keystore")))
+        .ok_or_else(|| anyhow::anyhow!("Could not determine keystore directory"))?;
+
+    let node_identity_path = keystore_dir.join(NODE_IDENTITY_FILENAME);
+    let node_key_path = keystore_dir.join(NODE_PRIVATE_KEY_FILENAME);
+
+    let node_identity_json = tokio::fs::read_to_string(&node_identity_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", node_identity_path, e))?;
+    let node_identity_val: serde_json::Value = serde_json::from_str(&node_identity_json)
+        .map_err(|e| anyhow::anyhow!("Invalid JSON {:?}: {}", node_identity_path, e))?;
+    let did = node_identity_val
+        .get("did")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing .did in {:?}", node_identity_path))?;
+
+    let identity_id = lib_identity::did::parse_did_to_identity_id(did)
+        .map_err(|e| anyhow::anyhow!("Invalid DID in {:?}: {}", node_identity_path, e))?;
+
+    let key_json = tokio::fs::read_to_string(&node_key_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", node_key_path, e))?;
+    let ks: KeystorePrivateKey = serde_json::from_str(&key_json)
+        .map_err(|e| anyhow::anyhow!("Invalid JSON {:?}: {}", node_key_path, e))?;
+
+    if ks.dilithium_sk.is_empty() || ks.dilithium_pk.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Keystore key {:?} missing dilithium_sk/dilithium_pk",
+            node_key_path
+        ));
+    }
+
+    // Consensus identity uses Dilithium public key bytes for signature verification.
+    let public_key = lib_crypto::PublicKey::new(ks.dilithium_pk.clone());
+    let private_key = lib_crypto::PrivateKey {
+        dilithium_sk: ks.dilithium_sk,
+        dilithium_pk: ks.dilithium_pk,
+        kyber_sk: ks.kyber_sk,
+        master_seed: ks.master_seed,
+    };
+
+    Ok((identity_id, lib_crypto::KeyPair { public_key, private_key }))
 }
 
 async fn handle_liveness_event(alert_manager: &AlertManager, event: ConsensusEvent) {
@@ -685,8 +764,14 @@ impl Component for ConsensusComponent {
         info!("✓ Node role {:?} can validate - starting consensus engine", *self.node_role);
         
         let mut config = ConsensusConfig::default();
-        
-        config.development_mode = matches!(self.environment, crate::config::Environment::Development);
+
+        // Keep this node's consensus parameters aligned with zhtp configuration.
+        // Determinism requirement: all validators on the same chain must share these values.
+        config.min_stake = self.min_stake;
+        // Storage is optional for validators in zhtp; do not block consensus on storage capacity.
+        config.min_storage = 0;
+        // Allow non-mainnet to run with <4 validators while still enforcing real signatures.
+        config.development_mode = !matches!(self.environment, crate::config::Environment::Mainnet);
         if config.development_mode {
             info!("🔧 Development mode enabled - single validator consensus allowed for testing");
             info!("   Production deployment requires minimum 4 validators for BFT");
@@ -719,6 +804,15 @@ impl Component for ConsensusComponent {
         // Channel size of 256 provides buffer for burst message handling
         let (consensus_msg_tx, consensus_msg_rx) = tokio::sync::mpsc::channel::<ValidatorMessage>(256);
         consensus_engine.set_message_receiver(consensus_msg_rx);
+
+        // Load the persistent local validator signing keypair from the keystore.
+        // Without this, the node cannot produce verifiable proposals/votes.
+        let (local_validator_id, local_validator_keypair) = load_local_validator_from_keystore().await?;
+        consensus_engine
+            .set_validator_keypair(local_validator_keypair.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to set local consensus validator keypair: {}", e))?;
+        *self.local_validator_identity.write().await = Some(local_validator_id);
+        *self.local_validator_keypair.write().await = Some(local_validator_keypair);
 
         // Wire the message sender to the mesh message handler
         if let Ok(mesh_router) = get_global_mesh_router().await {

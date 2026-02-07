@@ -506,7 +506,8 @@ impl RuntimeOrchestrator {
         if !is_registered(ComponentId::Consensus).await {
             let environment = self.config.environment;
             let node_role = self.node_role.read().await.clone();
-            self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
+            let min_stake = self.config.consensus_config.min_stake;
+            self.register_component(Arc::new(ConsensusComponent::new(environment, node_role, min_stake))).await?;
         }
 
         if !is_registered(ComponentId::Economics).await {
@@ -1200,7 +1201,11 @@ impl RuntimeOrchestrator {
             self.config.protocols_config.quic_port,
             self.config.protocols_config.discovery_port,
         ))).await?;
-        self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
+        self.register_component(Arc::new(ConsensusComponent::new(
+            environment,
+            node_role,
+            self.config.consensus_config.min_stake,
+        ))).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         
