@@ -12,7 +12,11 @@ pub use document_generation::*;
 ///
 /// # Example
 /// ```
-/// let id = parse_did_to_identity_id("did:zhtp:abc123...")?;
+/// use lib_identity::did::parse_did_to_identity_id;
+///
+/// // 32-byte hex identity id (64 hex chars)
+/// let id = parse_did_to_identity_id("did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+/// assert_eq!(id.as_bytes().len(), 32);
 /// ```
 pub fn parse_did_to_identity_id(did: &str) -> anyhow::Result<lib_crypto::Hash> {
     let id_hex = did.strip_prefix("did:zhtp:")

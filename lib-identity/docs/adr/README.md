@@ -18,9 +18,19 @@ Each ADR follows this structure:
 
 ## Index
 
-- [ADR-0001](./0001-seed-anchored-identity.md) - Seed-Anchored Identity Architecture (2025-11-29)
+- [ADR-0003](./0003-zhtp-proof-suite-v1.md) - ZHTP Proof Suite V1 - Complete Specification (2025-11-30)
+  - **Status**: Proposed
+  - **Summary**: Governance and schema for proof envelopes and proof types across the protocol.
+
+- [ADR-0004](./0004-root-key-anchored-did.md) - Root-Key-Anchored DID (Identity Invariant Revision) (2026-02-07)
   - **Status**: Accepted
-  - **Summary**: Anchor identity on cryptographic seed rather than PQC keypairs, enabling deterministic recovery while maintaining PQC security as attached capabilities.
+  - **Summary**: DID is anchored to a deterministic root signing public key and is not a function of raw seed bytes; operational keys rotate under DID.
+
+## Archive
+
+- [ADR-0001](./archive/0001-seed-anchored-identity.md) - Seed-Anchored Identity Architecture (2025-11-29)
+  - **Status**: Superseded by ADR-0004
+  - **Summary**: Retained for historical context only.
 
 ## Adding New ADRs
 

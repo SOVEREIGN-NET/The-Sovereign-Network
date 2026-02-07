@@ -336,7 +336,7 @@ fn test_device_name_affects_node_id_multi_node() -> Result<()> {
         identities.push(identity);
     }
 
-    // All should have same DID (same seed)
+    // All should have same DID (same Root Secret -> same root signing public key -> same DID)
     for i in 1..identities.len() {
         assert_eq!(
             identities[0].did, identities[i].did,

@@ -15,6 +15,7 @@ members = [
     "lib-dht",
     "lib-dns",
     "lib-economy",
+    "lib-identity-core",
     "lib-identity",
     "lib-network",
     "lib-proofs",

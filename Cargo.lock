@@ -2810,6 +2810,7 @@ dependencies = [
  "js-sys",
  "lib-blockchain",
  "lib-crypto",
+ "lib-identity-core",
  "pqc_kyber",
  "pqcrypto-dilithium",
  "pqcrypto-kyber 0.8.1",
@@ -2938,6 +2939,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "lib-crypto",
+ "lib-identity-core",
  "lib-proofs",
  "md5",
  "names",
@@ -2950,6 +2952,18 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+ "zeroize",
+]
+
+[[package]]
+name = "lib-identity-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "crystals-dilithium",
+ "hkdf",
+ "sha3",
  "zeroize",
 ]
 
@@ -7842,10 +7856,12 @@ dependencies = [
  "hex",
  "keyring",
  "lib-blockchain",
+ "lib-client",
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
  "lib-identity",
+ "lib-identity-core",
  "lib-network",
  "lib-proofs",
  "lib-protocols",

@@ -131,9 +131,11 @@ mod native {
         }
 
         pub fn generate_keypair_from_seed(_seed: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-            // For now, generate random keypair
-            // TODO: Implement deterministic generation using seed
-            Self::generate_keypair()
+            // IMPORTANT: Kyber is treated as an operational key in the current identity invariant.
+            // A "seeded" API that silently returns random keys is dangerous; fail fast instead.
+            Err(ClientError::CryptoError(
+                "Kyber1024 deterministic keygen is not supported; use generate_keypair() and bind as an operational key".into(),
+            ))
         }
 
         pub fn encapsulate(public_key: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
@@ -223,9 +225,11 @@ mod wasm_crypto {
         }
 
         pub fn generate_keypair_from_seed(_seed: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-            // For now, generate random keypair
-            // TODO: Implement deterministic generation using seed
-            Self::generate_keypair()
+            // IMPORTANT: Kyber is treated as an operational key in the current identity invariant.
+            // A "seeded" API that silently returns random keys is dangerous; fail fast instead.
+            Err(ClientError::CryptoError(
+                "Kyber1024 deterministic keygen is not supported; use generate_keypair() and bind as an operational key".into(),
+            ))
         }
 
         pub fn encapsulate(public_key: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {

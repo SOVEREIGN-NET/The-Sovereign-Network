@@ -40,7 +40,7 @@ assert!(manager.verify_age_requirement(&proof, 18).await?);
 
 ## Architecture
 
-**Seed-Anchored Identity**: This library implements a seed-based deterministic identity model where the cryptographic seed is the root of trust. See [ADR-0001](docs/adr/0001-seed-anchored-identity.md) for the complete architecture decision and rationale.
+**Root-Key-Anchored Identity (Breaking Change)**: The DID is anchored to a deterministic **Root Signing public key** (Dilithium) derived from a high-entropy Root Secret using a domain-separated KDF. The DID MUST NOT be derived directly from raw seed material. See [ADR-0004](docs/adr/0004-root-key-anchored-did.md).
 
 ```
 src/

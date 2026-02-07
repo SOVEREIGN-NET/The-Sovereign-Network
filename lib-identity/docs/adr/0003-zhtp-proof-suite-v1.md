@@ -11,7 +11,7 @@
 
 ## Context
 
-ZHTP is built on **seed-anchored identities** (ADR-0001), **sovereign devices**, and a mix of **private peer interactions** and **public DAO-level governance**.
+ZHTP is built on **root-key-anchored identities** (ADR-0004), **sovereign devices**, and a mix of **private peer interactions** and **public DAO-level governance**.
 
 ### The Problem
 
@@ -23,7 +23,7 @@ The existing implementation treats `ZeroKnowledgeProof` as an ungoverned catch-a
 - **no validation rules** - malformed proofs deserialize silently
 - **string-based dispatch** - `match proof.proof_system.as_str()` allows typos, returns `Ok(false)` for unknown types
 - **inconsistent usage across modules** - lib-proofs uses `ZkProofType` enum, lib-identity uses free-form strings
-- **no binding between deterministic identity and post-quantum keypairs** - seed-anchored DID exists separately from PQC keys with no cryptographic proof of ownership
+- **no binding between identity anchor and operational keys** - without an explicit binding proof, operational keys can drift from the DID anchor without authorization
 
 As a result, proofs are **fragile, unverifiable, incompatible across versions, and unsafe to evolve**.
 
@@ -87,11 +87,12 @@ This is not an implementation document, it is an **architectural contract**.
 
 ## 1. Core Design Principles
 
-### 1.1 Seed-Anchored Identity
+### 1.1 Root-Key-Anchored Identity
 
-* Identity is derived from a root seed.
-* The seed deterministically yields DID, internal secrets, wallet seed, NodeIds, DAO member ID.
-* *Reference: ADR-0001 (Seed-Anchored Identity)*
+* Identity is anchored to a deterministic **Root Signing public key** (Dilithium5).
+* Recovery material is used only to derive the Root Secret and Root Signing Key; the DID is not a function of raw seed bytes.
+* Operational keys are attached under the DID and are authorized by the Root Signing Key.
+* *Reference: ADR-0004 (Root-Key-Anchored DID)*
 
 ### 1.2 Capabilities Are Attached by Proofs
 
@@ -188,7 +189,7 @@ Each concrete proof type defines the exact content and layout of `public_inputs`
 
 ### 3.1 SignaturePopV1
 
-**Purpose**: Bind the seed-derived DID to a public signing key (e.g., a post-quantum signature key).
+**Purpose**: Bind operational keys and capabilities to the root-key-anchored DID via authorization from the Root Signing Key.
 
 **Scope**:
 * SID level
@@ -679,7 +680,7 @@ ProofRegistry {
 
 ## References
 
-* ADR-0001: Seed-Anchored Identity
+* ADR-0004: Root-Key-Anchored DID
 * ADR-0002: Identity Proof Policy v1 (superseded by this ADR)
 * RFC 8949: Concise Binary Object Representation (CBOR)
 * NIST SP 800-208: CRYSTALS-Dilithium

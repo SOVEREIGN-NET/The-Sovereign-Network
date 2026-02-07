@@ -5,6 +5,7 @@ use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use std::collections::HashMap;
 use lib_crypto::{Hash, PublicKey, PrivateKey};
 use lib_proofs::ZeroKnowledgeProof;
+use lib_identity_core::{did_from_root_signing_public_key, RootSecret64, RootSigningKeypair};
 
 use crate::types::{IdentityId, IdentityType, CredentialType, IdentityProofParams, IdentityVerification, AccessLevel, NodeId};
 use crate::credentials::ZkCredential;
@@ -404,23 +405,24 @@ impl ZhtpIdentity {
         })
     }
 
-    /// Create a new ZHTP identity with seed-anchored deterministic derivation
+    /// Create a new ZHTP identity with Root Signing Key anchored DID (breaking invariant)
     ///
-    /// This constructor implements seed-anchored identity where the seed is the root
-    /// of trust, not PQC keypairs. All identity fields (DID, secrets, NodeIds) derive
-    /// deterministically from the seed, while PQC keypairs are generated randomly
-    /// and attached as capabilities.
+    /// The 64-byte `seed` is treated as a **Root Secret** (RS). The DID is anchored to a
+    /// deterministically derived **Root Signing public key** (Dilithium), not to raw seed bytes.
     ///
-    /// # Architecture
+    /// Operational keys (e.g. Kyber) are treated as capabilities that can rotate without changing the DID.
+    ///
+    /// # Architecture (current invariant)
     /// ```text
-    /// seed (root of trust)
-    ///  ├─ DID = did:zhtp:{Blake3(seed || "ZHTP_DID_V1")}
-    ///  ├─ IdentityId = Blake3(DID)
-    ///  ├─ zk_identity_secret = Blake3(seed || "ZHTP_ZK_SECRET_V1")
-    ///  ├─ wallet_master_seed = XOF(seed || "ZHTP_WALLET_SEED_V1")
+    /// RootSecret (RS, 64 bytes)
+    ///  ├─ root signing keypair (Dilithium5) = KeyGen(HKDF(RS, info="zhtp:root-signing-seed:v1"))
+    ///  ├─ DID = did:zhtp:{Blake3(root_signing_public_key)}
+    ///  ├─ IdentityId = parse_hex(DID suffix)
+    ///  ├─ zk_identity_secret = Blake3(RS || "ZHTP_ZK_SECRET_V1")
+    ///  ├─ wallet_master_seed = XOF(RS || "ZHTP_WALLET_SEED_V1")
     ///  ├─ dao_member_id = Blake3("DAO:" || DID)
     ///  ├─ NodeIds = f(DID, device)
-    ///  └─ PQC keypairs (random, attached, rotatable)
+    ///  └─ operational keys (Kyber, etc.) are random/rotatable and NOT part of DID
     /// ```
     ///
     /// # Arguments
@@ -434,8 +436,8 @@ impl ZhtpIdentity {
     /// Fully initialized ZhtpIdentity with deterministic fields from seed
     ///
     /// # Determinism
-    /// Same seed → same DID, same secrets, same NodeIds (always)
-    /// PQC keypairs are random (by design, pqcrypto-* limitation)
+    /// Same RS → same root signing keypair → same DID and deterministic fields.
+    /// Operational keys are free to rotate (and may be random).
     pub fn new_unified(
         identity_type: IdentityType,
         age: Option<u64>,
@@ -449,12 +451,15 @@ impl ZhtpIdentity {
             None => lib_crypto::generate_identity_seed()?,
         };
 
-        // Step 2: Derive DID from seed (seed-anchored, not from PQC key_id)
-        let did = Self::derive_did_from_seed(&seed)?;
+        // Step 2: Derive deterministic root signing keypair from Root Secret (seed)
+        // Breaking change: DID is now anchored to the root signing public key, not raw seed.
+        let rs = RootSecret64(seed);
+        let rsk = RootSigningKeypair::from_root_secret(&rs)?;
+        let did = did_from_root_signing_public_key(&rsk.public_key);
 
         // Step 3: Extract IdentityId from DID (DID format: "did:zhtp:{id_hex}")
         let id_hex = did.strip_prefix("did:zhtp:")
-            .ok_or_else(|| anyhow!("Invalid DID format from derive_did_from_seed"))?;
+            .ok_or_else(|| anyhow!("Invalid DID format from root signing public key"))?;
         let id = Hash::from_hex(id_hex)
             .map_err(|e| anyhow!("Invalid DID hex in new_from_seed: {}", e))?;
 
@@ -481,9 +486,24 @@ impl ZhtpIdentity {
         // Step 8: Derive dao_member_id from DID
         let dao_member_id = Self::derive_dao_member_id(&did)?;
 
-        // Step 9: Generate random PQC keypairs (attached, not foundational)
-        let keypair = lib_crypto::KeyPair::generate()
-            .map_err(|e| anyhow!("Failed to generate PQC keypair: {}", e))?;
+        // Step 9: Generate operational Kyber keypair (random)
+        let (kyber_pk, kyber_sk) = lib_crypto::post_quantum::kyber::kyber1024_keypair();
+
+        // Construct canonical lib-crypto key types:
+        // - Dilithium keys are the ROOT signing keys (anchor identity)
+        // - Kyber keys are OPERATIONAL (transport/KEM) keys
+        let key_id = lib_crypto::hash_blake3(&[rsk.public_key.as_slice(), kyber_pk.as_slice()].concat());
+        let public_key = PublicKey {
+            dilithium_pk: rsk.public_key.clone(),
+            kyber_pk: kyber_pk.clone(),
+            key_id,
+        };
+        let private_key = PrivateKey {
+            dilithium_sk: rsk.secret_key.clone(),
+            dilithium_pk: rsk.public_key.clone(),
+            kyber_sk: kyber_sk.clone(),
+            master_seed: seed.to_vec(), // Root Secret (RS), 64 bytes
+        };
 
         // Step 10: Initialize WalletManager (seeded for deterministic recovery)
         let wallet_manager = crate::wallets::WalletManager::from_master_seed(id.clone(), wallet_master_seed);
@@ -502,7 +522,7 @@ impl ZhtpIdentity {
             proof_system: "dilithium-pop-placeholder-v0".to_string(),
             proof_data: b"TODO:SignaturePopV1".to_vec(),
             public_inputs: did.as_bytes().to_vec(),
-            verification_key: keypair.public_key.dilithium_pk.clone(),
+            verification_key: public_key.dilithium_pk.clone(),
             plonky2_proof: None,
             proof: vec![],
         };
@@ -516,8 +536,8 @@ impl ZhtpIdentity {
             id: id.clone(),
             identity_type,
             did,
-            public_key: keypair.public_key,
-            private_key: Some(keypair.private_key),
+            public_key,
+            private_key: Some(private_key),
             node_id,
             device_node_ids,
             primary_device: primary_device.to_string(),
@@ -601,26 +621,20 @@ impl ZhtpIdentity {
         Ok(hex::encode(hash))
     }
 
-    // ========== SEED-ANCHORED DERIVATION FUNCTIONS ==========
-    // These functions implement the seed-anchored identity architecture
-    // where seed is the root of trust, not PQC keypairs.
+    // ========== ROOT-SECRET DERIVATION FUNCTIONS ==========
+    // The 64-byte seed is treated as a Root Secret (RS) for deterministic derivations of
+    // non-identity-anchoring secrets (ZK, wallets, commitments).
+    //
+    // IMPORTANT: The DID is NOT derived from this seed. DID is anchored to the root signing public key.
 
-    /// Derive DID from seed (seed-anchored, not from PQC key_id)
-    /// Per seed-anchored architecture: DID = did:zhtp:{Blake3(seed || "ZHTP_DID_V1")}
-    fn derive_did_from_seed(seed: &[u8; 64]) -> Result<String> {
-        let hash = lib_crypto::hash_blake3(&[seed.as_slice(), b"ZHTP_DID_V1"].concat());
-        Ok(format!("did:zhtp:{}", hex::encode(hash)))
-    }
-
-    /// Derive ZK identity secret from seed (not from private key)
-    /// Per seed-anchored architecture: Blake3(seed || "ZHTP_ZK_SECRET_V1")
+    /// Derive ZK identity secret from Root Secret (RS) (not from private key).
     fn derive_zk_secret_from_seed(seed: &[u8; 64]) -> Result<[u8; 32]> {
         let hash = lib_crypto::hash_blake3(&[seed.as_slice(), b"ZHTP_ZK_SECRET_V1"].concat());
         Ok(hash)
     }
 
-    /// Derive wallet master seed from identity seed (not from private key)
-    /// Per seed-anchored architecture: XOF(seed || "ZHTP_WALLET_SEED_V1") [64 bytes]
+    /// Derive wallet master seed from Root Secret (RS) (not from private key).
+    /// 64 bytes via Blake3 XOF.
     fn derive_wallet_seed_from_seed(seed: &[u8; 64]) -> Result<[u8; 64]> {
         let mut output = [0u8; 64];
         let mut hasher = blake3::Hasher::new();

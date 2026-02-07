@@ -27,9 +27,9 @@ use lib_identity::{IdentityManager, RecoveryPhraseManager, PhraseGenerationOptio
 // Session management
 use crate::session_manager::SessionManager;
 
-// BIP39 and deterministic key generation for recovery
+// BIP39 and deterministic root key generation for recovery
 use super::bip39::entropy_from_mnemonic;
-use crystals_dilithium::dilithium5::Keypair as DilithiumKeypair;
+use lib_identity_core::{derive_root_secret64_from_recovery_entropy, did_from_root_signing_public_key, RecoveryEntropy32, RootSigningKeypair};
 
 /// Request for generating recovery phrase
 #[derive(Debug, Deserialize)]
@@ -333,16 +333,17 @@ pub async fn handle_recover_identity(
             }
         };
 
-        // Step 2: Generate Dilithium5 keypair from entropy (deterministic)
-        eprintln!("🔑🔑🔑 Generating Dilithium keypair...");
-        let keypair = DilithiumKeypair::generate(Some(&entropy));
-        let dilithium_pk = keypair.public.to_bytes();
-        eprintln!("🔑🔑🔑 Dilithium5 public key generated ({} bytes)", dilithium_pk.len());
+        // Step 2: Derive root signing public key via RootSecret HKDF step (NEW invariant; breaking change)
+        eprintln!("🔑🔑🔑 Deriving root signing keypair from entropy...");
+        let entropy32: [u8; 32] = entropy.as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Entropy must be 32 bytes"))?;
+        let rs = derive_root_secret64_from_recovery_entropy(&RecoveryEntropy32(entropy32))?;
+        let rsk = RootSigningKeypair::from_root_secret(&rs)?;
+        eprintln!("🔑🔑🔑 Root signing public key derived ({} bytes)", rsk.public_key.len());
 
-        // Step 3: Hash public key to get DID (same as lib-client)
-        // lib-client: let pk_hash = Blake3::hash(&dilithium_pk);
-        let pk_hash = lib_crypto::hash_blake3(&dilithium_pk);
-        let did = format!("did:zhtp:{}", hex::encode(pk_hash));
+        // Step 3: DID is anchored to root signing public key
+        let did = did_from_root_signing_public_key(&rsk.public_key);
         eprintln!("🔑🔑🔑 Derived DID from public key: {}", &did);
 
         // Step 4: Extract identity_id from DID
@@ -999,6 +1000,26 @@ pub async fn handle_migrate_identity(
     let display_name = old_identity.metadata.get("display_name").cloned()
         .unwrap_or_else(|| "unnamed".to_string());
 
+    // If the display_name is currently owned by a migration target, block re-migration.
+    // Otherwise, a second call would migrate the newly-created identity again.
+    if old_identity.metadata.get("migrated_from").is_some() {
+        let source = old_identity
+            .metadata
+            .get("migrated_from")
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+        tracing::warn!(
+            "🔄 Migration blocked: display_name '{}' is already attached to a migrated identity (source={}) - key={} reported_ip={} audit_ip={} user_agent={}",
+            &display_name, source,
+            &rate_limit_key, &reported_ip, &audit_ip, &user_agent
+        );
+        rate_limiter.record_failed_attempt(&rate_limit_key).await;
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::Conflict,
+            "This display_name has already been migrated. Only one migration is allowed.".to_string(),
+        ));
+    }
+
     // AUDIT LOG: Record migration attempt
     tracing::info!(
         "🔄 MIGRATION ATTEMPT: old_did={} new_did={} display_name='{}' key={} reported_ip={} audit_ip={} user_agent={}",
@@ -1077,8 +1098,11 @@ pub async fn handle_migrate_identity(
             );
         }
 
-        // Clone wallet_manager for transfer
+        // Move wallets by cloning then clearing. This ensures wallets are owned by exactly one identity.
         old_wallet_manager = Some(old_id.wallet_manager.clone());
+        old_id.wallet_manager.wallets.clear();
+        old_id.wallet_manager.alias_map.clear();
+        old_id.wallet_manager.total_balance = 0;
     }
 
     // Transfer wallets to new identity
@@ -1088,6 +1112,8 @@ pub async fn handle_migrate_identity(
 
         if let Some(new_id) = manager.get_identity_mut(&new_identity_id) {
             new_id.wallet_manager = wallet_manager;
+            new_id.metadata.insert("migrated_from".to_string(), old_did.clone());
+            new_id.metadata.insert("migration_type".to_string(), "seed-only".to_string());
             tracing::info!(
                 "🔄 Transferred {} wallets to new identity",
                 new_id.wallet_manager.wallets.len()
@@ -1213,6 +1239,20 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::RwLock;
     use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpStatus, ZHTP_VERSION};
+    use zhtp_client::{build_migrate_identity_request_json, generate_identity};
+
+    async fn build_persistent_storage() -> Arc<RwLock<lib_storage::PersistentStorageSystem>> {
+        // Persist the tempdir path so sled keeps working for the duration of the test.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.into_path();
+        let system = lib_storage::UnifiedStorageSystem::new_persistent(
+            lib_storage::UnifiedStorageConfig::default(),
+            path,
+        )
+        .await
+        .expect("persistent storage init");
+        Arc::new(RwLock::new(system))
+    }
 
     fn build_identity_manager(
         old_pk_byte: u8,
@@ -1292,10 +1332,16 @@ mod tests {
         let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
         let (manager, _identity_id, _did) = build_identity_manager(1, "device-old", "alice");
         let manager = Arc::new(RwLock::new(manager));
+        let storage_system = build_persistent_storage().await;
 
+        let timestamp = 1234567890u64;
         let req = MigrateIdentityRequest {
+            display_name: "alice".to_string(),
             new_public_key: hex::encode(vec![2u8; 2592]),
             device_id: "device-new".to_string(),
+            timestamp,
+            // Invalid signature to force Unauthorized
+            signature: hex::encode(vec![0u8; 4595]),
         };
         let body = serde_json::to_vec(&req).unwrap();
         let request = build_request(body, None, Some("10.0.0.1:1234"), None);
@@ -1305,6 +1351,7 @@ mod tests {
             manager,
             rate_limiter,
             &request,
+            storage_system,
         )
         .await
         .expect("handler failed");
@@ -1317,16 +1364,32 @@ mod tests {
         let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
         let (manager, identity_id, _did) = build_identity_manager(3, "device-old", "alice");
         let manager = Arc::new(RwLock::new(manager));
+        let storage_system = build_persistent_storage().await;
 
-        let new_pk_bytes = vec![5u8; 2592];
+        // Generate a real crystals-dilithium keypair so signature verification succeeds.
+        let seed = [7u8; 32];
+        let kp = crystals_dilithium::dilithium5::Keypair::generate(Some(&seed));
+        let new_pk_bytes = kp.public.to_bytes().to_vec();
         let expected_new_did = {
             let pk = lib_crypto::PublicKey::new(new_pk_bytes.clone());
             format!("did:zhtp:{}", hex::encode(pk.key_id))
         };
 
+        let timestamp = 1234567890u64;
+        let signed_message = format!(
+            "SEED_MIGRATE:{}:{}:{}",
+            "alice",
+            hex::encode(&new_pk_bytes),
+            timestamp
+        );
+        let signature_bytes = kp.secret.sign(signed_message.as_bytes()).to_vec();
+
         let req = MigrateIdentityRequest {
+            display_name: "alice".to_string(),
             new_public_key: hex::encode(new_pk_bytes),
             device_id: "device-new".to_string(),
+            timestamp,
+            signature: hex::encode(signature_bytes),
         };
         let body = serde_json::to_vec(&req).unwrap();
         let request = build_request(body, Some(identity_id.clone()), Some("10.0.0.2:5678"), None);
@@ -1336,6 +1399,7 @@ mod tests {
             manager.clone(),
             rate_limiter,
             &request,
+            storage_system,
         )
         .await
         .expect("handler failed");
@@ -1356,15 +1420,19 @@ mod tests {
     #[tokio::test]
     async fn test_migrate_rate_limit_uses_peer_addr_not_forwarded_for() {
         let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
+        let storage_system = build_persistent_storage().await;
 
         for i in 0..4u8 {
             let (manager, identity_id, _did) = build_identity_manager(10 + i, "device-old", "alice");
             let manager = Arc::new(RwLock::new(manager));
 
             let req = MigrateIdentityRequest {
+                display_name: "alice".to_string(),
                 // Invalid length to force failure and record rate limit attempts.
                 new_public_key: hex::encode(vec![50 + i; 10]),
                 device_id: "device-new".to_string(),
+                timestamp: 1234567890u64,
+                signature: hex::encode(vec![0u8; 4595]),
             };
             let body = serde_json::to_vec(&req).unwrap();
             let request = build_request(
@@ -1379,6 +1447,7 @@ mod tests {
                 manager,
                 rate_limiter.clone(),
                 &request,
+                storage_system.clone(),
             )
             .await
             .expect("handler failed");
@@ -1388,6 +1457,133 @@ mod tests {
             } else {
                 assert_eq!(response.status, ZhtpStatus::TooManyRequests);
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_migrate_end_to_end_payload_builder_transfers_wallets_exactly_once() {
+        let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
+        let storage_system = build_persistent_storage().await;
+
+        // Old identity that currently owns display_name + wallets.
+        let (mut manager, old_identity_id, old_did) = build_identity_manager(42, "device-old", "alice");
+        {
+            let old = manager
+                .get_identity_mut(&old_identity_id)
+                .expect("old identity missing");
+
+            // Give the old identity a few wallets so we can verify "move" semantics.
+            let (w1, _) = old
+                .wallet_manager
+                .create_wallet_with_seed_phrase(
+                    lib_identity::wallets::WalletType::Primary,
+                    "Primary".to_string(),
+                    Some("primary".to_string()),
+                )
+                .await
+                .expect("create primary wallet");
+            if let Some(w) = old.wallet_manager.get_wallet_mut(&w1) {
+                w.balance = 111;
+            }
+
+            let (w2, _) = old
+                .wallet_manager
+                .create_wallet_with_seed_phrase(
+                    lib_identity::wallets::WalletType::UBI,
+                    "UBI".to_string(),
+                    Some("ubi".to_string()),
+                )
+                .await
+                .expect("create ubi wallet");
+            if let Some(w) = old.wallet_manager.get_wallet_mut(&w2) {
+                w.balance = 222;
+            }
+
+            let (w3, _) = old
+                .wallet_manager
+                .create_wallet_with_seed_phrase(
+                    lib_identity::wallets::WalletType::Savings,
+                    "Savings".to_string(),
+                    Some("savings".to_string()),
+                )
+                .await
+                .expect("create savings wallet");
+            if let Some(w) = old.wallet_manager.get_wallet_mut(&w3) {
+                w.balance = 333;
+            }
+        }
+
+        let manager = Arc::new(RwLock::new(manager));
+
+        // First migration: build request JSON using lib-client helper.
+        let new_identity_1 = generate_identity("device-new-1".to_string()).expect("generate identity");
+        let body_json_1 = build_migrate_identity_request_json(&new_identity_1, "alice".to_string())
+            .expect("build migrate json");
+        let request_1 = build_request(body_json_1.into_bytes(), Some(old_identity_id.clone()), Some("10.0.0.10:1111"), None);
+
+        let response_1 = handle_migrate_identity(
+            &request_1.body,
+            manager.clone(),
+            rate_limiter.clone(),
+            &request_1,
+            storage_system.clone(),
+        )
+        .await
+        .expect("handler failed");
+
+        assert_eq!(response_1.status, ZhtpStatus::Ok);
+        let parsed_1: MigrateIdentityResponse = serde_json::from_slice(&response_1.body).unwrap();
+        assert_eq!(parsed_1.old_did, old_did);
+        assert_eq!(parsed_1.new_did, new_identity_1.did);
+
+        // Verify wallet ownership moved to the new identity, and old identity is empty.
+        let new_identity_id_1 = {
+            let pk = lib_crypto::PublicKey::new(new_identity_1.public_key.clone());
+            lib_crypto::Hash::from_bytes(&pk.key_id)
+        };
+
+        {
+            let mgr = manager.read().await;
+            assert_eq!(mgr.list_identities().len(), 2);
+
+            let old = mgr.get_identity(&old_identity_id).expect("old identity missing");
+            assert!(old.metadata.get("display_name").is_none());
+            assert_eq!(old.metadata.get("migrated_to"), Some(&parsed_1.new_did));
+            assert!(old.wallet_manager.wallets.is_empty());
+
+            let new = mgr.get_identity(&new_identity_id_1).expect("new identity missing");
+            assert_eq!(new.metadata.get("migrated_from"), Some(&parsed_1.old_did));
+            assert_eq!(new.wallet_manager.wallets.len(), 3);
+        }
+
+        // Second migration attempt for same display_name with a different new identity must fail,
+        // and must not transfer wallets a second time.
+        let new_identity_2 = generate_identity("device-new-2".to_string()).expect("generate identity");
+        let body_json_2 = build_migrate_identity_request_json(&new_identity_2, "alice".to_string())
+            .expect("build migrate json");
+        let request_2 = build_request(body_json_2.into_bytes(), Some(old_identity_id.clone()), Some("10.0.0.11:2222"), None);
+
+        let response_2 = handle_migrate_identity(
+            &request_2.body,
+            manager.clone(),
+            rate_limiter.clone(),
+            &request_2,
+            storage_system.clone(),
+        )
+        .await
+        .expect("handler failed");
+
+        assert_eq!(response_2.status, ZhtpStatus::Conflict);
+
+        {
+            let mgr = manager.read().await;
+            assert_eq!(mgr.list_identities().len(), 2);
+
+            let old = mgr.get_identity(&old_identity_id).expect("old identity missing");
+            assert!(old.wallet_manager.wallets.is_empty());
+
+            let new = mgr.get_identity(&new_identity_id_1).expect("new identity missing");
+            assert_eq!(new.wallet_manager.wallets.len(), 3);
         }
     }
 }

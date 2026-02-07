@@ -114,8 +114,8 @@ fn given_same_seed_when_called_multiple_times_then_outputs_are_identical() {
     assert_eq!(identity1.dao_member_id, identity2.dao_member_id,
         "Same seed should produce same dao_member_id");
 
-    // PQC keypairs are allowed to differ (they're random)
-    // This is by design - seed anchors identity, not PQC keys
+    // Root signing (Dilithium) is deterministic from the Root Secret and anchors the DID.
+    // Operational keys (e.g. Kyber) may be random/rotatable.
 }
 
 /// AC2b: Given different seeds

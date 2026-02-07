@@ -21,6 +21,7 @@ path = "src/main.rs"
 [dependencies]
 # All ZHTP package dependencies - must be completed first
 lib-crypto = { path = "../lib-crypto" }
+lib-identity-core = { path = "../lib-identity-core" }
 lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }
@@ -114,6 +115,7 @@ features = [
 tokio-test = "0.4"
 tempfile = "3.8"
 criterion = "0.5"
+zhtp_client = { package = "lib-client", path = "../lib-client" }
 
 [features]
 default = ["production", "full-blockchain", "windows-bluetooth"]  # See Issue #739 for planned TLS pinning behavior
