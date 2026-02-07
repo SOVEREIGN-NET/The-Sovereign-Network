@@ -16,6 +16,12 @@ use lib_crypto::{
     },
 };
 
+fn fp8(label: &'static str, bytes: &[u8]) -> String {
+    // Debug fingerprint only (non-secret): blake3(data) prefix.
+    // Never log raw key material.
+    format!("{}:{}", label, hex::encode(&lib_crypto::hash_blake3(bytes)[..8]))
+}
+
 /// Supported PQC capability suites
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PqcCapability {
@@ -92,6 +98,12 @@ pub fn create_pqc_offer(suite: PqcCapability) -> Result<(PqcHandshakeOffer, PqcH
     let (dilithium_pk, dilithium_sk) = dilithium5_keypair();
 
     let kyber_pk_vec = kyber_pk.to_vec();
+    tracing::debug!(
+        kyber_pk = %fp8("kyber_pk", &kyber_pk_vec),
+        kyber_sk = %fp8("kyber_sk", &kyber_sk),
+        "PQC offer created (ephemeral keypair)"
+    );
+
     let binder = binder_bytes(suite.as_str(), &kyber_pk_vec);
     let signature = dilithium_sign(&binder, &dilithium_sk)?;
 
@@ -144,6 +156,8 @@ pub fn encapsulate_pqc(offer: &PqcHandshakeOffer) -> Result<(Vec<u8>, [u8; 32])>
     let kdf_info = b"ZHTP-KEM-v2.0";
     let result = kyber1024_encapsulate(&offer.kyber_public_key, kdf_info)?;
     tracing::debug!(
+        kyber_pk = %fp8("kyber_pk", &offer.kyber_public_key),
+        ciphertext = %fp8("ct", &result.0),
         pqc_shared_prefix = ?hex::encode(&result.1[..8]),
         ciphertext_len = result.0.len(),
         "PQC encapsulate (initiator)"
@@ -159,6 +173,8 @@ pub fn decapsulate_pqc(ciphertext: &[u8], state: &PqcHandshakeState) -> Result<[
     let kdf_info = b"ZHTP-KEM-v2.0";
     let shared = kyber1024_decapsulate(ciphertext, &state.kyber_secret_key, kdf_info)?;
     tracing::debug!(
+        kyber_sk = %fp8("kyber_sk", &state.kyber_secret_key),
+        ciphertext = %fp8("ct", ciphertext),
         pqc_shared_prefix = ?hex::encode(&shared[..8]),
         ciphertext_len = ciphertext.len(),
         "PQC decapsulate (responder)"
