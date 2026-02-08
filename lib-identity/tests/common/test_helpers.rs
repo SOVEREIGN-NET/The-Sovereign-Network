@@ -2,6 +2,8 @@
 //!
 //! This module consolidates common test logic to eliminate code duplication.
 
+#![allow(dead_code)]
+
 use lib_identity::identity::ZhtpIdentity;
 use lib_identity::types::IdentityType;
 use lib_crypto::{PublicKey, PrivateKey};

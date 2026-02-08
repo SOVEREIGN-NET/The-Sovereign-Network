@@ -2,11 +2,9 @@
 // Acceptance Criteria Tests
 
 use lib_identity::identity::ZhtpIdentity;
-use lib_identity::types::{IdentityType, NodeId, IdentityId, AccessLevel};
-use lib_identity::wallets::WalletManager;
+use lib_identity::types::{IdentityType, NodeId};
 use lib_crypto::{PublicKey, PrivateKey};
 use lib_proofs::ZeroKnowledgeProof;
-use blake3;
 use std::collections::HashMap;
 
 mod common;
@@ -67,7 +65,7 @@ fn test_zhtp_identity_uses_lib_crypto_types() {
 fn test_private_key_not_serialized() {
     use serde_json;
 
-    let mut identity = create_test_identity();
+    let identity = create_test_identity();
     // PrivateKey doesn't have Default, skip setting it for test
 
     let json = serde_json::to_string(&identity)

@@ -2871,17 +2871,14 @@ impl Blockchain {
     /// Process wallet transactions in a block
     pub fn process_wallet_transactions(&mut self, block: &Block) -> Result<()> {
         for transaction in &block.transactions {
-            if transaction.transaction_type == TransactionType::WalletRegistration {
+            if matches!(
+                transaction.transaction_type,
+                TransactionType::WalletRegistration | TransactionType::WalletUpdate
+            ) {
                 if let Some(ref wallet_data) = transaction.wallet_data {
                     let wallet_id_str = hex::encode(wallet_data.wallet_id.as_bytes());
-                    self.wallet_registry.insert(
-                        wallet_id_str.clone(),
-                        wallet_data.clone()
-                    );
-                    self.wallet_blocks.insert(
-                        wallet_id_str,
-                        block.height()
-                    );
+                    self.wallet_registry.insert(wallet_id_str.clone(), wallet_data.clone());
+                    self.wallet_blocks.insert(wallet_id_str, block.height());
                 }
             }
         }

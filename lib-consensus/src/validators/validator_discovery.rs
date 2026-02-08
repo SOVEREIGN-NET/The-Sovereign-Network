@@ -417,6 +417,40 @@ impl ValidatorDiscoveryProtocol {
         Ok(())
     }
 
+    /// Add a trusted validator to the discovery cache without signature verification.
+    ///
+    /// Used for blockchain-sourced or genesis validators whose data is already
+    /// authenticated by chain consensus. Skips `validate_announcement()` which
+    /// would otherwise reject entries without valid self-signed announcements.
+    pub async fn populate_trusted(
+        &self,
+        validator_id: Hash,
+        consensus_key: lib_crypto::PublicKey,
+        endpoints: Vec<ValidatorEndpoint>,
+        stake: u64,
+    ) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let announcement = ValidatorAnnouncement {
+            identity_id: validator_id.clone(),
+            consensus_key,
+            stake,
+            storage_provided: 0,
+            commission_rate: 0,
+            endpoints,
+            status: ValidatorStatus::Active,
+            last_updated: now,
+            signature: Vec::new(), // No self-signature needed for trusted entries
+        };
+
+        let mut cache = self.validator_cache.write().await;
+        cache.insert(validator_id.clone(), announcement);
+        debug!("Trusted validator {} added to discovery cache", validator_id);
+    }
+
     /// Select the best endpoint for a validator, respecting priority
     ///
     /// # Invariants

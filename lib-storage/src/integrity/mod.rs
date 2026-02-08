@@ -175,6 +175,7 @@ impl IntegrityMetadata {
 }
 
 /// Integrity manager for coordinating integrity operations
+#[allow(dead_code)]
 pub struct IntegrityManager {
     /// Checksum manager
     checksum_manager: ChecksumManager,

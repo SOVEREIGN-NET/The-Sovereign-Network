@@ -482,7 +482,9 @@ impl Component for ProtocolsComponent {
         // Stop ZDNS transport server if running
         if let Some(transport) = self.zdns_transport.write().await.take() {
             info!(" Stopping ZDNS transport server...");
-            transport.stop().await;
+            if let Err(e) = transport.stop().await {
+                warn!("Failed to stop ZDNS transport server: {}", e);
+            }
         }
 
         if let Some(mut server) = self.unified_server.write().await.take() {

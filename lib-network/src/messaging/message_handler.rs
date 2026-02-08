@@ -56,6 +56,11 @@ pub struct MeshMessageHandler {
     /// Consensus message sender for forwarding ValidatorMessages to the consensus engine
     /// When set, received ValidatorMessages are converted and sent to the consensus loop
     pub consensus_message_sender: Option<ConsensusMessageSender>,
+    /// Raw validator message sender for routing messages through ValidatorProtocol middleware.
+    /// When set, incoming ValidatorMessages are forwarded here INSTEAD of being converted and
+    /// sent directly to `consensus_message_sender`. This allows ValidatorProtocol to verify
+    /// message-level Dilithium signatures before forwarding to the consensus engine.
+    pub raw_validator_message_sender: Option<tokio::sync::mpsc::Sender<lib_consensus::validators::ValidatorMessage>>,
 }
 
 /// DHT rate limit configuration
@@ -87,6 +92,7 @@ impl MeshMessageHandler {
             dht_rate_limits: Arc::new(RwLock::new(HashMap::new())),
             blockchain_event_receiver: Arc::new(crate::blockchain_sync::NullBlockchainEventReceiver),
             consensus_message_sender: None,
+            raw_validator_message_sender: None,
         }
     }
 
@@ -133,6 +139,19 @@ impl MeshMessageHandler {
     pub fn set_consensus_message_sender(&mut self, sender: ConsensusMessageSender) {
         self.consensus_message_sender = Some(sender);
         info!("🔗 Consensus message sender wired to mesh message handler");
+    }
+
+    /// Set raw validator message sender for routing through ValidatorProtocol middleware.
+    ///
+    /// When set, incoming `ValidatorMessage` variants are forwarded to this channel
+    /// **instead of** being converted and sent to `consensus_message_sender` directly.
+    /// This enables ValidatorProtocol to verify message-level signatures before forwarding.
+    pub fn set_raw_validator_message_sender(
+        &mut self,
+        sender: tokio::sync::mpsc::Sender<lib_consensus::validators::ValidatorMessage>,
+    ) {
+        self.raw_validator_message_sender = Some(sender);
+        info!("🔗 Raw validator message sender wired to mesh message handler (ValidatorProtocol middleware)");
     }
 
     /// Handle incoming mesh message
@@ -247,8 +266,23 @@ impl MeshMessageHandler {
                 self.handle_dht_generic_payload(requester, payload, signature).await?;
             },
             ZhtpMeshMessage::ValidatorMessage(msg) => {
-                // Forward to consensus engine if sender is wired
-                if let Some(ref consensus_tx) = self.consensus_message_sender {
+                // Route through ValidatorProtocol middleware if wired (signature verification)
+                if let Some(ref raw_tx) = self.raw_validator_message_sender {
+                    match raw_tx.send(msg).await {
+                        Ok(()) => {
+                            debug!("✅ ValidatorMessage forwarded to ValidatorProtocol middleware from peer {:?}",
+                                hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
+                            );
+                        }
+                        Err(e) => {
+                            warn!("Failed to forward ValidatorMessage to ValidatorProtocol: {} (middleware may be stopped)",
+                                e
+                            );
+                        }
+                    }
+                }
+                // Fallback: forward directly to consensus engine (backward compatible)
+                else if let Some(ref consensus_tx) = self.consensus_message_sender {
                     // Convert from network format to consensus engine format
                     let consensus_msg = convert_network_to_consensus_message(&msg);
 

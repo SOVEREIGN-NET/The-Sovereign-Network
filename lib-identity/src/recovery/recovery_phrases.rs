@@ -1374,7 +1374,7 @@ impl RecoveryPhraseManager {
     /// 1. Validates the mnemonic format
     /// 2. Converts mnemonic to 64-byte master seed (BIP39 PBKDF2)
     /// 3. Derives identity seed via HKDF
-    /// 4. Derives DID deterministically from seed
+    /// 4. Derives Root Signing Key deterministically from the Root Secret and anchors DID to the root public key
     /// 5. Calculates seed commitment for blockchain verification
     /// 6. Reconstructs complete ZhtpIdentity
     /// 7. Recovers all HD wallets from master seed

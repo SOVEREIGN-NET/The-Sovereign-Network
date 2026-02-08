@@ -35,6 +35,7 @@ flate2 = "1.0"
 # Workspace dependencies for correct transaction serialization
 lib-blockchain = { path = "../lib-blockchain" }
 lib-crypto = { path = "../lib-crypto" }
+lib-identity-core = { path = "../lib-identity-core" }
 
 # Post-quantum crypto (native builds use C-based implementations)
 blake3 = "1.5"
@@ -58,7 +59,7 @@ crystals-dilithium = "1.0"  # For deterministic keypair generation from seed
 # WASM: Pure Rust PQC implementations
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 crystals-dilithium = "1.0"
-pqc_kyber = "0.7"
+pqc_kyber = { version = "0.7", features = ["kyber1024"] }
 
 # WASM (optional, for web)
 wasm-bindgen = { version = "0.2", optional = true }

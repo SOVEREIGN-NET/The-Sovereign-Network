@@ -356,7 +356,8 @@ fn identity_to_js(identity: &Identity) -> Result<JsValue, JsError> {
     js_set!(&obj, "kyberSecretKey", &Uint8Array::from(&identity.kyber_secret_key[..]));
     js_set!(&obj, "nodeId", &Uint8Array::from(&identity.node_id[..]));
     js_set!(&obj, "deviceId", &JsValue::from_str(&identity.device_id));
-    js_set!(&obj, "masterSeed", &Uint8Array::from(&identity.master_seed[..]));
+    // Legacy field name: 32-byte recovery entropy (mnemonic-encodable).
+    js_set!(&obj, "masterSeed", &Uint8Array::from(&identity.recovery_entropy[..]));
     js_set!(&obj, "createdAt", &JsValue::from_f64(identity.created_at as f64));
     Ok(obj.into())
 }
@@ -380,7 +381,7 @@ fn js_to_identity(js: &JsValue) -> Result<Identity, JsError> {
         kyber_secret_key,
         node_id,
         device_id,
-        master_seed,
+        recovery_entropy: master_seed,
         created_at,
     })
 }

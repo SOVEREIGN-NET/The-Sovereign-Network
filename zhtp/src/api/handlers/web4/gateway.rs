@@ -616,7 +616,7 @@ mod tests {
         fn _compile_check() {
             // This function is never called, just checks compilation
             async fn _inner() {
-                let storage = std::sync::Arc::new(
+                let _storage = std::sync::Arc::new(
                     tokio::sync::RwLock::new(
                         lib_storage::UnifiedStorageSystem::new(
                             lib_storage::UnifiedStorageConfig::default()

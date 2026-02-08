@@ -23,6 +23,7 @@ pub struct ContentManager {
     /// DHT storage backend
     dht_storage: DhtStorage,
     /// Economic manager for contracts
+    #[allow(dead_code)]
     economic_manager: EconomicStorageManager,
     /// Content metadata
     content_metadata: HashMap<ContentHash, ContentMetadata>,
@@ -273,7 +274,7 @@ impl ContentManager {
         }
 
         // Create economic storage request
-        let economic_request = EconomicStorageRequest {
+        let _economic_request = EconomicStorageRequest {
             content: processed_content.clone(),
             filename: request.filename.clone(),
             content_type: request.mime_type.clone(),

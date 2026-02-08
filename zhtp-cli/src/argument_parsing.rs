@@ -327,6 +327,67 @@ pub enum IdentityAction {
     },
     /// List identities
     List,
+
+    /// Register a new client-generated identity on the node (creates wallets)
+    ///
+    /// Calls `POST /api/v1/identity/register` over QUIC.
+    ///
+    /// This is useful for staging/testing the migration flow end-to-end, because
+    /// registration assigns a `display_name` and creates wallets/balances that the
+    /// migration can transfer exactly once.
+    Register {
+        /// Display name (username) to register on the node
+        #[arg(long)]
+        display_name: String,
+
+        /// Device identifier for the identity being registered
+        #[arg(long)]
+        device_id: String,
+
+        /// Identity type (human, device, organization)
+        #[arg(long, default_value = "human")]
+        identity_type: String,
+
+        /// Path to keystore directory used for the QUIC client identity
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        #[command(flatten)]
+        trust: TrustFlags,
+    },
+
+    /// Migrate an identity to a new DID (seed-only, controlled re-registration)
+    ///
+    /// This calls `POST /api/v1/identity/migrate` over QUIC.
+    ///
+    /// The request is signed using the **new** seed-derived root signing key (Dilithium5),
+    /// proving control of the recovery phrase for the migrated identity.
+    Migrate {
+        /// Existing identity display name to migrate (must exist on the node)
+        #[arg(long)]
+        display_name: String,
+
+        /// Device identifier to bind to the new identity (copied into the new identity record)
+        #[arg(long)]
+        device_id: String,
+
+        /// 24-word recovery phrase for the NEW identity (quote it)
+        ///
+        /// If omitted, a new phrase is generated and printed.
+        #[arg(long)]
+        phrase: Option<String>,
+
+        /// Read the 24-word recovery phrase from a file
+        #[arg(long)]
+        phrase_file: Option<String>,
+
+        /// Path to keystore directory used for the QUIC client identity
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        #[command(flatten)]
+        trust: TrustFlags,
+    },
 }
 
 /// Network operation commands

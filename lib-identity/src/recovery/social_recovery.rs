@@ -341,7 +341,7 @@ impl SocialRecoveryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::{KeyPair, PublicKey};
+    use lib_crypto::PublicKey;
 
     #[test]
     fn test_recovery_request_creation() {

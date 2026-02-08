@@ -227,7 +227,7 @@ impl MeshHandler {
         info!(" API: Producing block for mesh {}", mesh_id);
 
         // Parse request body (optional)
-        let produce_req: ProduceBlockRequest = if !request.body.is_empty() {
+        let _produce_req: ProduceBlockRequest = if !request.body.is_empty() {
             match serde_json::from_slice(&request.body) {
                 Ok(req) => req,
                 Err(_) => ProduceBlockRequest { force: Some(false) }

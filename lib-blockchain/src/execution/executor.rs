@@ -146,7 +146,8 @@ impl FeeModelV2 {
             // Other types default to NativeTransfer pricing
             TransactionType::SessionCreation |
             TransactionType::SessionTermination |
-            TransactionType::WalletRegistration => TxKind::NativeTransfer,
+            TransactionType::WalletRegistration |
+            TransactionType::WalletUpdate => TxKind::NativeTransfer,
             // Catch-all for any future types
             _ => TxKind::NativeTransfer,
         };

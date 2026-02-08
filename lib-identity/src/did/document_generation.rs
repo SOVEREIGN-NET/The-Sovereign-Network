@@ -1,5 +1,8 @@
 // packages/lib-identity/src/did/document_generation.rs
-// W3C DID Document generation for ZHTP identities with seed phrase support
+// W3C DID Document generation for ZHTP identities.
+//
+// Current invariant (ADR-0004): DID is anchored to a root signing public key; seed/recovery
+// material must never be embedded directly into the DID.
 // IMPLEMENTATIONS from original identity.rs
 
 use crate::identity::ZhtpIdentity;

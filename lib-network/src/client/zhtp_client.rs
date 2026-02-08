@@ -266,6 +266,14 @@ impl ZhtpClient {
             &handshake_result.handshake_hash,
         ).context("Failed to derive V2 session keys")?;
 
+        debug!(
+            peer_did = %peer_did,
+            session_id_prefix = ?hex::encode(&handshake_result.session_id[..8]),
+            handshake_hash_prefix = ?hex::encode(&handshake_result.handshake_hash[..8]),
+            mac_key_prefix = ?hex::encode(&v2_keys.mac_key[..8]),
+            "V2 key material derived (client)"
+        );
+
         info!(
             peer_did = %peer_did,
             session_id = ?hex::encode(&handshake_result.session_id[..8]),
@@ -321,6 +329,21 @@ impl ZhtpClient {
             seq,
             &conn.mac_key,
         );
+
+        if let Some(auth) = &wire_request.auth_context {
+            // Canonical size is a useful invariant to debug MAC mismatches.
+            let canonical_len = 1 + 2 + wire_request.request.uri.as_bytes().len() + 4 + wire_request.request.body.len();
+            debug!(
+                request_id = %wire_request.request_id_hex(),
+                seq = seq,
+                session_id_prefix = ?hex::encode(&conn.session_id[..8]),
+                mac_key_prefix = ?hex::encode(&conn.mac_key[..8]),
+                request_mac_prefix = ?hex::encode(&auth.request_mac[..8]),
+                canonical_len = canonical_len,
+                uri = %wire_request.request.uri,
+                "V2 request MAC computed (client)"
+            );
+        }
 
         let request_id = wire_request.request_id;
 

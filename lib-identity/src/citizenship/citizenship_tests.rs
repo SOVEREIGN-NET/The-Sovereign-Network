@@ -1,8 +1,6 @@
 //! Comprehensive tests for the citizenship system
 
-use super::*;
 use lib_crypto::Hash;
-use crate::types::*;
 use std::collections::HashMap;
 
 // Mock types for testing citizenship system

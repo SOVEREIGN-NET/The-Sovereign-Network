@@ -118,21 +118,21 @@ fn test_snapshot_restore_complete_state() {
     store.begin_block(0).unwrap();
     store.append_block(&genesis).unwrap();
     store.put_utxo(&outpoint1, &utxo1).unwrap();
-    store.set_token_balance(token, &alice, 10_000).unwrap();
+    store.set_token_balance(&token, &alice, 10_000).unwrap();
     store.commit_block().unwrap();
 
     // Apply block 1
     store.begin_block(1).unwrap();
     store.append_block(&block1).unwrap();
     store.put_utxo(&outpoint2, &utxo2).unwrap();
-    store.set_token_balance(token, &bob, 20_000).unwrap();
+    store.set_token_balance(&token, &bob, 20_000).unwrap();
     store.commit_block().unwrap();
 
     // Apply block 2
     store.begin_block(2).unwrap();
     store.append_block(&block2).unwrap();
     store.put_utxo(&outpoint3, &utxo3).unwrap();
-    store.set_token_balance(token, &charlie, 30_000).unwrap();
+    store.set_token_balance(&token, &charlie, 30_000).unwrap();
     store.commit_block().unwrap();
 
     // Apply block 3
@@ -145,9 +145,9 @@ fn test_snapshot_restore_complete_state() {
     let snapshot_id = manager.snapshot_at(3).unwrap();
 
     // Record state before restore
-    let alice_balance_before = store.get_token_balance(token, &alice).unwrap();
-    let bob_balance_before = store.get_token_balance(token, &bob).unwrap();
-    let charlie_balance_before = store.get_token_balance(token, &charlie).unwrap();
+    let alice_balance_before = store.get_token_balance(&token, &alice).unwrap();
+    let bob_balance_before = store.get_token_balance(&token, &bob).unwrap();
+    let charlie_balance_before = store.get_token_balance(&token, &charlie).unwrap();
 
     // Clear all state
     store.blocks_by_height().clear().unwrap();
@@ -158,18 +158,18 @@ fn test_snapshot_restore_complete_state() {
 
     // Verify state is cleared
     assert!(store.get_utxo(&outpoint1).unwrap().is_none());
-    assert_eq!(store.get_token_balance(token, &alice).unwrap(), 0);
+    assert_eq!(store.get_token_balance(&token, &alice).unwrap(), 0);
 
     // Restore from snapshot
     manager.restore(&snapshot_id).unwrap();
 
     // Verify all state is restored
-    assert_eq!(store.get_latest_height().unwrap(), 3);
+    assert_eq!(store.latest_height().unwrap(), 3);
 
     // Verify balances
-    assert_eq!(store.get_token_balance(token, &alice).unwrap(), alice_balance_before);
-    assert_eq!(store.get_token_balance(token, &bob).unwrap(), bob_balance_before);
-    assert_eq!(store.get_token_balance(token, &charlie).unwrap(), charlie_balance_before);
+    assert_eq!(store.get_token_balance(&token, &alice).unwrap(), alice_balance_before);
+    assert_eq!(store.get_token_balance(&token, &bob).unwrap(), bob_balance_before);
+    assert_eq!(store.get_token_balance(&token, &charlie).unwrap(), charlie_balance_before);
 
     // Verify UTXOs
     let restored_utxo1 = store.get_utxo(&outpoint1).unwrap().unwrap();
@@ -221,7 +221,7 @@ fn test_restore_then_continue_chain() {
     store.meta().clear().unwrap();
 
     manager.restore(&snapshot_id).unwrap();
-    assert_eq!(store.get_latest_height().unwrap(), 5);
+    assert_eq!(store.latest_height().unwrap(), 5);
 
     // Get block 5's hash to continue from
     let block5 = store.get_block_by_height(5).unwrap().unwrap();
@@ -237,7 +237,7 @@ fn test_restore_then_continue_chain() {
     }
 
     // Verify complete chain
-    assert_eq!(store.get_latest_height().unwrap(), 10);
+    assert_eq!(store.latest_height().unwrap(), 10);
 
     for height in 0..=10 {
         let block = store.get_block_by_height(height).unwrap().unwrap();
@@ -284,7 +284,7 @@ fn test_snapshot_at_intermediate_height() {
     manager.restore(&snapshot_id).unwrap();
 
     // Should only have blocks 0-5
-    assert_eq!(store.get_latest_height().unwrap(), 5);
+    assert_eq!(store.latest_height().unwrap(), 5);
 
     for height in 0..=5 {
         assert!(store.get_block_by_height(height).unwrap().is_some());
@@ -382,7 +382,7 @@ fn test_multiple_snapshots() {
     store.meta().clear().unwrap();
 
     manager.restore(&id_h3).unwrap();
-    assert_eq!(store.get_latest_height().unwrap(), 3);
+    assert_eq!(store.latest_height().unwrap(), 3);
 }
 
 /// Test: Restore with account state
@@ -446,7 +446,7 @@ fn test_snapshot_with_chain_sync_roundtrip() {
     store1.begin_block(10).unwrap();
     let block10 = create_block_at_height(10, store1.get_block_by_height(9).unwrap().unwrap().header.block_hash);
     store1.append_block(&block10).unwrap();
-    store1.set_token_balance(TokenId::NATIVE, &Address::new([1u8; 32]), 999_999).unwrap();
+    store1.set_token_balance(&TokenId::NATIVE, &Address::new([1u8; 32]), 999_999).unwrap();
     store1.commit_block().unwrap();
 
     // Take snapshot
@@ -462,8 +462,8 @@ fn test_snapshot_with_chain_sync_roundtrip() {
     sync2.import_blocks(exported).unwrap();
 
     // Both should be at height 10
-    assert_eq!(store1.get_latest_height().unwrap(), 10);
-    assert_eq!(store2.get_latest_height().unwrap(), 10);
+    assert_eq!(store1.latest_height().unwrap(), 10);
+    assert_eq!(store2.latest_height().unwrap(), 10);
 
     // Hashes should match
     let hash1 = store1.get_block_by_height(10).unwrap().unwrap().header.block_hash;

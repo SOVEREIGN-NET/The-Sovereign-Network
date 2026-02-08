@@ -4,6 +4,7 @@
 //! including mock implementations, test fixtures, and integration test helpers.
 
 #![cfg(feature = "testing")]
+#![allow(dead_code)]
 
 use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus, ZhtpHeaders};
 use crate::{ProtocolError, Result};

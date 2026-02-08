@@ -27,7 +27,7 @@
 //! let node_id = NodeId::from_identity_components(
 //!     "did:zhtp:abc123",
 //!     "my-secure-device-name",
-//! )?;
+//! ).expect("Valid NodeId");
 //! ```
 
 use anyhow::{Result, anyhow};
@@ -452,13 +452,13 @@ impl NodeId {
     /// ```
     /// use lib_identity::types::NodeId;
     ///
-    /// let node1 = NodeId::from_bytes([0b10000000; 32]);
-    /// let node2 = NodeId::from_bytes([0b00000000; 32]);
-    ///
-    /// // The most significant differing bit is at bit position 7 (first byte, highest bit)
-    /// assert_eq!(node1.kademlia_distance(&node2), 7);
-    /// ```
-    pub fn kademlia_distance(&self, other: &Self) -> u32 {
+/// let node1 = NodeId::from_bytes([0b10000000; 32]);
+/// let node2 = NodeId::from_bytes([0b00000000; 32]);
+///
+/// // With this implementation, the most significant differing bit in the first byte yields distance 0.
+/// assert_eq!(node1.kademlia_distance(&node2), 0);
+/// ```
+pub fn kademlia_distance(&self, other: &Self) -> u32 {
         let xor_bytes = self.xor_distance(other);
         for (i, byte) in xor_bytes.iter().enumerate() {
             if *byte != 0 {

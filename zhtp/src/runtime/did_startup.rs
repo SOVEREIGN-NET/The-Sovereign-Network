@@ -1508,7 +1508,7 @@ async fn create_user_identity_with_wallet(
 ) -> Result<(ZhtpIdentity, WalletId, String, lib_identity::identity::PrivateIdentityData)> {
     use lib_identity::wallets::WalletType;
 
-    // Generate new identity using P1-7 seed-anchored architecture
+    // Generate new identity using root-key-anchored DID invariant (ADR-0004)
     let mut identity = ZhtpIdentity::new_unified(
         IdentityType::Human,
         Some(25), // Default age
@@ -1548,7 +1548,7 @@ async fn create_node_device_identity(
     reward_wallet_id: WalletId,
     device_name: String,
 ) -> Result<(ZhtpIdentity, lib_identity::identity::PrivateIdentityData)> {
-    // Generate device identity using P1-7 seed-anchored architecture
+    // Generate device identity using root-key-anchored DID invariant (ADR-0004)
     let mut identity = ZhtpIdentity::new_unified(
         IdentityType::Device,
         None, // Devices don't have age

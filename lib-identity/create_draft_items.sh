@@ -259,7 +259,7 @@ gh api graphql -f query='
   -f title="PG-3: Implement SignaturePopV1 proof type" \
   -f body="## Description
 
-Implement SignaturePopV1 for binding seed-derived DID to post-quantum signature keys.
+Implement SignaturePopV1 for binding operational keys to the root-key-anchored DID via the Root Signing Key.
 
 ## Acceptance Criteria
 

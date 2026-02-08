@@ -22,30 +22,14 @@ async fn main() -> Result<()> {
     let mut manager = WalletManager::new(creator_did_1.clone());
     
     println!("\nCreating DAO Wallets (DID Required)...");
-    
-    // Try to create DAO wallets with a standalone manager (should fail)
-    let mut standalone_manager = WalletManager::new_standalone();
-    println!("\nAttempting to create DAO wallet without DID...");
-    
+
     let governance_settings = DaoGovernanceSettings {
         min_signatures_required: 1,
         max_single_transaction: 10000, // 10K ZHTP max per transaction
         requires_governance_vote: false,
         voting_threshold_percent: 60,
     };
-    
-    match standalone_manager.create_dao_wallet(
-        WalletType::NonProfitDAO,
-        creator_did_1.clone(),
-        "Invalid DAO".to_string(),
-        "This should fail".to_string(),
-        governance_settings.clone(),
-        TransparencyLevel::Full,
-    ).await {
-        Ok(_) => println!(" This should not happen!"),
-        Err(e) => println!("Correctly rejected: {}", e),
-    }
-    
+
     // Create NonProfit DAO wallet (creator cannot own it)
     println!("\n  Creating NonProfit DAO Wallet...");
     let nonprofit_dao = manager.create_dao_wallet(

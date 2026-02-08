@@ -66,6 +66,8 @@ use zeroize::Zeroize;
 ///
 /// Use generic bounds to ensure only zeroizing keys are accepted:
 /// ```rust
+/// use lib_crypto::ZeroizingKey;
+///
 /// pub fn secure_store<K: ZeroizingKey>(key: K) {
 ///     // Guaranteed to be zeroized on drop
 /// }

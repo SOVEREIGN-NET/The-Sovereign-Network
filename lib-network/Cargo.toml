@@ -73,7 +73,7 @@ sled = "0.34"
 x25519-dalek = "2.0"
 
 # Post-quantum cryptography (Kyber for forward secrecy)
-pqc_kyber = "0.7"
+pqc_kyber = { version = "0.7", features = ["kyber1024"] }
 
 # System calls (for Bluetooth Classic on macOS/Linux)
 libc = "0.2"
