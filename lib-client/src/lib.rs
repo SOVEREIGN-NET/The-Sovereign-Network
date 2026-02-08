@@ -105,6 +105,16 @@ pub struct IdentityHandle {
     inner: Identity,
 }
 
+/// Opaque handle to a HandshakeState
+pub struct HandshakeStateHandle {
+    inner: HandshakeState,
+}
+
+/// Opaque handle to a HandshakeResult
+pub struct HandshakeResultHandle {
+    inner: HandshakeResult,
+}
+
 /// Generate a new identity. Returns a pointer to IdentityHandle.
 /// Caller must free with `zhtp_client_identity_free`.
 #[no_mangle]
@@ -308,6 +318,7 @@ pub extern "C" fn zhtp_client_identity_get_created_at(handle: *const IdentityHan
 /// Get Dilithium secret key from identity (for UHP handshake)
 /// SECURITY: This key should only be used for signing operations on-device.
 /// It should NEVER be transmitted over any network.
+#[deprecated(note = "Use zhtp_client_handshake_new() instead — keeps secret keys inside Rust")]
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_get_dilithium_secret_key(handle: *const IdentityHandle) -> ByteBuffer {
     if handle.is_null() {
@@ -326,6 +337,7 @@ pub extern "C" fn zhtp_client_identity_get_dilithium_secret_key(handle: *const I
 /// Get Kyber secret key from identity (for UHP handshake key exchange)
 /// SECURITY: This key should only be used for decapsulation on-device.
 /// It should NEVER be transmitted over any network.
+#[deprecated(note = "Use zhtp_client_handshake_new() instead — keeps secret keys inside Rust")]
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_get_kyber_secret_key(handle: *const IdentityHandle) -> ByteBuffer {
     if handle.is_null() {
@@ -344,6 +356,7 @@ pub extern "C" fn zhtp_client_identity_get_kyber_secret_key(handle: *const Ident
 /// Get master seed from identity (for key derivation)
 /// SECURITY: This seed should only be used for local key derivation.
 /// It should NEVER be transmitted over any network.
+#[deprecated(note = "Use zhtp_client_handshake_new() instead — keeps secret keys inside Rust")]
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_get_master_seed(handle: *const IdentityHandle) -> ByteBuffer {
     if handle.is_null() {
@@ -605,6 +618,186 @@ pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const Identity
         },
         Err(_) => std::ptr::null_mut(),
     }
+}
+
+// =============================================================================
+// Handshake FFI Exports
+// =============================================================================
+
+/// Create a new HandshakeState from an identity and channel binding.
+/// Returns a pointer to HandshakeStateHandle, or null on error.
+/// Caller must free with `zhtp_client_handshake_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_handshake_new(
+    handle: *const IdentityHandle,
+    channel_binding: *const u8,
+    channel_binding_len: usize,
+) -> *mut HandshakeStateHandle {
+    if handle.is_null() || channel_binding.is_null() {
+        return std::ptr::null_mut();
+    }
+    let identity = unsafe { &(*handle).inner };
+    let cb = unsafe { std::slice::from_raw_parts(channel_binding, channel_binding_len) };
+    Box::into_raw(Box::new(HandshakeStateHandle {
+        inner: HandshakeState::new(identity.clone(), cb.to_vec()),
+    }))
+}
+
+/// Step 1: Create ClientHello message.
+/// Returns wire-format bytes to send to the server. Empty buffer on error.
+/// Caller must free the returned ByteBuffer with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_handshake_create_client_hello(
+    handle: *mut HandshakeStateHandle,
+) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let state = unsafe { &mut (*handle).inner };
+    match state.create_client_hello() {
+        Ok(mut bytes) => {
+            let buf = ByteBuffer {
+                data: bytes.as_mut_ptr(),
+                len: bytes.len(),
+            };
+            std::mem::forget(bytes);
+            buf
+        }
+        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+    }
+}
+
+/// Step 2: Process ServerHello and create ClientFinish.
+/// Returns wire-format ClientFinish bytes to send back. Empty buffer on error.
+/// Caller must free the returned ByteBuffer with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_handshake_process_server_hello(
+    handle: *mut HandshakeStateHandle,
+    data: *const u8,
+    data_len: usize,
+) -> ByteBuffer {
+    if handle.is_null() || data.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let state = unsafe { &mut (*handle).inner };
+    let data_slice = unsafe { std::slice::from_raw_parts(data, data_len) };
+    match state.process_server_hello(data_slice) {
+        Ok(mut bytes) => {
+            let buf = ByteBuffer {
+                data: bytes.as_mut_ptr(),
+                len: bytes.len(),
+            };
+            std::mem::forget(bytes);
+            buf
+        }
+        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+    }
+}
+
+/// Step 3: Finalize handshake and derive session keys.
+/// Returns a pointer to HandshakeResultHandle, or null on error.
+/// Caller must free with `zhtp_client_handshake_result_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_handshake_finalize(
+    handle: *const HandshakeStateHandle,
+) -> *mut HandshakeResultHandle {
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let state = unsafe { &(*handle).inner };
+    match state.finalize() {
+        Ok(result) => Box::into_raw(Box::new(HandshakeResultHandle { inner: result })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Free a HandshakeStateHandle
+#[no_mangle]
+pub extern "C" fn zhtp_client_handshake_free(handle: *mut HandshakeStateHandle) {
+    if !handle.is_null() {
+        unsafe { drop(Box::from_raw(handle)) };
+    }
+}
+
+/// Free a HandshakeResultHandle
+#[no_mangle]
+pub extern "C" fn zhtp_client_handshake_result_free(handle: *mut HandshakeResultHandle) {
+    if !handle.is_null() {
+        unsafe { drop(Box::from_raw(handle)) };
+    }
+}
+
+/// Get session key (32 bytes) from handshake result.
+/// Caller must free with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_handshake_result_get_session_key(
+    handle: *const HandshakeResultHandle,
+) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let result = unsafe { &(*handle).inner };
+    let mut bytes = result.session_key.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
+}
+
+/// Get session ID (32 bytes) from handshake result.
+/// Caller must free with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_handshake_result_get_session_id(
+    handle: *const HandshakeResultHandle,
+) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let result = unsafe { &(*handle).inner };
+    let mut bytes = result.session_id.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
+}
+
+/// Get peer DID string from handshake result.
+/// Caller must free with `zhtp_client_string_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_handshake_result_get_peer_did(
+    handle: *const HandshakeResultHandle,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let result = unsafe { &(*handle).inner };
+    match std::ffi::CString::new(result.peer_did.clone()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Get peer public key from handshake result.
+/// Caller must free with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_handshake_result_get_peer_public_key(
+    handle: *const HandshakeResultHandle,
+) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let result = unsafe { &(*handle).inner };
+    let mut bytes = result.peer_public_key.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
 }
 
 // =============================================================================
