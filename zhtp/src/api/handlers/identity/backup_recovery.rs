@@ -264,12 +264,7 @@ pub async fn handle_recover_identity(
     rate_limiter: Arc<crate::api::middleware::RateLimiter>,
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
-    // Debug: write to file to verify code execution
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/recovery_debug.log") {
-        let _ = writeln!(f, "RECOVERY HANDLER ENTERED - body len: {} at {:?}", request_body.len(), std::time::SystemTime::now());
-    }
-    tracing::info!("🔑🔑🔑 RECOVERY HANDLER ENTERED - body len: {}", request_body.len());
+    tracing::debug!("Recovery handler entered, body_len={}", request_body.len());
 
     // Extract client IP for rate limiting
     let client_ip = request.headers.get("X-Real-IP")
@@ -310,7 +305,6 @@ pub async fn handle_recover_identity(
     }
 
     // Restore identity from phrase using appropriate method based on word count
-    eprintln!("🔑🔑🔑 Recovery attempt: {} words received", words.len());
 
     let identity_id = if words.len() == 24 {
         // 24-word BIP39 standard - derive identity using lib-client's method:
@@ -319,32 +313,20 @@ pub async fn handle_recover_identity(
         // 3. Hash public key to get DID
 
         let phrase_str = words.join(" ");
-        eprintln!("🔑🔑🔑 Extracting entropy from phrase...");
 
         // Step 1: Extract 32-byte entropy from mnemonic
-        let entropy = match entropy_from_mnemonic(&phrase_str) {
-            Ok(e) => {
-                eprintln!("🔑🔑🔑 Entropy extracted OK: {:02x?}", &e[..8]);
-                e
-            }
-            Err(e) => {
-                eprintln!("🔑🔑🔑 Entropy extraction FAILED: {}", e);
-                return Err(anyhow::anyhow!("Failed to extract entropy: {}", e));
-            }
-        };
+        let entropy = entropy_from_mnemonic(&phrase_str)
+            .map_err(|e| anyhow::anyhow!("Failed to extract entropy: {}", e))?;
 
         // Step 2: Derive root signing public key via RootSecret HKDF step (NEW invariant; breaking change)
-        eprintln!("🔑🔑🔑 Deriving root signing keypair from entropy...");
         let entropy32: [u8; 32] = entropy.as_slice()
             .try_into()
             .map_err(|_| anyhow::anyhow!("Entropy must be 32 bytes"))?;
         let rs = derive_root_secret64_from_recovery_entropy(&RecoveryEntropy32(entropy32))?;
         let rsk = RootSigningKeypair::from_root_secret(&rs)?;
-        eprintln!("🔑🔑🔑 Root signing public key derived ({} bytes)", rsk.public_key.len());
 
         // Step 3: DID is anchored to root signing public key
         let did = did_from_root_signing_public_key(&rsk.public_key);
-        eprintln!("🔑🔑🔑 Derived DID from public key: {}", &did);
 
         // Step 4: Extract identity_id from DID
         let id_hex = did.strip_prefix("did:zhtp:")
@@ -362,23 +344,13 @@ pub async fn handle_recover_identity(
         id
     };
 
-    eprintln!("🔑🔑🔑 Looking for identity_id: {}", identity_id);
-
     // Verify identity exists in IdentityManager
     let manager = identity_manager.read().await;
-
-    // Log all stored identities for debugging
-    let stored_ids: Vec<String> = manager.list_identities()
-        .iter()
-        .map(|id| id.did.clone())
-        .collect();
-    eprintln!("🔑🔑🔑 Stored identities ({} total): {:?}", stored_ids.len(),
-        stored_ids.iter().take(10).collect::<Vec<_>>());
 
     let identity = match manager.get_identity(&identity_id) {
         Some(id) => id,
         None => {
-            eprintln!("🔑🔑🔑 Identity NOT FOUND: {}", identity_id);
+            tracing::debug!("Recovery: identity not found for derived id");
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 "Identity not found in storage".to_string(),
