@@ -7,12 +7,11 @@ use blake3::Hasher as Blake3Hasher;
 use rand::{RngCore};
 use rand::rngs::OsRng;
 use pqcrypto_dilithium::dilithium5;
-use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::{
     sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey},
-    kem::{PublicKey as KemPublicKey, SecretKey as KemSecretKey},
 };
 use crate::types::{PublicKey, PrivateKey};
+use pqc_kyber as kyber1024;
 
 /// quantum-resistant key pair with secure memory management
 #[derive(Debug, Clone)]
@@ -35,25 +34,26 @@ impl KeyPair {
         let (dilithium_pk, dilithium_sk) = dilithium5::keypair();
         
         // Generate CRYSTALS-Kyber key pair (NIST post-quantum standard)
-        let (kyber_pk, kyber_sk) = kyber1024::keypair();
+        let kyber_keys = kyber1024::keypair(&mut rng)
+            .map_err(|e| anyhow::anyhow!("Kyber1024 keypair generation failed: {:?}", e))?;
         
         // Calculate unique key ID from post-quantum public keys only
         let mut hasher = Blake3Hasher::new();
         hasher.update(dilithium_pk.as_bytes());
-        hasher.update(kyber_pk.as_bytes());
+        hasher.update(&kyber_keys.public);
         let key_id: [u8; 32] = hasher.finalize().into();
 
         let dilithium_pk_bytes = dilithium_pk.as_bytes().to_vec();
         let keypair = KeyPair {
             public_key: PublicKey {
                 dilithium_pk: dilithium_pk_bytes.clone(),
-                kyber_pk: kyber_pk.as_bytes().to_vec(),
+                kyber_pk: kyber_keys.public.to_vec(),
                 key_id,
             },
             private_key: PrivateKey {
                 dilithium_sk: dilithium_sk.as_bytes().to_vec(),
                 dilithium_pk: dilithium_pk_bytes,
-                kyber_sk: kyber_sk.as_bytes().to_vec(),
+                kyber_sk: kyber_keys.secret.to_vec(),
                 master_seed,
             },
         };

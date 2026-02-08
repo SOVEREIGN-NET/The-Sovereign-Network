@@ -1,0 +1,15 @@
+[package]
+name = "lib-identity-core"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-target identity derivation primitives (root signing key, DID, key bindings)"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+blake3 = "1.5"
+crystals-dilithium = "1.0"
+hkdf = "0.12"
+sha3 = "0.10"
+zeroize = { version = "1.7", features = ["derive"] }
+

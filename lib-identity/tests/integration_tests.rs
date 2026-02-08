@@ -7,7 +7,6 @@ use lib_identity::*;
 use lib_identity::credentials::creation::CredentialFactory;
 use lib_identity::identity::activity_tracking::{ActivityTracker, ActivityType};
 use lib_crypto::Hash;
-use std::collections::HashMap;
 
 mod common;
 use common::test_helpers::create_test_identity_async as create_test_identity;
@@ -173,7 +172,7 @@ async fn test_identity_verification_system() {
     assert!(complete_verification.verification_methods.len() >= 3);
     
     // Verify cache functionality
-    let (cache_size, cache_ops, hit_rate) = verifier.get_cache_stats();
+    let (_cache_size, cache_ops, _hit_rate) = verifier.get_cache_stats();
     assert!(cache_ops > 0);
     
     println!("Identity verification system test passed!");
@@ -255,13 +254,13 @@ async fn test_wallet_integration() {
         Some("primary".to_string()),
     ).await.expect("Failed to create primary wallet");
 
-    let (ubi_wallet, _seed2) = wallet_manager.create_wallet_with_seed_phrase(
+    let (_ubi_wallet, _seed2) = wallet_manager.create_wallet_with_seed_phrase(
         WalletType::UBI,
         "UBI Wallet".to_string(),
         Some("ubi".to_string()),
     ).await.expect("Failed to create UBI wallet");
-
-    let (savings_wallet, _seed3) = wallet_manager.create_wallet_with_seed_phrase(
+    
+    let (_savings_wallet, _seed3) = wallet_manager.create_wallet_with_seed_phrase(
         WalletType::Savings,
         "Savings Wallet".to_string(),
         Some("savings".to_string()),
@@ -402,7 +401,7 @@ async fn test_error_handling_and_edge_cases() {
     assert!(!result.messages.is_empty());
     
     // Test recovery phrase validation with invalid input
-    let mut phrase_manager = recovery::RecoveryPhraseManager::new();
+    let phrase_manager = recovery::RecoveryPhraseManager::new();
     
     let invalid_phrase = recovery::RecoveryPhrase {
         words: vec!["invalid".to_string()], // Too few words

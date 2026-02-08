@@ -223,6 +223,9 @@ fn check_https(request: &lib_protocols::types::ZhtpRequest) -> Result<(), ZhtpRe
         }
     }
 
+    #[cfg(debug_assertions)]
+    let _ = request;
+
     Ok(())
 }
 

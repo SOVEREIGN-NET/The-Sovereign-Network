@@ -267,7 +267,6 @@ impl IdentityVerificationCache {
     /// Get verification stats
     pub async fn get_stats(&self) -> VerificationStats {
         let cache = self.cache.read().await;
-        let now = current_timestamp();
         let expired = cache.values().filter(|v| v.is_expired()).count();
 
         VerificationStats {
@@ -370,10 +369,10 @@ mod tests {
     use super::*;
     use lib_crypto::PublicKey;
 
-    fn create_test_peer(did_suffix: &str, bootstrap: bool) -> UnifiedPeerId {
+    fn create_test_peer(_did_suffix: &str, _bootstrap: bool) -> UnifiedPeerId {
         // Create a test peer with known DID
         let pk = PublicKey::new(vec![0u8; 32]);
-        let mut peer = UnifiedPeerId::from_public_key_legacy(pk);
+        let peer = UnifiedPeerId::from_public_key_legacy(pk);
         // Note: In real code, you'd set the DID properly
         peer
     }

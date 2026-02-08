@@ -6,11 +6,10 @@ use anyhow::Result;
 use sha3::Sha3_256;
 use hkdf::Hkdf;
 use pqcrypto_dilithium::{dilithium2, dilithium5};
-use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::{
     sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey, SignedMessage},
-    kem::{PublicKey as KemPublicKey, SecretKey as KemSecretKey, Ciphertext, SharedSecret},
 };
+use pqc_kyber as kyber1024;
 // Ed25519 imports removed - pure post-quantum only
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
@@ -22,7 +21,7 @@ use crate::advanced::ring_signature::{verify_ring_signature, RingSignature};
 use super::KeyPair;
 
 // Constants for CRYSTALS key sizes (from pqcrypto_dilithium)
-const KYBER1024_CIPHERTEXT_BYTES: usize = 1568;
+const KYBER1024_CIPHERTEXT_BYTES: usize = kyber1024::KYBER_CIPHERTEXTBYTES;
 const DILITHIUM2_SECRETKEY_BYTES: usize = 2560; // Actual pqcrypto_dilithium size
 const DILITHIUM5_SECRETKEY_BYTES: usize = 4896; // pqcrypto-dilithium
 const DILITHIUM5_SECRETKEY_BYTES_CRYSTALS: usize = 4864; // crystals-dilithium (seed-derived)
@@ -173,20 +172,23 @@ impl KeyPair {
 
     /// Encapsulate a shared secret using CRYSTALS-Kyber
     pub fn encapsulate(&self) -> Result<Encapsulation> {
-        let kyber_pk = kyber1024::PublicKey::from_bytes(&self.public_key.kyber_pk)
-            .map_err(|_| anyhow::anyhow!("Invalid Kyber public key"))?;
+        let pk: [u8; kyber1024::KYBER_PUBLICKEYBYTES] = self.public_key.kyber_pk
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid Kyber public key (len={})", self.public_key.kyber_pk.len()))?;
 
-        let (shared_secret_bytes, ciphertext) = kyber1024::encapsulate(&kyber_pk);
+        let (ciphertext, shared_secret_bytes) = kyber1024::encapsulate(&pk, &mut rand::rngs::OsRng)
+            .map_err(|e| anyhow::anyhow!("Kyber encapsulation failed: {:?}", e))?;
         
         // Derive a 32-byte key using HKDF-SHA3
-        let hk = Hkdf::<Sha3_256>::new(None, shared_secret_bytes.as_bytes());
+        let hk = Hkdf::<Sha3_256>::new(None, &shared_secret_bytes);
         let mut shared_secret = [0u8; 32];
         let kdf_info = b"ZHTP-KEM-v2.0";
         hk.expand(kdf_info, &mut shared_secret)
             .map_err(|_| anyhow::anyhow!("HKDF expansion failed"))?;
         
         Ok(Encapsulation {
-            ciphertext: ciphertext.as_bytes().to_vec(),
+            ciphertext: ciphertext.to_vec(),
             shared_secret,
             kdf_info: kdf_info.to_vec(),
         })
@@ -194,15 +196,21 @@ impl KeyPair {
 
     /// Decapsulate a shared secret using CRYSTALS-Kyber
     pub fn decapsulate(&self, encapsulation: &Encapsulation) -> Result<[u8; 32]> {
-        let kyber_sk = kyber1024::SecretKey::from_bytes(&self.private_key.kyber_sk)
-            .map_err(|_| anyhow::anyhow!("Invalid Kyber secret key"))?;
-        let kyber_ct = kyber1024::Ciphertext::from_bytes(&encapsulation.ciphertext)
-            .map_err(|_| anyhow::anyhow!("Invalid Kyber ciphertext"))?;
+        let sk: [u8; kyber1024::KYBER_SECRETKEYBYTES] = self.private_key.kyber_sk
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid Kyber secret key (len={})", self.private_key.kyber_sk.len()))?;
 
-        let shared_secret_bytes = kyber1024::decapsulate(&kyber_ct, &kyber_sk);
+        let ct: [u8; kyber1024::KYBER_CIPHERTEXTBYTES] = encapsulation.ciphertext
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid Kyber ciphertext (len={})", encapsulation.ciphertext.len()))?;
+
+        let shared_secret_bytes = kyber1024::decapsulate(&ct, &sk)
+            .map_err(|e| anyhow::anyhow!("Kyber decapsulation failed: {:?}", e))?;
         
         // Derive the same 32-byte key using HKDF-SHA3
-        let hk = Hkdf::<Sha3_256>::new(None, shared_secret_bytes.as_bytes());
+        let hk = Hkdf::<Sha3_256>::new(None, &shared_secret_bytes);
         let mut shared_secret = [0u8; 32];
         hk.expand(&encapsulation.kdf_info, &mut shared_secret)
             .map_err(|_| anyhow::anyhow!("HKDF expansion failed"))?;

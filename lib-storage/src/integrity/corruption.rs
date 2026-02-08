@@ -7,6 +7,7 @@ use lib_crypto::hashing::hash_blake3;
 /// Corruption detector
 pub struct CorruptionDetector {
     /// Detection sensitivity (0.0 to 1.0)
+    #[allow(dead_code)]
     sensitivity: f64,
 }
 

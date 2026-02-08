@@ -506,7 +506,8 @@ impl RuntimeOrchestrator {
         if !is_registered(ComponentId::Consensus).await {
             let environment = self.config.environment;
             let node_role = self.node_role.read().await.clone();
-            self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
+            let min_stake = self.config.consensus_config.min_stake;
+            self.register_component(Arc::new(ConsensusComponent::new(environment, node_role, min_stake))).await?;
         }
 
         if !is_registered(ComponentId::Economics).await {
@@ -1030,7 +1031,7 @@ impl RuntimeOrchestrator {
         let network_info = self.discover_network_with_retry(is_edge_node).await.ok().flatten();
 
         let joined_existing_network = network_info.is_some();
-        self.set_joined_existing_network(joined_existing_network).await;
+        self.set_joined_existing_network(joined_existing_network).await?;
 
         // Phase 3: Use SledStore for persistent blockchain storage
         // This replaces the deprecated file-based storage with incremental Sled DB
@@ -1200,7 +1201,11 @@ impl RuntimeOrchestrator {
             self.config.protocols_config.quic_port,
             self.config.protocols_config.discovery_port,
         ))).await?;
-        self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
+        self.register_component(Arc::new(ConsensusComponent::new(
+            environment,
+            node_role,
+            self.config.consensus_config.min_stake,
+        ))).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         
@@ -2558,11 +2563,11 @@ impl RuntimeOrchestrator {
         };
         
         let identity_mgr_opt = identity_mgr_arc.read().await;
-        let identity_mgr: &lib_identity::IdentityManager = identity_mgr_opt.as_ref()
+        let _identity_mgr: &lib_identity::IdentityManager = identity_mgr_opt.as_ref()
             .ok_or_else(|| anyhow::anyhow!("IdentityManager not initialized"))?;
         
         // Convert lib_blockchain::Hash to lib_crypto::Hash for IdentityManager
-        let selected_utxos_crypto: Vec<(lib_crypto::Hash, u32, u64)> = selected_utxos
+        let _selected_utxos_crypto: Vec<(lib_crypto::Hash, u32, u64)> = selected_utxos
             .iter()
             .map(|(hash, idx, amt)| {
                 (lib_crypto::Hash::from_bytes(hash.as_bytes()), *idx, *amt)

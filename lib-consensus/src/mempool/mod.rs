@@ -226,7 +226,7 @@ impl Mempool {
     pub fn evict_expired(&mut self, current_height: u64) -> usize {
         let initial_count = self.transactions.len();
 
-        self.transactions.retain(|tx_hash, tx| {
+        self.transactions.retain(|_tx_hash, tx| {
             if tx.should_retry(self.max_mempool_age, current_height) {
                 true
             } else {

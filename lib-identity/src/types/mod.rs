@@ -12,7 +12,7 @@ pub use identity_types::*;
 pub use credential_types::*;
 pub use proof_params::*;
 pub use verification_result::*;
-pub use node_id::NodeId;
+pub use node_id::{NodeId, set_network_genesis, try_set_network_genesis, get_network_genesis};
 pub use peer_identity::DhtPeerIdentity;
 
 // DID-related types from did module (remaining types after cleanup)

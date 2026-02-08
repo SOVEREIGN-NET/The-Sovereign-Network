@@ -8,6 +8,7 @@ use crate::erasure::ErasureCoding;
 /// Self-healing system
 pub struct SelfHealing {
     /// Maximum repair attempts
+    #[allow(dead_code)]
     max_repair_attempts: usize,
 }
 

@@ -2810,9 +2810,10 @@ dependencies = [
  "js-sys",
  "lib-blockchain",
  "lib-crypto",
+ "lib-identity-core",
  "pqc_kyber",
  "pqcrypto-dilithium",
- "pqcrypto-kyber 0.8.1",
+ "pqcrypto-kyber",
  "pqcrypto-traits",
  "rand 0.8.5",
  "serde",
@@ -2869,8 +2870,8 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "hkdf",
+ "pqc_kyber",
  "pqcrypto-dilithium",
- "pqcrypto-kyber 0.7.9",
  "pqcrypto-traits",
  "rand 0.8.5",
  "serde",
@@ -2938,6 +2939,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "lib-crypto",
+ "lib-identity-core",
  "lib-proofs",
  "md5",
  "names",
@@ -2950,6 +2952,18 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+ "zeroize",
+]
+
+[[package]]
+name = "lib-identity-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "crystals-dilithium",
+ "hkdf",
+ "sha3",
  "zeroize",
 ]
 
@@ -4184,19 +4198,6 @@ dependencies = [
  "dunce",
  "getrandom 0.3.4",
  "libc",
-]
-
-[[package]]
-name = "pqcrypto-kyber"
-version = "0.7.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c32fe9d5c9913b1aed1ba92b3449eb2d7cf7ca29741b11455dfa34c711b95776"
-dependencies = [
- "cc",
- "glob",
- "libc",
- "pqcrypto-internals",
- "pqcrypto-traits",
 ]
 
 [[package]]
@@ -7842,10 +7843,12 @@ dependencies = [
  "hex",
  "keyring",
  "lib-blockchain",
+ "lib-client",
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
  "lib-identity",
+ "lib-identity-core",
  "lib-network",
  "lib-proofs",
  "lib-protocols",
@@ -7902,6 +7905,7 @@ dependencies = [
  "dirs",
  "hex",
  "lib-blockchain",
+ "lib-client",
  "lib-crypto",
  "lib-economy",
  "lib-identity",

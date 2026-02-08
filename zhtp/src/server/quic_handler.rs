@@ -366,7 +366,7 @@ impl QuicHandler {
         info!("🔐 Control plane connection from {} - starting UHP v2 handshake", peer_addr);
 
         // Perform UHP+Kyber handshake (same as v1, but we'll derive keys differently)
-        let (identity, handshake_result) = self.perform_uhp_handshake(
+        let (_identity, handshake_result) = self.perform_uhp_handshake(
             &connection,
             &peer_addr,
         ).await?;
@@ -526,6 +526,27 @@ impl QuicHandler {
                 wire_request.request_id,
                 ZhtpStatus::Unauthorized,
                 "Invalid client identity".to_string(),
+            );
+            write_response(&mut send, &error_response).await?;
+            return Ok(());
+        }
+
+        // 1b. Verify session_id matches the session established by UHP v2 handshake.
+        //
+        // If this fails, MAC verification will also fail (session_id is part of the MAC input),
+        // but this produces a clearer diagnostic than a generic MAC mismatch.
+        if auth_ctx.session_id != *session.session_id() {
+            warn!(
+                request_id = %wire_request.request_id_hex(),
+                peer_did = %session.peer_did(),
+                received_session_id_prefix = ?hex::encode(&auth_ctx.session_id[..8]),
+                expected_session_id_prefix = ?hex::encode(&session.session_id()[..8]),
+                "V2 session_id mismatch between request auth context and active session"
+            );
+            let error_response = ZhtpResponseWire::error(
+                wire_request.request_id,
+                ZhtpStatus::Unauthorized,
+                "Invalid session".to_string(),
             );
             write_response(&mut send, &error_response).await?;
             return Ok(());
@@ -1001,7 +1022,7 @@ impl QuicHandler {
                 // Continue accepting more streams on this connection
                 self.accept_additional_streams(connection, None);
             }
-            ProtocolType::MeshMessage(initial_data) => {
+            ProtocolType::MeshMessage(_initial_data) => {
                 warn!("📨 Mesh message on first stream from {} - should be after handshake", peer_addr);
                 // Treat as unknown since handshake should come first
                 self.send_error_response(send, "Expected PQC handshake first").await?;
@@ -1317,6 +1338,7 @@ impl Clone for QuicHandler {
 }
 
 // Extension trait for BufferedStream compatibility
+#[allow(async_fn_in_trait)]
 pub trait BufferedStreamExt {
     async fn handle_zhtp_stream_buffered(
         &self,

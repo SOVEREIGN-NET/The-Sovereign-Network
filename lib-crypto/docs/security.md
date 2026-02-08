@@ -546,24 +546,19 @@ use lib_crypto::*;
 fn cryptographic_testing() -> Result<()> {
     // Test vector validation
     fn test_known_vectors() -> Result<()> {
-        // Test with known good inputs/outputs
-        let test_vectors = [
-            (b"test message 1", "expected_signature_hex"),
-            (b"test message 2", "expected_signature_hex"),
-        ];
-        
-        let keypair = KeyPair::from_seed(&[1u8; 32])?; // Deterministic for testing
-        
-        for (message, expected_sig_hex) in &test_vectors {
+        // NOTE: `KeyPair::from_seed()` is legacy and does not produce deterministic PQ keys.
+        // For correctness testing, validate sign/verify roundtrips instead of comparing fixed signatures.
+        let keypair = KeyPair::generate()?;
+
+        for message in [b"test message 1".as_slice(), b"test message 2".as_slice()] {
             let signature = keypair.sign(message)?;
-            let sig_hex = hex::encode(signature.as_bytes());
-            
-            if &sig_hex != expected_sig_hex {
-                return Err(anyhow::anyhow!("Test vector failed for message: {:?}", message));
+            let ok = keypair.public_key.verify(message, &signature)?;
+            if !ok {
+                return Err(anyhow::anyhow!("Signature verification failed for message: {:?}", message));
             }
         }
-        
-        println!("All test vectors passed");
+
+        println!("All sign/verify tests passed");
         Ok(())
     }
     
@@ -1420,24 +1415,19 @@ use lib_crypto::*;
 fn cryptographic_testing() -> Result<()> {
     // Test vector validation
     fn test_known_vectors() -> Result<()> {
-        // Test with known good inputs/outputs
-        let test_vectors = [
-            (b"test message 1", "expected_signature_hex"),
-            (b"test message 2", "expected_signature_hex"),
-        ];
-        
-        let keypair = KeyPair::from_seed(&[1u8; 32])?; // Deterministic for testing
-        
-        for (message, expected_sig_hex) in &test_vectors {
+        // NOTE: `KeyPair::from_seed()` is legacy and does not produce deterministic PQ keys.
+        // For correctness testing, validate sign/verify roundtrips instead of comparing fixed signatures.
+        let keypair = KeyPair::generate()?;
+
+        for message in [b"test message 1".as_slice(), b"test message 2".as_slice()] {
             let signature = keypair.sign(message)?;
-            let sig_hex = hex::encode(signature.as_bytes());
-            
-            if &sig_hex != expected_sig_hex {
-                return Err(anyhow::anyhow!("Test vector failed for message: {:?}", message));
+            let ok = keypair.public_key.verify(message, &signature)?;
+            if !ok {
+                return Err(anyhow::anyhow!("Signature verification failed for message: {:?}", message));
             }
         }
-        
-        println!("All test vectors passed");
+
+        println!("All sign/verify tests passed");
         Ok(())
     }
     

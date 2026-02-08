@@ -259,7 +259,7 @@ async fn handle_generate_proof(
     let valid_until = now + 86400; // 24 hours expiration
 
     // Generate proof based on type
-    let (proof, claim) = match req.proof_type.as_str() {
+    let (proof, _claim) = match req.proof_type.as_str() {
         "age_over_18" => {
             let age = req.credential_data.age
                 .ok_or_else(|| anyhow::anyhow!("Missing age in credential_data"))?;

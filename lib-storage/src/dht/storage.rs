@@ -30,6 +30,7 @@ use tracing::{trace, debug, warn, info, error, instrument};
 
 /// Versioned container for persisted DHT storage
 #[derive(Serialize, Deserialize)]
+#[allow(dead_code)]
 struct PersistedDhtStorage {
     /// Version for future migrations
     version: u32,
