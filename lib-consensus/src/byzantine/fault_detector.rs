@@ -49,6 +49,7 @@ pub struct ByzantineFaultDetector {
     partition_check_interval_secs: u64,
 
     /// Configuration
+    #[allow(dead_code)]
     config: FaultDetectorConfig,
 }
 

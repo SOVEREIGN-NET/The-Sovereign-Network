@@ -80,6 +80,7 @@ use crate::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue}
 use crate::rewards::RewardCalculator;
 use crate::types::*;
 use crate::validators::ValidatorManager;
+use crate::validators::validator_manager::ValidatorInfo as ValidatorInfoTrait;
 use crate::{ConsensusError, ConsensusResult};
 
 mod liveness;
@@ -468,6 +469,46 @@ impl ConsensusEngine {
         }
 
         self.validator_keypair = Some(keypair);
+        Ok(())
+    }
+
+    /// Sync validators from an external source (e.g. blockchain registry).
+    ///
+    /// This is the supported way for a node to converge its consensus validator set with
+    /// the chain's validator registry without using the queued epoch-change path.
+    pub fn sync_validators_from_list<T>(&mut self, validators: Vec<T>) -> anyhow::Result<(usize, usize)>
+    where
+        T: ValidatorInfoTrait,
+    {
+        self.validator_manager.sync_from_validator_list(validators)
+    }
+
+    /// Set the local validator identity (enables proposing/voting).
+    ///
+    /// The identity must already exist in the current validator set and must match the local
+    /// validator keypair, if one is configured.
+    pub fn set_local_validator_identity(&mut self, identity: IdentityId) -> ConsensusResult<()> {
+        if self.validator_identity.is_some() {
+            return Ok(());
+        }
+
+        let validator = self
+            .validator_manager
+            .get_validator(&identity)
+            .ok_or_else(|| {
+                ConsensusError::ValidatorError("Validator not found for local identity".to_string())
+            })?;
+
+        if let Some(kp) = &self.validator_keypair {
+            if kp.public_key.dilithium_pk != validator.consensus_key {
+                return Err(ConsensusError::ValidatorError(
+                    "Local validator keypair does not match validator set consensus key".to_string(),
+                ));
+            }
+        }
+
+        self.validator_identity = Some(identity.clone());
+        self.heartbeat_tracker.set_local_validator(identity);
         Ok(())
     }
 

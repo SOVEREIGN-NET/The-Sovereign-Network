@@ -1,7 +1,7 @@
-//! Unified Identity Demo - Complete P1-7 Seed-Anchored Identity Example
+//! Unified Identity Demo - Root-Key-Anchored DID Example (ADR-0004)
 //!
-//! This example demonstrates the new unified identity system where all cryptographic
-//! materials are deterministically derived from a single master seed phrase.
+//! This example demonstrates unified identity where the DID is anchored to a deterministic
+//! Root Signing public key derived from a Root Secret.
 //!
 //! ## What This Demonstrates
 //!
@@ -26,7 +26,7 @@ use lib_identity::{
 
 fn main() -> Result<()> {
     println!("\n{}", "=".repeat(80));
-    println!("  ZHTP UNIFIED IDENTITY DEMO - P1-7 Seed-Anchored Architecture");
+    println!("  ZHTP UNIFIED IDENTITY DEMO - Root-Key-Anchored DID (ADR-0004)");
     println!("{}\n", "=".repeat(80));
 
     // ============================================================================
@@ -38,7 +38,7 @@ fn main() -> Result<()> {
     
     println!("📋 PART 1: Creating Identity with Random Seed\n");
     println!("   WHY: Production use case - each user gets unique random identity");
-    println!("   HOW: System generates secure random 32-byte seed internally\n");
+    println!("   HOW: System generates secure random root secret internally\n");
 
     let identity_random = create_identity_with_random_seed()?;
     display_identity_details(&identity_random, "Random Seed Identity")?;
@@ -122,7 +122,7 @@ fn main() -> Result<()> {
 /// 
 /// This uses ZhtpIdentity::new_unified() which:
 /// - Generates random 64-byte seed internally
-/// - Derives DID from seed (seed-anchored)
+/// - Treats the 64-byte seed as Root Secret (RS) and anchors DID to a deterministic root signing public key
 /// - Derives all secrets deterministically from seed
 /// - Generates PQC keypairs (Dilithium + Kyber)
 fn create_identity_with_random_seed() -> Result<ZhtpIdentity> {
@@ -151,7 +151,7 @@ fn create_identity_with_random_seed() -> Result<ZhtpIdentity> {
 /// - Same wallet_master_seed
 /// - Same dao_member_id
 /// 
-/// Note: PQC keypairs are still randomly generated (pqcrypto library limitation)
+/// Note: Operational keys (e.g. Kyber) may be randomly generated/rotatable; DID is anchored to the root signing key.
 fn create_identity_with_fixed_seed(seed: [u8; 64]) -> Result<ZhtpIdentity> {
     // Create unified identity with specific seed
     let identity = ZhtpIdentity::new_unified(

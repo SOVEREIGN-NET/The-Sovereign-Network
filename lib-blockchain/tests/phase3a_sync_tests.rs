@@ -233,7 +233,7 @@ fn test_crash_no_partial_state() {
     sync.import_blocks(vec![genesis.clone(), block1.clone(), block2.clone()]).unwrap();
 
     // Verify at height 2
-    assert_eq!(store.get_latest_height().unwrap(), 2);
+    assert_eq!(store.latest_height().unwrap(), 2);
 
     // Create invalid block 3 (wrong previous hash)
     let invalid_block3 = create_block_at_height(3, Hash::new([99u8; 32]));
@@ -243,13 +243,13 @@ fn test_crash_no_partial_state() {
     assert!(matches!(result, Err(SyncError::BlockApplyFailed { height: 3, .. })));
 
     // Verify state is EXACTLY at height 2 - no partial state from failed block
-    assert_eq!(store.get_latest_height().unwrap(), 2);
+    assert_eq!(store.latest_height().unwrap(), 2);
 
     // Verify we can continue with valid block
     let valid_block3 = create_block_at_height(3, block2.header.block_hash);
     sync.import_blocks(vec![valid_block3]).unwrap();
 
-    assert_eq!(store.get_latest_height().unwrap(), 3);
+    assert_eq!(store.latest_height().unwrap(), 3);
 }
 
 /// Test: Blocks with token transfers (token balance state)
@@ -283,7 +283,7 @@ fn test_token_transfer_state_sync() {
 
     // Set up initial balance for Alice in store1 before genesis
     store1.begin_block(0).unwrap();
-    store1.set_token_balance(TokenId::new(token_id), &Address::new(alice), 1_000_000).unwrap();
+    store1.set_token_balance(&TokenId::new(token_id), &Address::new(alice), 1_000_000).unwrap();
     let genesis = create_genesis_block();
     store1.append_block(&genesis).unwrap();
     store1.commit_block().unwrap();
@@ -296,8 +296,8 @@ fn test_token_transfer_state_sync() {
     executor1.apply_block(&block1).unwrap();
 
     // Verify balances in store1
-    let alice_balance_1 = store1.get_token_balance(TokenId::new(token_id), &Address::new(alice)).unwrap();
-    let bob_balance_1 = store1.get_token_balance(TokenId::new(token_id), &Address::new(bob)).unwrap();
+    let alice_balance_1 = store1.get_token_balance(&TokenId::new(token_id), &Address::new(alice)).unwrap();
+    let bob_balance_1 = store1.get_token_balance(&TokenId::new(token_id), &Address::new(bob)).unwrap();
     assert_eq!(alice_balance_1, 999_900, "Alice should have 1M - 100 = 999900");
     assert_eq!(bob_balance_1, 100, "Bob should have 100");
 
@@ -310,7 +310,7 @@ fn test_token_transfer_state_sync() {
     // Set up identical initial balance state in store2 and import genesis
     // Note: We manually set up genesis + balance, then apply block 1 via executor
     store2.begin_block(0).unwrap();
-    store2.set_token_balance(TokenId::new(token_id), &Address::new(alice), 1_000_000).unwrap();
+    store2.set_token_balance(&TokenId::new(token_id), &Address::new(alice), 1_000_000).unwrap();
     // Append the exported genesis block to store2
     store2.append_block(&exported[0]).unwrap();
     store2.commit_block().unwrap();
@@ -329,8 +329,8 @@ fn test_token_transfer_state_sync() {
     );
 
     // Verify balances match after re-execution
-    let alice_balance_2 = store2.get_token_balance(TokenId::new(token_id), &Address::new(alice)).unwrap();
-    let bob_balance_2 = store2.get_token_balance(TokenId::new(token_id), &Address::new(bob)).unwrap();
+    let alice_balance_2 = store2.get_token_balance(&TokenId::new(token_id), &Address::new(alice)).unwrap();
+    let bob_balance_2 = store2.get_token_balance(&TokenId::new(token_id), &Address::new(bob)).unwrap();
     assert_eq!(alice_balance_2, alice_balance_1, "Alice balance should match");
     assert_eq!(bob_balance_2, bob_balance_1, "Bob balance should match");
 }
@@ -381,7 +381,7 @@ fn test_sequential_imports() {
     }
 
     sync.import_blocks(blocks.clone()).unwrap();
-    assert_eq!(store.get_latest_height().unwrap(), 4);
+    assert_eq!(store.latest_height().unwrap(), 4);
 
     // Second batch: blocks 5-9
     let mut blocks2 = vec![];
@@ -394,7 +394,7 @@ fn test_sequential_imports() {
     }
 
     sync.import_blocks(blocks2).unwrap();
-    assert_eq!(store.get_latest_height().unwrap(), 9);
+    assert_eq!(store.latest_height().unwrap(), 9);
 }
 
 /// Test: Export from empty chain

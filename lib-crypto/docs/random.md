@@ -78,9 +78,11 @@ use lib_crypto::{
 fn cryptographic_key_generation() -> Result<()> {
     // Generate keys for different algorithms
     
-    // Ed25519 seed (32 bytes)
-    let ed25519_seed = secure_random_bytes::<32>()?;
-    let keypair_from_seed = KeyPair::from_seed(&ed25519_seed)?;
+    // Post-quantum keypair (random, production-safe)
+    //
+    // NOTE: `KeyPair::from_seed()` is legacy and does not produce deterministic PQ keys.
+    // Use identity-layer derivation (`lib-identity-core`) when you need deterministic identity anchors.
+    let keypair = KeyPair::generate()?;
     
     // ChaCha20 key (32 bytes)
     let chacha_key = generate_chacha20_key();

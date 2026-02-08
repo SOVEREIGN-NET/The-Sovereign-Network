@@ -51,6 +51,7 @@ lib-network = { path = "../lib-network" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts"] }
 lib-protocols = { path = "../lib-protocols" }
 lib-proofs = { path = "../lib-proofs" }
+zhtp_client = { package = "lib-client", path = "../lib-client" }
 
 # zhtp library as a dependency (core orchestrator)
 zhtp = { path = "../zhtp", default-features = false, features = ["full-blockchain"] }
@@ -103,11 +104,4 @@ relay = ["zhtp/relay"]
 edge = ["zhtp/edge"]
 rpi = ["zhtp/rpi"]
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-
-[profile.dev]
-opt-level = 0
-debug = true
+# Build profiles live at the workspace root `Cargo.toml`.

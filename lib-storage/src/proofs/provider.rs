@@ -135,7 +135,7 @@ impl StorageProofProvider for InMemoryStorageProofProvider {
             return Ok(Vec::new());
         };
 
-        let mut manager = self.proof_manager.lock().await;
+        let manager = self.proof_manager.lock().await;
         let mut challenges = Vec::new();
         for content in &state.contents {
             challenges.extend(manager.get_active_challenges(&content.content_hash));

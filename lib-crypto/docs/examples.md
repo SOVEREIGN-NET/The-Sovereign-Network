@@ -49,7 +49,7 @@ use zeroize::ZeroizeOnDrop;
 #[derive(ZeroizeOnDrop)]
 struct SecureKeyManager {
     master_seed: [u8; 32],
-    derived_keys: Vec<KeyPair>,
+    operational_keys: Vec<KeyPair>,
 }
 
 impl SecureKeyManager {
@@ -58,37 +58,42 @@ impl SecureKeyManager {
         
         Ok(Self {
             master_seed,
-            derived_keys: Vec::new(),
+            operational_keys: Vec::new(),
         })
     }
     
-    fn derive_key(&mut self, purpose: &str, index: u32) -> Result<KeyPair> {
-        // Derive deterministic seed for specific purpose
+    fn new_operational_keypair(&mut self, purpose: &str, index: u32) -> Result<KeyPair> {
+        // Derive a deterministic key identifier for tracking and purpose separation.
+        //
+        // NOTE: This does NOT deterministically generate PQ key material. PQ keypairs are generated
+        // randomly; only the `key_id` is deterministic. Use identity-layer derivation
+        // (`lib-identity-core`) for deterministic identity anchors.
         let purpose_data = format!("{}:{}", purpose, index);
-        let derived_seed = hashing::blake3_derive_key(
-            &self.master_seed, 
-            purpose_data.as_bytes()
+        let derived_key_id = hashing::derive_key_blake3(
+            &format!("ZHTP_OP_KEY_ID_V1:{}", purpose_data),
+            &self.master_seed,
         );
         
-        let keypair = KeyPair::from_seed(&derived_seed)?;
-        self.derived_keys.push(keypair.clone());
+        let mut keypair = KeyPair::generate()?;
+        keypair.public_key.key_id = derived_key_id;
+        self.operational_keys.push(keypair.clone());
         
         println!("Derived key for '{}' #{}: {}", 
-                 purpose, index, hex::encode(keypair.public_key().as_bytes()));
+                 purpose, index, hex::encode(keypair.public_key.key_id));
         
         Ok(keypair)
     }
     
     fn get_signing_key(&mut self) -> Result<KeyPair> {
-        self.derive_key("signing", 0)
+        self.new_operational_keypair("signing", 0)
     }
     
     fn get_encryption_key(&mut self) -> Result<KeyPair> {
-        self.derive_key("encryption", 0)
+        self.new_operational_keypair("encryption", 0)
     }
     
     fn get_identity_key(&mut self, identity_id: u32) -> Result<KeyPair> {
-        self.derive_key("identity", identity_id)
+        self.new_operational_keypair("identity", identity_id)
     }
 }
 
@@ -554,10 +559,11 @@ impl SecureFileStorage {
     }
     
     fn encrypt_and_store(&mut self, filename: &str, data: &[u8]) -> Result<String> {
-        // Generate unique key for this file
+        // Generate unique seed for this file and derive a symmetric encryption key from it.
+        // This avoids relying on non-existent deterministic PQ key generation.
         let file_seed = random::secure_random_bytes::<32>()?;
-        let file_keypair = KeyPair::from_seed(&file_seed)?;
-        let key_id = hex::encode(file_keypair.public_key().as_bytes());
+        let file_key = hashing::derive_key_blake3("FILE_ENC_KEY_V1", &file_seed);
+        let key_id = hex::encode(file_key);
         
         // Hash original file for integrity
         let file_hash = hashing::blake3_hash(data)?;
@@ -569,7 +575,7 @@ impl SecureFileStorage {
                                   .duration_since(std::time::UNIX_EPOCH)?
                                   .as_secs());
         
-        let encrypted_data = file_keypair.encrypt(data, metadata.as_bytes())?;
+        let encrypted_data = symmetric::encrypt_data_with_ad(data, &file_key, metadata.as_bytes())?;
         
         let encrypted_file = EncryptedFile {
             filename: filename.to_string(),
@@ -588,10 +594,10 @@ impl SecureFileStorage {
         let storage_path = self.storage_path.join(&storage_filename);
         fs::write(&storage_path, &encrypted_data)?;
         
-        // Store file key encrypted with master key
+        // Store file seed encrypted with master key (so we can re-derive the file key later)
         let key_storage_path = self.storage_path.join(format!("{}.key", key_id));
-        let encrypted_key = self.master_keypair.encrypt(&file_seed, b"file_key")?;
-        fs::write(&key_storage_path, encrypted_key)?;
+        let encrypted_seed = self.master_keypair.encrypt(&file_seed, b"file_seed")?;
+        fs::write(&key_storage_path, encrypted_seed)?;
         
         // Update index
         self.file_index.files.push(encrypted_file);
@@ -607,13 +613,11 @@ impl SecureFileStorage {
             .find(|f| f.encryption_key_id == key_id)
             .ok_or_else(|| anyhow::anyhow!("File not found with key ID: {}", key_id))?;
         
-        // Load and decrypt file key
+        // Load and decrypt file seed
         let key_storage_path = self.storage_path.join(format!("{}.key", key_id));
-        let encrypted_key = fs::read(&key_storage_path)?;
-        let file_seed = self.master_keypair.decrypt(&encrypted_key, b"file_key")?;
-        
-        // Reconstruct file keypair
-        let file_keypair = KeyPair::from_seed(file_seed.as_slice().try_into()?)?;
+        let encrypted_seed = fs::read(&key_storage_path)?;
+        let file_seed = self.master_keypair.decrypt(&encrypted_seed, b"file_seed")?;
+        let file_key = hashing::derive_key_blake3("FILE_ENC_KEY_V1", &file_seed);
         
         // Load and decrypt file data
         let storage_filename = format!("{}.enc", hex::encode(&encrypted_file.file_hash));
@@ -623,7 +627,7 @@ impl SecureFileStorage {
         let metadata = format!("file:{}|size:{}|created:{}", 
                               encrypted_file.filename, encrypted_file.size, encrypted_file.created_at);
         
-        let decrypted_data = file_keypair.decrypt(&encrypted_data, metadata.as_bytes())?;
+        let decrypted_data = symmetric::decrypt_data_with_ad(&encrypted_data, &file_key, metadata.as_bytes())?;
         
         // Verify file integrity
         let computed_hash = hashing::blake3_hash(&decrypted_data)?;
@@ -1229,7 +1233,7 @@ use zeroize::ZeroizeOnDrop;
 #[derive(ZeroizeOnDrop)]
 struct SecureKeyManager {
     master_seed: [u8; 32],
-    derived_keys: Vec<KeyPair>,
+    operational_keys: Vec<KeyPair>,
 }
 
 impl SecureKeyManager {
@@ -1238,33 +1242,38 @@ impl SecureKeyManager {
         
         Ok(Self {
             master_seed,
-            derived_keys: Vec::new(),
+            operational_keys: Vec::new(),
         })
     }
     
-    fn derive_key(&mut self, purpose: &str, index: u32) -> Result<KeyPair> {
-        // Derive deterministic seed for specific purpose
+    fn new_operational_keypair(&mut self, purpose: &str, index: u32) -> Result<KeyPair> {
+        // Derive a deterministic key identifier for tracking and purpose separation.
+        //
+        // NOTE: This does NOT deterministically generate PQ key material. PQ keypairs are generated
+        // randomly; only the `key_id` is deterministic. Use identity-layer derivation
+        // (`lib-identity-core`) for deterministic identity anchors.
         let purpose_data = format!("{}:{}", purpose, index);
-        let derived_seed = hashing::blake3_derive_key(
-            &self.master_seed, 
-            purpose_data.as_bytes()
+        let derived_key_id = hashing::derive_key_blake3(
+            &format!("ZHTP_OP_KEY_ID_V1:{}", purpose_data),
+            &self.master_seed,
         );
         
-        let keypair = KeyPair::from_seed(&derived_seed)?;
-        self.derived_keys.push(keypair.clone());
+        let mut keypair = KeyPair::generate()?;
+        keypair.public_key.key_id = derived_key_id;
+        self.operational_keys.push(keypair.clone());
         
         println!("Derived key for '{}' #{}: {}", 
-                 purpose, index, hex::encode(keypair.public_key().as_bytes()));
+                 purpose, index, hex::encode(keypair.public_key.key_id));
         
         Ok(keypair)
     }
     
     fn get_signing_key(&mut self) -> Result<KeyPair> {
-        self.derive_key("signing", 0)
+        self.new_operational_keypair("signing", 0)
     }
     
     fn get_encryption_key(&mut self) -> Result<KeyPair> {
-        self.derive_key("encryption", 0)
+        self.new_operational_keypair("encryption", 0)
     }
     
     fn get_identity_key(&mut self, identity_id: u32) -> Result<KeyPair> {
@@ -1734,10 +1743,11 @@ impl SecureFileStorage {
     }
     
     fn encrypt_and_store(&mut self, filename: &str, data: &[u8]) -> Result<String> {
-        // Generate unique key for this file
+        // Generate unique seed for this file and derive a symmetric encryption key from it.
+        // This avoids relying on non-existent deterministic PQ key generation.
         let file_seed = random::secure_random_bytes::<32>()?;
-        let file_keypair = KeyPair::from_seed(&file_seed)?;
-        let key_id = hex::encode(file_keypair.public_key().as_bytes());
+        let file_key = hashing::derive_key_blake3("FILE_ENC_KEY_V1", &file_seed);
+        let key_id = hex::encode(file_key);
         
         // Hash original file for integrity
         let file_hash = hashing::blake3_hash(data)?;
@@ -1749,7 +1759,7 @@ impl SecureFileStorage {
                                   .duration_since(std::time::UNIX_EPOCH)?
                                   .as_secs());
         
-        let encrypted_data = file_keypair.encrypt(data, metadata.as_bytes())?;
+        let encrypted_data = symmetric::encrypt_data_with_ad(data, &file_key, metadata.as_bytes())?;
         
         let encrypted_file = EncryptedFile {
             filename: filename.to_string(),
@@ -1768,10 +1778,10 @@ impl SecureFileStorage {
         let storage_path = self.storage_path.join(&storage_filename);
         fs::write(&storage_path, &encrypted_data)?;
         
-        // Store file key encrypted with master key
+        // Store file seed encrypted with master key (so we can re-derive the file key later)
         let key_storage_path = self.storage_path.join(format!("{}.key", key_id));
-        let encrypted_key = self.master_keypair.encrypt(&file_seed, b"file_key")?;
-        fs::write(&key_storage_path, encrypted_key)?;
+        let encrypted_seed = self.master_keypair.encrypt(&file_seed, b"file_seed")?;
+        fs::write(&key_storage_path, encrypted_seed)?;
         
         // Update index
         self.file_index.files.push(encrypted_file);
@@ -1787,13 +1797,11 @@ impl SecureFileStorage {
             .find(|f| f.encryption_key_id == key_id)
             .ok_or_else(|| anyhow::anyhow!("File not found with key ID: {}", key_id))?;
         
-        // Load and decrypt file key
+        // Load and decrypt file seed
         let key_storage_path = self.storage_path.join(format!("{}.key", key_id));
-        let encrypted_key = fs::read(&key_storage_path)?;
-        let file_seed = self.master_keypair.decrypt(&encrypted_key, b"file_key")?;
-        
-        // Reconstruct file keypair
-        let file_keypair = KeyPair::from_seed(file_seed.as_slice().try_into()?)?;
+        let encrypted_seed = fs::read(&key_storage_path)?;
+        let file_seed = self.master_keypair.decrypt(&encrypted_seed, b"file_seed")?;
+        let file_key = hashing::derive_key_blake3("FILE_ENC_KEY_V1", &file_seed);
         
         // Load and decrypt file data
         let storage_filename = format!("{}.enc", hex::encode(&encrypted_file.file_hash));
@@ -1803,7 +1811,7 @@ impl SecureFileStorage {
         let metadata = format!("file:{}|size:{}|created:{}", 
                               encrypted_file.filename, encrypted_file.size, encrypted_file.created_at);
         
-        let decrypted_data = file_keypair.decrypt(&encrypted_data, metadata.as_bytes())?;
+        let decrypted_data = symmetric::decrypt_data_with_ad(&encrypted_data, &file_key, metadata.as_bytes())?;
         
         // Verify file integrity
         let computed_hash = hashing::blake3_hash(&decrypted_data)?;

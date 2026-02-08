@@ -55,7 +55,12 @@ pub mod wasm;
 pub use crypto::{Blake3, Dilithium5, Kyber1024};
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};
-pub use identity::{generate_identity, get_public_identity, get_seed_phrase, restore_identity_from_phrase, sign_registration_proof, export_keystore_base64, Identity, PublicIdentity};
+pub use identity::{
+    build_migrate_identity_request, build_migrate_identity_request_json,
+    export_keystore_base64, generate_identity, get_public_identity, get_seed_phrase,
+    restore_identity_from_phrase, sign_registration_proof, Identity, MigrateIdentityRequestPayload,
+    PublicIdentity,
+};
 pub use request::{
     create_zhtp_frame, deserialize_response, parse_zhtp_frame, serialize_request, ZhtpHeaders,
     ZhtpRequest, ZhtpResponse,
@@ -345,7 +350,8 @@ pub extern "C" fn zhtp_client_identity_get_master_seed(handle: *const IdentityHa
         return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
     }
     let identity = unsafe { &(*handle).inner };
-    let mut bytes = identity.master_seed.clone();
+    // Legacy API name: returns 32-byte recovery entropy (mnemonic-encodable).
+    let mut bytes = identity.recovery_entropy.clone();
     let buf = ByteBuffer {
         data: bytes.as_mut_ptr(),
         len: bytes.len(),

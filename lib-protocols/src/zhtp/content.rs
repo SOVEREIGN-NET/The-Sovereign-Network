@@ -4,6 +4,8 @@
 //! replication, versioning, and Web4-specific content handling including
 //! DAO-governed content and economic incentive distribution.
 
+#![allow(dead_code)]
+
 use crate::types::{ZhtpRequest, ServerContent, ContentMetadata, AccessPolicy};
 use crate::zhtp::ZhtpResult;
 
@@ -706,7 +708,7 @@ impl ZhtpContentManager {
         }
     }
     
-    fn calculate_storage_fees(&self, content_size: usize, metadata: &ContentMetadata, _request: &ZhtpRequest) -> ZhtpResult<EconomicAssessment> {
+    fn calculate_storage_fees(&self, content_size: usize, _metadata: &ContentMetadata, _request: &ZhtpRequest) -> ZhtpResult<EconomicAssessment> {
         let base_fee = (content_size as u64).saturating_mul(self.config.economic_incentives.storage_fee_per_byte_per_day);
         let dao_fees = (base_fee as f64 * self.config.economic_incentives.dao_governance_fee_percentage) as u64;
         let ubi_contribution = (base_fee as f64 * self.config.economic_incentives.ubi_content_percentage) as u64;

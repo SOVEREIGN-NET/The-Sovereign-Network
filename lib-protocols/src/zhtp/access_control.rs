@@ -4,6 +4,8 @@
 //! time-based access, reputation scoring, DAO membership verification,
 //! and multi-dimensional access policies.
 
+#![allow(dead_code)]
+
 use crate::types::ZhtpRequest;
 use crate::zhtp::config::{ServerConfig, AccessPolicy as ConfigAccessPolicy, AuthMethod};
 use crate::zhtp::ZhtpResult;

@@ -372,7 +372,7 @@ fn test_fee_sink_balance_increases_deterministically() {
     );
 
     // Verify chain height progressed
-    assert_eq!(store.get_latest_height().unwrap(), 2, "Chain should be at height 2");
+    assert_eq!(store.latest_height().unwrap(), 2, "Chain should be at height 2");
 }
 
 /// Test: Coinbase without fee sink output rejected when fees > 0

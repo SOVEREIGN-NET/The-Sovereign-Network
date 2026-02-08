@@ -1,8 +1,11 @@
 # Architecture Decision: Seed-Anchored Identity
 
 **Date**: 2025-11-29
-**Status**: Accepted
+**Status**: Superseded (see ADR-0004)
 **Context**: P1-7 Implementation - new_unified() Constructor
+
+> NOTE: This ADR is retained for historical context. The current invariant is **root-key-anchored DID**
+> (ADR-0004): DID is derived from a deterministic root signing public key and MUST NOT be derived from raw seed bytes.
 
 ## Problem
 

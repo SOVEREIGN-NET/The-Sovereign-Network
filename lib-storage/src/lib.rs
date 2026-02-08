@@ -956,6 +956,17 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
         Ok(())
     }
 
+    /// Clear an identity's wallet index (used for one-time migrations / tombstoning).
+    pub async fn clear_wallet_index_for_identity(&mut self, identity_id: &str) -> Result<()> {
+        if identity_id.is_empty() {
+            return Err(anyhow::anyhow!("identity_id cannot be empty"));
+        }
+
+        let index_key = format!("idx/wallets/by_identity/{}", identity_id);
+        self.dht_storage.remove(&index_key).await?;
+        Ok(())
+    }
+
     /// List all wallet IDs for a given identity
     pub async fn list_wallet_ids_for_identity(&mut self, identity_id: &str) -> Result<Vec<String>> {
         let index_key = format!("idx/wallets/by_identity/{}", identity_id);

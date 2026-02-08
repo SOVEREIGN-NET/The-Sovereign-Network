@@ -55,24 +55,32 @@ impl SupplyManager {
     /// Mint tokens for UBI distribution
     #[deprecated(since = "0.1.0", note = "Use TreasuryKernel for on-chain UBI minting")]
     pub fn mint_for_ubi(&mut self, amount: u64) -> Result<u64> {
+        // SupplyManager is internal accounting; on-chain minting is handled elsewhere.
+        #[allow(deprecated)]
         self.mint_operational_tokens(amount, "UBI distribution")
     }
     
     /// Mint tokens for welfare services
     #[deprecated(since = "0.1.0", note = "Use TreasuryKernel for on-chain welfare minting")]
     pub fn mint_for_welfare(&mut self, amount: u64) -> Result<u64> {
+        // SupplyManager is internal accounting; on-chain minting is handled elsewhere.
+        #[allow(deprecated)]
         self.mint_operational_tokens(amount, "welfare services")
     }
     
     /// Mint tokens for infrastructure rewards
     #[deprecated(since = "0.1.0", note = "Use TreasuryKernel for on-chain infrastructure minting")]
     pub fn mint_for_infrastructure(&mut self, amount: u64) -> Result<u64> {
+        // SupplyManager is internal accounting; on-chain minting is handled elsewhere.
+        #[allow(deprecated)]
         self.mint_operational_tokens(amount, "infrastructure rewards")
     }
 
     /// Legacy method for backward compatibility - delegates to mint_operational_tokens
     #[deprecated(since = "0.1.0", note = "Use TreasuryKernel for on-chain minting")]
     pub fn mint_tokens(&mut self, amount: u64) -> Result<(), String> {
+        // SupplyManager is internal accounting; on-chain minting is handled elsewhere.
+        #[allow(deprecated)]
         self.mint_operational_tokens(amount, "legacy mint")
             .map(|_| ())
             .map_err(|e| e.to_string())

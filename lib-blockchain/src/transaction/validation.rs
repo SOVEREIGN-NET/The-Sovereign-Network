@@ -121,6 +121,9 @@ impl TransactionValidator {
                 // Wallet registration transactions - validate wallet data and ownership
                 self.validate_wallet_registration_transaction(transaction)?;
             },
+            TransactionType::WalletUpdate => {
+                self.validate_wallet_update_transaction(transaction, is_system_transaction)?;
+            },
             TransactionType::ValidatorRegistration => {
                 // Validator registration - validate validator data exists
                 if transaction.validator_data.is_none() {
@@ -174,9 +177,11 @@ impl TransactionValidator {
             }
         }
 
-        // Signature validation (skip for system transactions - they don't have real signatures)
-        // System transactions include: genesis, UBI distribution, identity/wallet registration from node
-        if !is_system_transaction {
+        // Signature validation:
+        // - Historically, "system transactions" (empty inputs) skipped signatures.
+        // - WalletUpdate must always be signed (it's a privileged state mutation).
+        let require_signature = !is_system_transaction || matches!(transaction.transaction_type, TransactionType::WalletUpdate);
+        if require_signature {
             self.validate_signature(transaction)?;
         }
 
@@ -226,6 +231,9 @@ impl TransactionValidator {
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
                 self.validate_wallet_registration_transaction(transaction)?;
+            },
+            TransactionType::WalletUpdate => {
+                self.validate_wallet_update_transaction(transaction, is_system_transaction)?;
             },
             TransactionType::ValidatorRegistration => {
                 // Validator registration - validate validator data exists
@@ -278,9 +286,11 @@ impl TransactionValidator {
             }
         }
 
-        // Signature validation (skip for system transactions - they don't have real signatures)
-        // System transactions include: genesis, UBI distribution, identity/wallet registration from node
-        if !is_system_transaction {
+        // Signature validation:
+        // - Historically, "system transactions" (empty inputs) skipped signatures.
+        // - WalletUpdate must always be signed (it's a privileged state mutation).
+        let require_signature = !is_system_transaction || matches!(transaction.transaction_type, TransactionType::WalletUpdate);
+        if require_signature {
             self.validate_signature(transaction)?;
         }
 
@@ -844,6 +854,44 @@ impl TransactionValidator {
         Ok(())
     }
 
+    /// Validate wallet update transaction.
+    ///
+    /// Today this is only permitted as a system transaction on the development/testnet chain,
+    /// used for controlled migrations and administrative recovery. Future authorization (DAO/validator)
+    /// should be enforced here as rules evolve.
+    fn validate_wallet_update_transaction(
+        &self,
+        transaction: &Transaction,
+        is_system_transaction: bool,
+    ) -> ValidationResult {
+        // Must carry wallet_data
+        self.validate_wallet_registration_transaction(transaction)?;
+
+        // Restrict to system transactions for now (no user-auth path implemented yet).
+        if !is_system_transaction {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Must not move value: this transaction is metadata/ownership-only.
+        if !transaction.outputs.is_empty() || !transaction.inputs.is_empty() || transaction.fee != 0 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Restrict to non-mainnet chains (dev/bootstrap=0x03, testnet=0x02).
+        // This is consensus-critical: do not gate on env flags that may differ across nodes.
+        if !matches!(transaction.chain_id, 0x02 | 0x03) {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Require an explicit memo prefix for auditability.
+        const PREFIX: &[u8] = b"WALLET_UPDATE_V1:";
+        if !transaction.memo.starts_with(PREFIX) {
+            return Err(ValidationError::InvalidMemo);
+        }
+
+        Ok(())
+    }
+
     /// Validate UBI claim transaction (Week 7)
     ///
     /// Checks that:
@@ -1025,6 +1073,21 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
                 stateless_validator.validate_transaction(transaction)?;
+            },
+            TransactionType::WalletUpdate => {
+                stateless_validator.validate_transaction(transaction)?;
+
+                // Authority check: WalletUpdate must be signed by an active validator consensus key.
+                // This is a stateful rule (depends on validator_registry).
+                let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+                let signer_pk = transaction.signature.public_key.as_bytes();
+                let is_active_validator = blockchain
+                    .validator_registry
+                    .values()
+                    .any(|v| v.status == "active" && v.consensus_key == signer_pk);
+                if !is_active_validator {
+                    return Err(ValidationError::InvalidTransaction);
+                }
             },
             TransactionType::ValidatorRegistration |
             TransactionType::ValidatorUpdate |
@@ -1318,6 +1381,10 @@ pub mod utils {
             },
             TransactionType::WalletRegistration => {
                 // Wallet registration should have wallet_data
+                transaction.wallet_data.is_some()
+            }
+            TransactionType::WalletUpdate => {
+                // Wallet update should have wallet_data
                 transaction.wallet_data.is_some()
             }
             TransactionType::ValidatorRegistration |

@@ -27,6 +27,7 @@ hkdf = "0.12"
 names = { version = "0.14", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 lib-crypto = { path = "../lib-crypto" }
+lib-identity-core = { path = "../lib-identity-core" }
 lib-proofs = { path = "../lib-proofs" }
 aes-gcm = "0.10"
 argon2 = "0.5"

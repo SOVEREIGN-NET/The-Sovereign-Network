@@ -390,52 +390,52 @@ impl ZhtpIntegration {
                         let mut device_node_ids = std::collections::HashMap::new();
                         device_node_ids.insert("requester-device".to_string(), requester_node_id);
 
-                        // Create ZhtpIdentity for storage retrieval from authenticated session
-                        let requester = lib_identity::ZhtpIdentity {
-                            id: identity_id.clone(),
-                            identity_type: lib_identity::IdentityType::Human,
-                            did: requester_did,
-                            public_key: lib_crypto::PublicKey::new(vec![0u8; 32]), // This would be extracted from session
-                            private_key: None,
-                            node_id: requester_node_id,
-                            device_node_ids,
-                            primary_device: "requester-device".to_string(),
-                            ownership_proof: lib_proofs::ZeroKnowledgeProof::new(
-                                "authenticated".to_string(),
-                                vec![0u8; 32],
-                                vec![0u8; 32],
-                                vec![],
-                                None,
-                            ),
-                            credentials: std::collections::HashMap::new(),
-                            reputation: 100,
-                            age: Some(25),
-                            access_level: session.access_level,
-                            metadata: std::collections::HashMap::new(),
-                            private_data_id: None,
-                            wallet_manager: lib_identity::wallets::WalletManager::new(identity_id.clone()),
-                            did_document_hash: None,
-                            attestations: vec![],
-                            created_at: chrono::Utc::now().timestamp() as u64,
-                            last_active: chrono::Utc::now().timestamp() as u64,
-                            recovery_keys: vec![],
-                            owner_identity_id: None,  // Human users don't have owners
-                            reward_wallet_id: None,   // Users don't need this (nodes do)
-                            encrypted_master_seed: None,  // Not needed for authenticated retrieval
-                            next_wallet_index: 0,
-                            password_hash: None,
-                            master_seed_phrase: None,
-                            zk_identity_secret: [0u8; 32], // Session identity - zeroed
-                            zk_credential_hash: [0u8; 32],
-                            wallet_master_seed: [0u8; 64],
-                            dao_member_id: format!("session-{}", hex::encode(&identity_id.as_bytes()[..8])),
-                            dao_voting_power: 1, // Unverified human
-                            citizenship_verified: false,
-                            jurisdiction: None,
-                        };
-                        
                         #[cfg(feature = "storage")]
                         {
+                            // Create ZhtpIdentity for storage retrieval from authenticated session
+                            let requester = lib_identity::ZhtpIdentity {
+                                id: identity_id.clone(),
+                                identity_type: lib_identity::IdentityType::Human,
+                                did: requester_did,
+                                public_key: lib_crypto::PublicKey::new(vec![0u8; 32]), // This would be extracted from session
+                                private_key: None,
+                                node_id: requester_node_id,
+                                device_node_ids,
+                                primary_device: "requester-device".to_string(),
+                                ownership_proof: lib_proofs::ZeroKnowledgeProof::new(
+                                    "authenticated".to_string(),
+                                    vec![0u8; 32],
+                                    vec![0u8; 32],
+                                    vec![],
+                                    None,
+                                ),
+                                credentials: std::collections::HashMap::new(),
+                                reputation: 100,
+                                age: Some(25),
+                                access_level: session.access_level,
+                                metadata: std::collections::HashMap::new(),
+                                private_data_id: None,
+                                wallet_manager: lib_identity::wallets::WalletManager::new(identity_id.clone()),
+                                did_document_hash: None,
+                                attestations: vec![],
+                                created_at: chrono::Utc::now().timestamp() as u64,
+                                last_active: chrono::Utc::now().timestamp() as u64,
+                                recovery_keys: vec![],
+                                owner_identity_id: None,  // Human users don't have owners
+                                reward_wallet_id: None,   // Users don't need this (nodes do)
+                                encrypted_master_seed: None,  // Not needed for authenticated retrieval
+                                next_wallet_index: 0,
+                                password_hash: None,
+                                master_seed_phrase: None,
+                                zk_identity_secret: [0u8; 32], // Session identity - zeroed
+                                zk_credential_hash: [0u8; 32],
+                                wallet_master_seed: [0u8; 64],
+                                dao_member_id: format!("session-{}", hex::encode(&identity_id.as_bytes()[..8])),
+                                dao_voting_power: 1, // Unverified human
+                                citizenship_verified: false,
+                                jurisdiction: None,
+                            };
+
                             match self.storage.retrieve_content(content_id, requester, request).await {
                                 Ok(Some((content, _metadata))) => StorageResult::Retrieved(content),
                                 Ok(None) => StorageResult::NotFound,
@@ -455,9 +455,9 @@ impl ZhtpIntegration {
             }
             ZhtpMethod::Delete => {
                 // Delete content
-                let content_id = request.uri.trim_start_matches("/content/");
                 #[cfg(feature = "storage")]
                 {
+                    let content_id = request.uri.trim_start_matches("/content/");
                     match self.storage.delete_content(content_id, request).await {
                         Ok(true) => StorageResult::Deleted,
                         Ok(false) => StorageResult::NotFound,

@@ -1508,7 +1508,7 @@ impl IdentityHandler {
         };
 
         // Parse identity type
-        let identity_type = match req_data.identity_type.as_str() {
+        let _identity_type = match req_data.identity_type.as_str() {
             "human" => IdentityType::Human,
             "device" => IdentityType::Device,
             "organization" => IdentityType::Organization,

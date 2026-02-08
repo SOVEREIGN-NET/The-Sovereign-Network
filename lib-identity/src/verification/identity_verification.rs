@@ -844,7 +844,7 @@ mod tests {
         verifier.verification_cache.clear();
         
         // Perform several verifications with the same identity but clear cache each time
-        for i in 0..5 {
+        for _i in 0..5 {
             // Clear cache before each verification to ensure it's counted
             verifier.verification_cache.clear();
             

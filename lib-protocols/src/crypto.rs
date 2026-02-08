@@ -151,7 +151,7 @@ impl ZhtpCrypto {
         }
 
         // For transaction proofs, try to use transaction verifier
-        if let Ok(verifier) = TransactionVerifier::new() {
+        if TransactionVerifier::new().is_ok() {
             // Try to interpret as transaction proof
             if let Ok(tx_proof) = serde_json::from_slice::<ZkTransactionProof>(proof_data) {
                 match ZkTransactionProof::verify_transaction(&tx_proof) {

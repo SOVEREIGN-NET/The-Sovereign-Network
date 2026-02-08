@@ -265,7 +265,7 @@ impl RewardCalculator {
         let aggregated = self.aggregate_receipts(receipts);
         let mut rewards = Vec::new();
 
-        for ((client_did, receipt_epoch), stats) in aggregated {
+        for ((_client_did, receipt_epoch), stats) in aggregated {
             if receipt_epoch == epoch {
                 let reward = self.calculate_reward(&stats);
                 rewards.push(reward.clone());

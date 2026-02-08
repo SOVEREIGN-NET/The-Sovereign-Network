@@ -9,9 +9,9 @@ repository = "https://github.com/SOVEREIGN-NETWORK/ZHTPDEV"
 [dependencies]
 # Post-quantum cryptography (NIST standardized CRYSTALS)
 pqcrypto-dilithium = "0.5"
-pqcrypto-kyber = "0.7"
 pqcrypto-traits = "0.3"
 crystals-dilithium = "1.0"  # For cross-library compatibility with lib-client
+pqc_kyber = { version = "0.7", features = ["kyber1024"] }
 
 # Classical cryptography for compatibility (but identities use pure PQC)
 ed25519-dalek = { version = "2.0", features = ["rand_core"] }
