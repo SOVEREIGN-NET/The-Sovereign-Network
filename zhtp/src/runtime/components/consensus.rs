@@ -9,6 +9,7 @@ use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, C
 use crate::runtime::node_runtime::NodeRole;
 use lib_consensus::{ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorManager, NoOpBroadcaster};
 use lib_consensus::types::{MessageBroadcaster as ConsensusMessageBroadcaster, ValidatorMessage};
+use lib_consensus::validators::{ValidatorNetworkTransport, ValidatorProtocol, ValidatorDiscoveryProtocol};
 use lib_identity::IdentityId;
 use crate::monitoring::{Alert, AlertLevel, AlertManager};
 use crate::runtime::mesh_router_provider::get_global_mesh_router;
@@ -75,6 +76,50 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
                     format!("Consensus broadcast failed: {}", e),
                 )))
             }
+        }
+    }
+}
+
+/// Adapter that implements `ValidatorNetworkTransport` using zhtp's QUIC mesh.
+///
+/// Used by `ValidatorProtocol` to broadcast signed validator messages to peers.
+struct QuicValidatorTransport {
+    mesh_router: Arc<MeshRouter>,
+}
+
+impl QuicValidatorTransport {
+    fn new(mesh_router: Arc<MeshRouter>) -> Self {
+        Self { mesh_router }
+    }
+}
+
+#[async_trait::async_trait]
+impl ValidatorNetworkTransport for QuicValidatorTransport {
+    async fn broadcast_to_validators(
+        &self,
+        message: lib_consensus::validators::ValidatorMessage,
+        _recipients: &[IdentityId],
+    ) -> anyhow::Result<()> {
+        let quic_protocol_guard = self.mesh_router.quic_protocol.read().await;
+        let quic_protocol = match quic_protocol_guard.as_ref() {
+            Some(qp) => qp.clone(),
+            None => {
+                debug!("QUIC protocol not available for ValidatorProtocol broadcast");
+                return Ok(()); // Best-effort
+            }
+        };
+        drop(quic_protocol_guard);
+
+        let mesh_message = lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(message);
+        let message_bytes = bincode::serialize(&mesh_message)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize validator message: {}", e))?;
+
+        match quic_protocol.broadcast_message(&message_bytes).await {
+            Ok(count) => {
+                debug!("ValidatorProtocol broadcast sent to {} peers", count);
+                Ok(())
+            }
+            Err(e) => Err(anyhow::anyhow!("ValidatorProtocol broadcast failed: {}", e)),
         }
     }
 }
@@ -811,23 +856,66 @@ impl Component for ConsensusComponent {
         consensus_engine
             .set_validator_keypair(local_validator_keypair.clone())
             .map_err(|e| anyhow::anyhow!("Failed to set local consensus validator keypair: {}", e))?;
+
+        // Clone for ValidatorProtocol middleware before moving into self
+        let vp_keypair = local_validator_keypair.clone();
+        let vp_identity = local_validator_id.clone();
+
         *self.local_validator_identity.write().await = Some(local_validator_id);
         *self.local_validator_keypair.write().await = Some(local_validator_keypair);
 
-        // Wire the message sender to the mesh message handler
+        // Wire ValidatorProtocol as security middleware between network and consensus engine
+        //
+        // Message flow:
+        //   Network (QUIC) → raw_validator_msg channel → ValidatorProtocol.handle_message()
+        //     → verify signature → consensus_msg_tx → ConsensusEngine
+        //
+        // Outgoing (via ValidatorProtocol.broadcast_*):
+        //   ValidatorProtocol → sign → QuicValidatorTransport → QUIC mesh
         if let Ok(mesh_router) = get_global_mesh_router().await {
+            // Create discovery protocol for signature verification lookups
+            let discovery = Arc::new(ValidatorDiscoveryProtocol::new(3600));
+
+            // Create ValidatorProtocol and wire it
+            let mut validator_protocol = ValidatorProtocol::new(discovery, None);
+            validator_protocol.set_validator_keypair(vp_keypair);
+            validator_protocol.set_validator_identity(vp_identity).await;
+            validator_protocol.set_consensus_forwarder(consensus_msg_tx.clone());
+            validator_protocol.set_network_transport(Arc::new(QuicValidatorTransport::new(mesh_router.clone())));
+
+            // Create raw validator message channel
+            let (raw_msg_tx, mut raw_msg_rx) =
+                tokio::sync::mpsc::channel::<lib_consensus::validators::ValidatorMessage>(256);
+
+            // Wire raw message sender into the mesh message handler
             if let Some(quic_protocol) = mesh_router.quic_protocol.read().await.as_ref() {
                 if let Some(handler) = quic_protocol.message_handler.as_ref() {
-                    handler.write().await.set_consensus_message_sender(consensus_msg_tx.clone());
-                    info!("🔗 Consensus message channel wired to mesh message handler");
+                    let mut h = handler.write().await;
+                    h.set_raw_validator_message_sender(raw_msg_tx);
+                    // Also keep direct consensus sender as fallback
+                    h.set_consensus_message_sender(consensus_msg_tx.clone());
+                    info!("🔗 ValidatorProtocol middleware wired to mesh message handler");
                 } else {
                     warn!("QUIC message handler not available - consensus messages won't be received from network");
                 }
             } else {
                 warn!("QUIC protocol not available - consensus messages won't be received from network");
             }
+
+            // Spawn middleware task: reads raw messages, verifies via ValidatorProtocol, forwards to consensus
+            tokio::spawn(async move {
+                info!("🛡️ ValidatorProtocol middleware task started");
+                while let Some(msg) = raw_msg_rx.recv().await {
+                    if let Err(e) = validator_protocol.handle_message(msg).await {
+                        // Verification failure: log but don't crash the middleware
+                        warn!("ValidatorProtocol rejected message: {}", e);
+                    }
+                }
+                info!("ValidatorProtocol middleware task exited (channel closed)");
+            });
         } else {
             warn!("Mesh router not available - consensus messages won't be received from network");
+            // No mesh router, but still wire direct consensus sender if available
         }
 
         // **Start-order independent alert wiring**
