@@ -1,0 +1,141 @@
+# Ren AI Service Node Configuration
+# Optimized for hosting the Ren LLM inference engine on the Sovereign Network
+# Suitable for: AI inference providers, Ren model hosting, prompt/completion services
+#
+# ROLE: This node type runs the Ren LLM and exposes inference endpoints
+# to the ZHTP mesh. Clients pay SOV to submit prompts and receive completions.
+# The node operator earns rewards proportional to tokens generated, quality
+# scores, and uptime.
+
+# Core Node Settings
+mesh_mode = "Hybrid"
+security_level = "High"
+environment = "Mainnet"
+data_directory = "./data/mainnet-ren-ai"
+
+[crypto_config]
+post_quantum_enabled = true
+dilithium_level = 3
+kyber_level = 768
+hybrid_mode = true
+memory_security = true
+
+[zk_config]
+plonky2_enabled = true
+proof_cache_size = 500            # Smaller cache -- GPU memory is the priority
+circuit_cache_enabled = true
+parallel_proving = false          # Conserve CPU for inference
+verification_threads = 2
+
+[identity_config]
+auto_citizenship = true
+ubi_registration = true
+dao_auto_join = true
+recovery_modes = ["mnemonic", "biometric"]
+reputation_enabled = true
+
+# ---------------------------------------------------------------------------
+# REN AI ENGINE CONFIGURATION  (unique to this node type)
+# ---------------------------------------------------------------------------
+[ren_ai_config]
+enabled = true
+model_id = "ren-v1"                       # Model identifier on the network
+model_path = "./models/ren-v1"            # Local path to model weights
+model_format = "safetensors"              # gguf | safetensors | onnx
+quantization = "Q4_K_M"                   # Quantization level (Q4_K_M, Q8_0, F16, F32)
+context_window = 8192                     # Max context length in tokens
+max_batch_size = 8                        # Concurrent inference requests
+max_tokens_per_request = 4096             # Hard cap per completion
+temperature_default = 0.7
+top_p_default = 0.9
+top_k_default = 40
+
+# GPU / Accelerator
+gpu_enabled = true
+gpu_layers = 99                           # Number of layers offloaded to GPU (-1 = all)
+gpu_memory_fraction = 0.90                # Max fraction of VRAM to use
+tensor_parallel = 1                       # Number of GPUs for tensor parallelism
+
+# Safety & Guardrails
+content_filter_enabled = true
+max_prompt_length = 32768                 # Max input tokens
+rate_limit_prompts_per_min = 60           # Per-DID rate limit
+require_signed_prompts = true             # Prompts must be DID-signed
+audit_log_enabled = true                  # Log all inference requests (hashed)
+
+# Model Registry (on-chain advertisement)
+advertise_on_chain = true
+supported_tasks = ["completion", "chat", "embedding", "summarization"]
+pricing_sov_per_1k_input_tokens = 1       # SOV cost per 1K input tokens
+pricing_sov_per_1k_output_tokens = 3      # SOV cost per 1K output tokens
+
+# ---------------------------------------------------------------------------
+# STORAGE  (minimal -- this node stores models, not user data)
+# ---------------------------------------------------------------------------
+[storage_config]
+dht_port = 33442
+blockchain_storage_gb = 100              # Blockchain data
+hosted_storage_gb = 50                   # Minimal hosted storage
+personal_storage_gb = 0
+storage_capacity_gb = 100                # Legacy compat
+replication_factor = 2
+erasure_coding = true
+pricing_tier = "hot"
+
+[network_config]
+mesh_port = 33444
+max_peers = 100
+protocols = ["tcp", "quic"]
+bootstrap_peers = ["100.94.204.6:9333", "ai.sovereign.net:9333"]
+long_range_relays = false
+
+[blockchain_config]
+network_id = "zhtp-mainnet"
+chain_id = 1
+block_time_seconds = 5
+max_block_size = 2097152
+zk_transactions = true
+smart_contracts = true                   # Required for inference payment contracts
+enforce_chain_id = true
+
+[consensus_config]
+consensus_type = "Hybrid"
+dao_enabled = true
+validator_enabled = false                # AI nodes do not validate blocks
+min_stake = 5000                         # Lower stake than validators
+reward_multipliers = { "inference" = 2.0, "embedding" = 1.5 }
+
+[economics_config]
+ubi_enabled = true
+daily_ubi_amount = 50
+dao_fee_percentage = 2.0
+mesh_rewards = true
+
+[economics_config.token_economics]
+total_supply = 1000000000
+inflation_rate = 2.0
+burn_rate = 1.0
+reward_pool_percentage = 15.0            # Solid reward pool for AI providers
+
+[protocols_config]
+lib_enabled = true
+zdns_enabled = true
+api_port = 9333
+max_connections = 500                    # Lower -- inference is heavy
+request_timeout_ms = 120000             # 2 min -- LLM generation can be slow
+
+# ---------------------------------------------------------------------------
+# RESOURCE ALLOCATIONS  (GPU-heavy)
+# ---------------------------------------------------------------------------
+[resource_allocations]
+max_memory_mb = 32768                    # 32 GB RAM minimum
+max_cpu_threads = 16
+max_disk_gb = 500                        # Models + blockchain
+max_gpu_memory_mb = 24576                # 24 GB VRAM (e.g. RTX 4090 / A5000)
+bandwidth_allocation = { "inference" = 5000000, "model_sync" = 2000000 }
+
+[integration_settings]
+event_bus_enabled = true
+service_discovery = true
+health_check_interval_ms = 15000         # Frequent health checks (GPU thermals)
+cross_package_timeouts = { "inference" = 120000, "model_load" = 300000 }
