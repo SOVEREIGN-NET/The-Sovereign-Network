@@ -282,8 +282,13 @@ impl TokenHandler {
     /// POST /api/v1/token/transfer - Transfer tokens
     ///
     /// The `to` field can be:
-    /// - 32 bytes: wallet_id (will be resolved to public key via wallet_registry)
+    /// - 32 bytes: wallet_id OR key_id (DID suffix) - resolved via wallet_registry then identity_registry
     /// - 2592 bytes: full Dilithium5 public key (used directly)
+    ///
+    /// Resolution order for 32-byte values:
+    /// 1. Try wallet_registry[to] - direct wallet lookup
+    /// 2. If not found, try identity_registry[to] - DID key_id lookup
+    /// 3. Fail if neither found or ambiguous
     async fn handle_transfer_token(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let transfer_req: TransferTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
@@ -305,7 +310,7 @@ impl TokenHandler {
         #[derive(serde::Deserialize)]
         struct TransferParams {
             token_id: [u8; 32],
-            to: Vec<u8>,  // Can be wallet_id (32 bytes) or full public key (2592 bytes)
+            to: Vec<u8>,  // Can be wallet_id (32 bytes), key_id (32 bytes), or full public key (2592 bytes)
             amount: u64,
         }
         let params: TransferParams = match bincode::deserialize(&call.params) {
@@ -319,32 +324,48 @@ impl TokenHandler {
         };
         let TransferParams { token_id, to, amount } = params;
 
-        // Resolve wallet_id to public key if needed
-        let resolved_to = if to.len() == 32 {
-            // This is a wallet_id - look up the public key from wallet_registry
-            let wallet_id_hex = hex::encode(&to);
+        // Resolve recipient to public key
+        // Supports: wallet_id (32 bytes), key_id/DID (32 bytes), or full public key (2592 bytes)
+        let (resolved_to, resolution_path) = if to.len() == 32 {
+            let id_hex = hex::encode(&to);
+            let did_key = format!("did:zhtp:{}", id_hex);  // Full DID for identity_registry lookup
             let blockchain = self.blockchain.read().await;
 
-            match blockchain.wallet_registry.get(&wallet_id_hex) {
-                Some(wallet_data) => {
-                    info!("Resolved wallet_id {} to public key ({} bytes)",
-                        &wallet_id_hex[..16], wallet_data.public_key.len());
-                    wallet_data.public_key.clone()
-                }
-                None => {
+            // Step 1: Try wallet_registry first (keyed by wallet_id hex)
+            if let Some(wallet_data) = blockchain.wallet_registry.get(&id_hex) {
+                info!("[TRANSFER] Resolved via wallet_registry: {} -> {} bytes pubkey",
+                    &id_hex[..16], wallet_data.public_key.len());
+                (wallet_data.public_key.clone(), "wallet_registry")
+            }
+            // Step 2: Try identity_registry (keyed by full DID: "did:zhtp:xxx")
+            else if let Some(identity_data) = blockchain.identity_registry.get(&did_key) {
+                // Use the identity's public key directly for the transfer
+                if identity_data.public_key.is_empty() {
                     return Ok(create_error_response(
-                        ZhtpStatus::NotFound,
-                        format!("Wallet not found: {}", wallet_id_hex),
+                        ZhtpStatus::BadRequest,
+                        format!("Identity {} has no public key registered", &id_hex[..16]),
                     ));
                 }
+                info!("[TRANSFER] Resolved via identity_registry (DID): {} -> {} bytes pubkey",
+                    &did_key, identity_data.public_key.len());
+                (identity_data.public_key.clone(), "identity_registry")
+            }
+            // Step 3: Neither found - fail hard
+            else {
+                warn!("[TRANSFER] Resolution failed: {} not found in wallet_registry or identity_registry", &id_hex[..16]);
+                return Ok(create_error_response(
+                    ZhtpStatus::NotFound,
+                    format!("Recipient not found: {} (checked wallet_registry and identity_registry)", id_hex),
+                ));
             }
         } else if to.len() >= 2000 {
             // This is already a full public key
-            to.clone()
+            info!("[TRANSFER] Using direct public key ({} bytes)", to.len());
+            (to.clone(), "direct_pubkey")
         } else {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                format!("Invalid 'to' field: expected 32 bytes (wallet_id) or ~2592 bytes (public key), got {} bytes", to.len()),
+                format!("Invalid 'to' field: expected 32 bytes (wallet_id/key_id) or ~2592 bytes (public key), got {} bytes", to.len()),
             ));
         };
 
@@ -394,14 +415,15 @@ impl TokenHandler {
             warn!("Failed to submit transfer to mempool (transfer already executed): {}", e);
         }
 
-        info!("Transfer completed for token {}", hex::encode(token_id));
+        info!("[TRANSFER] Completed: {} tokens, resolution_path={}", hex::encode(token_id), resolution_path);
 
         create_json_response(json!({
             "success": true,
             "token_id": hex::encode(token_id),
-            "to": if to.len() == 32 { format!("wallet:{}", hex::encode(&to)) } else { format!("0x{}", hex::encode(&to[..32.min(to.len())])) },
+            "to": if to.len() == 32 { hex::encode(&to) } else { format!("0x{}", hex::encode(&to[..32.min(to.len())])) },
             "amount": amount,
-            "status": "completed"
+            "status": "completed",
+            "resolution_path": resolution_path
         }))
     }
 
