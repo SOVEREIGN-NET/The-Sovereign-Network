@@ -427,7 +427,8 @@ fn mnemonic_from_entropy(entropy: &[u8]) -> Result<Vec<&'static str>> {
 ///
 /// Dilithium5 signature as bytes
 pub fn sign_registration_proof(identity: &Identity, timestamp: u64) -> Result<Vec<u8>> {
-    let message = format!("ZHTP_REGISTER:{}:{}", identity.did, timestamp);
+    // Server expects: "ZHTP_REGISTER:{timestamp}" (no DID in message)
+    let message = format!("ZHTP_REGISTER:{}", timestamp);
     Dilithium5::sign(message.as_bytes(), &identity.private_key)
 }
 
@@ -664,8 +665,8 @@ mod tests {
 
         let signature = sign_registration_proof(&identity, timestamp).unwrap();
 
-        // Verify the signature
-        let message = format!("ZHTP_REGISTER:{}:{}", identity.did, timestamp);
+        // Verify the signature (server expects "ZHTP_REGISTER:{timestamp}" without DID)
+        let message = format!("ZHTP_REGISTER:{}", timestamp);
         assert!(Dilithium5::verify(message.as_bytes(), &signature, &identity.public_key).unwrap());
     }
 
