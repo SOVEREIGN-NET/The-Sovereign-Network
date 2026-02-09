@@ -71,11 +71,13 @@ pub use token_tx::{
     build_contract_transaction,
     // Token-specific (backward compatible)
     build_burn_tx, build_create_token_tx, build_mint_tx, build_transfer_tx,
-    // Domain-specific
+    // Domain-specific (new JSON-based API)
+    build_domain_register_request, build_domain_update_request, build_domain_transfer_request,
+    // Domain-specific (deprecated, use *_request functions instead)
     build_domain_register_tx, build_domain_update_tx, build_domain_transfer_tx,
     // Param types for serialization
     CreateTokenParams, MintParams, TransferParams, BurnParams,
-    DomainRegisterParams, DomainUpdateParams, DomainTransferParams,
+    DomainRegisterParams, DomainUpdateParams, DomainTransferParams, ContentMapping,
 };
 // Re-export ContractType for FFI callers
 pub use lib_blockchain::types::ContractType;
