@@ -74,6 +74,21 @@ This directory contains pre-configured templates for different types of ZHTP nod
 
 **Resources**: 512MB RAM, 2 CPU threads, 50GB storage
 
+### 6. **Ren AI Node** (`ren-ai-node.toml`)
+**Purpose**: Hosting the Ren LLM for decentralized AI inference
+**Best for**: AI inference providers, Ren model operators, prompt/completion services
+
+**Features**:
+- **GPU-accelerated LLM inference** (Ren model)
+- DID-signed prompt authentication
+- SOV micro-payment per inference request
+- Content safety guardrails
+- Prometheus metrics for GPU and throughput monitoring
+- On-chain model registry advertisement
+- Supports completion, chat, embedding, summarization
+
+**Resources**: 32GB RAM, 16 CPU threads, 24GB VRAM, 500GB storage
+
 ## Usage
 
 ### Quick Start Commands
@@ -85,6 +100,7 @@ zhtp --node-type validator # Validator node
 zhtp --node-type storage   # Storage node
 zhtp --node-type edge      # Edge node
 zhtp --node-type dev       # Development node
+zhtp --node-type ren-ai    # Ren AI inference node
 
 # Using explicit config files
 zhtp node start --config ./configs/full-node.toml
@@ -92,6 +108,7 @@ zhtp node start --config ./configs/validator-node.toml
 zhtp node start --config ./configs/storage-node.toml
 zhtp node start --config ./configs/edge-node.toml
 zhtp node start --config ./configs/dev-node.toml
+zhtp node start --config ./configs/ren-ai-node.toml
 
 # Using helper scripts
 ./start-node.sh    # Interactive node type selection (Linux/Mac)
