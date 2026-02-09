@@ -72,25 +72,45 @@ pub struct BurnParams {
 // Domain Operation Parameters
 // ============================================================================
 
-/// Parameters for registering a domain
+/// Parameters for registering a domain (matches server's SimpleDomainRegistrationRequest)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainRegisterParams {
     pub domain: String,
-    pub content_cid: Option<String>,
+    pub owner: String,
+    #[serde(default)]
+    pub content_mappings: std::collections::HashMap<String, ContentMapping>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    pub signature: String,
+    pub timestamp: u64,
+    #[serde(default)]
+    pub fee: Option<u64>,
 }
 
-/// Parameters for updating a domain
+/// Content mapping for domain registration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentMapping {
+    pub content: String,
+    pub content_type: String,
+}
+
+/// Parameters for updating a domain (matches server's DomainUpdateRequest)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainUpdateParams {
     pub domain: String,
-    pub content_cid: String,
+    pub new_manifest_cid: String,
+    pub expected_previous_manifest_cid: String,
+    pub signature: String,
+    pub timestamp: u64,
 }
 
-/// Parameters for transferring a domain
+/// Parameters for transferring a domain (matches server's ApiDomainTransferRequest)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainTransferParams {
     pub domain: String,
-    pub to: Vec<u8>,  // New owner PublicKey bytes
+    pub from_owner: String,
+    pub to_owner: String,
+    pub transfer_proof: String,
 }
 
 // ============================================================================
@@ -330,53 +350,152 @@ pub fn build_burn_tx(
 // Convenience: Domain-specific API
 // ============================================================================
 
-/// Build a signed domain registration transaction
+use crate::crypto::Dilithium5;
+
+/// Domain registration fee in SOV tokens
+const DOMAIN_REGISTRATION_FEE: u64 = 10;
+
+/// Build a signed domain registration request (JSON format matching server's SimpleDomainRegistrationRequest)
+///
+/// # Arguments
+/// * `identity` - The identity registering the domain (becomes owner)
+/// * `domain` - Domain name (e.g., "example.sov")
+/// * `content_mappings` - Optional content mappings (path -> content)
+///
+/// # Returns
+/// JSON string ready to POST to /api/v1/web4/domains/register
+pub fn build_domain_register_request(
+    identity: &Identity,
+    domain: &str,
+    content_mappings: Option<std::collections::HashMap<String, ContentMapping>>,
+) -> Result<String, String> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("Failed to get timestamp: {}", e))?
+        .as_secs();
+
+    // Sign: domain|timestamp|fee_amount
+    let message = format!("{}|{}|{}", domain, timestamp, DOMAIN_REGISTRATION_FEE);
+    let signature = Dilithium5::sign(message.as_bytes(), &identity.private_key)
+        .map_err(|e| format!("Failed to sign: {}", e))?;
+
+    let request = DomainRegisterParams {
+        domain: domain.to_string(),
+        owner: identity.did.clone(),
+        content_mappings: content_mappings.unwrap_or_default(),
+        metadata: None,
+        signature: hex::encode(&signature),
+        timestamp,
+        fee: Some(DOMAIN_REGISTRATION_FEE),
+    };
+
+    serde_json::to_string(&request)
+        .map_err(|e| format!("Failed to serialize request: {}", e))
+}
+
+/// Build a signed domain update request (JSON format matching server's DomainUpdateRequest)
+///
+/// # Arguments
+/// * `identity` - The domain owner's identity
+/// * `domain` - Domain name to update
+/// * `new_manifest_cid` - CID of the new manifest
+/// * `expected_previous_manifest_cid` - Expected current manifest CID (for compare-and-swap)
+///
+/// # Returns
+/// JSON string ready to POST to /api/v1/web4/domains/update
+pub fn build_domain_update_request(
+    identity: &Identity,
+    domain: &str,
+    new_manifest_cid: &str,
+    expected_previous_manifest_cid: &str,
+) -> Result<String, String> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("Failed to get timestamp: {}", e))?
+        .as_secs();
+
+    // Sign: domain|expected_previous_manifest_cid|new_manifest_cid|timestamp
+    let message = format!("{}|{}|{}|{}", domain, expected_previous_manifest_cid, new_manifest_cid, timestamp);
+    let signature = Dilithium5::sign(message.as_bytes(), &identity.private_key)
+        .map_err(|e| format!("Failed to sign: {}", e))?;
+
+    let request = DomainUpdateParams {
+        domain: domain.to_string(),
+        new_manifest_cid: new_manifest_cid.to_string(),
+        expected_previous_manifest_cid: expected_previous_manifest_cid.to_string(),
+        signature: hex::encode(&signature),
+        timestamp,
+    };
+
+    serde_json::to_string(&request)
+        .map_err(|e| format!("Failed to serialize request: {}", e))
+}
+
+/// Build a signed domain transfer request (JSON format matching server's ApiDomainTransferRequest)
+///
+/// # Arguments
+/// * `identity` - The current domain owner's identity
+/// * `domain` - Domain name to transfer
+/// * `to_owner` - New owner's DID (did:zhtp:hex format)
+///
+/// # Returns
+/// JSON string ready to POST to /api/v1/web4/domains/transfer
+pub fn build_domain_transfer_request(
+    identity: &Identity,
+    domain: &str,
+    to_owner: &str,
+) -> Result<String, String> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("Failed to get timestamp: {}", e))?
+        .as_secs();
+
+    // Sign: domain|from_owner|to_owner|timestamp
+    let message = format!("{}|{}|{}|{}", domain, identity.did, to_owner, timestamp);
+    let signature = Dilithium5::sign(message.as_bytes(), &identity.private_key)
+        .map_err(|e| format!("Failed to sign: {}", e))?;
+
+    let request = DomainTransferParams {
+        domain: domain.to_string(),
+        from_owner: identity.did.clone(),
+        to_owner: to_owner.to_string(),
+        transfer_proof: hex::encode(&signature),
+    };
+
+    serde_json::to_string(&request)
+        .map_err(|e| format!("Failed to serialize request: {}", e))
+}
+
+// Legacy function names for backward compatibility - these now call the new JSON-based functions
+#[deprecated(since = "0.2.0", note = "Use build_domain_register_request instead")]
 pub fn build_domain_register_tx(
     identity: &Identity,
     domain: &str,
-    content_cid: Option<&str>,
-    chain_id: u8,
+    _content_cid: Option<&str>,
+    _chain_id: u8,
 ) -> Result<String, String> {
-    let params = DomainRegisterParams {
-        domain: domain.to_string(),
-        content_cid: content_cid.map(|s| s.to_string()),
-    };
-    let params_bytes = bincode::serialize(&params)
-        .map_err(|e| format!("Failed to serialize params: {}", e))?;
-
-    build_contract_transaction(identity, ContractType::Web4Website, "register", params_bytes, chain_id)
+    build_domain_register_request(identity, domain, None)
 }
 
-/// Build a signed domain update transaction
+#[deprecated(since = "0.2.0", note = "Use build_domain_update_request instead")]
 pub fn build_domain_update_tx(
     identity: &Identity,
     domain: &str,
     content_cid: &str,
-    chain_id: u8,
+    _chain_id: u8,
 ) -> Result<String, String> {
-    let params = DomainUpdateParams {
-        domain: domain.to_string(),
-        content_cid: content_cid.to_string(),
-    };
-    let params_bytes = bincode::serialize(&params)
-        .map_err(|e| format!("Failed to serialize params: {}", e))?;
-
-    build_contract_transaction(identity, ContractType::Web4Website, "update", params_bytes, chain_id)
+    // For legacy calls, use content_cid as both new and expected (not ideal but maintains compat)
+    build_domain_update_request(identity, domain, content_cid, "")
 }
 
-/// Build a signed domain transfer transaction
+#[deprecated(since = "0.2.0", note = "Use build_domain_transfer_request instead")]
 pub fn build_domain_transfer_tx(
     identity: &Identity,
     domain: &str,
     to_pubkey: &[u8],
-    chain_id: u8,
+    _chain_id: u8,
 ) -> Result<String, String> {
-    let params = DomainTransferParams {
-        domain: domain.to_string(),
-        to: to_pubkey.to_vec(),
-    };
-    let params_bytes = bincode::serialize(&params)
-        .map_err(|e| format!("Failed to serialize params: {}", e))?;
-
-    build_contract_transaction(identity, ContractType::Web4Website, "transfer", params_bytes, chain_id)
+    // Convert pubkey bytes to DID format for legacy callers
+    let to_did = format!("did:zhtp:{}", hex::encode(to_pubkey));
+    build_domain_transfer_request(identity, domain, &to_did)
 }
