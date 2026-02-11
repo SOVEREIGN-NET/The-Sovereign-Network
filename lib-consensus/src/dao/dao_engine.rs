@@ -446,7 +446,10 @@ impl DaoEngine {
                 //      BlockchainConsensusCoordinator::apply_difficulty_governance_update()
                 GovernanceParameterValue::BlockchainInitialDifficulty(_)
                 | GovernanceParameterValue::BlockchainAdjustmentInterval(_)
-                | GovernanceParameterValue::BlockchainTargetTimespan(_) => {
+                | GovernanceParameterValue::BlockchainTargetTimespan(_)
+                | GovernanceParameterValue::TxFeeBase(_)
+                | GovernanceParameterValue::TxFeeBytesPerSov(_)
+                | GovernanceParameterValue::TxFeeWitnessCap(_) => {
                     // No-op here: these are applied via the DifficultyManager pathway
                     // described in the comment above, not via ConsensusConfig mutation
                 }
@@ -543,6 +546,21 @@ impl DaoEngine {
                 GovernanceParameterValue::BlockchainTargetTimespan(value) => {
                     if *value == 0 {
                         return Err(anyhow::anyhow!("Target timespan must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::TxFeeBase(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Tx base fee must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::TxFeeBytesPerSov(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Tx bytes_per_sov must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::TxFeeWitnessCap(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Tx witness cap must be greater than zero"));
                     }
                 }
             }
