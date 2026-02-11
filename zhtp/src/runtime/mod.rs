@@ -69,6 +69,89 @@ pub use identity_manager_provider::{initialize_global_identity_manager_provider,
 pub use network_blockchain_provider::ZhtpBlockchainProvider;
 pub use mesh_router_provider::{initialize_global_mesh_router_provider, set_global_mesh_router, get_broadcast_metrics};
 
+async fn try_initial_sync_from_peer(
+    store: std::sync::Arc<lib_blockchain::storage::SledStore>,
+    peers: &[String],
+    api_port: u16,
+) -> bool {
+    let max_attempts: usize = std::env::var("ZHTP_SYNC_MAX_ATTEMPTS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(5);
+    let base_delay_ms: u64 = std::env::var("ZHTP_SYNC_BASE_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(500);
+    let client = reqwest::Client::new();
+
+    for attempt in 0..max_attempts {
+        for peer in peers {
+            let socket = match peer.parse::<std::net::SocketAddr>() {
+                Ok(s) => s,
+                Err(_) => {
+                    warn!("⚠️  Skipping invalid bootstrap peer address: {}", peer);
+                    continue;
+                }
+            };
+            let url = format!("http://{}:{}/api/v1/blockchain/export", socket.ip(), api_port);
+            info!("🔄 Attempting initial chain sync from {} (attempt {}/{})", url, attempt + 1, max_attempts);
+            let response = match client.get(&url).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("⚠️  Failed to fetch export from {}: {}", url, e);
+                    continue;
+                }
+            };
+            if !response.status().is_success() {
+                warn!("⚠️  Export request failed {}: {}", url, response.status());
+                continue;
+            }
+            let bytes = match response.bytes().await {
+                Ok(b) => b.to_vec(),
+                Err(e) => {
+                    warn!("⚠️  Failed to read export bytes from {}: {}", url, e);
+                    continue;
+                }
+            };
+            let import: lib_blockchain::BlockchainImport = match bincode::deserialize(&bytes) {
+                Ok(i) => i,
+                Err(e) => {
+                    warn!("⚠️  Failed to deserialize export from {}: {}", url, e);
+                    continue;
+                }
+            };
+            if import.blocks.is_empty() {
+                warn!("⚠️  Export from {} contained no blocks", url);
+                continue;
+            }
+            let sync = lib_blockchain::sync::ChainSync::new(store.clone());
+            match sync.import_blocks(import.blocks) {
+                Ok(result) => {
+                    info!(
+                        "✅ Initial sync imported {} blocks (final height={:?}) from {}",
+                        result.blocks_imported, result.final_height, url
+                    );
+                    return true;
+                }
+                Err(e) => {
+                    warn!("⚠️  Failed to import blocks from {}: {}", url, e);
+                    continue;
+                }
+            }
+        }
+
+        if attempt + 1 < max_attempts {
+            let delay = base_delay_ms.saturating_mul(1u64 << attempt);
+            info!("⏳ Initial sync retry in {}ms (attempt {}/{})", delay, attempt + 1, max_attempts);
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        }
+    }
+
+    false
+}
+
 /// Component status information
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComponentStatus {
@@ -1052,6 +1135,7 @@ impl RuntimeOrchestrator {
                 .map_err(|e| anyhow::anyhow!("Failed to open SledStore: {}", e))?
         );
 
+        let mut synced_blockchain: Option<lib_blockchain::Blockchain> = None;
         let (blockchain, was_loaded) = match lib_blockchain::Blockchain::load_from_store(store.clone())? {
             Some(mut bc) => {
                 info!("📂 Loaded existing blockchain from SledStore (height: {}, tokens: {})",
@@ -1076,6 +1160,30 @@ impl RuntimeOrchestrator {
                 (bc, true)
             }
             None => {
+                // If we discovered peers, try to sync before creating genesis.
+                if let Some(ref net_info) = network_info {
+                    if !net_info.bootstrap_peers.is_empty() {
+                        if try_initial_sync_from_peer(
+                            store.clone(),
+                            &net_info.bootstrap_peers,
+                            self.config.protocols_config.api_port,
+                        ).await {
+                            if let Some(bc) = lib_blockchain::Blockchain::load_from_store(store.clone())? {
+                                info!("📂 Synced chain from peer (height: {})", bc.height);
+                                synced_blockchain = Some(bc);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(bc) = synced_blockchain {
+                    (bc, true)
+                } else {
+                if network_info.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "Initial sync failed while peers are available - refusing to create a new genesis"
+                    ));
+                }
                 info!("📂 SledStore is empty - creating new blockchain");
                 let mut bc = lib_blockchain::Blockchain::new()?;
                 bc.set_store(store.clone());
@@ -1095,6 +1203,7 @@ impl RuntimeOrchestrator {
                 }
 
                 (bc, false)
+                }
             }
         };
 
