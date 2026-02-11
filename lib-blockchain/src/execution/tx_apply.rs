@@ -497,6 +497,16 @@ pub fn apply_token_transfer(
     mutator.transfer_token(token, from, to, amount)
 }
 
+/// Apply a token mint transaction (balance model)
+pub fn apply_token_mint(
+    mutator: &StateMutator<'_>,
+    token: &TokenId,
+    to: &Address,
+    amount: u128,
+) -> TxApplyResult<()> {
+    mutator.credit_token(token, to, amount)
+}
+
 /// Apply a coinbase transaction (block reward + fee collection)
 ///
 /// Coinbase creates new value - no inputs are spent.

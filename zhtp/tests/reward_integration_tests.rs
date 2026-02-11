@@ -300,8 +300,8 @@ async fn test_rewards_config_default() -> Result<()> {
     assert_eq!(config.routing_minimum_threshold, 100);
     assert_eq!(config.storage_minimum_threshold, 100);
     
-    println!("    Routing threshold: {} ZHTP", config.routing_minimum_threshold);
-    println!("    Storage threshold: {} ZHTP", config.storage_minimum_threshold);
+    println!("    Routing threshold: {} SOV", config.routing_minimum_threshold);
+    println!("    Storage threshold: {} SOV", config.storage_minimum_threshold);
     
     Ok(())
 }
@@ -324,8 +324,8 @@ async fn test_rewards_config_customization() -> Result<()> {
     assert_eq!(config.max_claims_per_hour, 12);
     assert_eq!(config.cooldown_period_secs, 300);
     
-    println!("    Custom routing threshold: {} ZHTP", config.routing_minimum_threshold);
-    println!("    Custom storage threshold: {} ZHTP", config.storage_minimum_threshold);
+    println!("    Custom routing threshold: {} SOV", config.routing_minimum_threshold);
+    println!("    Custom storage threshold: {} SOV", config.storage_minimum_threshold);
     println!("    Custom max claims: {}/hour", config.max_claims_per_hour);
     println!("    Custom cooldown: {}s (5 minutes)", config.cooldown_period_secs);
     
@@ -369,8 +369,8 @@ async fn test_rewards_config_batch_sizes() -> Result<()> {
     assert_eq!(config.routing_max_batch_size, 10_000);
     assert_eq!(config.storage_max_batch_size, 10_000);
     
-    println!("    Routing max batch: {} ZHTP", config.routing_max_batch_size);
-    println!("    Storage max batch: {} ZHTP", config.storage_max_batch_size);
+    println!("    Routing max batch: {} SOV", config.routing_max_batch_size);
+    println!("    Storage max batch: {} SOV", config.storage_max_batch_size);
     
     // Test custom batch sizes
     let mut custom_config = RewardsConfig::default();
@@ -380,8 +380,8 @@ async fn test_rewards_config_batch_sizes() -> Result<()> {
     assert_eq!(custom_config.routing_max_batch_size, 50_000);
     assert_eq!(custom_config.storage_max_batch_size, 75_000);
     
-    println!("    Custom routing batch: {} ZHTP", custom_config.routing_max_batch_size);
-    println!("    Custom storage batch: {} ZHTP", custom_config.storage_max_batch_size);
+    println!("    Custom routing batch: {} SOV", custom_config.routing_max_batch_size);
+    println!("    Custom storage batch: {} SOV", custom_config.storage_max_batch_size);
     
     Ok(())
 }

@@ -725,7 +725,7 @@ pub enum DeployAction {
         #[arg(short, long)]
         keystore: String,
 
-        /// Fee to pay for deployment (in ZHTP tokens)
+        /// Fee to pay for deployment (in SOV tokens)
         #[arg(short, long)]
         fee: Option<u64>,
 
@@ -816,7 +816,7 @@ pub enum DeployAction {
         #[arg(short, long)]
         keystore: String,
 
-        /// Fee for update (in ZHTP tokens)
+        /// Fee for update (in SOV tokens)
         #[arg(short, long)]
         fee: Option<u64>,
 

@@ -10,6 +10,7 @@ use lib_identity_core::{did_from_root_signing_public_key, RootSecret64, RootSign
 use crate::types::{IdentityId, IdentityType, CredentialType, IdentityProofParams, IdentityVerification, AccessLevel, NodeId};
 use crate::credentials::ZkCredential;
 use crate::credentials::IdentityAttestation;
+use crate::constants::{SOV_ATOMIC_UNITS, SOV_WELCOME_BONUS_SOV};
 
 // Custom serialization for HashMap<CredentialType, ZkCredential> to use string keys
 mod credentials_serde {
@@ -336,7 +337,7 @@ impl ZhtpIdentity {
             wallet_type: crate::wallets::WalletType::Primary,
             name: "Primary Wallet".to_string(),
             alias: None,
-            balance: 5000, // Welcome bonus
+            balance: SOV_WELCOME_BONUS_SOV.saturating_mul(SOV_ATOMIC_UNITS), // Welcome bonus (atomic units)
             staked_balance: 0,
             pending_rewards: 0,
             owner_id: Some(id.clone()),
@@ -358,7 +359,8 @@ impl ZhtpIdentity {
         wallet_manager.wallets.insert(primary_wallet.id.clone(), primary_wallet);
 
         tracing::info!(
-            "🎁 Created Primary wallet with 5000 ZHTP welcome bonus for observed identity {}",
+            "🎁 Created Primary wallet with {} SOV welcome bonus for observed identity {}",
+            SOV_WELCOME_BONUS_SOV,
             &id_hex[..16.min(id_hex.len())]
         );
 

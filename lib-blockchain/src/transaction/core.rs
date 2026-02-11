@@ -2,13 +2,13 @@
 //!
 //! Defines the fundamental transaction data structures used in the ZHTP blockchain.
 
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use crate::types::{Hash, transaction_type::TransactionType};
 use crate::integration::crypto_integration::{Signature, PublicKey};
 use crate::integration::zk_integration::ZkTransactionProof;
 
 /// Zero-knowledge transaction with identity support
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Transaction {
     /// Transaction version
     pub version: u32,
@@ -53,9 +53,136 @@ pub struct Transaction {
     /// Token transfer data (Phase 2 - balance model transfers)
     /// Required for TransactionType::TokenTransfer
     pub token_transfer_data: Option<TokenTransferData>,
+    /// Token mint data (Phase 2 - balance model mints)
+    /// Required for TransactionType::TokenMint
+    pub token_mint_data: Option<TokenMintData>,
     /// Governance config update data (Phase 3D - restricted config changes)
     /// Required for TransactionType::GovernanceConfigUpdate
     pub governance_config_data: Option<GovernanceConfigUpdateData>,
+}
+
+/// V1 has 18 fields (no token_mint_data). V2 has 19 (token_mint_data between
+/// token_transfer_data and governance_config_data). Serialization writes the
+/// field count matching the version so old V1 blocks stay byte-identical.
+/// Deserialization requests 19 slots (V2 max); for V1 data we read only 18,
+/// leaving one unused slot in bincode's SeqAccess — harmless because bincode
+/// does not enforce post-return consumption.
+const TX_FIELD_COUNT_V1: usize = 18;
+const TX_FIELD_COUNT_V2: usize = 19;
+
+impl Serialize for Transaction {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeTuple;
+
+        let field_count = if self.version >= 2 { TX_FIELD_COUNT_V2 } else { TX_FIELD_COUNT_V1 };
+        let mut tup = serializer.serialize_tuple(field_count)?;
+
+        tup.serialize_element(&self.version)?;
+        tup.serialize_element(&self.chain_id)?;
+        tup.serialize_element(&self.transaction_type)?;
+        tup.serialize_element(&self.inputs)?;
+        tup.serialize_element(&self.outputs)?;
+        tup.serialize_element(&self.fee)?;
+        tup.serialize_element(&self.signature)?;
+        tup.serialize_element(&self.memo)?;
+        tup.serialize_element(&self.identity_data)?;
+        tup.serialize_element(&self.wallet_data)?;
+        tup.serialize_element(&self.validator_data)?;
+        tup.serialize_element(&self.dao_proposal_data)?;
+        tup.serialize_element(&self.dao_vote_data)?;
+        tup.serialize_element(&self.dao_execution_data)?;
+        tup.serialize_element(&self.ubi_claim_data)?;
+        tup.serialize_element(&self.profit_declaration_data)?;
+        tup.serialize_element(&self.token_transfer_data)?;
+        if self.version >= 2 {
+            tup.serialize_element(&self.token_mint_data)?;
+        }
+        tup.serialize_element(&self.governance_config_data)?;
+
+        tup.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Transaction {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct TxVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for TxVisitor {
+            type Value = Transaction;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("Transaction")
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                use serde::de::Error;
+
+                macro_rules! next {
+                    ($name:literal) => {
+                        seq.next_element()?.ok_or_else(|| A::Error::missing_field($name))?
+                    };
+                }
+
+                let version: u32                                      = next!("version");
+                let chain_id: u8                                      = next!("chain_id");
+                let transaction_type: TransactionType                 = next!("transaction_type");
+                let inputs: Vec<TransactionInput>                     = next!("inputs");
+                let outputs: Vec<TransactionOutput>                   = next!("outputs");
+                let fee: u64                                          = next!("fee");
+                let signature: Signature                              = next!("signature");
+                let memo: Vec<u8>                                     = next!("memo");
+                let identity_data: Option<IdentityTransactionData>    = next!("identity_data");
+                let wallet_data: Option<WalletTransactionData>        = next!("wallet_data");
+                let validator_data: Option<ValidatorTransactionData>  = next!("validator_data");
+                let dao_proposal_data: Option<DaoProposalData>        = next!("dao_proposal_data");
+                let dao_vote_data: Option<DaoVoteData>                = next!("dao_vote_data");
+                let dao_execution_data: Option<DaoExecutionData>      = next!("dao_execution_data");
+                let ubi_claim_data: Option<UbiClaimData>              = next!("ubi_claim_data");
+                let profit_declaration_data: Option<ProfitDeclarationData> = next!("profit_declaration_data");
+                let token_transfer_data: Option<TokenTransferData>    = next!("token_transfer_data");
+
+                // V2 added token_mint_data between token_transfer_data and governance_config_data.
+                // V1 data (version < 2) does not contain it; skip reading and default to None.
+                let token_mint_data: Option<TokenMintData> = if version >= 2 {
+                    next!("token_mint_data")
+                } else {
+                    None
+                };
+
+                let governance_config_data: Option<GovernanceConfigUpdateData> = next!("governance_config_data");
+
+                Ok(Transaction {
+                    version,
+                    chain_id,
+                    transaction_type,
+                    inputs,
+                    outputs,
+                    fee,
+                    signature,
+                    memo,
+                    identity_data,
+                    wallet_data,
+                    validator_data,
+                    dao_proposal_data,
+                    dao_vote_data,
+                    dao_execution_data,
+                    ubi_claim_data,
+                    profit_declaration_data,
+                    token_transfer_data,
+                    token_mint_data,
+                    governance_config_data,
+                })
+            }
+        }
+
+        // Request V2 field count (the maximum). For V1 data the visitor reads
+        // one fewer element; the leftover slot is never consumed and bincode
+        // does not enforce that all requested slots are read.
+        deserializer.deserialize_tuple(TX_FIELD_COUNT_V2, TxVisitor)
+    }
 }
 
 /// DAO proposal transaction data (processed by lib-consensus package)
@@ -200,13 +327,31 @@ pub struct TokenTransferData {
     /// Token identifier (32-byte hash, or TokenId::NATIVE for native)
     pub token_id: [u8; 32],
     /// Sender address (32-byte public key hash)
+    /// - For SOV, this is the wallet_id
     pub from: [u8; 32],
     /// Recipient address (32-byte public key hash)
+    /// - For SOV, this is the wallet_id
     pub to: [u8; 32],
     /// Amount to transfer (in smallest token unit)
     pub amount: u128,
     /// Nonce for replay protection (must equal sender's current nonce)
     pub nonce: u64,
+}
+
+/// Token mint data (system-controlled issuance)
+///
+/// # Invariants
+/// - `amount` must be > 0
+/// - `to` must be a valid public key hash (key_id)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenMintData {
+    /// Token identifier (32-byte hash, or TokenId::NATIVE for native)
+    pub token_id: [u8; 32],
+    /// Recipient address (32-byte public key hash)
+    /// - For SOV, this is the wallet_id
+    pub to: [u8; 32],
+    /// Amount to mint (in smallest token unit)
+    pub amount: u128,
 }
 
 /// Governance config update data for Phase 3D
@@ -447,7 +592,7 @@ pub struct WalletPrivateData {
 pub struct ValidatorTransactionData {
     /// Identity ID of the validator (must be pre-registered)
     pub identity_id: String,
-    /// Staked amount in micro-ZHTP
+    /// Staked amount in micro-SOV
     pub stake: u64,
     /// Storage provided in bytes
     pub storage_provided: u64,
@@ -501,6 +646,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -530,6 +677,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -561,6 +710,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -608,6 +759,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -637,6 +790,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -683,6 +838,87 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
+            governance_config_data: None,
+        }
+    }
+
+    /// Create a new token transfer transaction (balance model).
+    pub fn new_token_transfer(
+        token_transfer_data: TokenTransferData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Self::new_token_transfer_with_chain_id(0x03, token_transfer_data, signature, memo)
+    }
+
+    /// Create a new token transfer transaction with an explicit chain id.
+    pub fn new_token_transfer_with_chain_id(
+        chain_id: u8,
+        token_transfer_data: TokenTransferData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 1,
+            chain_id,
+            transaction_type: TransactionType::TokenTransfer,
+            inputs: Vec::new(),  // Balance-model transfer has no UTXO inputs
+            outputs: Vec::new(), // Balance-model transfer has no UTXO outputs
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: Some(token_transfer_data),
+            token_mint_data: None,
+
+            governance_config_data: None,
+        }
+    }
+
+    /// Create a new token mint transaction (balance model).
+    pub fn new_token_mint(
+        token_mint_data: TokenMintData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Self::new_token_mint_with_chain_id(0x03, token_mint_data, signature, memo)
+    }
+
+    /// Create a new token mint transaction with an explicit chain id.
+    pub fn new_token_mint_with_chain_id(
+        chain_id: u8,
+        token_mint_data: TokenMintData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 2,
+            chain_id,
+            transaction_type: TransactionType::TokenMint,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: Some(token_mint_data),
             governance_config_data: None,
         }
     }
@@ -712,6 +948,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -743,6 +981,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -774,6 +1014,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -805,6 +1047,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -836,6 +1080,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -867,6 +1113,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -879,7 +1127,7 @@ impl Transaction {
     /// # Arguments
     /// * `claim_data` - UBI claim data with claimant identity, month index, and claim amount
     /// * `outputs` - Transaction outputs (typically sends UBI to recipient wallet)
-    /// * `fee` - Transaction fee in micro-ZHTP
+    /// * `fee` - Transaction fee in micro-SOV
     /// * `signature` - Authorization signature from claimant
     /// * `memo` - Optional transaction memo
     ///
@@ -910,6 +1158,8 @@ impl Transaction {
             ubi_claim_data: Some(claim_data),
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -923,7 +1173,7 @@ impl Transaction {
     /// * `declaration_data` - Profit declaration data with profit amount, tribute calculation, and entities
     /// * `inputs` - UTXOs from for-profit treasury (must cover tribute amount)
     /// * `outputs` - UTXOs to nonprofit treasury (tribute recipient)
-    /// * `fee` - Transaction fee in micro-ZHTP
+    /// * `fee` - Transaction fee in micro-SOV
     /// * `signature` - Authorization signature from for-profit entity
     /// * `memo` - Optional transaction memo
     ///
@@ -960,6 +1210,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: Some(declaration_data),
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: None,
         }
     }
@@ -973,7 +1225,7 @@ impl Transaction {
     ///
     /// # Arguments
     /// * `config_data` - Governance config update data with operation and target token
-    /// * `fee` - Transaction fee in micro-ZHTP
+    /// * `fee` - Transaction fee in micro-SOV
     /// * `signature` - Authorization signature from governance address
     /// * `memo` - Optional transaction memo
     ///
@@ -1008,6 +1260,8 @@ impl Transaction {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
+            
             governance_config_data: Some(config_data),
         }
     }
@@ -1034,7 +1288,7 @@ impl Transaction {
     }
 
     /// Check if this is a coinbase transaction
-    /// Note: ZHTP uses native token system, not Bitcoin-style coinbase
+    /// Note: SOV uses native token system, not Bitcoin-style coinbase
     pub fn is_coinbase(&self) -> bool {
         false
     }

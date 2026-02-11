@@ -331,7 +331,7 @@ Main configuration structure for the consensus system.
 pub struct ConsensusConfig {
     /// Type of consensus mechanism
     pub consensus_type: ConsensusType,
-    /// Minimum stake required to be a validator (in micro-ZHTP)
+    /// Minimum stake required to be a validator (in micro-SOV)
     pub min_stake: u64,
     /// Minimum storage required to be a validator (in bytes)
     pub min_storage: u64,
@@ -366,7 +366,7 @@ impl Default for ConsensusConfig {
     fn default() -> Self {
         Self {
             consensus_type: ConsensusType::Hybrid,
-            min_stake: 1000 * 1_000_000, // 1000 ZHTP tokens
+            min_stake: 1000 * 1_000_000, // 1000 SOV tokens
             min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
             max_validators: 100,
             block_time: 10, // 10 seconds
@@ -556,7 +556,7 @@ The type system enforces correct configuration:
 // Type-safe consensus configuration
 let config = ConsensusConfig {
     consensus_type: ConsensusType::Hybrid, // Enum ensures valid types
-    min_stake: 1000 * 1_000_000, // Clear units (micro-ZHTP)
+    min_stake: 1000 * 1_000_000, // Clear units (micro-SOV)
     block_time: 10, // Seconds
     byzantine_threshold: 1.0 / 3.0, // Mathematical precision
     ..Default::default()

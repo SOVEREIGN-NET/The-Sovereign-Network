@@ -34,7 +34,7 @@ pub struct ConsensusEngine {
 **`register_validator(identity: IdentityId, stake: u64, storage_capacity: u64, consensus_key: Vec<u8>, commission_rate: u8, is_genesis: bool) -> ConsensusResult<()>`**
 - Registers a new validator
 - `identity`: Validator identity
-- `stake`: Staked amount in micro-ZHTP
+- `stake`: Staked amount in micro-SOV
 - `storage_capacity`: Storage capacity in bytes
 - `consensus_key`: Validator's consensus public key
 - `commission_rate`: Commission rate (0-100)
@@ -913,7 +913,7 @@ async fn main() -> anyhow::Result<()> {
     // Create consensus configuration
     let config = ConsensusConfig {
         consensus_type: ConsensusType::Hybrid,
-        min_stake: 1000 * 1_000_000,           // 1000 ZHTP
+        min_stake: 1000 * 1_000_000,           // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 100,
         block_time: 10,
@@ -925,7 +925,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Register as validator
     let identity = IdentityId::from_bytes(b"validator_identity_32_bytes");
-    let stake_amount = 5000 * 1_000_000; // 5000 ZHTP
+    let stake_amount = 5000 * 1_000_000; // 5000 SOV
     let storage_capacity = 500 * 1024 * 1024 * 1024; // 500 GB
     let consensus_key = vec![0u8; 32]; // Public key
     let commission_rate = 5; // 5%
@@ -973,7 +973,7 @@ consensus.dao_engine_mut().cast_dao_vote(
 // Get validator statistics
 let stats = consensus.validator_manager().get_validator_stats();
 println!("Active validators: {}", stats.active_validators);
-println!("Total stake: {} ZHTP", stats.total_stake);
+println!("Total stake: {} SOV", stats.total_stake);
 
 // Check Byzantine threshold
 let threshold = consensus.validator_manager().get_byzantine_threshold();

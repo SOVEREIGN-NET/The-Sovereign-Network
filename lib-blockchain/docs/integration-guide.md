@@ -232,7 +232,7 @@ async fn integrate_ubi_system() -> Result<()> {
     
     // Create UBI distributions for verified citizens
     let citizens = vec![
-        (IdentityId::new([1u8; 32]), 1000), // 1000 ZHTP UBI
+        (IdentityId::new([1u8; 32]), 1000), // 1000 SOV UBI
         (IdentityId::new([2u8; 32]), 1000),
         (IdentityId::new([3u8; 32]), 1000),
     ];
@@ -269,7 +269,7 @@ async fn distribute_network_rewards() -> Result<()> {
         ([3u8; 32], 120, 250, 60),
     ];
     
-    let reward_pool = 10000; // Total reward pool in ZHTP
+    let reward_pool = 10000; // Total reward pool in SOV
     
     let reward_transactions = processor.distribute_infrastructure_rewards(
         &infrastructure_participants,
@@ -277,7 +277,7 @@ async fn distribute_network_rewards() -> Result<()> {
         &system_keypair,
     ).await?;
     
-    println!("Distributed {} ZHTP in infrastructure rewards", reward_pool);
+    println!("Distributed {} SOV in infrastructure rewards", reward_pool);
     
     // Process network fees
     let network_fees = 5000;
@@ -303,9 +303,9 @@ fn calculate_integrated_fees() -> Result<()> {
         Priority::Normal,
     );
     
-    println!("Network fee: {} ZHTP", network_fee);
-    println!("DAO fee: {} ZHTP", dao_fee);
-    println!("Total fee: {} ZHTP", total_fee);
+    println!("Network fee: {} SOV", network_fee);
+    println!("DAO fee: {} SOV", dao_fee);
+    println!("Total fee: {} SOV", total_fee);
     
     // Use fees with exemptions for system transactions
     let (sys_net, sys_dao, sys_total) = processor.calculate_transaction_fees_with_exemptions(
@@ -353,7 +353,7 @@ async fn setup_consensus_integration() -> Result<()> {
     
     coordinator.register_as_validator(
         identity,
-        10_000 * 100_000_000, // 10,000 ZHTP stake
+        10_000 * 100_000_000, // 10,000 SOV stake
         100 * 1024 * 1024 * 1024, // 100 GB storage capacity
         &validator_keypair,
         5, // 5% commission rate
@@ -536,8 +536,8 @@ async fn integrate_identity_registration() -> Result<()> {
         identity_type: "citizen".to_string(),
         did_document_hash: Hash::from_slice(&did_document_hash),
         created_at: current_timestamp(),
-        registration_fee: 1000, // 1000 ZHTP registration fee
-        dao_fee: 200,           // 200 ZHTP DAO fee
+        registration_fee: 1000, // 1000 SOV registration fee
+        dao_fee: 200,           // 200 SOV DAO fee
     };
     
     // Create and sign transaction

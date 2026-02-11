@@ -370,7 +370,7 @@ impl StorageHandler {
                 required_certifications: Vec::new(),
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 1000, // ZHTP tokens
+                max_total_cost: 1000, // SOV tokens
                 max_cost_per_gb_day: 10,
                 payment_schedule: PaymentSchedule::Daily,
                 max_price_volatility: 0.1,

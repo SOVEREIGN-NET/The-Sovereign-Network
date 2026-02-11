@@ -16,6 +16,7 @@ use tracing::{info, error};
 use anyhow::anyhow;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use crate::api::handlers::constants::SOV_WELCOME_BONUS;
 
 /// Handler for marketplace operations (buying, selling, transferring)
 pub struct MarketplaceHandler {
@@ -110,7 +111,7 @@ impl MarketplaceHandler {
         
         // Create blockchain transaction if there's a price
         let tx_hash = if request.price > 0 {
-            info!("Creating blockchain transaction for {} ZHTP payment", request.price);
+            info!("Creating blockchain transaction for {} SOV payment", request.price);
             
             let tx_hash = self.create_payment_transaction(
                 &request.buyer_identity_id,
@@ -228,7 +229,7 @@ impl MarketplaceHandler {
         let response_json = serde_json::to_vec(&response)
             .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
         
-        info!(" Content listed for {} ZHTP", request.price);
+        info!(" Content listed for {} SOV", request.price);
         
         Ok(ZhtpResponse::success_with_content_type(
             response_json,
@@ -268,7 +269,7 @@ impl MarketplaceHandler {
         drop(manager);
         
         // Create blockchain payment transaction
-        info!("Creating blockchain payment transaction for {} ZHTP", request.offered_price);
+        info!("Creating blockchain payment transaction for {} SOV", request.offered_price);
         let tx_hash = self.create_payment_transaction(
             &request.buyer_identity_id,
             &buyer_wallet,
@@ -345,7 +346,7 @@ impl MarketplaceHandler {
         amount: u64,
         content_hash: &Hash,
     ) -> Result<Hash, anyhow::Error> {
-        info!("Creating blockchain payment transaction: {} → {} for {} ZHTP", 
+        info!("Creating blockchain payment transaction: {} → {} for {} SOV", 
               from_wallet, to_wallet, amount);
         
         // Parse buyer identity ID
@@ -389,9 +390,9 @@ impl MarketplaceHandler {
             // Check if this UTXO belongs to buyer's wallet by comparing public keys
             if output.recipient.as_bytes() == wallet_pubkey {
                 // NOTE: Amount is hidden in Pedersen commitment
-                // For genesis UTXOs, we know the amount is 5000 ZHTP
+                // For genesis UTXOs, we know the amount is the welcome bonus
                 // In production, wallet would track amounts or decrypt notes
-                let utxo_amount = 5000u64; // Genesis wallet funding amount
+                let utxo_amount = SOV_WELCOME_BONUS; // Genesis wallet funding amount (atomic units)
                 
                 wallet_utxos.push((*utxo_hash, 0, utxo_amount));
                 info!("    Found UTXO: {}", hex::encode(utxo_hash.as_bytes()));
@@ -425,11 +426,11 @@ impl MarketplaceHandler {
         
         if total_selected < required_amount {
             drop(blockchain);
-            return Err(anyhow!("Insufficient funds: have {} ZHTP, need {} ZHTP (including {} ZHTP fee)", 
+            return Err(anyhow!("Insufficient funds: have {} SOV, need {} SOV (including {} SOV fee)", 
                               total_selected, required_amount, fee));
         }
         
-        info!(" Selected {} UTXOs totaling {} ZHTP (need {} ZHTP)", 
+        info!(" Selected {} UTXOs totaling {} SOV (need {} SOV)", 
               selected_utxos.len(), total_selected, required_amount);
         
         drop(blockchain);
@@ -493,7 +494,7 @@ impl MarketplaceHandler {
             },
         };
         outputs.push(payment_output);
-        info!("   → Payment output: {} ZHTP to seller", amount);
+        info!("   → Payment output: {} SOV to seller", amount);
         
         // Output 2: Change back to buyer (if any)
         let change_amount = total_selected.saturating_sub(required_amount);
@@ -514,7 +515,7 @@ impl MarketplaceHandler {
                 },
             };
             outputs.push(change_output);
-            info!("   → Change output: {} ZHTP back to buyer", change_amount);
+            info!("   → Change output: {} SOV back to buyer", change_amount);
         }
         
         // ========================================================================
@@ -583,7 +584,7 @@ pub struct TransferRequest {
 pub struct ListingRequest {
     /// Owner wallet ID (hex)
     pub owner_wallet: String,
-    /// Asking price in ZHTP
+    /// Asking price in SOV
     pub price: u64,
     /// Optional description for listing
     pub description: Option<String>,
@@ -594,7 +595,7 @@ pub struct ListingRequest {
 pub struct PurchaseRequest {
     /// Buyer wallet ID (hex)
     pub buyer_wallet: String,
-    /// Offered price in ZHTP
+    /// Offered price in SOV
     pub offered_price: u64,
     /// Buyer's identity ID (hex) - required for transaction signing
     pub buyer_identity_id: String,

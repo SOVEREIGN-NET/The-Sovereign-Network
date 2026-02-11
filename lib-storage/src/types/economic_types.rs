@@ -20,7 +20,7 @@ pub struct StorageContract {
     pub nodes: Vec<NodeId>,
     /// Contract duration (days)
     pub duration_days: u32,
-    /// Total cost (ZHTP tokens)
+    /// Total cost (SOV tokens)
     pub total_cost: u64,
     /// Payment schedule
     pub payment_schedule: Vec<Payment>,
@@ -58,7 +58,7 @@ pub enum ContractStatus {
 /// Payment in a storage contract
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Payment {
-    /// Payment amount (ZHTP tokens)
+    /// Payment amount (SOV tokens)
     pub amount: u64,
     /// Payment due timestamp
     pub due_at: u64,
@@ -90,7 +90,7 @@ pub enum PaymentType {
 pub struct PenaltyClause {
     /// Penalty type
     pub penalty_type: PenaltyType,
-    /// Penalty amount (ZHTP tokens)
+    /// Penalty amount (SOV tokens)
     pub penalty_amount: u64,
     /// Conditions for penalty
     pub conditions: String,
@@ -148,7 +148,7 @@ pub struct QualityRequirements {
 /// Budget constraints for storage contracts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetConstraints {
-    /// Maximum total cost (ZHTP tokens)
+    /// Maximum total cost (SOV tokens)
     pub max_total_cost: u64,
     /// Maximum cost per GB per day
     pub max_cost_per_gb_day: u64,
@@ -236,7 +236,7 @@ pub struct EconomicStorageRequest {
 pub struct EconomicQuote {
     /// Quote identifier
     pub quote_id: String,
-    /// Total cost estimate (ZHTP tokens)
+    /// Total cost estimate (SOV tokens)
     pub total_cost: u64,
     /// Cost per GB per day
     pub cost_per_gb_day: u64,
@@ -259,9 +259,9 @@ pub struct EconomicStats {
     pub total_contracts: u64,
     /// Total storage under economic management (bytes)
     pub total_storage: u64,
-    /// Total value locked in contracts (ZHTP tokens)
+    /// Total value locked in contracts (SOV tokens)
     pub total_value_locked: u64,
-    /// Average contract value (ZHTP tokens)
+    /// Average contract value (SOV tokens)
     pub average_contract_value: u64,
     /// Total penalties issued
     pub total_penalties: u64,
@@ -289,7 +289,7 @@ pub struct MarketPricing {
 pub struct RewardDistribution {
     /// Node receiving reward
     pub node_id: NodeId,
-    /// Reward amount (ZHTP tokens)
+    /// Reward amount (SOV tokens)
     pub amount: u64,
     /// Reward type
     pub reward_type: RewardType,
@@ -449,7 +449,7 @@ pub struct EconomicManagerConfig {
     pub escrow_release_threshold: f64,
     /// Maximum contract duration in days
     pub max_contract_duration: u32,
-    /// Minimum contract value (ZHTP tokens)
+    /// Minimum contract value (SOV tokens)
     pub min_contract_value: u64,
     /// Quality monitoring interval (seconds)
     pub quality_monitoring_interval: u64,

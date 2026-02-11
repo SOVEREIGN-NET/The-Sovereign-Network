@@ -24,7 +24,7 @@ impl TransactionBuilder {
         
         // Create a citizen identity for UBI distribution
         let citizen_id = IdentityId([1u8; 32]); // In production this would be a citizen
-        let ubi_amount = 1000; // 1000 ZHTP tokens as UBI
+        let ubi_amount = 1000; // 1000 SOV tokens as UBI
         
         // Create UBI distributions using economics package
         let ubi_distributions = create_ubi_distributions(&[(citizen_id, ubi_amount)])?;
@@ -42,7 +42,7 @@ impl TransactionBuilder {
     /// 
     /// # Arguments
     /// * `node_id` - The 32-byte unique identifier of the node receiving the reward
-    /// * `reward_amount` - The amount of ZHTP tokens to award
+    /// * `reward_amount` - The amount of SOV tokens to award
     /// * `environment` - The node's environment configuration
     pub async fn create_reward_transaction(
         node_id: [u8; 32],
@@ -97,7 +97,7 @@ impl TransactionBuilder {
 
         // Create memo with transaction details
         let memo = format!(
-            "System TX: {} {} ZHTP to {:?}", 
+            "System TX: {} {} SOV to {:?}", 
             economics_tx.tx_type.description(), 
             economics_tx.amount,
             economics_tx.to
@@ -122,7 +122,8 @@ impl TransactionBuilder {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         })
     }
 
@@ -156,7 +157,7 @@ impl TransactionBuilder {
             fee: economics_tx.total_fee,
             signature: temp_signature,
             memo: format!(
-                "System TX: {} {} ZHTP from {:?} to {:?}",
+                "System TX: {} {} SOV from {:?} to {:?}",
                 economics_tx.tx_type.description(),
                 economics_tx.amount,
                 economics_tx.from,
@@ -171,7 +172,8 @@ impl TransactionBuilder {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         };
 
         // Create signing hash using the exact same method as blockchain validation

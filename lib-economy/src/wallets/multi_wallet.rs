@@ -1,7 +1,7 @@
 //! Multi-wallet system for diverse economic activities
 //! 
 //! Implements a comprehensive multi-wallet architecture that supports different
-//! types of economic activities using the ZHTP identity system and economic incentives
+//! types of economic activities using the SOV identity system and economic incentives
 //! with seamless lib-blockchain and lib-identity integrations.
 
 use anyhow::Result;
@@ -24,7 +24,7 @@ pub type Address = Vec<u8>; // Simple address type
 /// Multi-wallet types for different economic activities
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WalletType {
-    /// Primary ZHTP wallet for general transactions
+    /// Primary SOV wallet for general transactions
     Primary,
     /// Specialized wallet for  rewards
     IspBypassRewards,
@@ -50,7 +50,7 @@ impl WalletType {
     /// Get wallet type description
     pub fn description(&self) -> &'static str {
         match self {
-            WalletType::Primary => "Primary ZHTP wallet for general use",
+            WalletType::Primary => "Primary SOV wallet for general use",
             WalletType::IspBypassRewards => " service rewards",
             WalletType::MeshDiscoveryRewards => "Mesh discovery and topology rewards",
             WalletType::Staking => "Staking and infrastructure investment",
@@ -339,7 +339,7 @@ impl MultiWalletManager {
         }
 
         info!(
-            " Transferred {} ZHTP from {:?} to {:?} (fee: {} ZHTP, tx: {})",
+            " Transferred {} SOV from {:?} to {:?} (fee: {} SOV, tx: {})",
             amount, from_wallet, to_wallet, fee, hex::encode(tx_id)
         );
 
@@ -433,7 +433,7 @@ impl MultiWalletManager {
                         }
 
                         info!(
-                            " Auto-consolidated {} ZHTP from {:?} to {:?}",
+                            " Auto-consolidated {} SOV from {:?} to {:?}",
                             consolidation_amount, wallet_type, rule.target_wallet
                         );
                     }
@@ -534,23 +534,23 @@ impl MultiWalletManager {
                 can_vote: false,
                 can_stake: true,
                 can_receive_rewards: true,
-                daily_transaction_limit: 10_000_000, // 10M ZHTP
-                requires_multisig_threshold: Some(1_000_000), // 1M ZHTP
+                daily_transaction_limit: 10_000_000, // 10M SOV
+                requires_multisig_threshold: Some(1_000_000), // 1M SOV
             },
             WalletType::Governance => WalletPermissions {
                 can_transfer_external: false,
                 can_vote: true,
                 can_stake: false,
                 can_receive_rewards: false,
-                daily_transaction_limit: 100_000, // 100K ZHTP
-                requires_multisig_threshold: Some(10_000), // 10K ZHTP
+                daily_transaction_limit: 100_000, // 100K SOV
+                requires_multisig_threshold: Some(10_000), // 10K SOV
             },
             WalletType::IspBypassRewards | WalletType::MeshDiscoveryRewards | WalletType::Infrastructure => WalletPermissions {
                 can_transfer_external: false,
                 can_vote: false,
                 can_stake: false,
                 can_receive_rewards: true,
-                daily_transaction_limit: 1_000_000, // 1M ZHTP
+                daily_transaction_limit: 1_000_000, // 1M SOV
                 requires_multisig_threshold: None,
             },
             WalletType::Staking => WalletPermissions {
@@ -558,8 +558,8 @@ impl MultiWalletManager {
                 can_vote: false,
                 can_stake: true,
                 can_receive_rewards: true,
-                daily_transaction_limit: 5_000_000, // 5M ZHTP
-                requires_multisig_threshold: Some(500_000), // 500K ZHTP
+                daily_transaction_limit: 5_000_000, // 5M SOV
+                requires_multisig_threshold: Some(500_000), // 500K SOV
             },
             _ => WalletPermissions::default_permissions(),
         }
@@ -569,14 +569,14 @@ impl MultiWalletManager {
         match wallet_type {
             WalletType::IspBypassRewards | WalletType::MeshDiscoveryRewards => ConsolidationRule {
                 enabled: true,
-                minimum_balance: 100_000, // 100K ZHTP
+                minimum_balance: 100_000, // 100K SOV
                 target_wallet: WalletType::Primary,
                 frequency_seconds: 86400, // Daily
                 last_consolidation: 0,
             },
             WalletType::Infrastructure => ConsolidationRule {
                 enabled: true,
-                minimum_balance: 500_000, // 500K ZHTP
+                minimum_balance: 500_000, // 500K SOV
                 target_wallet: WalletType::Staking,
                 frequency_seconds: 86400 * 7, // Weekly
                 last_consolidation: 0,
@@ -640,7 +640,7 @@ impl MultiWalletManager {
             .unwrap_or(&50); // Default 0.5%
 
         let fee = (amount * fee_rate) / 10_000; // Convert basis points to fee
-        Ok(fee.max(1)) // Minimum fee of 1 ZHTP
+        Ok(fee.max(1)) // Minimum fee of 1 SOV
     }
 
     async fn create_blockchain_transaction_record(
@@ -754,7 +754,7 @@ impl WalletPermissions {
             can_vote: false,
             can_stake: true,
             can_receive_rewards: true,
-            daily_transaction_limit: 1_000_000, // 1M ZHTP
+            daily_transaction_limit: 1_000_000, // 1M SOV
             requires_multisig_threshold: None,
         }
     }
@@ -775,9 +775,9 @@ impl ConsolidationRule {
 impl TransferCapabilities {
     fn new() -> Self {
         let mut daily_limits = HashMap::new();
-        daily_limits.insert(WalletType::Primary, 10_000_000); // 10M ZHTP
-        daily_limits.insert(WalletType::Governance, 100_000); // 100K ZHTP
-        daily_limits.insert(WalletType::Staking, 5_000_000); // 5M ZHTP
+        daily_limits.insert(WalletType::Primary, 10_000_000); // 10M SOV
+        daily_limits.insert(WalletType::Governance, 100_000); // 100K SOV
+        daily_limits.insert(WalletType::Staking, 5_000_000); // 5M SOV
 
         let mut fee_rates = HashMap::new();
         fee_rates.insert((WalletType::Primary, WalletType::Staking), 25); // 0.25%
@@ -785,8 +785,8 @@ impl TransferCapabilities {
         fee_rates.insert((WalletType::MeshDiscoveryRewards, WalletType::Primary), 10); // 0.1%
 
         let mut minimum_amounts = HashMap::new();
-        minimum_amounts.insert(WalletType::Primary, 1000); // 1000 ZHTP
-        minimum_amounts.insert(WalletType::Governance, 10000); // 10000 ZHTP
+        minimum_amounts.insert(WalletType::Primary, 1000); // 1000 SOV
+        minimum_amounts.insert(WalletType::Governance, 10000); // 10000 SOV
 
         let mut confirmations = HashMap::new();
         confirmations.insert(WalletType::Bridge, 6); // 6 confirmations for bridge

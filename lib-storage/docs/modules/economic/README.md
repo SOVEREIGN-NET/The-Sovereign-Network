@@ -39,8 +39,8 @@ The Economic Storage Layer builds sophisticated market mechanisms and incentive 
 ### Token Economics
 
 **Base Economics:**
-- **Currency**: ZHTP tokens for all transactions
-- **Base Rate**: 100 ZHTP tokens per GB per day
+- **Currency**: SOV tokens for all transactions
+- **Base Rate**: 100 SOV tokens per GB per day
 - **Quality Premium**: +10% for quality guarantees
 - **Network Fees**: +5% for protocol maintenance  
 - **Escrow Fees**: +2% for payment security
@@ -295,7 +295,7 @@ pub enum PenaltyType {
 ```rust
 pub struct PenaltyClause {
     pub penalty_type: PenaltyType,
-    pub penalty_amount: u64,          // Penalty in ZHTP tokens
+    pub penalty_amount: u64,          // Penalty in SOV tokens
     pub conditions: String,           // Conditions triggering penalty
     pub grace_period: u64,            // Grace period in seconds
     pub max_applications: u32,        // Maximum penalties per day
@@ -415,8 +415,8 @@ The Economic Storage Layer builds sophisticated market mechanisms and incentive 
 ### Token Economics
 
 **Base Economics:**
-- **Currency**: ZHTP tokens for all transactions
-- **Base Rate**: 100 ZHTP tokens per GB per day
+- **Currency**: SOV tokens for all transactions
+- **Base Rate**: 100 SOV tokens per GB per day
 - **Quality Premium**: +10% for quality guarantees
 - **Network Fees**: +5% for protocol maintenance  
 - **Escrow Fees**: +2% for payment security
@@ -671,7 +671,7 @@ pub enum PenaltyType {
 ```rust
 pub struct PenaltyClause {
     pub penalty_type: PenaltyType,
-    pub penalty_amount: u64,          // Penalty in ZHTP tokens
+    pub penalty_amount: u64,          // Penalty in SOV tokens
     pub conditions: String,           // Conditions triggering penalty
     pub grace_period: u64,            // Grace period in seconds
     pub max_applications: u32,        // Maximum penalties per day

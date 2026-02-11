@@ -209,28 +209,24 @@ pub enum TokenClass {
     DaoNp,
     /// DAO-issued token for for-profit DAOs
     DaoFp,
-    /// ZHTP utility token
-    ZHTP,
 }
 
 impl TokenClass {
     /// String representation of the token class
     pub fn as_str(&self) -> &'static str {
         match self {
-            TokenClass::SOV => "sov",
             TokenClass::DaoNp => "dao_np",
             TokenClass::DaoFp => "dao_fp",
-            TokenClass::ZHTP => "zhtp",
+            TokenClass::SOV => "sov",
         }
     }
 
     /// Parse a token class from a string (case-insensitive)
     pub fn from_str(value: &str) -> Option<Self> {
         match value.to_ascii_lowercase().as_str() {
-            "sov" => Some(TokenClass::SOV),
             "dao_np" | "dao-np" => Some(TokenClass::DaoNp),
             "dao_fp" | "dao-fp" => Some(TokenClass::DaoFp),
-            "zhtp" => Some(TokenClass::ZHTP),
+            "sov" => Some(TokenClass::SOV),
             _ => None,
         }
     }
@@ -571,7 +567,7 @@ mod tests {
     fn token_class_round_trip() {
         assert_eq!(TokenClass::from_str("dao_np"), Some(TokenClass::DaoNp));
         assert_eq!(TokenClass::from_str("DAO-FP"), Some(TokenClass::DaoFp));
-        assert_eq!(TokenClass::from_str("zhtp"), Some(TokenClass::ZHTP));
+        assert_eq!(TokenClass::from_str("sov"), Some(TokenClass::SOV));
         assert_eq!(TokenClass::SOV.as_str(), "sov");
         assert!(TokenClass::from_str("invalid").is_none());
     }
@@ -864,7 +860,7 @@ mod tests {
         ).unwrap();
         assert_eq!(bitcoin_like.target_block_time_secs(), 600);
 
-        // ZHTP-like: 1 day / 8640 blocks = 10 seconds
+        // SOV-like: 1 day / 8640 blocks = 10 seconds
         let zhtp_like = DifficultyParameterUpdateData::new(
             24 * 60 * 60,
             8640,

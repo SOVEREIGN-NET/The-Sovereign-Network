@@ -677,7 +677,7 @@ impl ZhtpValidator {
     fn calculate_minimum_fee(&self, request: &ZhtpRequest) -> f64 {
         let request_value = crate::economics::utils::calculate_request_value(&request.method, &request.body, &request.uri);
         let base_fee = request_value as f64 * 0.02; // 2% DAO fee
-        base_fee.max(5.0) // Minimum 5 ZHTP tokens
+        base_fee.max(5.0) // Minimum 5 SOV tokens
     }
 
     /// Calculate minimum DAO fee based on request complexity

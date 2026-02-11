@@ -565,13 +565,13 @@ impl InteractiveShell {
         }
         
         println!("   💵 UBI System: Active");
-        println!("   Daily UBI Amount: 50 ZHTP tokens");
+        println!("   Daily UBI Amount: 50 SOV tokens");
         
         // Calculate estimated UBI pool based on network activity
         match lib_network::get_active_peer_count().await {
             Ok(peer_count) => {
                 let estimated_pool = peer_count as u64 * 50 * 30; // peers * daily_ubi * 30 days
-                println!("   🏦 Estimated Monthly UBI Pool: {} ZHTP tokens", estimated_pool);
+                println!("   🏦 Estimated Monthly UBI Pool: {} SOV tokens", estimated_pool);
                 println!("   Active Citizens: {} (estimated from peer count)", peer_count);
             }
             Err(_) => {
@@ -584,7 +584,7 @@ impl InteractiveShell {
         match lib_network::get_mesh_status().await {
             Ok(mesh_status) => {
                 let mesh_rewards = mesh_status.active_peers as f64 * 10.0; // 10 tokens per peer for mesh participation
-                println!("   Mesh Participation Rewards: {:.0} ZHTP tokens/day", mesh_rewards);
+                println!("   Mesh Participation Rewards: {:.0} SOV tokens/day", mesh_rewards);
                 println!("   Network Health Score: {:.1}%", mesh_status.connectivity_percentage);
             }
             Err(_) => {
@@ -604,7 +604,7 @@ impl InteractiveShell {
         if args.is_empty() {
             // Show general UBI status
             println!("   Your UBI Status: Eligible");
-            println!("   💵 Daily Payment: 50 ZHTP tokens");
+            println!("   💵 Daily Payment: 50 SOV tokens");
             
             // Calculate total received based on system uptime (simplified)
             let uptime_days = std::time::SystemTime::now()
@@ -612,7 +612,7 @@ impl InteractiveShell {
                 .unwrap_or_default()
                 .as_secs() / 86400; // Convert to days
             let estimated_total = uptime_days.min(365) * 50; // Cap at 1 year
-            println!("    Estimated Total Received: {} ZHTP tokens", estimated_total);
+            println!("    Estimated Total Received: {} SOV tokens", estimated_total);
             
             // Show next payment time
             let current_time = chrono::Utc::now();
@@ -624,7 +624,7 @@ impl InteractiveShell {
                 Ok(peer_count) => {
                     println!("   Global UBI Recipients: {} active citizens", peer_count);
                     let daily_distribution = peer_count as u64 * 50;
-                    println!("    Daily Global Distribution: {} ZHTP tokens", daily_distribution);
+                    println!("    Daily Global Distribution: {} SOV tokens", daily_distribution);
                 }
                 Err(_) => {
                     println!("   Global UBI Recipients: Status unavailable");
@@ -642,7 +642,7 @@ impl InteractiveShell {
             let citizen_id = args[0];
             println!("   Citizen ID: {}", citizen_id);
             println!("   Status: Active citizen");
-            println!("   💵 Daily UBI: 50 ZHTP tokens");
+            println!("   💵 Daily UBI: 50 SOV tokens");
             println!("    Total Earned: Calculated based on participation");
             println!("    DAO Voting Power: Active");
             println!("   Mesh Contribution: Network routing and data sharing");
@@ -708,7 +708,7 @@ impl InteractiveShell {
                         
                         // Storage incentives
                         let daily_storage_reward = mesh_status.active_peers as f64 * 5.0; // 5 tokens per contributing peer
-                        println!("     • Daily Storage Rewards: {:.0} ZHTP tokens", daily_storage_reward);
+                        println!("     • Daily Storage Rewards: {:.0} SOV tokens", daily_storage_reward);
                     }
                     Err(_) => {
                         println!("   Network Storage: Status unavailable");

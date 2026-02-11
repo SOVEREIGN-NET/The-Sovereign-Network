@@ -20,7 +20,7 @@ ZHTP is a network node that orchestrates a complete internet replacement system.
 
 - **Complete ISP Replacement** - Pure mesh networking with Bluetooth LE, WiFi Direct, and LoRaWAN
 -  **Zero-Knowledge Privacy** - All communications protected with ZK proofs and post-quantum cryptography  
-- **Universal Basic Income** - 33 ZHTP daily, 1000 ZHTP monthly for all verified citizens
+- **Universal Basic Income** - 33 SOV daily, 1000 SOV monthly for all verified citizens
 -  **Decentralized Governance** - DAO-based decision making with liquid democracy
 -  **Web4 Protocol Stack** - Next-generation internet protocols
 -  **Real-time Monitoring** - Comprehensive system health and performance metrics
@@ -319,8 +319,8 @@ zero_knowledge = true
 [economy]
 ubi_enabled = true
 dao_participation = true
-daily_ubi_amount = 33000000000000000000    # 33 ZHTP tokens
-monthly_ubi_amount = 1000000000000000000000 # 1000 ZHTP tokens
+daily_ubi_amount = 33000000000000000000    # 33 SOV tokens
+monthly_ubi_amount = 1000000000000000000000 # 1000 SOV tokens
 
 [monitoring]
 enable_dashboard = true
@@ -384,7 +384,7 @@ For complete API documentation, visit: `http://127.0.0.1:9333/docs` when the ser
 Access the live monitoring dashboard at `http://127.0.0.1:9334` when the node is running:
 
 - **System Metrics** - CPU, memory, network usage
-- **Component Health** - Status of all 9 ZHTP libraries
+- **Component Health** - Status of all 9 SOV libraries
 - **Network Statistics** - Mesh network connectivity and performance
 - **Economic Metrics** - UBI distribution, transaction volumes
 - **Security Status** - Cryptographic operations, threat detection

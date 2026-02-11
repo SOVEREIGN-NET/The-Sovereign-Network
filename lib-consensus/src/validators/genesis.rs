@@ -16,7 +16,7 @@ use lib_identity::IdentityId;
 pub struct GenesisValidator {
     /// Validator identity ID (DID hash) - should be USER identity, not node identity
     pub identity_id: Hash,
-    /// Initial stake amount (in micro-ZHTP)
+    /// Initial stake amount (in micro-SOV)
     pub stake: u64,
     /// Storage capacity provided (in bytes)
     pub storage_provided: u64,

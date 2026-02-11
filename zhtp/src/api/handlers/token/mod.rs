@@ -290,140 +290,157 @@ impl TokenHandler {
     /// 2. If not found, try identity_registry[to] - DID key_id lookup
     /// 3. Fail if neither found or ambiguous
     async fn handle_transfer_token(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let transfer_req: TransferTokenRequest = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+        tracing::info!("[TRANSFER] START handle_transfer_token, body_len={}", request.body.len());
 
-        let (tx, call) = match self.decode_signed_tx(&transfer_req.signed_tx) {
-            Ok(parsed) => parsed,
+        let transfer_req: TransferTokenRequest = match serde_json::from_slice(&request.body) {
+            Ok(r) => r,
             Err(e) => {
+                tracing::error!("[TRANSFER] FAIL: invalid JSON request: {}", e);
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid request: {}", e),
+                ));
+            }
+        };
+
+        tracing::info!("[TRANSFER] signed_tx hex len={}", transfer_req.signed_tx.len());
+
+        let tx = match self.decode_signed_tx_raw(&transfer_req.signed_tx) {
+            Ok(parsed) => {
+                tracing::info!(
+                    "[TRANSFER] decoded tx OK: type={:?}, version={}, chain_id={}",
+                    parsed.transaction_type, parsed.version, parsed.chain_id
+                );
+                parsed
+            }
+            Err(e) => {
+                tracing::error!("[TRANSFER] FAIL: decode_signed_tx_raw: {}", e);
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
                     e.to_string(),
                 ));
             }
         };
-        if let Err(e) = self.ensure_token_call(&call, "transfer") {
-            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
-        }
 
-        // Must match TransferParams from lib-client
-        #[derive(serde::Deserialize)]
-        struct TransferParams {
-            token_id: [u8; 32],
-            to: Vec<u8>,  // Can be wallet_id (32 bytes), key_id (32 bytes), or full public key (2592 bytes)
-            amount: u64,
-        }
-        let params: TransferParams = match bincode::deserialize(&call.params) {
-            Ok(p) => p,
-            Err(e) => {
+        // Accept both TokenTransfer (with token_transfer_data) and ContractExecution
+        // (with Token/transfer contract call in memo). The mobile client currently sends
+        // ContractExecution via build_contract_transaction(), while the proper path uses
+        // TokenTransfer via build_transfer_tx().
+        let (recipient_hex, token_id_hex, amount) = if tx.transaction_type == lib_blockchain::TransactionType::TokenTransfer {
+            // Native TokenTransfer path
+            match tx.token_transfer_data.as_ref() {
+                Some(d) => (hex::encode(d.to), hex::encode(d.token_id), d.amount),
+                None => {
+                    tracing::error!("[TRANSFER] FAIL: TokenTransfer but token_transfer_data is None");
+                    return Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        "TokenTransfer missing data".to_string(),
+                    ));
+                }
+            }
+        } else if tx.transaction_type == lib_blockchain::TransactionType::ContractExecution {
+            // ContractExecution path (mobile client sends this)
+            tracing::info!("[TRANSFER] ContractExecution path - extracting from memo");
+            let call = match self.extract_contract_call(&tx) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("[TRANSFER] FAIL: extract_contract_call: {}", e);
+                    return Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        e.to_string(),
+                    ));
+                }
+            };
+            if let Err(e) = self.ensure_token_call(&call, "transfer") {
+                tracing::error!("[TRANSFER] FAIL: ensure_token_call: {}", e);
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Invalid transfer params: {}", e),
+                    e.to_string(),
                 ));
             }
-        };
-        let TransferParams { token_id, to, amount } = params;
-
-        // Resolve recipient to public key
-        // Supports: wallet_id (32 bytes), key_id/DID (32 bytes), or full public key (2592 bytes)
-        let (resolved_to, resolution_path) = if to.len() == 32 {
-            let id_hex = hex::encode(&to);
-            let did_key = format!("did:zhtp:{}", id_hex);  // Full DID for identity_registry lookup
-            let blockchain = self.blockchain.read().await;
-
-            // Step 1: Try wallet_registry first (keyed by wallet_id hex)
-            if let Some(wallet_data) = blockchain.wallet_registry.get(&id_hex) {
-                info!("[TRANSFER] Resolved via wallet_registry: {} -> {} bytes pubkey",
-                    &id_hex[..16], wallet_data.public_key.len());
-                (wallet_data.public_key.clone(), "wallet_registry")
+            // Extract TransferParams from contract call params
+            // TransferParams mirrors lib-client's TransferParams for bincode compat
+            #[derive(serde::Deserialize)]
+            struct ContractTransferParams {
+                token_id: [u8; 32],
+                to: Vec<u8>,
+                amount: u64,
             }
-            // Step 2: Try identity_registry (keyed by full DID: "did:zhtp:xxx")
-            else if let Some(identity_data) = blockchain.identity_registry.get(&did_key) {
-                // Use the identity's public key directly for the transfer
-                if identity_data.public_key.is_empty() {
+            let params: ContractTransferParams = match bincode::deserialize(&call.params) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!("[TRANSFER] FAIL: deserialize TransferParams: {}", e);
                     return Ok(create_error_response(
                         ZhtpStatus::BadRequest,
-                        format!("Identity {} has no public key registered", &id_hex[..16]),
+                        format!("Invalid transfer params: {}", e),
                     ));
                 }
-                info!("[TRANSFER] Resolved via identity_registry (DID): {} -> {} bytes pubkey",
-                    &did_key, identity_data.public_key.len());
-                (identity_data.public_key.clone(), "identity_registry")
-            }
-            // Step 3: Neither found - fail hard
-            else {
-                warn!("[TRANSFER] Resolution failed: {} not found in wallet_registry or identity_registry", &id_hex[..16]);
-                return Ok(create_error_response(
-                    ZhtpStatus::NotFound,
-                    format!("Recipient not found: {} (checked wallet_registry and identity_registry)", id_hex),
-                ));
-            }
-        } else if to.len() >= 2000 {
-            // This is already a full public key
-            info!("[TRANSFER] Using direct public key ({} bytes)", to.len());
-            (to.clone(), "direct_pubkey")
+            };
+            (hex::encode(params.to), hex::encode(params.token_id), params.amount as u128)
         } else {
+            tracing::error!(
+                "[TRANSFER] FAIL: wrong tx type: {:?} (expected TokenTransfer or ContractExecution)",
+                tx.transaction_type
+            );
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                format!("Invalid 'to' field: expected 32 bytes (wallet_id/key_id) or ~2592 bytes (public key), got {} bytes", to.len()),
+                format!("Token transfer requires TransactionType::TokenTransfer or ContractExecution, got {:?}", tx.transaction_type),
             ));
         };
+        tracing::info!(
+            "[TRANSFER] to={}, token_id={}, amount={}",
+            &recipient_hex[..16.min(recipient_hex.len())],
+            &token_id_hex[..16.min(token_id_hex.len())],
+            amount
+        );
 
-        // Execute the transfer directly on the token contract
-        // (The mempool/block processing will also validate, but we do it here for immediate feedback)
-        {
-            let mut blockchain = self.blockchain.write().await;
+        let is_sov = token_id_hex == hex::encode(lib_blockchain::contracts::utils::generate_lib_token_id())
+            || token_id_hex == "0000000000000000000000000000000000000000000000000000000000000000";
 
-            // Get sender from transaction signature
-            let sender_pk = &tx.signature.public_key;
+        // Recipient validation: check wallet_registry, identity_registry, and
+        // identity_manager. Log findings but don't reject — the token contract
+        // will create a balance entry for any valid public key, similar to how
+        // Bitcoin allows sends to any address.
+        let blockchain = self.blockchain.read().await;
+        let in_wallet = blockchain.wallet_registry.contains_key(&recipient_hex);
+        let in_identity = if is_sov {
+            false
+        } else {
+            let did_key = format!("did:zhtp:{}", recipient_hex);
+            blockchain.identity_registry.contains_key(&did_key)
+        };
+        drop(blockchain);
 
-            // Build recipient PublicKey from resolved bytes
-            let recipient_pk = PublicKey::new(resolved_to.clone());
+        tracing::info!(
+            "[TRANSFER] recipient check: wallet_registry={}, identity_registry={} (did={})",
+            in_wallet, in_identity, if is_sov { "<wallet_id>" } else { "did:zhtp:..." }
+        );
 
-            // Execute transfer on token contract
-            if let Some(token_contract) = blockchain.token_contracts.get_mut(&token_id) {
-                // Check sender balance
-                let sender_balance = token_contract.balance_of(sender_pk);
-                if sender_balance < amount {
-                    return Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        format!("Insufficient balance: have {}, need {}", sender_balance, amount),
-                    ));
-                }
-
-                // Debit sender
-                token_contract.balances.insert(sender_pk.clone(), sender_balance - amount);
-
-                // Credit recipient
-                let recipient_balance = token_contract.balance_of(&recipient_pk);
-                token_contract.balances.insert(recipient_pk.clone(), recipient_balance + amount);
-
-                info!("Token transfer executed: {} {} from {} to {}",
-                    amount, token_contract.symbol,
-                    hex::encode(&sender_pk.key_id[..8]),
-                    hex::encode(&recipient_pk.key_id[..8]));
-            } else {
-                return Ok(create_error_response(
-                    ZhtpStatus::NotFound,
-                    format!("Token not found: {}", hex::encode(token_id)),
-                ));
-            }
+        if !in_wallet && !in_identity {
+            tracing::warn!(
+                "[TRANSFER] recipient not in wallet_registry or identity_registry: {} — proceeding anyway",
+                &recipient_hex[..16.min(recipient_hex.len())]
+            );
         }
 
-        // Also submit to mempool for block inclusion
         if let Err(e) = self.submit_to_mempool(tx).await {
-            warn!("Failed to submit transfer to mempool (transfer already executed): {}", e);
+            tracing::error!("[TRANSFER] FAIL: mempool submission: {}", e);
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                e.to_string(),
+            ));
         }
 
-        info!("[TRANSFER] Completed: {} tokens, resolution_path={}", hex::encode(token_id), resolution_path);
-
+        tracing::info!(
+            "[TRANSFER] SUCCESS: submitted to mempool, to={}, amount={}",
+            &recipient_hex[..16.min(recipient_hex.len())], amount
+        );
         create_json_response(json!({
             "success": true,
-            "token_id": hex::encode(token_id),
-            "to": if to.len() == 32 { hex::encode(&to) } else { format!("0x{}", hex::encode(&to[..32.min(to.len())])) },
+            "token_id": token_id_hex,
+            "to": recipient_hex,
             "amount": amount,
-            "status": "completed",
-            "resolution_path": resolution_path
+            "tx_status": "submitted_to_mempool"
         }))
     }
 
@@ -529,19 +546,31 @@ impl TokenHandler {
 
         let token_id_array: [u8; 32] = token_id.try_into().unwrap();
 
-        let pubkey = self.identity_to_pubkey(address)?;
-        let target_key_id = pubkey.key_id;
+        let is_sov = token_id_array == [0u8; 32]
+            || token_id_array == lib_blockchain::contracts::utils::generate_lib_token_id();
 
         let blockchain = self.blockchain.read().await;
 
         let token = blockchain.get_token_contract(&token_id_array)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
-        // Look up balance by key_id (not full PublicKey comparison)
-        let balance = token.balances.iter()
-            .find(|(pk, _)| pk.key_id == target_key_id)
-            .map(|(_, bal)| *bal)
-            .unwrap_or(0);
+        let balance = if is_sov {
+            let wallet_id = self.resolve_wallet_id_for_sov(address, &blockchain)
+                .ok_or_else(|| anyhow::anyhow!("SOV balance lookup requires a valid wallet_id"))?;
+            let wallet_key = PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: wallet_id,
+            };
+            token.balance_of(&wallet_key)
+        } else {
+            let pubkey = self.identity_to_pubkey(address)?;
+            let target_key_id = pubkey.key_id;
+            token.balances.iter()
+                .find(|(pk, _)| pk.key_id == target_key_id)
+                .map(|(_, bal)| *bal)
+                .unwrap_or(0)
+        };
 
         create_json_response(json!({
             "token_id": token_id_hex,
@@ -607,9 +636,17 @@ impl TokenHandler {
 
     /// GET /api/v1/token/balances/{address} - Get all token balances for an address
     async fn handle_get_balances_for_address(&self, address: &str) -> Result<ZhtpResponse> {
-        let pubkey = self.identity_to_pubkey(address)?;
-        let target_key_id = pubkey.key_id;
+        use lib_blockchain::contracts::utils::generate_lib_token_id;
+
         let blockchain = self.blockchain.read().await;
+        let target_key_id = if let Some(wallet) = blockchain.wallet_registry.get(address) {
+            let wallet_pk = PublicKey::new(wallet.public_key.clone());
+            wallet_pk.key_id
+        } else {
+            let pubkey = self.identity_to_pubkey(address)?;
+            pubkey.key_id
+        };
+        let sov_wallet_id = self.resolve_wallet_id_for_sov(address, &blockchain);
 
         debug!(
             "token/balances: address={}, target_key_id={}, token_count={}",
@@ -618,16 +655,29 @@ impl TokenHandler {
             blockchain.token_contracts.len()
         );
 
+        let native_token_id = generate_lib_token_id();
+        let native_token_id_hex = hex::encode(native_token_id);
         let mut balances = Vec::new();
 
+        // Collect balances from all token contracts
         for (token_id, token) in &blockchain.token_contracts {
-            // Look up balance by key_id (not full PublicKey comparison)
-            // This handles the case where the stored PublicKey has full keys
-            // but the query only has key_id
-            let balance = token.balances.iter()
-                .find(|(pk, _)| pk.key_id == target_key_id)
-                .map(|(_, bal)| *bal)
-                .unwrap_or(0);
+            let balance = if *token_id == native_token_id {
+                if let Some(wallet_id) = sov_wallet_id {
+                    let wallet_key = PublicKey {
+                        dilithium_pk: vec![],
+                        kyber_pk: vec![],
+                        key_id: wallet_id,
+                    };
+                    token.balance_of(&wallet_key)
+                } else {
+                    0
+                }
+            } else {
+                token.balances.iter()
+                    .find(|(pk, _)| pk.key_id == target_key_id)
+                    .map(|(_, bal)| *bal)
+                    .unwrap_or(0)
+            };
 
             debug!(
                 "token/balances: token={} ({}) balance_count={} found_balance={}",
@@ -648,6 +698,27 @@ impl TokenHandler {
                     "is_creator": is_creator
                 }));
             }
+        }
+
+        // Always include native SOV entry (even if balance is 0) so clients get the token_id.
+        let has_sov = balances.iter().any(|b| {
+            b.get("token_id").and_then(|v| v.as_str()) == Some(&native_token_id_hex)
+        });
+        if !has_sov {
+            let (name, symbol, decimals) = blockchain
+                .token_contracts
+                .get(&native_token_id)
+                .map(|t| (t.name.clone(), t.symbol.clone(), t.decimals))
+                .unwrap_or_else(|| ("Sovereign".to_string(), "SOV".to_string(), 8));
+
+            balances.insert(0, json!({
+                "token_id": native_token_id_hex,
+                "name": name,
+                "symbol": symbol,
+                "decimals": decimals,
+                "balance": 0,
+                "is_creator": false
+            }));
         }
 
         create_json_response(json!({
@@ -689,6 +760,47 @@ impl TokenHandler {
         Ok(PublicKey::new(key_bytes))
     }
 
+    /// Resolve a wallet_id for SOV balance lookups/transfers.
+    ///
+    /// Accepts:
+    /// - wallet_id hex (preferred)
+    /// - DID/identity hex (maps to Primary wallet if found)
+    fn resolve_wallet_id_for_sov(
+        &self,
+        address: &str,
+        blockchain: &Blockchain,
+    ) -> Option<[u8; 32]> {
+        let hex_part = if address.starts_with("did:zhtp:") {
+            address.strip_prefix("did:zhtp:").unwrap_or(address)
+        } else if address.starts_with("0x") {
+            &address[2..]
+        } else {
+            address
+        };
+
+        let bytes = hex::decode(hex_part).ok()?;
+        if bytes.len() != 32 {
+            return None;
+        }
+
+        // If this is already a wallet_id, accept it.
+        let wallet_id_hex = hex::encode(&bytes);
+        if blockchain.wallet_registry.contains_key(&wallet_id_hex) {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            return Some(arr);
+        }
+
+        // Otherwise treat it as identity_id and try to find the Primary wallet.
+        let identity_hash = lib_blockchain::Hash::from_slice(&bytes);
+        let primary_wallet = blockchain.wallet_registry.values().find(|wallet| {
+            wallet.owner_identity_id.as_ref() == Some(&identity_hash)
+                && wallet.wallet_type == "Primary"
+        })?;
+        Some(primary_wallet.wallet_id.as_array())
+    }
+
+
     fn decode_signed_tx(&self, signed_tx: &str) -> Result<(Transaction, ContractCall)> {
         tracing::warn!("[FLOW] decode_signed_tx: len={}", signed_tx.len());
         let tx_bytes = hex::decode(signed_tx)
@@ -701,6 +813,15 @@ impl TokenHandler {
 
         let call = self.extract_contract_call(&tx)?;
         Ok((tx, call))
+    }
+
+    fn decode_signed_tx_raw(&self, signed_tx: &str) -> Result<Transaction> {
+        tracing::warn!("[FLOW] decode_signed_tx_raw: len={}", signed_tx.len());
+        let tx_bytes = hex::decode(signed_tx)
+            .map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
+        let tx: Transaction = bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
+        Ok(tx)
     }
 
     fn extract_contract_call(&self, tx: &Transaction) -> Result<ContractCall> {
@@ -863,6 +984,7 @@ impl Default for TokenHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::types::keys::PublicKey;
 
     // Helper to parse identity without needing full handler
     fn parse_identity(identity: &str) -> Result<PublicKey> {

@@ -113,7 +113,7 @@ impl ValidatorManager {
         self.validators.insert(identity.clone(), validator);
 
         tracing::info!(
-            "Registered new validator {:?} with {} ZHTP stake and {} bytes storage",
+            "Registered new validator {:?} with {} SOV stake and {} bytes storage",
             identity,
             stake,
             storage_provided

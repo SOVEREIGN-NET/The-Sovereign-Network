@@ -46,10 +46,10 @@ Development: 30% of DAO fees
 
 ### Example
 ```
-DAO fee received: 1000 ZHTP
-    → UBI allocated:    400 ZHTP
-    → Welfare allocated: 300 ZHTP
-    → Development:      300 ZHTP
+DAO fee received: 1000 SOV
+    → UBI allocated:    400 SOV
+    → Welfare allocated: 300 SOV
+    → Development:      300 SOV
 ```
 
 ## Core Operations
@@ -58,7 +58,7 @@ DAO fee received: 1000 ZHTP
 
 ```rust
 let mut treasury = DaoTreasury::new();
-treasury.receive_dao_fee(200)?; // Receive 200 ZHTP from transaction
+treasury.receive_dao_fee(200)?; // Receive 200 SOV from transaction
 treasury.allocate_funds()?;      // Allocate to UBI/welfare/dev
 ```
 
@@ -68,7 +68,7 @@ treasury.allocate_funds()?;      // Allocate to UBI/welfare/dev
 use lib_economy::treasury_economics::calculate_optimal_ubi_per_citizen;
 
 let total_citizens = 10000;
-let target_monthly_ubi = 1000; // Target 1000 ZHTP per citizen
+let target_monthly_ubi = 1000; // Target 1000 SOV per citizen
 
 let (actual_ubi, can_meet_target) = calculate_optimal_ubi_per_citizen(
     &treasury,
@@ -77,9 +77,9 @@ let (actual_ubi, can_meet_target) = calculate_optimal_ubi_per_citizen(
 );
 
 if can_meet_target {
-    println!(" Full target UBI: {} ZHTP", actual_ubi);
+    println!(" Full target UBI: {} SOV", actual_ubi);
 } else {
-    println!("⚠ Reduced UBI: {} ZHTP (insufficient funds)", actual_ubi);
+    println!("⚠ Reduced UBI: {} SOV (insufficient funds)", actual_ubi);
 }
 ```
 
@@ -103,7 +103,7 @@ println!("Welfare efficiency: {:.1}%", welfare_efficiency * 100.0);
 ```rust
 use lib_economy::treasury_economics::calculate_treasury_sustainability;
 
-let monthly_burn = 100000; // 100k ZHTP per month expected
+let monthly_burn = 100000; // 100k SOV per month expected
 let metrics = calculate_treasury_sustainability(&treasury, monthly_burn);
 
 println!("Sustainability: {}", serde_json::to_string_pretty(&metrics)?);
@@ -187,14 +187,14 @@ fn monthly_treasury_cycle() -> anyhow::Result<()> {
         treasury.receive_dao_fee(20)?;
     }
     treasury.allocate_funds()?;
-    println!("Week 1: {} ZHTP collected", treasury.total_dao_fees_collected);
+    println!("Week 1: {} SOV collected", treasury.total_dao_fees_collected);
     
     // Week 2: More fees
     for _ in 0..750 {
         treasury.receive_dao_fee(20)?;
     }
     treasury.allocate_funds()?;
-    println!("Week 2: {} ZHTP total collected", treasury.total_dao_fees_collected);
+    println!("Week 2: {} SOV total collected", treasury.total_dao_fees_collected);
     
     // Calculate UBI distribution
     let citizens = 1000;
@@ -206,17 +206,17 @@ fn monthly_treasury_cycle() -> anyhow::Result<()> {
     );
     
     println!("\n=== Month End Summary ===");
-    println!("Total collected: {} ZHTP", treasury.total_dao_fees_collected);
-    println!("UBI allocated (40%): {} ZHTP", treasury.ubi_allocated);
-    println!("Welfare allocated (30%): {} ZHTP", treasury.welfare_allocated);
-    println!("Development (30%): {} ZHTP", treasury.development_allocated);
+    println!("Total collected: {} SOV", treasury.total_dao_fees_collected);
+    println!("UBI allocated (40%): {} SOV", treasury.ubi_allocated);
+    println!("Welfare allocated (30%): {} SOV", treasury.welfare_allocated);
+    println!("Development (30%): {} SOV", treasury.development_allocated);
     
     if can_meet {
         println!("\n Can provide full target UBI");
-        println!("UBI per citizen ({} citizens): {} ZHTP", citizens, ubi_amount);
+        println!("UBI per citizen ({} citizens): {} SOV", citizens, ubi_amount);
     } else {
         println!("\n⚠ Reduced UBI");
-        println!("UBI per citizen ({} citizens): {} ZHTP", citizens, ubi_amount);
+        println!("UBI per citizen ({} citizens): {} SOV", citizens, ubi_amount);
     }
     
     // Distribute UBI
@@ -225,7 +225,7 @@ fn monthly_treasury_cycle() -> anyhow::Result<()> {
     }
     
     println!("\n UBI distributed to {} citizens", citizens);
-    println!("Remaining UBI allocation: {} ZHTP", treasury.ubi_allocated);
+    println!("Remaining UBI allocation: {} SOV", treasury.ubi_allocated);
     
     // Check sustainability
     let sustainability = calculate_treasury_sustainability(&treasury, 100000);

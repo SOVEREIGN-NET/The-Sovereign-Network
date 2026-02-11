@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TRANSACTION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Economic transaction in the ZHTP network
+/// Economic transaction in the SOV network
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     /// Unique transaction identifier

@@ -81,8 +81,8 @@ Creates a new Zero-Knowledge Decentralized Identifier (DID) with full Web4 citiz
 - **Quantum-Resistant DID**: Post-quantum cryptographic identity
 - **Multi-Wallet System**: Primary, UBI, and Savings wallets created
 - **DAO Voting Rights**: Automatic DAO registration with voting power
-- **UBI Eligibility**: Daily 33 ZHTP, Monthly 1000 ZHTP tokens
-- **Welcome Bonus**: 5000 ZHTP tokens for new citizens
+- **UBI Eligibility**: Daily 33 SOV, Monthly 1000 SOV tokens
+- **Welcome Bonus**: 5000 SOV tokens for new citizens
 - **Blockchain Registration**: Identity registered on ZHTP blockchain
 - **Web4 Access**: Full access to 10 Web4 services
 - **Zero-Knowledge Privacy**: 2 ZK credentials for selective disclosure

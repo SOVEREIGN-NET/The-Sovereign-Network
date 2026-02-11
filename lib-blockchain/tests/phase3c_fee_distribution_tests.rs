@@ -117,7 +117,8 @@ fn create_coinbase_with_fees(
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-        governance_config_data: None,
+            token_mint_data: None,
+                    governance_config_data: None,
     }
 }
 
@@ -178,7 +179,8 @@ fn create_transfer_tx(
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-        governance_config_data: None,
+            token_mint_data: None,
+                    governance_config_data: None,
     }
 }
 
@@ -337,7 +339,8 @@ fn test_fee_sink_balance_increases_deterministically() {
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-        governance_config_data: None,
+            token_mint_data: None,
+                    governance_config_data: None,
     };
 
     let genesis = create_genesis_with_coinbase(genesis_coinbase.clone());
@@ -421,7 +424,8 @@ fn test_coinbase_without_fee_sink_rejected() {
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-        governance_config_data: None,
+            token_mint_data: None,
+                    governance_config_data: None,
     };
 
     let block1 = create_block_with_txs(1, genesis.header.block_hash, bad_coinbase, vec![transfer]);
@@ -463,7 +467,8 @@ fn test_zero_fees_no_fee_sink_required() {
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-        governance_config_data: None,
+            token_mint_data: None,
+                    governance_config_data: None,
     };
 
     let genesis = create_genesis_with_coinbase(coinbase);

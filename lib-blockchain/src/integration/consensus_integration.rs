@@ -44,7 +44,7 @@ pub struct ValidatorInfo {
     pub identity: IdentityId,
     /// Current validator status
     pub status: ValidatorStatus,
-    /// Amount of ZHTP staked
+    /// Amount of SOV staked
     pub stake_amount: u64,
     /// Reputation score (0-100)
     pub reputation_score: u8,
@@ -258,7 +258,7 @@ impl BlockchainConsensusCoordinator {
         // Add to pending transactions
         blockchain.add_pending_transaction(registration_tx)?;
 
-        info!("Registered as validator: {:?} with {} ZHTP stake", identity, stake_amount);
+        info!("Registered as validator: {:?} with {} SOV stake", identity, stake_amount);
         Ok(())
     }
 
@@ -943,7 +943,7 @@ impl BlockchainConsensusCoordinator {
             blockchain.add_system_transaction(tx)?;
         }
 
-        info!(" Distributed {} ZHTP in rewards to {} validators", 
+        info!(" Distributed {} SOV in rewards to {} validators", 
               reward_round.total_rewards, reward_round.validator_rewards.len());
 
         Ok(())
@@ -967,7 +967,7 @@ impl BlockchainConsensusCoordinator {
                 total_ubi, estimated_treasury_available));
         }
         
-        info!("Treasury validation passed: {} ZHTP needed, estimated {} ZHTP available", 
+        info!("Treasury validation passed: {} SOV needed, estimated {} SOV available", 
             total_ubi, estimated_treasury_available);
         
         // Create UBI transactions for each citizen
@@ -1000,7 +1000,7 @@ impl BlockchainConsensusCoordinator {
             
             // For demo purposes, we'll simulate successful transaction creation
             // In production, this would integrate with the actual economic transaction system
-            info!("Created UBI payment transaction of {} ZHTP for citizen {} (Demo: Transaction hash: {})", 
+            info!("Created UBI payment transaction of {} SOV for citizen {} (Demo: Transaction hash: {})", 
                 amount, hex::encode(&citizen_id.as_bytes()[..8]), hex::encode(tx_hash.as_bytes()));
             
             // Since we can't access blockchain due to consensus locks, we'll record the transaction
@@ -1008,7 +1008,7 @@ impl BlockchainConsensusCoordinator {
             ubi_tx_hashes.push(tx_hash);
         }
         
-        info!("Created {} UBI distribution transactions totaling {} ZHTP", 
+        info!("Created {} UBI distribution transactions totaling {} SOV", 
             ubi_tx_hashes.len(), total_ubi);
         
         Ok(ubi_tx_hashes)
@@ -1030,7 +1030,7 @@ impl BlockchainConsensusCoordinator {
                 total_welfare, estimated_treasury_available));
         }
         
-        info!("Treasury validation passed: {} ZHTP needed, estimated {} ZHTP available", 
+        info!("Treasury validation passed: {} SOV needed, estimated {} SOV available", 
             total_welfare, estimated_treasury_available);
         
         // Create welfare funding transactions
@@ -1063,7 +1063,7 @@ impl BlockchainConsensusCoordinator {
             
             // For demo purposes, we'll simulate successful transaction creation
             // In production, this would integrate with the actual economic transaction system
-            info!("Created welfare funding transaction of {} ZHTP for service {} (Demo: Transaction hash: {})", 
+            info!("Created welfare funding transaction of {} SOV for service {} (Demo: Transaction hash: {})", 
                 amount, service_name, hex::encode(tx_hash.as_bytes()));
             
             // Since we can't access blockchain due to consensus locks, we'll record the transaction
@@ -1071,7 +1071,7 @@ impl BlockchainConsensusCoordinator {
             welfare_tx_hashes.push(tx_hash);
         }
         
-        info!("Created {} welfare funding transactions totaling {} ZHTP", 
+        info!("Created {} welfare funding transactions totaling {} SOV", 
             welfare_tx_hashes.len(), total_welfare);
         
         Ok(welfare_tx_hashes)
@@ -1337,7 +1337,7 @@ impl BlockchainConsensusCoordinator {
             validator_data,
             vec![], // No inputs for system registration
             empty_signature,
-            format!("Validator registration: {} ZHTP stake, {} GB storage, {}% commission", 
+            format!("Validator registration: {} SOV stake, {} GB storage, {}% commission", 
                    stake_amount, storage_capacity / (1024*1024*1024), commission_rate).into_bytes(),
         );
 
@@ -1476,7 +1476,7 @@ impl BlockchainConsensusCoordinator {
                 info!("   Recipient: {}", recipient);
             }
             if let Some(amount) = execution_data.amount {
-                info!("   Amount: {} ZHTP", amount);
+                info!("   Amount: {} SOV", amount);
             }
             info!("✅ DAO execution processed");
         } else {
@@ -1646,7 +1646,7 @@ impl BlockchainConsensusCoordinator {
                     inputs: vec![], // System transaction, no inputs
                     outputs: vec![output],
                     fee: 0, // No fee for reward transactions
-                    memo: format!("Validator reward: {} ZHTP (height: {})", reward.total_reward, reward_round.height).into_bytes(),
+                    memo: format!("Validator reward: {} SOV (height: {})", reward.total_reward, reward_round.height).into_bytes(),
                     signature,
                     transaction_type: TransactionType::Transfer,
                     identity_data: None,
@@ -1658,7 +1658,8 @@ impl BlockchainConsensusCoordinator {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
                 };
 
                 reward_transactions.push(reward_tx);
@@ -1961,7 +1962,7 @@ pub async fn initialize_consensus_integration(
 ) -> Result<BlockchainConsensusCoordinator> {
     let consensus_config = ConsensusConfig {
         consensus_type,
-        min_stake: 1000 * 1_000_000, // 1000 ZHTP minimum stake
+        min_stake: 1000 * 1_000_000, // 1000 SOV minimum stake
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB minimum storage
         max_validators: 100,
         block_time: 10, // 10 second blocks
@@ -2000,7 +2001,7 @@ pub async fn initialize_consensus_integration_with_difficulty_config(
 ) -> Result<BlockchainConsensusCoordinator> {
     let consensus_config = ConsensusConfig {
         consensus_type,
-        min_stake: 1000 * 1_000_000, // 1000 ZHTP minimum stake
+        min_stake: 1000 * 1_000_000, // 1000 SOV minimum stake
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB minimum storage
         max_validators: 100,
         block_time: 10, // 10 second blocks

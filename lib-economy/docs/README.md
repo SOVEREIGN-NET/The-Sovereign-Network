@@ -120,7 +120,7 @@ wallet_manager.create_wallet("Personal", WalletType::Personal)?;
 let tx = Transaction::new_payment(
     sender_address,
     recipient_address,
-    1000, // 1000 ZHTP
+    1000, // 1000 SOV
     Priority::Normal,
 )?;
 
@@ -160,11 +160,11 @@ treasury.allocate_funds()?;
 
 ```rust
 pub const DEFAULT_DAO_FEE_RATE: u64 = 200; // 2% (200 basis points)
-pub const ISP_BYPASS_CONNECTIVITY_RATE: u64 = 100; // 100 ZHTP per GB bandwidth
-pub const ISP_BYPASS_MESH_RATE: u64 = 1; // 1 ZHTP per MB packets routed
-pub const ISP_BYPASS_UPTIME_BONUS: u64 = 10; // 10 ZHTP per hour uptime
+pub const ISP_BYPASS_CONNECTIVITY_RATE: u64 = 100; // 100 SOV per GB bandwidth
+pub const ISP_BYPASS_MESH_RATE: u64 = 1; // 1 SOV per MB packets routed
+pub const ISP_BYPASS_UPTIME_BONUS: u64 = 10; // 10 SOV per hour uptime
 pub const MESH_CONNECTIVITY_THRESHOLD: u32 = 3; // Minimum peers for rewards
-pub const MIN_STAKING_AMOUNT: u64 = 1000; // 1000 ZHTP minimum stake
+pub const MIN_STAKING_AMOUNT: u64 = 1000; // 1000 SOV minimum stake
 pub const UBI_ALLOCATION_PERCENTAGE: u64 = 40; // 40% of DAO fees to UBI
 pub const WELFARE_ALLOCATION_PERCENTAGE: u64 = 30; // 30% to welfare
 pub const DEVELOPMENT_ALLOCATION_PERCENTAGE: u64 = 30; // 30% to development
@@ -182,8 +182,8 @@ pub const DEVELOPMENT_ALLOCATION_PERCENTAGE: u64 = 30; // 30% to development
 
 ## Use Cases
 
-- **ISP Replacement**: Earn ZHTP by sharing bandwidth and routing packets
-- **Storage Provider**: Earn ZHTP by providing decentralized storage
+- **ISP Replacement**: Earn SOV by sharing bandwidth and routing packets
+- **Storage Provider**: Earn SOV by providing decentralized storage
 - **Mesh Networking**: Maintain network connectivity for consistent rewards
 - **UBI Recipient**: Receive regular UBI distributions from DAO treasury
 - **Application Developer**: Build economic applications with multi-wallet support

@@ -148,7 +148,7 @@ Currently stubbed for Phase 5:
 ```rust
 // In ubi_engine.rs process_ubi_distributions()
 let kernel_txid = self.compute_kernel_txid(&claim.citizen_id, epoch, 1000);
-// TODO: Call executor.get_or_load_zhtp()
+// TODO: Call executor.get_or_load_sov()
 // TODO: Call token.mint_kernel_only(&kernel_address, &recipient, 1000)
 // TODO: Call self.emit_ubi_distributed(...)
 ```

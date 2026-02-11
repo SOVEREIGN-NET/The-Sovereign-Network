@@ -607,7 +607,7 @@ impl DiscoveryCoordinator {
             return Err(anyhow::anyhow!("No network peers found"));
         }
 
-        info!("✓ Discovered {} ZHTP peer(s)!", discovered_peers.len());
+        info!("✓ Discovered {} SOV peer(s)!", discovered_peers.len());
         for (i, peer) in discovered_peers.iter().enumerate() {
             info!("   {}. {}", i + 1, peer);
         }

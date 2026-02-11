@@ -168,7 +168,7 @@ impl NotificationChannel for ConsoleNotificationChannel {
             .unwrap_or_else(|| chrono::Utc::now())
             .format("%Y-%m-%d %H:%M:%S UTC");
 
-        println!("\n{} ZHTP ALERT [{}] {}", level_emoji, alert.level_str(), timestamp);
+        println!("\n{} SOV ALERT [{}] {}", level_emoji, alert.level_str(), timestamp);
         println!("{}: {}", alert.title, alert.message);
         println!("Source: {} | ID: {}", alert.source, alert.id);
         

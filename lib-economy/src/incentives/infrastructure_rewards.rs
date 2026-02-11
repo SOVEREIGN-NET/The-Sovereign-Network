@@ -38,7 +38,7 @@ impl InfrastructureRewards {
         let total_infrastructure_rewards = routing_rewards + storage_rewards + compute_rewards;
         
         info!(
-            "Infrastructure rewards calculated: routing={} ZHTP, storage={} ZHTP, compute={} ZHTP, total={} ZHTP",
+            "Infrastructure rewards calculated: routing={} SOV, storage={} SOV, compute={} SOV, total={} SOV",
             routing_rewards, storage_rewards, compute_rewards, total_infrastructure_rewards
         );
         
@@ -76,7 +76,7 @@ impl InfrastructureRewards {
         let total_with_quality = ((base_total as f64) * quality_multiplier) as u64;
         
         info!(
-            " rewards: bandwidth={}GB ({}ZHTP), routing={}MB ({}ZHTP), uptime={}h ({}ZHTP), quality={:.1}x, total={} ZHTP",
+            " rewards: bandwidth={}GB ({}SOV), routing={}MB ({}SOV), uptime={}h ({}SOV), quality={:.1}x, total={} SOV",
             work.bandwidth_shared_gb, bandwidth_reward,
             work.packets_routed_mb, routing_reward,
             work.uptime_hours, uptime_reward,

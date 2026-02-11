@@ -27,3 +27,12 @@ pub const TESTNET_GENESIS_HASH: [u8; 32] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
+
+/// SOV atomic units (8 decimals): 1 SOV = 100,000,000 units
+pub const SOV_ATOMIC_UNITS: u64 = 100_000_000;
+
+/// Welcome bonus amount in SOV (human units)
+pub const SOV_WELCOME_BONUS_SOV: u64 = 5_000;
+
+/// Monthly UBI amount in SOV (human units)
+pub const SOV_UBI_MONTHLY_SOV: u64 = 1_000;

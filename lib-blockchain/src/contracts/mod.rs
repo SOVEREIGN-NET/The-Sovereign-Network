@@ -155,15 +155,16 @@ pub const GAS_CONTACT: u64 = 1500; // Gas cost for contact operations
 #[cfg(feature = "contracts")]
 pub const GAS_GROUP: u64 = 2500; // Gas cost for group operations
 
-/// ZHTP native token constants
+/// SOV native token constants for the generic TokenContract
+/// (legacy supply cap retained for u64 compatibility)
 #[cfg(feature = "contracts")]
-pub const ZHTP_TOKEN_SYMBOL: &str = "ZHTP";
+pub const SOV_NATIVE_SYMBOL: &str = "SOV";
 #[cfg(feature = "contracts")]
-pub const ZHTP_TOKEN_NAME: &str = "ZHTP";
+pub const SOV_NATIVE_NAME: &str = "Sovereign";
 #[cfg(feature = "contracts")]
-pub const ZHTP_DECIMALS: u8 = 8;
+pub const SOV_NATIVE_DECIMALS: u8 = 8;
 #[cfg(feature = "contracts")]
-pub const ZHTP_MAX_SUPPLY: u64 = 21_000_000 * 100_000_000; // 21M ZHTP with 8 decimals
+pub const SOV_NATIVE_MAX_SUPPLY: u64 = 21_000_000 * 100_000_000; // Legacy cap (u64); keep stable for now
 
 /// Contract version information
 #[cfg(feature = "contracts")]
@@ -186,9 +187,9 @@ mod tests {
 
     #[test]
     fn test_lib_constants() {
-        assert_eq!(ZHTP_TOKEN_SYMBOL, "ZHTP");
-        assert_eq!(ZHTP_TOKEN_NAME, "ZHTP");
-        assert_eq!(ZHTP_DECIMALS, 8);
-        assert_eq!(ZHTP_MAX_SUPPLY, 2_100_000_000_000_000);
+        assert_eq!(SOV_NATIVE_SYMBOL, "SOV");
+        assert_eq!(SOV_NATIVE_NAME, "Sovereign");
+        assert_eq!(SOV_NATIVE_DECIMALS, 8);
+        assert_eq!(SOV_NATIVE_MAX_SUPPLY, 2_100_000_000_000_000);
     }
 }

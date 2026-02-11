@@ -31,8 +31,8 @@ pub type ContentHash = Hash;
 /// DHT key type
 pub type DhtKey = Hash;
 
-/// Storage pricing per GB per day (in ZHTP tokens)
-pub const STORAGE_PRICE_PER_GB_DAY: u64 = 100; // 0.001 ZHTP
+/// Storage pricing per GB per day (in SOV tokens)
+pub const STORAGE_PRICE_PER_GB_DAY: u64 = 100; // 0.001 SOV
 
 /// Minimum replication factor
 pub const MIN_REPLICATION: u8 = 3;

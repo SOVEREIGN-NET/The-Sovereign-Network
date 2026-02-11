@@ -235,17 +235,38 @@ impl BlockchainComponent {
     
     /// Mine a block using actual blockchain methods
     async fn mine_real_block(blockchain: &mut Blockchain) -> Result<()> {
-        if blockchain.pending_transactions.is_empty() {
+        let next_height = blockchain.height + 1;
+
+        let mut ubi_txs: Vec<lib_blockchain::Transaction> = Vec::new();
+        for entry in blockchain.collect_ubi_mint_entries(next_height) {
+            let memo = format!("UBI_DISTRIBUTION_V1:{}:{}", entry.identity_id, entry.wallet_id).into_bytes();
+            match crate::runtime::token_utils::build_sov_mint_tx(&entry.recipient_wallet_id, entry.payout, memo).await {
+                Ok(tx) => ubi_txs.push(tx),
+                Err(e) => warn!("Failed to build UBI TokenMint tx: {}", e),
+            }
+        }
+
+        if blockchain.pending_transactions.is_empty() && ubi_txs.is_empty() {
             return Err(anyhow::anyhow!("No pending transactions to mine"));
         }
 
-        info!("Mining block with {} transactions", blockchain.pending_transactions.len());
+        info!(
+            "Mining block with {} pending txs + {} UBI mints",
+            blockchain.pending_transactions.len(),
+            ubi_txs.len()
+        );
 
-        let transactions_for_block = blockchain.pending_transactions
-            .iter()
-            .take(10)
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut transactions_for_block: Vec<lib_blockchain::Transaction> = Vec::new();
+        transactions_for_block.extend(ubi_txs);
+        let remaining = 10usize.saturating_sub(transactions_for_block.len());
+        if remaining > 0 {
+            transactions_for_block.extend(
+                blockchain.pending_transactions
+                    .iter()
+                    .take(remaining)
+                    .cloned()
+            );
+        }
 
         if transactions_for_block.is_empty() {
             return Err(anyhow::anyhow!("No valid transactions for block"));

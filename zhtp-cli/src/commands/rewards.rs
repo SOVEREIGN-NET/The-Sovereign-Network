@@ -90,7 +90,7 @@ pub fn format_routing_rewards_message(
     max_batch_size: u64,
 ) -> String {
     format!(
-        "Routing Rewards:\n  Status:               {}\n  Check Interval:       {} seconds\n  Minimum Threshold:    {} ZHTP\n  Max Batch Size:       {} ZHTP",
+        "Routing Rewards:\n  Status:               {}\n  Check Interval:       {} seconds\n  Minimum Threshold:    {} SOV\n  Max Batch Size:       {} SOV",
         if enabled { "ENABLED" } else { "DISABLED" },
         check_interval_secs,
         minimum_threshold,
@@ -108,7 +108,7 @@ pub fn format_storage_rewards_message(
     max_batch_size: u64,
 ) -> String {
     format!(
-        "Storage Rewards:\n  Status:               {}\n  Check Interval:       {} seconds\n  Minimum Threshold:    {} ZHTP\n  Max Batch Size:       {} ZHTP",
+        "Storage Rewards:\n  Status:               {}\n  Check Interval:       {} seconds\n  Minimum Threshold:    {} SOV\n  Max Batch Size:       {} SOV",
         if enabled { "ENABLED" } else { "DISABLED" },
         check_interval_secs,
         minimum_threshold,
@@ -181,7 +181,7 @@ pub fn build_config_response(
 /// Pure function - message formatting only
 pub fn get_operation_header(operation: RewardOperation) -> String {
     match operation {
-        RewardOperation::Status => format!("{} ZHTP Reward Orchestrator Status", operation.emoji()),
+        RewardOperation::Status => format!("{} SOV Reward Orchestrator Status", operation.emoji()),
         RewardOperation::Metrics => format!("{} Combined Reward Metrics", operation.emoji()),
         RewardOperation::Routing => format!("{} Routing Reward Details", operation.emoji()),
         RewardOperation::Storage => format!("{} Storage Reward Details", operation.emoji()),

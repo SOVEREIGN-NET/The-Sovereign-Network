@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{info, debug};
+use tracing::{info, debug, warn};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
+use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
 use lib_identity::IdentityManager;
 
 /// Identity component implementation using lib-identity package
@@ -122,8 +123,12 @@ impl Component for IdentityComponent {
             }
         }
 
+        if let Err(e) = run_post_bootstrap_sov_backfill().await {
+            info!("⚠️ SOV backfill skipped (non-fatal): {}", e);
+        }
+
         if !genesis_ids.is_empty() {
-            info!("Funding genesis primary wallets with 5000 ZHTP welcome bonus...");
+            info!("Funding genesis primary wallets with {} SOV welcome bonus...", SOV_WELCOME_BONUS_SOV);
             for genesis_identity in &genesis_ids {
                 if genesis_identity.identity_type == lib_identity::IdentityType::Human {
                     let wallet_summaries = genesis_identity.wallet_manager.list_wallets();
@@ -727,7 +732,7 @@ async fn bootstrap_identities_from_dht(
                                 if !bc.wallet_registry.contains_key(wid) {
                                     let wallet_bytes = hex::decode(wid).unwrap_or_default();
                                     if wallet_bytes.len() >= 32 {
-                                        const WELCOME_BONUS: u64 = 5000;
+                                        const WELCOME_BONUS: u64 = SOV_WELCOME_BONUS;
                                         let wallet_data = lib_blockchain::transaction::WalletTransactionData {
                                             wallet_id: lib_blockchain::Hash::from_slice(&wallet_bytes[..32]),
                                             wallet_type: "Primary".to_string(),
@@ -744,7 +749,7 @@ async fn bootstrap_identities_from_dht(
                                         if bc.register_wallet(wallet_data).is_ok() {
                                             // Create spendable UTXO (not just registry entry)
                                             bc.create_funding_utxo(wid, &identity_hash.0, WELCOME_BONUS);
-                                            info!("💰 MIGRATED primary wallet {} with {} ZHTP (spendable)", &wid[..16], WELCOME_BONUS);
+                                            info!("💰 MIGRATED primary wallet {} with {} SOV (spendable)", &wid[..16], SOV_WELCOME_BONUS_SOV);
                                         }
                                     }
                                 }
@@ -907,4 +912,57 @@ async fn bootstrap_identities_from_dht(
         wallets_loaded,
         errors,
     })
+}
+
+/// After DHT bootstrap and identity migration, mint missing SOV balances via TokenMint txs.
+/// This makes token balances block-authoritative and durable across restarts.
+async fn run_post_bootstrap_sov_backfill() -> Result<()> {
+    let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
+
+    let entries = {
+        let bc = blockchain_arc.read().await;
+        bc.collect_sov_backfill_entries()
+    };
+
+    if entries.is_empty() {
+        info!("🪙 No SOV backfill needed after DHT bootstrap");
+        return Ok(());
+    }
+
+    let mut mint_txs: Vec<lib_blockchain::Transaction> = Vec::new();
+    for (wallet_id_bytes, amount, wallet_id) in entries {
+        let memo = format!("TOKEN_BACKFILL_V1:{}", wallet_id).into_bytes();
+        match crate::runtime::token_utils::build_sov_mint_tx(&wallet_id_bytes, amount, memo).await {
+            Ok(tx) => mint_txs.push(tx),
+            Err(e) => warn!("🪙 Failed to build backfill TokenMint tx: {}", e),
+        }
+    }
+
+    if mint_txs.is_empty() {
+        info!("🪙 No SOV backfill mints queued (all failed to build)");
+        return Ok(());
+    }
+
+    let mut bc = blockchain_arc.write().await;
+    let mut queued = 0usize;
+    for tx in mint_txs {
+        if let Err(e) = bc.add_pending_transaction(tx) {
+            warn!("🪙 Failed to enqueue backfill TokenMint tx: {}", e);
+        } else {
+            queued += 1;
+        }
+    }
+
+    if queued == 0 {
+        info!("🪙 No SOV backfill transactions queued");
+        return Ok(());
+    }
+
+    if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await {
+        warn!("🪙 Failed to mine SOV backfill block: {}", e);
+    } else {
+        info!("🪙 Mined SOV backfill block with {} TokenMint txs", queued);
+    }
+
+    Ok(())
 }

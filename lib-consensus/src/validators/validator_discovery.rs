@@ -24,7 +24,7 @@ pub struct ValidatorAnnouncement {
     /// Validator's consensus public key
     pub consensus_key: PublicKey,
 
-    /// Amount of ZHTP tokens staked
+    /// Amount of SOV tokens staked
     pub stake: u64,
 
     /// Storage capacity provided (bytes)
@@ -197,7 +197,7 @@ impl ValidatorDiscoveryProtocol {
     /// Announce this validator to the consensus network
     pub async fn announce_validator(&self, announcement: ValidatorAnnouncement) -> Result<()> {
         info!(
-            "Announcing validator {} with stake {} ZHTP for consensus",
+            "Announcing validator {} with stake {} SOV for consensus",
             announcement.identity_id, announcement.stake
         );
 

@@ -76,7 +76,7 @@ fn manual_ubi_distribution(
     // 1. Calculate UBI per citizen
     let ubi_amount = treasury.calculate_ubi_per_citizen(citizens.len() as u64);
     
-    println!("Distributing {} ZHTP to {} citizens", ubi_amount, citizens.len());
+    println!("Distributing {} SOV to {} citizens", ubi_amount, citizens.len());
     
     // 2. Create and process UBI transaction for each citizen
     for citizen_address in citizens {
@@ -89,7 +89,7 @@ fn manual_ubi_distribution(
         // Transaction would be processed by consensus layer
         // blockchain::record_transaction(tx)?;
         
-        println!(" Distributed {} ZHTP to {}", 
+        println!(" Distributed {} SOV to {}", 
             ubi_amount, 
             hex::encode(&citizen_address[..8])
         );
@@ -283,7 +283,7 @@ fn monthly_ubi_process(
     
     println!("=== Monthly UBI Distribution ===");
     println!("Citizens: {}", verified_citizens.len());
-    println!("Amount per citizen: {} ZHTP", ubi_amount);
+    println!("Amount per citizen: {} SOV", ubi_amount);
     
     for citizen in verified_citizens {
         let tx = Transaction::new_ubi_distribution(citizen, ubi_amount)?;

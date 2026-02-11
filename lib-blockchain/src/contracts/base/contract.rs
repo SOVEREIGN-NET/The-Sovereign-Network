@@ -59,7 +59,7 @@ impl SmartContract {
         )
     }
 
-    /// Create a ZHTP native token contract
+    /// Create a SOV native token contract
     pub fn new_lib_token_contract(
         contract_id: [u8; 32],
         bytecode: Vec<u8>,
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(contract.contract_type, ContractType::Token);
         assert!(contract.permissions.can_mint);
         assert!(!contract.permissions.can_burn);
-        assert!(contract.permissions.admins.is_empty()); // No single admin for ZHTP
+        assert!(contract.permissions.admins.is_empty()); // No single admin for SOV
     }
 
     #[test]

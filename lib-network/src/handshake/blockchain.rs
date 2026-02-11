@@ -193,8 +193,8 @@ impl PeerTier {
     /// Get minimum stake required for this tier
     pub fn min_stake(&self) -> u64 {
         match self {
-            PeerTier::Validator => 1_000 * 1_000_000, // 1000 ZHTP minimum for validators
-            PeerTier::StakedNode => 100 * 1_000_000,   // 100 ZHTP minimum for staked nodes
+            PeerTier::Validator => 1_000 * 1_000_000, // 1000 SOV minimum for validators
+            PeerTier::StakedNode => 100 * 1_000_000,   // 100 SOV minimum for staked nodes
             PeerTier::Unverified => 0,
         }
     }
@@ -730,7 +730,7 @@ mod tests {
         let mut verifier = BlockchainHandshakeVerifier::new(local_ctx);
         
         let validator_id = Hash::from_bytes(&[3u8; 32]);
-        let validator_stake = 2_000_000_000; // 2000 ZHTP
+        let validator_stake = 2_000_000_000; // 2000 SOV
         
         verifier.add_validator_stake(validator_id.clone(), validator_stake, 1);
         
@@ -779,7 +779,7 @@ mod tests {
         let mut verifier = BlockchainHandshakeVerifier::new(local_ctx);
         
         let node_id = Hash::from_bytes(&[4u8; 32]);
-        let node_stake = 500_000_000; // 500 ZHTP (above StakedNode threshold)
+        let node_stake = 500_000_000; // 500 SOV (above StakedNode threshold)
         
         verifier.add_validator_stake(node_id.clone(), node_stake, 1);
         

@@ -52,7 +52,7 @@ pub struct DhtNode {
 pub struct StorageCapabilities {
     pub available_space: u64,                // Available storage in bytes
     pub total_capacity: u64,                 // Total storage capacity
-    pub price_per_gb_day: u64,              // Pricing in ZHTP tokens
+    pub price_per_gb_day: u64,              // Pricing in SOV tokens
     pub supported_tiers: Vec<StorageTier>,   // Supported storage tiers
     pub region: String,                      // Geographic region
     pub uptime: f64,                        // Historical uptime percentage
@@ -462,7 +462,7 @@ pub struct DhtNode {
 pub struct StorageCapabilities {
     pub available_space: u64,                // Available storage in bytes
     pub total_capacity: u64,                 // Total storage capacity
-    pub price_per_gb_day: u64,              // Pricing in ZHTP tokens
+    pub price_per_gb_day: u64,              // Pricing in SOV tokens
     pub supported_tiers: Vec<StorageTier>,   // Supported storage tiers
     pub region: String,                      // Geographic region
     pub uptime: f64,                        // Historical uptime percentage

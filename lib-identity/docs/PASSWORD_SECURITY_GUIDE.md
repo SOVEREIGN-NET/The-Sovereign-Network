@@ -213,7 +213,7 @@ if wallet_manager.wallet_has_password(&wallet_id) {
 3. **Add wallet passwords** to:
    - Savings wallets (high balances)
    - Business wallets
-   - Any wallet with >10,000 ZHTP
+   - Any wallet with >10,000 SOV
 
 ### For Maximum Security
 ```rust

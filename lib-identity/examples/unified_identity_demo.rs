@@ -209,7 +209,7 @@ fn display_identity_details(identity: &ZhtpIdentity, label: &str) -> Result<()> 
     // Wallet Manager Status
     println!("\n   💰 Wallet Manager:");
     println!("      Wallets:              {}", identity.wallet_manager.wallets.len());
-    println!("      Total Balance:        {} ZHTP", identity.wallet_manager.total_balance);
+    println!("      Total Balance:        {} SOV", identity.wallet_manager.total_balance);
     
     Ok(())
 }
@@ -279,7 +279,7 @@ fn demonstrate_wallet_integration(identity: &ZhtpIdentity) -> Result<()> {
     
     println!("\n   💰 Current Wallet Status:");
     println!("      Wallets Created:  {}", identity.wallet_manager.wallets.len());
-    println!("      Total Balance:    {} ZHTP", identity.wallet_manager.total_balance);
+    println!("      Total Balance:    {} SOV", identity.wallet_manager.total_balance);
     
     // Show how to create wallets from the identity
     println!("\n   📝 Creating Wallets (Example Code):");

@@ -45,6 +45,13 @@ mod sizes {
 
     /// UTXO entry size estimate
     pub const UTXO_ENTRY_SIZE: u32 = 128; // outpoint + commitment + note + recipient
+
+    /// Dilithium5 signature size
+    pub const DILITHIUM5_SIG: u32 = 4595;
+    /// Dilithium5 public key size
+    pub const DILITHIUM5_PK: u32 = 2592;
+    /// Account entry size estimate
+    pub const ACCOUNT_ENTRY_SIZE: u32 = 96; // address + balance + nonce + metadata
 }
 
 /// Classify a Transfer (native UTXO) transaction.
@@ -190,9 +197,47 @@ pub fn classify_transaction(tx: &Transaction) -> Option<FeeInput> {
     match tx.transaction_type {
         TransactionType::Transfer => Some(classify_transfer(tx)),
         TransactionType::TokenTransfer => Some(classify_token_transfer(tx)),
+        TransactionType::TokenMint => Some(classify_token_mint(tx)),
         TransactionType::Coinbase => Some(classify_coinbase(tx)),
         _ => None, // Unsupported in Phase 2
     }
+}
+
+/// Classify a TokenMint (balance model) transaction.
+///
+/// Token mints are system-issued but still consume state writes.
+pub fn classify_token_mint(tx: &Transaction) -> FeeInput {
+    let envelope_bytes = sizes::BASE_ENVELOPE;
+
+    // Payload: TokenMintData + memo
+    let token_payload = sizes::TOKEN_TRANSFER_PAYLOAD - 32; // 32+32+8 vs 32+32+32+8
+    let memo_payload = tx.memo.len() as u32;
+    let payload_bytes = token_payload + memo_payload;
+
+    let sig_scheme = detect_sig_scheme(&tx.signature);
+    let sig_count = if tx.signature.signature.is_empty() { 0 } else { 1 };
+    let witness_bytes = if sig_count == 1 {
+        sizes::DILITHIUM5_SIG + sizes::DILITHIUM5_PK
+    } else {
+        0
+    };
+
+    // State operations: credit one balance
+    let state_reads = 1;
+    let state_writes = 1;
+    let state_write_bytes = sizes::ACCOUNT_ENTRY_SIZE;
+
+    FeeInput::new(
+        TxKind::TokenTransfer,
+        sig_scheme,
+        sig_count,
+        envelope_bytes,
+        payload_bytes,
+        witness_bytes,
+        state_reads,
+        state_writes,
+        state_write_bytes,
+    )
 }
 
 /// Detect signature scheme from the Signature struct.
