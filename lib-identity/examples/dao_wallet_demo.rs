@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
     println!("\n  NonProfit DAO Transactions (Full Transparency):");
     let nonprofit_txs = manager.get_dao_public_transactions(&nonprofit_dao)?;
     for (i, tx) in nonprofit_txs.iter().enumerate() {
-        println!("  {}. {} {} ZHTP - {}", 
+        println!("  {}. {} {} SOV - {}", 
                 i + 1,
                 if tx.is_incoming { "Received" } else { "Sent" },
                 tx.amount,
@@ -159,7 +159,7 @@ async fn main() -> Result<()> {
     println!("\n ForProfit DAO Transactions (Partial Transparency):");
     let forprofit_txs = manager.get_dao_public_transactions(&forprofit_dao)?;
     for (i, tx) in forprofit_txs.iter().enumerate() {
-        println!("  {}. {} {} ZHTP - {}", 
+        println!("  {}. {} {} SOV - {}", 
                 i + 1,
                 if tx.is_incoming { "Received" } else { "Sent" },
                 tx.amount,
@@ -179,7 +179,7 @@ async fn main() -> Result<()> {
         println!("\nWallet #{}", i + 1);
         println!("  Name: {}", wallet.name);
         println!("  Type: {:?}", wallet.wallet_type);
-        println!("  Balance: {} ZHTP", wallet.balance);
+        println!("  Balance: {} SOV", wallet.balance);
         println!("  Is DAO: {}", if wallet.is_dao_wallet { "Yes" } else { "No" });
         if let Some(ref transparency) = wallet.dao_transparency {
             println!("  Transparency: {:?}", transparency);
@@ -196,19 +196,19 @@ async fn main() -> Result<()> {
     println!("ForProfit DAOs: {}", manager.get_dao_wallets_by_type(false).len());
     
     let total_dao_funds: u64 = dao_wallets.iter().map(|w| w.balance).sum();
-    println!("Total DAO Funds: {} ZHTP", total_dao_funds);
+    println!("Total DAO Funds: {} SOV", total_dao_funds);
     
     for dao_wallet in dao_wallets {
         if let Some(dao_props) = dao_wallet.get_dao_properties() {
             println!("\nDAO: {}", dao_wallet.name);
             println!("  Type: {}", if dao_props.is_nonprofit { "NonProfit" } else { "ForProfit" });
             println!("  Founded: {}", dao_props.founded_at);
-            println!("  Total Received: {} ZHTP", dao_props.total_funds_received);
-            println!("  Total Spent: {} ZHTP", dao_props.total_funds_spent);
+            println!("  Total Received: {} SOV", dao_props.total_funds_received);
+            println!("  Total Spent: {} SOV", dao_props.total_funds_spent);
             println!("  Transaction Count: {}", dao_props.transaction_count);
             println!("  Controllers: {}", dao_props.authorized_controllers.len());
             println!("  Transparency: {:?}", dao_props.transparency_level);
-            println!("  Max Single Transaction: {} ZHTP", dao_props.governance_settings.max_single_transaction);
+            println!("  Max Single Transaction: {} SOV", dao_props.governance_settings.max_single_transaction);
         }
     }
     

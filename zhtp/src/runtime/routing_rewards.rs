@@ -42,8 +42,8 @@ impl Default for RoutingRewardConfig {
     fn default() -> Self {
         Self {
             check_interval: Duration::from_secs(600), // 10 minutes
-            minimum_threshold: 100, // 100 ZHTP
-            max_batch_size: 10_000, // 10,000 ZHTP max
+            minimum_threshold: 100, // 100 SOV
+            max_batch_size: 10_000, // 10,000 SOV max
         }
     }
 }
@@ -99,8 +99,8 @@ impl RoutingRewardProcessor {
         info!(" Starting Routing Reward Processor");
         info!("═══════════════════════════════════════════════════════");
         info!("   Check interval: {:?}", self.config.check_interval);
-        info!("   Minimum threshold: {} ZHTP", self.config.minimum_threshold);
-        info!("   Max batch size: {} ZHTP", self.config.max_batch_size);
+        info!("   Minimum threshold: {} SOV", self.config.minimum_threshold);
+        info!("   Max batch size: {} SOV", self.config.max_batch_size);
         info!("═══════════════════════════════════════════════════════");
         
         tokio::spawn(async move {
@@ -175,7 +175,7 @@ impl RoutingRewardProcessor {
         
         info!("    Creating routing reward transaction: {} SOV", claim_amount);
         
-        info!("    Creating routing reward transaction: {} ZHTP", claim_amount);
+        info!("    Creating routing reward transaction: {} SOV", claim_amount);
         
         // Get this node's unique identifier for reward attribution
         let node_id = self.network_component.get_node_id().await
@@ -221,7 +221,7 @@ impl RoutingRewardProcessor {
         info!("    Reward counter reset");
         info!("═══════════════════════════════════════════════════════");
         info!(" Routing Reward Claimed Successfully!");
-        info!("   Amount: {} ZHTP", claim_amount);
+        info!("   Amount: {} SOV", claim_amount);
         info!("   Cycle: {}", cycle);
         info!("   Next check: {:?}", self.config.check_interval);
         info!("═══════════════════════════════════════════════════════");
@@ -250,7 +250,7 @@ impl RoutingRewardProcessor {
         info!("    Validating transaction...");
         
         // 1. Validate reward amount is reasonable
-        const MAX_SINGLE_CLAIM: u64 = 1_000_000; // 1M ZHTP maximum per claim
+        const MAX_SINGLE_CLAIM: u64 = 1_000_000; // 1M SOV maximum per claim
         
         if claim_amount == 0 {
             return Err(anyhow::anyhow!("Invalid claim: amount is zero"));
@@ -258,7 +258,7 @@ impl RoutingRewardProcessor {
         
         if claim_amount > MAX_SINGLE_CLAIM {
             return Err(anyhow::anyhow!(
-                "Invalid claim: amount {} exceeds maximum allowed {} ZHTP",
+                "Invalid claim: amount {} exceeds maximum allowed {} SOV",
                 claim_amount,
                 MAX_SINGLE_CLAIM
             ));
@@ -266,13 +266,13 @@ impl RoutingRewardProcessor {
         
         if claim_amount > self.config.max_batch_size {
             return Err(anyhow::anyhow!(
-                "Invalid claim: amount {} exceeds configured max_batch_size {} ZHTP",
+                "Invalid claim: amount {} exceeds configured max_batch_size {} SOV",
                 claim_amount,
                 self.config.max_batch_size
             ));
         }
         
-        info!("       Amount valid: {} ZHTP", claim_amount);
+        info!("       Amount valid: {} SOV", claim_amount);
         
         // 2. Verify blockchain is available
         let shared_blockchain = crate::runtime::blockchain_provider::get_global_blockchain()

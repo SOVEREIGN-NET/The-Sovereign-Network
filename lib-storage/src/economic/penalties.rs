@@ -191,7 +191,7 @@ impl PenaltyEnforcer {
 pub struct PenaltyStats {
     /// Total number of penalties issued
     pub total_penalties: u64,
-    /// Total penalty amount in ZHTP tokens
+    /// Total penalty amount in SOV tokens
     pub total_penalty_amount: u64,
     /// Count of penalties by type
     pub penalty_counts: HashMap<PenaltyType, u64>,

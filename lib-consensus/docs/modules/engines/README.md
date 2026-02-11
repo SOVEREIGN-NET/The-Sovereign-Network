@@ -142,7 +142,7 @@ pub async fn register_validator(
         self.validator_identity = Some(identity.clone());
     }
 
-    tracing::info!(" Registered validator {:?} with {} ZHTP stake", identity, stake);
+    tracing::info!(" Registered validator {:?} with {} SOV stake", identity, stake);
     Ok(())
 }
 ```
@@ -955,7 +955,7 @@ async fn main() -> Result<()> {
     // Configure consensus
     let config = ConsensusConfig {
         consensus_type: ConsensusType::Hybrid,
-        min_stake: 1000 * 1_000_000, // 1000 ZHTP
+        min_stake: 1000 * 1_000_000, // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 100,
         block_time: 10,
@@ -969,7 +969,7 @@ async fn main() -> Result<()> {
     let identity = create_validator_identity();
     consensus.register_validator(
         identity,
-        5000 * 1_000_000, // 5000 ZHTP stake
+        5000 * 1_000_000, // 5000 SOV stake
         500 * 1024 * 1024 * 1024, // 500 GB storage
         generate_consensus_key(),
         5, // 5% commission

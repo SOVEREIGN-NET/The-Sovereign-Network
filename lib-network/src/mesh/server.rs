@@ -2085,7 +2085,7 @@ impl ZhtpMeshServer {
         stats.theoretical_tokens_earned = 0;
         
         if previous > 0 {
-            info!(" Routing reward counter reset: {} ZHTP claimed", previous);
+            info!(" Routing reward counter reset: {} SOV claimed", previous);
         }
     }
     
@@ -2141,7 +2141,7 @@ impl ZhtpMeshServer {
         stats.successful_storage_ops += 1;
         
         info!(
-            " Storage recorded: {} bytes, {} hours, {} ZHTP earned",
+            " Storage recorded: {} bytes, {} hours, {} SOV earned",
             content_size, duration_hours, tokens_earned
         );
     }
@@ -2172,7 +2172,7 @@ impl ZhtpMeshServer {
         stats.theoretical_tokens_earned = 0;
         
         if previous > 0 {
-            info!(" Storage reward counter reset: {} ZHTP claimed", previous);
+            info!(" Storage reward counter reset: {} SOV claimed", previous);
         }
     }
     

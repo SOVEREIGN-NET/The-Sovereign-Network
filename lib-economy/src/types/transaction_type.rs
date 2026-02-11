@@ -1,11 +1,11 @@
 //! Transaction types for economic operations
 //! 
-//! Defines all types of economic transactions in the ZHTP network,
+//! Defines all types of economic transactions in the SOV network,
 //! from rewards and payments to UBI distribution and governance.
 
 use serde::{Serialize, Deserialize};
 
-/// Types of economic transactions in the ZHTP network
+/// Types of economic transactions in the SOV network
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TransactionType {
     /// Reward payment for network services (routing, storage, compute)

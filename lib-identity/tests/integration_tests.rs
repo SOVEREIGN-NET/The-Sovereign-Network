@@ -4,6 +4,7 @@
 //! including citizen onboarding, credential verification, and zero-knowledge proofs.
 
 use lib_identity::*;
+use lib_identity::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV, SOV_WELCOME_BONUS_SOV};
 use lib_identity::credentials::creation::CredentialFactory;
 use lib_identity::identity::activity_tracking::{ActivityTracker, ActivityType};
 use lib_crypto::Hash;
@@ -40,7 +41,7 @@ async fn test_complete_citizen_onboarding_flow() {
     assert!(citizenship_result.dao_registration.proposal_eligibility);
     
     // Verify UBI registration
-    assert_eq!(citizenship_result.ubi_registration.monthly_amount, 1000);
+    assert_eq!(citizenship_result.ubi_registration.monthly_amount, SOV_UBI_MONTHLY_SOV * SOV_ATOMIC_UNITS);
     assert!(citizenship_result.ubi_registration.daily_amount > 0);
     
     // Verify Web4 access
@@ -51,7 +52,7 @@ async fn test_complete_citizen_onboarding_flow() {
     assert!(citizenship_result.web4_access.service_tokens.contains_key("zhtp.voting"));
     
     // Verify welcome bonus
-    assert_eq!(citizenship_result.welcome_bonus.bonus_amount, 5000);
+    assert_eq!(citizenship_result.welcome_bonus.bonus_amount, SOV_WELCOME_BONUS_SOV * SOV_ATOMIC_UNITS);
     
     println!("Complete citizen onboarding test passed!");
 }
@@ -366,8 +367,8 @@ async fn test_citizenship_system_integration() {
         assert_eq!(result.web4_access.access_level, AccessLevel::FullCitizen);
         assert!(result.web4_access.restrictions.is_empty());
         assert_eq!(result.dao_registration.voting_power, 1);
-        assert_eq!(result.ubi_registration.monthly_amount, 1000);
-        assert_eq!(result.welcome_bonus.bonus_amount, 5000);
+        assert_eq!(result.ubi_registration.monthly_amount, SOV_UBI_MONTHLY_SOV * SOV_ATOMIC_UNITS);
+        assert_eq!(result.welcome_bonus.bonus_amount, SOV_WELCOME_BONUS_SOV * SOV_ATOMIC_UNITS);
     }
     
     println!("Citizenship system integration test passed!");

@@ -132,7 +132,7 @@ impl TreasuryFund {
 pub struct TreasuryFundData {
     /// Fund category
     pub fund: TreasuryFund,
-    /// Current balance in ZHTP
+    /// Current balance in SOV
     pub current_balance: u64,
     /// Allocated percentage of total treasury
     pub allocated_percentage: f64,
@@ -207,7 +207,7 @@ pub enum UbiRecipientCategory {
     NonProfit,
     /// Research institutions
     ResearchInstitution,
-    /// Small businesses using ZHTP
+    /// Small businesses using SOV
     SmallBusiness,
 }
 
@@ -426,7 +426,7 @@ impl TreasuryStatsManager {
         };
 
         info!(
-            " Treasury stats manager initialized with {} ZHTP across {} funds",
+            " Treasury stats manager initialized with {} SOV across {} funds",
             total_treasury_balance, manager.fund_data.len()
         );
 
@@ -438,7 +438,7 @@ impl TreasuryStatsManager {
         // Update total treasury balance
         if new_total_balance != self.total_treasury_balance {
             info!(
-                "Treasury balance updated: {} -> {} ZHTP",
+                "Treasury balance updated: {} -> {} SOV",
                 self.total_treasury_balance, new_total_balance
             );
             self.total_treasury_balance = new_total_balance;
@@ -694,7 +694,7 @@ impl Default for TreasurySettings {
     fn default() -> Self {
         Self {
             minimum_emergency_ratio: 0.1, // 10%
-            max_auto_expenditure: 1_000_000, // 1M ZHTP
+            max_auto_expenditure: 1_000_000, // 1M SOV
             ubi_distribution_frequency: 86400 * 30, // Monthly
             rebalancing_frequency: 86400 * 7, // Weekly
             auto_rebalancing_enabled: true,

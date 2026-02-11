@@ -16,9 +16,9 @@ pub struct QualityBonus {
     pub quality_score: f64,
     /// Uptime percentage that earned the bonus
     pub uptime_percentage: f64,
-    /// Quality bonus amount in ZHTP
+    /// Quality bonus amount in SOV
     pub quality_bonus_amount: u64,
-    /// Uptime bonus amount in ZHTP
+    /// Uptime bonus amount in SOV
     pub uptime_bonus_amount: u64,
     /// Total bonus amount
     pub total_bonus: u64,
@@ -53,7 +53,7 @@ impl QualityBonus {
         
         if total_bonus > 0 {
             info!(
-                "⭐ Quality bonus earned: quality={:.1}% ({}ZHTP), uptime={:.1}% ({}ZHTP), total={}ZHTP",
+                "⭐ Quality bonus earned: quality={:.1}% ({}SOV), uptime={:.1}% ({}SOV), total={}SOV",
                 work.quality_score * 100.0, quality_bonus_amount,
                 uptime_percentage, uptime_bonus_amount,
                 total_bonus
@@ -104,7 +104,7 @@ impl QualityBonus {
         
         if total_bonus > 0 {
             info!(
-                " quality bonus: connection={:.1}% ({}ZHTP), uptime={:.1}% ({}ZHTP), total={}ZHTP",
+                " quality bonus: connection={:.1}% ({}SOV), uptime={:.1}% ({}SOV), total={}SOV",
                 connection_quality * 100.0, quality_bonus_amount,
                 uptime_percentage, uptime_bonus_amount,
                 total_bonus

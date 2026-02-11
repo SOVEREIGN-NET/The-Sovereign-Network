@@ -265,7 +265,7 @@ impl MeshDiscoveryRewardManager {
         self.record_discovery_performance(&comprehensive_reward, &mesh_status).await?;
 
         info!(
-            " Mesh discovery rewards calculated: {} ZHTP (base: {}, topology: {}, diversity: {}, health: {}, reliability: {}, network_util: {:.2}x, demand: {:.2}x)",
+            " Mesh discovery rewards calculated: {} SOV (base: {}, topology: {}, diversity: {}, health: {}, reliability: {}, network_util: {:.2}x, demand: {:.2}x)",
             comprehensive_reward.total_reward,
             base_discovery_reward,
             topology_bonus,
@@ -317,7 +317,7 @@ impl MeshDiscoveryRewardManager {
                 wallet.add_reward(&reward)?;
 
                 info!(
-                    "Distributed {} ZHTP discovery reward to node {} (contribution score: {})",
+                    "Distributed {} SOV discovery reward to node {} (contribution score: {})",
                     reward_amount, hex::encode(node_id), score
                 );
             }

@@ -62,7 +62,8 @@ fn create_transfer_tx(sender: &PublicKey, fee: u64, nullifier_id: u8) -> Transac
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-        governance_config_data: None,
+            token_mint_data: None,
+                    governance_config_data: None,
     }
 }
 

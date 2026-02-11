@@ -35,6 +35,7 @@ use lib_blockchain::{
     integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm},
     Hash,
 };
+use crate::api::handlers::constants::{SOV_ATOMIC_UNITS, SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
 
 // Removed unused cryptographic imports
 
@@ -293,7 +294,7 @@ impl IdentityHandler {
             let keypair = generate_keypair().map_err(|e| anyhow::anyhow!("Failed to generate keypair: {}", e))?;
             
             // ========================================================================
-            // CRITICAL FIX: Create welcome bonus UTXO output (5,000 ZHTP)
+            // CRITICAL FIX: Create welcome bonus UTXO output (5,000 SOV)
             // This creates an actual spendable UTXO on the blockchain, not just a
             // record in the identity layer. Without this, users cannot spend tokens.
             // ========================================================================
@@ -302,8 +303,8 @@ impl IdentityHandler {
             let identity_id_hex = citizenship_result.identity_id.to_string();
             let welcome_bonus_amount = citizenship_result.welcome_bonus.bonus_amount;
             
-            tracing::info!(" Creating welcome bonus UTXO: {} ZHTP for identity {}", 
-                          welcome_bonus_amount, &identity_id_hex[..16]);
+            tracing::info!(" Creating welcome bonus UTXO: {} SOV for identity {}", 
+                          welcome_bonus_amount / SOV_ATOMIC_UNITS, &identity_id_hex[..16]);
             
             // Create UTXO output for welcome bonus
             // The recipient is the identity hash (32 bytes) - same as what genesis uses
@@ -643,14 +644,14 @@ impl IdentityHandler {
             .as_secs();
         
         // ========================================================================
-        // CRITICAL FIX: Create dust UTXO for wallet (1 micro-ZHTP = 0.00000001 ZHTP)
+        // CRITICAL FIX: Create dust UTXO for wallet (1 micro-SOV = 0.00000001 SOV)
         // This establishes the wallet on-chain and allows it to receive transactions
-        // Cost is minimal: 3 micro-ZHTP per user for 3 wallets
+        // Cost is minimal: 3 micro-SOV per user for 3 wallets
         // ========================================================================
-        let dust_amount = 1u64; // 1 micro-ZHTP (0.00000001 ZHTP)
+        let dust_amount = 1u64; // 1 micro-SOV (0.00000001 SOV)
         let wallet_id_hex = hex::encode(wallet_data.wallet_id.as_bytes());
         
-        tracing::info!("💳 Creating dust UTXO for {} wallet: {} micro-ZHTP", 
+        tracing::info!("💳 Creating dust UTXO for {} wallet: {} micro-SOV", 
                       wallet_data.wallet_type, dust_amount);
         
         // Create dust UTXO output
@@ -1577,7 +1578,7 @@ impl IdentityHandler {
 
         use lib_blockchain::transaction::TransactionOutput;
 
-        let welcome_bonus_amount = 5000u64; // Citizens always get welcome bonus
+        let welcome_bonus_amount = SOV_WELCOME_BONUS; // Citizens always get welcome bonus (atomic units)
 
         let outputs = vec![TransactionOutput {
             commitment: lib_blockchain::types::hash::blake3_hash(
@@ -1640,6 +1641,9 @@ impl IdentityHandler {
             }
         };
 
+        // SOV welcome bonus is credited in-memory by register_wallet() via token_contract.mint().
+        // No separate TokenMint transaction needed.
+
         // Register wallets in blockchain's wallet_registry (source of truth for balances)
         if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
             let mut blockchain = blockchain_arc.write().await;
@@ -1656,12 +1660,12 @@ impl IdentityHandler {
                 created_at,
                 registration_fee: 50,
                 capabilities: 0xFF,
-                initial_balance: welcome_bonus_amount, // 5000 ZHTP welcome bonus
+                initial_balance: welcome_bonus_amount, // 5,000 SOV welcome bonus (atomic units)
             };
             if let Err(e) = blockchain.register_wallet(primary_wallet_data) {
                 tracing::warn!("Failed to register primary wallet: {}", e);
             } else {
-                tracing::info!("💰 Primary wallet registered with {} ZHTP welcome bonus", welcome_bonus_amount);
+                tracing::info!("💰 Primary wallet registered with {} SOV welcome bonus", SOV_WELCOME_BONUS_SOV);
             }
 
             // UBI wallet - no initial balance
@@ -1701,48 +1705,6 @@ impl IdentityHandler {
             }
 
             tracing::info!("✅ All 3 wallets registered in blockchain wallet_registry");
-
-            // Mint 5000 SOV welcome bonus to new user
-            let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-            let sov_welcome_bonus = 5000u64;
-            let user_pubkey = lib_blockchain::integration::crypto_integration::PublicKey::new(
-                public_key_bytes.clone()
-            );
-
-            // Ensure SOV token contract exists
-            if !blockchain.token_contracts.contains_key(&sov_token_id) {
-                let sov_token = lib_blockchain::contracts::TokenContract::new_zhtp();
-                blockchain.token_contracts.insert(sov_token_id, sov_token);
-                tracing::info!("🪙 SOV token contract initialized during identity registration");
-            }
-
-            // Mint welcome bonus (separate scope to release mutable borrow)
-            let mint_success = if let Some(sov_token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-                match sov_token.mint(&user_pubkey, sov_welcome_bonus) {
-                    Ok(()) => {
-                        tracing::info!("🪙 SOV welcome bonus credited: {} SOV to new user", sov_welcome_bonus);
-                        true
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to mint SOV welcome bonus: {}", e);
-                        false
-                    }
-                }
-            } else {
-                false
-            };
-
-            // Persist SOV token contract to SledStore (separate borrow)
-            if mint_success {
-                if let (Some(store), Some(sov_token)) = (&blockchain.store, blockchain.token_contracts.get(&sov_token_id)) {
-                    let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
-                    if let Err(e) = store_ref.put_token_contract(sov_token) {
-                        tracing::warn!("Failed to persist SOV token after minting: {}", e);
-                    } else {
-                        tracing::info!("🪙 SOV token contract persisted after welcome bonus mint");
-                    }
-                }
-            }
         }
 
         // Persist to DHT for fast lookups

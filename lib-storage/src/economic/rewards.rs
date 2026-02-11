@@ -142,7 +142,7 @@ impl StorageRewardTracker {
         let threshold = self.tier_thresholds.get(&tier).unwrap();
 
         // Base reward calculation
-        let base_reward = storage_provided / 1_000_000; // 1 ZHTP per MB
+        let base_reward = storage_provided / 1_000_000; // 1 SOV per MB
         let tier_multiplied = (base_reward as f64 * threshold.base_multiplier) as u64;
 
         // Performance bonus

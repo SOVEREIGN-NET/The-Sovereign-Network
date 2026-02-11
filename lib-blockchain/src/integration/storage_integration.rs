@@ -248,7 +248,7 @@ impl BlockchainStorageManager {
                     required_certifications: vec![],
                 },
                 budget_constraints: BudgetConstraints {
-                    max_total_cost: serialized_state.len() as u64 * 365,  // 1 ZHTP per byte per year
+                    max_total_cost: serialized_state.len() as u64 * 365,  // 1 SOV per byte per year
                     max_cost_per_gb_day: 100,
                     payment_schedule: PaymentSchedule::Monthly,
                     max_price_volatility: 0.05,

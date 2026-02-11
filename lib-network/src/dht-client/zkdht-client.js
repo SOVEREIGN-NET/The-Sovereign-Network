@@ -384,7 +384,7 @@ class ZkDHTClient {
                         type: 'balance-overview',
                         data: {
                             totalBalance: '1,234.56',
-                            currency: 'ZHTP',
+                            currency: 'SOV',
                             usdValue: '24,691.20',
                             change24h: '+5.67%'
                         }
@@ -396,15 +396,15 @@ class ZkDHTClient {
                     {
                         type: 'asset-list',
                         assets: [
-                            { symbol: 'ZHTP', name: 'ZHTP Token', balance: '1,234.56', value: '$24,691.20' },
+                            { symbol: 'SOV', name: 'SOV Token', balance: '1,234.56', value: '$24,691.20' },
                             { symbol: 'GAS', name: 'Network Gas', balance: '45.23', value: '$135.69' }
                         ]
                     },
                     {
                         type: 'transaction-history',
                         transactions: [
-                            { type: 'received', amount: '+100 ZHTP', time: '2 hours ago', from: 'alice.zkdid' },
-                            { type: 'sent', amount: '-50 ZHTP', time: '1 day ago', to: 'bob.zkdid' }
+                            { type: 'received', amount: '+100 SOV', time: '2 hours ago', from: 'alice.zkdid' },
+                            { type: 'sent', amount: '-50 SOV', time: '1 day ago', to: 'bob.zkdid' }
                         ]
                     }
                 ]
@@ -432,7 +432,7 @@ class ZkDHTClient {
                             activeProposals: 7,
                             totalMembers: 3247,
                             votingPower: 150,
-                            treasuryValue: '2.5M ZHTP'
+                            treasuryValue: '2.5M SOV'
                         }
                     },
                     {
@@ -450,7 +450,7 @@ class ZkDHTClient {
                             {
                                 id: 'ZEP-002',
                                 title: 'Treasury Fund Allocation',
-                                description: 'Allocate 500K ZHTP for development grants',
+                                description: 'Allocate 500K SOV for development grants',
                                 status: 'active',
                                 votesYes: 2103,
                                 votesNo: 234,
@@ -556,7 +556,7 @@ class ZkDHTClient {
                                 type: 'nft',
                                 title: 'Quantum Digital Art #001',
                                 description: 'Unique quantum-verified artwork by renowned artist',
-                                price: '100 ZHTP',
+                                price: '100 SOV',
                                 rarity: 'Ultra Rare',
                                 image: ''
                             },
@@ -565,7 +565,7 @@ class ZkDHTClient {
                                 type: 'domain',
                                 title: 'mycompany.zhtp',
                                 description: 'Premium business domain for Web4',
-                                price: '500 ZHTP',
+                                price: '500 SOV',
                                 category: 'Business',
                                 image: ''
                             }

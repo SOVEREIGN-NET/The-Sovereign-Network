@@ -52,7 +52,7 @@ pub struct QuantumWallet {
     pub name: String,
     /// Optional alias for quick access
     pub alias: Option<String>,
-    /// Current balance in ZHTP tokens
+    /// Current balance in SOV tokens
     pub balance: u64,
     /// Staked balance for rewards
     pub staked_balance: u64,
@@ -131,7 +131,7 @@ pub struct ContentTransfer {
 /// Type of content transfer
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ContentTransferType {
-    /// Direct sale for ZHTP tokens
+    /// Direct sale for SOV tokens
     Sale,
     /// Gift (no payment)
     Gift,

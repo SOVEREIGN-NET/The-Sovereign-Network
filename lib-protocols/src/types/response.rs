@@ -271,7 +271,7 @@ impl ZhtpResponse {
     pub fn dao_fee_insufficient(required: u64, provided: u64) -> Self {
         Self::error(
             ZhtpStatus::DaoFeeInsufficient,
-            format!("DAO fee insufficient. Required: {} ZHTP, Provided: {} ZHTP", required, provided),
+            format!("DAO fee insufficient. Required: {} SOV, Provided: {} SOV", required, provided),
         )
     }
 

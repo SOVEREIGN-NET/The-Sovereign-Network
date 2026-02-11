@@ -10,6 +10,7 @@ use tokio::time::{Duration, Instant};
 use tracing::{info, warn, error, debug};
 
 use super::config::NodeConfig;
+use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
 use crate::runtime::node_identity::{
     derive_node_id,
     log_runtime_node_identity,
@@ -51,6 +52,7 @@ pub mod node_identity;
 pub mod node_runtime;
 pub mod node_runtime_orchestrator;
 pub mod seed_storage;
+pub mod token_utils;
 #[cfg(test)]
 pub mod test_api_integration;
 
@@ -597,7 +599,7 @@ impl RuntimeOrchestrator {
 
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
                 if !blockchain.token_contracts.contains_key(&sov_token_id) {
-                    let sov_token = lib_blockchain::contracts::TokenContract::new_zhtp();
+                    let sov_token = lib_blockchain::contracts::TokenContract::new_sov_native();
                     blockchain.token_contracts.insert(sov_token_id, sov_token);
                     info!("🪙 SOV token contract initialized (upgrade migration): {}", hex::encode(&sov_token_id[..8]));
                 } else {
@@ -1059,7 +1061,7 @@ impl RuntimeOrchestrator {
                 // This handles upgrades from older blockchain data that didn't have the SOV token
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
                 if !bc.token_contracts.contains_key(&sov_token_id) {
-                    let sov_token = lib_blockchain::contracts::TokenContract::new_zhtp();
+                    let sov_token = lib_blockchain::contracts::TokenContract::new_sov_native();
                     bc.token_contracts.insert(sov_token_id, sov_token.clone());
 
                     // Persist to SledStore so it's loaded on next startup
@@ -1301,7 +1303,7 @@ impl RuntimeOrchestrator {
                                 // Add welcome bonus for Primary wallets (new identity registration)
                                 if format!("{:?}", wallet.wallet_type) == "Primary" {
                                     let wallet_id_hex = hex::encode(&wallet_id.0);
-                                    let welcome_bonus = 5000u64;
+                                    let welcome_bonus = SOV_WELCOME_BONUS;
 
                                     // Update wallet registry balance
                                     if let Some(wallet_entry) = blockchain_ref.wallet_registry.get_mut(&wallet_id_hex) {
@@ -1323,34 +1325,10 @@ impl RuntimeOrchestrator {
                                     );
                                     blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
 
-                                    // Also credit ZHTP token contract balance for fee deduction
-                                    // This is separate from UTXOs - token contract tracks balances for token operations
-                                    let zhtp_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-                                    if let Some(zhtp_token) = blockchain_ref.token_contracts.get_mut(&zhtp_token_id) {
-                                        // Build PublicKey for the user from their identity
-                                        let user_pubkey = lib_blockchain::integration::crypto_integration::PublicKey {
-                                            dilithium_pk: wallet.public_key.clone(),
-                                            kyber_pk: vec![],
-                                            key_id: {
-                                                let hash = lib_blockchain::types::hash::blake3_hash(&wallet.public_key);
-                                                let mut arr = [0u8; 32];
-                                                arr.copy_from_slice(hash.as_bytes());
-                                                arr
-                                            },
-                                        };
-                                        // Mint welcome bonus to token contract balance
-                                        if let Err(e) = zhtp_token.mint(&user_pubkey, welcome_bonus) {
-                                            warn!("Failed to mint ZHTP token balance: {}", e);
-                                        } else {
-                                            info!("🪙 ZHTP token balance credited: {} to key_id {}",
-                                                welcome_bonus, hex::encode(&user_pubkey.key_id[..8]));
-                                        }
-                                    } else {
-                                        warn!("ZHTP token contract not found, skipping token balance credit");
-                                    }
-
-                                    info!("🎁 Welcome bonus: {} ZHTP credited to wallet {} (UTXO created)",
-                                        welcome_bonus, &wallet_id_hex[..16]);
+                                    info!(
+                                        "🎁 Welcome bonus: {} SOV recorded for wallet {} (UTXO created; TokenMint queued by backfill)",
+                                        SOV_WELCOME_BONUS_SOV, &wallet_id_hex[..16]
+                                    );
                                 }
                             }
                             Err(e) => {
@@ -1453,7 +1431,7 @@ impl RuntimeOrchestrator {
                                             // Create actual UTXO so funds are spendable
                                             if format!("{:?}", wallet.wallet_type) == "Primary" {
                                                 let wallet_id_hex = hex::encode(&wallet_id.0);
-                                                let welcome_bonus = 5000u64;
+                                                let welcome_bonus = SOV_WELCOME_BONUS;
 
                                                 // Update wallet registry balance
                                                 if let Some(wallet_entry) = blockchain_ref.wallet_registry.get_mut(&wallet_id_hex) {
@@ -1474,7 +1452,7 @@ impl RuntimeOrchestrator {
                                                     format!("welcome_bonus_utxo:{}", wallet_id_hex).as_bytes()
                                                 );
                                                 blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
-                                                info!("🎁 Welcome bonus: {} ZHTP credited to wallet {} (UTXO created)", welcome_bonus, &wallet_id_hex[..16]);
+                                                info!("🎁 Welcome bonus: {} SOV credited to wallet {} (UTXO created)", SOV_WELCOME_BONUS_SOV, &wallet_id_hex[..16]);
                                             }
                                         }
                                         Err(e) => {
@@ -1496,7 +1474,7 @@ impl RuntimeOrchestrator {
                                     if wallet_entry.initial_balance == 0 && format!("{:?}", wallet.wallet_type) == "Primary" {
                                         info!("📝 Funding existing zero-balance Primary wallet: {}", &wallet_id_hex[..16]);
 
-                                        let welcome_bonus = 5000u64;
+                                        let welcome_bonus = SOV_WELCOME_BONUS;
 
                                         // Update wallet registry
                                         if let Some(wallet_mut) = blockchain_ref.wallet_registry.get_mut(&wallet_id_hex) {
@@ -1518,7 +1496,7 @@ impl RuntimeOrchestrator {
                                         );
                                         blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
 
-                                        info!("🎁 Welcome bonus: {} ZHTP credited to wallet {} (UTXO created)", welcome_bonus, &wallet_id_hex[..16]);
+                                        info!("🎁 Welcome bonus: {} SOV credited to wallet {} (UTXO created)", SOV_WELCOME_BONUS_SOV, &wallet_id_hex[..16]);
                                     }
                                 } else {
                                     // Wallet NOT in registry - register it now
@@ -1553,7 +1531,7 @@ impl RuntimeOrchestrator {
 
                                             // Give welcome bonus to Primary wallets
                                             if format!("{:?}", wallet.wallet_type) == "Primary" {
-                                                let welcome_bonus = 5000u64;
+                                                let welcome_bonus = SOV_WELCOME_BONUS;
 
                                                 // Update wallet registry balance
                                                 if let Some(wallet_entry) = blockchain_ref.wallet_registry.get_mut(&wallet_id_hex) {
@@ -1575,8 +1553,8 @@ impl RuntimeOrchestrator {
                                                 );
                                                 blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
 
-                                                info!("🎁 Welcome bonus: {} ZHTP credited to wallet {} (UTXO created)",
-                                                    welcome_bonus, &wallet_id_hex[..16]);
+                                                info!("🎁 Welcome bonus: {} SOV credited to wallet {} (UTXO created)",
+                                                    SOV_WELCOME_BONUS_SOV, &wallet_id_hex[..16]);
                                             }
                                         }
                                         Err(e) => {
@@ -2409,7 +2387,7 @@ impl RuntimeOrchestrator {
             
             for (wallet_id_hex, wallet_data) in blockchain.wallet_registry.iter() {
                 if wallet_data.initial_balance > 0 {
-                    info!("   Found funded wallet: {} → {} ZHTP", 
+                    info!("   Found funded wallet: {} → {} SOV", 
                         &wallet_id_hex[..16], wallet_data.initial_balance);
                     balances.insert(wallet_id_hex.clone(), wallet_data.initial_balance);
                 } else {
@@ -2438,7 +2416,7 @@ impl RuntimeOrchestrator {
                     if blockchain_balance > wallet.balance {
                         let diff = blockchain_balance - wallet.balance;
                         info!(
-                            "   Syncing wallet {} ({}): {} → {} ZHTP (+{})",
+                            "   Syncing wallet {} ({}): {} → {} SOV (+{})",
                             wallet.alias.as_deref().unwrap_or("unnamed"),
                             &wallet_id_hex[..16],
                             wallet.balance,
@@ -2455,7 +2433,7 @@ impl RuntimeOrchestrator {
         }
 
         info!(
-            " Wallet balance sync complete: {} wallets updated, {} ZHTP synced",
+            " Wallet balance sync complete: {} wallets updated, {} SOV synced",
             synced_count,
             total_synced_amount
         );
@@ -2478,7 +2456,7 @@ impl RuntimeOrchestrator {
         amount: u64,
         purpose: &str,
     ) -> Result<lib_blockchain::Hash> {
-        info!(" Creating blockchain transaction for wallet payment: {} ZHTP for '{}'", amount, purpose);
+        info!(" Creating blockchain transaction for wallet payment: {} SOV for '{}'", amount, purpose);
         
         // Step 1: Get blockchain and scan for UTXOs matching wallet_pubkey
         let blockchain_arc = if let Some(component) = self.components.read().await.get(&ComponentId::Blockchain) {
@@ -2509,7 +2487,7 @@ impl RuntimeOrchestrator {
                 // In production, we'd need to decrypt the note or track amounts separately
                 
                 // For now, use a placeholder amount - this would come from wallet's UTXO tracking
-                let utxo_amount = 5000u64; // Genesis wallet funding amount
+                let utxo_amount = SOV_WELCOME_BONUS; // Genesis wallet funding amount
                 
                 wallet_utxos.push((*utxo_hash, 0, utxo_amount));
                 info!("   Found UTXO: {}", hex::encode(utxo_hash.as_bytes()));
@@ -2524,7 +2502,7 @@ impl RuntimeOrchestrator {
         info!(" Found {} UTXOs for wallet", wallet_utxos.len());
         
         // Step 2: Select UTXOs to cover amount + fee
-        let fee = 100u64; // 100 micro-ZHTP fee
+        let fee = 100u64; // 100 micro-SOV fee
         let required_amount = amount + fee;
         
         let mut selected_utxos = Vec::new();
@@ -2547,7 +2525,7 @@ impl RuntimeOrchestrator {
             ));
         }
         
-        info!(" Selected {} UTXOs totaling {} ZHTP", selected_utxos.len(), total_selected);
+        info!(" Selected {} UTXOs totaling {} SOV", selected_utxos.len(), total_selected);
         
         drop(blockchain); // Release read lock
         
@@ -2585,7 +2563,7 @@ impl RuntimeOrchestrator {
         ));
 
         /* TODO: P1-7 - Uncomment and reimplement this code using WalletManager API
-        info!("💳 Building payment transaction: {} ZHTP to recipient, {} ZHTP change", amount, change_amount);
+        info!("💳 Building payment transaction: {} SOV to recipient, {} SOV change", amount, change_amount);
         
         // Step 4: Build Transaction using lib-blockchain TransactionBuilder
         use lib_blockchain::transaction::{TransactionInput, TransactionOutput, TransactionBuilder};

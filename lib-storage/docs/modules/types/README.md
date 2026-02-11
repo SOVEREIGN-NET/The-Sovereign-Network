@@ -51,7 +51,7 @@ pub type DhtKey = Hash;
 ### System Constants
 
 ```rust
-/// Storage pricing per GB per day (in ZHTP tokens)
+/// Storage pricing per GB per day (in SOV tokens)
 pub const STORAGE_PRICE_PER_GB_DAY: u64 = 100;
 
 /// Minimum replication factor
@@ -262,7 +262,7 @@ pub struct StorageCapabilities {
     pub available_space: u64,
     /// Total storage capacity in bytes
     pub total_capacity: u64,
-    /// Pricing per GB per day in ZHTP tokens
+    /// Pricing per GB per day in SOV tokens
     pub price_per_gb_day: u64,
     /// Supported storage tiers
     pub supported_tiers: Vec<StorageTier>,
@@ -371,7 +371,7 @@ pub struct QualityRequirements {
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetConstraints {
-    /// Maximum total cost in ZHTP tokens
+    /// Maximum total cost in SOV tokens
     pub max_total_cost: u64,
     /// Maximum cost per GB per day
     pub max_cost_per_gb_day: u64,
@@ -387,7 +387,7 @@ pub struct BudgetConstraints {
 pub struct EconomicQuote {
     /// Unique quote identifier
     pub quote_id: String,
-    /// Total cost in ZHTP tokens
+    /// Total cost in SOV tokens
     pub total_cost: u64,
     /// Cost per GB per day
     pub cost_per_gb_day: u64,
@@ -530,7 +530,7 @@ let metadata = ContentMetadata {
     last_accessed: current_timestamp(),
     access_count: 0,
     expires_at: Some(expiry_timestamp),
-    cost_per_day: 150, // 150 ZHTP tokens per day
+    cost_per_day: 150, // 150 SOV tokens per day
     tags: vec!["legal".to_string(), "contract".to_string()],
     access_control: vec![AccessLevel::Private],
     total_chunks: 1,
@@ -554,7 +554,7 @@ let requirements = StorageRequirements {
         data_integrity_level: 0.999, // 99.9% integrity
     },
     budget_constraints: BudgetConstraints {
-        max_total_cost: 100000,     // 100,000 ZHTP tokens
+        max_total_cost: 100000,     // 100,000 SOV tokens
         max_cost_per_gb_day: 200,   // 200 tokens per GB/day
         preferred_payment_schedule: PaymentSchedule::Monthly,
     },
@@ -668,7 +668,7 @@ pub type DhtKey = Hash;
 ### System Constants
 
 ```rust
-/// Storage pricing per GB per day (in ZHTP tokens)
+/// Storage pricing per GB per day (in SOV tokens)
 pub const STORAGE_PRICE_PER_GB_DAY: u64 = 100;
 
 /// Minimum replication factor
@@ -879,7 +879,7 @@ pub struct StorageCapabilities {
     pub available_space: u64,
     /// Total storage capacity in bytes
     pub total_capacity: u64,
-    /// Pricing per GB per day in ZHTP tokens
+    /// Pricing per GB per day in SOV tokens
     pub price_per_gb_day: u64,
     /// Supported storage tiers
     pub supported_tiers: Vec<StorageTier>,
@@ -988,7 +988,7 @@ pub struct QualityRequirements {
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetConstraints {
-    /// Maximum total cost in ZHTP tokens
+    /// Maximum total cost in SOV tokens
     pub max_total_cost: u64,
     /// Maximum cost per GB per day
     pub max_cost_per_gb_day: u64,
@@ -1004,7 +1004,7 @@ pub struct BudgetConstraints {
 pub struct EconomicQuote {
     /// Unique quote identifier
     pub quote_id: String,
-    /// Total cost in ZHTP tokens
+    /// Total cost in SOV tokens
     pub total_cost: u64,
     /// Cost per GB per day
     pub cost_per_gb_day: u64,
@@ -1147,7 +1147,7 @@ let metadata = ContentMetadata {
     last_accessed: current_timestamp(),
     access_count: 0,
     expires_at: Some(expiry_timestamp),
-    cost_per_day: 150, // 150 ZHTP tokens per day
+    cost_per_day: 150, // 150 SOV tokens per day
     tags: vec!["legal".to_string(), "contract".to_string()],
     access_control: vec![AccessLevel::Private],
     total_chunks: 1,
@@ -1171,7 +1171,7 @@ let requirements = StorageRequirements {
         data_integrity_level: 0.999, // 99.9% integrity
     },
     budget_constraints: BudgetConstraints {
-        max_total_cost: 100000,     // 100,000 ZHTP tokens
+        max_total_cost: 100000,     // 100,000 SOV tokens
         max_cost_per_gb_day: 200,   // 200 tokens per GB/day
         preferred_payment_schedule: PaymentSchedule::Monthly,
     },

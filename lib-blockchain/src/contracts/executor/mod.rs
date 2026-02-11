@@ -28,7 +28,7 @@ use crate::integration::crypto_integration::{PublicKey, Signature};
 const UBI_INSTANCE_ID: &[u8] = b"contract:ubi:v1";
 const DEV_GRANTS_INSTANCE_ID: &[u8] = b"contract:dev_grants:v1";
 const SYSTEM_CONFIG_KEY: &[u8] = b"system:config:v1";
-const ZHTP_TOKEN_KEY: &[u8] = b"token:zhtp:v1";
+const SOV_TOKEN_KEY: &[u8] = b"token:zhtp:v1"; // Legacy storage key (keep stable)
 
 /// Maximum allowed call depth to prevent infinite recursion
 /// Set to 10 to allow complex multi-contract workflows while preventing stack overflow
@@ -336,7 +336,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
             runtime_config,
         };
 
-        // ZHTP will be lazy-loaded on first access via get_or_load_zhtp()
+        // SOV will be lazy-loaded on first access via get_or_load_sov()
         // Genesis initialization happens in init_system()
 
         // IMPORTANT: WAL recovery must be performed BEFORE executor initialization
@@ -442,11 +442,11 @@ impl<S: ContractStorage> ContractExecutor<S> {
         self.persist_dev_grants(&dev_grants)?;
         self.dev_grants_contract = Some(dev_grants);
 
-        // Create and persist genesis ZHTP token
-        let zhtp_token = TokenContract::new_zhtp();
-        let zhtp_token_id = zhtp_token.token_id;
-        self.token_contracts.insert(zhtp_token_id, zhtp_token);
-        self.persist_zhtp(&zhtp_token_id)?;
+        // Create and persist genesis SOV token
+        let sov_token = TokenContract::new_sov_native();
+        let sov_token_id = sov_token.token_id;
+        self.token_contracts.insert(sov_token_id, sov_token);
+        self.persist_sov(&sov_token_id)?;
 
         Ok(())
     }
@@ -501,37 +501,37 @@ impl<S: ContractStorage> ContractExecutor<S> {
         Ok(())
     }
 
-    /// Persist ZHTP token state to storage
-    fn persist_zhtp(&mut self, token_id: &[u8; 32]) -> Result<()> {
+    /// Persist SOV token state to storage
+    fn persist_sov(&mut self, token_id: &[u8; 32]) -> Result<()> {
         let token = self.token_contracts
             .get(token_id)
-            .ok_or_else(|| anyhow!("ZHTP token not found in memory"))?;
-        let storage_key = ZHTP_TOKEN_KEY.to_vec();
+            .ok_or_else(|| anyhow!("SOV token not found in memory"))?;
+        let storage_key = SOV_TOKEN_KEY.to_vec();
         let token_data = bincode::serialize(token)?;
         self.storage.set(&storage_key, &token_data)?;
         Ok(())
     }
 
-    /// Load or retrieve ZHTP token from storage (lazy-loading)
+    /// Load or retrieve SOV token from storage (lazy-loading)
     ///
-    /// **Consensus-Critical**: ZHTP must be loaded from persistent storage.
+    /// **Consensus-Critical**: SOV must be loaded from persistent storage.
     /// Never recreate in-memory to prevent balance loss.
-    pub fn get_or_load_zhtp(&mut self) -> Result<&mut TokenContract> {
-        let zhtp_token_id = TokenContract::new_zhtp().token_id;
+    pub fn get_or_load_sov(&mut self) -> Result<&mut TokenContract> {
+        let sov_token_id = TokenContract::new_sov_native().token_id;
 
-        if !self.token_contracts.contains_key(&zhtp_token_id) {
+        if !self.token_contracts.contains_key(&sov_token_id) {
             // Attempt to load from storage
-            let storage_key = ZHTP_TOKEN_KEY.to_vec();
+            let storage_key = SOV_TOKEN_KEY.to_vec();
             if let Some(token_data) = self.storage.get(&storage_key)? {
                 let token: TokenContract = bincode::deserialize(&token_data)?;
-                self.token_contracts.insert(zhtp_token_id, token);
+                self.token_contracts.insert(sov_token_id, token);
             } else {
-                return Err(anyhow!("ZHTP token not found in storage - call init_system() first"));
+                return Err(anyhow!("SOV token not found in storage - call init_system() first"));
             }
         }
 
-        Ok(self.token_contracts.get_mut(&zhtp_token_id)
-            .expect("ZHTP token must exist in memory after successful load check"))
+        Ok(self.token_contracts.get_mut(&sov_token_id)
+            .expect("SOV token must exist in memory after successful load check"))
     }
 
     /// Load or retrieve custom token from storage (lazy-loading)
@@ -1393,15 +1393,15 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 let citizen: PublicKey = bincode::deserialize(&call.params)?;
 
                 // Get mutable reference to token for transfer using lazy-loading
-                let token = self.get_or_load_zhtp()?;
-                let zhtp_token_id = token.token_id;
+                let token = self.get_or_load_sov()?;
+                let sov_token_id = token.token_id;
 
                 ubi.claim_ubi(&citizen, context.block_number, token, &contract_context, None)
                     .map_err(|e| anyhow!("{:?}", e))?;
 
                 // CRITICAL: Persist token contract after mutations using helper
                 // Without this, token balances revert on restart even though UBI state persists
-                self.persist_zhtp(&zhtp_token_id)?;
+                self.persist_sov(&sov_token_id)?;
 
                 Ok(ContractResult::with_return_data(&"Claim UBI successful", contract_context.gas_used)?)
             },
@@ -1574,15 +1574,15 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 let (proposal_id, recipient) = params;
 
                 // Get mutable reference to token for transfer using lazy-loading
-                let token = self.get_or_load_zhtp()?;
-                let zhtp_token_id = token.token_id;
+                let token = self.get_or_load_sov()?;
+                let sov_token_id = token.token_id;
 
                 dev_grants.execute_grant(&context.caller, proposal_id, &recipient, context.block_number, token, &contract_context)
                     .map_err(|e| anyhow!("{:?}", e))?;
 
                 // CRITICAL: Persist token contract after mutations using helper
                 // Without this, token balances revert on restart even though DevGrants state persists
-                self.persist_zhtp(&zhtp_token_id)?;
+                self.persist_sov(&sov_token_id)?;
 
                 Ok(ContractResult::with_return_data(&"Grant executed", contract_context.gas_used)?)
             },
@@ -1795,7 +1795,7 @@ mod tests {
         let storage = MemoryStorage::default();
         let mut executor = ContractExecutor::new(storage);
 
-        // Initialize system first (creates and persists ZHTP)
+        // Initialize system first (creates and persists SOV)
         let governance = PublicKey {
             dilithium_pk: vec![1],
             kyber_pk: vec![1],
@@ -1807,7 +1807,7 @@ mod tests {
         };
         executor.init_system(config).expect("System initialization should succeed");
 
-        // Should have ZHTP token initialized after init_system
+        // Should have SOV token initialized after init_system
         let lib_id = crate::contracts::utils::generate_lib_token_id();
         assert!(executor.get_token_contract(&lib_id).is_some());
     }

@@ -77,7 +77,7 @@ impl DaoTreasury {
         self.assert_accounting_invariant();
 
         info!(
-            " Added {} ZHTP to DAO treasury - UBI: +{}, Sector DAOs: +{}, Emergency: +{}, Dev Grants: +{}, Total: {}",
+            " Added {} SOV to DAO treasury - UBI: +{}, Sector DAOs: +{}, Emergency: +{}, Dev Grants: +{}, Total: {}",
             total,
             distribution.ubi,
             distribution.sector_daos,
@@ -152,7 +152,7 @@ impl DaoTreasury {
         self.assert_accounting_invariant();
         
         info!(
-            "Recorded UBI distribution: {} ZHTP to citizens, remaining allocated: {}",
+            "Recorded UBI distribution: {} SOV to citizens, remaining allocated: {}",
             amount, self.ubi_allocated
         );
         
@@ -172,7 +172,7 @@ impl DaoTreasury {
         self.assert_accounting_invariant();
 
         info!(
-            " Recorded sector DAO distribution: {} ZHTP, remaining allocated: {}",
+            " Recorded sector DAO distribution: {} SOV, remaining allocated: {}",
             amount, self.sector_dao_allocated
         );
 
@@ -192,7 +192,7 @@ impl DaoTreasury {
         self.assert_accounting_invariant();
 
         info!(
-            " Recorded emergency distribution: {} ZHTP, remaining allocated: {}",
+            " Recorded emergency distribution: {} SOV, remaining allocated: {}",
             amount, self.emergency_allocated
         );
 
@@ -212,7 +212,7 @@ impl DaoTreasury {
         self.assert_accounting_invariant();
 
         info!(
-            " Recorded dev grants distribution: {} ZHTP, remaining allocated: {}",
+            " Recorded dev grants distribution: {} SOV, remaining allocated: {}",
             amount, self.dev_grants_allocated
         );
 

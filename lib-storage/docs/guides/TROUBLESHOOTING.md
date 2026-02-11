@@ -266,14 +266,14 @@ async fn download_with_fallback(
 async fn check_wallet_status(storage: &mut UnifiedStorageSystem, identity: &ZhtpIdentity) -> Result<()> {
     let wallet_info = storage.get_wallet_info(identity).await?;
     
-    println!("Wallet balance: {} ZHTP", wallet_info.balance);
-    println!("Locked funds: {} ZHTP", wallet_info.locked_balance);
-    println!("Available: {} ZHTP", wallet_info.balance - wallet_info.locked_balance);
+    println!("Wallet balance: {} SOV", wallet_info.balance);
+    println!("Locked funds: {} SOV", wallet_info.locked_balance);
+    println!("Available: {} SOV", wallet_info.balance - wallet_info.locked_balance);
     
     // Check recent transactions
     let transactions = storage.get_transaction_history(identity, 10).await?;
     for tx in transactions {
-        println!("Transaction: {} ZHTP, Status: {:?}", tx.amount, tx.status);
+        println!("Transaction: {} SOV, Status: {:?}", tx.amount, tx.status);
     }
     
     Ok(())
@@ -284,11 +284,11 @@ async fn check_wallet_status(storage: &mut UnifiedStorageSystem, identity: &Zhtp
 
 1. **Top Up Wallet:**
 ```rust
-// In a implementation, integrate with ZHTP token system
+// In a implementation, integrate with SOV token system
 async fn fund_wallet(storage: &mut UnifiedStorageSystem, identity: &ZhtpIdentity, amount: u64) -> Result<()> {
     // This would connect to the ZHTP blockchain/token system
     let funding_tx = storage.fund_wallet(identity.clone(), amount).await?;
-    println!("Wallet funded with {} ZHTP, tx: {}", amount, funding_tx);
+    println!("Wallet funded with {} SOV, tx: {}", amount, funding_tx);
     Ok(())
 }
 ```
@@ -1058,14 +1058,14 @@ async fn download_with_fallback(
 async fn check_wallet_status(storage: &mut UnifiedStorageSystem, identity: &ZhtpIdentity) -> Result<()> {
     let wallet_info = storage.get_wallet_info(identity).await?;
     
-    println!("Wallet balance: {} ZHTP", wallet_info.balance);
-    println!("Locked funds: {} ZHTP", wallet_info.locked_balance);
-    println!("Available: {} ZHTP", wallet_info.balance - wallet_info.locked_balance);
+    println!("Wallet balance: {} SOV", wallet_info.balance);
+    println!("Locked funds: {} SOV", wallet_info.locked_balance);
+    println!("Available: {} SOV", wallet_info.balance - wallet_info.locked_balance);
     
     // Check recent transactions
     let transactions = storage.get_transaction_history(identity, 10).await?;
     for tx in transactions {
-        println!("Transaction: {} ZHTP, Status: {:?}", tx.amount, tx.status);
+        println!("Transaction: {} SOV, Status: {:?}", tx.amount, tx.status);
     }
     
     Ok(())
@@ -1076,11 +1076,11 @@ async fn check_wallet_status(storage: &mut UnifiedStorageSystem, identity: &Zhtp
 
 1. **Top Up Wallet:**
 ```rust
-// In a implementation, integrate with ZHTP token system
+// In a implementation, integrate with SOV token system
 async fn fund_wallet(storage: &mut UnifiedStorageSystem, identity: &ZhtpIdentity, amount: u64) -> Result<()> {
     // This would connect to the ZHTP blockchain/token system
     let funding_tx = storage.fund_wallet(identity.clone(), amount).await?;
-    println!("Wallet funded with {} ZHTP, tx: {}", amount, funding_tx);
+    println!("Wallet funded with {} SOV, tx: {}", amount, funding_tx);
     Ok(())
 }
 ```

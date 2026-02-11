@@ -12,7 +12,7 @@ use std::collections::HashMap;
 /// Serves as the interface specification for Treasury Kernel integration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractAbi {
-    /// Contract name (e.g., "UBI", "DevGrants", "ZHTP")
+    /// Contract name (e.g., "UBI", "DevGrants", "SOV")
     pub contract: String,
 
     /// Semantic version of the ABI (e.g., "1.0.0")

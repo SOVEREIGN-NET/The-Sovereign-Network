@@ -1,12 +1,13 @@
-//! Economic integration for ZHTP Identity
+//! Economic integration for SOV Identity
 //! 
-//! This module provides integration with the ZHTP economic system,
+//! This module provides integration with the SOV economic system,
 //! enabling UBI distribution, DAO governance, and token economics.
 
 pub mod transaction;
 
 // Re-exports for compatibility with original identity.rs
 pub use transaction::{Transaction, TransactionType, Priority};
+use crate::constants::SOV_ATOMIC_UNITS;
 
 // Temporary economic model for integration
 // This should be replaced with actual lib-economy integration
@@ -18,7 +19,7 @@ pub struct EconomicModel {
     pub dao_treasury: u64,
     /// Welcome bonus treasury
     pub welcome_treasury: u64,
-    /// Total ZHTP supply
+    /// Total SOV supply
     pub total_supply: u64,
     /// Current block height
     pub current_block: u64,
@@ -28,10 +29,10 @@ impl EconomicModel {
     /// Create a new economic model
     pub fn new() -> Self {
         Self {
-            ubi_treasury: 1_000_000_000, // 1 billion ZHTP for UBI
-            dao_treasury: 500_000_000,   // 500 million ZHTP for DAO
-            welcome_treasury: 100_000_000, // 100 million ZHTP for welcome bonuses
-            total_supply: 21_000_000_000, // 21 billion ZHTP total
+            ubi_treasury: 1_000_000_000u64.saturating_mul(SOV_ATOMIC_UNITS), // 1B SOV for UBI
+            dao_treasury: 500_000_000u64.saturating_mul(SOV_ATOMIC_UNITS),   // 500M SOV for DAO
+            welcome_treasury: 100_000_000u64.saturating_mul(SOV_ATOMIC_UNITS), // 100M SOV for welcome bonuses
+            total_supply: 21_000_000_000u64.saturating_mul(SOV_ATOMIC_UNITS), // 21B SOV total
             current_block: 0,
         }
     }

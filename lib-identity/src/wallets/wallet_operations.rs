@@ -54,7 +54,7 @@ impl WalletManager {
         self.calculate_total_balance();
         
         tracing::info!(
-            "Added {} ZHTP to wallet {}. New balance: {}",
+            "Added {} SOV to wallet {}. New balance: {}",
             amount,
             hex::encode(&wallet_id.0[..8]),
             new_balance
@@ -75,7 +75,7 @@ impl WalletManager {
         self.calculate_total_balance();
         
         tracing::info!(
-            "Removed {} ZHTP from wallet {}. New balance: {}",
+            "Removed {} SOV from wallet {}. New balance: {}",
             amount,
             hex::encode(&wallet_id.0[..8]),
             new_balance
@@ -124,7 +124,7 @@ impl WalletManager {
         }
         
         tracing::info!(
-            "Completed bulk transfer of {} ZHTP from wallet {} to {} recipients",
+            "Completed bulk transfer of {} SOV from wallet {} to {} recipients",
             total_amount,
             hex::encode(&from_wallet.0[..8]),
             transaction_hashes.len()
@@ -189,7 +189,7 @@ impl WalletManager {
         self.calculate_total_balance();
         
         tracing::info!(
-            "Auto-distributed {} ZHTP to {} UBI wallets",
+            "Auto-distributed {} SOV to {} UBI wallets",
             amount_per_wallet,
             distribution_hashes.len()
         );

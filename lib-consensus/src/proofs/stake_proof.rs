@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub struct StakeProof {
     /// Validator identity
     pub validator: IdentityId,
-    /// Amount staked (in micro-ZHTP)
+    /// Amount staked (in micro-SOV)
     pub staked_amount: u64,
     /// Stake transaction hash
     pub stake_tx_hash: Hash,
@@ -85,7 +85,7 @@ impl StakeProof {
     pub fn verify(&self, current_height: u64) -> Result<bool> {
         // Check minimum stake requirements
         if self.staked_amount < 1000 * 1_000_000 {
-            // 1000 ZHTP minimum
+            // 1000 SOV minimum
             return Ok(false);
         }
 

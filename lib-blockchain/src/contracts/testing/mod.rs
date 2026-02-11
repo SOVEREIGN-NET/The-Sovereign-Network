@@ -80,7 +80,7 @@ impl ContractTestFramework {
         self.current_block += blocks;
     }
 
-    /// Get ZHTP token balance for user
+    /// Get SOV token balance for user
     pub fn get_lib_balance(&self, user: &str) -> u64 {
         if let Some(keypair) = self.keypairs.get(user) {
             let lib_id = generate_lib_token_id();
@@ -295,7 +295,7 @@ impl ContractTestFramework {
         // Print user balances
         for (name, _keypair) in &self.keypairs {
             let lib_balance = self.get_lib_balance(name);
-            println!("User {}: ZHTP Balance = {}", name, lib_balance);
+            println!("User {}: SOV Balance = {}", name, lib_balance);
         }
     }
 }

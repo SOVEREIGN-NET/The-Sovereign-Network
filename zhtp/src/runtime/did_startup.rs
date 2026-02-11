@@ -17,6 +17,7 @@ use lib_crypto::{PrivateKey, Hash};
 use serde::{Serialize, Deserialize};
 use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME, WALLET_DATA_FILENAME, KeystorePrivateKey};
 use tracing::info;
+use crate::api::handlers::constants::SOV_WELCOME_BONUS;
 // Core wallet functionality with mesh network integration
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -61,7 +62,7 @@ struct PersistedWalletData {
 }
 
 fn default_genesis_balance() -> u64 {
-    5000 // Default genesis wallet balance
+    SOV_WELCOME_BONUS // Default genesis wallet balance (atomic units)
 }
 
 /// Get the default keystore path (~/.zhtp/keystore)
@@ -180,7 +181,7 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
         hex::encode(&wallet_id.0[..8]),
         hex::encode(&user_identity.id.0[..8])
     );
-    info!("Wallet count: {}, Balance: {} ZHTP",
+    info!("Wallet count: {}, Balance: {} SOV",
         user_identity.wallet_manager.wallets.len(),
         wallet_data.balance);
 
@@ -290,7 +291,7 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
     let primary_balance = result.user_identity.wallet_manager.wallets.values()
         .find(|w| w.wallet_type == lib_identity::WalletType::Primary)
         .map(|w| w.balance)
-        .unwrap_or(5000); // Default to genesis balance if not found
+        .unwrap_or(SOV_WELCOME_BONUS); // Default to genesis balance if not found
 
     let wallet_data = PersistedWalletData {
         wallet_name: result.wallet_name.clone(),
@@ -1003,7 +1004,7 @@ impl WalletStartupManager {
 
                 println!("Found {} existing wallets on the mesh:", wallets.len());
                 for (i, wallet_info) in wallets.iter().enumerate() {
-                    println!("{}. {} (Balance: {} ZHTP)", i + 1, wallet_info.0, wallet_info.1);
+                    println!("{}. {} (Balance: {} SOV)", i + 1, wallet_info.0, wallet_info.1);
                 }
 
                 print!("Enter the number of the wallet to import (or 0 to cancel): ");
@@ -1023,7 +1024,7 @@ impl WalletStartupManager {
                 }
 
                 let selected_wallet = &wallets[choice - 1];
-                println!("Selected wallet: {} (Balance: {} ZHTP)", selected_wallet.0, selected_wallet.1);
+                println!("Selected wallet: {} (Balance: {} SOV)", selected_wallet.0, selected_wallet.1);
 
                 // Import actual wallet from mesh network
                 println!("Requesting wallet import from mesh network...");
@@ -1035,7 +1036,7 @@ impl WalletStartupManager {
                 println!("Identity ID: {}", hex::encode(&user_identity.id.0[..8]));
                 println!("Wallet ID: {}", hex::encode(&wallet_id.0[..8]));
                 println!("Wallet Address: {}", wallet_address);
-                println!("Current Balance: {} ZHTP", selected_wallet.1);
+                println!("Current Balance: {} SOV", selected_wallet.1);
 
                 Ok((user_identity, node_identity, wallet_id, wallet_name, seed_phrase, wallet_address, user_private_data, node_private_data))
             }

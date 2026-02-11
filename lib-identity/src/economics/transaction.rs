@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use lib_crypto::Hash;
 
-/// Transaction types supported by ZHTP
+/// Transaction types supported by SOV
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TransactionType {
     /// Standard payment transaction
@@ -34,7 +34,7 @@ pub enum Priority {
     Urgent,
 }
 
-/// ZHTP Transaction from the original identity.rs
+/// SOV Transaction from the original identity.rs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     /// Transaction ID
@@ -126,7 +126,7 @@ impl Transaction {
             Priority::Urgent => 50,
         };
         
-        // Minimum fee is 1 ZHTP, scales with transaction size
+        // Minimum fee is 1 SOV, scales with transaction size
         std::cmp::max(1, (tx_size * base_rate) / 1000)
     }
 

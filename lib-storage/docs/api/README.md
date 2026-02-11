@@ -248,7 +248,7 @@ let request = EconomicStorageRequest {
             data_integrity_level: 0.99,
         },
         budget_constraints: BudgetConstraints {
-            max_total_cost: 10000, // 10,000 ZHTP tokens
+            max_total_cost: 10000, // 10,000 SOV tokens
             max_cost_per_gb_day: 150,
             preferred_payment_schedule: PaymentSchedule::Upfront,
         },
@@ -260,7 +260,7 @@ let request = EconomicStorageRequest {
 };
 
 let quote = system.get_storage_quote(request).await?;
-println!("Total cost: {} ZHTP tokens", quote.total_cost);
+println!("Total cost: {} SOV tokens", quote.total_cost);
 ```
 
 ### EconomicQuote Structure
@@ -733,7 +733,7 @@ let request = EconomicStorageRequest {
             data_integrity_level: 0.99,
         },
         budget_constraints: BudgetConstraints {
-            max_total_cost: 10000, // 10,000 ZHTP tokens
+            max_total_cost: 10000, // 10,000 SOV tokens
             max_cost_per_gb_day: 150,
             preferred_payment_schedule: PaymentSchedule::Upfront,
         },
@@ -745,7 +745,7 @@ let request = EconomicStorageRequest {
 };
 
 let quote = system.get_storage_quote(request).await?;
-println!("Total cost: {} ZHTP tokens", quote.total_cost);
+println!("Total cost: {} SOV tokens", quote.total_cost);
 ```
 
 ### EconomicQuote Structure

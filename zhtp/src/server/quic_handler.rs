@@ -54,6 +54,7 @@ use lib_network::handshake::{HandshakeContext, NonceCache, ClientHello};
 use lib_network::messaging::message_handler::MeshMessageHandler;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
 use lib_crypto::PublicKey;
+use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
 
 use super::zhtp::ZhtpRouter;
 use super::zhtp::serialization::ZHTP_MAGIC;
@@ -762,7 +763,7 @@ impl QuicHandler {
                     "📝 Auto-registered authenticated peer identity (observed, unprivileged)"
                 );
 
-                // Fund new identity with welcome bonus (5000 ZHTP)
+                // Fund new identity with welcome bonus (5,000 SOV)
                 // This ensures all authenticated peers can participate in the network
                 self.fund_new_identity_wallet(
                     &identity_id,
@@ -783,7 +784,7 @@ impl QuicHandler {
     /// Fund a new identity's primary wallet with the welcome bonus
     ///
     /// Called when a new peer identity is auto-registered from handshake.
-    /// Gives them 5000 ZHTP to participate in the network.
+    /// Gives them 5,000 SOV to participate in the network.
     async fn fund_new_identity_wallet(
         &self,
         identity_id: &lib_crypto::Hash,
@@ -825,7 +826,7 @@ impl QuicHandler {
         }
 
         // Register wallet with welcome bonus
-        let welcome_bonus = 5000u64;
+        let welcome_bonus = SOV_WELCOME_BONUS;
 
         let wallet_data = lib_blockchain::transaction::WalletTransactionData {
             wallet_id: lib_blockchain::Hash::from_slice(&wallet_id_bytes),
@@ -844,16 +845,33 @@ impl QuicHandler {
             initial_balance: welcome_bonus,
         };
 
+        let mint_tx = match crate::runtime::token_utils::build_sov_mint_tx(
+            &wallet_id_bytes,
+            welcome_bonus,
+            format!("SOV_WELCOME_BONUS:{}", peer_did).into_bytes(),
+        ).await {
+            Ok(tx) => Some(tx),
+            Err(e) => {
+                warn!("Failed to build SOV welcome mint tx for peer {}: {}", peer_did, e);
+                None
+            }
+        };
+
         {
             let mut bc_write = blockchain.write().await;
             bc_write.wallet_registry.insert(wallet_id_hex.clone(), wallet_data);
+            if let Some(tx) = mint_tx {
+                if let Err(e) = bc_write.add_pending_transaction(tx) {
+                    warn!("Failed to enqueue peer welcome mint tx: {}", e);
+                }
+            }
         }
 
         info!(
             peer_did = %peer_did,
             wallet_id = %wallet_id_hex[..16],
-            bonus = welcome_bonus,
-            "🎁 Funded new peer wallet with welcome bonus"
+            bonus = SOV_WELCOME_BONUS_SOV,
+            "🎁 Funded new peer wallet with welcome bonus (TokenMint queued)"
         );
     }
 

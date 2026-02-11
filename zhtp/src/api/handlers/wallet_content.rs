@@ -154,7 +154,7 @@ impl WalletContentHandler {
         let response_json = serde_json::to_vec(&response)
             .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
         
-        info!(" Wallet {} owns {} items ({} bytes, {} ZHTP value)", 
+        info!(" Wallet {} owns {} items ({} bytes, {} SOV value)", 
               wallet_id_str, stats.total_items, stats.total_storage_bytes, stats.total_value);
         
         Ok(ZhtpResponse::success_with_content_type(
