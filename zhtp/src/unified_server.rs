@@ -472,16 +472,18 @@ impl ZhtpUnifiedServer {
             identity_manager.clone(),            // Identity manager for auto-registration
         );
 
+        // Issue #846: Set MeshRouter on QuicHandler for peer registration
+        // After UHP handshake, peers are registered in both QuicMeshProtocol (transport)
+        // and MeshRouter (routing/visibility). This makes peers discoverable via DHT.
+        quic_handler.set_mesh_router(mesh_router_arc.clone());
+
         // Issue #907: QuicMeshProtocol is now the SINGLE canonical connection store.
         // No need to link MeshRouter's PeerRegistry - broadcast_to_peers() now calls
         // quic_protocol.broadcast_message() directly.
 
         let quic_handler = Arc::new(quic_handler);
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
-
-        // Set ZHTP router on mesh_router for proper endpoint routing over UDP
-        mesh_router_arc.set_zhtp_router(zhtp_router_arc.clone()).await;
-        info!(" ZHTP router registered with mesh router for UDP endpoint handling");
+        info!(" MeshRouter registered with QuicHandler (Issue #846)");
 
         // Initialize NodeRuntime - Policy Authority (NR-1: Policy Ownership)
         // Delegates all "should we?" decisions to runtime, server only executes "can we?" operations
