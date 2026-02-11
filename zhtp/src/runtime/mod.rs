@@ -1268,6 +1268,12 @@ impl RuntimeOrchestrator {
                     
                     // Register wallets on blockchain
                     for (wallet_id, wallet) in &identity.wallet_manager.wallets {
+                        let initial_balance = if format!("{:?}", wallet.wallet_type) == "Primary" {
+                            SOV_WELCOME_BONUS
+                        } else {
+                            0
+                        };
+
                         let wallet_data = lib_blockchain::transaction::WalletTransactionData {
                             wallet_id: lib_blockchain::Hash::from_slice(&wallet_id.0),
                             owner_identity_id: Some(lib_blockchain::Hash::from_slice(&identity.id.0)),
@@ -1278,7 +1284,7 @@ impl RuntimeOrchestrator {
                             capabilities: 0,
                             created_at: wallet.created_at,
                             registration_fee: 0,
-                            initial_balance: wallet.balance,
+                            initial_balance,
                             seed_commitment: wallet.seed_commitment.as_ref()
                                 .map(|s| {
                                     // Hash the seed commitment string to create blockchain hash
@@ -1400,6 +1406,13 @@ impl RuntimeOrchestrator {
                             for (wallet_id, wallet) in &user_identity.wallet_manager.wallets {
                                 let wallet_id_hex = hex::encode(&wallet_id.0);
                                 if !blockchain_ref.wallet_exists(&wallet_id_hex) {
+                                    let initial_balance = if format!("{:?}", wallet.wallet_type) == "Primary" {
+                                        let current = wallet.balance;
+                                        if current == 0 { SOV_WELCOME_BONUS } else { current }
+                                    } else {
+                                        0
+                                    };
+
                                     let wallet_data = lib_blockchain::transaction::WalletTransactionData {
                                         wallet_id: lib_blockchain::Hash::from_slice(&wallet_id.0),
                                         owner_identity_id: Some(lib_blockchain::Hash::from_slice(&user_identity.id.0)),
@@ -1410,7 +1423,7 @@ impl RuntimeOrchestrator {
                                         capabilities: 0,
                                         created_at: wallet.created_at,
                                         registration_fee: 0,
-                                        initial_balance: wallet.balance,
+                                        initial_balance,
                                         seed_commitment: wallet.seed_commitment.as_ref()
                                             .map(|s| lib_blockchain::types::hash::blake3_hash(s.as_bytes()))
                                             .unwrap_or_else(|| {
@@ -1502,6 +1515,13 @@ impl RuntimeOrchestrator {
                                     // Wallet NOT in registry - register it now
                                     info!("📝 Registering missing wallet for existing identity: {}", &wallet_id_hex[..16]);
 
+                                    let initial_balance = if format!("{:?}", wallet.wallet_type) == "Primary" {
+                                        let current = wallet.balance;
+                                        if current == 0 { SOV_WELCOME_BONUS } else { current }
+                                    } else {
+                                        0
+                                    };
+
                                     let wallet_data = lib_blockchain::transaction::WalletTransactionData {
                                         wallet_id: lib_blockchain::Hash::from_slice(&wallet_id.0),
                                         owner_identity_id: Some(lib_blockchain::Hash::from_slice(&user_identity.id.0)),
@@ -1512,7 +1532,7 @@ impl RuntimeOrchestrator {
                                         capabilities: 0,
                                         created_at: wallet.created_at,
                                         registration_fee: 0,
-                                        initial_balance: wallet.balance,
+                                        initial_balance,
                                         seed_commitment: wallet.seed_commitment.as_ref()
                                             .map(|s| lib_blockchain::types::hash::blake3_hash(s.as_bytes()))
                                             .unwrap_or_else(|| {
