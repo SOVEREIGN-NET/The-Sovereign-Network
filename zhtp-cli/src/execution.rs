@@ -454,7 +454,7 @@ async fn execute_get_balance(context: &CommandContext, addr: Option<&str>) -> Re
     
     match get_account_balance(&address).await {
         Ok(balance) => {
-            Ok(format!("Balance for {}: {:.6} ZHTP", address, balance))
+            Ok(format!("Balance for {}: {:.6} SOV", address, balance))
         },
         Err(e) => Ok(format!("Failed to get balance: {}", e))
     }
@@ -472,7 +472,7 @@ async fn execute_send_transaction(context: &CommandContext, to: &str, amount: &s
     
     match send_transaction(to, amount_value, fee).await {
         Ok(tx_hash) => {
-            Ok(format!("Transaction sent successfully!\n Amount: {} ZHTP\n To: {}\nFee: {} ZHTP\nTX Hash: {}", 
+            Ok(format!("Transaction sent successfully!\n Amount: {} SOV\n To: {}\nFee: {} SOV\nTX Hash: {}", 
                 amount_value, to, fee, tx_hash))
         },
         Err(e) => Ok(format!("Failed to send transaction: {}", e))
@@ -495,7 +495,7 @@ async fn execute_list_transactions(context: &CommandContext) -> Result<String> {
             } else {
                 let mut result = format!("Transaction History ({} transactions):\n", transactions.len());
                 for (i, tx) in transactions.iter().enumerate().take(10) {
-                    result.push_str(&format!("{}. {} {} ZHTP to {} ({})\n", 
+                    result.push_str(&format!("{}. {} {} SOV to {} ({})\n", 
                         i + 1, 
                         if tx.from == address { "Sent" } else { "Received" },
                         tx.amount,
@@ -543,7 +543,7 @@ async fn execute_storage_info(context: &CommandContext) -> Result<String> {
             info.push_str(&format!(" Used Storage: {:.2} GB\n", stats.used_storage as f64 / 1_000_000_000.0));
             info.push_str(&format!("📁 Total Files: {}\n", stats.file_count));
             info.push_str(&format!("DHT Nodes: {}\n", stats.dht_nodes));
-            info.push_str(&format!("Total Earnings: {:.6} ZHTP\n", stats.total_earnings));
+            info.push_str(&format!("Total Earnings: {:.6} SOV\n", stats.total_earnings));
             Ok(info)
         },
         Err(e) => Ok(format!("Failed to get storage stats: {}", e))
@@ -641,9 +641,9 @@ async fn execute_ubi_info(context: &CommandContext) -> Result<String> {
         Ok(ubi_status) => {
             let mut info = format!("Universal Basic Income Information:\n");
             info.push_str(&format!("UBI Status: {}\n", if ubi_status.is_eligible { "Eligible " } else { "Not Eligible " }));
-            info.push_str(&format!("💵 Available UBI: {:.6} ZHTP\n", ubi_status.available_amount));
+            info.push_str(&format!("💵 Available UBI: {:.6} SOV\n", ubi_status.available_amount));
             info.push_str(&format!("⏰ Next Payment: {}\n", ubi_status.next_payment_time));
-            info.push_str(&format!(" Monthly Rate: {:.6} ZHTP\n", ubi_status.monthly_rate));
+            info.push_str(&format!(" Monthly Rate: {:.6} SOV\n", ubi_status.monthly_rate));
             info.push_str(&format!("Participation Score: {:.1}%\n", ubi_status.participation_score * 100.0));
             Ok(info)
         },
@@ -661,7 +661,7 @@ async fn execute_claim_ubi(context: &CommandContext) -> Result<String> {
     match claim_ubi_payment("current_user").await {
         Ok(claim_result) => {
             if claim_result.success {
-                Ok(format!("UBI claimed successfully!\nAmount: {:.6} ZHTP\nTransaction: {}", 
+                Ok(format!("UBI claimed successfully!\nAmount: {:.6} SOV\nTransaction: {}", 
                     claim_result.amount, claim_result.transaction_hash))
             } else {
                 Ok(format!("UBI claim failed: {}", claim_result.reason))
@@ -681,11 +681,11 @@ async fn execute_dao_info(context: &CommandContext) -> Result<String> {
     match get_dao_status().await {
         Ok(dao_status) => {
             let mut info = format!(" DAO Governance Information:\n");
-            info.push_str(&format!("Treasury Balance: {:.2} ZHTP\n", dao_status.treasury_balance));
+            info.push_str(&format!("Treasury Balance: {:.2} SOV\n", dao_status.treasury_balance));
             info.push_str(&format!(" Active Proposals: {}\n", dao_status.active_proposals));
             info.push_str(&format!("Total Voters: {}\n", dao_status.total_voters));
             info.push_str(&format!("Participation Rate: {:.1}%\n", dao_status.participation_rate * 100.0));
-            info.push_str(&format!(" Daily UBI Distribution: {:.2} ZHTP\n", dao_status.daily_ubi_distribution));
+            info.push_str(&format!(" Daily UBI Distribution: {:.2} SOV\n", dao_status.daily_ubi_distribution));
             Ok(info)
         },
         Err(e) => Ok(format!("Failed to get DAO status: {}", e))
@@ -866,7 +866,7 @@ async fn execute_metrics(context: &CommandContext) -> Result<String> {
                     metrics.push_str(&format!("  • Files: {}\n", storage_stats.file_count));
                     metrics.push_str(&format!("  • Used Space: {:.2} GB\n", storage_stats.used_storage as f64 / 1e9));
                     metrics.push_str(&format!("  • DHT Nodes: {}\n", storage_stats.dht_nodes));
-                    metrics.push_str(&format!("  • Earnings: {:.6} ZHTP\n", storage_stats.total_earnings));
+                    metrics.push_str(&format!("  • Earnings: {:.6} SOV\n", storage_stats.total_earnings));
                 },
                 Err(_) => metrics.push_str("\n Storage: Stats unavailable\n"),
             }
@@ -878,9 +878,9 @@ async fn execute_metrics(context: &CommandContext) -> Result<String> {
     match get_dao_status().await {
         Ok(dao_status) => {
             metrics.push_str("\nEconomics:\n");
-            metrics.push_str(&format!("  • Treasury: {:.2} ZHTP\n", dao_status.treasury_balance));
+            metrics.push_str(&format!("  • Treasury: {:.2} SOV\n", dao_status.treasury_balance));
             metrics.push_str(&format!("  • Active Proposals: {}\n", dao_status.active_proposals));
-            metrics.push_str(&format!("  • Daily UBI: {:.2} ZHTP\n", dao_status.daily_ubi_distribution));
+            metrics.push_str(&format!("  • Daily UBI: {:.2} SOV\n", dao_status.daily_ubi_distribution));
             metrics.push_str(&format!("  • Participation: {:.1}%\n", dao_status.participation_rate * 100.0));
         },
         Err(_) => metrics.push_str("\nEconomics: Unavailable\n"),

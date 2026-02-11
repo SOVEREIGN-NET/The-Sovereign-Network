@@ -101,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize consensus with hybrid PoS + PoStorage
     let config = ConsensusConfig {
         consensus_type: ConsensusType::Hybrid,
-        min_stake: 1000 * 1_000_000,           // 1000 ZHTP
+        min_stake: 1000 * 1_000_000,           // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 100,
         block_time: 10,

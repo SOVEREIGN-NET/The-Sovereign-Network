@@ -10,7 +10,7 @@ use crate::treasury_economics::DaoTreasury;
 use crate::transactions::calculate_dao_fee_distribution;
 use crate::wasm::logging::info;
 
-/// Core economic model for the ZHTP network
+/// Core economic model for the SOV network
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EconomicModel {
     /// Tokens per MB of data routed (like ISP bandwidth costs)
@@ -41,8 +41,8 @@ impl EconomicModel {
         let mut dao_treasury = DaoTreasury::new();
         
         // Initialize treasury with collected fees for demonstration
-        dao_treasury.treasury_balance = 2_500_000; // 2.5M ZHTP
-        dao_treasury.total_dao_fees_collected = 5_000_000; // 5M ZHTP collected
+        dao_treasury.treasury_balance = 2_500_000; // 2.5M SOV
+        dao_treasury.total_dao_fees_collected = 5_000_000; // 5M SOV collected
         dao_treasury.ubi_allocated = 1_500_000; // 1.5M allocated to UBI
         dao_treasury.sector_dao_allocated = 600_000; // 0.6M allocated to sector DAOs
         dao_treasury.emergency_allocated = 250_000; // 0.25M allocated to emergency reserves

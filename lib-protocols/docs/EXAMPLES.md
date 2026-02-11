@@ -307,10 +307,10 @@ async fn main() -> Result<()> {
         let assessment = econ.calculate_operation_fees(op, size, priority)?;
         
         println!("\n{} operation ({} bytes, {:?} priority):", op, size, priority);
-        println!("  Base fee: {} ZHTP", assessment.base_fee);
-        println!("  DAO fee: {} ZHTP", assessment.dao_fee);
-        println!("  Network fee: {} ZHTP", assessment.network_fee);
-        println!("  Total: {} ZHTP", assessment.total_fee);
+        println!("  Base fee: {} SOV", assessment.base_fee);
+        println!("  DAO fee: {} SOV", assessment.dao_fee);
+        println!("  Network fee: {} SOV", assessment.network_fee);
+        println!("  Total: {} SOV", assessment.total_fee);
     }
     
     Ok(())

@@ -90,6 +90,8 @@ pub enum TransactionType {
     ///
     /// This is a durable on-chain update for existing wallet records.
     WalletUpdate = 23,
+    /// Token mint (system-controlled issuance, e.g., welcome bonus, UBI, migrations)
+    TokenMint = 24,
 }
 
 impl TransactionType {
@@ -176,6 +178,7 @@ impl TransactionType {
             TransactionType::UBIClaim => "UBI claim - citizen-initiated claim from pool",
             TransactionType::ProfitDeclaration => "Profit declaration - enforces 20% tribute",
             TransactionType::GovernanceConfigUpdate => "Token governance configuration update",
+            TransactionType::TokenMint => "System-controlled token mint (welcome bonus, UBI, migrations)",
         }
     }
 
@@ -206,6 +209,7 @@ impl TransactionType {
             TransactionType::UBIClaim => "ubi_claim",
             TransactionType::ProfitDeclaration => "profit_declaration",
             TransactionType::GovernanceConfigUpdate => "governance_config_update",
+            TransactionType::TokenMint => "token_mint",
         }
     }
 

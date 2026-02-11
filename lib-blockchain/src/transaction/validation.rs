@@ -85,7 +85,13 @@ impl TransactionValidator {
     /// Validate a transaction completely
     pub fn validate_transaction(&self, transaction: &Transaction) -> ValidationResult {
         // Check if this is a system transaction (empty inputs = coinbase-style)
-        let is_system_transaction = transaction.inputs.is_empty();
+        let mut is_system_transaction = transaction.inputs.is_empty();
+        if matches!(
+            transaction.transaction_type,
+            TransactionType::TokenTransfer | TransactionType::TokenMint
+        ) {
+            is_system_transaction = false;
+        }
 
         // Basic structure validation
         self.validate_basic_structure(transaction)?;
@@ -148,7 +154,7 @@ impl TransactionValidator {
             TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
             }
-        
+
             TransactionType::UBIClaim => {
                 // UBI claim transactions - citizen-initiated claims (Week 7)
                 self.validate_ubi_claim_transaction(transaction)?;
@@ -174,6 +180,9 @@ impl TransactionValidator {
                 if transaction.governance_config_data.is_none() {
                     return Err(ValidationError::InvalidInputs);
                 }
+            }
+            TransactionType::TokenMint => {
+                // System-controlled token mint - validation handled at consensus layer
             }
         }
 
@@ -274,7 +283,31 @@ impl TransactionValidator {
                 }
             }
             TransactionType::TokenTransfer => {
-                if transaction.outputs.is_empty() {
+                let data = transaction.token_transfer_data.as_ref()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                if data.amount == 0 {
+                    return Err(ValidationError::InvalidAmount);
+                }
+                if !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+                if data.from != transaction.signature.public_key.key_id {
+                    return Err(ValidationError::InvalidTransaction);
+                }
+            }
+            TransactionType::TokenMint => {
+                if transaction.version < 2 {
+                    return Err(ValidationError::InvalidTransaction);
+                }
+                let data = transaction.token_mint_data.as_ref()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                if data.amount == 0 {
+                    return Err(ValidationError::InvalidAmount);
+                }
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if !transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidOutputs);
                 }
             }
@@ -721,8 +754,8 @@ impl TransactionValidator {
         );
         println!("FEE VALIDATION DEBUG:");
         println!("   Transaction size: {} bytes", transaction.size());
-        println!("   Calculated minimum fee: {} ZHTP", min_fee);
-        println!("   Actual transaction fee: {} ZHTP", transaction.fee);
+        println!("   Calculated minimum fee: {} SOV", min_fee);
+        println!("   Actual transaction fee: {} SOV", transaction.fee);
         if transaction.fee < min_fee {
             println!("FEE VALIDATION FAILED: {} < {}", transaction.fee, min_fee);
             return Err(ValidationError::InvalidFee);
@@ -1039,7 +1072,13 @@ impl<'a> StatefulTransactionValidator<'a> {
         let is_token = is_token_contract_execution(transaction);
         tracing::debug!("[BREADCRUMB] is_token_contract_execution = {}", is_token);
 
-        let is_system_transaction = transaction.inputs.is_empty() && !is_token;
+        let mut is_system_transaction = transaction.inputs.is_empty() && !is_token;
+        if matches!(
+            transaction.transaction_type,
+            TransactionType::TokenTransfer | TransactionType::TokenMint
+        ) {
+            is_system_transaction = false;
+        }
         tracing::debug!("[BREADCRUMB] is_system_transaction = {}", is_system_transaction);
 
         // Create a stateless validator for basic checks
@@ -1116,7 +1155,42 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
             }
             TransactionType::TokenTransfer => {
-                if transaction.outputs.is_empty() {
+                if transaction.outputs.len() != 0 {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+                let data = transaction.token_transfer_data.as_ref()
+                    .ok_or(ValidationError::InvalidInputs)?;
+                if data.amount == 0 {
+                    return Err(ValidationError::InvalidAmount);
+                }
+                let is_sov = data.token_id == [0u8; 32]
+                    || data.token_id == crate::contracts::utils::generate_lib_token_id();
+                if is_sov {
+                    let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+                    let wallet_id_hex = hex::encode(data.from);
+                    let wallet = blockchain.wallet_registry.get(&wallet_id_hex)
+                        .ok_or(ValidationError::InvalidTransaction)?;
+                    let wallet_pk = lib_crypto::PublicKey::new(wallet.public_key.clone());
+                    if wallet_pk.key_id != transaction.signature.public_key.key_id {
+                        return Err(ValidationError::InvalidTransaction);
+                    }
+                } else if data.from != transaction.signature.public_key.key_id {
+                    return Err(ValidationError::InvalidTransaction);
+                }
+            }
+            TransactionType::TokenMint => {
+                if transaction.version < 2 {
+                    return Err(ValidationError::InvalidTransaction);
+                }
+                let data = transaction.token_mint_data.as_ref()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                if data.amount == 0 {
+                    return Err(ValidationError::InvalidAmount);
+                }
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if !transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidOutputs);
                 }
             }
@@ -1140,6 +1214,8 @@ impl<'a> StatefulTransactionValidator<'a> {
         // Identity is an optional overlay, not a precondition for token operations.
         if !is_system_transaction
             && transaction.transaction_type != TransactionType::IdentityRegistration
+            && transaction.transaction_type != TransactionType::TokenTransfer
+            && transaction.transaction_type != TransactionType::TokenMint
             && !is_token_contract_execution(transaction)
         {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");
@@ -1148,14 +1224,22 @@ impl<'a> StatefulTransactionValidator<'a> {
         }
 
         // Signature validation (always required except for system transactions)
-        if !is_system_transaction {
+        let mut skip_signature = is_system_transaction;
+        if transaction.transaction_type == TransactionType::TokenMint {
+            if let Some(blockchain) = self.blockchain {
+                if blockchain.height == 0 && blockchain.blocks.is_empty() && transaction.signature.signature.is_empty() {
+                    skip_signature = true; // Allow genesis TokenMint without signature
+                }
+            }
+        }
+        if !skip_signature {
             tracing::debug!("[BREADCRUMB] validate_signature CALL");
             stateless_validator.validate_signature(transaction)?;
             tracing::debug!("[BREADCRUMB] validate_signature OK");
         }
 
         // Zero-knowledge proof validation (skip for system transactions)
-        if !is_system_transaction {
+        if !skip_signature {
             tracing::debug!("[BREADCRUMB] validate_zk_proofs CALL");
             stateless_validator.validate_zk_proofs(transaction)?;
             tracing::debug!("[BREADCRUMB] validate_zk_proofs OK");
@@ -1414,8 +1498,13 @@ pub mod utils {
                 transaction.inputs.is_empty() && !transaction.outputs.is_empty()
             }
             TransactionType::TokenTransfer => {
-                // Token transfers need outputs
-                !transaction.outputs.is_empty()
+                transaction.token_transfer_data.is_some() && transaction.outputs.is_empty()
+            }
+            TransactionType::TokenMint => {
+                transaction.version >= 2
+                    && transaction.token_mint_data.is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates should have governance_config_data
@@ -1511,7 +1600,8 @@ mod tests {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         }
     }
 
@@ -1579,7 +1669,8 @@ mod tests {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         };
 
         assert!(
@@ -1674,7 +1765,8 @@ mod tests {
                 ubi_claim_data: None,
                 profit_declaration_data: None,
                 token_transfer_data: None,
-                governance_config_data: None,
+            token_mint_data: None,
+                            governance_config_data: None,
             };
 
             assert!(
@@ -1709,7 +1801,8 @@ mod tests {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         };
 
         assert!(

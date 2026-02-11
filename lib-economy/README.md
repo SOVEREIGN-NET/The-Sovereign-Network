@@ -49,10 +49,10 @@ ZHTP Economics enables the transition from Web3 to Web4 by creating economic inc
 ### **ISP Replacement Economics**
 ```rust
 // Economic incentives mirror traditional ISP revenue streams
-ISP Traditional Revenue → ZHTP Token Rewards
-├── Bandwidth fees → Routing rewards (1 ZHTP/MB)
-├── Storage fees → Storage rewards (10 ZHTP/GB/month)
-├── Service fees → Validation rewards (5 ZHTP/validation)
+ISP Traditional Revenue → SOV Token Rewards
+├── Bandwidth fees → Routing rewards (1 SOV/MB)
+├── Storage fees → Storage rewards (10 SOV/GB/month)
+├── Service fees → Validation rewards (5 SOV/validation)
 └── Infrastructure → Quality bonuses (up to 50% multiplier)
 ```
 
@@ -80,7 +80,7 @@ let mut economic_model = EconomicModel::new();
 // Calculate transaction fees
 let (network_fee, dao_fee, total) = economic_model.calculate_fee(
     1000,              // transaction size in bytes
-    50_000,            // transaction amount in ZHTP
+    50_000,            // transaction amount in SOV
     Priority::Normal   // transaction priority
 );
 
@@ -94,7 +94,7 @@ let work_metrics = WorkMetrics {
 };
 
 let reward = TokenReward::calculate(&work_metrics, &economic_model)?;
-println!("Earned {} ZHTP tokens", reward.total_reward);
+println!("Earned {} SOV tokens", reward.total_reward);
 ```
 
 ### **Multi-Wallet System**
@@ -115,7 +115,7 @@ wallet_manager.create_specialized_wallet(WalletType::Governance).await?;
 let tx_id = wallet_manager.transfer_between_wallets(
     WalletType::IspBypassRewards,
     WalletType::Primary,
-    100_000, // 100K ZHTP
+    100_000, // 100K SOV
     "Consolidating  rewards".to_string()
 ).await?;
 ```
@@ -142,10 +142,10 @@ Economic rewards are calculated based on actual infrastructure contribution:
 
 | Activity | Base Rate | Quality Bonus | Uptime Bonus |
 |----------|-----------|---------------|---------------|
-| **Packet Routing** | 1 ZHTP/MB | +50% (>95% quality) | +25% (>95% uptime) |
-| **Data Storage** | 10 ZHTP/GB/month | +50% (>95% reliability) | +25% (>99% availability) |
-| **Validation** | 5 ZHTP/validation | +50% (>95% accuracy) | +25% (>23h/day) |
-| **** | 100 ZHTP/GB shared | +50% (>90% quality) | +10 ZHTP/hour uptime |
+| **Packet Routing** | 1 SOV/MB | +50% (>95% quality) | +25% (>95% uptime) |
+| **Data Storage** | 10 SOV/GB/month | +50% (>95% reliability) | +25% (>99% availability) |
+| **Validation** | 5 SOV/validation | +50% (>95% accuracy) | +25% (>23h/day) |
+| **** | 100 SOV/GB shared | +50% (>90% quality) | +10 SOV/hour uptime |
 
 ### **3. Treasury Economics**
 ```rust
@@ -176,9 +176,9 @@ Economic incentives specifically designed to replace traditional ISPs:
 
 ```rust
 pub struct IspBypassIncentives {
-    pub connectivity_sharing_rate: u64,     // 100 ZHTP per GB shared
-    pub mesh_routing_rate: u64,             // 1 ZHTP per MB routed
-    pub uptime_bonus_rate: u64,             // 10 ZHTP per hour uptime
+    pub connectivity_sharing_rate: u64,     // 100 SOV per GB shared
+    pub mesh_routing_rate: u64,             // 1 SOV per MB routed
+    pub uptime_bonus_rate: u64,             // 10 SOV per hour uptime
     pub bandwidth_quality_multiplier: f64,  // 1.5x for high quality
 }
 ```
@@ -323,19 +323,19 @@ wasm-pack build --target web --features wasm
 ```rust
 // Core economic parameters
 pub const DEFAULT_DAO_FEE_RATE: u64 = 200;                    // 2.00% DAO fee
-pub const MINIMUM_DAO_FEE: u64 = 5;                           // 5 ZHTP minimum
+pub const MINIMUM_DAO_FEE: u64 = 5;                           // 5 SOV minimum
 pub const UBI_ALLOCATION_PERCENTAGE: u64 = 60;                // 60% to UBI
 pub const WELFARE_ALLOCATION_PERCENTAGE: u64 = 40;            // 40% to welfare
 
 // Infrastructure reward rates
-pub const DEFAULT_ROUTING_RATE: u64 = 1;                      // 1 ZHTP per MB
-pub const DEFAULT_STORAGE_RATE: u64 = 10;                     // 10 ZHTP per GB/month
-pub const DEFAULT_COMPUTE_RATE: u64 = 5;                      // 5 ZHTP per validation
+pub const DEFAULT_ROUTING_RATE: u64 = 1;                      // 1 SOV per MB
+pub const DEFAULT_STORAGE_RATE: u64 = 10;                     // 10 SOV per GB/month
+pub const DEFAULT_COMPUTE_RATE: u64 = 5;                      // 5 SOV per validation
 
 //  incentives
-pub const ISP_BYPASS_CONNECTIVITY_RATE: u64 = 100;            // 100 ZHTP per GB shared
-pub const ISP_BYPASS_MESH_RATE: u64 = 1;                      // 1 ZHTP per MB routed
-pub const ISP_BYPASS_UPTIME_BONUS: u64 = 10;                  // 10 ZHTP per hour
+pub const ISP_BYPASS_CONNECTIVITY_RATE: u64 = 100;            // 100 SOV per GB shared
+pub const ISP_BYPASS_MESH_RATE: u64 = 1;                      // 1 SOV per MB routed
+pub const ISP_BYPASS_UPTIME_BONUS: u64 = 10;                  // 10 SOV per hour
 
 // Quality and performance thresholds
 pub const HIGH_UTILIZATION_THRESHOLD: f64 = 0.9;              // 90% utilization
@@ -357,7 +357,7 @@ let infrastructure_work = WorkMetrics {
 };
 
 let daily_rewards = TokenReward::calculate(&infrastructure_work, &economic_model)?;
-// Typical result: ~2,000-3,000 ZHTP tokens per day
+// Typical result: ~2,000-3,000 SOV tokens per day
 ```
 
 ### **2.  Participant**
@@ -372,7 +372,7 @@ let bypass_work = IspBypassWork {
 };
 
 let monthly_rewards = isp_incentives.calculate_rewards(&bypass_work);
-// Typical result: ~10,000-15,000 ZHTP tokens per month
+// Typical result: ~10,000-15,000 SOV tokens per month
 // Equivalent to traditional ISP profit margins
 ```
 
@@ -384,7 +384,7 @@ let ubi_amount = calculate_ubi_amount(&dao_treasury, &verified_citizens)?;
 
 // Monthly UBI distribution
 let ubi_tx = Transaction::new_ubi_distribution(citizen_wallet, ubi_amount)?;
-// Typical result: 500-2,000 ZHTP tokens per month per citizen
+// Typical result: 500-2,000 SOV tokens per month per citizen
 ```
 
 ## 🔮 **Future Roadmap**

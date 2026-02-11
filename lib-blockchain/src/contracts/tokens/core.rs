@@ -31,14 +31,14 @@ impl fmt::Display for Error {
     }
 }
 
-/// Core token contract structure supporting both ZHTP native and custom tokens
+/// Core token contract structure supporting both SOV native and custom tokens
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenContract {
     /// Unique token identifier
     pub token_id: [u8; 32],
     /// Human-readable token name
     pub name: String,
-    /// Token symbol (e.g., "ZHTP", "WHISPER")
+    /// Token symbol (e.g., "SOV", "WHISPER")
     pub symbol: String,
     /// Number of decimal places
     pub decimals: u8,
@@ -101,17 +101,17 @@ impl TokenContract {
         }
     }
 
-    /// Create ZHTP native token
-    pub fn new_zhtp() -> Self {
-        let creator = PublicKey::new(vec![0u8; 1312]); // Mock creator for ZHTP
+    /// Create SOV native token (legacy supply cap retained for u64 compatibility)
+    pub fn new_sov_native() -> Self {
+        let creator = PublicKey::new(vec![0u8; 1312]); // Mock creator for SOV
         Self::new(
             crate::contracts::utils::generate_lib_token_id(),
-            crate::contracts::ZHTP_TOKEN_NAME.to_string(),
-            crate::contracts::ZHTP_TOKEN_SYMBOL.to_string(),
-            crate::contracts::ZHTP_DECIMALS,
-            crate::contracts::ZHTP_MAX_SUPPLY,
-            false, // ZHTP is not deflationary
-            0,     // No burn rate for ZHTP
+            crate::contracts::SOV_NATIVE_NAME.to_string(),
+            crate::contracts::SOV_NATIVE_SYMBOL.to_string(),
+            crate::contracts::SOV_NATIVE_DECIMALS,
+            crate::contracts::SOV_NATIVE_MAX_SUPPLY,
+            false, // SOV is not deflationary
+            0,     // No burn rate for SOV
             creator,
         )
     }
@@ -602,12 +602,12 @@ mod tests {
 
     #[test]
     fn test_lib_token_creation() {
-        let token = TokenContract::new_zhtp();
+        let token = TokenContract::new_sov_native();
 
-        assert_eq!(token.name, "ZHTP");
-        assert_eq!(token.symbol, "ZHTP");
+        assert_eq!(token.name, "Sovereign");
+        assert_eq!(token.symbol, "SOV");
         assert_eq!(token.decimals, 8);
-        assert_eq!(token.max_supply, crate::contracts::ZHTP_MAX_SUPPLY);
+        assert_eq!(token.max_supply, crate::contracts::SOV_NATIVE_MAX_SUPPLY);
         assert!(!token.is_deflationary);
         assert_eq!(token.burn_rate, 0);
     }

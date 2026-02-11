@@ -33,10 +33,10 @@ pub struct SupplyManager {
 The system compensates network participants similarly to how ISPs and CDNs operate, but decentralized:
 
 **Infrastructure Services:**
-- **Routing**: 1 ZHTP per MB of data routed
-- **Storage**: 10 ZHTP per GB stored per month
-- **Bandwidth**: 100 ZHTP per GB bandwidth shared
-- **Uptime**: 10 ZHTP per hour of consistent availability
+- **Routing**: 1 SOV per MB of data routed
+- **Storage**: 10 SOV per GB stored per month
+- **Bandwidth**: 100 SOV per GB bandwidth shared
+- **Uptime**: 10 SOV per hour of consistent availability
 
 **Anti-ISP Monopoly:**
 - No single provider controls infrastructure
@@ -45,9 +45,9 @@ The system compensates network participants similarly to how ISPs and CDNs opera
 - Anti-Sybil design prevents gaming the system
 
 ```rust
-pub const ISP_BYPASS_CONNECTIVITY_RATE: u64 = 100; // 100 ZHTP per GB
-pub const ISP_BYPASS_MESH_RATE: u64 = 1;           // 1 ZHTP per MB routed
-pub const ISP_BYPASS_UPTIME_BONUS: u64 = 10;       // 10 ZHTP per hour
+pub const ISP_BYPASS_CONNECTIVITY_RATE: u64 = 100; // 100 SOV per GB
+pub const ISP_BYPASS_MESH_RATE: u64 = 1;           // 1 SOV per MB routed
+pub const ISP_BYPASS_UPTIME_BONUS: u64 = 10;       // 10 SOV per hour
 ```
 
 ### 3. DAO-Driven Welfare System
@@ -228,8 +228,8 @@ pub const DEVELOPMENT_ALLOCATION_PERCENTAGE: u64 = 30; // 30% to development
 
 **Minting Formula:**
 ```rust
-base_mint = infrastructure_usage * 10 ZHTP
-activity_bonus = network_activity * 5 ZHTP
+base_mint = infrastructure_usage * 10 SOV
+activity_bonus = network_activity * 5 SOV
 total_mint = base_mint + activity_bonus
 ```
 
@@ -242,9 +242,9 @@ total_mint = base_mint + activity_bonus
 3. **Supply/Demand**: Logarithmic adjustments prevent extremes
 
 **Infrastructure Pricing:**
-- Routing: 1 ZHTP per MB
-- Storage: 10 ZHTP per GB
-- Bandwidth: 100 ZHTP per GB
+- Routing: 1 SOV per MB
+- Storage: 10 SOV per GB
+- Bandwidth: 100 SOV per GB
 
 ## Economic Formulas
 
@@ -272,10 +272,10 @@ total_fee = (base_fee * priority_multiplier) + dao_fee
 ### Infrastructure Rewards
 
 ```rust
-// Routing rewards (1 ZHTP per MB)
+// Routing rewards (1 SOV per MB)
 routing_reward = (bytes_routed / 1_000_000) * base_routing_rate
 
-// Storage rewards (10 ZHTP per GB per month)
+// Storage rewards (10 SOV per GB per month)
 storage_reward = (bytes_stored / 1_000_000_000) * base_storage_rate
 
 // Compute rewards (minimal, for consensus validation)

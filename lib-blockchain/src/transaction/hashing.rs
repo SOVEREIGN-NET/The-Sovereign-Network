@@ -243,6 +243,9 @@ pub fn hash_for_signature(transaction: &Transaction) -> Hash {
     hash_optional_field(&mut hasher, &transaction.ubi_claim_data);
     hash_optional_field(&mut hasher, &transaction.profit_declaration_data);
     hash_optional_field(&mut hasher, &transaction.token_transfer_data);
+    if transaction.version >= 2 {
+        hash_optional_field(&mut hasher, &transaction.token_mint_data);
+    }
     hash_optional_field(&mut hasher, &transaction.governance_config_data);
 
     let mut hash_bytes = [0u8; 32];

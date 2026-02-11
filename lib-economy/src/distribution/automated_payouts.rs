@@ -178,7 +178,7 @@ impl AutomatedUBI {
                 }
 
                 info!(
-                    "Distributed {} ZHTP UBI to citizen {} (wallet: {}) at block {}",
+                    "Distributed {} SOV UBI to citizen {} (wallet: {}) at block {}",
                     ubi_per_citizen,
                     citizen_id,
                     hex::encode(wallet_address),
@@ -192,7 +192,7 @@ impl AutomatedUBI {
         self.schedule.process_payout()?;
         
         info!(
-            "Completed UBI distribution: {} ZHTP to {} recipients",
+            "Completed UBI distribution: {} SOV to {} recipients",
             total_distribution, successful_distributions
         );
         
@@ -273,7 +273,7 @@ impl AutomatedInfrastructureRewards {
                 total_distributed += provider_reward;
                 
                 info!(
-                    "🏭 Distributed {} ZHTP infrastructure reward to provider {}",
+                    "🏭 Distributed {} SOV infrastructure reward to provider {}",
                     provider_reward,
                     hex::encode(wallet_address)
                 );
@@ -284,7 +284,7 @@ impl AutomatedInfrastructureRewards {
         self.schedule.process_payout()?;
         
         info!(
-            "🏭 Completed infrastructure rewards: {} ZHTP to {} providers",
+            "🏭 Completed infrastructure rewards: {} SOV to {} providers",
             total_distributed, self.providers.len()
         );
         
@@ -361,7 +361,7 @@ pub fn process_automated_payouts(
 
     if ubi_distributed > 0 || infrastructure_distributed > 0 {
         info!(
-            " Automated payouts completed: {} UBI + {} infrastructure = {} total ZHTP at block {}",
+            " Automated payouts completed: {} UBI + {} infrastructure = {} total SOV at block {}",
             ubi_distributed, infrastructure_distributed, ubi_distributed + infrastructure_distributed, current_block
         );
     }
@@ -371,6 +371,6 @@ pub fn process_automated_payouts(
 
 impl Default for AutomatedPayoutProcessor {
     fn default() -> Self {
-        Self::new(1000, 10000) // Default: 1000 ZHTP monthly UBI, 10000 ZHTP daily infrastructure
+        Self::new(1000, 10000) // Default: 1000 SOV monthly UBI, 10000 SOV daily infrastructure
     }
 }

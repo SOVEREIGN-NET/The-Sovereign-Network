@@ -26,19 +26,19 @@ Complete API documentation for all public types, functions, and modules in lib-e
 /// Mandatory DAO fee rate (2% = 200 basis points)
 pub const DEFAULT_DAO_FEE_RATE: u64 = 200;
 
-///  connectivity reward (100 ZHTP per GB bandwidth)
+///  connectivity reward (100 SOV per GB bandwidth)
 pub const ISP_BYPASS_CONNECTIVITY_RATE: u64 = 100;
 
-///  mesh routing reward (1 ZHTP per MB packets routed)
+///  mesh routing reward (1 SOV per MB packets routed)
 pub const ISP_BYPASS_MESH_RATE: u64 = 1;
 
-///  uptime bonus (10 ZHTP per hour)
+///  uptime bonus (10 SOV per hour)
 pub const ISP_BYPASS_UPTIME_BONUS: u64 = 10;
 
 /// Minimum peers required for mesh connectivity rewards
 pub const MESH_CONNECTIVITY_THRESHOLD: u32 = 3;
 
-/// Minimum staking amount (1000 ZHTP)
+/// Minimum staking amount (1000 SOV)
 pub const MIN_STAKING_AMOUNT: u64 = 1000;
 ```
 
@@ -105,7 +105,7 @@ Calculate transaction fees (base fee, DAO fee, total fee).
 
 **Parameters:**
 - `tx_size`: Transaction size in bytes
-- `amount`: Transaction amount in ZHTP
+- `amount`: Transaction amount in SOV
 - `priority`: Transaction priority level
 
 **Returns:** `(base_fee, dao_fee, total_fee)`
@@ -115,10 +115,10 @@ Calculate transaction fees (base fee, DAO fee, total fee).
 let model = EconomicModel::new();
 let (base_fee, dao_fee, total_fee) = model.calculate_fee(
     250,                  // 250 bytes
-    10000,               // 10000 ZHTP
+    10000,               // 10000 SOV
     Priority::Normal
 );
-assert_eq!(dao_fee, 200); // 2% of 10000 = 200 ZHTP
+assert_eq!(dao_fee, 200); // 2% of 10000 = 200 SOV
 ```
 
 ##### `process_network_fees(&self, base_fee: u64) -> Result<()>`
@@ -176,7 +176,7 @@ let work = WorkMetrics {
 
 let model = EconomicModel::new();
 let reward = TokenReward::calculate(&work, &model)?;
-println!("Total reward: {} ZHTP", reward.total_reward);
+println!("Total reward: {} SOV", reward.total_reward);
 ```
 
 ##### `calculate_isp_bypass(work: &IspBypassWork) -> Result<Self>`
@@ -261,7 +261,7 @@ Calculate UBI amount per citizen.
 **Parameters:**
 - `total_citizens`: Total number of verified citizens
 
-**Returns:** UBI per citizen in ZHTP
+**Returns:** UBI per citizen in SOV
 
 ##### `distribute_ubi(&mut self, amount: u64) -> Result<()>`
 Distribute UBI funds.
@@ -398,7 +398,7 @@ Transfer funds between wallets.
 manager.transfer_between_wallets(
     &personal_wallet_id,
     &savings_wallet_id,
-    5000, // 5000 ZHTP
+    5000, // 5000 SOV
 )?;
 ```
 
@@ -433,13 +433,13 @@ Calculate optimal UBI distribution amount per citizen.
 let (ubi_amount, can_meet) = calculate_optimal_ubi_per_citizen(
     &treasury,
     10000,    // 10,000 citizens
-    1000,     // Target 1000 ZHTP per month
+    1000,     // Target 1000 SOV per month
 );
 
 if can_meet {
-    println!("Can provide full target UBI: {} ZHTP", ubi_amount);
+    println!("Can provide full target UBI: {} SOV", ubi_amount);
 } else {
-    println!("Reduced UBI: {} ZHTP", ubi_amount);
+    println!("Reduced UBI: {} SOV", ubi_amount);
 }
 ```
 
@@ -513,7 +513,7 @@ Create new transaction with automatic fee calculation.
 let tx = Transaction::new(
     sender_address,
     recipient_address,
-    10000,                      // 10000 ZHTP
+    10000,                      // 10000 SOV
     TransactionType::Payment,
     250,                        // 250 bytes
     Priority::Normal,

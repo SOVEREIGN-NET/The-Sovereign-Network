@@ -9,7 +9,7 @@ This directory contains pre-configured templates for different types of ZHTP nod
 **Best for**: API servers, blockchain explorers, dApps, general-purpose nodes
 
 **Features**:
-- All 9 ZHTP components enabled
+- All 9 SOV components enabled
 - Complete blockchain copy and validation
 - API endpoints for serving data
 - Moderate storage provision (500GB)
@@ -28,7 +28,7 @@ This directory contains pre-configured templates for different types of ZHTP nod
 - High storage provision (1TB)
 - Enhanced peer connectivity (200 peers)
 - Hardware security key support
-- Higher staking requirements (10,000 ZHTP)
+- Higher staking requirements (10,000 SOV)
 
 **Resources**: 8GB RAM, 16 CPU threads, 2TB storage
 
@@ -140,7 +140,7 @@ zhtp node start --config ./configs/my-custom-node.toml
 ## Node Role Requirements
 
 ### Validator Node Requirements
-- **Minimum stake**: 10,000 ZHTP tokens
+- **Minimum stake**: 10,000 SOV tokens
 - **Identity**: Registered human identity (`did:zhtp:person:*`)
 - **Hardware**: Dedicated server recommended
 - **Network**: Stable, high-bandwidth connection
@@ -190,7 +190,7 @@ Monitor logs for:
 1. **Port conflicts**: Ensure mesh_port, dht_port, and api_port are available
 2. **Storage space**: Monitor disk usage, especially for storage nodes
 3. **Peer connectivity**: Check firewall and network configuration
-4. **Stake requirements**: Validators need sufficient ZHTP tokens staked
+4. **Stake requirements**: Validators need sufficient SOV tokens staked
 
 ### Configuration Validation
 Before starting a node, validate your configuration:

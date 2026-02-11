@@ -74,7 +74,7 @@ impl RewardDistribution {
                 distributed_total += reward_share;
                 
                 info!(
-                    "Distributed {} ZHTP infrastructure reward to participant",
+                    "Distributed {} SOV infrastructure reward to participant",
                     reward_share
                 );
             }
@@ -86,7 +86,7 @@ impl RewardDistribution {
         self.last_distribution = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
         
         info!(
-            "🏭 Distributed {} ZHTP total infrastructure rewards to {} participants",
+            "🏭 Distributed {} SOV total infrastructure rewards to {} participants",
             distributed_total, participants.len()
         );
         
@@ -132,7 +132,7 @@ impl RewardDistribution {
                 distributed_total += reward_share;
                 
                 info!(
-                    "Distributed {} ZHTP  reward to participant",
+                    "Distributed {} SOV  reward to participant",
                     reward_share
                 );
             }
@@ -144,7 +144,7 @@ impl RewardDistribution {
         self.last_distribution = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
         
         info!(
-            "Distributed {} ZHTP total  rewards to {} participants",
+            "Distributed {} SOV total  rewards to {} participants",
             distributed_total, participants.len()
         );
         
@@ -180,7 +180,7 @@ impl RewardDistribution {
                 distributed_total += reward_per_validator;
                 
                 info!(
-                    " Distributed {} ZHTP validation reward to validator",
+                    " Distributed {} SOV validation reward to validator",
                     reward_per_validator
                 );
             }
@@ -192,7 +192,7 @@ impl RewardDistribution {
         self.last_distribution = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
         
         info!(
-            " Distributed {} ZHTP total validation rewards to {} validators",
+            " Distributed {} SOV total validation rewards to {} validators",
             distributed_total, validators.len()
         );
         
@@ -247,7 +247,7 @@ pub fn distribute_rewards(
     
     let stats = distribution.get_distribution_stats();
     info!(
-        "Completed reward distribution: {} ZHTP to {} participants",
+        "Completed reward distribution: {} SOV to {} participants",
         stats["total_rewards_distributed"], stats["participants_rewarded"]
     );
     

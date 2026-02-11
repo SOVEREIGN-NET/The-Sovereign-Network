@@ -118,7 +118,7 @@ pub enum RateLimitType {
 /// Economic requirements for access
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EconomicRequirements {
-    /// Minimum ZHTP balance required
+    /// Minimum SOV balance required
     pub min_balance: Option<u64>,
     /// Required staking amount
     pub required_stake: Option<u64>,

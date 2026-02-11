@@ -110,7 +110,7 @@ pub async fn discover_wifi_relays_with_capabilities(capabilities: &HardwareCapab
     if discovered_networks.is_empty() {
         println!("No ZHTP WiFi relay networks detected");
     } else {
-        println!("Discovered {} ZHTP mesh relay networks", discovered_networks.len());
+        println!("Discovered {} SOV mesh relay networks", discovered_networks.len());
     }
     
     Ok(discovered_networks)

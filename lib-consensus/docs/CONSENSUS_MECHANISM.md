@@ -116,7 +116,7 @@ The system includes comprehensive Byzantine fault detection:
 
 ### 2. Proof of Stake (PoS)
 
-- **Validator selection**: Based on staked ZHTP tokens
+- **Validator selection**: Based on staked SOV tokens
 - **Voting power**: `√(stake_amount)` to prevent concentration
 - **Delegation**: Supports stake delegation with commission rates
 - **Locking**: Stake can be locked for security
@@ -167,7 +167,7 @@ Combines PoS and PoStorage with configurable weights:
 
 ### 4. Economic Security
 
-- **Stake requirements**: Minimum 1000 ZHTP to participate
+- **Stake requirements**: Minimum 1000 SOV to participate
 - **Slashing mechanisms**: Economic penalties for misbehavior
 - **Delegation security**: Protected stake delegation with commission limits
 - **Reward distribution**: Fair and transparent incentive system
@@ -203,7 +203,7 @@ The consensus system includes integrated DAO governance:
 
 ### Reward Calculation
 
-- **Base reward**: 100 ZHTP per block
+- **Base reward**: 100 SOV per block
 - **Work multipliers**: Different weights for different work types
 - **Storage bonus**: Additional rewards for storage providers
 - **Participation bonus**: Based on validator reputation
@@ -228,7 +228,7 @@ The consensus system includes integrated DAO governance:
 ### Minimum Requirements
 
 - **Validators**: Minimum 4 for BFT (3f+1 where f=1)
-- **Stake**: Minimum 1000 ZHTP per validator
+- **Stake**: Minimum 1000 SOV per validator
 - **Storage**: Optional, but recommended for additional rewards
 - **Connectivity**: Reliable network connection for consensus participation
 
@@ -280,7 +280,7 @@ The consensus system includes integrated DAO governance:
 ```rust
 ConsensusConfig {
     consensus_type: ConsensusType::Hybrid,
-    min_stake: 1000 * 1_000_000,           // 1000 ZHTP tokens
+    min_stake: 1000 * 1_000_000,           // 1000 SOV tokens
     min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
     max_validators: 100,
     block_time: 10,          // 10 seconds

@@ -1,6 +1,6 @@
 //! Multi-Package Configuration Management
 //! 
-//! Aggregates and validates configurations from all 11 ZHTP packages
+//! Aggregates and validates configurations from all 11 SOV packages
 
 pub mod aggregation;
 pub mod validation;

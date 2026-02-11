@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     // 1. Initialize consensus engine with hybrid consensus
     let config = ConsensusConfig {
         consensus_type: ConsensusType::Hybrid,
-        min_stake: 1000 * 1_000_000,           // 1000 ZHTP
+        min_stake: 1000 * 1_000_000,           // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 10,
         block_time: 5, // 5 seconds for demo
@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
             .await?;
 
         println!(
-            "Registered validator {}: {} ZHTP stake, {} GB storage",
+            "Registered validator {}: {} SOV stake, {} GB storage",
             name,
             stake / 1_000_000,
             storage / (1024 * 1024 * 1024)
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
         .create_dao_proposal(
             proposer.clone(),
             "Community Development Fund".to_string(),
-            "Allocate 5000 ZHTP for community development projects and initiatives. amount: 5000"
+            "Allocate 5000 SOV for community development projects and initiatives. amount: 5000"
                 .to_string(),
             DaoProposalType::TreasuryAllocation,
             7, // 7 days voting period
@@ -145,9 +145,9 @@ async fn main() -> Result<()> {
     // 4. Show treasury status
     let treasury = consensus_engine.dao_engine().get_dao_treasury();
     println!("\nTreasury Status:");
-    println!("   Total Balance: {} ZHTP", treasury.total_balance);
-    println!("   Available: {} ZHTP", treasury.available_balance);
-    println!("   Reserved: {} ZHTP", treasury.reserved_funds);
+    println!("   Total Balance: {} SOV", treasury.total_balance);
+    println!("   Available: {} SOV", treasury.available_balance);
+    println!("   Reserved: {} SOV", treasury.reserved_funds);
 
     // 5. Demonstrate validator management
     println!("\nValidator Management Demo");
@@ -161,7 +161,7 @@ async fn main() -> Result<()> {
         validator_stats.active_validators
     );
     println!(
-        "   Total Stake: {} ZHTP",
+        "   Total Stake: {} SOV",
         validator_stats.total_stake / 1_000_000
     );
     println!(
@@ -217,7 +217,7 @@ async fn main() -> Result<()> {
 
     let final_treasury = consensus_engine.dao_engine().get_dao_treasury();
     println!(
-        "Treasury: {} ZHTP available",
+        "Treasury: {} SOV available",
         final_treasury.available_balance
     );
 

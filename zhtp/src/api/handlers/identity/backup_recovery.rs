@@ -847,6 +847,7 @@ pub async fn handle_migrate_identity(
     request: &lib_protocols::types::ZhtpRequest,
     storage_system: Arc<RwLock<lib_storage::PersistentStorageSystem>>,
 ) -> ZhtpResult<ZhtpResponse> {
+    const MIN_DILITHIUM_PK_LEN: usize = 1312;
     // Hard gate: this is a one-time migration operation. It must be explicitly enabled.
     if std::env::var("ZHTP_ENABLE_IDENTITY_MIGRATION")
         .ok()
@@ -870,12 +871,6 @@ pub async fn handle_migrate_identity(
             "Migration endpoint disabled".to_string(),
         ));
     }
-
-    // Load the migration authority (validator) signing keypair.
-    // This is used to sign on-chain WalletUpdate transactions so they are durable and replay-safe.
-    let migration_authority_kp = load_migration_authority_keypair()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to load migration authority keypair: {}", e))?;
 
     // Extract client IP for rate limiting and audit logging.
     let peer_addr = request.headers.get("peer_addr");
@@ -997,10 +992,108 @@ pub async fn handle_migrate_identity(
     };
     drop(manager);
 
-    let mut manager = identity_manager.write().await;
     let old_did = old_identity.did.clone();
     let display_name = old_identity.metadata.get("display_name").cloned()
         .unwrap_or_else(|| "unnamed".to_string());
+
+    // Optional dry-run: validate inputs and compute what would change, but do not mutate state.
+    let dry_run_enabled = std::env::var("ZHTP_IDENTITY_MIGRATION_DRY_RUN")
+        .ok()
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    if dry_run_enabled {
+        let manager = identity_manager.read().await;
+        let mut wallet_ids_all: std::collections::HashSet<String> = old_identity
+            .wallet_manager
+            .wallets
+            .keys()
+            .map(|wid| hex::encode(wid.0))
+            .collect();
+
+        let mut registry_owned_count = 0usize;
+        let mut short_key_count = 0usize;
+        let mut short_key_min_len: Option<usize> = None;
+        let mut short_key_max_len: Option<usize> = None;
+        let mut short_key_backfill_total: u64 = 0;
+        let mut movable_balance_total: u64 = 0;
+        let mut has_token_contract = false;
+
+        match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(shared_blockchain) => {
+                let blockchain = shared_blockchain.read().await;
+                let old_identity_id_chain = lib_blockchain::Hash::from_slice(old_identity.id.as_bytes());
+                let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+                let token_opt = blockchain.token_contracts.get(&sov_token_id);
+                has_token_contract = token_opt.is_some();
+
+                for (wallet_id_str, wallet_data) in blockchain.wallet_registry.iter() {
+                    if wallet_data.owner_identity_id == Some(old_identity_id_chain.clone()) {
+                        registry_owned_count += 1;
+                        wallet_ids_all.insert(wallet_id_str.clone());
+
+                        let key_len = wallet_data.public_key.len();
+                        if key_len < MIN_DILITHIUM_PK_LEN {
+                            short_key_count += 1;
+                            short_key_backfill_total = short_key_backfill_total.saturating_add(wallet_data.initial_balance);
+                            short_key_min_len = Some(short_key_min_len.map(|v| v.min(key_len)).unwrap_or(key_len));
+                            short_key_max_len = Some(short_key_max_len.map(|v| v.max(key_len)).unwrap_or(key_len));
+                        } else if let Some(token) = token_opt {
+                            let old_pk = lib_crypto::PublicKey::new(wallet_data.public_key.clone());
+                            let new_pk = lib_crypto::PublicKey::new(new_public_key_bytes.clone());
+                            if old_pk != new_pk {
+                                movable_balance_total = movable_balance_total.saturating_add(token.balance_of(&old_pk));
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("🔄 Migration dry-run failed to access blockchain: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    "Blockchain not available for dry-run. Please retry.".to_string(),
+                ));
+            }
+        }
+
+        drop(manager);
+
+        let message = format!(
+            "Dry-run: would migrate {} wallets ({} from registry), fix {} short-key wallets (key_len_range={}-{}, threshold={}), backfill_total={}, {} SOV balance to move, token_present={}",
+            wallet_ids_all.len(),
+            registry_owned_count,
+            short_key_count,
+            short_key_min_len.unwrap_or(0),
+            short_key_max_len.unwrap_or(0),
+            MIN_DILITHIUM_PK_LEN,
+            short_key_backfill_total,
+            movable_balance_total,
+            has_token_contract
+        );
+
+        let response = MigrateIdentityResponse {
+            status: "dry-run".to_string(),
+            new_did,
+            old_did,
+            display_name,
+            message,
+        };
+
+        let json_response = serde_json::to_vec(&response)?;
+        return Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ));
+    }
+
+    // Load the migration authority (validator) signing keypair.
+    // This is used to sign on-chain WalletUpdate transactions so they are durable and replay-safe.
+    let migration_authority_kp = load_migration_authority_keypair()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load migration authority keypair: {}", e))?;
+
+    let mut manager = identity_manager.write().await;
 
     // If the display_name is currently owned by a migration target, block re-migration.
     // Otherwise, a second call would migrate the newly-created identity again.
@@ -1131,91 +1224,192 @@ pub async fn handle_migrate_identity(
     // - Update wallet registry owner/public_key via WalletUpdate txs
     // - Mine a block immediately so restart/replay keeps the rebind
     // ---------------------------------------------------------------------
-    if !wallet_ids_to_transfer.is_empty() {
-        match crate::runtime::blockchain_provider::get_global_blockchain().await {
-            Ok(shared_blockchain) => {
-                let mut blockchain = shared_blockchain.write().await;
+    match crate::runtime::blockchain_provider::get_global_blockchain().await {
+        Ok(shared_blockchain) => {
+            let mut blockchain = shared_blockchain.write().await;
+            let old_identity_id_chain = lib_blockchain::Hash::from_slice(old_identity.id.as_bytes());
+            let new_identity_id_chain = lib_blockchain::Hash::from_slice(new_identity_id.as_bytes());
 
-                // Ensure new DID exists on-chain so wallet owner references aren't dangling.
-                if !blockchain.identity_exists(&new_did) {
-                    let identity_tx = lib_blockchain::transaction::IdentityTransactionData {
-                        did: new_did.clone(),
-                        display_name: display_name.clone(),
-                        public_key: new_public_key_bytes.clone(),
-                        ownership_proof: vec![], // system-style migration registration
-                        identity_type: "human".to_string(),
-                        did_document_hash: lib_blockchain::Hash::zero(),
-                        created_at,
-                        registration_fee: 0,
-                        dao_fee: 0,
-                        controlled_nodes: vec![],
-                        owned_wallets: wallet_ids_to_transfer
-                            .iter()
-                            .map(|(wid, _, _)| hex::encode(wid.0))
-                            .collect(),
-                    };
-
-                    if let Err(e) = blockchain.register_identity(identity_tx) {
-                        tracing::warn!("🔄 Failed to register migrated identity on-chain (will still attempt wallet updates): {}", e);
-                    }
+            // Collect any wallets in the chain registry still owned by the old identity.
+            // This fixes cases where wallet_manager is incomplete (e.g., short-key wallets).
+            let mut wallet_ids_all: std::collections::HashSet<String> = wallet_ids_to_transfer
+                .iter()
+                .map(|(wid, _, _)| hex::encode(wid.0))
+                .collect();
+            for (wallet_id_str, wallet_data) in blockchain.wallet_registry.iter() {
+                if wallet_data.owner_identity_id == Some(old_identity_id_chain.clone()) {
+                    wallet_ids_all.insert(wallet_id_str.clone());
                 }
+            }
+
+            // Ensure new DID exists on-chain so wallet owner references aren't dangling.
+            if !blockchain.identity_exists(&new_did) {
+                let identity_tx = lib_blockchain::transaction::IdentityTransactionData {
+                    did: new_did.clone(),
+                    display_name: display_name.clone(),
+                    public_key: new_public_key_bytes.clone(),
+                    ownership_proof: vec![], // system-style migration registration
+                    identity_type: "human".to_string(),
+                    did_document_hash: lib_blockchain::Hash::zero(),
+                    created_at,
+                    registration_fee: 0,
+                    dao_fee: 0,
+                    controlled_nodes: vec![],
+                    owned_wallets: wallet_ids_all.iter().cloned().collect(),
+                };
+
+                if let Err(e) = blockchain.register_identity(identity_tx) {
+                    tracing::warn!("🔄 Failed to register migrated identity on-chain (will still attempt wallet updates): {}", e);
+                }
+            }
 
                 // Enqueue wallet updates (system transaction with explicit memo prefix).
-                for (wallet_id, wallet_type, _balance) in &wallet_ids_to_transfer {
-                    let wallet_id_str = hex::encode(wallet_id.0);
-                    if let Some(existing) = blockchain.wallet_registry.get(&wallet_id_str).cloned() {
-                        let mut updated = existing.clone();
-                        updated.owner_identity_id = Some(lib_blockchain::Hash::from_slice(new_identity_id.as_bytes()));
-                        updated.public_key = new_public_key_bytes.clone();
+                // Prepare TokenMint txs for balance fixes during migration.
+                let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+                let mut mint_txs: Vec<lib_blockchain::Transaction> = Vec::new();
 
-                        // Ensure consensus-level chain_id matches the running chain configuration.
-                        let mut tx = lib_blockchain::transaction::Transaction::new_wallet_update_with_chain_id(
-                            chain_id,
-                            updated.clone(),
-                            vec![],
-                            // Placeholder signature gets replaced below (WalletUpdate requires real signature).
-                            lib_blockchain::integration::crypto_integration::Signature {
-                                signature: Vec::new(),
-                                public_key: migration_authority_kp.public_key.clone(),
-                                algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
-                                timestamp: created_at,
-                            },
-                            format!("WALLET_UPDATE_V1:migrate:{}:{}:{}", old_did, new_did, wallet_id_str).into_bytes(),
+            for wallet_id_str in wallet_ids_all.iter() {
+                let wallet_id_bytes = match hex::decode(wallet_id_str) {
+                    Ok(bytes) if bytes.len() == 32 => {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(&bytes);
+                        arr
+                    }
+                    _ => {
+                        tracing::warn!(
+                            "🪙 Migration skipped: invalid wallet_id {}",
+                            &wallet_id_str[..16.min(wallet_id_str.len())]
                         );
+                        continue;
+                    }
+                };
+                let wallet_addr = lib_crypto::PublicKey {
+                    dilithium_pk: vec![],
+                    kyber_pk: vec![],
+                    key_id: wallet_id_bytes,
+                };
 
-                        // Sign the transaction hash (signing_hash excludes the signature field).
-                        let signing_hash = tx.signing_hash();
-                        let sig = lib_crypto::sign_message(&migration_authority_kp, signing_hash.as_bytes())
-                            .map_err(|e| anyhow::anyhow!("Failed to sign WalletUpdate: {}", e))?;
-                        tx.signature = sig;
+                if let Some(existing) = blockchain.wallet_registry.get(wallet_id_str).cloned() {
+                    let wallet_type = existing.wallet_type.clone();
+                    let old_public_key = existing.public_key.clone();
+                    let old_pk_is_short = old_public_key.len() < MIN_DILITHIUM_PK_LEN;
 
-                        if let Err(e) = blockchain.add_system_transaction(tx) {
-                            tracing::warn!("🔄 Failed to enqueue wallet update tx for {} ({}): {}", &wallet_id_str[..16.min(wallet_id_str.len())], wallet_type, e);
-                        } else {
-                            // Update in-memory view immediately (the block will make it durable).
-                            blockchain.wallet_registry.insert(wallet_id_str.clone(), updated);
+                    // Build TokenMint txs for balance fixes
+                    if old_pk_is_short {
+                        if existing.initial_balance > 0 {
+                            let token_opt = blockchain.token_contracts.get(&sov_token_id);
+                            let current_balance = token_opt.map(|t| t.balance_of(&wallet_addr)).unwrap_or(0);
+                            if current_balance < existing.initial_balance {
+                                let mint_amount = existing.initial_balance - current_balance;
+                                let memo = format!("TOKEN_BACKFILL_V1:{}", wallet_id_str).into_bytes();
+                                if let Ok(tx) = build_signed_sov_mint_tx(
+                                    &migration_authority_kp,
+                                    chain_id,
+                                    &wallet_id_bytes,
+                                    mint_amount,
+                                    memo,
+                                ) {
+                                    mint_txs.push(tx);
+                                    tracing::info!(
+                                        "🪙 Migration SOV backfill queued: {} to wallet {} (short key, key_len={}, current={})",
+                                        mint_amount,
+                                        &wallet_id_str[..16.min(wallet_id_str.len())],
+                                        old_public_key.len(),
+                                        current_balance
+                                    );
+                                }
+                            } else {
+                                tracing::info!(
+                                    "🪙 Migration backfill skipped: wallet {} already has {} SOV (short key, key_len={})",
+                                    &wallet_id_str[..16.min(wallet_id_str.len())],
+                                    current_balance,
+                                    old_public_key.len()
+                                );
+                            }
                         }
                     } else {
-                        tracing::warn!("🔄 Wallet {} not found in blockchain registry; cannot rebind owner", &wallet_id_str[..16.min(wallet_id_str.len())]);
+                        if let Some(token) = blockchain.token_contracts.get(&sov_token_id) {
+                            let old_pk = lib_crypto::PublicKey::new(old_public_key.clone());
+                            if old_pk.key_id != wallet_addr.key_id {
+                                let old_balance = token.balance_of(&old_pk);
+                                if old_balance > 0 {
+                                    let memo = format!("TOKEN_MIGRATE_V1:{}", hex::encode(&old_public_key)).into_bytes();
+                                    if let Ok(tx) = build_signed_sov_mint_tx(
+                                        &migration_authority_kp,
+                                        chain_id,
+                                        &wallet_id_bytes,
+                                        old_balance,
+                                        memo,
+                                    ) {
+                                        mint_txs.push(tx);
+                                        tracing::info!(
+                                            "🪙 Migration SOV move queued: {} from old key to new key for wallet {}",
+                                            old_balance,
+                                            &wallet_id_str[..16.min(wallet_id_str.len())]
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let mut updated = existing.clone();
+                    updated.owner_identity_id = Some(new_identity_id_chain.clone());
+                    updated.public_key = new_public_key_bytes.clone();
+
+                    // Ensure consensus-level chain_id matches the running chain configuration.
+                    let mut tx = lib_blockchain::transaction::Transaction::new_wallet_update_with_chain_id(
+                        chain_id,
+                        updated.clone(),
+                        vec![],
+                        // Placeholder signature gets replaced below (WalletUpdate requires real signature).
+                        lib_blockchain::integration::crypto_integration::Signature {
+                            signature: Vec::new(),
+                            public_key: migration_authority_kp.public_key.clone(),
+                            algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+                            timestamp: created_at,
+                        },
+                        format!("WALLET_UPDATE_V1:migrate:{}:{}:{}", old_did, new_did, wallet_id_str).into_bytes(),
+                    );
+
+                    // Sign the transaction hash (signing_hash excludes the signature field).
+                    let signing_hash = tx.signing_hash();
+                    let sig = lib_crypto::sign_message(&migration_authority_kp, signing_hash.as_bytes())
+                        .map_err(|e| anyhow::anyhow!("Failed to sign WalletUpdate: {}", e))?;
+                    tx.signature = sig;
+
+                    if let Err(e) = blockchain.add_system_transaction(tx) {
+                        tracing::warn!("🔄 Failed to enqueue wallet update tx for {} ({}): {}", &wallet_id_str[..16.min(wallet_id_str.len())], wallet_type, e);
+                    } else {
+                        // Update in-memory view immediately (the block will make it durable).
+                        blockchain.wallet_registry.insert(wallet_id_str.clone(), updated);
+                    }
+                } else {
+                    tracing::warn!("🔄 Wallet {} not found in blockchain registry; cannot rebind owner", &wallet_id_str[..16.min(wallet_id_str.len())]);
+                }
+            }
+
+                for tx in mint_txs {
+                    if let Err(e) = blockchain.add_pending_transaction(tx) {
+                        tracing::warn!("🪙 Failed to enqueue migration TokenMint tx: {}", e);
                     }
                 }
 
-                // Mine immediately to persist to SledStore and make replay deterministic.
-                if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *blockchain).await {
-                    tracing::warn!("🔄 Failed to mine migration block (aborting persistence): {}", e);
-                    return Ok(ZhtpResponse::error(
-                        ZhtpStatus::InternalServerError,
-                        "Migration failed to persist on-chain. Please retry.".to_string(),
-                    ));
-                }
-            }
-            Err(e) => {
-                tracing::warn!("🔄 Failed to get blockchain for wallet update (aborting persistence): {}", e);
+            // Mine immediately to persist to SledStore and make replay deterministic.
+            if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *blockchain).await {
+                tracing::warn!("🔄 Failed to mine migration block (aborting persistence): {}", e);
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
-                    "Blockchain not available for migration persistence. Please retry.".to_string(),
+                    "Migration failed to persist on-chain. Please retry.".to_string(),
                 ));
             }
+        }
+        Err(e) => {
+            tracing::warn!("🔄 Failed to get blockchain for wallet update (aborting persistence): {}", e);
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::InternalServerError,
+                "Blockchain not available for migration persistence. Please retry.".to_string(),
+            ));
         }
     }
 
@@ -1380,6 +1574,43 @@ async fn load_migration_authority_keypair() -> anyhow::Result<lib_crypto::KeyPai
     };
 
     Ok(lib_crypto::KeyPair { public_key, private_key })
+}
+
+// Build a signed TokenMint transaction using the provided validator keypair.
+fn build_signed_sov_mint_tx(
+    validator_kp: &lib_crypto::KeyPair,
+    chain_id: u8,
+    recipient_wallet_id: &[u8; 32],
+    amount: u64,
+    memo: Vec<u8>,
+) -> anyhow::Result<lib_blockchain::Transaction> {
+    let token_mint_data = lib_blockchain::transaction::TokenMintData {
+        token_id: lib_blockchain::contracts::utils::generate_lib_token_id(),
+        to: *recipient_wallet_id,
+        amount: amount as u128,
+    };
+
+    let mut tx = lib_blockchain::Transaction::new_token_mint_with_chain_id(
+        chain_id,
+        token_mint_data,
+        lib_blockchain::integration::crypto_integration::Signature {
+            signature: Vec::new(),
+            public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(Vec::new()),
+            algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        },
+        memo,
+    );
+
+    let signing_hash = tx.signing_hash();
+    let sig = lib_crypto::sign_message(validator_kp, signing_hash.as_bytes())
+        .map_err(|e| anyhow::anyhow!("Failed to sign TokenMint: {}", e))?;
+    tx.signature = sig;
+
+    Ok(tx)
 }
 
 #[cfg(test)]

@@ -243,7 +243,7 @@ impl ZhtpRequest {
         }
         
         tracing::info!(
-            "ZHTP request validated: {} ZHTP DAO fee paid for UBI/welfare funding",
+            "ZHTP request validated: {} SOV DAO fee paid for UBI/welfare funding",
             self.headers.dao_fee
         );
         

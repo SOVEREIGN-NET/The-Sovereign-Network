@@ -8,21 +8,21 @@ The ZHTP blockchain provides a comprehensive smart contract platform supporting 
 
 ### 1. Token Contracts
 
-Token contracts support both the native ZHTP token and custom token creation.
+Token contracts support both the native SOV token and custom token creation.
 
-#### ZHTP Native Token
+#### SOV Native Token
 
-The blockchain includes a built-in ZHTP token with special properties:
+The blockchain includes a built-in SOV token with special properties:
 
 ```rust
 use lib_blockchain::contracts::{TokenContract, ContractCall};
 
-// Get ZHTP native token contract
+// Get SOV native token contract
 let zhtp_contract = TokenContract::zhtp_native_token();
 
-// Check ZHTP properties
-assert_eq!(zhtp_contract.token_name, "Zero Hash Transfer Protocol");
-assert_eq!(zhtp_contract.token_symbol, "ZHTP");
+// Check SOV properties
+assert_eq!(zhtp_contract.token_name, "Sovereign");
+assert_eq!(zhtp_contract.token_symbol, "SOV");
 assert_eq!(zhtp_contract.decimals, 8);
 assert!(zhtp_contract.is_deflationary);
 ```
@@ -160,7 +160,7 @@ use lib_blockchain::contracts::WhisperContract;
 
 // Deploy messaging contract
 let whisper_contract = WhisperContract::new(
-    100, // message cost in ZHTP
+    100, // message cost in SOV
     1000, // token gate requirement
     EncryptionLevel::High,
 );
@@ -186,7 +186,7 @@ use lib_blockchain::contracts::FileContract;
 
 // Deploy file sharing contract
 let file_contract = FileContract::new(
-    50,   // file cost in ZHTP per MB
+    50,   // file cost in SOV per MB
     true, // encryption required
 );
 let deployment_call = ContractCall::deploy_file_contract(file_contract);

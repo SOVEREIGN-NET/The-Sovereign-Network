@@ -173,7 +173,7 @@ impl LinuxBluetoothOps {
             }
         }
         
-        info!(" Found {} ZHTP mesh peers via D-Bus", peers.len());
+        info!(" Found {} SOV mesh peers via D-Bus", peers.len());
         Ok(peers)
     }
     
@@ -226,7 +226,7 @@ impl LinuxBluetoothOps {
             }
         }
         
-        info!(" Found {} ZHTP mesh peers via CLI", peers.len());
+        info!(" Found {} SOV mesh peers via CLI", peers.len());
         Ok(peers)
     }
     

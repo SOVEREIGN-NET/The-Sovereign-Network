@@ -2530,7 +2530,7 @@ impl BluetoothClassicProtocol {
     
     /// Start full RFCOMM service with all 4 channels
     pub async fn start_full_service(&self) -> Result<()> {
-        info!(" Starting full RFCOMM service with all 4 ZHTP channels");
+        info!(" Starting full RFCOMM service with all 4 SOV channels");
         
         // Start advertising
         self.start_advertising().await?;

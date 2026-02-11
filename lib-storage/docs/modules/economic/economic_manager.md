@@ -89,7 +89,7 @@ let request = EconomicStorageRequest {
             data_integrity_level: 0.999, // 99.9% integrity
         },
         budget_constraints: BudgetConstraints {
-            max_total_cost: 50000,      // 50,000 ZHTP tokens max
+            max_total_cost: 50000,      // 50,000 SOV tokens max
             max_cost_per_gb_day: 200,   // 200 tokens per GB/day max
             preferred_payment_schedule: PaymentSchedule::Monthly,
         },
@@ -286,14 +286,14 @@ fn create_default_penalties(&self) -> Vec<PenaltyClause> {
     vec![
         PenaltyClause {
             penalty_type: PenaltyType::DataLoss,
-            penalty_amount: 10000,                    // 10,000 ZHTP tokens
+            penalty_amount: 10000,                    // 10,000 SOV tokens
             conditions: "Data integrity below 99%".to_string(),
             grace_period: 3600,                       // 1 hour grace period
             max_applications: 3,                      // Max 3 applications per day
         },
         PenaltyClause {
             penalty_type: PenaltyType::Unavailability,
-            penalty_amount: 5000,                     // 5,000 ZHTP tokens
+            penalty_amount: 5000,                     // 5,000 SOV tokens
             conditions: "Uptime below 95%".to_string(),
             grace_period: 1800,                       // 30 minute grace period
             max_applications: 5,                      // Max 5 applications per day
@@ -310,7 +310,7 @@ impl Default for EconomicManagerConfig {
     fn default() -> Self {
         Self {
             default_duration_days: 30,
-            base_price_per_gb_day: 100,               // 100 ZHTP tokens per GB/day
+            base_price_per_gb_day: 100,               // 100 SOV tokens per GB/day
             enable_escrow: true,
             quality_premium_rate: 0.10,               // 10% quality premium
             network_fee_rate: 0.05,                   // 5% network fees
@@ -340,10 +340,10 @@ println!("Economic Statistics:");
 println!("  Total contracts: {}", stats.total_contracts);
 println!("  Total storage under contract: {} GB", 
          stats.total_storage / (1024 * 1024 * 1024));
-println!("  Total value locked: {} ZHTP", stats.total_value_locked);
-println!("  Average contract value: {} ZHTP", stats.average_contract_value);
-println!("  Total penalties enforced: {} ZHTP", stats.total_penalties);
-println!("  Total rewards distributed: {} ZHTP", stats.total_rewards);
+println!("  Total value locked: {} SOV", stats.total_value_locked);
+println!("  Average contract value: {} SOV", stats.average_contract_value);
+println!("  Total penalties enforced: {} SOV", stats.total_penalties);
+println!("  Total rewards distributed: {} SOV", stats.total_rewards);
 ```
 
 ### EconomicStats Structure
@@ -550,7 +550,7 @@ let request = EconomicStorageRequest {
             data_integrity_level: 0.999, // 99.9% integrity
         },
         budget_constraints: BudgetConstraints {
-            max_total_cost: 50000,      // 50,000 ZHTP tokens max
+            max_total_cost: 50000,      // 50,000 SOV tokens max
             max_cost_per_gb_day: 200,   // 200 tokens per GB/day max
             preferred_payment_schedule: PaymentSchedule::Monthly,
         },
@@ -747,14 +747,14 @@ fn create_default_penalties(&self) -> Vec<PenaltyClause> {
     vec![
         PenaltyClause {
             penalty_type: PenaltyType::DataLoss,
-            penalty_amount: 10000,                    // 10,000 ZHTP tokens
+            penalty_amount: 10000,                    // 10,000 SOV tokens
             conditions: "Data integrity below 99%".to_string(),
             grace_period: 3600,                       // 1 hour grace period
             max_applications: 3,                      // Max 3 applications per day
         },
         PenaltyClause {
             penalty_type: PenaltyType::Unavailability,
-            penalty_amount: 5000,                     // 5,000 ZHTP tokens
+            penalty_amount: 5000,                     // 5,000 SOV tokens
             conditions: "Uptime below 95%".to_string(),
             grace_period: 1800,                       // 30 minute grace period
             max_applications: 5,                      // Max 5 applications per day
@@ -771,7 +771,7 @@ impl Default for EconomicManagerConfig {
     fn default() -> Self {
         Self {
             default_duration_days: 30,
-            base_price_per_gb_day: 100,               // 100 ZHTP tokens per GB/day
+            base_price_per_gb_day: 100,               // 100 SOV tokens per GB/day
             enable_escrow: true,
             quality_premium_rate: 0.10,               // 10% quality premium
             network_fee_rate: 0.05,                   // 5% network fees
@@ -801,10 +801,10 @@ println!("Economic Statistics:");
 println!("  Total contracts: {}", stats.total_contracts);
 println!("  Total storage under contract: {} GB", 
          stats.total_storage / (1024 * 1024 * 1024));
-println!("  Total value locked: {} ZHTP", stats.total_value_locked);
-println!("  Average contract value: {} ZHTP", stats.average_contract_value);
-println!("  Total penalties enforced: {} ZHTP", stats.total_penalties);
-println!("  Total rewards distributed: {} ZHTP", stats.total_rewards);
+println!("  Total value locked: {} SOV", stats.total_value_locked);
+println!("  Average contract value: {} SOV", stats.average_contract_value);
+println!("  Total penalties enforced: {} SOV", stats.total_penalties);
+println!("  Total rewards distributed: {} SOV", stats.total_rewards);
 ```
 
 ### EconomicStats Structure

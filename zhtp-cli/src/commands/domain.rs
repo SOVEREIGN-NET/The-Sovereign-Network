@@ -77,7 +77,7 @@ fn minimum_registration_fee() -> u64 {
     if estimated_tx_size > threshold_bytes {
         size_fee *= 2;
     }
-    base_fee + size_fee  // = 1000 + 90 = 1090 ZHTP for 9000-byte estimate
+    base_fee + size_fee  // = 1000 + 90 = 1090 SOV for 9000-byte estimate
 }
 
 // ============================================================================

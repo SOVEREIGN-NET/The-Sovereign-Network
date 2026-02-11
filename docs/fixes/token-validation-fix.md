@@ -136,7 +136,7 @@ POST /api/v1/token/create
 Body: { "signed_tx": "..." }
 ```
 
-### 2. ZHTP Server (Backend)
+### 2. SOV Server (Backend)
 
 ```
 POST /api/v1/token/create arrives

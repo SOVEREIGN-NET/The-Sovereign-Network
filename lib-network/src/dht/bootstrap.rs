@@ -394,7 +394,7 @@ impl DHTBootstrap {
         let clients: Vec<_> = services.iter().filter(|s| s.is_client()).collect();
         
         if !routers.is_empty() {
-            info!(" Found {} ZHTP routers:", routers.len());
+            info!(" Found {} SOV routers:", routers.len());
             for router in &routers {
                 info!("   🔀 Router: {} ({}:{})", 
                     router.node_id().unwrap_or_else(|| router.name.clone()),
@@ -403,7 +403,7 @@ impl DHTBootstrap {
         }
         
         if !clients.is_empty() {
-            info!("📱 Found {} ZHTP clients:", clients.len());
+            info!("📱 Found {} SOV clients:", clients.len());
             for client in &clients {
                 info!("   📲 Client: {} ({}:{})",
                     client.node_id().unwrap_or_else(|| client.name.clone()),

@@ -817,6 +817,8 @@ pub extern "C" fn zhtp_client_handshake_result_get_peer_public_key(
 /// - to_pubkey_len: Length of to_pubkey
 /// - amount: Amount to transfer (in smallest units)
 /// - chain_id: Network chain ID (0x02=testnet, 0x03=development)
+///
+/// Note: SOV transfers require wallet_id; use `zhtp_client_build_sov_wallet_transfer`.
 #[no_mangle]
 pub extern "C" fn zhtp_client_build_token_transfer(
     handle: *const IdentityHandle,
@@ -838,6 +840,46 @@ pub extern "C" fn zhtp_client_build_token_transfer(
     token_id_arr.copy_from_slice(token_id_slice);
 
     match token_tx::build_transfer_tx(identity, &token_id_arr, to_pubkey_slice, amount, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed SOV wallet-based transfer transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/token/transfer
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle
+/// - from_wallet_id: 32-byte wallet_id (sender)
+/// - to_wallet_id: 32-byte wallet_id (recipient)
+/// - amount: Amount to transfer (in smallest units)
+/// - chain_id: Network chain ID (0x02=testnet, 0x03=development)
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
+    handle: *const IdentityHandle,
+    from_wallet_id: *const u8,
+    to_wallet_id: *const u8,
+    amount: u64,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || from_wallet_id.is_null() || to_wallet_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let from_slice = unsafe { std::slice::from_raw_parts(from_wallet_id, 32) };
+    let to_slice = unsafe { std::slice::from_raw_parts(to_wallet_id, 32) };
+
+    let mut from_arr = [0u8; 32];
+    let mut to_arr = [0u8; 32];
+    from_arr.copy_from_slice(from_slice);
+    to_arr.copy_from_slice(to_slice);
+
+    match token_tx::build_sov_wallet_transfer_tx(identity, &from_arr, &to_arr, amount, chain_id) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),

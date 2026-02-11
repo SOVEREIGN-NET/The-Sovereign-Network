@@ -380,7 +380,7 @@ impl WalletManager {
         
         if let Some(ref owner_id) = self.owner_id {
             tracing::info!(
-                "Transferred {} ZHTP from wallet {} to wallet {} for identity {} (purpose: {})",
+                "Transferred {} SOV from wallet {} to wallet {} for identity {} (purpose: {})",
                 amount,
                 hex::encode(&from_wallet.0[..8]),
                 hex::encode(&to_wallet.0[..8]),
@@ -389,7 +389,7 @@ impl WalletManager {
             );
         } else {
             tracing::info!(
-                "Transferred {} ZHTP from wallet {} to wallet {} (purpose: {})",
+                "Transferred {} SOV from wallet {} to wallet {} (purpose: {})",
                 amount,
                 hex::encode(&from_wallet.0[..8]),
                 hex::encode(&to_wallet.0[..8]),
@@ -613,14 +613,14 @@ impl WalletManager {
         let auth_did_clone = authorized_by_did.clone();
         if let Some(did) = auth_did_clone {
             tracing::info!(
-                "Added {} ZHTP to DAO wallet {} (authorized by DID {})",
+                "Added {} SOV to DAO wallet {} (authorized by DID {})",
                 amount,
                 hex::encode(&wallet_id.0[..8]),
                 hex::encode(&did.0[..8])
             );
         } else if let Some(dao_id) = authorized_by_dao {
             tracing::info!(
-                "Added {} ZHTP to DAO wallet {} (authorized by DAO {})",
+                "Added {} SOV to DAO wallet {} (authorized by DAO {})",
                 amount,
                 hex::encode(&wallet_id.0[..8]),
                 hex::encode(&dao_id.0[..8])
@@ -701,14 +701,14 @@ impl WalletManager {
         
         if let Some(did) = authorized_by_did {
             tracing::info!(
-                "Removed {} ZHTP from DAO wallet {} (authorized by DID {})",
+                "Removed {} SOV from DAO wallet {} (authorized by DID {})",
                 amount,
                 hex::encode(&wallet_id.0[..8]),
                 hex::encode(&did.0[..8])
             );
         } else if let Some(dao_id) = authorized_by_dao {
             tracing::info!(
-                "Removed {} ZHTP from DAO wallet {} (authorized by DAO {})",
+                "Removed {} SOV from DAO wallet {} (authorized by DAO {})",
                 amount,
                 hex::encode(&wallet_id.0[..8]),
                 hex::encode(&dao_id.0[..8])

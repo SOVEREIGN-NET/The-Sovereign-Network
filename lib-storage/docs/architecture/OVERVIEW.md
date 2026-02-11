@@ -134,7 +134,7 @@ pub struct EconomicStorageManager {
 5. **Automatic Enforcement**: Penalties/rewards based on performance
 
 **Pricing Model**:
-- Base: 100 ZHTP tokens per GB/day
+- Base: 100 SOV tokens per GB/day
 - Quality Premium: +10% for quality guarantees
 - Network Fees: +5% for protocol maintenance
 - Escrow Fees: +2% for payment security
@@ -422,7 +422,7 @@ pub struct EconomicStorageManager {
 5. **Automatic Enforcement**: Penalties/rewards based on performance
 
 **Pricing Model**:
-- Base: 100 ZHTP tokens per GB/day
+- Base: 100 SOV tokens per GB/day
 - Quality Premium: +10% for quality guarantees
 - Network Fees: +5% for protocol maintenance
 - Escrow Fees: +2% for payment security
