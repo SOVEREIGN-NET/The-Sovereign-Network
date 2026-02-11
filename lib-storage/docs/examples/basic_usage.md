@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 data_integrity_level: 0.95,
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 1000, // 1000 ZHTP tokens
+                max_total_cost: 1000, // 1000 SOV tokens
                 max_cost_per_gb_day: 100,
                 preferred_payment_schedule: PaymentSchedule::Upfront,
             },
@@ -531,8 +531,8 @@ async fn monitor_storage_system(
     if stats.economic_stats.total_contracts > 0 {
         println!("\\n Economic Activity:");
         println!("  Active contracts: {}", stats.economic_stats.total_contracts);
-        println!("  Value locked: {} ZHTP", stats.economic_stats.total_value_locked);
-        println!("  Total rewards: {} ZHTP", stats.economic_stats.total_rewards);
+        println!("  Value locked: {} SOV", stats.economic_stats.total_value_locked);
+        println!("  Total rewards: {} SOV", stats.economic_stats.total_rewards);
     }
     
     // Performance metrics
@@ -796,7 +796,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 data_integrity_level: 0.95,
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 1000, // 1000 ZHTP tokens
+                max_total_cost: 1000, // 1000 SOV tokens
                 max_cost_per_gb_day: 100,
                 preferred_payment_schedule: PaymentSchedule::Upfront,
             },
@@ -1282,8 +1282,8 @@ async fn monitor_storage_system(
     if stats.economic_stats.total_contracts > 0 {
         println!("\\n Economic Activity:");
         println!("  Active contracts: {}", stats.economic_stats.total_contracts);
-        println!("  Value locked: {} ZHTP", stats.economic_stats.total_value_locked);
-        println!("  Total rewards: {} ZHTP", stats.economic_stats.total_rewards);
+        println!("  Value locked: {} SOV", stats.economic_stats.total_value_locked);
+        println!("  Total rewards: {} SOV", stats.economic_stats.total_rewards);
     }
     
     // Performance metrics

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct Validator {
     /// Validator identity
     pub identity: IdentityId,
-    /// Staked amount (ZHTP tokens)
+    /// Staked amount (SOV tokens)
     pub stake: u64,
     /// Storage provided (bytes)
     pub storage_provided: u64,
@@ -128,7 +128,7 @@ impl Validator {
         self.update_voting_power();
 
         tracing::warn!(
-            " Validator {:?} slashed {} ZHTP for {:?} (slash count: {})",
+            " Validator {:?} slashed {} SOV for {:?} (slash count: {})",
             self.identity,
             slash_amount,
             slash_type,
@@ -209,7 +209,7 @@ impl Validator {
         self.update_voting_power();
 
         tracing::info!(
-            "Validator {:?} added {} ZHTP stake (total: {} ZHTP)",
+            "Validator {:?} added {} SOV stake (total: {} SOV)",
             self.identity,
             amount,
             self.stake
@@ -223,7 +223,7 @@ impl Validator {
         }
 
         // Check minimum stake requirement
-        let min_stake = 1000 * 1_000_000; // 1000 ZHTP minimum
+        let min_stake = 1000 * 1_000_000; // 1000 SOV minimum
         if self.stake - amount < min_stake {
             return Err(anyhow::anyhow!(
                 "Cannot reduce stake below minimum requirement"
@@ -234,7 +234,7 @@ impl Validator {
         self.update_voting_power();
 
         tracing::info!(
-            " Validator {:?} removed {} ZHTP stake (remaining: {} ZHTP)",
+            " Validator {:?} removed {} SOV stake (remaining: {} SOV)",
             self.identity,
             amount,
             self.stake

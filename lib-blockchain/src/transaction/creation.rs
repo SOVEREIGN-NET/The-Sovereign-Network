@@ -182,7 +182,8 @@ impl TransactionBuilder {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         };
 
         // Sign the transaction
@@ -404,12 +405,12 @@ pub mod utils {
     /// charging something for large witnesses to discourage spam.
     ///
     /// # Fee Structure
-    /// - **BASE_FEE**: 100 ZHTP (reduced from 1000 to make transactions affordable)
-    /// - **Size Fee**: 1 ZHTP per 100 bytes of "effective size"
+    /// - **BASE_FEE**: 100 SOV (reduced from 1000 to make transactions affordable)
+    /// - **Size Fee**: 1 SOV per 100 bytes of "effective size"
     /// - **Effective Size**: payload_bytes + min(witness_bytes, WITNESS_CAP)
     ///
     /// # Economic Rationale
-    /// The BASE_FEE reduction from 1000 to 100 ZHTP makes small transactions 10x cheaper,
+    /// The BASE_FEE reduction from 1000 to 100 SOV makes small transactions 10x cheaper,
     /// improving accessibility while still providing economic spam prevention. Combined
     /// with the witness cap, this ensures post-quantum transactions remain affordable
     /// without creating a spam vector through zero-cost large witnesses.
@@ -437,7 +438,7 @@ pub mod utils {
         //   for large witnesses to prevent abuse).
         const WITNESS_CAP: usize = 500;
         
-        // Base transaction fee - reduced from 1000 to 100 ZHTP.
+        // Base transaction fee - reduced from 1000 to 100 SOV.
         //
         // Economic justification:
         // - Makes small transactions affordable for everyday use (e.g., token transfers).
@@ -446,7 +447,7 @@ pub mod utils {
         // - Aligns with network goal of accessible, usable cryptocurrency vs. high-fee networks.
         const BASE_FEE: u64 = 100;
         
-        const BYTES_PER_ZHTP: u64 = 100;     // 100 bytes per 1 ZHTP
+        const BYTES_PER_SOV: u64 = 100;     // 100 bytes per 1 SOV
 
         // Estimate payload vs witness
         //
@@ -466,22 +467,22 @@ pub mod utils {
         // - BUT: witness is capped at WITNESS_CAP (500 bytes) for fee purposes
         //
         // Result: All transactions < 7219 bytes pay roughly the same base fee
-        // (BASE_FEE + ~5 ZHTP for capped witness), which simplifies economics and
+        // (BASE_FEE + ~5 SOV for capped witness), which simplifies economics and
         // avoids penalizing Dilithium2 or classical signatures.
         let payload_bytes = transaction_size.saturating_sub(PQ_WITNESS_SIZE);
         let witness_bytes = transaction_size.saturating_sub(payload_bytes);
 
         // Effective size = payload + capped witness
         // Examples:
-        // - 500 byte classical tx: 0 payload + 500 witness (capped) = 500 bytes → 105 ZHTP
-        // - 3732 byte D2 tx: 0 payload + 500 witness (capped) = 500 bytes → 105 ZHTP  
-        // - 10000 byte D5 tx: 2781 payload + 500 witness (capped) = 3281 bytes → 132 ZHTP
+        // - 500 byte classical tx: 0 payload + 500 witness (capped) = 500 bytes → 105 SOV
+        // - 3732 byte D2 tx: 0 payload + 500 witness (capped) = 500 bytes → 105 SOV  
+        // - 10000 byte D5 tx: 2781 payload + 500 witness (capped) = 3281 bytes → 132 SOV
         let effective_size = payload_bytes + witness_bytes.min(WITNESS_CAP);
-        let size_fee = (effective_size as u64 / BYTES_PER_ZHTP).max(1);
+        let size_fee = (effective_size as u64 / BYTES_PER_SOV).max(1);
 
         let total_fee = BASE_FEE + size_fee;
 
-        debug!("Fee calc: tx={}B, payload={}B, witness={}B, effective={}B, fee={} ZHTP",
+        debug!("Fee calc: tx={}B, payload={}B, witness={}B, effective={}B, fee={} SOV",
                transaction_size, payload_bytes, witness_bytes, effective_size, total_fee);
 
         total_fee
@@ -580,6 +581,9 @@ pub mod utils {
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validation will be handled during transaction validation
                 // Requires governance_config_data and caller must have Governance role
+            }
+            TransactionType::TokenMint => {
+                // System-controlled token mint - validation handled at consensus layer
             }
         }
 

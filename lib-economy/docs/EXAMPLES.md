@@ -86,14 +86,14 @@ fn move_funds_to_savings(manager: &mut MultiWalletManager) -> anyhow::Result<()>
     let personal_wallet = manager.get_wallet_by_type(WalletType::Personal)?;
     let savings_wallet = manager.get_wallet_by_type(WalletType::Savings)?;
     
-    // Transfer 5000 ZHTP from personal to savings
+    // Transfer 5000 SOV from personal to savings
     manager.transfer_between_wallets(
         &personal_wallet.wallet_id,
         &savings_wallet.wallet_id,
         5000,
     )?;
     
-    println!(" Transferred 5000 ZHTP to savings");
+    println!(" Transferred 5000 SOV to savings");
     Ok(())
 }
 ```
@@ -106,14 +106,14 @@ fn check_all_balances(manager: &MultiWalletManager) {
     
     for wallet in manager.list_wallets() {
         println!(
-            "{:?}: {} ZHTP ({})",
+            "{:?}: {} SOV ({})",
             wallet.wallet_type,
             wallet.balance,
             wallet.name
         );
     }
     
-    println!("\nTotal Balance: {} ZHTP", manager.get_total_balance());
+    println!("\nTotal Balance: {} SOV", manager.get_total_balance());
 }
 ```
 
@@ -140,11 +140,11 @@ fn send_payment(
     )?;
     
     println!("Transaction created:");
-    println!("  Amount: {} ZHTP", tx.amount);
-    println!("  Base fee: {} ZHTP", tx.base_fee);
-    println!("  DAO fee (2%): {} ZHTP", tx.dao_fee);
-    println!("  Total fee: {} ZHTP", tx.total_fee);
-    println!("  Total cost: {} ZHTP", tx.amount + tx.total_fee);
+    println!("  Amount: {} SOV", tx.amount);
+    println!("  Base fee: {} SOV", tx.base_fee);
+    println!("  DAO fee (2%): {} SOV", tx.dao_fee);
+    println!("  Total fee: {} SOV", tx.total_fee);
+    println!("  Total cost: {} SOV", tx.amount + tx.total_fee);
     
     Ok(tx)
 }
@@ -165,12 +165,12 @@ fn compare_priorities() -> anyhow::Result<()> {
         Priority::Urgent,
     ];
     
-    println!("\n=== Fee Comparison for 10,000 ZHTP ===");
+    println!("\n=== Fee Comparison for 10,000 SOV ===");
     
     for priority in priorities {
         let tx = Transaction::new_payment(sender, recipient, amount, priority)?;
         println!(
-            "{:?}: {} ZHTP total fee (base: {}, DAO: {})",
+            "{:?}: {} SOV total fee (base: {}, DAO: {})",
             priority,
             tx.total_fee,
             tx.base_fee,
@@ -193,7 +193,7 @@ fn create_ubi_distribution(recipient: [u8; 32]) -> anyhow::Result<Transaction> {
     assert_eq!(tx.dao_fee, 0);
     assert_eq!(tx.total_fee, 0);
     
-    println!(" UBI distribution: 1000 ZHTP (no fees)");
+    println!(" UBI distribution: 1000 SOV (no fees)");
     Ok(tx)
 }
 ```
@@ -221,12 +221,12 @@ fn calculate_node_rewards() -> anyhow::Result<()> {
     let reward = TokenReward::calculate(&work, &model)?;
     
     println!("\n=== Daily Infrastructure Rewards ===");
-    println!("Routing (5 GB): {} ZHTP", reward.routing_reward);
-    println!("Storage (50 GB): {} ZHTP", reward.storage_reward);
-    println!("Compute: {} ZHTP", reward.compute_reward);
-    println!("Quality bonus (96%): {} ZHTP", reward.quality_bonus);
-    println!("Uptime bonus: {} ZHTP", reward.uptime_bonus);
-    println!("\nTotal: {} ZHTP", reward.total_reward);
+    println!("Routing (5 GB): {} SOV", reward.routing_reward);
+    println!("Storage (50 GB): {} SOV", reward.storage_reward);
+    println!("Compute: {} SOV", reward.compute_reward);
+    println!("Quality bonus (96%): {} SOV", reward.quality_bonus);
+    println!("Uptime bonus: {} SOV", reward.uptime_bonus);
+    println!("\nTotal: {} SOV", reward.total_reward);
     
     Ok(())
 }
@@ -249,8 +249,8 @@ fn project_monthly_rewards() -> anyhow::Result<()> {
     let monthly_reward = daily_reward.total_reward * 30;
     
     println!("\n=== Monthly Projection ===");
-    println!("Daily reward: {} ZHTP", daily_reward.total_reward);
-    println!("Monthly reward (30 days): {} ZHTP", monthly_reward);
+    println!("Daily reward: {} SOV", daily_reward.total_reward);
+    println!("Monthly reward (30 days): {} SOV", monthly_reward);
     
     Ok(())
 }
@@ -286,7 +286,7 @@ fn combine_rewards() -> anyhow::Result<()> {
     // Combine rewards
     morning_reward.combine(&evening_reward);
     
-    println!("Combined daily reward: {} ZHTP", morning_reward.total_reward);
+    println!("Combined daily reward: {} SOV", morning_reward.total_reward);
     
     Ok(())
 }
@@ -305,7 +305,7 @@ fn process_dao_fees() -> anyhow::Result<()> {
     let mut treasury = DaoTreasury::new();
     
     // Simulate receiving fees from multiple transactions
-    let transactions_fees = vec![20, 50, 100, 200, 30]; // DAO fees in ZHTP
+    let transactions_fees = vec![20, 50, 100, 200, 30]; // DAO fees in SOV
     
     for fee in transactions_fees {
         treasury.receive_dao_fee(fee)?;
@@ -315,11 +315,11 @@ fn process_dao_fees() -> anyhow::Result<()> {
     treasury.allocate_funds()?;
     
     println!("\n=== Treasury Status ===");
-    println!("Total fees collected: {} ZHTP", treasury.total_dao_fees_collected);
-    println!("UBI allocated (40%): {} ZHTP", treasury.ubi_allocated);
-    println!("Welfare allocated (30%): {} ZHTP", treasury.welfare_allocated);
-    println!("Development (30%): {} ZHTP", treasury.development_allocated);
-    println!("Treasury balance: {} ZHTP", treasury.treasury_balance);
+    println!("Total fees collected: {} SOV", treasury.total_dao_fees_collected);
+    println!("UBI allocated (40%): {} SOV", treasury.ubi_allocated);
+    println!("Welfare allocated (30%): {} SOV", treasury.welfare_allocated);
+    println!("Development (30%): {} SOV", treasury.development_allocated);
+    println!("Treasury balance: {} SOV", treasury.treasury_balance);
     
     Ok(())
 }
@@ -332,7 +332,7 @@ use lib_economy::treasury_economics::calculate_optimal_ubi_per_citizen;
 
 fn calculate_ubi_amounts(treasury: &DaoTreasury) -> anyhow::Result<()> {
     let total_citizens = 10000;
-    let target_monthly_ubi = 1000; // Target 1000 ZHTP per citizen per month
+    let target_monthly_ubi = 1000; // Target 1000 SOV per citizen per month
     
     let (actual_ubi, can_meet_target) = calculate_optimal_ubi_per_citizen(
         treasury,
@@ -342,16 +342,16 @@ fn calculate_ubi_amounts(treasury: &DaoTreasury) -> anyhow::Result<()> {
     
     println!("\n=== UBI Calculation ===");
     println!("Total verified citizens: {}", total_citizens);
-    println!("Target monthly UBI: {} ZHTP", target_monthly_ubi);
+    println!("Target monthly UBI: {} SOV", target_monthly_ubi);
     
     if can_meet_target {
-        println!(" Can provide full target: {} ZHTP per citizen", actual_ubi);
+        println!(" Can provide full target: {} SOV per citizen", actual_ubi);
     } else {
-        println!("⚠ Reduced UBI: {} ZHTP per citizen", actual_ubi);
+        println!("⚠ Reduced UBI: {} SOV per citizen", actual_ubi);
         println!("  (Insufficient treasury funds)");
     }
     
-    println!("\nTotal monthly distribution: {} ZHTP", actual_ubi * total_citizens);
+    println!("\nTotal monthly distribution: {} SOV", actual_ubi * total_citizens);
     
     Ok(())
 }
@@ -363,7 +363,7 @@ fn calculate_ubi_amounts(treasury: &DaoTreasury) -> anyhow::Result<()> {
 use lib_economy::treasury_economics::calculate_treasury_sustainability;
 
 fn analyze_sustainability(treasury: &DaoTreasury) -> anyhow::Result<()> {
-    let monthly_burn_rate = 100000; // Expected 100k ZHTP per month
+    let monthly_burn_rate = 100000; // Expected 100k SOV per month
     
     let metrics = calculate_treasury_sustainability(treasury, monthly_burn_rate);
     
@@ -398,11 +398,11 @@ fn calculate_bandwidth_rewards() -> anyhow::Result<()> {
     let rewards = NetworkParticipationRewards::calculate(&work, peers_connected)?;
     
     println!("\n=== Network Participation Rewards ===");
-    println!("Bandwidth sharing: {} ZHTP", rewards.bandwidth_sharing_rewards);
-    println!("Mesh networking: {} ZHTP", rewards.mesh_networking_rewards);
-    println!("Connectivity provision: {} ZHTP", rewards.connectivity_provision_rewards);
-    println!("Anti-Sybil bonuses: {} ZHTP", rewards.anti_sybil_bonuses);
-    println!("\nTotal: {} ZHTP", rewards.total_participation_rewards);
+    println!("Bandwidth sharing: {} SOV", rewards.bandwidth_sharing_rewards);
+    println!("Mesh networking: {} SOV", rewards.mesh_networking_rewards);
+    println!("Connectivity provision: {} SOV", rewards.connectivity_provision_rewards);
+    println!("Anti-Sybil bonuses: {} SOV", rewards.anti_sybil_bonuses);
+    println!("\nTotal: {} SOV", rewards.total_participation_rewards);
     
     Ok(())
 }
@@ -425,7 +425,7 @@ fn calculate_mesh_rewards() -> anyhow::Result<()> {
     for (peers, uptime_hours, description) in scenarios {
         let reward = calculate_mesh_maintenance(peers, uptime_hours)?;
         println!(
-            "{}: {} peers, {} hours = {} ZHTP",
+            "{}: {} peers, {} hours = {} SOV",
             description, peers, uptime_hours, reward
         );
     }
@@ -462,11 +462,11 @@ fn isp_bypass_node_rewards() -> anyhow::Result<()> {
     println!("Quality: {}%", daily_work.connection_quality * 100.0);
     println!("Users served: {}", daily_work.users_served);
     println!("\n=== Rewards ===");
-    println!("Routing: {} ZHTP", reward.routing_reward);
-    println!("Quality bonus: {} ZHTP", reward.quality_bonus);
-    println!("Uptime bonus: {} ZHTP", reward.uptime_bonus);
-    println!("\nTotal: {} ZHTP/day", reward.total_reward);
-    println!("Monthly estimate: {} ZHTP", reward.total_reward * 30);
+    println!("Routing: {} SOV", reward.routing_reward);
+    println!("Quality bonus: {} SOV", reward.quality_bonus);
+    println!("Uptime bonus: {} SOV", reward.uptime_bonus);
+    println!("\nTotal: {} SOV/day", reward.total_reward);
+    println!("Monthly estimate: {} SOV", reward.total_reward * 30);
     
     Ok(())
 }
@@ -509,7 +509,7 @@ fn manual_ubi_distribution(
     
     println!("\n=== Manual UBI Distribution ===");
     println!("Citizens: {}", citizens.len());
-    println!("UBI per citizen: {} ZHTP", ubi_per_citizen);
+    println!("UBI per citizen: {} SOV", ubi_per_citizen);
     
     for citizen_address in citizens {
         // Create UBI distribution transaction
@@ -518,7 +518,7 @@ fn manual_ubi_distribution(
         // Process transaction (would be done by consensus layer)
         treasury.distribute_ubi(ubi_per_citizen)?;
         
-        println!(" Distributed {} ZHTP to {}", ubi_per_citizen, hex::encode(&citizen_address[..8]));
+        println!(" Distributed {} SOV to {}", ubi_per_citizen, hex::encode(&citizen_address[..8]));
     }
     
     Ok(())
@@ -535,7 +535,7 @@ fn manual_ubi_distribution(
 use lib_economy::pricing::{calculate_dynamic_price, Priority};
 
 fn demonstrate_dynamic_pricing() {
-    let base_price = 100; // 100 ZHTP base fee
+    let base_price = 100; // 100 SOV base fee
     
     let congestion_levels = vec![
         (0.0, "No congestion"),
@@ -549,7 +549,7 @@ fn demonstrate_dynamic_pricing() {
     
     for (congestion, description) in congestion_levels {
         let price = calculate_dynamic_price(base_price, congestion, Priority::Normal);
-        println!("{}: {} ZHTP", description, price);
+        println!("{}: {} SOV", description, price);
     }
 }
 ```
@@ -572,7 +572,7 @@ fn priority_pricing_comparison() {
     
     for priority in priorities {
         let price = calculate_dynamic_price(base_price, congestion, priority);
-        println!("{:?}: {} ZHTP", priority, price);
+        println!("{:?}: {} SOV", priority, price);
     }
 }
 ```
@@ -607,8 +607,8 @@ fn node_operator_daily_flow() -> anyhow::Result<()> {
     manager.deposit(&rewards_wallet, reward.total_reward)?;
     
     println!("\n=== Node Operator Daily Summary ===");
-    println!("Infrastructure rewards: {} ZHTP", reward.total_reward);
-    println!("Rewards wallet balance: {} ZHTP", 
+    println!("Infrastructure rewards: {} SOV", reward.total_reward);
+    println!("Rewards wallet balance: {} SOV", 
         manager.get_wallet(&rewards_wallet).unwrap().balance);
     
     // 4. Transfer some to savings
@@ -616,7 +616,7 @@ fn node_operator_daily_flow() -> anyhow::Result<()> {
     let save_amount = reward.total_reward / 2;
     manager.transfer_between_wallets(&rewards_wallet, &savings_wallet, save_amount)?;
     
-    println!("\n Transferred {} ZHTP to savings", save_amount);
+    println!("\n Transferred {} SOV to savings", save_amount);
     
     Ok(())
 }
@@ -631,7 +631,7 @@ fn citizen_ubi_flow() -> anyhow::Result<()> {
     let mut manager = MultiWalletManager::new(identity)?;
     let personal_wallet = manager.create_wallet("Personal", WalletType::Personal)?;
     
-    // Receive monthly UBI (1000 ZHTP)
+    // Receive monthly UBI (1000 SOV)
     let ubi_amount = 1000;
     let ubi_tx = Transaction::new_ubi_distribution(identity, ubi_amount)?;
     
@@ -639,8 +639,8 @@ fn citizen_ubi_flow() -> anyhow::Result<()> {
     manager.deposit(&personal_wallet, ubi_amount)?;
     
     println!("\n=== Citizen UBI Receipt ===");
-    println!(" Received {} ZHTP UBI", ubi_amount);
-    println!("Personal wallet balance: {} ZHTP",
+    println!(" Received {} SOV UBI", ubi_amount);
+    println!("Personal wallet balance: {} SOV",
         manager.get_wallet(&personal_wallet).unwrap().balance);
     
     // Use UBI for payment
@@ -658,10 +658,10 @@ fn citizen_ubi_flow() -> anyhow::Result<()> {
     manager.withdraw(&personal_wallet, total_cost)?;
     
     println!("\n=== Payment Made ===");
-    println!("Amount: {} ZHTP", payment_amount);
-    println!("Fees: {} ZHTP (base: {}, DAO: {})",
+    println!("Amount: {} SOV", payment_amount);
+    println!("Fees: {} SOV (base: {}, DAO: {})",
         payment_tx.total_fee, payment_tx.base_fee, payment_tx.dao_fee);
-    println!("Remaining balance: {} ZHTP",
+    println!("Remaining balance: {} SOV",
         manager.get_wallet(&personal_wallet).unwrap().balance);
     
     Ok(())
@@ -677,30 +677,30 @@ fn treasury_monthly_cycle() -> anyhow::Result<()> {
     // Simulate one month of transactions
     println!("\n=== Treasury Monthly Cycle ===");
     
-    // Week 1: 10,000 ZHTP in DAO fees
+    // Week 1: 10,000 SOV in DAO fees
     for _ in 0..500 {
         treasury.receive_dao_fee(20)?;
     }
     treasury.allocate_funds()?;
-    println!("Week 1: {} ZHTP collected", treasury.total_dao_fees_collected);
+    println!("Week 1: {} SOV collected", treasury.total_dao_fees_collected);
     
-    // Week 2: 15,000 ZHTP in DAO fees
+    // Week 2: 15,000 SOV in DAO fees
     for _ in 0..750 {
         treasury.receive_dao_fee(20)?;
     }
     treasury.allocate_funds()?;
-    println!("Week 2: {} ZHTP collected", treasury.total_dao_fees_collected);
+    println!("Week 2: {} SOV collected", treasury.total_dao_fees_collected);
     
     // Calculate UBI distribution
     let citizens = 1000;
     let ubi_per_citizen = treasury.calculate_ubi_per_citizen(citizens);
     
     println!("\n=== Month End Summary ===");
-    println!("Total collected: {} ZHTP", treasury.total_dao_fees_collected);
-    println!("UBI allocated: {} ZHTP", treasury.ubi_allocated);
-    println!("Welfare allocated: {} ZHTP", treasury.welfare_allocated);
-    println!("Development: {} ZHTP", treasury.development_allocated);
-    println!("\nUBI per citizen ({} citizens): {} ZHTP", citizens, ubi_per_citizen);
+    println!("Total collected: {} SOV", treasury.total_dao_fees_collected);
+    println!("UBI allocated: {} SOV", treasury.ubi_allocated);
+    println!("Welfare allocated: {} SOV", treasury.welfare_allocated);
+    println!("Development: {} SOV", treasury.development_allocated);
+    println!("\nUBI per citizen ({} citizens): {} SOV", citizens, ubi_per_citizen);
     
     // Distribute UBI
     for _ in 0..citizens {
@@ -708,7 +708,7 @@ fn treasury_monthly_cycle() -> anyhow::Result<()> {
     }
     
     println!("\n UBI distributed to {} citizens", citizens);
-    println!("Remaining UBI allocation: {} ZHTP", treasury.ubi_allocated);
+    println!("Remaining UBI allocation: {} SOV", treasury.ubi_allocated);
     
     Ok(())
 }

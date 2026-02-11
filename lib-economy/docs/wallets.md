@@ -76,7 +76,7 @@ pub enum WalletType {
 - **Purpose**: Network staking
 - **Use Cases**: Consensus participation, validator stakes
 - **Restrictions**: Locked during staking period
-- **Typical Balance**: Minimum 1000 ZHTP
+- **Typical Balance**: Minimum 1000 SOV
 
 #### Governance Wallet
 - **Purpose**: DAO participation
@@ -111,7 +111,7 @@ pub struct Wallet {
     pub wallet_id: [u8; 32],              // Unique wallet identifier
     pub name: String,                      // User-defined name
     pub wallet_type: WalletType,          // Type of wallet
-    pub balance: u64,                     // Current balance in ZHTP
+    pub balance: u64,                     // Current balance in SOV
     pub owner_identity: [u8; 32],         // Owner's identity address
     pub created_at: u64,                  // Creation timestamp
     pub last_activity: u64,               // Last transaction timestamp
@@ -150,7 +150,7 @@ let wallet = Wallet::new(
 Deposit funds into wallet.
 
 ```rust
-wallet.deposit(1000)?; // Deposit 1000 ZHTP
+wallet.deposit(1000)?; // Deposit 1000 SOV
 assert_eq!(wallet.balance, 1000);
 ```
 
@@ -159,7 +159,7 @@ assert_eq!(wallet.balance, 1000);
 Withdraw funds from wallet.
 
 ```rust
-wallet.withdraw(500)?; // Withdraw 500 ZHTP
+wallet.withdraw(500)?; // Withdraw 500 SOV
 assert_eq!(wallet.balance, 500);
 ```
 
@@ -169,7 +169,7 @@ Get current balance.
 
 ```rust
 let balance = wallet.get_balance();
-println!("Balance: {} ZHTP", balance);
+println!("Balance: {} SOV", balance);
 ```
 
 #### `is_active(&self) -> bool`
@@ -275,7 +275,7 @@ List all wallets.
 
 ```rust
 for wallet in manager.list_wallets() {
-    println!("{}: {} ZHTP", wallet.name, wallet.balance);
+    println!("{}: {} SOV", wallet.name, wallet.balance);
 }
 ```
 
@@ -295,7 +295,7 @@ Get total balance across all wallets.
 
 ```rust
 let total = manager.get_total_balance();
-println!("Total holdings: {} ZHTP", total);
+println!("Total holdings: {} SOV", total);
 ```
 
 ### Transfer Operations
@@ -305,7 +305,7 @@ println!("Total holdings: {} ZHTP", total);
 Transfer funds between wallets (same identity).
 
 ```rust
-// Move 5000 ZHTP from personal to savings
+// Move 5000 SOV from personal to savings
 manager.transfer_between_wallets(
     &personal_wallet_id,
     &savings_wallet_id,
@@ -415,7 +415,7 @@ fn auto_save_rewards(manager: &mut MultiWalletManager) -> anyhow::Result<()> {
     if rewards_balance > 0 {
         let save_amount = rewards_balance / 2;
         manager.transfer_between_wallets(&rewards_id, &savings_id, save_amount)?;
-        println!(" Auto-saved {} ZHTP to savings", save_amount);
+        println!(" Auto-saved {} SOV to savings", save_amount);
     }
     
     Ok(())
@@ -432,7 +432,7 @@ fn generate_balance_report(manager: &MultiWalletManager) {
     for wallet in manager.list_wallets() {
         if wallet.status == WalletStatus::Active {
             println!(
-                "{:12} {:20} {:>12} ZHTP",
+                "{:12} {:20} {:>12} SOV",
                 format!("{:?}", wallet.wallet_type),
                 wallet.name,
                 wallet.balance
@@ -442,7 +442,7 @@ fn generate_balance_report(manager: &MultiWalletManager) {
     
     println!("{}", "-".repeat(50));
     println!(
-        "{:33} {:>12} ZHTP\n",
+        "{:33} {:>12} SOV\n",
         "TOTAL",
         manager.get_total_balance()
     );
@@ -461,7 +461,7 @@ fn consolidate_to_investment(manager: &mut MultiWalletManager) -> anyhow::Result
     let personal = manager.get_wallet_by_type(WalletType::Personal).unwrap();
     let rewards = manager.get_wallet_by_type(WalletType::Rewards).unwrap();
     
-    // Transfer excess from personal (keep minimum 1000 ZHTP)
+    // Transfer excess from personal (keep minimum 1000 SOV)
     if personal.balance > 1000 {
         let excess = personal.balance - 1000;
         manager.transfer_between_wallets(&personal.wallet_id, &investment_id, excess)?;
@@ -665,7 +665,7 @@ fn credit_infrastructure_rewards(
     // Credit rewards
     manager.deposit(&rewards_wallet, reward.total_reward)?;
     
-    println!(" Credited {} ZHTP to rewards wallet", reward.total_reward);
+    println!(" Credited {} SOV to rewards wallet", reward.total_reward);
     Ok(())
 }
 ```

@@ -549,7 +549,7 @@ impl BlockchainHandler {
             req_data.fee,
             signature,
             format!(
-                "P2P Transfer {} ZHTP from {} to {}",
+                "P2P Transfer {} SOV from {} to {}",
                 req_data.amount, req_data.from, req_data.to
             )
             .as_bytes()
@@ -568,7 +568,7 @@ impl BlockchainHandler {
         match blockchain_write.add_pending_transaction(transaction) {
             Ok(()) => {
                 tracing::info!(
-                    " P2P Transfer transaction {} added to mempool (amount: {} ZHTP)",
+                    " P2P Transfer transaction {} added to mempool (amount: {} SOV)",
                     tx_hash,
                     req_data.amount
                 );
@@ -577,7 +577,7 @@ impl BlockchainHandler {
                     status: "transaction_submitted".to_string(),
                     transaction_hash: tx_hash.to_string(),
                     message: format!(
-                        "P2P transfer of {} ZHTP from {} to {} submitted to mempool",
+                        "P2P transfer of {} SOV from {} to {} submitted to mempool",
                         req_data.amount, req_data.from, req_data.to
                     ),
                 };
@@ -1103,7 +1103,7 @@ impl BlockchainHandler {
                     success: true,                    // Assume success if in block
                     logs: vec![
                         format!("Transaction confirmed in block {}", block_height),
-                        format!("Fee paid: {} ZHTP", confirmed_tx.fee),
+                        format!("Fee paid: {} SOV", confirmed_tx.fee),
                         format!("Transaction type: {:?}", confirmed_tx.transaction_type),
                     ],
                 };

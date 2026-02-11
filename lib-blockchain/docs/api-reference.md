@@ -276,7 +276,7 @@ let output = TransactionOutput::new(
 
 ### TokenContract
 
-Multi-token contract supporting ZHTP native and custom tokens.
+Multi-token contract supporting SOV native and custom tokens.
 
 ```rust
 pub struct TokenContract {
@@ -307,7 +307,7 @@ let token = TokenContract::new(
 ```
 
 ##### `zhtp_native_token() -> Self`
-Creates the ZHTP native token contract.
+Creates the SOV native token contract.
 
 ```rust
 let zhtp = TokenContract::zhtp_native_token();
@@ -774,8 +774,8 @@ pub const GAS_GOVERNANCE: u64 = 2500;
 ### Token Constants
 
 ```rust
-pub const ZHTP_DECIMALS: u8 = 8;
-pub const ZHTP_INITIAL_SUPPLY: u64 = 21_000_000_00_000_000; // 21M ZHTP
+pub const SOV_DECIMALS: u8 = 8;
+pub const ZHTP_INITIAL_SUPPLY: u64 = 21_000_000_00_000_000; // 21M SOV
 pub const ZHTP_BURN_RATE: u32 = 100; // 1% burn rate
 ```
 

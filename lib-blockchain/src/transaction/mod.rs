@@ -19,6 +19,7 @@ pub use core::{
     ProfitDeclarationData,
     RevenueSource,
     TokenTransferData,
+    TokenMintData,
     TransactionInput,
     TransactionOutput,
     IdentityTransactionData,

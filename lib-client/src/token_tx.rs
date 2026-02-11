@@ -12,6 +12,8 @@ use crate::crypto;
 // Use the canonical types from lib-blockchain and lib-crypto to ensure bincode compatibility
 // CRITICAL: These MUST be imported, not redefined locally, for bincode serialization to match
 use lib_blockchain::{Transaction, TransactionType};
+use lib_blockchain::contracts::utils::generate_lib_token_id;
+use lib_blockchain::transaction::TokenTransferData;
 use lib_blockchain::types::{ContractType, ContractCall, CallPermissions};
 use lib_crypto::types::SignatureAlgorithm;
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey};
@@ -57,7 +59,7 @@ pub struct MintParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferParams {
     pub token_id: [u8; 32],
-    pub to: Vec<u8>,  // PublicKey bytes
+    pub to: Vec<u8>,  // PublicKey bytes or key_id (32 bytes)
     pub amount: u64,
 }
 
@@ -181,14 +183,14 @@ pub fn build_contract_transaction(
     memo.extend(call_data);
 
     // Step 1: Calculate dynamic fee based on estimated transaction size
-    // Fee formula: ~0.119 ZHTP per byte, or 1 ZHTP per ~8.4 bytes
+    // Fee formula: ~0.119 SOV per byte, or 1 SOV per ~8.4 bytes
     // Server calculation: fee = ceil(transaction_size_bytes / 8.4)
     let estimated_tx_size = 200 // minimum fixed fields
         + memo.len() // memo variable size
         + 3732; // Dilithium2 witness: 2420 byte sig + 1312 byte pk (from lib-blockchain)
 
     // Calculate fee using integer arithmetic: ceil(size / 8.4) = ceil(size * 10 / 84)
-    // This ensures: 10083 bytes -> 1200 ZHTP (matches server requirement)
+    // This ensures: 10083 bytes -> 1200 SOV (matches server requirement)
     let min_fee = ((estimated_tx_size as u64 * 10 + 83) / 84) + 50; // Buffer for rounding safety
 
     // Step 2: Build transaction with calculated fee for hashing
@@ -221,14 +223,15 @@ pub fn build_contract_transaction(
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-        governance_config_data: None,
+            token_mint_data: None,
+                    governance_config_data: None,
     };
 
     eprintln!("[contract_tx] Chain ID: {}", chain_id);
     eprintln!("[contract_tx] Memo length: {} bytes", memo.len());
     eprintln!("[contract_tx] Public key size: {}", identity.public_key.len());
     eprintln!("[contract_tx] Estimated tx size: {} bytes", estimated_tx_size);
-    eprintln!("[contract_tx] Calculated minimum fee: {} ZHTP", min_fee);
+    eprintln!("[contract_tx] Calculated minimum fee: {} SOV", min_fee);
 
     // Step 3: Use signing_hash() - deterministic field-by-field hashing
     // This is the SAFE method that won't break when Transaction struct changes
@@ -258,7 +261,7 @@ pub fn build_contract_transaction(
         .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
     eprintln!("[contract_tx] Final tx size: {} bytes (estimated was {})", final_tx_bytes.len(), estimated_tx_size);
-    eprintln!("[contract_tx] Fee verification: {} ZHTP for {} bytes = {:.3} ZHTP/byte",
+    eprintln!("[contract_tx] Fee verification: {} SOV for {} bytes = {:.3} SOV/byte",
         min_fee, final_tx_bytes.len(),
         min_fee as f64 / final_tx_bytes.len() as f64);
 
@@ -278,15 +281,112 @@ pub fn build_transfer_tx(
     amount: u64,
     chain_id: u8,
 ) -> Result<String, String> {
-    let params = TransferParams {
-        token_id: *token_id,
-        to: to_pubkey.to_vec(),
-        amount,
-    };
-    let params_bytes = bincode::serialize(&params)
-        .map_err(|e| format!("Failed to serialize params: {}", e))?;
+    if *token_id == generate_lib_token_id() || *token_id == [0u8; 32] {
+        return Err("SOV transfers require wallet_id; use build_sov_wallet_transfer_tx".to_string());
+    }
+    let sender_pk = create_public_key(identity.public_key.clone());
 
-    build_contract_transaction(identity, ContractType::Token, "transfer", params_bytes, chain_id)
+    let to_key_id = if to_pubkey.len() == 32 {
+        let mut key_id = [0u8; 32];
+        key_id.copy_from_slice(to_pubkey);
+        key_id
+    } else if to_pubkey.len() >= 2000 {
+        create_public_key(to_pubkey.to_vec()).key_id
+    } else {
+        return Err(format!(
+            "Invalid recipient public key length: {} (expected 32-byte key_id or full Dilithium key)",
+            to_pubkey.len()
+        ));
+    };
+
+    let transfer_data = TokenTransferData {
+        token_id: *token_id,
+        from: sender_pk.key_id,
+        to: to_key_id,
+        amount: amount as u128,
+        nonce: 0,
+    };
+
+    let mut tx = Transaction::new_token_transfer_with_chain_id(
+        chain_id,
+        transfer_data,
+        Signature {
+            signature: vec![],
+            public_key: sender_pk.clone(),
+            algorithm: SignatureAlgorithm::Dilithium2,
+            timestamp: 0,
+        },
+        Vec::new(),
+    );
+
+    let tx_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign: {}", e))?;
+
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: sender_pk,
+        algorithm: SignatureAlgorithm::Dilithium2,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let final_tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
+
+    Ok(hex::encode(final_tx_bytes))
+}
+
+/// Build a signed SOV wallet-based transfer transaction
+pub fn build_sov_wallet_transfer_tx(
+    identity: &Identity,
+    from_wallet_id: &[u8; 32],
+    to_wallet_id: &[u8; 32],
+    amount: u64,
+    chain_id: u8,
+) -> Result<String, String> {
+    let sender_pk = create_public_key(identity.public_key.clone());
+
+    let transfer_data = TokenTransferData {
+        token_id: generate_lib_token_id(),
+        from: *from_wallet_id,
+        to: *to_wallet_id,
+        amount: amount as u128,
+        nonce: 0,
+    };
+
+    let mut tx = Transaction::new_token_transfer_with_chain_id(
+        chain_id,
+        transfer_data,
+        Signature {
+            signature: vec![],
+            public_key: sender_pk.clone(),
+            algorithm: SignatureAlgorithm::Dilithium2,
+            timestamp: 0,
+        },
+        Vec::new(),
+    );
+
+    let tx_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign: {}", e))?;
+
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: sender_pk,
+        algorithm: SignatureAlgorithm::Dilithium2,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let final_tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
+
+    Ok(hex::encode(final_tx_bytes))
 }
 
 /// Build a signed token mint transaction

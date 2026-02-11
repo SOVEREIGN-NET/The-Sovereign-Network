@@ -125,7 +125,7 @@ async fn deploy_hello_world_contract(
                 data_integrity_level: 0.999,
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 100000, // 100K ZHTP tokens
+                max_total_cost: 100000, // 100K SOV tokens
                 max_cost_per_gb_day: 200,
                 preferred_payment_schedule: PaymentSchedule::Annual,
             },
@@ -218,7 +218,7 @@ async fn deploy_payment_contract(
                 data_integrity_level: 0.9999, // 99.99% integrity
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 500000, // 500K ZHTP tokens
+                max_total_cost: 500000, // 500K SOV tokens
                 max_cost_per_gb_day: 1000, // Premium pricing for critical contracts
                 preferred_payment_schedule: PaymentSchedule::Annual,
             },
@@ -303,7 +303,7 @@ async fn discover_contracts(
     
     let author_contracts = storage.search_content(author_query, user).await?;
     
-    println!("\\n Found {} ZHTP contracts:", author_contracts.len());
+    println!("\\n Found {} SOV contracts:", author_contracts.len());
     for contract in &author_contracts {
         println!("   {}", contract.filename);
     }
@@ -450,7 +450,7 @@ async fn simulate_contract_execution(
                     println!("  💳 Created payment:");
                     println!("    Payment ID: {}", payment_id);
                     println!("    Recipient: {}", recipient);
-                    println!("    Amount: {} ZHTP", amount);
+                    println!("    Amount: {} SOV", amount);
                     println!("    Conditions: {}", conditions);
                     
                     Ok(payment_id)
@@ -528,7 +528,7 @@ async fn interact_with_payment_processor(
         "create_payment",
         vec![
             "recipient_address_123".to_string(),
-            "1000".to_string(), // 1000 ZHTP tokens
+            "1000".to_string(), // 1000 SOV tokens
             "Deliver goods within 7 days".to_string()
         ],
         user.clone()
@@ -899,7 +899,7 @@ async fn deploy_hello_world_contract(
                 data_integrity_level: 0.999,
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 100000, // 100K ZHTP tokens
+                max_total_cost: 100000, // 100K SOV tokens
                 max_cost_per_gb_day: 200,
                 preferred_payment_schedule: PaymentSchedule::Annual,
             },
@@ -992,7 +992,7 @@ async fn deploy_payment_contract(
                 data_integrity_level: 0.9999, // 99.99% integrity
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 500000, // 500K ZHTP tokens
+                max_total_cost: 500000, // 500K SOV tokens
                 max_cost_per_gb_day: 1000, // Premium pricing for critical contracts
                 preferred_payment_schedule: PaymentSchedule::Annual,
             },
@@ -1077,7 +1077,7 @@ async fn discover_contracts(
     
     let author_contracts = storage.search_content(author_query, user).await?;
     
-    println!("\\n Found {} ZHTP contracts:", author_contracts.len());
+    println!("\\n Found {} SOV contracts:", author_contracts.len());
     for contract in &author_contracts {
         println!("   {}", contract.filename);
     }
@@ -1224,7 +1224,7 @@ async fn simulate_contract_execution(
                     println!("  💳 Created payment:");
                     println!("    Payment ID: {}", payment_id);
                     println!("    Recipient: {}", recipient);
-                    println!("    Amount: {} ZHTP", amount);
+                    println!("    Amount: {} SOV", amount);
                     println!("    Conditions: {}", conditions);
                     
                     Ok(payment_id)
@@ -1302,7 +1302,7 @@ async fn interact_with_payment_processor(
         "create_payment",
         vec![
             "recipient_address_123".to_string(),
-            "1000".to_string(), // 1000 ZHTP tokens
+            "1000".to_string(), // 1000 SOV tokens
             "Deliver goods within 7 days".to_string()
         ],
         user.clone()

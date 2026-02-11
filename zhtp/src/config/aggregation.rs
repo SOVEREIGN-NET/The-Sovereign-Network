@@ -436,7 +436,7 @@ impl Default for ValidatorConfig {
         Self {
             enabled: false,
             identity_id: String::new(),
-            stake: 1000 * 1_000_000, // 1000 ZHTP minimum stake
+            stake: 1000 * 1_000_000, // 1000 SOV minimum stake
             storage_provided: 0, // 0 = pure validator (no storage), can be increased for storage bonus
             consensus_key_path: "./data/consensus_key.pem".to_string(),
             commission_rate: 500, // 5% default

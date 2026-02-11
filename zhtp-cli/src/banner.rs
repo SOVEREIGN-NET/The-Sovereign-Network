@@ -42,7 +42,7 @@ pub fn show_lib_banner() {
     // System information
     println!("System Information:");
     println!("   • Node Type: Complete Internet Replacement Orchestrator");
-    println!("   • Coordination: 11 ZHTP packages");
+    println!("   • Coordination: 11 SOV packages");
     println!("   • Architecture: Event-driven with dependency injection");
     println!("   • Security: Post-quantum cryptography enabled");
     println!("   • Economics: Universal Basic Income system ready");

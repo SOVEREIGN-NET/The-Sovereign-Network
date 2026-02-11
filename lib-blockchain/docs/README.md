@@ -8,7 +8,7 @@ A comprehensive blockchain implementation for the Zero Hash Transfer Protocol (Z
 
 - **Zero-Knowledge Transactions**: Private transactions using ZK-SNARKs and Plonky2 proofs
 - **Smart Contract Platform**: WASM-based smart contracts with gas metering
-- **Multi-Token System**: Native ZHTP token and custom token support
+- **Multi-Token System**: Native SOV token and custom token support
 - **Web4 Decentralized Websites**: Blockchain-based website hosting with DHT integration
 - **Identity Integration**: DID-based identity system with privacy preservation
 - **Economic System**: Built-in UBI, DAO governance, and economic incentives
@@ -29,7 +29,7 @@ The blockchain is built with a modular architecture consisting of several key co
 ### Smart Contract Platform
 
 - **Contracts** (`contracts/`): Multi-contract platform supporting:
-  - Token contracts (ZHTP native + custom tokens)
+  - Token contracts (SOV native + custom tokens)
   - Web4 website hosting contracts
   - Messaging and communication contracts
   - File sharing and storage contracts
@@ -219,7 +219,7 @@ let storage_config = BlockchainStorageConfig {
 
 ### Contract Types
 
-- **`TokenContract`**: Multi-token contract supporting ZHTP and custom tokens
+- **`TokenContract`**: Multi-token contract supporting SOV and custom tokens
 - **`Web4Contract`**: Decentralized website hosting contract
 - **`ContractCall`**: Smart contract execution call with gas limits
 - **`ContractResult`**: Contract execution result with events and state changes

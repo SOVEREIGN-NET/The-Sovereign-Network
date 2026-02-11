@@ -48,7 +48,7 @@ impl RewardCalculator {
         work_multipliers.insert(UsefulWorkType::BridgeOperations, 1.5);
 
         Self {
-            base_reward: 100 * 1_000_000, // 100 ZHTP base reward
+            base_reward: 100 * 1_000_000, // 100 SOV base reward
             work_multipliers,
             reward_history: Vec::new(),
         }
@@ -88,7 +88,7 @@ impl RewardCalculator {
         }
 
         tracing::info!(
-            "Calculated round rewards: {} ZHTP total to {} validators",
+            "Calculated round rewards: {} SOV total to {} validators",
             total_rewards,
             validator_rewards.len()
         );
@@ -151,7 +151,7 @@ impl RewardCalculator {
 
         for (work_type, amount) in work_breakdown {
             if let Some(multiplier) = self.work_multipliers.get(work_type) {
-                let bonus = (*amount as f64 * multiplier * 10.0) as u64; // 10 ZHTP per unit
+                let bonus = (*amount as f64 * multiplier * 10.0) as u64; // 10 SOV per unit
                 total_bonus += bonus;
             }
         }
@@ -169,7 +169,7 @@ impl RewardCalculator {
             // 4. Update staking pools
 
             tracing::info!(
-                " Distributed {} ZHTP to validator {:?} (base: {}, work: {}, participation: {})",
+                " Distributed {} SOV to validator {:?} (base: {}, work: {}, participation: {})",
                 reward.total_reward,
                 validator_id,
                 reward.base_reward,
@@ -214,7 +214,7 @@ impl RewardCalculator {
         let old_reward = self.base_reward;
         self.base_reward = new_base_reward;
         tracing::info!(
-            "Base reward adjusted: {} -> {} ZHTP",
+            "Base reward adjusted: {} -> {} SOV",
             old_reward,
             new_base_reward
         );

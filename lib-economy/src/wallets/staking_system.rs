@@ -48,7 +48,7 @@ impl StakingPool {
         self.total_staked += amount;
         
         info!(
-            "🏦 Added {} ZHTP to staking pool - Total staked: {}",
+            "🏦 Added {} SOV to staking pool - Total staked: {}",
             amount, self.total_staked
         );
         
@@ -64,7 +64,7 @@ impl StakingPool {
         self.total_staked -= amount;
         
         info!(
-            "🏦 Removed {} ZHTP from staking pool - Total staked: {}",
+            "🏦 Removed {} SOV from staking pool - Total staked: {}",
             amount, self.total_staked
         );
         
@@ -185,9 +185,9 @@ impl StakingPosition {
 /// Infrastructure staking system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfrastructureStaking {
-    /// Large infrastructure staking pool (100K+ ZHTP)
+    /// Large infrastructure staking pool (100K+ SOV)
     pub large_infrastructure_pool: StakingPool,
-    /// Small infrastructure staking pool (<100K ZHTP)
+    /// Small infrastructure staking pool (<100K SOV)
     pub small_infrastructure_pool: StakingPool,
     /// All active staking positions
     pub positions: Vec<StakingPosition>,
@@ -199,12 +199,12 @@ impl InfrastructureStaking {
         InfrastructureStaking {
             large_infrastructure_pool: StakingPool::new(
                 crate::LARGE_INFRASTRUCTURE_DAILY_YIELD,  // 0.01% daily
-                crate::LARGE_INFRASTRUCTURE_THRESHOLD,    // 100K ZHTP minimum
+                crate::LARGE_INFRASTRUCTURE_THRESHOLD,    // 100K SOV minimum
                 365,                                      // 1 year lock
             ),
             small_infrastructure_pool: StakingPool::new(
                 crate::SMALL_INFRASTRUCTURE_DAILY_YIELD,  // 0.02% daily  
-                1000,                                     // 1K ZHTP minimum
+                1000,                                     // 1K SOV minimum
                 90,                                       // 3 months lock
             ),
             positions: Vec::new(),
@@ -228,7 +228,7 @@ impl InfrastructureStaking {
         self.positions.push(position);
         
         info!(
-            "Staked {} ZHTP from wallet {} in {} infrastructure pool",
+            "Staked {} SOV from wallet {} in {} infrastructure pool",
             amount,
             hex::encode(wallet_address),
             if amount >= crate::LARGE_INFRASTRUCTURE_THRESHOLD { "large" } else { "small" }
@@ -268,7 +268,7 @@ impl InfrastructureStaking {
         }
         
         info!(
-            "Unstaked {} ZHTP from wallet {}",
+            "Unstaked {} SOV from wallet {}",
             amount,
             hex::encode(wallet_address)
         );

@@ -34,11 +34,11 @@ impl ContractPermissions {
         }
     }
 
-    /// Create permissions for ZHTP native token
+    /// Create permissions for SOV native token
     pub fn for_lib_token() -> Self {
         Self {
             can_mint: true, // For network rewards
-            can_burn: false, // ZHTP is not deflationary
+            can_burn: false, // SOV is not deflationary
             can_pause: false,
             admins: vec![], // No single admin for native token
         }

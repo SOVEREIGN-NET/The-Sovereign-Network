@@ -1,4 +1,4 @@
-//! Reward management system for ZHTP network participants
+//! Reward management system for SOV network participants
 //! 
 //! Manages calculation, accumulation, and distribution of rewards for network services
 //! including bandwidth sharing, data storage, mesh routing, and  activities.
@@ -145,7 +145,7 @@ pub struct DiscoveryStats {
 /// Multi-wallet support for different reward types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiWallet {
-    /// Main ZHTP wallet
+    /// Main SOV wallet
     pub primary_wallet: WalletBalance,
     /// Specialized wallets for different reward types
     pub reward_wallets: HashMap<String, WalletBalance>,
@@ -512,7 +512,7 @@ impl StakingSystem {
         let staked_amount = self.staked_amount;
         
         info!(
-            "Unstaking completed: {} ZHTP staked, {} accumulated + {} final = {} total rewards",
+            "Unstaking completed: {} SOV staked, {} accumulated + {} final = {} total rewards",
             staked_amount, self.accumulated_rewards, final_rewards, total_rewards
         );
 
@@ -757,7 +757,7 @@ impl MultiWallet {
 impl TransferCapabilities {
     pub fn new() -> Self {
         Self {
-            daily_transfer_limit: 1_000_000, // 1M ZHTP
+            daily_transfer_limit: 1_000_000, // 1M SOV
             transfer_fee_rate: 50, // 0.5%
             supported_types: vec!["primary".to_string()],
             auto_consolidate: true,

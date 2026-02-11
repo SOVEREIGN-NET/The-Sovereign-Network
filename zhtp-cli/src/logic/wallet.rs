@@ -115,7 +115,7 @@ pub fn validate_transaction_amount(amount: u64) -> CliResult<()> {
         ));
     }
 
-    // Max transaction amount: 21,000,000 ZHTP (in satoshis)
+    // Max transaction amount: 21,000,000 SOV (in satoshis)
     const MAX_AMOUNT: u64 = 21_000_000_00_000_000;
     if amount > MAX_AMOUNT {
         return Err(CliError::WalletError(format!(

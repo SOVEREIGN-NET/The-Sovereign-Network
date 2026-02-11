@@ -290,8 +290,8 @@ impl ContentPublisher {
 
     /// Calculate storage fees
     async fn calculate_storage_fees(&self, request: &ContentPublishRequest) -> Result<f64> {
-        let base_fee = 0.1; // 0.1 ZHTP base fee
-        let per_kb_fee = 0.001; // 0.001 ZHTP per KB
+        let base_fee = 0.1; // 0.1 SOV base fee
+        let per_kb_fee = 0.001; // 0.001 SOV per KB
         
         let size_kb = (request.content.len() as f64) / 1024.0;
         let size_fee = size_kb * per_kb_fee;

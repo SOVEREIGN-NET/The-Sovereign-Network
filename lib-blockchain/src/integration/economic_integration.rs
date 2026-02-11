@@ -90,7 +90,7 @@ impl EconomicTransactionProcessor {
         // Validate the conversion
         self.validate_economic_conversion(&blockchain_tx, economy_tx)?;
 
-        info!("Economic transaction processed: {} ZHTP from {:?} to {:?}", 
+        info!("Economic transaction processed: {} SOV from {:?} to {:?}", 
               economy_tx.amount, economy_tx.from, economy_tx.to);
 
         Ok(blockchain_tx)
@@ -116,7 +116,7 @@ impl EconomicTransactionProcessor {
 
         // Update UBI statistics
         let total_ubi_amount: u64 = citizens.iter().map(|(_, amount)| *amount).sum();
-        info!("Created {} UBI distributions totaling {} ZHTP", 
+        info!("Created {} UBI distributions totaling {} SOV", 
               blockchain_txs.len(), total_ubi_amount);
 
         Ok(blockchain_txs)
@@ -132,7 +132,7 @@ impl EconomicTransactionProcessor {
 
         // Use proper lib-economy reward distribution system
         let total_rewards: u64 = rewards.iter().map(|(_, amount)| *amount).sum();
-        debug!("Processing reward distribution for {} ZHTP across {} recipients", total_rewards, rewards.len());
+        debug!("Processing reward distribution for {} SOV across {} recipients", total_rewards, rewards.len());
 
         // Update our reward distribution statistics
         self.reward_distribution.total_rewards_distributed += total_rewards;
@@ -165,10 +165,10 @@ impl EconomicTransactionProcessor {
 
         // Log successful distribution using lib-economy stats
         let stats = self.reward_distribution.get_distribution_stats();
-        info!("Successfully processed reward distribution: {} ZHTP total distributed to {} participants", 
+        info!("Successfully processed reward distribution: {} SOV total distributed to {} participants", 
               stats["total_rewards_distributed"], stats["participants_rewarded"]);
 
-        info!("Created {} reward transactions totaling {} ZHTP", 
+        info!("Created {} reward transactions totaling {} SOV", 
               blockchain_txs.len(), total_rewards);
 
         Ok(blockchain_txs)
@@ -181,7 +181,7 @@ impl EconomicTransactionProcessor {
         reward_pool: u64,
         system_keypair: &lib_crypto::KeyPair,
     ) -> Result<Vec<BlockchainTransaction>> {
-        info!("🏭 Distributing {} ZHTP infrastructure rewards to {} participants", 
+        info!("🏭 Distributing {} SOV infrastructure rewards to {} participants", 
               reward_pool, participants.len());
 
         // Calculate total work
@@ -210,7 +210,7 @@ impl EconomicTransactionProcessor {
                 
                 distributed_total += reward_share;
 
-                debug!("Allocated {} ZHTP infrastructure reward (routing: {}, storage: {}, compute: {})", 
+                debug!("Allocated {} SOV infrastructure reward (routing: {}, storage: {}, compute: {})", 
                        reward_share, routing_work, storage_work, compute_work);
             }
         }
@@ -224,7 +224,7 @@ impl EconomicTransactionProcessor {
             .unwrap_or_default()
             .as_secs();
 
-        info!("Distributed {} ZHTP infrastructure rewards across {} transactions", 
+        info!("Distributed {} SOV infrastructure rewards across {} transactions", 
               distributed_total, blockchain_txs.len());
 
         Ok(blockchain_txs)
@@ -244,7 +244,7 @@ impl EconomicTransactionProcessor {
         priority: Priority,
         sender_keypair: &lib_crypto::KeyPair,
     ) -> Result<BlockchainTransaction> {
-        info!("🏦 Creating payment transaction: {} ZHTP from {:?} to {:?}", amount, from, to);
+        info!("🏦 Creating payment transaction: {} SOV from {:?} to {:?}", amount, from, to);
 
         // Create economy payment transaction with proper fees
         let economy_tx = create_payment_transaction(from, to, amount, priority)?;
@@ -252,7 +252,7 @@ impl EconomicTransactionProcessor {
         // Process and convert to blockchain format
         let blockchain_tx = self.process_economic_transaction(&economy_tx, sender_keypair).await?;
 
-        info!("Payment transaction created with {} ZHTP base fee and {} ZHTP DAO fee", 
+        info!("Payment transaction created with {} SOV base fee and {} SOV DAO fee", 
               economy_tx.base_fee, economy_tx.dao_fee);
 
         Ok(blockchain_tx)
@@ -316,7 +316,7 @@ impl EconomicTransactionProcessor {
     /// Process network fees for infrastructure operation
     pub async fn process_network_fees(&mut self, network_fees: u64) -> Result<()> {
         if network_fees > 0 {
-            debug!("Processing {} ZHTP in network infrastructure fees", network_fees);
+            debug!("Processing {} SOV in network infrastructure fees", network_fees);
             // Network fees would be distributed to infrastructure providers
             // This is where you'd incentivize ISP replacement infrastructure
             info!("Network fees processed for infrastructure rewards");
@@ -375,7 +375,7 @@ impl EconomicTransactionProcessor {
 
         // Create memo describing the economic transaction
         let memo = format!(
-            "Economic TX: {} - {} ZHTP (Base: {}, DAO: {})",
+            "Economic TX: {} - {} SOV (Base: {}, DAO: {})",
             economy_tx.tx_type.description(),
             economy_tx.amount,
             economy_tx.base_fee,
@@ -444,7 +444,8 @@ impl EconomicTransactionProcessor {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         })
     }
 
@@ -482,7 +483,8 @@ impl EconomicTransactionProcessor {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         };
 
         // Create signing hash
@@ -515,7 +517,7 @@ impl EconomicTransactionProcessor {
                 error!("Insufficient balance for transaction - Sender: {}..., Required: {}, Available: {}", 
                        sender_addr, required_amount, sender_balance.available_balance);
                 return Err(anyhow::anyhow!(
-                    "Insufficient balance: need {} ZHTP, have {} ZHTP", 
+                    "Insufficient balance: need {} SOV, have {} SOV", 
                     required_amount, sender_balance.available_balance
                 ));
             }
@@ -652,7 +654,7 @@ pub async fn create_welfare_funding_transactions(
     }
 
     let total_welfare: u64 = services.iter().map(|(_, _, amount)| *amount).sum();
-    info!("Created {} welfare funding transactions totaling {} ZHTP", 
+    info!("Created {} welfare funding transactions totaling {} SOV", 
           blockchain_txs.len(), total_welfare);
 
     Ok(blockchain_txs)
@@ -762,7 +764,7 @@ mod tests {
             compute_reward: 0,
             quality_bonus: 0,
             uptime_bonus: 0,
-            total_reward: 2000 * 1_000_000, // 2000 ZHTP
+            total_reward: 2000 * 1_000_000, // 2000 SOV
             currency: "ZHTP".to_string(),
         };
         wallet_balance.add_reward(&reward)?;

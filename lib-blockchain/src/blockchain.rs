@@ -180,7 +180,7 @@ pub struct Blockchain {
 pub struct ValidatorInfo {
     /// Validator identity ID
     pub identity_id: String,
-    /// Staked amount (in micro-ZHTP)
+    /// Staked amount (in micro-SOV)
     pub stake: u64,
     /// Storage provided (in bytes)
     pub storage_provided: u64,
@@ -210,9 +210,9 @@ pub struct UbiRegistryEntry {
     pub identity_id: String,
     /// UBI wallet ID where payments are sent
     pub ubi_wallet_id: String,
-    /// Daily UBI amount (~33 ZHTP)
+    /// Daily UBI amount (~33 SOV)
     pub daily_amount: u64,
-    /// Monthly UBI amount (1000 ZHTP)
+    /// Monthly UBI amount (1000 SOV)
     pub monthly_amount: u64,
     /// Block height when registered for UBI
     pub registered_at_block: u64,
@@ -224,6 +224,15 @@ pub struct UbiRegistryEntry {
     pub remainder_balance: u64,
     /// Whether UBI is currently active for this citizen
     pub is_active: bool,
+}
+
+/// UBI mint entry for block-authoritative TokenMint transactions
+#[derive(Debug, Clone)]
+pub struct UbiMintEntry {
+    pub identity_id: String,
+    pub wallet_id: String,
+    pub recipient_wallet_id: [u8; 32],
+    pub payout: u64,
 }
 
 /// Economics transaction record (simplified for blockchain package)
@@ -281,7 +290,8 @@ impl TransactionV1 {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         }
     }
 }
@@ -698,6 +708,7 @@ pub struct BlockchainImport {
 }
 
 impl Blockchain {
+    const MIN_DILITHIUM_PK_LEN: usize = 1312;
     /// Create a new blockchain with genesis block
     pub fn new() -> Result<Self> {
         let genesis_block = crate::block::create_genesis_block();
@@ -943,6 +954,30 @@ impl Blockchain {
             }
         }
 
+        // Backfill SOV balances in-memory for existing wallets that were registered
+        // before the in-memory credit was added. Will be persisted on next block write.
+        blockchain.ensure_sov_token_contract();
+        blockchain.migrate_sov_key_balances_to_wallets();
+        let backfill_entries = blockchain.collect_sov_backfill_entries();
+        if !backfill_entries.is_empty() {
+            info!(
+                "Backfilling SOV balances for {} wallets (in-memory)",
+                backfill_entries.len()
+            );
+            let sov_id = crate::contracts::utils::generate_lib_token_id();
+        for (wallet_id_bytes, amount, wallet_id) in &backfill_entries {
+            let recipient_pk = Self::wallet_key_for_sov(wallet_id_bytes);
+            if let Some(token) = blockchain.token_contracts.get_mut(&sov_id) {
+                if let Ok(()) = token.mint(&recipient_pk, *amount) {
+                    info!(
+                        "Backfill: credited {} SOV to wallet {}",
+                            amount, &wallet_id[..16.min(wallet_id.len())]
+                        );
+                    }
+                }
+            }
+        }
+
         info!(
             "📂 Loaded blockchain from SledStore: height={}, identities={}, wallets={}, tokens={}",
             blockchain.height,
@@ -1110,7 +1145,8 @@ impl Blockchain {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         };
 
         // Add genesis transaction to genesis block
@@ -1410,6 +1446,7 @@ impl Blockchain {
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
         self.process_contract_transactions(&block)?;
+        self.process_token_transactions(&block)?;
 
         // Process approved governance proposals (e.g., difficulty parameter updates)
         // This executes any proposals that have passed voting since the last block
@@ -1424,11 +1461,8 @@ impl Blockchain {
             // Don't fail block processing for UBI errors
         }
 
-        // Process automatic UBI distribution to all eligible citizens
-        if let Err(e) = self.process_automatic_ubi_distribution(self.height) {
-            warn!("Error processing automatic UBI distribution at height {}: {}", self.height, e);
-            // Don't fail block processing for UBI distribution errors
-        }
+        // Automatic UBI distribution is now minted via TokenMint transactions
+        // constructed during block creation (block-authoritative path).
 
         if let Err(e) = self.process_profit_declarations(&block) {
             warn!("Error processing profit declarations at height {}: {}", self.height, e);
@@ -1784,6 +1818,26 @@ impl Blockchain {
         // Get SOV token contract ID
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
 
+        // Pre-compute fee payers before taking mutable borrow on token contract.
+        // This avoids borrow conflict between self.token_contracts.get_mut() and
+        // self.primary_wallet_for_signer().
+        let fee_payers: Vec<(usize, PublicKey)> = block.transactions.iter().enumerate()
+            .filter_map(|(i, tx)| {
+                let is_token_contract = tx.transaction_type == TransactionType::ContractExecution
+                    && tx.memo.len() > 4
+                    && &tx.memo[0..4] == b"ZHTP";
+                let is_system = tx.inputs.is_empty() && !is_token_contract;
+                if is_system || tx.fee == 0 { return None; }
+                let sender = &tx.signature.public_key;
+                let fee_payer = if let Some(wallet_id) = self.primary_wallet_for_signer(&sender.key_id) {
+                    Self::wallet_key_for_sov(&wallet_id)
+                } else {
+                    sender.clone()
+                };
+                Some((i, fee_payer))
+            })
+            .collect();
+
         // Get mutable reference to SOV token contract
         let sov_token = match self.token_contracts.get_mut(&sov_token_id) {
             Some(token) => token,
@@ -1796,28 +1850,12 @@ impl Blockchain {
 
         let mut total_fees: u64 = 0;
 
-        for tx in &block.transactions {
-            // Skip system transactions (empty inputs = UBI, rewards, genesis)
-            // BUT token contract executions are NOT system transactions - they must pay fees
-            let is_token_contract = tx.transaction_type == TransactionType::ContractExecution
-                && tx.memo.len() > 4
-                && &tx.memo[0..4] == b"ZHTP";
-            let is_system_transaction = tx.inputs.is_empty() && !is_token_contract;
-
-            if is_system_transaction {
-                continue;
-            }
-
-            // Skip zero-fee transactions (shouldn't exist after validation, but be safe)
-            if tx.fee == 0 {
-                continue;
-            }
-
-            // Get sender's public key from signature
+        for (i, fee_payer) in &fee_payers {
+            let tx = &block.transactions[*i];
             let sender = &tx.signature.public_key;
 
             // Check sender's balance before deduction
-            let sender_balance = sov_token.balance_of(sender);
+            let sender_balance = sov_token.balance_of(&fee_payer);
             if sender_balance < tx.fee {
                 // This shouldn't happen if validation is working correctly
                 warn!(
@@ -1833,7 +1871,7 @@ impl Blockchain {
             // Deduct fee from sender's balance
             // Note: We use the internal balance mutation since this is at the blockchain level
             let new_balance = sender_balance - tx.fee;
-            sov_token.balances.insert(sender.clone(), new_balance);
+            sov_token.balances.insert(fee_payer.clone(), new_balance);
 
             total_fees = total_fees.saturating_add(tx.fee);
 
@@ -2773,6 +2811,197 @@ impl Blockchain {
 
     // ===== WALLET MANAGEMENT METHODS =====
 
+    /// Ensure the native SOV token contract exists in memory.
+    fn ensure_sov_token_contract(&mut self) {
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        if !self.token_contracts.contains_key(&sov_token_id) {
+            let sov_token = crate::contracts::TokenContract::new_sov_native();
+            self.token_contracts.insert(sov_token_id, sov_token);
+            info!("🪙 Initialized native SOV token contract");
+        }
+    }
+
+    fn resolve_credit_pubkey_from_parts(
+        &self,
+        public_key: Vec<u8>,
+        owner_identity_id: Option<Hash>,
+    ) -> Option<Vec<u8>> {
+        if public_key.len() >= Self::MIN_DILITHIUM_PK_LEN {
+            return Some(public_key);
+        }
+
+        if let Some(owner) = owner_identity_id {
+            let did = format!("did:zhtp:{}", hex::encode(owner.as_bytes()));
+            if let Some(identity) = self.identity_registry.get(&did) {
+                if identity.public_key.len() >= Self::MIN_DILITHIUM_PK_LEN {
+                    return Some(identity.public_key.clone());
+                }
+            }
+        }
+
+        warn!(
+            "SOV credit skipped: short public key (len={}) and no full identity key",
+            public_key.len()
+        );
+        None
+    }
+
+    fn resolve_wallet_credit_pubkey(
+        &self,
+        wallet: &crate::transaction::WalletTransactionData,
+    ) -> Option<Vec<u8>> {
+        self.resolve_credit_pubkey_from_parts(
+            wallet.public_key.clone(),
+            wallet.owner_identity_id.clone(),
+        )
+    }
+
+    /// Check whether a token_id refers to native SOV (zero or legacy SOV token id).
+    fn is_sov_token_id(token_id: &[u8; 32]) -> bool {
+        *token_id == [0u8; 32] || *token_id == crate::contracts::utils::generate_lib_token_id()
+    }
+
+    /// Create a synthetic PublicKey keyed by wallet_id for SOV balances.
+    /// This uses an empty keypair and the wallet_id bytes as key_id.
+    fn wallet_key_for_sov(wallet_id: &[u8; 32]) -> PublicKey {
+        PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: *wallet_id,
+        }
+    }
+
+    /// Convert wallet_id hex string to a 32-byte array.
+    fn wallet_id_bytes(wallet_id_hex: &str) -> Option<[u8; 32]> {
+        let bytes = hex::decode(wallet_id_hex).ok()?;
+        if bytes.len() != 32 {
+            return None;
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        Some(arr)
+    }
+
+    /// Find the Primary wallet_id for a signer key_id, if available.
+    fn primary_wallet_for_signer(&self, signer_key_id: &[u8; 32]) -> Option<[u8; 32]> {
+        for (wallet_id, wallet) in &self.wallet_registry {
+            if wallet.wallet_type != "Primary" {
+                continue;
+            }
+            let pk = PublicKey::new(wallet.public_key.clone());
+            if &pk.key_id == signer_key_id {
+                return Self::wallet_id_bytes(wallet_id);
+            }
+        }
+        None
+    }
+
+    /// Migrate legacy SOV balances keyed by public-key key_id into Primary wallet_id entries.
+    fn migrate_sov_key_balances_to_wallets(&mut self) {
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let token = match self.token_contracts.get_mut(&sov_token_id) {
+            Some(token) => token,
+            None => return,
+        };
+
+        // Map signer key_id -> primary wallet_id
+        let mut key_to_wallet: std::collections::HashMap<[u8; 32], [u8; 32]> = std::collections::HashMap::new();
+        for (wallet_id, wallet) in &self.wallet_registry {
+            if wallet.wallet_type != "Primary" {
+                continue;
+            }
+            if let Some(wallet_id_bytes) = Self::wallet_id_bytes(wallet_id) {
+                let pk = PublicKey::new(wallet.public_key.clone());
+                key_to_wallet.insert(pk.key_id, wallet_id_bytes);
+            }
+        }
+
+        let mut migrated_total: u64 = 0;
+        let balances: Vec<(PublicKey, u64)> = token.balances.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        for (pk, bal) in balances {
+            if bal == 0 {
+                continue;
+            }
+            // Skip entries already keyed by wallet_id.
+            let key_hex = hex::encode(pk.key_id);
+            if self.wallet_registry.contains_key(&key_hex) {
+                continue;
+            }
+            if let Some(wallet_id_bytes) = key_to_wallet.get(&pk.key_id) {
+                token.balances.remove(&pk);
+                let wallet_key = Self::wallet_key_for_sov(wallet_id_bytes);
+                let existing = token.balance_of(&wallet_key);
+                token.balances.insert(wallet_key, existing.saturating_add(bal));
+                migrated_total = migrated_total.saturating_add(bal);
+            }
+        }
+
+        if migrated_total > 0 {
+            info!("🪙 Migrated {} SOV from key-based balances to Primary wallets", migrated_total);
+        }
+    }
+
+    /// Resolve a full public key from a key_id by searching wallet and identity registries.
+    fn resolve_public_key_by_key_id(&self, key_id: &[u8; 32]) -> Option<Vec<u8>> {
+        for wallet in self.wallet_registry.values() {
+            if wallet.public_key.is_empty() {
+                continue;
+            }
+            let pk = PublicKey::new(wallet.public_key.clone());
+            if &pk.key_id == key_id {
+                return Some(wallet.public_key.clone());
+            }
+        }
+
+        for identity in self.identity_registry.values() {
+            if identity.public_key.is_empty() {
+                continue;
+            }
+            let pk = PublicKey::new(identity.public_key.clone());
+            if &pk.key_id == key_id {
+                return Some(identity.public_key.clone());
+            }
+        }
+
+        None
+    }
+
+    /// Collect SOV backfill entries from wallet_registry for wallets missing token balances.
+    ///
+    /// Returns a list of (public_key_bytes, amount, wallet_id) that should be minted
+    /// via TokenMint transactions in a migration block.
+    pub fn collect_sov_backfill_entries(&self) -> Vec<([u8; 32], u64, String)> {
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let token_opt = self.token_contracts.get(&sov_token_id);
+
+        let mut entries: Vec<([u8; 32], u64, String)> = Vec::new();
+        for (wallet_id, wallet) in &self.wallet_registry {
+            if wallet.initial_balance == 0 {
+                continue;
+            }
+            let wallet_key = match Self::wallet_id_bytes(wallet_id) {
+                Some(bytes) => bytes,
+                None => {
+                    warn!(
+                        "Skipping SOV backfill for wallet {}: invalid wallet_id",
+                        &wallet_id[..16.min(wallet_id.len())]
+                    );
+                    continue;
+                }
+            };
+
+            let recipient = Self::wallet_key_for_sov(&wallet_key);
+            let already_has_balance = token_opt
+                .map(|token| token.balance_of(&recipient) > 0)
+                .unwrap_or(false);
+            if already_has_balance {
+                continue;
+            }
+            entries.push((wallet_key, wallet.initial_balance, wallet_id.clone()));
+        }
+        entries
+    }
+
     /// Register a new wallet on the blockchain
     pub fn register_wallet(&mut self, wallet_data: crate::transaction::WalletTransactionData) -> Result<Hash> {
         // Check if wallet already exists
@@ -2801,7 +3030,42 @@ impl Blockchain {
 
         // Store in wallet registry immediately for queries
         self.wallet_registry.insert(wallet_id_str.clone(), wallet_data.clone());
-        self.wallet_blocks.insert(wallet_id_str, self.height + 1);
+        self.wallet_blocks.insert(wallet_id_str.clone(), self.height + 1);
+
+        // Credit SOV balance to the token contract immediately (in-memory).
+        // Persisted when save_to_file() is called after registration completes.
+        if wallet_data.initial_balance > 0 {
+            if let Some(wallet_id_bytes) = Self::wallet_id_bytes(&wallet_id_str) {
+                let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+                self.ensure_sov_token_contract();
+                let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes);
+                if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
+                    match token.mint(&recipient_pk, wallet_data.initial_balance) {
+                        Ok(()) => {
+                            info!(
+                                "Credited {} SOV to wallet {}",
+                                wallet_data.initial_balance,
+                                &wallet_id_str[..16.min(wallet_id_str.len())]
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to credit {} SOV to wallet {}: {}",
+                                wallet_data.initial_balance,
+                                &wallet_id_str[..16.min(wallet_id_str.len())],
+                                e
+                            );
+                        }
+                    }
+                }
+            } else {
+                warn!(
+                    "Failed to credit {} SOV: invalid wallet_id {}",
+                    wallet_data.initial_balance,
+                    &wallet_id_str[..16.min(wallet_id_str.len())]
+                );
+            }
+        }
 
         Ok(registration_tx.hash())
     }
@@ -2824,7 +3088,7 @@ impl Blockchain {
             format!("funding_utxo:{}:{}", wallet_id, amount).as_bytes()
         );
         self.utxo_set.insert(utxo_hash, utxo_output);
-        info!("💰 Created funding UTXO: {} ZHTP for wallet {}", amount, &wallet_id[..16.min(wallet_id.len())]);
+        info!("💰 Created funding UTXO: {} SOV for wallet {}", amount, &wallet_id[..16.min(wallet_id.len())]);
         utxo_hash
     }
 
@@ -2958,7 +3222,7 @@ impl Blockchain {
         self.validator_registry.insert(validator_info.identity_id.clone(), validator_info.clone());
         self.validator_blocks.insert(validator_info.identity_id.clone(), self.height + 1);
 
-        info!(" Validator {} registered with {} ZHTP stake and {} bytes storage", 
+        info!(" Validator {} registered with {} SOV stake and {} bytes storage", 
               validator_info.identity_id, validator_info.stake, validator_info.storage_provided);
 
         Ok(registration_tx.hash())
@@ -3194,6 +3458,218 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Process token transfer and mint transactions from a block
+    pub fn process_token_transactions(&mut self, block: &Block) -> Result<()> {
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+
+        for transaction in &block.transactions {
+            match transaction.transaction_type {
+                TransactionType::TokenTransfer => {
+                    let transfer = transaction.token_transfer_data.as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("TokenTransfer missing data"))?;
+
+                    if transfer.amount == 0 {
+                        return Err(anyhow::anyhow!("TokenTransfer amount must be > 0"));
+                    }
+
+                    // Sender public key comes from transaction signature
+                    let sender_pk = transaction.signature.public_key.clone();
+
+                    let is_sov = Self::is_sov_token_id(&transfer.token_id);
+                    let token_id = if is_sov {
+                        sov_token_id
+                    } else {
+                        transfer.token_id
+                    };
+
+                    if token_id == sov_token_id {
+                        self.ensure_sov_token_contract();
+                    }
+
+                    let amount_u64: u64 = transfer.amount.try_into()
+                        .map_err(|_| anyhow::anyhow!("TokenTransfer amount exceeds u64"))?;
+
+                    let tx_hash_obj = transaction.hash();
+                    let tx_hash_bytes = tx_hash_obj.as_bytes();
+                    let mut tx_hash = [0u8; 32];
+                    tx_hash.copy_from_slice(tx_hash_bytes);
+
+                    if is_sov {
+                        let from_wallet_id = hex::encode(transfer.from);
+                        let to_wallet_id = hex::encode(transfer.to);
+
+                        let from_wallet = self.wallet_registry.get(&from_wallet_id)
+                            .ok_or_else(|| anyhow::anyhow!("TokenTransfer SOV sender wallet not found"))?;
+                        if !self.wallet_registry.contains_key(&to_wallet_id) {
+                            return Err(anyhow::anyhow!("TokenTransfer SOV recipient wallet not found"));
+                        }
+
+                        let from_wallet_pk = PublicKey::new(from_wallet.public_key.clone());
+                        if from_wallet_pk.key_id != sender_pk.key_id {
+                            return Err(anyhow::anyhow!("TokenTransfer SOV sender does not own wallet"));
+                        }
+
+                        let from_wallet_addr = Self::wallet_key_for_sov(&transfer.from);
+                        let to_wallet_addr = Self::wallet_key_for_sov(&transfer.to);
+
+                        let ctx = crate::contracts::executor::ExecutionContext::new(
+                            from_wallet_addr.clone(),
+                            block.height(),
+                            block.header.timestamp,
+                            0,
+                            tx_hash,
+                        );
+
+                        let token = self.token_contracts.get_mut(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                        token.transfer(&ctx, &to_wallet_addr, amount_u64)
+                            .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
+                    } else {
+                        if sender_pk.key_id != transfer.from {
+                            return Err(anyhow::anyhow!("TokenTransfer sender key_id mismatch"));
+                        }
+
+                        // Resolve recipient before mutable borrow on token
+                        let recipient_pk_bytes = self.resolve_public_key_by_key_id(&transfer.to)
+                            .ok_or_else(|| anyhow::anyhow!("TokenTransfer recipient not found"))?;
+                        let recipient_pk = PublicKey::new(recipient_pk_bytes);
+
+                        let ctx = crate::contracts::executor::ExecutionContext::new(
+                            sender_pk.clone(),
+                            block.height(),
+                            block.header.timestamp,
+                            0,
+                            tx_hash,
+                        );
+
+                        let token = self.token_contracts.get_mut(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                        token.transfer(&ctx, &recipient_pk, amount_u64)
+                            .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
+                    };
+
+                    if let Some(store) = &self.store {
+                        if let Some(token) = self.token_contracts.get(&token_id) {
+                            let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                            if let Err(e) = store_ref.put_token_contract(token) {
+                                warn!("Failed to persist token contract after transfer: {}", e);
+                            }
+                        }
+                    }
+                }
+                TransactionType::TokenMint => {
+                    if transaction.version < 2 {
+                        return Err(anyhow::anyhow!("TokenMint not supported in this serialization version"));
+                    }
+
+                    let mint = transaction.token_mint_data.as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("TokenMint missing data"))?;
+
+                    if mint.amount == 0 {
+                        return Err(anyhow::anyhow!("TokenMint amount must be > 0"));
+                    }
+
+                    let is_sov = Self::is_sov_token_id(&mint.token_id);
+                    let recipient_pk = if is_sov {
+                        Self::wallet_key_for_sov(&mint.to)
+                    } else {
+                        let recipient_pk_bytes = self.resolve_public_key_by_key_id(&mint.to)
+                            .ok_or_else(|| anyhow::anyhow!("TokenMint recipient not found"))?;
+                        PublicKey::new(recipient_pk_bytes)
+                    };
+
+                    let mut migration_from: Option<PublicKey> = None;
+                    if let Some(memo_str) = std::str::from_utf8(&transaction.memo).ok() {
+                        if let Some(rest) = memo_str.strip_prefix("UBI_DISTRIBUTION_V1:") {
+                            let mut parts = rest.split(':');
+                            let identity_id = parts.next().unwrap_or("").to_string();
+                            let wallet_id = parts.next().unwrap_or("").to_string();
+
+                            let entry = self.ubi_registry.get_mut(&identity_id)
+                                .ok_or_else(|| anyhow::anyhow!("UBI mint for unknown identity"))?;
+                            if entry.ubi_wallet_id != wallet_id {
+                                return Err(anyhow::anyhow!("UBI mint wallet mismatch"));
+                            }
+                            if Self::is_sov_token_id(&mint.token_id) {
+                                let mint_wallet_id = hex::encode(mint.to);
+                                if mint_wallet_id != wallet_id {
+                                    return Err(anyhow::anyhow!("UBI mint recipient wallet mismatch"));
+                                }
+                            }
+
+                            let is_due = match entry.last_payout_block {
+                                Some(last_block) => block.height().saturating_sub(last_block) >= Self::BLOCKS_PER_DAY,
+                                None => true,
+                            };
+                            if !is_due {
+                                return Err(anyhow::anyhow!("UBI mint not due for identity"));
+                            }
+
+                            let mut expected_payout = entry.daily_amount;
+                            let mut new_remainder = entry.remainder_balance + (entry.monthly_amount % 30);
+                            if new_remainder >= 30 {
+                                expected_payout += new_remainder / 30;
+                                new_remainder %= 30;
+                            }
+
+                            let amount_u64: u64 = mint.amount.try_into()
+                                .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
+                            if amount_u64 != expected_payout {
+                                return Err(anyhow::anyhow!("UBI mint amount mismatch"));
+                            }
+
+                            entry.last_payout_block = Some(block.height());
+                            entry.total_received = entry.total_received.saturating_add(expected_payout);
+                            entry.remainder_balance = new_remainder;
+
+                            if let Some(wallet) = self.wallet_registry.get_mut(&wallet_id) {
+                                wallet.initial_balance = wallet.initial_balance.saturating_add(expected_payout);
+                            }
+                        } else if let Some(rest) = memo_str.strip_prefix("TOKEN_MIGRATE_V1:") {
+                            let old_pk_bytes = hex::decode(rest)
+                                .map_err(|_| anyhow::anyhow!("Invalid TOKEN_MIGRATE_V1 memo"))?;
+                            migration_from = Some(PublicKey::new(old_pk_bytes));
+                        }
+                    }
+
+                    let token_id = if is_sov { sov_token_id } else { mint.token_id };
+
+                    if token_id == sov_token_id {
+                        self.ensure_sov_token_contract();
+                        let mint_wallet_id = hex::encode(mint.to);
+                        if !self.wallet_registry.contains_key(&mint_wallet_id) {
+                            return Err(anyhow::anyhow!("TokenMint SOV recipient wallet not found"));
+                        }
+                    }
+
+                    let token = self.token_contracts.get_mut(&token_id)
+                        .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+
+                    let amount_u64: u64 = mint.amount.try_into()
+                        .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
+
+                    if let Some(from_pk) = migration_from {
+                        token.burn(&from_pk, amount_u64)
+                            .map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                    }
+
+                    token.mint(&recipient_pk, amount_u64)
+                        .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+
+                    if let Some(store) = &self.store {
+                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                        if let Err(e) = store_ref.put_token_contract(token) {
+                            warn!("Failed to persist token contract after mint: {}", e);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
     /// Process a ContractExecution transaction
     fn process_contract_execution(&mut self, transaction: &Transaction, block_height: u64) -> Result<()> {
         // Parse ContractCall from memo: "ZHTP" + bincode(ContractCall, Signature)
@@ -3326,6 +3802,9 @@ impl Blockchain {
                 let params: MintParams = bincode::deserialize(&call.params)
                     .map_err(|e| anyhow::anyhow!("Invalid mint params: {}", e))?;
                 let MintParams { token_id, to: to_bytes, amount } = params;
+                if Self::is_sov_token_id(&token_id) {
+                    return Err(anyhow::anyhow!("SOV mints must use TokenMint transactions"));
+                }
 
                 // Deserialize PublicKey from bytes, or create minimal key with key_id
                 let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
@@ -3368,6 +3847,9 @@ impl Blockchain {
                 let params: TransferParams = bincode::deserialize(&call.params)
                     .map_err(|e| anyhow::anyhow!("Invalid transfer params: {}", e))?;
                 let TransferParams { token_id, to: to_bytes, amount } = params;
+                if Self::is_sov_token_id(&token_id) {
+                    return Err(anyhow::anyhow!("SOV transfers must use TokenTransfer transactions"));
+                }
 
                 // Deserialize PublicKey from bytes, or create minimal key with key_id
                 let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
@@ -3391,14 +3873,46 @@ impl Blockchain {
                 let token = self.token_contracts.get_mut(&token_id)
                     .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
-                // Direct balance transfer (bypass ExecutionContext requirement)
-                let source_balance = token.balance_of(caller);
+                // Debug: log caller key_id and all balance entries for diagnosis
+                warn!(
+                    "[TRANSFER-EXEC] caller key_id={}, token has {} balance entries, amount={}",
+                    hex::encode(&caller.key_id),
+                    token.balances.len(),
+                    amount
+                );
+                for (pk, bal) in token.balances.iter() {
+                    warn!(
+                        "[TRANSFER-EXEC] balance entry: key_id={} balance={} dilithium_pk_len={} kyber_pk_len={}",
+                        hex::encode(&pk.key_id), bal, pk.dilithium_pk.len(), pk.kyber_pk.len()
+                    );
+                }
+
+                // Look up balance by key_id to handle PublicKey shape mismatches.
+                // Balances may have been minted under PublicKey::new(dilithium_pk) which
+                // has kyber_pk=vec![], but the caller's tx signature has both keys populated.
+                // Find the existing balance entry by key_id instead of full PublicKey equality.
+                let (source_key, source_balance) = token.balances.iter()
+                    .find(|(pk, _)| pk.key_id == caller.key_id)
+                    .map(|(pk, bal)| (pk.clone(), *bal))
+                    .unwrap_or_else(|| (caller.clone(), 0));
+
+                warn!(
+                    "[TRANSFER-EXEC] source_balance={} (found_by_key_id={}) for caller key_id={}",
+                    source_balance,
+                    source_balance > 0,
+                    hex::encode(&caller.key_id)
+                );
+
                 if source_balance < amount {
                     return Err(anyhow::anyhow!("Insufficient balance"));
                 }
-                token.balances.insert(caller.clone(), source_balance - amount);
-                let to_balance = token.balance_of(&to);
-                token.balances.insert(to.clone(), to_balance + amount);
+                token.balances.insert(source_key, source_balance - amount);
+
+                let (to_key, to_balance) = token.balances.iter()
+                    .find(|(pk, _)| pk.key_id == to.key_id)
+                    .map(|(pk, bal)| (pk.clone(), *bal))
+                    .unwrap_or_else(|| (to.clone(), 0));
+                token.balances.insert(to_key, to_balance + amount);
 
                 info!("Transferred {} tokens from {:?} to {:?}", amount, caller.key_id, to.key_id);
             }
@@ -3641,7 +4155,7 @@ impl Blockchain {
             let tx_hash = blockchain_tx.hash();
             self.add_pending_transaction(blockchain_tx)?;
             
-            info!("🏦 Created payment transaction: {} ZHTP from {:?} to {:?}", amount, from, to);
+            info!("🏦 Created payment transaction: {} SOV from {:?} to {:?}", amount, from, to);
             Ok(tx_hash)
         } else {
             Err(anyhow::anyhow!("Economic processor not initialized"))
@@ -4024,7 +4538,7 @@ impl Blockchain {
                 algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                 timestamp: crate::utils::time::current_timestamp(),
             },
-            format!("Block {} fee collection: {} ZHTP to DAO treasury", 
+            format!("Block {} fee collection: {} SOV to DAO treasury", 
                     block_height, total_fees).into_bytes(),
         );
         
@@ -4883,7 +5397,7 @@ impl Blockchain {
         // Store audit entry
         self.welfare_audit_trail.insert(audit_id, audit_entry);
         
-        info!("📝 Recorded welfare distribution of {} ZHTP to service {}", amount, service_id);
+        info!("📝 Recorded welfare distribution of {} SOV to service {}", amount, service_id);
         Ok(())
     }
 
@@ -5113,11 +5627,11 @@ impl Blockchain {
 
         match proposal_type {
             DaoProposalType::UbiDistribution => {
-                // Estimate based on average UBI amount (e.g., 1000 ZHTP per beneficiary)
+                // Estimate based on average UBI amount (e.g., 1000 SOV per beneficiary)
                 Some(amount / 1000)
             },
             DaoProposalType::WelfareAllocation => {
-                // Welfare services: estimate 1 beneficiary per 5000 ZHTP
+                // Welfare services: estimate 1 beneficiary per 5000 SOV
                 Some(amount / 5000)
             },
             DaoProposalType::CommunityFunding => {
@@ -6810,6 +7324,29 @@ impl Blockchain {
         }
 
         let elapsed = start.elapsed();
+        // Backfill SOV balances for wallets registered before the in-memory credit was added.
+        blockchain.ensure_sov_token_contract();
+        blockchain.migrate_sov_key_balances_to_wallets();
+        let backfill_entries = blockchain.collect_sov_backfill_entries();
+        if !backfill_entries.is_empty() {
+            info!(
+                "Backfilling SOV balances for {} wallets",
+                backfill_entries.len()
+            );
+            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+            for (wallet_id_bytes, amount, wallet_id) in &backfill_entries {
+                let recipient_pk = Self::wallet_key_for_sov(wallet_id_bytes);
+                if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+                    if let Ok(()) = token.mint(&recipient_pk, *amount) {
+                        info!(
+                            "Backfill: credited {} SOV to wallet {}",
+                            amount, &wallet_id[..16.min(wallet_id.len())]
+                        );
+                    }
+                }
+            }
+        }
+
         info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, tokens: {}, UTXOs: {}, {:?})",
               blockchain.height, blockchain.identity_registry.len(),
               blockchain.wallet_registry.len(), blockchain.token_contracts.len(),
@@ -7412,7 +7949,7 @@ impl Blockchain {
 
     /// Process automatic UBI distribution for all eligible citizens
     ///
-    /// This runs every block and distributes daily UBI (~33 ZHTP) to citizens
+    /// This runs every block and distributes daily UBI (~33 SOV) to citizens
     /// who are due for their payout (last_payout_block + BLOCKS_PER_DAY <= current_block).
     ///
     /// This is the "best" approach - fully automatic, deterministic, no user action required.
@@ -7469,7 +8006,7 @@ impl Blockchain {
                 if let Some(wallet) = self.wallet_registry.get_mut(&wallet_id) {
                     wallet.initial_balance += payout;
                     debug!(
-                        "💰 UBI distributed: {} ZHTP to wallet {} (identity {})",
+                        "💰 UBI distributed: {} SOV to wallet {} (identity {})",
                         payout, wallet_id, identity_id
                     );
                 }
@@ -7478,12 +8015,71 @@ impl Blockchain {
 
         if recipients_paid > 0 {
             info!(
-                "🌍 UBI DISTRIBUTION: {} ZHTP to {} citizens at block {}",
+                "🌍 UBI DISTRIBUTION (ledger-only): {} SOV to {} citizens at block {}",
                 total_distributed, recipients_paid, current_block
             );
         }
 
         Ok(total_distributed)
+    }
+
+    /// Collect UBI mint entries for the next block without mutating state.
+    ///
+    /// These entries are used to build TokenMint transactions during block creation.
+    pub fn collect_ubi_mint_entries(&self, current_block: u64) -> Vec<UbiMintEntry> {
+        let mut entries = Vec::new();
+
+        for (identity_id, entry) in self.ubi_registry.iter() {
+            if !entry.is_active {
+                continue;
+            }
+
+            let is_due = match entry.last_payout_block {
+                Some(last_block) => current_block.saturating_sub(last_block) >= Self::BLOCKS_PER_DAY,
+                None => true,
+            };
+
+            if !is_due {
+                continue;
+            }
+
+            // Calculate payout amount with remainder handling
+            let mut payout = entry.daily_amount;
+            let mut new_remainder = entry.remainder_balance + (entry.monthly_amount % 30);
+            if new_remainder >= 30 {
+                payout += new_remainder / 30;
+                new_remainder %= 30;
+            }
+
+            let wallet_id = entry.ubi_wallet_id.clone();
+            if let Some(_wallet) = self.wallet_registry.get(&wallet_id) {
+                let wallet_id_bytes = match Self::wallet_id_bytes(&wallet_id) {
+                    Some(bytes) => bytes,
+                    None => {
+                        warn!(
+                            "UBI mint skipped: invalid wallet_id {} for identity {}",
+                            &wallet_id[..16.min(wallet_id.len())],
+                            &identity_id[..16.min(identity_id.len())]
+                        );
+                        continue;
+                    }
+                };
+                entries.push(UbiMintEntry {
+                    identity_id: identity_id.clone(),
+                    wallet_id,
+                    recipient_wallet_id: wallet_id_bytes,
+                    payout,
+                });
+            } else {
+                warn!(
+                    "UBI mint skipped: wallet {} not found for identity {}",
+                    &wallet_id[..16.min(wallet_id.len())],
+                    &identity_id[..16.min(identity_id.len())]
+                );
+            }
+        }
+
+        entries
     }
 
     /// Register a citizen for automatic UBI distribution
@@ -7496,8 +8092,8 @@ impl Blockchain {
             return Err(anyhow::anyhow!("Identity {} already registered for UBI", identity_id));
         }
 
-        let monthly_amount = 1000u64; // 1000 ZHTP per month
-        let daily_amount = monthly_amount / 30; // ~33 ZHTP per day
+        let monthly_amount = 1000u64; // 1000 SOV per month
+        let daily_amount = monthly_amount / 30; // ~33 SOV per day
 
         let entry = UbiRegistryEntry {
             identity_id: identity_id.clone(),
@@ -7515,7 +8111,7 @@ impl Blockchain {
         self.ubi_blocks.insert(identity_id.clone(), current_block);
 
         info!(
-            "🎉 UBI REGISTERED: Citizen {} eligible for {} ZHTP daily ({} monthly) at block {}",
+            "🎉 UBI REGISTERED: Citizen {} eligible for {} SOV daily ({} monthly) at block {}",
             identity_id, daily_amount, monthly_amount, current_block
         );
 

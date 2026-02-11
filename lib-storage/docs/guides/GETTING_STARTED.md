@@ -76,7 +76,7 @@ async fn store_document(
                 data_integrity_level: 0.99,
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 50000, // 50,000 ZHTP tokens
+                max_total_cost: 50000, // 50,000 SOV tokens
                 max_cost_per_gb_day: 200,
                 preferred_payment_schedule: PaymentSchedule::Upfront,
             },
@@ -172,7 +172,7 @@ async fn get_storage_quote(
                 data_integrity_level: 0.999,
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 1000000, // 1M ZHTP tokens
+                max_total_cost: 1000000, // 1M SOV tokens
                 max_cost_per_gb_day: 50,  // Lower cost for cold storage
                 preferred_payment_schedule: PaymentSchedule::Annual,
             },
@@ -194,7 +194,7 @@ async fn get_storage_quote(
     let quote = storage.get_storage_quote(request).await?;
     
     println!("Storage Quote:");
-    println!("  Total cost: {} ZHTP tokens", quote.total_cost);
+    println!("  Total cost: {} SOV tokens", quote.total_cost);
     println!("  Cost per GB/day: {} tokens", quote.cost_per_gb_day);
     println!("  Duration: {} days", quote.duration_days);
     println!("  Recommended nodes: {}", quote.recommended_nodes.len());
@@ -223,7 +223,7 @@ async fn store_critical_data(
             data_integrity_level: 0.9999, // 99.99% integrity
         },
         budget_constraints: BudgetConstraints {
-            max_total_cost: 5000000, // 5M ZHTP tokens
+            max_total_cost: 5000000, // 5M SOV tokens
             max_cost_per_gb_day: 500, // Premium pricing acceptable
             preferred_payment_schedule: PaymentSchedule::Monthly,
         },
@@ -352,10 +352,10 @@ async fn monitor_system(
     
     println!("\\nEconomic Activity:");
     println!("  Total contracts: {}", stats.economic_stats.total_contracts);
-    println!("  Value locked: {} ZHTP", stats.economic_stats.total_value_locked);
-    println!("  Average contract value: {} ZHTP", stats.economic_stats.average_contract_value);
-    println!("  Total penalties: {} ZHTP", stats.economic_stats.total_penalties);
-    println!("  Total rewards: {} ZHTP", stats.economic_stats.total_rewards);
+    println!("  Value locked: {} SOV", stats.economic_stats.total_value_locked);
+    println!("  Average contract value: {} SOV", stats.economic_stats.average_contract_value);
+    println!("  Total penalties: {} SOV", stats.economic_stats.total_penalties);
+    println!("  Total rewards: {} SOV", stats.economic_stats.total_rewards);
     
     println!("\\nStorage Usage:");
     println!("  Total content items: {}", stats.storage_stats.total_content_count);
@@ -452,7 +452,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let quote = storage.get_storage_quote(economic_request).await?;
     
     println!("Storage quote received:");
-    println!("  Total cost: {} ZHTP tokens", quote.total_cost);
+    println!("  Total cost: {} SOV tokens", quote.total_cost);
     println!("  Quality score: {:.2}", quote.estimated_quality.overall_score);
     
     // Start maintenance loop in background
@@ -699,7 +699,7 @@ async fn store_document(
                 data_integrity_level: 0.99,
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 50000, // 50,000 ZHTP tokens
+                max_total_cost: 50000, // 50,000 SOV tokens
                 max_cost_per_gb_day: 200,
                 preferred_payment_schedule: PaymentSchedule::Upfront,
             },
@@ -795,7 +795,7 @@ async fn get_storage_quote(
                 data_integrity_level: 0.999,
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 1000000, // 1M ZHTP tokens
+                max_total_cost: 1000000, // 1M SOV tokens
                 max_cost_per_gb_day: 50,  // Lower cost for cold storage
                 preferred_payment_schedule: PaymentSchedule::Annual,
             },
@@ -817,7 +817,7 @@ async fn get_storage_quote(
     let quote = storage.get_storage_quote(request).await?;
     
     println!("Storage Quote:");
-    println!("  Total cost: {} ZHTP tokens", quote.total_cost);
+    println!("  Total cost: {} SOV tokens", quote.total_cost);
     println!("  Cost per GB/day: {} tokens", quote.cost_per_gb_day);
     println!("  Duration: {} days", quote.duration_days);
     println!("  Recommended nodes: {}", quote.recommended_nodes.len());
@@ -846,7 +846,7 @@ async fn store_critical_data(
             data_integrity_level: 0.9999, // 99.99% integrity
         },
         budget_constraints: BudgetConstraints {
-            max_total_cost: 5000000, // 5M ZHTP tokens
+            max_total_cost: 5000000, // 5M SOV tokens
             max_cost_per_gb_day: 500, // Premium pricing acceptable
             preferred_payment_schedule: PaymentSchedule::Monthly,
         },
@@ -975,10 +975,10 @@ async fn monitor_system(
     
     println!("\\nEconomic Activity:");
     println!("  Total contracts: {}", stats.economic_stats.total_contracts);
-    println!("  Value locked: {} ZHTP", stats.economic_stats.total_value_locked);
-    println!("  Average contract value: {} ZHTP", stats.economic_stats.average_contract_value);
-    println!("  Total penalties: {} ZHTP", stats.economic_stats.total_penalties);
-    println!("  Total rewards: {} ZHTP", stats.economic_stats.total_rewards);
+    println!("  Value locked: {} SOV", stats.economic_stats.total_value_locked);
+    println!("  Average contract value: {} SOV", stats.economic_stats.average_contract_value);
+    println!("  Total penalties: {} SOV", stats.economic_stats.total_penalties);
+    println!("  Total rewards: {} SOV", stats.economic_stats.total_rewards);
     
     println!("\\nStorage Usage:");
     println!("  Total content items: {}", stats.storage_stats.total_content_count);
@@ -1075,7 +1075,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let quote = storage.get_storage_quote(economic_request).await?;
     
     println!("Storage quote received:");
-    println!("  Total cost: {} ZHTP tokens", quote.total_cost);
+    println!("  Total cost: {} SOV tokens", quote.total_cost);
     println!("  Quality score: {:.2}", quote.estimated_quality.overall_score);
     
     // Start maintenance loop in background

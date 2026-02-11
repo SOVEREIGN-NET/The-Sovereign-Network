@@ -17,7 +17,7 @@ pub struct EconomicModel {
     pub ubi_treasury: u64,          // UBI distribution pool
     pub dao_treasury: u64,          // DAO governance funds
     pub welcome_treasury: u64,      // Welcome bonus pool
-    pub total_supply: u64,          // Total ZHTP token supply
+    pub total_supply: u64,          // Total SOV token supply
     pub current_block: u64,         // Current blockchain height
 }
 ```
@@ -109,7 +109,7 @@ impl UbiDistributionSystem {
         // Enroll in UBI system
         self.ubi_recipients.insert(identity_id.clone(), ubi_account.clone());
         
-        println!("Citizen {} enrolled for UBI: {} ZHTP/month", 
+        println!("Citizen {} enrolled for UBI: {} SOV/month", 
             identity_id.0, monthly_amount);
         
         Ok(ubi_account)
@@ -142,7 +142,7 @@ impl UbiDistributionSystem {
                         
                         transactions.push(transaction);
                         
-                        println!("UBI distributed: {} ZHTP to {}", 
+                        println!("UBI distributed: {} SOV to {}", 
                             ubi_account.monthly_amount, identity_id.0);
                     },
                     Err(e) => {
@@ -157,9 +157,9 @@ impl UbiDistributionSystem {
     
     fn calculate_ubi_amount(&self, citizenship_tier: &str) -> u64 {
         match citizenship_tier {
-            "basic" => 1000,     // 1000 ZHTP/month
-            "verified" => 1500,  // 1500 ZHTP/month
-            "premium" => 2000,   // 2000 ZHTP/month
+            "basic" => 1000,     // 1000 SOV/month
+            "verified" => 1500,  // 1500 SOV/month
+            "premium" => 2000,   // 2000 SOV/month
             _ => 800,            // Default amount
         }
     }
@@ -528,10 +528,10 @@ struct WelcomeBonusRecord {
 impl WelcomeBonusSystem {
     pub fn new() -> Self {
         let mut bonus_tiers = HashMap::new();
-        bonus_tiers.insert("basic".to_string(), 500);      // 500 ZHTP
-        bonus_tiers.insert("verified".to_string(), 1000);  // 1000 ZHTP
-        bonus_tiers.insert("premium".to_string(), 2000);   // 2000 ZHTP
-        bonus_tiers.insert("referred".to_string(), 1500);  // 1500 ZHTP + referrer bonus
+        bonus_tiers.insert("basic".to_string(), 500);      // 500 SOV
+        bonus_tiers.insert("verified".to_string(), 1000);  // 1000 SOV
+        bonus_tiers.insert("premium".to_string(), 2000);   // 2000 SOV
+        bonus_tiers.insert("referred".to_string(), 1500);  // 1500 SOV + referrer bonus
         
         Self {
             economic_model: EconomicModel::new(),
@@ -592,7 +592,7 @@ impl WelcomeBonusSystem {
             }
         }
         
-        println!("Welcome bonus distributed: {} ZHTP to {}", 
+        println!("Welcome bonus distributed: {} SOV to {}", 
             bonus_amount, identity_id.0);
         
         Ok(transaction)
@@ -614,7 +614,7 @@ impl WelcomeBonusSystem {
             self.economic_model.give_welcome_bonus(bonus_amount)
                 .map_err(|e| format!("Failed to distribute referrer bonus: {}", e))?;
             
-            println!("Referrer bonus distributed: {} ZHTP to {}", 
+            println!("Referrer bonus distributed: {} SOV to {}", 
                 bonus_amount, referrer_id.0);
         }
         Ok(())

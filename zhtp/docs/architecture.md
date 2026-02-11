@@ -113,7 +113,7 @@ Commands:
 ### 4. Configuration System (`src/config/`)
 
 #### Multi-Package Configuration
-- **Aggregation**: Combines configurations from all 11 ZHTP packages
+- **Aggregation**: Combines configurations from all 11 SOV packages
 - **Validation**: Cross-package configuration consistency checks
 - **Environment Management**: Development, production, pure-mesh modes
 - **Mesh Modes**: Pure mesh (ISP-free) vs hybrid configurations

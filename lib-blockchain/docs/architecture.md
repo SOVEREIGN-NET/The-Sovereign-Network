@@ -148,7 +148,7 @@ Contract Architecture:
 │           Smart Contract Platform              │
 ├─────────────────────────────────────────────────┤
 │  Contract Types                                 │
-│  ├─ TokenContract (ZHTP + Custom Tokens)      │
+│  ├─ TokenContract (SOV + Custom Tokens)      │
 │  ├─ Web4Contract (Decentralized Websites)     │
 │  ├─ MessagingContract (Encrypted Messaging)   │
 │  ├─ FileContract (File Sharing)               │

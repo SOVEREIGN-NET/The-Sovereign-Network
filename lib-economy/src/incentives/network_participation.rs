@@ -54,7 +54,7 @@ impl NetworkParticipationRewards {
                                         anti_sybil_bonuses;
         
         info!(
-            "Network participation rewards: bandwidth={}ZHTP, mesh={}ZHTP, connectivity={}ZHTP, anti-sybil={}ZHTP, total={}ZHTP",
+            "Network participation rewards: bandwidth={}SOV, mesh={}SOV, connectivity={}SOV, anti-sybil={}SOV, total={}SOV",
             bandwidth_sharing_rewards, mesh_networking_rewards, connectivity_provision_rewards, anti_sybil_bonuses, total_participation_rewards
         );
         
@@ -92,7 +92,7 @@ impl NetworkParticipationRewards {
         
         if total_reward > 0 {
             info!(
-                "Mesh maintenance reward: {} peers, {} hours uptime = {} ZHTP",
+                "Mesh maintenance reward: {} peers, {} hours uptime = {} SOV",
                 peers_connected, mesh_uptime_hours, total_reward
             );
         }
@@ -115,7 +115,7 @@ impl NetworkParticipationRewards {
         
         if total_reward > 0 {
             info!(
-                " routing reward: {} MB through {} hops = {} ZHTP",
+                " routing reward: {} MB through {} hops = {} SOV",
                 bytes_routed / 1_000_000, hops, total_reward
             );
         }

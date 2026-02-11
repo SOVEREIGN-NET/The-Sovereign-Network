@@ -31,7 +31,7 @@ fn create_test_network_state() -> NetworkState {
 #[test]
 fn test_stake_proof_creation_and_verification() -> Result<()> {
     let validator_id = create_test_identity("alice");
-    let stake_amount = 2000 * 1_000_000; // 2000 ZHTP
+    let stake_amount = 2000 * 1_000_000; // 2000 SOV
     let stake_tx_hash = Hash::from_bytes(&hash_blake3(b"stake_transaction"));
     let block_height = 100;
     let lock_time = 86400; // 1 day
@@ -84,7 +84,7 @@ fn test_stake_proof_insufficient_lock_time() -> Result<()> {
 #[test]
 fn test_stake_proof_verification_failure() -> Result<()> {
     let validator_id = create_test_identity("charlie");
-    let stake_amount = 500 * 1_000_000; // Below minimum (1000 ZHTP)
+    let stake_amount = 500 * 1_000_000; // Below minimum (1000 SOV)
     let stake_tx_hash = Hash::from_bytes(&hash_blake3(b"stake_transaction"));
     let block_height = 100;
     let lock_time = 86400;

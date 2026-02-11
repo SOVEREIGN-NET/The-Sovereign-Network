@@ -11,6 +11,7 @@ use lib_blockchain::{
 };
 use lib_crypto::PublicKey;
 use tracing::{info, warn, error};
+use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
 
 /// Genesis validator configuration
 #[derive(Clone, Debug)]
@@ -45,12 +46,12 @@ impl GenesisFundingService {
         
         info!("Multi-validator mode: {} validators for production network", genesis_validators.len());
 
-        // Initialize ZHTP token contract FIRST so we can credit balances during genesis
-        let zhtp_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-        if !blockchain.token_contracts.contains_key(&zhtp_token_id) {
-            let zhtp_token = lib_blockchain::contracts::TokenContract::new_zhtp();
-            blockchain.token_contracts.insert(zhtp_token_id, zhtp_token);
-            info!("🪙 ZHTP token contract initialized: {}", hex::encode(&zhtp_token_id[..8]));
+        // Initialize SOV token contract FIRST so we can credit balances during genesis
+        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+        if !blockchain.token_contracts.contains_key(&sov_token_id) {
+            let sov_token = lib_blockchain::contracts::TokenContract::new_sov_native();
+            blockchain.token_contracts.insert(sov_token_id, sov_token);
+            info!("🪙 SOV token contract initialized: {}", hex::encode(&sov_token_id[..8]));
         }
 
         // Initialize outputs vector for genesis transaction
@@ -60,7 +61,7 @@ impl GenesisFundingService {
         // Create UTXOs for each validator based on their stake
         for (index, validator) in genesis_validators.iter().enumerate() {
             let validator_id_hex = hex::encode(&validator.identity_id.0[..8]);
-            info!("Creating validator {} UTXO: {} ZHTP stake (Identity: {})", 
+            info!("Creating validator {} UTXO: {} SOV stake (Identity: {})", 
                   index + 1, validator.stake, validator_id_hex);
             
             // Create validator stake UTXO
@@ -77,11 +78,11 @@ impl GenesisFundingService {
             genesis_outputs.push(validator_output);
             total_validator_stake += validator.stake;
             
-            info!("   - Validator {}: {} ZHTP (ID: {})", 
+            info!("   - Validator {}: {} SOV (ID: {})", 
                   index + 1, validator.stake, validator_id_hex);
         }
         
-        info!("Total validator stake: {} ZHTP across {} validators", 
+        info!("Total validator stake: {} SOV across {} validators", 
               total_validator_stake, genesis_validators.len());
         
         // Access the genesis block (first block in the blockchain)
@@ -113,10 +114,11 @@ impl GenesisFundingService {
             },
         ]);
         
-        // Add user primary wallet funding (welcome bonus: 5000 ZHTP)
+        // Add user primary wallet funding (welcome bonus: 5,000 SOV)
+        let mut genesis_sov_credit: Option<([u8; 32], u64)> = None;
         if let Some((wallet_id, _wallet_public_key)) = user_primary_wallet_id.as_ref() {
             let wallet_id_hex = hex::encode(&wallet_id.0[..8]);
-            info!(" Funding genesis user primary wallet: {} with 5000 ZHTP welcome bonus", wallet_id_hex);
+            info!(" Funding genesis user primary wallet: {} with {} SOV welcome bonus", wallet_id_hex, SOV_WELCOME_BONUS_SOV);
             
             // CRITICAL: Get the FULL Dilithium2 public key from the identity's private data
             // This is required for signature verification (1312 bytes, not 32-byte hash)
@@ -142,7 +144,7 @@ impl GenesisFundingService {
             let identity_hash = user_identity_id.as_ref().unwrap().0.to_vec();
             let wallet_output = TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(
-                    format!("user_wallet_commitment_{}_{}", wallet_id_hex, 5000).as_bytes()
+                    format!("user_wallet_commitment_{}_{}", wallet_id_hex, SOV_WELCOME_BONUS).as_bytes()
                 ),
                 note: lib_blockchain::types::hash::blake3_hash(
                     format!("user_wallet_note_{}", wallet_id_hex).as_bytes()
@@ -165,33 +167,15 @@ impl GenesisFundingService {
                 created_at: 1730419200, // Genesis timestamp
                 registration_fee: 0,
                 capabilities: 0xFFFFFFFF, // Full capabilities
-                initial_balance: 5000, // 5000 ZHTP welcome bonus
+                initial_balance: SOV_WELCOME_BONUS, // 5,000 SOV welcome bonus (atomic units)
             };
             
             blockchain.wallet_registry.insert(hex::encode(&wallet_id.0), wallet_data);
 
-            // Also credit ZHTP token contract balance for fee deduction
-            // Build PublicKey for the user from their Dilithium2 public key
-            let user_pubkey = lib_blockchain::integration::crypto_integration::PublicKey {
-                dilithium_pk: identity_dilithium_pubkey.clone(),
-                kyber_pk: vec![],
-                key_id: {
-                    let hash = lib_blockchain::types::hash::blake3_hash(&identity_dilithium_pubkey);
-                    let mut arr = [0u8; 32];
-                    arr.copy_from_slice(hash.as_bytes());
-                    arr
-                },
-            };
-            // Mint welcome bonus to ZHTP token contract balance
-            if let Some(zhtp_token) = blockchain.token_contracts.get_mut(&zhtp_token_id) {
-                if let Err(e) = zhtp_token.mint(&user_pubkey, 5000) {
-                    warn!("Failed to mint genesis ZHTP token balance: {}", e);
-                } else {
-                    info!("🪙 Genesis ZHTP token balance credited: 5000 to key_id {}", hex::encode(&user_pubkey.key_id[..8]));
-                }
-            }
+            // Defer TokenMint creation until genesis block assembly is complete
+            genesis_sov_credit = Some((wallet_id.0, SOV_WELCOME_BONUS));
 
-            info!(" Genesis user wallet funded and registered: {} ZHTP", 5000);
+            info!(" Genesis user wallet funded and registered: {} SOV", SOV_WELCOME_BONUS_SOV);
             info!("   - Wallet ID: {}", hex::encode(&wallet_id.0));
             info!("   - Owner Identity ID: {}", hex::encode(&user_identity_id.as_ref().unwrap().0));
             info!("   - Dilithium2 Public Key (first 16 bytes): {}", hex::encode(&identity_dilithium_pubkey[..16]));
@@ -218,7 +202,7 @@ impl GenesisFundingService {
             outputs: genesis_outputs.clone(),
             fee: 0,
             signature: genesis_signature,
-            memo: b"Genesis funding transaction for ZHTP system".to_vec(),
+            memo: b"Genesis funding transaction for SOV system".to_vec(),
             wallet_data: None,
             identity_data: None,
             validator_data: None,
@@ -228,17 +212,21 @@ impl GenesisFundingService {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
+            token_mint_data: None,
             governance_config_data: None,
         };
 
         // Add genesis transaction to the genesis block
         genesis_block.transactions.push(genesis_tx.clone());
-        
-        // Recalculate and update the genesis block's merkle root after adding the transaction
+
+        // Note: Genesis funding is handled via UTXO outputs; SOV mints are issued via
+        // TokenMint transactions elsewhere when needed.
+
+        // Recalculate and update the genesis block's merkle root after adding the transactions
         let updated_merkle_root = lib_blockchain::transaction::hashing::calculate_transaction_merkle_root(&genesis_block.transactions);
         genesis_block.header.merkle_root = updated_merkle_root;
         info!("Genesis block merkle root updated: {}", hex::encode(updated_merkle_root.as_bytes()));
-        
+
         // Create UTXOs from genesis transaction outputs and add to UTXO set
         let genesis_tx_id = lib_blockchain::types::hash::blake3_hash(b"genesis_funding_transaction");
         for (index, output) in genesis_outputs.iter().enumerate() {
@@ -252,14 +240,14 @@ impl GenesisFundingService {
               genesis_outputs.len());
         
         for (index, validator) in genesis_validators.iter().enumerate() {
-            info!("   - Validator {}: {} ZHTP (ID: {})", 
+            info!("   - Validator {}: {} SOV (ID: {})", 
                   index + 1, validator.stake, hex::encode(&validator.identity_id.0[..8]));
         }
         
-        info!("   - UBI Pool: 500,000 ZHTP");
-        info!("   - Mining Pool: 300,000 ZHTP");
-        info!("   - Development Pool: 200,000 ZHTP");
-        info!("   - Total validator stake: {} ZHTP", total_validator_stake);
+        info!("   - UBI Pool: 500,000 SOV");
+        info!("   - Mining Pool: 300,000 SOV");
+        info!("   - Development Pool: 200,000 SOV");
+        info!("   - Total validator stake: {} SOV", total_validator_stake);
         info!("   - Total UTXO entries: {}", blockchain.utxo_set.len());
         
         // Register USER identity on blockchain (not just validators)
@@ -382,7 +370,7 @@ impl GenesisFundingService {
                     registered_validators += 1;
                     info!(" Genesis validator {} registered in validator_registry", index + 1);
                     info!("   - Validator TX: {}", hex::encode(validator_tx_hash));
-                    info!("   - Stake: {} ZHTP", validator.stake);
+                    info!("   - Stake: {} SOV", validator.stake);
                     info!("   - Storage: {} GB", validator.storage_provided);
                     info!("   - Commission: {}.{}%", 
                           validator.commission_rate / 100, validator.commission_rate % 100);

@@ -165,7 +165,7 @@ impl IdentityManager {
             ],
         );
         
-        // Give welcome bonus (5000 ZHTP tokens)
+        // Give welcome bonus (5,000 SOV tokens, atomic units)
         let welcome_bonus = crate::citizenship::WelcomeBonus::provide_welcome_bonus(&id, &primary_wallet_id, economic_model).await?;
 
         // Actually credit the welcome bonus to the Primary wallet
@@ -398,7 +398,7 @@ impl IdentityManager {
             ],
         );
 
-        // Give welcome bonus (5000 ZHTP tokens)
+        // Give welcome bonus (5,000 SOV tokens, atomic units)
         let welcome_bonus = crate::citizenship::WelcomeBonus::provide_welcome_bonus(&id, &primary_wallet_id, economic_model).await?;
 
         // Actually credit the welcome bonus to the Primary wallet

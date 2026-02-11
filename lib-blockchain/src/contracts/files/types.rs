@@ -27,7 +27,7 @@ pub struct SharedFile {
     pub access_list: Vec<PublicKey>,
     /// Number of downloads
     pub download_count: u64,
-    /// Cost in ZHTP tokens to download (if not free)
+    /// Cost in SOV tokens to download (if not free)
     pub download_cost: u64,
     /// File encryption status
     pub is_encrypted: bool,

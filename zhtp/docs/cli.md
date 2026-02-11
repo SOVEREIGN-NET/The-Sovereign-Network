@@ -80,8 +80,8 @@ Status: transaction_created
 - **Quantum-Resistant DID**: `did:zhtp:...` identifier
 - **Multiple Wallets**: Primary, UBI, and Savings wallets
 - **DAO Voting Rights**: 1 voting power granted automatically
-- **UBI Registration**: 33 ZHTP daily, 1000 ZHTP monthly eligibility
-- **Welcome Bonus**: 5000 ZHTP tokens credited immediately
+- **UBI Registration**: 33 SOV daily, 1000 SOV monthly eligibility
+- **Welcome Bonus**: 5000 SOV tokens credited immediately
 - **Blockchain Registration**: Identity mined into blockchain block
 - **Web4 Access**: Full access to 10 Web4 services
 - **Privacy Credentials**: 2 ZK credentials for selective disclosure
@@ -116,7 +116,7 @@ Primary Wallet: ...
 🎁 UBI Wallet: ...
 🏦 Savings Wallet: ...
  DAO Voting Power: 1
-Daily UBI: 33 ZHTP
+Daily UBI: 33 SOV
 Blockchain TX: ...
 Registration Status: transaction_created
  Full Web4 citizen onboarding completed!

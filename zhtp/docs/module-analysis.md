@@ -38,10 +38,10 @@ zhtp/
 - Multi-platform support (Windows, Linux, macOS)
 - Feature flags for different deployment modes
 - Optimized build profiles for different targets
-- Extensive dependency management for 11 ZHTP packages
+- Extensive dependency management for 11 SOV packages
 
 **Notable Dependencies**:
-- **Core Libraries**: All 11 ZHTP packages (lib-crypto through lib-protocols)
+- **Core Libraries**: All 11 SOV packages (lib-crypto through lib-protocols)
 - **Async Runtime**: tokio for async operations
 - **CLI Framework**: clap for command parsing
 - **Web Server**: axum and warp for HTTP servers
@@ -264,7 +264,7 @@ config/
 
 ### Configuration Aggregation (src/config/aggregation.rs)
 
-**Purpose**: Combines configurations from all 11 ZHTP packages into a unified NodeConfig.
+**Purpose**: Combines configurations from all 11 SOV packages into a unified NodeConfig.
 
 **Key Features**:
 - Package dependency resolution

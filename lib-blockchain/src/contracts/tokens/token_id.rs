@@ -15,7 +15,7 @@ use crate::types::dao::DAOType;
 ///
 /// # Generic Tokens
 /// Generic TokenContract (from core.rs) uses separate utilities:
-/// - `generate_lib_token_id()` for ZHTP native token
+/// - `generate_lib_token_id()` for SOV native token
 /// - `generate_custom_token_id()` for dApp tokens
 ///
 /// These are NOT DAO-specific and do not require DAOType or decimals.

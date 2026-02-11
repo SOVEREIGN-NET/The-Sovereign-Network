@@ -79,10 +79,10 @@ fn calculate_total_node_rewards(
         + network_reward.total_participation_rewards;
     
     println!("=== Total Node Rewards ===");
-    println!("Infrastructure: {} ZHTP", infra_reward.total_reward);
-    println!(": {} ZHTP", isp_reward.total_reward);
-    println!("Network Participation: {} ZHTP", network_reward.total_participation_rewards);
-    println!("Total: {} ZHTP", total_reward);
+    println!("Infrastructure: {} SOV", infra_reward.total_reward);
+    println!(": {} SOV", isp_reward.total_reward);
+    println!("Network Participation: {} SOV", network_reward.total_participation_rewards);
+    println!("Total: {} SOV", total_reward);
     
     Ok(total_reward)
 }
@@ -278,7 +278,7 @@ fn daily_reward_process(
     // Process transaction (would be done by consensus)
     // blockchain::record_transaction(tx)?;
     
-    println!(" Node {} earned {} ZHTP", 
+    println!(" Node {} earned {} SOV", 
         hex::encode(&node_address[..8]), 
         total
     );
@@ -308,10 +308,10 @@ fn weekly_node_rewards(
         
         total_weekly_reward += daily_total;
         
-        println!("Day {}: {} ZHTP", day + 1, daily_total);
+        println!("Day {}: {} SOV", day + 1, daily_total);
     }
     
-    println!("Weekly total: {} ZHTP", total_weekly_reward);
+    println!("Weekly total: {} SOV", total_weekly_reward);
     Ok(total_weekly_reward)
 }
 ```

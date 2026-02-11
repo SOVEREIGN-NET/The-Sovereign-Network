@@ -112,9 +112,9 @@ zhtp wallet balance zhtp1abc123def456...
 Wallet Balance
 ==============
 Address: zhtp1abc123def456...
-Balance: 1,500 ZHTP
-Pending: 50 ZHTP
-Total Available: 1,550 ZHTP
+Balance: 1,500 SOV
+Pending: 50 SOV
+Total Available: 1,550 SOV
 ```
 
 #### Transfer Funds
@@ -164,7 +164,7 @@ DAO Status
 ==========
 Total Members: 500
 Active Proposals: 3
-Treasury Balance: 100,000 ZHTP
+Treasury Balance: 100,000 SOV
 Voting Power Distributed: 45,000
 Current Period: Voting Phase
 ```
@@ -182,7 +182,7 @@ Options:
 ```bash
 zhtp dao propose \
   --title "Increase UBI Rate" \
-  --description "Proposal to increase UBI from 10 to 15 ZHTP per day"
+  --description "Proposal to increase UBI from 10 to 15 SOV per day"
 ```
 
 #### Vote on Proposal
@@ -208,9 +208,9 @@ zhtp dao claim-ubi
 ```
 UBI Claim Result
 ================
-Amount Claimed: 10 ZHTP
+Amount Claimed: 10 SOV
 Next Claim Available: 2025-10-11 12:00:00 UTC
-Total Claimed (All Time): 300 ZHTP
+Total Claimed (All Time): 300 SOV
 ```
 
 ### Identity Management
@@ -357,8 +357,8 @@ Hash: 0xabc123def456...
 Block: 12,340
 From: did:zhtp:sender...
 To: did:zhtp:receiver...
-Amount: 100 ZHTP
-Fee: 1 ZHTP
+Amount: 100 SOV
+Fee: 1 SOV
 Status: Confirmed (5 confirmations)
 Timestamp: 2025-10-10 11:30:00 UTC
 ```

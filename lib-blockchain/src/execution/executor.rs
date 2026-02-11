@@ -559,6 +559,9 @@ impl BlockExecutor {
                 TxOutcome::TokenTransfer(_outcome) => {
                     summary.balance_changes += 2; // sender + receiver
                 }
+                TxOutcome::TokenMint(_outcome) => {
+                    summary.balance_changes += 1; // recipient only
+                }
                 TxOutcome::Coinbase(_) => {
                     // Should not happen - coinbase filtered out
                     unreachable!("Coinbase should not be in non-coinbase pass");
@@ -659,6 +662,7 @@ impl BlockExecutor {
         match tx.transaction_type {
             TransactionType::Transfer => {}
             TransactionType::TokenTransfer => {}
+            TransactionType::TokenMint => {}
             TransactionType::Coinbase => {}
             other => {
                 return Err(TxApplyError::UnsupportedType(format!("{:?}", other)));
@@ -736,6 +740,34 @@ impl BlockExecutor {
                     ));
                 }
             }
+            TransactionType::TokenMint => {
+                if tx.version < 2 {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenMint transactions not supported in this serialization version".to_string()
+                    ));
+                }
+                if tx.token_mint_data.is_none() {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenMint requires token_mint_data field".to_string()
+                    ));
+                }
+                let data = tx.token_mint_data.as_ref().unwrap();
+                if data.amount == 0 {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenMint amount must be greater than 0".to_string()
+                    ));
+                }
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenMint must not have UTXO inputs or outputs".to_string()
+                    ));
+                }
+                if tx.fee != 0 {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenMint transaction fee must be 0 in Phase 2".to_string()
+                    ));
+                }
+            }
             _ => {}
         }
 
@@ -764,6 +796,7 @@ impl BlockExecutor {
         match tx.transaction_type {
             TransactionType::Coinbase => return Ok(()),       // Creates value, no fee
             TransactionType::TokenTransfer => return Ok(()),  // Phase 2: subsidized
+            TransactionType::TokenMint => return Ok(()),      // Phase 2: system mint
             _ => {}
         }
 
@@ -859,7 +892,8 @@ impl BlockExecutor {
             tx.identity_data.as_ref().map(|_| 256).unwrap_or(0) +
             tx.wallet_data.as_ref().map(|_| 128).unwrap_or(0) +
             tx.validator_data.as_ref().map(|_| 256).unwrap_or(0) +
-            tx.token_transfer_data.as_ref().map(|_| 104).unwrap_or(0); // 32+32+32+8
+            tx.token_transfer_data.as_ref().map(|_| 104).unwrap_or(0) +
+            tx.token_mint_data.as_ref().map(|_| 72).unwrap_or(0); // 32+32+8
 
         (base + inputs_payload + outputs + optional_data) as u64
     }
@@ -910,6 +944,10 @@ impl BlockExecutor {
             TransactionType::TokenTransfer => {
                 // Two balance updates (from + to), ~100 bytes each
                 200
+            }
+            TransactionType::TokenMint => {
+                // One balance update (to), ~100 bytes
+                100
             }
             _ => {
                 // Conservative estimate for unknown types
@@ -991,6 +1029,40 @@ impl BlockExecutor {
                     amount,
                 }))
             }
+            TransactionType::TokenMint => {
+                let mint_data = tx.token_mint_data.as_ref()
+                    .ok_or_else(|| TxApplyError::InvalidType(
+                        "TokenMint requires token_mint_data field".to_string()
+                    ))?;
+
+                if mint_data.amount == 0 {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenMint amount must be greater than 0".to_string()
+                    ));
+                }
+
+                let token = if mint_data.token_id == [0u8; 32] {
+                    TokenId::NATIVE
+                } else {
+                    TokenId::new(mint_data.token_id)
+                };
+
+                let to = Address::new(mint_data.to);
+                let amount = mint_data.amount;
+
+                tx_apply::apply_token_mint(
+                    mutator,
+                    &token,
+                    &to,
+                    amount,
+                )?;
+
+                Ok(TxOutcome::TokenMint(TokenMintOutcome {
+                    token,
+                    to,
+                    amount,
+                }))
+            }
             _ => Err(TxApplyError::UnsupportedType(
                 format!("{:?}", tx.transaction_type)
             )),
@@ -1055,6 +1127,7 @@ impl BlockExecutor {
 enum TxOutcome {
     Transfer(TransferOutcome),
     TokenTransfer(TokenTransferOutcome),
+    TokenMint(TokenMintOutcome),
     Coinbase(CoinbaseOutcome),
 }
 
@@ -1063,6 +1136,14 @@ enum TxOutcome {
 pub struct TokenTransferOutcome {
     pub token: TokenId,
     pub from: Address,
+    pub to: Address,
+    pub amount: u128,
+}
+
+/// Outcome of a token mint transaction
+#[derive(Debug, Clone)]
+pub struct TokenMintOutcome {
+    pub token: TokenId,
     pub to: Address,
     pub amount: u128,
 }
@@ -1260,7 +1341,8 @@ mod tests {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         }
     }
 
@@ -1287,7 +1369,8 @@ mod tests {
             ubi_claim_data: None,
             profit_declaration_data: None,
             token_transfer_data: None,
-            governance_config_data: None,
+            token_mint_data: None,
+                        governance_config_data: None,
         }
     }
 

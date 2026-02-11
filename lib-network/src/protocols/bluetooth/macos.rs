@@ -62,7 +62,7 @@ impl BluetoothMeshProtocol {
             }
 
             manager.stop_scan().await?;
-            info!(" macOS: Found {} ZHTP mesh peers", mesh_peers.len());
+            info!(" macOS: Found {} SOV mesh peers", mesh_peers.len());
             Ok(mesh_peers)
         } else {
             warn!(" macOS: Core Bluetooth manager not initialized");

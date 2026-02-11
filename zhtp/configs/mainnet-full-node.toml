@@ -91,7 +91,7 @@ enforce_chain_id = true      # CRITICAL: Strict chain ID validation
 consensus_type = "Hybrid"    # Hybrid PoW/PoS consensus
 dao_enabled = true           # DAO governance active
 validator_enabled = false    # Full node doesn't validate by default
-min_stake = 10000            # Minimum stake for validators (10,000 ZHTP)
+min_stake = 10000            # Minimum stake for validators (10,000 SOV)
 reward_multipliers = {}
 
 # ============================================================================
@@ -100,12 +100,12 @@ reward_multipliers = {}
 
 [economics_config]
 ubi_enabled = true
-daily_ubi_amount = 33        # 33 ZHTP per day (production UBI)
+daily_ubi_amount = 33        # 33 SOV per day (production UBI)
 dao_fee_percentage = 2.0     # 2% DAO fee
 mesh_rewards = true          # Mesh participation rewards enabled
 
 [economics_config.token_economics]
-total_supply = 1000000000    # 1 billion ZHTP total supply
+total_supply = 1000000000    # 1 billion SOV total supply
 inflation_rate = 2.0         # 2% annual inflation
 burn_rate = 1.0              # 1% burn rate
 reward_pool_percentage = 10.0

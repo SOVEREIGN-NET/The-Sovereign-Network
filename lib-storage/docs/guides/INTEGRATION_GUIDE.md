@@ -487,7 +487,7 @@ fn create_default_user_identity() -> ZhtpIdentity {
                     <p>Used: ${formatBytes(stats.storage.storage_used)}</p>
                     
                     <h4> Economic</h4>
-                    <p>Contracts: ${stats.economic.total_contracts} | Value Locked: ${stats.economic.value_locked} ZHTP</p>
+                    <p>Contracts: ${stats.economic.total_contracts} | Value Locked: ${stats.economic.value_locked} SOV</p>
                 `;
                 
             } catch (error) {
@@ -599,7 +599,7 @@ async fn upload_file(
                 data_integrity_level: 0.99,
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 10000, // 10K ZHTP tokens
+                max_total_cost: 10000, // 10K SOV tokens
                 max_cost_per_gb_day: 200,
                 preferred_payment_schedule: PaymentSchedule::Monthly,
             },
@@ -970,7 +970,7 @@ function App() {
             <div className="stat-card">
               <h3> Economic</h3>
               <p>Contracts: {stats.economic.contracts}</p>
-              <p>Value Locked: {stats.economic.value_locked} ZHTP</p>
+              <p>Value Locked: {stats.economic.value_locked} SOV</p>
             </div>
           </div>
         </section>
@@ -1757,7 +1757,7 @@ fn create_default_user_identity() -> ZhtpIdentity {
                     <p>Used: ${formatBytes(stats.storage.storage_used)}</p>
                     
                     <h4> Economic</h4>
-                    <p>Contracts: ${stats.economic.total_contracts} | Value Locked: ${stats.economic.value_locked} ZHTP</p>
+                    <p>Contracts: ${stats.economic.total_contracts} | Value Locked: ${stats.economic.value_locked} SOV</p>
                 `;
                 
             } catch (error) {
@@ -1869,7 +1869,7 @@ async fn upload_file(
                 data_integrity_level: 0.99,
             },
             budget_constraints: BudgetConstraints {
-                max_total_cost: 10000, // 10K ZHTP tokens
+                max_total_cost: 10000, // 10K SOV tokens
                 max_cost_per_gb_day: 200,
                 preferred_payment_schedule: PaymentSchedule::Monthly,
             },
@@ -2240,7 +2240,7 @@ function App() {
             <div className="stat-card">
               <h3> Economic</h3>
               <p>Contracts: {stats.economic.contracts}</p>
-              <p>Value Locked: {stats.economic.value_locked} ZHTP</p>
+              <p>Value Locked: {stats.economic.value_locked} SOV</p>
             </div>
           </div>
         </section>

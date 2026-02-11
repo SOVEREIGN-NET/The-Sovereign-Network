@@ -138,7 +138,7 @@ zhtp node start --config configs/pure-mesh.toml --pure-mesh
 - **Data Sovereignty**: Complete control over personal data and communications
 
 ### Economic Incentives
-- **Universal Basic Income**: Earn ZHTP tokens for network participation
+- **Universal Basic Income**: Earn SOV tokens for network participation
 - **Quality-Based Routing**: Premium routing for better service quality
 - **Storage Economics**: Earn tokens for providing distributed storage
 - **DAO Governance**: Participate in decentralized network governance
@@ -158,7 +158,7 @@ zhtp node start --config configs/pure-mesh.toml --pure-mesh
 4. **Level 4 (Foundation)**: Proofs, identity, and cryptographic utilities
 
 ### Component Orchestration
-- **Runtime Orchestrator**: Central coordination of all 11 ZHTP packages
+- **Runtime Orchestrator**: Central coordination of all 11 SOV packages
 - **Health Monitoring**: Continuous component health tracking and recovery
 - **Message Bus**: Inter-component communication and event handling
 - **Shared Services**: Blockchain and DHT sharing across components
@@ -186,7 +186,7 @@ zhtp node start --config configs/pure-mesh.toml --pure-mesh
 ## Economic Model
 
 ### Universal Basic Income
-- Daily ZHTP token distribution for network participation
+- Daily SOV token distribution for network participation
 - Quality-based routing premiums for better service
 - Storage and bandwidth compensation
 - DAO participation rewards

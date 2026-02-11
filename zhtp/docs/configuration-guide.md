@@ -2,7 +2,7 @@
 
 ## Overview
 
-The ZHTP node orchestrator uses a comprehensive configuration system that aggregates settings from all 11 ZHTP packages. This guide covers configuration options, deployment scenarios, and best practices.
+The ZHTP node orchestrator uses a comprehensive configuration system that aggregates settings from all 11 SOV packages. This guide covers configuration options, deployment scenarios, and best practices.
 
 ## Configuration Architecture
 
@@ -296,7 +296,7 @@ storage_tiers = ["hot", "warm", "cold"]
 
 [economics]
 storage_payments = true
-storage_rate = 0.001  # ZHTP per MB per day
+storage_rate = 0.001  # SOV per MB per day
 
 [network]
 advertise_storage = true
@@ -417,8 +417,8 @@ quality_multiplier = 1.5
 payment_threshold = 1.0
 
 [economics.storage]
-storage_rate = 0.001  # ZHTP per MB per day
-bandwidth_rate = 0.0001  # ZHTP per MB transferred
+storage_rate = 0.001  # SOV per MB per day
+bandwidth_rate = 0.0001  # SOV per MB transferred
 ```
 
 ### DAO Governance

@@ -20,7 +20,7 @@ fn create_test_identity(name: &str) -> IdentityId {
 fn create_test_config() -> ConsensusConfig {
     ConsensusConfig {
         consensus_type: ConsensusType::Hybrid,
-        min_stake: 1000 * 1_000_000,           // 1000 ZHTP
+        min_stake: 1000 * 1_000_000,           // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 10,
         block_time: 1, // Fast for testing

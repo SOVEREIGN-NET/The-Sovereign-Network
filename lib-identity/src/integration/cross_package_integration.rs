@@ -382,7 +382,7 @@ impl CrossPackageIntegration {
             parameters: serde_json::json!({
                 "identity_id": identity_id,
                 "amount": amount,
-                "currency": "ZHTP",
+                "currency": "SOV",
                 "reason": "monthly_ubi"
             }),
             identity_context: Some(identity_id.to_string()),

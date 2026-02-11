@@ -1,7 +1,7 @@
 //! ISP cost savings calculation and tracking
 //! 
 //! Tracks and calculates the economic value created by replacing traditional
-//! ISP services with the ZHTP mesh network.
+//! ISP services with the SOV mesh network.
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
@@ -102,7 +102,7 @@ impl CostSavings {
 pub struct RegionalImpact {
     /// Total population in region
     pub population: u64,
-    /// Number of users adopting ZHTP
+    /// Number of users adopting SOV
     pub users_adopting: u64,
     /// Average ISP cost in region ($/month)
     pub avg_isp_cost: u64,

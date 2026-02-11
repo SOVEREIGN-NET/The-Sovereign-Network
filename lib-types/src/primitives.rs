@@ -196,12 +196,12 @@ impl TokenId {
         Self(bytes)
     }
 
-    /// Create a zeroed TokenId (represents native ZHTP token)
+    /// Create a zeroed TokenId (represents native SOV token)
     pub const fn zero() -> Self {
         Self([0u8; 32])
     }
 
-    /// Native ZHTP token ID (all zeros)
+    /// Native SOV token ID (all zeros)
     pub const NATIVE: Self = Self([0u8; 32]);
 
     /// Get the underlying bytes
@@ -228,7 +228,7 @@ impl fmt::Debug for TokenId {
 impl fmt::Display for TokenId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_native() {
-            write!(f, "ZHTP")
+            write!(f, "SOV")
         } else {
             write!(f, "{}", hex::encode(&self.0))
         }
@@ -283,7 +283,7 @@ mod tests {
     fn test_token_id_native() {
         let native = TokenId::NATIVE;
         assert!(native.is_native());
-        assert_eq!(format!("{}", native), "ZHTP");
+        assert_eq!(format!("{}", native), "SOV");
 
         let custom = TokenId::new([1u8; 32]);
         assert!(!custom.is_native());

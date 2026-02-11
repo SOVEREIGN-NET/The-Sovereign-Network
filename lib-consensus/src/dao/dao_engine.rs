@@ -591,8 +591,8 @@ impl DaoEngine {
     ///
     /// Voting power is calculated from multiple factors:
     /// - Base power: 1 (every identity gets base vote)
-    /// - Token balance: 1 power per 10,000 ZHTP tokens
-    /// - Staked tokens: 2 power per 10,000 ZHTP staked (bonus for commitment)
+    /// - Token balance: 1 power per 10,000 SOV tokens
+    /// - Staked tokens: 2 power per 10,000 SOV staked (bonus for commitment)
     /// - Network contribution: Up to 50% bonus based on storage/compute provided
     /// - Reputation score: Up to 25% bonus based on on-chain reputation
     /// - Delegation: Can receive voting power from other users
@@ -617,10 +617,10 @@ impl DaoEngine {
         // Base power: everyone gets 1 vote
         let base_power = 1u64;
 
-        // Token-based power: 1 vote per 10,000 ZHTP
+        // Token-based power: 1 vote per 10,000 SOV
         let token_power = token_balance / 10_000;
 
-        // Stake-based power: 2 votes per 10,000 ZHTP staked (incentivize staking)
+        // Stake-based power: 2 votes per 10,000 SOV staked (incentivize staking)
         let stake_power = (staked_amount / 10_000) * 2;
 
         // Network contribution bonus (0-50% based on storage/compute provided)
@@ -717,7 +717,7 @@ impl DaoEngine {
             }
         }
 
-        // Default to 1000 ZHTP for demo proposals if no amount specified
+        // Default to 1000 SOV for demo proposals if no amount specified
         Ok(1000)
     }
 
