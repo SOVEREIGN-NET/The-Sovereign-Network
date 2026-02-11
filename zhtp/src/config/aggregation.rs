@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::collections::HashMap;
-use super::{MeshMode, SecurityLevel, Environment, ConfigError, CliArgs};
+use super::{MeshMode, SecurityLevel, Environment, ConfigError, CliArgs, NodeType};
 
 /// Partial configuration for simple TOML files with optional sections
 /// This allows users to provide minimal config files with just the sections they need:
@@ -108,6 +108,11 @@ pub struct NodeConfig {
     pub security_level: SecurityLevel,
     pub environment: Environment,
     pub data_directory: String,
+
+    // Canonical node type - SINGLE SOURCE OF TRUTH
+    // Determined at startup from config and immutable thereafter
+    #[serde(default)]
+    pub node_type: NodeType,
 
     // Node role determines what operations this node can perform
     // This is derived from validator_enabled and other config settings during aggregation
@@ -801,6 +806,39 @@ impl NodeConfig {
             }
         };
     }
+
+    /// Derive canonical node type from configuration (SINGLE SOURCE OF TRUTH)
+    ///
+    /// Determines the node's primary mode based on:
+    /// 1. Integer "node_type" field in config (if explicitly set)
+    /// 2. Validator flags (validator_enabled in consensus_config)
+    /// 3. Storage configuration (edge_mode, hosted_storage_gb)
+    pub fn derive_node_type(&mut self) {
+        // Logic for determining node type from config fields
+        let derived_type = if self.consensus_config.validator_enabled {
+            // Validator enabled => this is a Validator node
+            tracing::info!(
+                "✓ Deriving NodeType: validator_enabled=true → Validator (full blockchain + block production)"
+            );
+            NodeType::Validator
+        } else if self.blockchain_config.edge_mode || self.storage_config.hosted_storage_gb == 0 {
+            // Edge mode OR no hosting storage => this is an Edge node
+            tracing::info!(
+                "✓ Deriving NodeType: edge_mode={} OR hosted_storage_gb={} → EdgeNode (headers only)",
+                self.blockchain_config.edge_mode,
+                self.storage_config.hosted_storage_gb
+            );
+            NodeType::EdgeNode
+        } else {
+            // Default: Full node (complete blockchain, no mining)
+            tracing::info!(
+                "✓ Deriving NodeType: default → FullNode (complete blockchain, read-only)"
+            );
+            NodeType::FullNode
+        };
+
+        self.node_type = derived_type;
+    }
 }
 
 /// Aggregate configurations from all package configuration files
@@ -1029,6 +1067,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
     // This must be done after all config sections have been loaded/merged
     // Maps validator_enabled and storage settings to the appropriate NodeRole
     config.derive_node_role();
+
+    // CRITICAL: Derive canonical node type (SINGLE SOURCE OF TRUTH)
+    // This determines the node's primary mode: Full, Edge, Validator, or Relay
+    config.derive_node_type();
 
     Ok(config)
 }
