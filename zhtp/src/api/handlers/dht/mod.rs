@@ -870,10 +870,10 @@ impl DhtHandler {
             },
             ContractInfo {
                 contract_id: "token_v1".to_string(),
-                name: "ZHTP Token".to_string(),
+                name: "SOV Token".to_string(),
                 version: "1.0.0".to_string(),
                 author: Some("ZHTP Foundation".to_string()),
-                description: Some("Official ZHTP token contract".to_string()),
+                description: Some("Official SOV token contract".to_string()),
                 deployed_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()

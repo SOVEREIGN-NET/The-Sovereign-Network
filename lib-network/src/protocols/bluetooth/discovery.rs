@@ -428,7 +428,7 @@ impl BluetoothMeshProtocol {
                 let bt_ops = LinuxBluetoothOps::new();
                 let peers = bt_ops.scan_mesh_peers().await?;
 
-                info!("Found {} ZHTP mesh peers on Linux", peers.len());
+                info!("Found {} SOV mesh peers on Linux", peers.len());
                 Ok(peers)
             })
         })
@@ -487,7 +487,7 @@ impl BluetoothMeshProtocol {
 
         gatt_manager.stop_discovery().await?;
 
-        info!(" Found {} ZHTP mesh peers on Windows", peers.len());
+        info!(" Found {} SOV mesh peers on Windows", peers.len());
         Ok(peers)
     }
 

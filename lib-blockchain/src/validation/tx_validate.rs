@@ -39,6 +39,7 @@ use super::errors::{TxValidateError, TxValidateResult};
 const PHASE2_ALLOWED_TYPES: &[TransactionType] = &[
     TransactionType::Transfer,
     TransactionType::TokenTransfer,
+    TransactionType::TokenMint,
     TransactionType::Coinbase,
 ];
 
@@ -71,6 +72,7 @@ pub fn validate_stateless(tx: &Transaction) -> TxValidateResult<()> {
     match tx.transaction_type {
         TransactionType::Transfer => validate_transfer_stateless(tx)?,
         TransactionType::TokenTransfer => validate_token_transfer_stateless(tx)?,
+        TransactionType::TokenMint => validate_token_mint_stateless(tx)?,
         TransactionType::Coinbase => validate_coinbase_stateless(tx)?,
         _ => return Err(TxValidateError::UnsupportedType(
             format!("{:?}", tx.transaction_type)
@@ -136,6 +138,34 @@ fn validate_token_transfer_stateless(tx: &Transaction) -> TxValidateResult<()> {
     Ok(())
 }
 
+/// Stateless validation for TokenMint transactions
+fn validate_token_mint_stateless(tx: &Transaction) -> TxValidateResult<()> {
+    if tx.version < 2 {
+        return Err(TxValidateError::InvalidStructure(
+            "TokenMint transactions not supported in this serialization version".to_string()
+        ));
+    }
+
+    let data = tx.token_mint_data.as_ref()
+        .ok_or_else(|| TxValidateError::MissingField(
+            "TokenMint requires token_mint_data field".to_string()
+        ))?;
+
+    if data.amount == 0 {
+        return Err(TxValidateError::InvalidAmount(
+            "TokenMint amount must be greater than 0".to_string()
+        ));
+    }
+
+    if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+        return Err(TxValidateError::InvalidStructure(
+            "TokenMint must not have UTXO inputs or outputs".to_string()
+        ));
+    }
+
+    Ok(())
+}
+
 /// Stateless validation for Coinbase transactions
 fn validate_coinbase_stateless(tx: &Transaction) -> TxValidateResult<()> {
     // Coinbase must have NO inputs
@@ -166,6 +196,9 @@ pub fn validate_stateful(
     match tx.transaction_type {
         TransactionType::Transfer => validate_transfer_stateful(tx, store)?,
         TransactionType::TokenTransfer => validate_token_transfer_stateful(tx, store)?,
+        TransactionType::TokenMint => {
+            // Authorization and balance checks are enforced during execution
+        }
         TransactionType::Coinbase => {
             // Coinbase has no stateful checks (reward validation done in executor)
         }
@@ -268,6 +301,13 @@ pub fn validate_fee(tx: &Transaction, params: &FeeParamsV2) -> TxValidateResult<
 
         TransactionType::TokenTransfer => {
             // Token transfers must have zero fee in Phase 2
+            if tx.fee != 0 {
+                return Err(TxValidateError::TokenTransferNonZeroFee(tx.fee));
+            }
+            Ok(())
+        }
+        TransactionType::TokenMint => {
+            // Token mints must have zero fee
             if tx.fee != 0 {
                 return Err(TxValidateError::TokenTransferNonZeroFee(tx.fee));
             }

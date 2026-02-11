@@ -1,7 +1,7 @@
 //! Economic models and calculation engine module
 //! 
 //! Contains the core economic models, reward calculation algorithms,
-//! and parameter adjustment mechanisms for the ZHTP network.
+//! and parameter adjustment mechanisms for the SOV network.
 
 pub mod economic_model;
 pub mod token_reward;
@@ -77,7 +77,7 @@ mod tests {
         // Bonuses should be present for high quality/uptime
         assert!(reward.quality_bonus > 0);
         assert!(reward.uptime_bonus > 0);
-        assert_eq!(reward.currency, "ZHTP");
+        assert_eq!(reward.currency, "SOV");
     }
 
     #[test]

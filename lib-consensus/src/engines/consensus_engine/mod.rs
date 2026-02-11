@@ -667,7 +667,7 @@ impl ConsensusEngine {
         }
 
         tracing::info!(
-            "Registered validator {:?} with {} ZHTP stake{}",
+            "Registered validator {:?} with {} SOV stake{}",
             identity,
             stake,
             if register_immediately {

@@ -44,7 +44,7 @@ async fn test_validator_registration() {
 
     let result = coordinator.register_as_validator(
         validator_identity,
-        1000_000_000, // 1000 ZHTP
+        1000_000_000, // 1000 SOV
         100 * 1024 * 1024 * 1024, // 100 GB
         &validator_keypair,
         5, // 5% commission

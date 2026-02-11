@@ -54,36 +54,36 @@ fn test_get_system_config() -> Result<()> {
     Ok(())
 }
 
-/// Test 3: ZHTP can be loaded after initialization
+/// Test 3: SOV can be loaded after initialization
 #[test]
-fn test_zhtp_loads_after_init() -> Result<()> {
+fn test_sov_loads_after_init() -> Result<()> {
     let storage = MemoryStorage::default();
     let mut executor = ContractExecutor::new(storage);
 
     // Initialize system
     executor.init_system(test_system_config(1))?;
 
-    // Get ZHTP
-    let zhtp = executor.get_or_load_zhtp()?;
-    assert_eq!(zhtp.name, "ZHTP");
-    assert_eq!(zhtp.symbol, "ZHTP");
+    // Get SOV
+    let sov = executor.get_or_load_sov()?;
+    assert_eq!(sov.name, "Sovereign");
+    assert_eq!(sov.symbol, "SOV");
 
     Ok(())
 }
 
-/// Test 4: ZHTP loads consistently across calls
+/// Test 4: SOV loads consistently across calls
 #[test]
-fn test_zhtp_loads_consistently() -> Result<()> {
+fn test_sov_loads_consistently() -> Result<()> {
     let storage = MemoryStorage::default();
     let mut executor = ContractExecutor::new(storage);
 
     executor.init_system(test_system_config(1))?;
 
-    // Load ZHTP twice
-    let id1 = executor.get_or_load_zhtp()?.token_id;
-    let id2 = executor.get_or_load_zhtp()?.token_id;
+    // Load SOV twice
+    let id1 = executor.get_or_load_sov()?.token_id;
+    let id2 = executor.get_or_load_sov()?.token_id;
 
-    assert_eq!(id1, id2, "ZHTP token IDs should be consistent");
+    assert_eq!(id1, id2, "SOV token IDs should be consistent");
 
     Ok(())
 }
@@ -187,11 +187,11 @@ fn test_multiple_executor_instances() -> Result<()> {
     executor1.init_system(test_system_config(1))?;
     executor2.init_system(test_system_config(1))?;
 
-    // Both should have ZHTP
-    let zhtp1 = executor1.get_or_load_zhtp()?;
-    let zhtp2 = executor2.get_or_load_zhtp()?;
+    // Both should have SOV
+    let sov1 = executor1.get_or_load_sov()?;
+    let sov2 = executor2.get_or_load_sov()?;
 
-    assert_eq!(zhtp1.name, zhtp2.name);
+    assert_eq!(sov1.name, sov2.name);
 
     Ok(())
 }

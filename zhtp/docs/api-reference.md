@@ -427,7 +427,7 @@ POST /api/v1/dao/propose
 ```json
 {
   "title": "Increase UBI Rate",
-  "description": "Proposal to increase the UBI rate from 10 to 15 ZHTP per day",
+  "description": "Proposal to increase the UBI rate from 10 to 15 SOV per day",
   "proposal_type": "economic",
   "voting_duration": 604800
 }
@@ -603,7 +603,7 @@ X-User-ID: did:zhtp:your-identity-here
 
 ## Economic Requirements
 
-Some operations require ZHTP token payments:
+Some operations require SOV token payments:
 - Storage operations: Based on size and redundancy
 - High-priority transactions: Network fee
 - Premium API access: Subscription model

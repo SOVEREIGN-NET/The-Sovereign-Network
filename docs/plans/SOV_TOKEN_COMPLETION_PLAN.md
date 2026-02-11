@@ -78,7 +78,7 @@ pub fn get_treasury_balance(&self) -> u64 {
 ### Current Code (ubi_engine.rs)
 ```rust
 // In ubi_engine.rs process_ubi_claims()
-// TODO: Call executor.get_or_load_zhtp()
+// TODO: Call executor.get_or_load_sov()
 // TODO: Call token.mint_kernel_only(&kernel_address, &recipient, 1000)
 // TODO: Call self.emit_ubi_distributed(...)
 ```

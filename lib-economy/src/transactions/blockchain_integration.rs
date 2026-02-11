@@ -90,7 +90,7 @@ pub fn to_blockchain_data(
 
     // Create memo with transaction details
     let memo = format!(
-        "System TX: {} {} ZHTP to {:?}", 
+        "System TX: {} {} SOV to {:?}", 
         economics_tx.tx_type.description(), 
         economics_tx.amount,
         economics_tx.to

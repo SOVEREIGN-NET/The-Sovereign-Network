@@ -252,10 +252,8 @@ impl Web4Handler {
 
         info!("💳 Processing SOV token payment for domain registration ({} SOV)", registration_fee_sov);
 
-        // Get the owner's public key for SOV balance lookup
-        let owner_pubkey = lib_blockchain::integration::crypto_integration::PublicKey::new(
-            owner_identity.public_key.dilithium_pk.clone()
-        );
+        // Resolve owner's Primary wallet for SOV balance lookup
+        let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
 
         // Get SOV token contract and check balance
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
@@ -264,59 +262,43 @@ impl Web4Handler {
         {
             let mut blockchain = self.blockchain.write().await;
             if !blockchain.token_contracts.contains_key(&sov_token_id) {
-                let sov_token = lib_blockchain::contracts::TokenContract::new_zhtp();
+                let sov_token = lib_blockchain::contracts::TokenContract::new_sov_native();
                 blockchain.token_contracts.insert(sov_token_id, sov_token);
                 info!("🪙 SOV token contract auto-initialized during domain registration");
             }
         }
 
-        // Check SOV balance and apply late welcome bonus if needed (migration for pre-existing users)
+        // Check SOV balance
         {
             let mut blockchain = self.blockchain.write().await;
+
+            let owner_wallet_id = blockchain.wallet_registry.values()
+                .find(|wallet| wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash) && wallet.wallet_type == "Primary")
+                .map(|wallet| wallet.wallet_id.clone())
+                .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
+
+            let owner_wallet_id_bytes = hex::decode(&owner_wallet_id)
+                .map_err(|_| anyhow!("Invalid primary wallet_id"))?;
+            if owner_wallet_id_bytes.len() != 32 {
+                return Err(anyhow!("Invalid primary wallet_id length"));
+            }
+            let mut owner_wallet_key_id = [0u8; 32];
+            owner_wallet_key_id.copy_from_slice(&owner_wallet_id_bytes);
+
+            let owner_wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: owner_wallet_key_id,
+            };
 
             // Check if SOV token contract exists
             let sov_token = blockchain.token_contracts.get(&sov_token_id)
                 .ok_or_else(|| anyhow!("SOV token contract not initialized. Network may still be bootstrapping."))?;
 
             // Check user's SOV balance
-            let user_sov_balance = sov_token.balance_of(&owner_pubkey);
+            let user_sov_balance = sov_token.balance_of(&owner_wallet_key);
 
             info!(" User SOV balance: {} SOV (need {} SOV)", user_sov_balance, registration_fee_sov);
-
-            // MIGRATION: If user has 0 SOV balance, they registered before SOV welcome bonus was implemented
-            // Credit them the 5000 SOV welcome bonus now (lazy migration)
-            let mut minted_bonus = false;
-            if user_sov_balance == 0 {
-                info!("🪙 User has 0 SOV - applying late welcome bonus (migration for pre-existing users)");
-                let welcome_bonus = 5000u64;
-
-                if let Some(sov_token_mut) = blockchain.token_contracts.get_mut(&sov_token_id) {
-                    match sov_token_mut.mint(&owner_pubkey, welcome_bonus) {
-                        Ok(()) => {
-                            info!("🪙 Late SOV welcome bonus credited: {} SOV to user", welcome_bonus);
-                            minted_bonus = true;
-                        }
-                        Err(e) => {
-                            warn!("Failed to mint late SOV welcome bonus: {}", e);
-                        }
-                    }
-                }
-            }
-
-            // Persist SOV token contract if we minted (separate borrow scope)
-            if minted_bonus {
-                if let (Some(store), Some(sov_token)) = (&blockchain.store, blockchain.token_contracts.get(&sov_token_id)) {
-                    let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
-                    if let Err(e) = store_ref.put_token_contract(sov_token) {
-                        warn!("Failed to persist SOV token after late minting: {}", e);
-                    }
-                }
-            }
-
-            // Re-check balance after potential minting
-            let sov_token = blockchain.token_contracts.get(&sov_token_id)
-                .ok_or_else(|| anyhow!("SOV token contract not found"))?;
-            let user_sov_balance = sov_token.balance_of(&owner_pubkey);
 
             if user_sov_balance < registration_fee_sov {
                 return Err(anyhow!(
@@ -331,6 +313,24 @@ impl Web4Handler {
         {
             let mut blockchain = self.blockchain.write().await;
 
+            let owner_wallet_id = blockchain.wallet_registry.values()
+                .find(|wallet| wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash) && wallet.wallet_type == "Primary")
+                .map(|wallet| wallet.wallet_id.clone())
+                .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
+            let owner_wallet_id_bytes = hex::decode(&owner_wallet_id)
+                .map_err(|_| anyhow!("Invalid primary wallet_id"))?;
+            if owner_wallet_id_bytes.len() != 32 {
+                return Err(anyhow!("Invalid primary wallet_id length"));
+            }
+            let mut owner_wallet_key_id = [0u8; 32];
+            owner_wallet_key_id.copy_from_slice(&owner_wallet_id_bytes);
+
+            let owner_wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: owner_wallet_key_id,
+            };
+
             // Get height before mutable borrow of token_contracts
             let current_block_number = blockchain.height;
 
@@ -341,8 +341,8 @@ impl Web4Handler {
 
             // Create execution context for the transfer
             let ctx = lib_blockchain::contracts::executor::ExecutionContext {
-                caller: owner_pubkey.clone(),
-                contract: owner_pubkey.clone(),
+                caller: owner_wallet_key.clone(),
+                contract: owner_wallet_key.clone(),
                 call_origin: lib_blockchain::contracts::executor::CallOrigin::User,
                 block_number: current_block_number,
                 timestamp: std::time::SystemTime::now()

@@ -424,7 +424,7 @@ impl DaoVoteChoice {
 /// DAO treasury management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaoTreasury {
-    /// Total treasury balance (ZHTP tokens)
+    /// Total treasury balance (SOV tokens)
     pub total_balance: u64,
     /// Available balance for allocation
     pub available_balance: u64,

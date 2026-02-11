@@ -5,7 +5,7 @@ pub fn hash_data(data: &[u8]) -> [u8; 32] {
     blake3::hash(data).into()
 }
 
-/// Generate ZHTP native token ID
+/// Generate native SOV token ID (legacy hash string retained for stability)
 pub fn generate_lib_token_id() -> [u8; 32] {
     blake3::hash(b"ZHTP_NATIVE_TOKEN").into()
 }

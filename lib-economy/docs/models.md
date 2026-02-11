@@ -35,8 +35,8 @@ Central economic model managing network-wide parameters including:
 
 ```rust
 pub struct EconomicModel {
-    pub base_routing_rate: u64,        // 1 ZHTP per MB
-    pub base_storage_rate: u64,        // 10 ZHTP per GB
+    pub base_routing_rate: u64,        // 1 SOV per MB
+    pub base_storage_rate: u64,        // 10 SOV per GB
     pub base_compute_rate: u64,        // Minimal compute rate
     pub base_fee_per_byte: u64,        // Transaction fee per byte
     pub dao_fee_rate: u64,             // 200 (2%)
@@ -49,10 +49,10 @@ pub struct EconomicModel {
 
 ```rust
 EconomicModel {
-    base_routing_rate: 1,              // 1 ZHTP per MB routed
-    base_storage_rate: 10,             // 10 ZHTP per GB stored
-    base_compute_rate: 1,              // 1 ZHTP per compute unit
-    base_fee_per_byte: 1,              // 1 ZHTP per byte tx size
+    base_routing_rate: 1,              // 1 SOV per MB routed
+    base_storage_rate: 10,             // 10 SOV per GB stored
+    base_compute_rate: 1,              // 1 SOV per compute unit
+    base_fee_per_byte: 1,              // 1 SOV per byte tx size
     dao_fee_rate: 200,                 // 2% (200 basis points)
     quality_multiplier: 0.5,           // 50% bonus for quality
     uptime_multiplier: 0.3,            // 30% bonus for uptime
@@ -119,12 +119,12 @@ total_fee = base_fee + dao_fee
 let model = EconomicModel::new();
 let (base, dao, total) = model.calculate_fee(
     250,              // 250 bytes
-    10000,           // 10000 ZHTP
+    10000,           // 10000 SOV
     Priority::Normal
 );
-// base_fee = 250 ZHTP
-// dao_fee = 200 ZHTP (2% of 10000)
-// total_fee = 450 ZHTP
+// base_fee = 250 SOV
+// dao_fee = 200 SOV (2% of 10000)
+// total_fee = 450 SOV
 ```
 
 #### `process_network_fees(&self, base_fee: u64) -> Result<()>`
@@ -153,7 +153,7 @@ pub struct TokenReward {
     pub quality_bonus: u64,       // Quality bonus (>95% quality)
     pub uptime_bonus: u64,        // Uptime bonus (>99% uptime)
     pub total_reward: u64,        // Sum of all rewards
-    pub currency: String,         // Always "ZHTP"
+    pub currency: String,         // Always "SOV"
 }
 ```
 
@@ -176,10 +176,10 @@ WorkMetrics {
 
 **Calculation:**
 ```rust
-// Routing: 1 ZHTP per MB
+// Routing: 1 SOV per MB
 routing_reward = (routing_work / 1_000_000) * base_routing_rate
 
-// Storage: 10 ZHTP per GB per month
+// Storage: 10 SOV per GB per month
 storage_reward = (storage_work / 1_000_000_000) * base_storage_rate
 
 // Compute: Minimal processing fee
@@ -216,12 +216,12 @@ let model = EconomicModel::new();
 let reward = TokenReward::calculate(&work, &model)?;
 
 // Expected:
-// routing_reward = 5000 ZHTP (5 GB * 1000 MB/GB * 1)
-// storage_reward = 500 ZHTP (50 GB * 10)
-// compute_reward = 100 ZHTP (100 * 1)
-// quality_bonus = 2800 ZHTP ((5000+500+100) * 0.5)
-// uptime_bonus = 1680 ZHTP ((5000+500+100) * 0.3)
-// total_reward = 10080 ZHTP
+// routing_reward = 5000 SOV (5 GB * 1000 MB/GB * 1)
+// storage_reward = 500 SOV (50 GB * 10)
+// compute_reward = 100 SOV (100 * 1)
+// quality_bonus = 2800 SOV ((5000+500+100) * 0.5)
+// uptime_bonus = 1680 SOV ((5000+500+100) * 0.3)
+// total_reward = 10080 SOV
 ```
 
 #### `calculate_isp_bypass(work: &IspBypassWork) -> Result<Self>`
@@ -241,13 +241,13 @@ IspBypassWork {
 
 **Calculation:**
 ```rust
-// Bandwidth: 100 ZHTP per GB
+// Bandwidth: 100 SOV per GB
 bandwidth_reward = bandwidth_shared_gb * ISP_BYPASS_CONNECTIVITY_RATE
 
-// Routing: 1 ZHTP per MB
+// Routing: 1 SOV per MB
 routing_reward = packets_routed_mb * ISP_BYPASS_MESH_RATE
 
-// Uptime: 10 ZHTP per hour
+// Uptime: 10 SOV per hour
 uptime_bonus = uptime_hours * ISP_BYPASS_UPTIME_BONUS
 
 // Quality bonus (>90% quality)
@@ -273,11 +273,11 @@ let work = IspBypassWork {
 let reward = TokenReward::calculate_isp_bypass(&work)?;
 
 // Expected:
-// bandwidth_reward = 10000 ZHTP (100 * 100)
-// routing_reward = 5000 ZHTP (5000 * 1)
-// uptime_bonus = 240 ZHTP (24 * 10)
-// quality_bonus = 7620 ZHTP ((10000+5000+240) * 0.5)
-// total_reward = 22860 ZHTP
+// bandwidth_reward = 10000 SOV (100 * 100)
+// routing_reward = 5000 SOV (5000 * 1)
+// uptime_bonus = 240 SOV (24 * 10)
+// quality_bonus = 7620 SOV ((10000+5000+240) * 0.5)
+// total_reward = 22860 SOV
 ```
 
 #### `combine(&mut self, other: &TokenReward)`
@@ -369,7 +369,7 @@ Calculate UBI amount per citizen.
 let treasury = DaoTreasury::new();
 // ... receive and allocate fees ...
 let ubi = treasury.calculate_ubi_per_citizen(1000);
-// If ubi_allocated = 10000, ubi = 10 ZHTP per citizen
+// If ubi_allocated = 10000, ubi = 10 SOV per citizen
 ```
 
 #### `distribute_ubi(&mut self, amount: u64) -> Result<()>`
@@ -408,9 +408,9 @@ let (base_fee, dao_fee, total_fee) = model.calculate_fee(
     Priority::Normal
 );
 
-println!("Base fee (infrastructure): {} ZHTP", base_fee);
-println!("DAO fee (2% of amount): {} ZHTP", dao_fee);
-println!("Total fee: {} ZHTP", total_fee);
+println!("Base fee (infrastructure): {} SOV", base_fee);
+println!("DAO fee (2% of amount): {} SOV", dao_fee);
+println!("Total fee: {} SOV", total_fee);
 ```
 
 ### Dynamic Adjustment

@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum TxKind {
-    /// Native token transfer (ZHTP)
+    /// Native token transfer (SOV)
     NativeTransfer = 0,
     /// Custom token transfer
     TokenTransfer = 1,

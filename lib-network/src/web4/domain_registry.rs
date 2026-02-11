@@ -894,8 +894,8 @@ impl DomainRegistry {
     /// Calculate registration fee based on domain and duration
     async fn calculate_registration_fee(&self, request: &DomainRegistrationRequest) -> Result<f64> {
         // Base fee structure
-        let base_fee = 10.0; // 10 ZHTP base fee
-        let per_day_fee = 0.01; // 0.01 ZHTP per day
+        let base_fee = 10.0; // 10 SOV base fee
+        let per_day_fee = 0.01; // 0.01 SOV per day
         
         // Premium domain multiplier
         let premium_multiplier = if request.domain.len() <= 6 { // Short domains are premium

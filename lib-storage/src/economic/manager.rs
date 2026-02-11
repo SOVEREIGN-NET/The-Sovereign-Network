@@ -424,28 +424,28 @@ impl EconomicStorageManager {
         vec![
             PenaltyClause {
                 penalty_type: PenaltyType::DataLoss,
-                penalty_amount: 10000, // 10,000 ZHTP tokens
+                penalty_amount: 10000, // 10,000 SOV tokens
                 conditions: "Data integrity below 99%".to_string(),
                 grace_period: 3600, // 1 hour grace period
                 max_applications: 3, // Maximum 3 applications per day
             },
             PenaltyClause {
                 penalty_type: PenaltyType::Unavailability,
-                penalty_amount: 5000, // 5,000 ZHTP tokens
+                penalty_amount: 5000, // 5,000 SOV tokens
                 conditions: "Uptime below 95%".to_string(),
                 grace_period: 1800, // 30 minute grace period
                 max_applications: 5, // Maximum 5 applications per day
             },
             PenaltyClause {
                 penalty_type: PenaltyType::SlowResponse,
-                penalty_amount: 1000, // 1,000 ZHTP tokens
+                penalty_amount: 1000, // 1,000 SOV tokens
                 conditions: "Response time above 5 seconds".to_string(),
                 grace_period: 300, // 5 minute grace period
                 max_applications: 10, // Maximum 10 applications per day
             },
             PenaltyClause {
                 penalty_type: PenaltyType::ContractBreach,
-                penalty_amount: 20000, // 20,000 ZHTP tokens
+                penalty_amount: 20000, // 20,000 SOV tokens
                 conditions: "Bandwidth utilization below 80%".to_string(),
                 grace_period: 0, // No grace period for breaches
                 max_applications: 1, // Maximum 1 application per day

@@ -18,7 +18,7 @@ This module contains all the fundamental types used across the ZHTP protocol sta
 - `MAX_REQUEST_SIZE`: 16MB
 - `MAX_HEADER_SIZE`: 64KB
 - `DEFAULT_REQUEST_TIMEOUT`: 30 seconds
-- `MIN_DAO_FEE`: 5 ZHTP tokens
+- `MIN_DAO_FEE`: 5 SOV tokens
 - `DAO_FEE_PERCENTAGE`: 2.00% (200 basis points)
 
 ## Core Types

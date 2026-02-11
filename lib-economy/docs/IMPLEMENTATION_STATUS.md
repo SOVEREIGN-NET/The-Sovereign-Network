@@ -201,9 +201,9 @@ pub fn distribute_ubi_to_citizens() -> anyhow::Result<()> {
 - Value derived from network infrastructure
 
 ### 2. ISP Replacement Model 
-- Fair compensation for routing (1 ZHTP/MB)
-- Fair compensation for storage (10 ZHTP/GB)
-- Fair compensation for bandwidth (100 ZHTP/GB)
+- Fair compensation for routing (1 SOV/MB)
+- Fair compensation for storage (10 SOV/GB)
+- Fair compensation for bandwidth (100 SOV/GB)
 - Quality and uptime bonuses
 
 ### 3. DAO-Driven Welfare 

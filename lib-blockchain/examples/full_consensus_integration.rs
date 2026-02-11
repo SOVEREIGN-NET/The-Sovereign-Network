@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
 
     // 4. Register validators
     let validator_names = ["Alice", "Bob", "Charlie", "Dave"];
-    let stakes = [2000_000_000u64, 1500_000_000, 1000_000_000, 3000_000_000]; // In micro-ZHTP
+    let stakes = [2000_000_000u64, 1500_000_000, 1000_000_000, 3000_000_000]; // In micro-SOV
     let storage_capacities = [200u64, 150, 100, 300]; // In GB
 
     for (i, ((name, &stake), &storage_gb)) in validator_names.iter().zip(stakes.iter()).zip(storage_capacities.iter()).enumerate() {
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
             5, // 5% commission rate
         ).await?;
 
-        println!("Registered validator {}: {} ZHTP stake, {} GB storage", 
+        println!("Registered validator {}: {} SOV stake, {} GB storage", 
                 name, stake / 1_000_000, storage_gb);
     }
 
@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
     println!("   Round: {}", status.current_round);
     println!("   Step: {:?}", status.current_step);
     println!("   Validators: {} active / {} total", status.active_validators, status.validator_count);
-    println!("   Treasury: {} ZHTP", status.treasury_balance);
+    println!("   Treasury: {} SOV", status.treasury_balance);
     println!("   Producing blocks: {}", status.is_producing_blocks);
 
     // 7. Demonstrate DAO proposal creation
@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
     let proposal_tx = create_dao_proposal_transaction(
         &validator_keypairs[0],
         "Increase UBI Distribution".to_string(),
-        "Proposal to increase UBI distribution from 50 to 75 ZHTP per citizen per month. amount:5000".to_string(),
+        "Proposal to increase UBI distribution from 50 to 75 SOV per citizen per month. amount:5000".to_string(),
         DaoProposalType::TreasuryAllocation,
     )?;
 
@@ -158,15 +158,15 @@ async fn main() -> Result<()> {
     println!("   Current height: {}", final_status.current_height);
     println!("   Active validators: {}", final_status.active_validators);
     println!("   DAO proposals: {}", final_status.dao_proposals);
-    println!("   Treasury balance: {} ZHTP", final_status.treasury_balance);
+    println!("   Treasury balance: {} SOV", final_status.treasury_balance);
 
     if let Some(treasury_stats) = blockchain_guard.get_treasury_statistics().await.ok() {
         println!("Treasury:");
-        println!("   Current treasury: {} ZHTP", treasury_stats.current_treasury_balance);
-        println!("   UBI fund: {} ZHTP", treasury_stats.ubi_fund_balance);
-        println!("   Sector DAO fund: {} ZHTP", treasury_stats.sector_dao_fund_balance);
-        println!("   Emergency fund: {} ZHTP", treasury_stats.emergency_fund_balance);
-        println!("   Dev grants fund: {} ZHTP", treasury_stats.dev_grants_fund_balance);
+        println!("   Current treasury: {} SOV", treasury_stats.current_treasury_balance);
+        println!("   UBI fund: {} SOV", treasury_stats.ubi_fund_balance);
+        println!("   Sector DAO fund: {} SOV", treasury_stats.sector_dao_fund_balance);
+        println!("   Emergency fund: {} SOV", treasury_stats.emergency_fund_balance);
+        println!("   Dev grants fund: {} SOV", treasury_stats.dev_grants_fund_balance);
     }
 
     // 11. Demonstrate transaction creation and processing
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
     
     // Create UBI distribution transactions
     println!("Creating UBI distribution transactions...");
-    let ubi_amount = 15_000u64; // 15 ZHTP per citizen per month (15 ZHTP, not micro-ZHTP)
+    let ubi_amount = 15_000u64; // 15 SOV per citizen per month (15 SOV, not micro-SOV)
     let ubi_citizens = vec![
         (IdentityId::from_bytes(&validator_keypairs[1].public_key.dilithium_pk), ubi_amount),
         (IdentityId::from_bytes(&validator_keypairs[2].public_key.dilithium_pk), ubi_amount),
@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
     
     // Create welfare funding transactions  
     println!("🏥 Creating welfare funding transactions...");
-    let welfare_amount = 10_000u64; // 10 ZHTP for welfare needs (10 ZHTP, not micro-ZHTP)
+    let welfare_amount = 10_000u64; // 10 SOV for welfare needs (10 SOV, not micro-SOV)
     let welfare_services = vec![
         ("Healthcare funding".to_string(), validator_keypairs[1].public_key.dilithium_pk[..32].try_into().unwrap(), welfare_amount),
         ("Education support".to_string(), validator_keypairs[2].public_key.dilithium_pk[..32].try_into().unwrap(), welfare_amount / 2),
@@ -220,7 +220,7 @@ async fn main() -> Result<()> {
     // Demonstrate treasury statistics access
     println!("Final treasury status:");
     if let Ok(status) = consensus_coordinator.get_consensus_status().await {
-        println!("   Available funds: {} ZHTP", status.treasury_balance);
+        println!("   Available funds: {} SOV", status.treasury_balance);
         println!("   DAO proposals: {}", status.dao_proposals);
         println!("   Active validators: {}", status.active_validators);
     }
@@ -248,7 +248,7 @@ fn display_transaction_info(tx: &lib_blockchain::Transaction) {
     println!("  Transaction:");
     println!("    Hash: {}", hex::encode(tx.hash().as_bytes()));
     println!("    Type: {:?}", tx.transaction_type);
-    println!("    Fee: {} micro-ZHTP", tx.fee);
+    println!("    Fee: {} micro-SOV", tx.fee);
     println!("    Inputs: {}", tx.inputs.len());
     println!("    Outputs: {}", tx.outputs.len());
     if !tx.memo.is_empty() {

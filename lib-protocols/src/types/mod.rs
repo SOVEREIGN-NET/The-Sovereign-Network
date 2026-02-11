@@ -43,7 +43,7 @@ pub const DEFAULT_REQUEST_TIMEOUT: u64 = 30;
 /// Default cache TTL (1 hour)
 pub const DEFAULT_CACHE_TTL: u64 = 3600;
 
-/// Minimum DAO fee (5 ZHTP tokens)
+/// Minimum DAO fee (5 SOV tokens)
 pub const MIN_DAO_FEE: u64 = 5;
 
 /// DAO fee percentage (2.00%)

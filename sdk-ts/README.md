@@ -126,10 +126,10 @@ if (didResult.valid) {
 ```typescript
 import { calculateDomainRegistrationFee, calculateTransactionFee } from '@zhtp/sdk';
 
-// Domain registration fees based on length (in ZHTP)
-const fee1 = calculateDomainRegistrationFee('a.zhtp');           // 5000 ZHTP (1 char)
-const fee2 = calculateDomainRegistrationFee('ab.zhtp');          // 1000 ZHTP (2 chars)
-const fee3 = calculateDomainRegistrationFee('abc.zhtp');         // 100 ZHTP (3+ chars)
+// Domain registration fees based on length (in SOV)
+const fee1 = calculateDomainRegistrationFee('a.zhtp');           // 5000 SOV (1 char)
+const fee2 = calculateDomainRegistrationFee('ab.zhtp');          // 1000 SOV (2 chars)
+const fee3 = calculateDomainRegistrationFee('abc.zhtp');         // 100 SOV (3+ chars)
 
 // Transaction fees (base + per-byte)
 const txFee = calculateTransactionFee(1000);  // 1000 base + (size * 10)

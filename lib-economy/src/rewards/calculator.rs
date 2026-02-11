@@ -30,7 +30,7 @@ impl RewardCalculator {
         work_multipliers.insert(UsefulWorkType::UbiDistribution, 1.1);
 
         Self {
-            base_reward: 100 * 1_000_000, // 100 ZHTP base reward
+            base_reward: 100 * 1_000_000, // 100 SOV base reward
             work_multipliers,
             reward_history: Vec::new(),
         }
@@ -93,7 +93,7 @@ impl RewardCalculator {
     pub fn adjust_base_reward(&mut self, new_base_reward: u64) {
         let old_reward = self.base_reward;
         self.base_reward = new_base_reward;
-        tracing::info!("Base reward adjusted: {} -> {} ZHTP", old_reward, new_base_reward);
+        tracing::info!("Base reward adjusted: {} -> {} SOV", old_reward, new_base_reward);
     }
 
     /// Get current base reward

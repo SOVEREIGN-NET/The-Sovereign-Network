@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::IdentityId;
 use crate::wallets::WalletId;
 use crate::economics::{EconomicModel, Transaction, TransactionType, Priority};
+use crate::constants::{SOV_ATOMIC_UNITS, SOV_WELCOME_BONUS_SOV};
 
 /// Welcome bonus for new citizens
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +14,7 @@ pub struct WelcomeBonus {
     pub identity_id: IdentityId,
     /// Wallet receiving the bonus
     pub wallet_id: WalletId,
-    /// Bonus amount (5000 ZHTP)
+    /// Bonus amount (atomic units)
     pub bonus_amount: u64,
     /// Welcome bonus transaction
     pub bonus_tx: Transaction,
@@ -53,8 +54,8 @@ impl WelcomeBonus {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
-        // Welcome bonus: 5000 ZHTP tokens to get started
-        let bonus_amount = 5000u64;
+        // Welcome bonus: 5,000 SOV tokens to get started (atomic units)
+        let bonus_amount = SOV_WELCOME_BONUS_SOV.saturating_mul(SOV_ATOMIC_UNITS);
 
         // Create welcome bonus transaction
         let bonus_tx = Transaction::new(
@@ -78,9 +79,9 @@ impl WelcomeBonus {
         );
 
         tracing::info!(
-            "🎁 WELCOME BONUS: Citizen {} received {} ZHTP tokens",
+            "🎁 WELCOME BONUS: Citizen {} received {} SOV tokens",
             hex::encode(&identity_id.0[..8]),
-            bonus_amount
+            SOV_WELCOME_BONUS_SOV
         );
 
         Ok(Self::new(

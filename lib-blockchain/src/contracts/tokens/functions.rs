@@ -121,9 +121,9 @@ pub fn calculate_market_cap(contract: &TokenContract, price_per_token: f64) -> f
     contract.market_cap(price_per_token)
 }
 
-/// Create a new ZHTP native token contract
-pub fn create_zhtp_token() -> TokenContract {
-    TokenContract::new_zhtp()
+/// Create a new SOV native token contract
+pub fn create_sov_token() -> TokenContract {
+    TokenContract::new_sov_native()
 }
 
 /// Create a new custom token contract

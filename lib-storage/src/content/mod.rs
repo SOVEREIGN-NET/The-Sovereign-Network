@@ -453,10 +453,10 @@ impl ContentManager {
     pub fn calculate_storage_cost(&self, size: u64, tier: &StorageTier, replication_factor: u8, duration_days: u32) -> u64 {
         // Base cost per GB per day
         let base_cost_per_gb_day = match tier {
-            StorageTier::Hot => 100,      // 100 ZHTP per GB per day
-            StorageTier::Warm => 50,      // 50 ZHTP per GB per day
-            StorageTier::Cold => 10,      // 10 ZHTP per GB per day
-            StorageTier::Archive => 1,    // 1 ZHTP per GB per day
+            StorageTier::Hot => 100,      // 100 SOV per GB per day
+            StorageTier::Warm => 50,      // 50 SOV per GB per day
+            StorageTier::Cold => 10,      // 10 SOV per GB per day
+            StorageTier::Archive => 1,    // 1 SOV per GB per day
         };
         
         // Calculate size in GB
@@ -469,7 +469,7 @@ impl ContentManager {
         let cost_per_day = (size_gb * base_cost_per_gb_day as f64 * replication_multiplier).ceil() as u64;
         let total_cost = cost_per_day * duration_days as u64;
         
-        // Minimum cost of 1 ZHTP per day
+        // Minimum cost of 1 SOV per day
         total_cost.max(duration_days as u64)
     }
 

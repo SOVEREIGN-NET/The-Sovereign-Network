@@ -1,7 +1,7 @@
 //! Total supply tracking and calculations for post-scarcity economics
 //! 
 //! Manages token supply calculations based on network utility rather than artificial scarcity.
-//! In the ZHTP model, supply grows with network demand to maintain stable utility value.
+//! In the SOV model, supply grows with network demand to maintain stable utility value.
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};

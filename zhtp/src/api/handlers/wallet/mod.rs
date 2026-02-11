@@ -247,12 +247,13 @@ impl WalletHandler {
         // Get wallets from the identity's wallet manager (created during identity registration)
         let wallet_summaries = identity.list_wallets();
 
-        // Get blockchain wallet registry balances (UBI distributions go here)
-        let blockchain_balances: std::collections::HashMap<String, u64> = {
+        // Use SOV token contract as authoritative live balance when available.
+        let (blockchain_balances, sov_token_id) = {
             let blockchain = self.blockchain.read().await;
-            blockchain.wallet_registry.iter()
+            let balances: std::collections::HashMap<String, u64> = blockchain.wallet_registry.iter()
                 .map(|(id, data)| (id.clone(), data.initial_balance))
-                .collect()
+                .collect();
+            (balances, lib_blockchain::contracts::utils::generate_lib_token_id())
         };
 
         // Convert wallet summaries to API response format, merging blockchain balances
@@ -266,10 +267,27 @@ impl WalletHandler {
                 (0, 0)
             };
 
-            // Check blockchain registry for potentially higher balance (UBI accumulates there)
+            // Prefer SOV token contract balance (live balance), fallback to wallet registry.
             let wallet_id_hex = hex::encode(summary.id.0);
             let blockchain_balance = blockchain_balances.get(&wallet_id_hex).copied().unwrap_or(0);
-            let effective_balance = std::cmp::max(summary.balance, blockchain_balance);
+            let effective_balance = {
+                let blockchain = self.blockchain.read().await;
+                let token_balance = blockchain.token_contracts.get(&sov_token_id).and_then(|token| {
+                    let wallet_id_bytes = hex::decode(&wallet_id_hex).ok()?;
+                    if wallet_id_bytes.len() != 32 {
+                        return None;
+                    }
+                    let mut key_id = [0u8; 32];
+                    key_id.copy_from_slice(&wallet_id_bytes);
+                    let wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
+                        dilithium_pk: vec![],
+                        kyber_pk: vec![],
+                        key_id,
+                    };
+                    Some(token.balance_of(&wallet_key))
+                });
+                token_balance.unwrap_or_else(|| std::cmp::max(summary.balance, blockchain_balance))
+            };
 
             let wallet_info = WalletInfo {
                 wallet_type: format!("{:?}", summary.wallet_type),
@@ -382,18 +400,41 @@ impl WalletHandler {
                         (summary.balance, 0, 0, summary.created_at)
                     };
 
-                // Check blockchain's wallet_registry for the authoritative balance using direct wallet_id lookup
+                // Prefer SOV token contract balance (live balance) for this wallet.
                 let blockchain = self.blockchain.read().await;
                 let wallet_id_hex = hex::encode(summary.id.0);
                 if let Some(wallet_data) = blockchain.wallet_registry.get(&wallet_id_hex) {
-                    // Use max of identity balance and blockchain balance (UBI accumulates in blockchain)
-                    let blockchain_balance = wallet_data.initial_balance;
-                    if blockchain_balance > available_balance {
-                        tracing::debug!(
-                            "Using blockchain balance for wallet {}: {} > {} (identity)",
-                            &wallet_id_hex[..16], blockchain_balance, available_balance
-                        );
-                        available_balance = blockchain_balance;
+                    if let Some(token) = blockchain.token_contracts.get(&lib_blockchain::contracts::utils::generate_lib_token_id()) {
+                        let wallet_id_bytes = hex::decode(&wallet_id_hex).ok();
+                        let token_balance = if let Some(bytes) = wallet_id_bytes {
+                            if bytes.len() == 32 {
+                                let mut key_id = [0u8; 32];
+                                key_id.copy_from_slice(&bytes);
+                                let wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
+                                    dilithium_pk: vec![],
+                                    kyber_pk: vec![],
+                                    key_id,
+                                };
+                                token.balance_of(&wallet_key)
+                            } else {
+                                token.balance_of(&lib_blockchain::integration::crypto_integration::PublicKey::new(
+                                    wallet_data.public_key.clone()
+                                ))
+                            }
+                        } else {
+                            token.balance_of(&lib_blockchain::integration::crypto_integration::PublicKey::new(
+                                wallet_data.public_key.clone()
+                            ))
+                        };
+                        if token_balance != available_balance {
+                            tracing::debug!(
+                                "Using SOV token balance for wallet {}: {} (was {})",
+                                &wallet_id_hex[..16],
+                                token_balance,
+                                available_balance
+                            );
+                            available_balance = token_balance;
+                        }
                     }
                 }
                 drop(blockchain);

@@ -203,7 +203,7 @@ impl fmt::Display for Address {
 pub struct TokenId(pub [u8; 32]);
 
 impl TokenId {
-    /// Native ZHTP token (all zeros)
+    /// Native SOV token (all zeros)
     pub const NATIVE: Self = Self([0u8; 32]);
 
     pub fn new(bytes: [u8; 32]) -> Self {

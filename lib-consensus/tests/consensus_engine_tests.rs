@@ -15,7 +15,7 @@ fn create_test_identity(name: &str) -> IdentityId {
 fn create_test_config() -> ConsensusConfig {
     ConsensusConfig {
         consensus_type: ConsensusType::Hybrid,
-        min_stake: 1000 * 1_000_000,           // 1000 ZHTP
+        min_stake: 1000 * 1_000_000,           // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 10,
         block_time: 1, // Fast for testing
@@ -57,7 +57,7 @@ async fn test_validator_registration_success() -> Result<()> {
     let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     let identity = create_test_identity("alice");
-    let stake = 2000 * 1_000_000; // 2000 ZHTP
+    let stake = 2000 * 1_000_000; // 2000 SOV
     let storage = 200 * 1024 * 1024 * 1024; // 200 GB
     let consensus_key = vec![1u8; 32];
     let commission_rate = 5;
@@ -91,7 +91,7 @@ async fn test_validator_registration_insufficient_stake() -> Result<()> {
     let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     let identity = create_test_identity("bob");
-    let insufficient_stake = 500 * 1_000_000; // 500 ZHTP (below minimum)
+    let insufficient_stake = 500 * 1_000_000; // 500 SOV (below minimum)
     let storage = 200 * 1024 * 1024 * 1024;
     let consensus_key = vec![2u8; 32];
     let commission_rate = 5;

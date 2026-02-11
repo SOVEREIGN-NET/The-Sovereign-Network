@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::IdentityId;
 use crate::wallets::WalletId;
 use crate::economics::{EconomicModel, Transaction, TransactionType, Priority};
+use crate::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV};
 
 /// Blocks per day (assuming ~10 second block time)
 /// At 10s/block: 24 hours = 86,400 seconds ÷ 10 = 8,640 blocks
@@ -23,9 +24,9 @@ pub struct UbiRegistration {
     pub ubi_wallet_id: WalletId,
     /// UBI registration transaction
     pub registration_tx: Transaction,
-    /// Daily UBI amount (~33 ZHTP)
+    /// Daily UBI amount (~33 SOV, atomic units)
     pub daily_amount: u64,
-    /// Monthly UBI amount (1000 ZHTP)
+    /// Monthly UBI amount (1000 SOV, atomic units)
     pub monthly_amount: u64,
     /// UBI eligibility proof
     pub eligibility_proof: [u8; 32],
@@ -77,9 +78,9 @@ impl UbiRegistration {
         // Use block height for deterministic consensus (not wall-clock time)
         let current_block = economic_model.current_block;
 
-        // Calculate monthly UBI amount (1000 ZHTP tokens per month)
-        let monthly_ubi_amount = 1000u64;
-        let daily_ubi_amount = monthly_ubi_amount / 30; // ~33 ZHTP per day
+        // Calculate monthly UBI amount (1000 SOV tokens per month, atomic units)
+        let monthly_ubi_amount = SOV_UBI_MONTHLY_SOV.saturating_mul(SOV_ATOMIC_UNITS);
+        let daily_ubi_amount = monthly_ubi_amount / 30; // ~33 SOV per day
 
         // Create UBI registration transaction
         let ubi_tx = Transaction::new(
@@ -103,10 +104,10 @@ impl UbiRegistration {
         );
 
         tracing::info!(
-            "UBI REGISTERED: Citizen {} eligible for {} ZHTP daily ({} ZHTP monthly) at block {}",
+            "UBI REGISTERED: Citizen {} eligible for {} SOV daily ({} SOV monthly) at block {}",
             hex::encode(&identity_id.0[..8]),
-            daily_ubi_amount,
-            monthly_ubi_amount,
+            daily_ubi_amount / SOV_ATOMIC_UNITS,
+            SOV_UBI_MONTHLY_SOV,
             current_block
         );
 

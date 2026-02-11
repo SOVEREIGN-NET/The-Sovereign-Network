@@ -1,7 +1,7 @@
-//! Blockchain integration interfaces for ZHTP Economics
+//! Blockchain integration interfaces for SOV Economics
 //! 
 //! Provides standardized interfaces for integrating the economics engine
-//! with the ZHTP blockchain layer, handling transactions, fees, and rewards.
+//! with the SOV blockchain layer, handling transactions, fees, and rewards.
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
@@ -121,7 +121,7 @@ impl BlockchainIntegration {
         let tx_hash = hex::encode(crate::wasm::hash_blake3(data_json.as_bytes()));
         
         info!(
-            " Submitted economic data to blockchain: {} ZHTP total value, hash: {}",
+            " Submitted economic data to blockchain: {} SOV total value, hash: {}",
             data.total_value(),
             &tx_hash[..8]
         );
@@ -148,7 +148,7 @@ impl BlockchainIntegration {
             self.total_processed += 1;
             
             info!(
-                "Confirmed economic transaction at block {}: {} ZHTP value",
+                "Confirmed economic transaction at block {}: {} SOV value",
                 block_height,
                 confirmed_data.total_value()
             );
@@ -227,7 +227,7 @@ impl BlockchainEconomics for BlockchainIntegration {
         self.economic_model.process_network_fees(fees)?;
         
         info!(
-            "💳 Processed {} ZHTP transaction fees for tx: {}",
+            "💳 Processed {} SOV transaction fees for tx: {}",
             fees, transaction_id
         );
         
@@ -238,7 +238,7 @@ impl BlockchainEconomics for BlockchainIntegration {
         self.economic_model.mint_operational_tokens(reward, "validator reward")?;
         
         info!(
-            " Handled {} ZHTP block reward for validator: {}",
+            " Handled {} SOV block reward for validator: {}",
             reward, validator_id
         );
         
@@ -250,7 +250,7 @@ impl BlockchainEconomics for BlockchainIntegration {
         self.dao_treasury.apply_fee_distribution(distribution)?;
         
         info!(
-            " Processed {} ZHTP DAO fees for UBI/DAO allocations",
+            " Processed {} SOV DAO fees for UBI/DAO allocations",
             dao_fees
         );
         
@@ -261,7 +261,7 @@ impl BlockchainEconomics for BlockchainIntegration {
         self.economic_model.mint_operational_tokens(reward, "infrastructure reward")?;
         
         info!(
-            "🏭 Handled {} ZHTP infrastructure reward for provider: {}",
+            "🏭 Handled {} SOV infrastructure reward for provider: {}",
             reward, provider_id
         );
         
@@ -272,7 +272,7 @@ impl BlockchainEconomics for BlockchainIntegration {
         self.economic_model.mint_operational_tokens(reward, " reward")?;
         
         info!(
-            "Processed {} ZHTP  reward for participant: {}",
+            "Processed {} SOV  reward for participant: {}",
             reward, participant_id
         );
         

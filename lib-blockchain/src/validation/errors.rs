@@ -99,6 +99,9 @@ pub enum TxValidateError {
     #[error("Coinbase transaction must not have inputs")]
     CoinbaseHasInputs,
 
+    #[error("Invalid transaction structure: {0}")]
+    InvalidStructure(String),
+
     // =========================================================================
     // UTXO Errors
     // =========================================================================

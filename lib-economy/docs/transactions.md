@@ -26,7 +26,7 @@ pub struct Transaction {
     pub tx_id: [u8; 32],                    // Unique transaction ID
     pub from: [u8; 32],                     // Sender address
     pub to: [u8; 32],                       // Recipient address
-    pub amount: u64,                        // Amount in ZHTP
+    pub amount: u64,                        // Amount in SOV
     pub base_fee: u64,                      // Infrastructure fee
     pub dao_fee: u64,                       // Mandatory DAO fee (2%)
     pub total_fee: u64,                     // base_fee + dao_fee
@@ -75,14 +75,14 @@ use lib_economy::{Transaction, Priority};
 let tx = Transaction::new_payment(
     sender_address,
     recipient_address,
-    10000,              // 10000 ZHTP
+    10000,              // 10000 SOV
     Priority::Normal,
 )?;
 
-println!("Amount: {} ZHTP", tx.amount);
-println!("Base fee: {} ZHTP", tx.base_fee);
-println!("DAO fee (2%): {} ZHTP", tx.dao_fee);
-println!("Total cost: {} ZHTP", tx.amount + tx.total_fee);
+println!("Amount: {} SOV", tx.amount);
+println!("Base fee: {} SOV", tx.base_fee);
+println!("DAO fee (2%): {} SOV", tx.dao_fee);
+println!("Total cost: {} SOV", tx.amount + tx.total_fee);
 ```
 
 ### Reward Transaction
@@ -91,7 +91,7 @@ println!("Total cost: {} ZHTP", tx.amount + tx.total_fee);
 // Create reward transaction (fee-free)
 let tx = Transaction::new_reward(
     node_address,
-    5000,  // 5000 ZHTP reward
+    5000,  // 5000 SOV reward
 )?;
 
 assert_eq!(tx.base_fee, 0);
@@ -105,7 +105,7 @@ assert_eq!(tx.total_fee, 0);
 // Create UBI distribution (fee-free)
 let tx = Transaction::new_ubi_distribution(
     citizen_address,
-    1000,  // 1000 ZHTP UBI
+    1000,  // 1000 SOV UBI
 )?;
 
 assert_eq!(tx.tx_type, TransactionType::UbiDistribution);
@@ -118,7 +118,7 @@ assert_eq!(tx.total_fee, 0);
 // Create welfare distribution (fee-free)
 let tx = Transaction::new_welfare_distribution(
     recipient_address,
-    2000,  // 2000 ZHTP welfare
+    2000,  // 2000 SOV welfare
 )?;
 
 assert_eq!(tx.total_fee, 0);
@@ -146,10 +146,10 @@ fn compare_priorities() -> anyhow::Result<()> {
     let high = Transaction::new_payment(from, to, amount, Priority::High)?;
     let urgent = Transaction::new_payment(from, to, amount, Priority::Urgent)?;
     
-    println!("Low:    {} ZHTP fee", low.total_fee);
-    println!("Normal: {} ZHTP fee", normal.total_fee);
-    println!("High:   {} ZHTP fee", high.total_fee);
-    println!("Urgent: {} ZHTP fee", urgent.total_fee);
+    println!("Low:    {} SOV fee", low.total_fee);
+    println!("Normal: {} SOV fee", normal.total_fee);
+    println!("High:   {} SOV fee", high.total_fee);
+    println!("Urgent: {} SOV fee", urgent.total_fee);
     
     Ok(())
 }
@@ -173,16 +173,16 @@ total_fee = base_fee + dao_fee
 ### Example Calculation
 
 ```rust
-// 10,000 ZHTP payment, 250 bytes, Normal priority
+// 10,000 SOV payment, 250 bytes, Normal priority
 let tx_size = 250;
 let amount = 10000;
 let priority = Priority::Normal; // 1.0x multiplier
 
-base_fee = 250 * 1 * 1.0 = 250 ZHTP
-dao_fee = (10000 * 200) / 10000 = 200 ZHTP
-total_fee = 250 + 200 = 450 ZHTP
+base_fee = 250 * 1 * 1.0 = 250 SOV
+dao_fee = (10000 * 200) / 10000 = 200 SOV
+total_fee = 250 + 200 = 450 SOV
 
-Total cost = 10000 + 450 = 10450 ZHTP
+Total cost = 10000 + 450 = 10450 SOV
 ```
 
 ## DAO Fee Proof
@@ -248,8 +248,8 @@ fn complete_transaction_flow(
     
     println!("Transaction created:");
     println!("  TX ID: {}", hex::encode(&tx.tx_id[..8]));
-    println!("  Amount: {} ZHTP", tx.amount);
-    println!("  Fees: {} ZHTP (base: {}, DAO: {})", 
+    println!("  Amount: {} SOV", tx.amount);
+    println!("  Fees: {} SOV (base: {}, DAO: {})", 
         tx.total_fee, tx.base_fee, tx.dao_fee);
     
     // 2. Validate transaction
@@ -306,7 +306,7 @@ fn send_from_wallet(
     // Deduct from wallet
     manager.withdraw(wallet_id, total_cost)?;
     
-    println!(" Sent {} ZHTP (+ {} fee) from wallet", amount, tx.total_fee);
+    println!(" Sent {} SOV (+ {} fee) from wallet", amount, tx.total_fee);
     Ok(tx)
 }
 ```

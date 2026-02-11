@@ -14,11 +14,11 @@ Fast lookup guide for common operations and key concepts.
 
 ```rust
 DAO_FEE_RATE = 2% (200 basis points)     // Mandatory DAO contribution
-ISP_CONNECTIVITY = 100 ZHTP/GB           // Bandwidth sharing reward
-ISP_MESH_RATE = 1 ZHTP/MB               // Packet routing reward
-ISP_UPTIME = 10 ZHTP/hour               // Uptime bonus
+ISP_CONNECTIVITY = 100 SOV/GB           // Bandwidth sharing reward
+ISP_MESH_RATE = 1 SOV/MB               // Packet routing reward
+ISP_UPTIME = 10 SOV/hour               // Uptime bonus
 MESH_THRESHOLD = 3 peers                 // Min peers for rewards
-MIN_STAKING = 1000 ZHTP                  // Minimum stake
+MIN_STAKING = 1000 SOV                  // Minimum stake
 UBI_ALLOCATION = 40%                     // UBI from DAO fees
 WELFARE_ALLOCATION = 30%                 // Welfare from DAO fees
 DEVELOPMENT_ALLOCATION = 30%             // Dev from DAO fees
@@ -104,10 +104,10 @@ Urgent: 5.0x (5x rate)
 ### Calculation Formula
 
 ```rust
-// Routing: 1 ZHTP per MB
+// Routing: 1 SOV per MB
 routing = (bytes_routed / 1_000_000) * 1
 
-// Storage: 10 ZHTP per GB
+// Storage: 10 SOV per GB
 storage = (bytes_stored / 1_000_000_000) * 10
 
 // Compute: Minimal rate
@@ -122,10 +122,10 @@ uptime_bonus = (uptime > 0.99) ? base * 0.3 : 0
 
 | Activity | Amount | Rate | Reward |
 |----------|--------|------|--------|
-| Route 5 GB | 5000 MB | 1 ZHTP/MB | 5000 ZHTP |
-| Store 50 GB | 50 GB | 10 ZHTP/GB | 500 ZHTP |
-| 96% quality | - | 50% bonus | 2750 ZHTP |
-| **Total** | - | - | **8250 ZHTP/day** |
+| Route 5 GB | 5000 MB | 1 SOV/MB | 5000 SOV |
+| Store 50 GB | 50 GB | 10 SOV/GB | 500 SOV |
+| 96% quality | - | 50% bonus | 2750 SOV |
+| **Total** | - | - | **8250 SOV/day** |
 
 ---
 
@@ -142,12 +142,12 @@ Automatic allocation:
     → 30% to Development fund
 ```
 
-### Example: 1000 ZHTP DAO fee
+### Example: 1000 SOV DAO fee
 
 ```
-UBI:         400 ZHTP (40%)
-Welfare:     300 ZHTP (30%)
-Development: 300 ZHTP (30%)
+UBI:         400 SOV (40%)
+Welfare:     300 SOV (30%)
+Development: 300 SOV (30%)
 ```
 
 ---

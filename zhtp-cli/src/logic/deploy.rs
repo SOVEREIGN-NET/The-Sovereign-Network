@@ -134,7 +134,7 @@ pub fn validate_deployment_fee(fee: u64) -> CliResult<()> {
         });
     }
 
-    // Maximum fee: 1 ZHTP
+    // Maximum fee: 1 SOV
     const MAX_FEE: u64 = 100_000_000;
     if fee > MAX_FEE {
         return Err(CliError::DeploymentFailed {
