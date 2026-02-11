@@ -284,7 +284,7 @@ impl WalletHandler {
                         kyber_pk: vec![],
                         key_id,
                     };
-                    Some(token.balance_of(&wallet_key))
+                    token.balances.get(&wallet_key).copied()
                 });
                 token_balance.unwrap_or_else(|| std::cmp::max(summary.balance, blockchain_balance))
             };
