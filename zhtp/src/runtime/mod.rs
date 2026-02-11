@@ -1133,6 +1133,24 @@ impl RuntimeOrchestrator {
         }).await
     }
 
+    /// Start a relay node - THE canonical way
+    ///
+    /// Relay nodes act as routers on the network, forwarding messages and peer
+    /// discovery information but NOT maintaining blockchain state or validating blocks.
+    /// They are useful for improving network connectivity and message routing.
+    ///
+    /// # Errors
+    /// Returns an error if config.node_type is not Relay.
+    pub async fn start_relay(config: NodeConfig) -> Result<Self> {
+        use crate::config::NodeType;
+        if config.node_type != NodeType::Relay {
+            return Err(anyhow::anyhow!("start_relay called for non-relay node type: {:?}", config.node_type));
+        }
+        let orchestrator = Self::new(config).await?;
+        orchestrator.start_node().await?;
+        Ok(orchestrator)
+    }
+
     // ========================================================================
     // END CANONICAL STARTUP METHODS
     // ========================================================================
