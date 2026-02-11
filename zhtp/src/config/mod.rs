@@ -9,6 +9,7 @@ pub mod mesh_modes;
 pub mod security;
 pub mod network_isolation;
 pub mod spki_pin;
+pub mod node_type;
 
 use anyhow::Result;
 
@@ -20,6 +21,7 @@ pub use mesh_modes::MeshMode;
 pub use security::SecurityLevel;
 pub use environment::Environment;
 pub use network_isolation::NetworkIsolationConfig;
+pub use node_type::NodeType;
 
 /// Command line arguments structure
 #[derive(Debug, Clone)]
