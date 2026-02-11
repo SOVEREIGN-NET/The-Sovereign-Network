@@ -86,10 +86,8 @@ impl TransactionValidator {
     pub fn validate_transaction(&self, transaction: &Transaction) -> ValidationResult {
         // Check if this is a system transaction (empty inputs = coinbase-style)
         let mut is_system_transaction = transaction.inputs.is_empty();
-        if matches!(
-            transaction.transaction_type,
-            TransactionType::TokenTransfer | TransactionType::TokenMint
-        ) {
+        // TokenTransfer must pay fees even with empty inputs
+        if matches!(transaction.transaction_type, TransactionType::TokenTransfer) {
             is_system_transaction = false;
         }
 
@@ -188,8 +186,9 @@ impl TransactionValidator {
 
         // Signature validation:
         // - Historically, "system transactions" (empty inputs) skipped signatures.
-        // - WalletUpdate must always be signed (it's a privileged state mutation).
-        let require_signature = !is_system_transaction || matches!(transaction.transaction_type, TransactionType::WalletUpdate);
+        // - WalletUpdate and TokenMint must always be signed (privileged state mutations).
+        let require_signature = !is_system_transaction
+            || matches!(transaction.transaction_type, TransactionType::WalletUpdate | TransactionType::TokenMint);
         if require_signature {
             self.validate_signature(transaction)?;
         }
@@ -321,8 +320,9 @@ impl TransactionValidator {
 
         // Signature validation:
         // - Historically, "system transactions" (empty inputs) skipped signatures.
-        // - WalletUpdate must always be signed (it's a privileged state mutation).
-        let require_signature = !is_system_transaction || matches!(transaction.transaction_type, TransactionType::WalletUpdate);
+        // - WalletUpdate and TokenMint must always be signed (privileged state mutations).
+        let require_signature = !is_system_transaction
+            || matches!(transaction.transaction_type, TransactionType::WalletUpdate | TransactionType::TokenMint);
         if require_signature {
             self.validate_signature(transaction)?;
         }
@@ -1073,10 +1073,8 @@ impl<'a> StatefulTransactionValidator<'a> {
         tracing::debug!("[BREADCRUMB] is_token_contract_execution = {}", is_token);
 
         let mut is_system_transaction = transaction.inputs.is_empty() && !is_token;
-        if matches!(
-            transaction.transaction_type,
-            TransactionType::TokenTransfer | TransactionType::TokenMint
-        ) {
+        // TokenTransfer must pay fees even with empty inputs
+        if matches!(transaction.transaction_type, TransactionType::TokenTransfer) {
             is_system_transaction = false;
         }
         tracing::debug!("[BREADCRUMB] is_system_transaction = {}", is_system_transaction);
@@ -1224,7 +1222,9 @@ impl<'a> StatefulTransactionValidator<'a> {
         }
 
         // Signature validation (always required except for system transactions)
-        let mut skip_signature = is_system_transaction;
+        // TokenMint is system for fee purposes but MUST still be signed (except genesis)
+        let mut skip_signature = is_system_transaction
+            && transaction.transaction_type != TransactionType::TokenMint;
         if transaction.transaction_type == TransactionType::TokenMint {
             if let Some(blockchain) = self.blockchain {
                 if blockchain.height == 0 && blockchain.blocks.is_empty() && transaction.signature.signature.is_empty() {

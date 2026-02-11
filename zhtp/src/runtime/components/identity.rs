@@ -919,6 +919,55 @@ async fn bootstrap_identities_from_dht(
 async fn run_post_bootstrap_sov_backfill() -> Result<()> {
     let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
 
+    // First, ensure all wallets in the registry are registered on-chain before minting.
+    // This prevents TokenMint blocks from referencing wallets unknown to other nodes.
+    {
+        let mut bc = blockchain_arc.write().await;
+        let mut added_wallet_regs = 0usize;
+
+        // Enqueue WalletRegistration txs for any registry wallets missing on-chain.
+        let wallet_entries: Vec<_> = bc
+            .wallet_registry
+            .iter()
+            .map(|(id, data)| (id.clone(), data.clone()))
+            .collect();
+        for (wallet_id, wallet_data) in wallet_entries {
+            let is_on_chain = bc.wallet_blocks.get(&wallet_id)
+                .map(|h| *h <= bc.height)
+                .unwrap_or(false);
+            if is_on_chain {
+                continue;
+            }
+
+            let registration_tx = lib_blockchain::transaction::Transaction::new_wallet_registration(
+                wallet_data.clone(),
+                vec![],
+                lib_blockchain::integration::crypto_integration::Signature {
+                    signature: wallet_data.public_key.clone(),
+                    public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(wallet_data.public_key.clone()),
+                    algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                    timestamp: wallet_data.created_at,
+                },
+                b"WALLET_BACKFILL_V1".to_vec(),
+            );
+            if bc.add_system_transaction(registration_tx).is_ok() {
+                added_wallet_regs += 1;
+            }
+        }
+
+        let pending_wallet_regs = added_wallet_regs > 0 || bc
+            .pending_transactions
+            .iter()
+            .any(|tx| matches!(tx.transaction_type, lib_blockchain::TransactionType::WalletRegistration));
+        if pending_wallet_regs {
+            if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await {
+                warn!("🪙 Failed to mine wallet registration block before backfill: {}", e);
+            } else {
+                info!("🪙 Mined wallet registration block before SOV backfill");
+            }
+        }
+    }
+
     let entries = {
         let bc = blockchain_arc.read().await;
         bc.collect_sov_backfill_entries()

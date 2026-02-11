@@ -954,28 +954,40 @@ impl Blockchain {
             }
         }
 
-        // Backfill SOV balances in-memory for existing wallets that were registered
-        // before the in-memory credit was added. Will be persisted on next block write.
+        // Migrate legacy initial_balance values from human SOV to atomic units.
+        // Old code stored raw 5000 instead of 5000 * 10^8. Any initial_balance that is
+        // non-zero but less than SOV_ATOMIC_UNITS was in human SOV and needs scaling.
+        const SOV_ATOMIC_UNITS: u64 = 100_000_000;
+        let mut migrated_count = 0usize;
+        for wallet in blockchain.wallet_registry.values_mut() {
+            if wallet.initial_balance > 0 && wallet.initial_balance < SOV_ATOMIC_UNITS {
+                let old = wallet.initial_balance;
+                wallet.initial_balance = old.saturating_mul(SOV_ATOMIC_UNITS);
+                migrated_count += 1;
+                info!(
+                    "Migrated wallet initial_balance: {} -> {} atomic units",
+                    old, wallet.initial_balance
+                );
+            }
+        }
+        if migrated_count > 0 {
+            info!(
+                "Migrated {} wallet initial_balance values from human SOV to atomic units",
+                migrated_count
+            );
+        }
+
+        // NOTE: Do not mint SOV in-memory here. SledStore requires writes inside
+        // an active block transaction. Missing or underfunded balances are
+        // repaired via TokenMint backfill after startup.
         blockchain.ensure_sov_token_contract();
         blockchain.migrate_sov_key_balances_to_wallets();
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
             info!(
-                "Backfilling SOV balances for {} wallets (in-memory)",
+                "SOV backfill needed for {} wallets (will be minted via TokenMint after startup)",
                 backfill_entries.len()
             );
-            let sov_id = crate::contracts::utils::generate_lib_token_id();
-        for (wallet_id_bytes, amount, wallet_id) in &backfill_entries {
-            let recipient_pk = Self::wallet_key_for_sov(wallet_id_bytes);
-            if let Some(token) = blockchain.token_contracts.get_mut(&sov_id) {
-                if let Ok(()) = token.mint(&recipient_pk, *amount) {
-                    info!(
-                        "Backfill: credited {} SOV to wallet {}",
-                            amount, &wallet_id[..16.min(wallet_id.len())]
-                        );
-                    }
-                }
-            }
         }
 
         info!(
@@ -2976,6 +2988,14 @@ impl Blockchain {
 
         let mut entries: Vec<([u8; 32], u64, String)> = Vec::new();
         for (wallet_id, wallet) in &self.wallet_registry {
+            // Only backfill wallets that are already registered on-chain.
+            // This prevents minting to wallets that only exist in local state.
+            let is_on_chain = self.wallet_blocks.get(wallet_id)
+                .map(|h| *h <= self.height)
+                .unwrap_or(false);
+            if !is_on_chain {
+                continue;
+            }
             if wallet.initial_balance == 0 {
                 continue;
             }
@@ -2991,13 +3011,14 @@ impl Blockchain {
             };
 
             let recipient = Self::wallet_key_for_sov(&wallet_key);
-            let already_has_balance = token_opt
-                .map(|token| token.balance_of(&recipient) > 0)
-                .unwrap_or(false);
-            if already_has_balance {
+            let current_balance = token_opt
+                .map(|token| token.balance_of(&recipient))
+                .unwrap_or(0);
+            if current_balance >= wallet.initial_balance {
                 continue;
             }
-            entries.push((wallet_key, wallet.initial_balance, wallet_id.clone()));
+            let deficit = wallet.initial_balance - current_balance;
+            entries.push((wallet_key, deficit, wallet_id.clone()));
         }
         entries
     }
@@ -3032,40 +3053,9 @@ impl Blockchain {
         self.wallet_registry.insert(wallet_id_str.clone(), wallet_data.clone());
         self.wallet_blocks.insert(wallet_id_str.clone(), self.height + 1);
 
-        // Credit SOV balance to the token contract immediately (in-memory).
-        // Persisted when save_to_file() is called after registration completes.
-        if wallet_data.initial_balance > 0 {
-            if let Some(wallet_id_bytes) = Self::wallet_id_bytes(&wallet_id_str) {
-                let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-                self.ensure_sov_token_contract();
-                let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes);
-                if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
-                    match token.mint(&recipient_pk, wallet_data.initial_balance) {
-                        Ok(()) => {
-                            info!(
-                                "Credited {} SOV to wallet {}",
-                                wallet_data.initial_balance,
-                                &wallet_id_str[..16.min(wallet_id_str.len())]
-                            );
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to credit {} SOV to wallet {}: {}",
-                                wallet_data.initial_balance,
-                                &wallet_id_str[..16.min(wallet_id_str.len())],
-                                e
-                            );
-                        }
-                    }
-                }
-            } else {
-                warn!(
-                    "Failed to credit {} SOV: invalid wallet_id {}",
-                    wallet_data.initial_balance,
-                    &wallet_id_str[..16.min(wallet_id_str.len())]
-                );
-            }
-        }
+        // NOTE: Do not mint SOV here. Wallet registration is persisted via block processing,
+        // and SOV initial_balance is minted during process_wallet_transactions to ensure
+        // block-authoritative, durable token balances.
 
         Ok(registration_tx.hash())
     }
@@ -3142,7 +3132,42 @@ impl Blockchain {
                 if let Some(ref wallet_data) = transaction.wallet_data {
                     let wallet_id_str = hex::encode(wallet_data.wallet_id.as_bytes());
                     self.wallet_registry.insert(wallet_id_str.clone(), wallet_data.clone());
-                    self.wallet_blocks.insert(wallet_id_str, block.height());
+                    self.wallet_blocks.insert(wallet_id_str.clone(), block.height());
+
+                    // Mint initial SOV balance for new wallets (block-authoritative).
+                    // This ensures the token contract is the source of truth and persists in the store.
+                    if transaction.transaction_type == TransactionType::WalletRegistration
+                        && wallet_data.initial_balance > 0
+                    {
+                        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+                        self.ensure_sov_token_contract();
+
+                        let mut wallet_id_bytes = [0u8; 32];
+                        wallet_id_bytes.copy_from_slice(wallet_data.wallet_id.as_bytes());
+                        let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes);
+
+                        let already_has_balance = self.token_contracts.get(&sov_token_id)
+                            .map(|token| token.balance_of(&recipient_pk) > 0)
+                            .unwrap_or(false);
+
+                        if !already_has_balance {
+                            if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
+                                if let Err(e) = token.mint(&recipient_pk, wallet_data.initial_balance) {
+                                    warn!(
+                                        "Failed to mint {} SOV for wallet {}: {}",
+                                        wallet_data.initial_balance,
+                                        &wallet_id_str[..16.min(wallet_id_str.len())],
+                                        e
+                                    );
+                                } else if let Some(store) = &self.store {
+                                    let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                                    if let Err(e) = store_ref.put_token_contract(token) {
+                                        warn!("Failed to persist SOV token after wallet registration mint: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3636,10 +3661,6 @@ impl Blockchain {
 
                     if token_id == sov_token_id {
                         self.ensure_sov_token_contract();
-                        let mint_wallet_id = hex::encode(mint.to);
-                        if !self.wallet_registry.contains_key(&mint_wallet_id) {
-                            return Err(anyhow::anyhow!("TokenMint SOV recipient wallet not found"));
-                        }
                     }
 
                     let token = self.token_contracts.get_mut(&token_id)
@@ -7324,6 +7345,30 @@ impl Blockchain {
         }
 
         let elapsed = start.elapsed();
+
+        // Migrate legacy initial_balance values from human SOV to atomic units.
+        // Old code stored raw 5000 instead of 5000 * 10^8. Any initial_balance that is
+        // non-zero but less than SOV_ATOMIC_UNITS was in human SOV and needs scaling.
+        const SOV_ATOMIC_UNITS: u64 = 100_000_000;
+        let mut migrated_count = 0usize;
+        for wallet in blockchain.wallet_registry.values_mut() {
+            if wallet.initial_balance > 0 && wallet.initial_balance < SOV_ATOMIC_UNITS {
+                let old = wallet.initial_balance;
+                wallet.initial_balance = old.saturating_mul(SOV_ATOMIC_UNITS);
+                migrated_count += 1;
+                info!(
+                    "Migrated wallet initial_balance: {} -> {} atomic units",
+                    old, wallet.initial_balance
+                );
+            }
+        }
+        if migrated_count > 0 {
+            info!(
+                "Migrated {} wallet initial_balance values from human SOV to atomic units",
+                migrated_count
+            );
+        }
+
         // Backfill SOV balances for wallets registered before the in-memory credit was added.
         blockchain.ensure_sov_token_contract();
         blockchain.migrate_sov_key_balances_to_wallets();
@@ -7344,6 +7389,54 @@ impl Blockchain {
                         );
                     }
                 }
+            }
+        }
+
+        // Fix wallets that were already minted with the wrong (un-scaled) balance.
+        // If a wallet has initial_balance=X*10^8 but token balance is X (un-scaled),
+        // mint the difference to bring it up to the correct amount.
+        {
+            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+            let mut corrections = 0usize;
+            let wallet_entries: Vec<(String, [u8; 32], u64)> = blockchain
+                .wallet_registry
+                .iter()
+                .filter_map(|(wid, w)| {
+                    if w.initial_balance == 0 {
+                        return None;
+                    }
+                    let bytes = Self::wallet_id_bytes(wid)?;
+                    Some((wid.clone(), bytes, w.initial_balance))
+                })
+                .collect();
+            for (wallet_id, wallet_key, expected) in &wallet_entries {
+                let recipient_pk = Self::wallet_key_for_sov(wallet_key);
+                if let Some(token) = blockchain.token_contracts.get(&sov_token_id) {
+                    let current = token.balance_of(&recipient_pk);
+                    if current > 0 && current < *expected {
+                        let deficit = expected - current;
+                        if let Some(token_mut) =
+                            blockchain.token_contracts.get_mut(&sov_token_id)
+                        {
+                            if let Ok(()) = token_mut.mint(&recipient_pk, deficit) {
+                                corrections += 1;
+                                info!(
+                                    "Corrected wallet {} balance: {} -> {} atomic units (+{})",
+                                    &wallet_id[..16.min(wallet_id.len())],
+                                    current,
+                                    expected,
+                                    deficit
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            if corrections > 0 {
+                info!(
+                    "Corrected {} wallet balances from legacy un-scaled values",
+                    corrections
+                );
             }
         }
 

@@ -319,6 +319,9 @@ pub fn build_transfer_tx(
         Vec::new(),
     );
 
+    let fee = calculate_transfer_fee(identity, &mut tx)?;
+    tx.fee = fee;
+
     let tx_hash = tx.signing_hash();
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
@@ -369,6 +372,9 @@ pub fn build_sov_wallet_transfer_tx(
         Vec::new(),
     );
 
+    let fee = calculate_transfer_fee(identity, &mut tx)?;
+    tx.fee = fee;
+
     let tx_hash = tx.signing_hash();
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
@@ -387,6 +393,30 @@ pub fn build_sov_wallet_transfer_tx(
         .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
     Ok(hex::encode(final_tx_bytes))
+}
+
+fn calculate_transfer_fee(identity: &Identity, tx: &mut Transaction) -> Result<u64, String> {
+    // Sign once to estimate size with real signature length.
+    let tx_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign for fee estimation: {}", e))?;
+
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: create_public_key(identity.public_key.clone()),
+        algorithm: SignatureAlgorithm::Dilithium2,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize tx for fee estimation: {}", e))?;
+
+    // Server formula: fee = ceil(tx_size_bytes / 8.4) = ceil(size * 10 / 84)
+    let min_fee = ((tx_bytes.len() as u64 * 10 + 83) / 84);
+    Ok(min_fee)
 }
 
 /// Build a signed token mint transaction
