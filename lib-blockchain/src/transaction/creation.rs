@@ -415,6 +415,11 @@ pub mod utils {
     /// with the witness cap, this ensures post-quantum transactions remain affordable
     /// without creating a spam vector through zero-cost large witnesses.
     pub fn calculate_minimum_fee(transaction_size: usize) -> u64 {
+        calculate_minimum_fee_with_config(transaction_size, &crate::transaction::TxFeeConfig::default())
+    }
+
+    /// Calculate the minimum fee for a transaction using governance-configurable parameters.
+    pub fn calculate_minimum_fee_with_config(transaction_size: usize, config: &crate::transaction::TxFeeConfig) -> u64 {
         // Post-quantum witness overhead (signature + pubkey)
         // Dilithium5: 4627 byte sig + 2592 byte pk = 7219 bytes total
         // Dilithium2: 2420 byte sig + 1312 byte pk = 3732 bytes total
@@ -436,7 +441,7 @@ pub mod utils {
         // - Empirically chosen as a conservative trade-off between fee fairness
         //   (not linearly penalizing PQ size) and economic integrity (charging something
         //   for large witnesses to prevent abuse).
-        const WITNESS_CAP: usize = 500;
+        let witness_cap = config.witness_cap as usize;
         
         // Base transaction fee - reduced from 1000 to 100 SOV.
         //
@@ -445,9 +450,8 @@ pub mod utils {
         // - A 10x reduction still provides spam protection via computational + bandwidth costs.
         // - Combined with size-based fees, prevents both tiny spam and large payload abuse.
         // - Aligns with network goal of accessible, usable cryptocurrency vs. high-fee networks.
-        const BASE_FEE: u64 = 100;
-        
-        const BYTES_PER_SOV: u64 = 100;     // 100 bytes per 1 SOV
+        let base_fee: u64 = config.base_fee;
+        let bytes_per_sov: u64 = config.bytes_per_sov;
 
         // Estimate payload vs witness
         //
@@ -477,10 +481,10 @@ pub mod utils {
         // - 500 byte classical tx: 0 payload + 500 witness (capped) = 500 bytes → 105 SOV
         // - 3732 byte D2 tx: 0 payload + 500 witness (capped) = 500 bytes → 105 SOV  
         // - 10000 byte D5 tx: 2781 payload + 500 witness (capped) = 3281 bytes → 132 SOV
-        let effective_size = payload_bytes + witness_bytes.min(WITNESS_CAP);
-        let size_fee = (effective_size as u64 / BYTES_PER_SOV).max(1);
+        let effective_size = payload_bytes + witness_bytes.min(witness_cap);
+        let size_fee = (effective_size as u64 / bytes_per_sov).max(1);
 
-        let total_fee = BASE_FEE + size_fee;
+        let total_fee = base_fee + size_fee;
 
         debug!("Fee calc: tx={}B, payload={}B, witness={}B, effective={}B, fee={} SOV",
                transaction_size, payload_bytes, witness_bytes, effective_size, total_fee);

@@ -8,6 +8,7 @@ pub mod creation;
 pub mod validation;
 pub mod hashing;
 pub mod signing;
+pub mod fee;
 
 // Explicit re-exports from core module
 pub use core::{
@@ -40,6 +41,9 @@ pub use creation::{
     create_contract_transaction,
     create_token_transaction,
 };
+
+// Explicit re-exports from fee module
+pub use fee::TxFeeConfig;
 
 // Explicit re-exports from validation module
 pub use validation::{

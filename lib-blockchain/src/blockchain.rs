@@ -50,6 +50,12 @@ pub struct Blockchain {
     /// Difficulty adjustment configuration (governance-controlled)
     #[serde(default)]
     pub difficulty_config: DifficultyConfig,
+    /// Transaction fee configuration (governance-controlled)
+    #[serde(default)]
+    pub tx_fee_config: crate::transaction::TxFeeConfig,
+    /// Last block height when tx fee config was updated
+    #[serde(default)]
+    pub tx_fee_config_updated_at_height: u64,
     /// Total work done (cumulative difficulty)
     pub total_work: u128,
     /// UTXO set for transaction validation
@@ -362,6 +368,8 @@ impl BlockchainV1 {
             height: self.height,
             difficulty: self.difficulty,
             difficulty_config: DifficultyConfig::default(),
+            tx_fee_config: crate::transaction::TxFeeConfig::default(),
+            tx_fee_config_updated_at_height: 0,
             total_work: self.total_work,
             utxo_set: self.utxo_set,
             nullifier_set: self.nullifier_set,
@@ -431,6 +439,10 @@ struct BlockchainStorageV3 {
     pub difficulty: Difficulty,
     #[serde(default)]
     pub difficulty_config: DifficultyConfig,
+    #[serde(default)]
+    pub tx_fee_config: crate::transaction::TxFeeConfig,
+    #[serde(default)]
+    pub tx_fee_config_updated_at_height: u64,
     pub total_work: u128,
 
     // === UTXO and nullifier sets (fields 6-7) ===
@@ -538,6 +550,8 @@ impl BlockchainStorageV3 {
             height: bc.height,
             difficulty: bc.difficulty.clone(),
             difficulty_config: bc.difficulty_config.clone(),
+            tx_fee_config: bc.tx_fee_config.clone(),
+            tx_fee_config_updated_at_height: bc.tx_fee_config_updated_at_height,
             total_work: bc.total_work,
 
             // UTXO and nullifiers
@@ -615,6 +629,8 @@ impl BlockchainStorageV3 {
             height: self.height,
             difficulty: self.difficulty,
             difficulty_config: self.difficulty_config,
+            tx_fee_config: self.tx_fee_config,
+            tx_fee_config_updated_at_height: self.tx_fee_config_updated_at_height,
             total_work: self.total_work,
 
             // UTXO and nullifiers
@@ -718,6 +734,8 @@ impl Blockchain {
             height: 0,
             difficulty: Difficulty::from_bits(crate::INITIAL_DIFFICULTY),
             difficulty_config: DifficultyConfig::default(),
+            tx_fee_config: crate::transaction::TxFeeConfig::default(),
+            tx_fee_config_updated_at_height: 0,
             total_work: 0,
             utxo_set: HashMap::new(),
             nullifier_set: HashSet::new(),
@@ -988,6 +1006,10 @@ impl Blockchain {
                 "SOV backfill needed for {} wallets (will be minted via TokenMint after startup)",
                 backfill_entries.len()
             );
+        }
+
+        if let Err(e) = blockchain.process_approved_governance_proposals() {
+            warn!("Failed to apply governance parameter updates during load_from_store: {}", e);
         }
 
         info!(
@@ -2133,6 +2155,16 @@ impl Blockchain {
     /// ```
     pub fn get_difficulty_config(&self) -> &DifficultyConfig {
         &self.difficulty_config
+    }
+
+    /// Get the current transaction fee configuration
+    pub fn get_tx_fee_config(&self) -> &crate::transaction::TxFeeConfig {
+        &self.tx_fee_config
+    }
+
+    /// Update the transaction fee configuration (governance-controlled)
+    pub fn set_tx_fee_config(&mut self, config: crate::transaction::TxFeeConfig) {
+        self.tx_fee_config = config;
     }
 
     /// Update the difficulty configuration (for governance updates).
@@ -4810,9 +4842,12 @@ impl Blockchain {
             )),
         };
 
-        // 6. Extract difficulty-specific parameters from the update vector
+        // 6. Extract governance parameters from the update vector
         let mut new_target_timespan: Option<u64> = None;
         let mut new_adjustment_interval: Option<u64> = None;
+        let mut new_base_fee: Option<u64> = None;
+        let mut new_bytes_per_sov: Option<u64> = None;
+        let mut new_witness_cap: Option<u32> = None;
 
         for param in &update.updates {
             match param {
@@ -4822,16 +4857,30 @@ impl Blockchain {
                 lib_consensus::dao::dao_types::GovernanceParameterValue::BlockchainAdjustmentInterval(v) => {
                     new_adjustment_interval = Some(*v);
                 }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::TxFeeBase(v) => {
+                    new_base_fee = Some(*v);
+                }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::TxFeeBytesPerSov(v) => {
+                    new_bytes_per_sov = Some(*v);
+                }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::TxFeeWitnessCap(v) => {
+                    new_witness_cap = Some(*v);
+                }
                 _ => {
                     // Other parameters are handled elsewhere
                 }
             }
         }
 
-        // 7. Validate that at least one difficulty parameter was provided
-        if new_target_timespan.is_none() && new_adjustment_interval.is_none() {
+        // 7. Validate that at least one applicable parameter was provided
+        if new_target_timespan.is_none()
+            && new_adjustment_interval.is_none()
+            && new_base_fee.is_none()
+            && new_bytes_per_sov.is_none()
+            && new_witness_cap.is_none()
+        {
             return Err(anyhow::anyhow!(
-                "ParameterValidationError: No difficulty parameters found in governance update"
+                "ParameterValidationError: No applicable parameters found in governance update"
             ));
         }
 
@@ -4847,6 +4896,27 @@ impl Blockchain {
             if ai == 0 {
                 return Err(anyhow::anyhow!(
                     "ParameterValidationError: adjustment_interval cannot be zero"
+                ));
+            }
+        }
+        if let Some(base_fee) = new_base_fee {
+            if base_fee == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: base_fee cannot be zero"
+                ));
+            }
+        }
+        if let Some(bytes_per_sov) = new_bytes_per_sov {
+            if bytes_per_sov == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: bytes_per_sov cannot be zero"
+                ));
+            }
+        }
+        if let Some(witness_cap) = new_witness_cap {
+            if witness_cap == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: witness_cap cannot be zero"
                 ));
             }
         }
@@ -4868,6 +4938,24 @@ impl Blockchain {
                 self.difficulty_config.adjustment_interval, ai
             );
         }
+        if let Some(base_fee) = new_base_fee {
+            info!(
+                "   tx_base_fee: {} → {}",
+                self.tx_fee_config.base_fee, base_fee
+            );
+        }
+        if let Some(bytes_per_sov) = new_bytes_per_sov {
+            info!(
+                "   tx_bytes_per_sov: {} → {}",
+                self.tx_fee_config.bytes_per_sov, bytes_per_sov
+            );
+        }
+        if let Some(witness_cap) = new_witness_cap {
+            info!(
+                "   tx_witness_cap: {} → {}",
+                self.tx_fee_config.witness_cap, witness_cap
+            );
+        }
 
         // 10. Apply the update
         if let Some(ts) = new_target_timespan {
@@ -4875,6 +4963,18 @@ impl Blockchain {
         }
         if let Some(ai) = new_adjustment_interval {
             self.difficulty_config.adjustment_interval = ai;
+        }
+        if let Some(base_fee) = new_base_fee {
+            self.tx_fee_config.base_fee = base_fee;
+            self.tx_fee_config_updated_at_height = self.height;
+        }
+        if let Some(bytes_per_sov) = new_bytes_per_sov {
+            self.tx_fee_config.bytes_per_sov = bytes_per_sov;
+            self.tx_fee_config_updated_at_height = self.height;
+        }
+        if let Some(witness_cap) = new_witness_cap {
+            self.tx_fee_config.witness_cap = witness_cap;
+            self.tx_fee_config_updated_at_height = self.height;
         }
         self.difficulty_config.last_updated_at_height = self.height;
 
@@ -4911,6 +5011,12 @@ impl Blockchain {
         let difficulty_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
             .iter()
             .filter(|p| p.proposal_type == "difficulty_parameter_update")
+            .map(|p| (p.proposal_id.clone(), p.quorum_required))
+            .collect();
+
+        let fee_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
+            .iter()
+            .filter(|p| p.proposal_type == "fee_structure" || p.proposal_type == "FeeStructure")
             .map(|p| (p.proposal_id.clone(), p.quorum_required))
             .collect();
 
@@ -4953,6 +5059,40 @@ impl Blockchain {
                         "Error checking status of proposal {:?}: {}",
                         proposal_id, e
                     );
+                }
+            }
+        }
+
+        for (proposal_id, quorum_required) in fee_proposals {
+            if self.executed_dao_proposals.contains(&proposal_id) {
+                continue;
+            }
+
+            match self.has_proposal_passed(&proposal_id, quorum_required as u32) {
+                Ok(true) => {
+                    match self.apply_difficulty_parameter_update(proposal_id.clone()) {
+                        Ok(()) => {
+                            info!(
+                                "✅ Successfully executed fee parameter update proposal {:?}",
+                                proposal_id
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to execute fee parameter update proposal {:?}: {}",
+                                proposal_id, e
+                            );
+                        }
+                    }
+                }
+                Ok(false) => {
+                    debug!(
+                        "Fee proposal {:?} has not passed voting yet",
+                        proposal_id
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to check fee proposal {:?}: {}", proposal_id, e);
                 }
             }
         }
@@ -7438,6 +7578,10 @@ impl Blockchain {
                     corrections
                 );
             }
+        }
+
+        if let Err(e) = blockchain.process_approved_governance_proposals() {
+            warn!("Failed to apply governance parameter updates during load_from_file: {}", e);
         }
 
         info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, tokens: {}, UTXOs: {}, {:?})",

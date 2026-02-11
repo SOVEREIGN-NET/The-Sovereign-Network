@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 use crate::identity::Identity;
 use crate::crypto;
+use hex;
 
 // Use the canonical types from lib-blockchain and lib-crypto to ensure bincode compatibility
 // CRITICAL: These MUST be imported, not redefined locally, for bincode serialization to match
@@ -17,6 +18,15 @@ use lib_blockchain::transaction::TokenTransferData;
 use lib_blockchain::types::{ContractType, ContractCall, CallPermissions};
 use lib_crypto::types::SignatureAlgorithm;
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+const DEFAULT_BASE_FEE: u64 = 100;
+const DEFAULT_BYTES_PER_SOV: u64 = 100;
+const DEFAULT_WITNESS_CAP: u32 = 500;
+
+static TX_FEE_BASE_FEE: AtomicU64 = AtomicU64::new(DEFAULT_BASE_FEE);
+static TX_FEE_BYTES_PER_SOV: AtomicU64 = AtomicU64::new(DEFAULT_BYTES_PER_SOV);
+static TX_FEE_WITNESS_CAP: AtomicU32 = AtomicU32::new(DEFAULT_WITNESS_CAP);
 
 // ============================================================================
 // Helper functions
@@ -32,6 +42,63 @@ pub fn create_public_key(dilithium_pk: Vec<u8>) -> PublicKey {
         kyber_pk: vec![],
         key_id: key_id_arr,
     }
+}
+
+/// Override fee parameters at runtime (set via governance-fed config).
+pub fn set_fee_config(base_fee: u64, bytes_per_sov: u64, witness_cap: u32) {
+    if base_fee > 0 {
+        TX_FEE_BASE_FEE.store(base_fee, Ordering::SeqCst);
+    }
+    if bytes_per_sov > 0 {
+        TX_FEE_BYTES_PER_SOV.store(bytes_per_sov, Ordering::SeqCst);
+    }
+    if witness_cap > 0 {
+        TX_FEE_WITNESS_CAP.store(witness_cap, Ordering::SeqCst);
+    }
+}
+
+/// Parse fee config JSON from /api/v1/blockchain/fee-config and apply locally.
+pub fn set_fee_config_from_json(json: &str) -> Result<(), String> {
+    #[derive(Deserialize)]
+    struct FeeConfigPayload {
+        base_fee: u64,
+        bytes_per_sov: u64,
+        witness_cap: u32,
+        #[allow(dead_code)]
+        updated_at_height: Option<u64>,
+        #[allow(dead_code)]
+        chain_height: Option<u64>,
+    }
+
+    let payload: FeeConfigPayload =
+        serde_json::from_str(json).map_err(|e| format!("Invalid fee config JSON: {}", e))?;
+    set_fee_config(payload.base_fee, payload.bytes_per_sov, payload.witness_cap);
+    Ok(())
+}
+
+pub struct FeeConfigMeta {
+    pub updated_at_height: u64,
+    pub chain_height: u64,
+}
+
+/// Parse fee config JSON and return metadata.
+pub fn set_fee_config_from_json_with_meta(json: &str) -> Result<FeeConfigMeta, String> {
+    #[derive(Deserialize)]
+    struct FeeConfigPayload {
+        base_fee: u64,
+        bytes_per_sov: u64,
+        witness_cap: u32,
+        updated_at_height: Option<u64>,
+        chain_height: Option<u64>,
+    }
+
+    let payload: FeeConfigPayload =
+        serde_json::from_str(json).map_err(|e| format!("Invalid fee config JSON: {}", e))?;
+    set_fee_config(payload.base_fee, payload.bytes_per_sov, payload.witness_cap);
+    Ok(FeeConfigMeta {
+        updated_at_height: payload.updated_at_height.unwrap_or(0),
+        chain_height: payload.chain_height.unwrap_or(0),
+    })
 }
 
 // ============================================================================
@@ -414,9 +481,61 @@ fn calculate_transfer_fee(identity: &Identity, tx: &mut Transaction) -> Result<u
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| format!("Failed to serialize tx for fee estimation: {}", e))?;
 
-    // Server formula: fee = ceil(tx_size_bytes / 8.4) = ceil(size * 10 / 84)
-    let min_fee = ((tx_bytes.len() as u64 * 10 + 83) / 84);
+    let base_fee = TX_FEE_BASE_FEE.load(Ordering::SeqCst);
+    let bytes_per_sov = TX_FEE_BYTES_PER_SOV.load(Ordering::SeqCst);
+    let witness_cap = TX_FEE_WITNESS_CAP.load(Ordering::SeqCst);
+
+    let min_fee = calculate_min_fee_from_size(tx_bytes.len(), base_fee, bytes_per_sov, witness_cap);
     Ok(min_fee)
+}
+
+fn calculate_min_fee_from_size(
+    tx_size: usize,
+    base_fee: u64,
+    bytes_per_sov: u64,
+    witness_cap: u32,
+) -> u64 {
+    const PQ_WITNESS_SIZE: usize = 7219;
+
+    let payload_bytes = tx_size.saturating_sub(PQ_WITNESS_SIZE);
+    let witness_bytes = tx_size.saturating_sub(payload_bytes);
+    let effective_size = payload_bytes + witness_bytes.min(witness_cap as usize);
+
+    let size_fee = (effective_size as u64 / bytes_per_sov).max(1);
+    base_fee + size_fee
+}
+
+/// Calculate the minimum fee for a hex-encoded bincode transaction.
+/// If the signature/public key is missing, a Dilithium2 witness is assumed.
+pub fn calculate_min_fee_for_tx_hex(tx_hex: &str) -> Result<u64, String> {
+    let raw = hex::decode(tx_hex).map_err(|e| format!("Invalid hex: {}", e))?;
+    let mut tx: Transaction = bincode::deserialize(&raw)
+        .map_err(|e| format!("Failed to deserialize tx: {}", e))?;
+
+    let sig_len = tx.signature.signature.len();
+    let pk_len = tx.signature.public_key.dilithium_pk.len();
+    if sig_len == 0 || pk_len == 0 {
+        let (expected_sig, expected_pk) = match tx.signature.algorithm {
+            SignatureAlgorithm::Dilithium5 => (4627usize, 2592usize),
+            _ => (2420usize, 1312usize), // Default to Dilithium2
+        };
+        tx.signature.signature = vec![0u8; expected_sig];
+        tx.signature.public_key.dilithium_pk = vec![0u8; expected_pk];
+    }
+
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize tx: {}", e))?;
+
+    let base_fee = TX_FEE_BASE_FEE.load(Ordering::SeqCst);
+    let bytes_per_sov = TX_FEE_BYTES_PER_SOV.load(Ordering::SeqCst);
+    let witness_cap = TX_FEE_WITNESS_CAP.load(Ordering::SeqCst);
+
+    Ok(calculate_min_fee_from_size(
+        tx_bytes.len(),
+        base_fee,
+        bytes_per_sov,
+        witness_cap,
+    ))
 }
 
 /// Build a signed token mint transaction
