@@ -14,7 +14,7 @@ use lib_protocols::zhtp::routing::RouterConfig;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 
 // Import our handlers and middleware
-use crate::api::handlers::NetworkHandler;
+use crate::api::handlers::{NetworkHandler, PouwHandler};
 // Removed unused IdentityHandler, BlockchainHandler, StorageHandler, ProtocolHandler
 use crate::api::middleware::MiddlewareStack;
 
@@ -190,6 +190,74 @@ impl ZhtpServer {
             middleware: vec![],
         };
         router.add_route(remove_peer_route)?;
+        
+        // ====================================================================
+        // Register PoUW (Proof-of-Useful-Work) Handler Routes
+        // ====================================================================
+        
+        // Initialize ChallengeGenerator with node's signing keys
+        // NOTE: In production, these keys should come from the node's keystore
+        let node_private_key = [0u8; 32]; // Placeholder - replace with actual key
+        let node_id = [0u8; 32]; // Placeholder - replace with actual key
+        let challenge_generator = Arc::new(crate::pouw::ChallengeGenerator::new(
+            node_private_key,
+            node_id,
+        ));
+        let pouw_handler = Arc::new(PouwHandler::new(challenge_generator.clone()));
+        
+        // GET /pouw/challenge - Generate challenge tokens (wildcard to catch query params)
+        let pouw_challenge_route = Route {
+            pattern: RoutePattern::Exact("/pouw/challenge".to_string()),
+            methods: vec![ZhtpMethod::Get],
+            handler: pouw_handler.clone(),
+            priority: 100,
+            economic_requirements: EconomicRequirements::default(),
+            access_requirements: AccessRequirements::default(),
+            metadata: RouteMetadata {
+                name: "get_pouw_challenge".to_string(),
+                description: "Generate a new PoUW challenge token".to_string(),
+                version: "1.0".to_string(),
+                tags: vec!["pouw".to_string(), "challenge".to_string()],
+                rate_limit: None,
+                cache_config: None,
+                monitoring: MonitoringConfig {
+                    enable_logging: true,
+                    enable_metrics: true,
+                    enable_tracing: false,
+                    custom_metrics: vec![],
+                },
+            },
+            middleware: vec![],
+        };
+        router.add_route(pouw_challenge_route)?;
+        
+        // GET /pouw/health - Health check endpoint
+        let pouw_health_route = Route {
+            pattern: RoutePattern::Exact("/pouw/health".to_string()),
+            methods: vec![ZhtpMethod::Get],
+            handler: pouw_handler.clone(),
+            priority: 100,
+            economic_requirements: EconomicRequirements::default(),
+            access_requirements: AccessRequirements::default(),
+            metadata: RouteMetadata {
+                name: "get_pouw_health".to_string(),
+                description: "Get PoUW service health status".to_string(),
+                version: "1.0".to_string(),
+                tags: vec!["pouw".to_string(), "health".to_string()],
+                rate_limit: None,
+                cache_config: None,
+                monitoring: MonitoringConfig {
+                    enable_logging: true,
+                    enable_metrics: true,
+                    enable_tracing: false,
+                    custom_metrics: vec![],
+                },
+            },
+            middleware: vec![],
+        };
+        router.add_route(pouw_health_route)?;
+        
+        info!("Router configured with PoUW handler routes");
         
         info!("Router configured with network handler routes");
         
