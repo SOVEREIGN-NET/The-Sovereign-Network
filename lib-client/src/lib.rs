@@ -888,6 +888,69 @@ pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
     }
 }
 
+// ============================================================================
+// Android JNI Export
+// ============================================================================
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeBuildSovWalletTransfer(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    handle: jni::sys::jlong,
+    from_wallet_id: jni::objects::JByteArray,
+    to_wallet_id: jni::objects::JByteArray,
+    amount: jni::sys::jlong,
+    chain_id: jni::sys::jint,
+) -> jni::sys::jstring {
+    if handle == 0 {
+        return std::ptr::null_mut();
+    }
+
+    let from_vec = match env.convert_byte_array(from_wallet_id) {
+        Ok(v) => v,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let to_vec = match env.convert_byte_array(to_wallet_id) {
+        Ok(v) => v,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    if from_vec.len() != 32 || to_vec.len() != 32 {
+        return std::ptr::null_mut();
+    }
+
+    let hex_ptr = zhtp_client_build_sov_wallet_transfer(
+        handle as *const IdentityHandle,
+        from_vec.as_ptr(),
+        to_vec.as_ptr(),
+        amount as u64,
+        chain_id as u8,
+    );
+    if hex_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let c_str = unsafe { std::ffi::CStr::from_ptr(hex_ptr) };
+    let hex_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            unsafe { zhtp_client_string_free(hex_ptr) };
+            return std::ptr::null_mut();
+        }
+    };
+
+    let jstr = match env.new_string(hex_str) {
+        Ok(s) => s,
+        Err(_) => {
+            unsafe { zhtp_client_string_free(hex_ptr) };
+            return std::ptr::null_mut();
+        }
+    };
+
+    unsafe { zhtp_client_string_free(hex_ptr) };
+    jstr.into_raw()
+}
+
 /// Build a signed token mint transaction.
 /// Returns hex-encoded transaction ready to POST to /api/v1/token/mint
 /// Caller must free with `zhtp_client_string_free`.

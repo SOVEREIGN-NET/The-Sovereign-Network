@@ -2807,6 +2807,7 @@ dependencies = [
  "getrandom 0.2.17",
  "hex",
  "hkdf",
+ "jni",
  "js-sys",
  "lib-blockchain",
  "lib-crypto",
