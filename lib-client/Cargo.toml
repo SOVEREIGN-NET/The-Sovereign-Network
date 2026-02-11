@@ -56,6 +56,10 @@ pqcrypto-kyber = "0.8"
 pqcrypto-traits = "0.3"
 crystals-dilithium = "1.0"  # For deterministic keypair generation from seed
 
+# Android JNI bindings
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
 # WASM: Pure Rust PQC implementations
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 crystals-dilithium = "1.0"
