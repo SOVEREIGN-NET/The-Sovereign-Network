@@ -205,6 +205,10 @@ pub struct QuicHandler {
     /// Mesh message handler for blockchain sync and peer messages
     mesh_handler: Option<Arc<RwLock<MeshMessageHandler>>>,
 
+    /// Mesh router for peer connection tracking and routing (Issue #846)
+    /// Registered via set_mesh_router() during server initialization
+    mesh_router: Option<Arc<super::mesh::MeshRouter>>,
+
     /// Handshake rate limiting (IP -> (count, window_start))
     handshake_rate_limits: Arc<RwLock<HashMap<SocketAddr, (usize, Instant)>>>,
 
@@ -223,6 +227,7 @@ impl QuicHandler {
             zhtp_router,
             quic_protocol,
             mesh_handler: None,
+            mesh_router: None,
             handshake_rate_limits: Arc::new(RwLock::new(HashMap::new())),
             identity_manager,
         }
@@ -267,6 +272,14 @@ impl QuicHandler {
             let mut guard = handler_clone.write().await;
             crate::integration::wire_message_handler(&mut guard).await;
         });
+    }
+
+    /// Set the mesh router for peer connection tracking (Issue #846)
+    /// Called during server initialization to register the mesh router.
+    /// After UHP handshake, peers are registered here via register_peer_in_router().
+    pub fn set_mesh_router(&mut self, router: Arc<super::mesh::MeshRouter>) {
+        self.mesh_router = Some(router);
+        info!("MeshRouter registered with QuicHandler");
     }
 
     /// Accept and handle incoming QUIC connections from endpoint
@@ -915,10 +928,114 @@ impl QuicHandler {
             "Inbound mesh peer registered in canonical store"
         );
 
+        // Issue #846: Register peer in MeshRouter for visibility to DHT and routing
+        // Create PeerEntry from handshake result and register in mesh_router.connections
+        if let Some(router) = &self.mesh_router {
+            self.register_peer_in_router(
+                router.clone(),
+                handshake_result.verified_peer.clone(),
+                peer_addr,
+                now_secs,
+            ).await;
+        } else {
+            warn!("MeshRouter not registered - peer {} not visible to routing layer", peer_addr);
+        }
+
         // Auto-register peer identity for wallet/blockchain
         self.auto_register_peer_identity(&handshake_result.verified_peer.identity).await;
 
         Ok(())
+    }
+
+    /// Register peer in MeshRouter for mesh routing visibility (Issue #846)
+    /// 
+    /// Called after UHP handshake to register the peer in the mesh router's
+    /// peer registry. This makes the peer visible to:
+    /// - DHT routing table (for peer discovery)
+    /// - Mesh message routing (for block sync and peer messages)
+    /// - Network topology visualization
+    async fn register_peer_in_router(
+        &self,
+        router: Arc<super::mesh::MeshRouter>,
+        verified_peer: lib_network::protocols::quic_handshake::VerifiedPeer,
+        peer_addr: SocketAddr,
+        timestamp: u64,
+    ) {
+        use lib_network::identity::UnifiedPeerId;
+        use lib_network::peer_registry::PeerEntry;
+        use lib_network::types::{NetworkProtocol, node_address::PeerEndpoint, ConnectionMetrics};
+
+        // Create UnifiedPeerId from verified peer identity
+        let unified_peer_id = match UnifiedPeerId::from_zhtp_identity(&verified_peer.identity) {
+            Ok(id) => id,
+            Err(e) => {
+                warn!(
+                    did = %verified_peer.identity.did,
+                    error = %e,
+                    "Failed to create UnifiedPeerId for peer {} - skipping router registration",
+                    peer_addr
+                );
+                return;
+            }
+        };
+
+        // Create PeerEntry with connection metadata
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let peer_entry = PeerEntry {
+            peer_id: unified_peer_id,
+            endpoints: vec![PeerEndpoint {
+                address: peer_addr.to_string(),
+                protocol: NetworkProtocol::Quic,
+                verified: true,
+            }],
+            active_protocols: vec![NetworkProtocol::Quic],
+            connection_metrics: ConnectionMetrics {
+                latency_ms: 0,
+                packet_loss_percent: 0.0,
+                bandwidth_mbps: 0.0,
+                last_updated: now,
+            },
+            authenticated: true,
+            quantum_secure: true,
+            next_hop: None,
+            hop_count: 0,
+            route_quality: 1.0,
+            capabilities: lib_network::types::NodeCapabilities::default(),
+            location: None,
+            reliability_score: 1.0,
+            dht_info: None,
+            discovery_method: lib_network::peer_registry::DiscoveryMethod::Handshake,
+            first_seen: now,
+            last_seen: now,
+            tier: lib_network::peer_registry::PeerTier::Trusted,
+            trust_score: 0.8,
+            data_transferred: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            tokens_earned: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            traffic_routed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        };
+
+        // Register peer in mesh router's peer registry (Issue #846)
+        let mut registry = router.connections.write().await;
+        registry.upsert(peer_entry.clone()).await.map_err(|e| {
+            warn!(
+                did = %verified_peer.identity.did,
+                error = %e,
+                "Failed to register peer in MeshRouter: {}",
+                e
+            );
+            e
+        }).ok();
+
+        info!(
+            did = %verified_peer.identity.did,
+            peer_addr = %peer_addr,
+            "Peer registered in MeshRouter for routing visibility"
+        );
+    }
     }
 
     /// Handle public read-only connection (mobile apps, browsers reading public content)
