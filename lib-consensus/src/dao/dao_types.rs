@@ -218,6 +218,12 @@ pub enum GovernanceParameterValue {
     BlockchainAdjustmentInterval(u64),
     /// Target time for difficulty adjustment interval (seconds)
     BlockchainTargetTimespan(u64),
+    /// Base fee for transaction fee calculation (atomic units)
+    TxFeeBase(u64),
+    /// Bytes per 1 SOV fee unit (slope)
+    TxFeeBytesPerSov(u64),
+    /// Witness cap in bytes for fee calculation
+    TxFeeWitnessCap(u32),
 }
 
 /// Types of DAO proposals

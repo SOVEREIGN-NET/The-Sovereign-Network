@@ -68,6 +68,7 @@ pub type ValidationResult = Result<(), ValidationError>;
 pub struct TransactionValidator {
     // Note: In implementation, this would contain references to
     // blockchain state, UTXO set, nullifier set, etc.
+    fee_config: crate::transaction::TxFeeConfig,
 }
 
 /// Transaction validator with blockchain state access for identity verification
@@ -79,7 +80,14 @@ pub struct StatefulTransactionValidator<'a> {
 impl TransactionValidator {
     /// Create a new transaction validator
     pub fn new() -> Self {
-        Self {}
+        Self {
+            fee_config: crate::transaction::TxFeeConfig::default(),
+        }
+    }
+
+    /// Create a transaction validator with explicit fee configuration
+    pub fn with_fee_config(fee_config: crate::transaction::TxFeeConfig) -> Self {
+        Self { fee_config }
     }
 
     /// Validate a transaction completely
@@ -746,7 +754,10 @@ impl TransactionValidator {
         }
 
         // Regular transaction fee validation
-        let min_fee = calculate_minimum_fee(transaction.size());
+        let min_fee = crate::transaction::creation::utils::calculate_minimum_fee_with_config(
+            transaction.size(),
+            &self.fee_config,
+        );
         tracing::warn!(
             "[BREADCRUMB] validate_economics_with_system_check min_fee={}, fee={}",
             min_fee,
@@ -1080,7 +1091,12 @@ impl<'a> StatefulTransactionValidator<'a> {
         tracing::debug!("[BREADCRUMB] is_system_transaction = {}", is_system_transaction);
 
         // Create a stateless validator for basic checks
-        let stateless_validator = TransactionValidator::new();
+        let stateless_validator = {
+            let fee_config = self.blockchain
+                .map(|bc| bc.tx_fee_config.clone())
+                .unwrap_or_default();
+            TransactionValidator::with_fee_config(fee_config)
+        };
 
         // Basic structure validation
         tracing::debug!("[BREADCRUMB] validate_basic_structure CALL");

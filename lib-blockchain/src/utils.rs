@@ -91,9 +91,7 @@ pub mod fees {
     
     /// Calculate minimum fee for transaction
     pub fn calculate_minimum_fee(transaction: &Transaction) -> u64 {
-        let base_fee = 1000u64; // Base fee
-        let size_fee = size::transaction_size(transaction) as u64; // 1 unit per byte
-        base_fee + size_fee
+        crate::transaction::creation::utils::calculate_minimum_fee(transaction.size())
     }
     
     /// Calculate fee rate (fee per byte)

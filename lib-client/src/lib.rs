@@ -888,6 +888,79 @@ pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
     }
 }
 
+/// Override fee parameters used by client-side fee calculation.
+/// This should be called after fetching the fee config from the node.
+#[no_mangle]
+pub extern "C" fn zhtp_client_set_fee_config(
+    base_fee: u64,
+    bytes_per_sov: u64,
+    witness_cap: u32,
+) {
+    token_tx::set_fee_config(base_fee, bytes_per_sov, witness_cap);
+}
+
+/// Set fee config from JSON (response of /api/v1/blockchain/fee-config).
+/// Returns 1 on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn zhtp_client_set_fee_config_json(json: *const std::ffi::c_char) -> i32 {
+    if json.is_null() {
+        return 0;
+    }
+    let c_str = unsafe { std::ffi::CStr::from_ptr(json) };
+    match c_str.to_str() {
+        Ok(s) => token_tx::set_fee_config_from_json(s).map(|_| 1).unwrap_or(0),
+        Err(_) => 0,
+    }
+}
+
+/// Set fee config from JSON and return updated heights via out params.
+/// Returns 1 on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn zhtp_client_set_fee_config_json_ex(
+    json: *const std::ffi::c_char,
+    out_updated_at_height: *mut u64,
+    out_chain_height: *mut u64,
+) -> i32 {
+    if json.is_null() {
+        return 0;
+    }
+    let c_str = unsafe { std::ffi::CStr::from_ptr(json) };
+    let res = match c_str.to_str() {
+        Ok(s) => token_tx::set_fee_config_from_json_with_meta(s),
+        Err(_) => return 0,
+    };
+    match res {
+        Ok(meta) => {
+            unsafe {
+                if !out_updated_at_height.is_null() {
+                    *out_updated_at_height = meta.updated_at_height;
+                }
+                if !out_chain_height.is_null() {
+                    *out_chain_height = meta.chain_height;
+                }
+            }
+            1
+        }
+        Err(_) => 0,
+    }
+}
+
+/// Quote minimum fee for a hex-encoded bincode transaction using cached fee config.
+/// Returns 0 on failure.
+#[no_mangle]
+pub extern "C" fn zhtp_client_quote_fee_for_tx_hex(
+    tx_hex: *const std::ffi::c_char,
+) -> u64 {
+    if tx_hex.is_null() {
+        return 0;
+    }
+    let c_str = unsafe { std::ffi::CStr::from_ptr(tx_hex) };
+    match c_str.to_str() {
+        Ok(s) => token_tx::calculate_min_fee_for_tx_hex(s).unwrap_or(0),
+        Err(_) => 0,
+    }
+}
+
 // ============================================================================
 // Android JNI Export
 // ============================================================================
@@ -949,6 +1022,80 @@ pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeBuildSovWa
 
     unsafe { zhtp_client_string_free(hex_ptr) };
     jstr.into_raw()
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeSetFeeConfig(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    base_fee: jni::sys::jlong,
+    bytes_per_sov: jni::sys::jlong,
+    witness_cap: jni::sys::jint,
+) {
+    zhtp_client_set_fee_config(base_fee as u64, bytes_per_sov as u64, witness_cap as u32);
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeSetFeeConfigJson(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    json: jni::objects::JString,
+) -> jni::sys::jint {
+    let json_str = match env.get_string(&json) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let c_str = std::ffi::CString::new(json_str.to_bytes()).unwrap_or_default();
+    zhtp_client_set_fee_config_json(c_str.as_ptr()) as jni::sys::jint
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeSetFeeConfigJsonEx(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    json: jni::objects::JString,
+    out_heights: jni::objects::JLongArray,
+) -> jni::sys::jint {
+    let json_str = match env.get_string(&json) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let c_str = std::ffi::CString::new(json_str.to_bytes()).unwrap_or_default();
+
+    let mut updated_at_height: u64 = 0;
+    let mut chain_height: u64 = 0;
+    let ok = zhtp_client_set_fee_config_json_ex(
+        c_str.as_ptr(),
+        &mut updated_at_height as *mut u64,
+        &mut chain_height as *mut u64,
+    );
+    if ok == 0 {
+        return 0;
+    }
+
+    let arr = [updated_at_height as jni::sys::jlong, chain_height as jni::sys::jlong];
+    if env.set_long_array_region(out_heights, 0, &arr).is_err() {
+        return 0;
+    }
+    1
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeQuoteFeeForTxHex(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    tx_hex: jni::objects::JString,
+) -> jni::sys::jlong {
+    let tx_str = match env.get_string(&tx_hex) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let c_str = std::ffi::CString::new(tx_str.to_bytes()).unwrap_or_default();
+    zhtp_client_quote_fee_for_tx_hex(c_str.as_ptr()) as jni::sys::jlong
 }
 
 /// Build a signed token mint transaction.

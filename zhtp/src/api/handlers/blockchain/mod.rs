@@ -97,8 +97,14 @@ impl ZhtpRequestHandler for BlockchainHandler {
             (ZhtpMethod::Get, "/api/v1/blockchain/edge-stats") => {
                 self.handle_edge_stats(request).await
             }
+            (ZhtpMethod::Get, "/api/v1/blockchain/fee-config") => {
+                self.handle_get_fee_config(request).await
+            }
             (ZhtpMethod::Post, "/api/v1/blockchain/transaction/estimate-fee") => {
                 self.handle_estimate_transaction_fee(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/blockchain/transaction/quote-fee") => {
+                self.handle_quote_transaction_fee(request).await
             }
             (ZhtpMethod::Post, "/api/v1/blockchain/transaction/broadcast") => {
                 self.handle_broadcast_transaction(request).await
@@ -279,6 +285,34 @@ struct FeeEstimateResponse {
 }
 
 #[derive(Serialize)]
+struct FeeConfigResponse {
+    status: String,
+    base_fee: u64,
+    bytes_per_sov: u64,
+    witness_cap: u32,
+    updated_at_height: u64,
+    chain_height: u64,
+}
+
+#[derive(Deserialize)]
+struct FeeQuoteRequest {
+    /// Hex-encoded bincode transaction (may be unsigned)
+    transaction_hex: Option<String>,
+    /// Optional direct size override
+    transaction_size: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct FeeQuoteResponse {
+    status: String,
+    estimated_fee: u64,
+    base_fee: u64,
+    bytes_per_sov: u64,
+    witness_cap: u32,
+    transaction_size: usize,
+}
+
+#[derive(Serialize)]
 struct BroadcastResponse {
     status: String,
     transaction_hash: String,
@@ -311,6 +345,26 @@ struct FeeEstimateRequest {
 #[derive(Deserialize)]
 struct BroadcastTransactionRequest {
     transaction_data: String, // Hex-encoded transaction
+}
+
+fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
+    match bincode::deserialize::<lib_blockchain::transaction::Transaction>(raw_tx) {
+        Ok(mut tx) => {
+            let sig_len = tx.signature.signature.len();
+            let pk_len = tx.signature.public_key.dilithium_pk.len();
+            if sig_len == 0 || pk_len == 0 {
+                // Fill signature/public key with expected sizes for fee estimation.
+                let (expected_sig, expected_pk) = match tx.signature.algorithm {
+                    lib_crypto::types::SignatureAlgorithm::Dilithium5 => (4627usize, 2592usize),
+                    _ => (2420usize, 1312usize), // Default to Dilithium2
+                };
+                tx.signature.signature = vec![0u8; expected_sig];
+                tx.signature.public_key.dilithium_pk = vec![0u8; expected_pk];
+            }
+            bincode::serialize(&tx).map(|b| b.len()).unwrap_or(raw_tx.len())
+        }
+        Err(_) => raw_tx.len(),
+    }
 }
 
 impl BlockchainHandler {
@@ -913,23 +967,17 @@ impl BlockchainHandler {
         // Use provided transaction size or estimate a typical size
         let tx_size = req_data.transaction_size.unwrap_or(250); // Typical transaction size
 
-        // Map priority string to lib_economy Priority enum
-        let priority = match req_data.priority.as_deref() {
-            Some("low") => lib_economy::Priority::Low,
-            Some("high") => lib_economy::Priority::High,
-            Some("urgent") => lib_economy::Priority::Urgent,
-            _ => lib_economy::Priority::Normal, // Default
-        };
-
         let is_system = req_data.is_system_transaction.unwrap_or(false);
 
-        // Calculate fees using blockchain's economic processor
-        let (base_fee, dao_fee, total_fee) = blockchain.calculate_transaction_fees(
-            tx_size as u64,
-            req_data.amount,
-            priority,
-            is_system,
+        // Calculate fees using the canonical chain fee model
+        let fee_config = blockchain.get_tx_fee_config();
+        let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
+            tx_size,
+            fee_config,
         );
+        let base_fee = min_fee;
+        let dao_fee = 0;
+        let total_fee = if is_system { 0 } else { min_fee };
 
         // Calculate fee rate (fee per byte)
         let fee_rate = if tx_size > 0 {
@@ -946,6 +994,68 @@ impl BlockchainHandler {
             total_fee,
             transaction_size: tx_size,
             fee_rate,
+        };
+
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Handle fee configuration fetch
+    async fn handle_get_fee_config(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+        let fee_config = blockchain.get_tx_fee_config();
+
+        let response_data = FeeConfigResponse {
+            status: "success".to_string(),
+            base_fee: fee_config.base_fee,
+            bytes_per_sov: fee_config.bytes_per_sov,
+            witness_cap: fee_config.witness_cap,
+            updated_at_height: blockchain.tx_fee_config_updated_at_height,
+            chain_height: blockchain.get_height(),
+        };
+
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Handle fee quote request using canonical chain fee config
+    async fn handle_quote_transaction_fee(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let req_data: FeeQuoteRequest = serde_json::from_slice(&request.body)?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+        let fee_config = blockchain.get_tx_fee_config();
+
+        let tx_size = if let Some(hex_tx) = req_data.transaction_hex.as_ref() {
+            match hex::decode(hex_tx) {
+                Ok(bytes) => estimate_signed_tx_size(&bytes),
+                Err(_) => req_data.transaction_size.unwrap_or(250),
+            }
+        } else {
+            req_data.transaction_size.unwrap_or(250)
+        };
+
+        let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
+            tx_size,
+            fee_config,
+        );
+
+        let response_data = FeeQuoteResponse {
+            status: "success".to_string(),
+            estimated_fee: min_fee,
+            base_fee: fee_config.base_fee,
+            bytes_per_sov: fee_config.bytes_per_sov,
+            witness_cap: fee_config.witness_cap,
+            transaction_size: tx_size,
         };
 
         let json_response = serde_json::to_vec(&response_data)?;
