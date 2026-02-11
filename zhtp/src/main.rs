@@ -3,8 +3,8 @@
 //! Main entry point for the ZHTP orchestrator node.
 //! Starts the unified server and manages the network node lifecycle.
 
-use zhtp::config::{CliArgs, load_configuration, Environment};
-use zhtp::runtime::{RuntimeOrchestrator, NodeRole};
+use zhtp::config::{CliArgs, load_configuration, Environment, NodeType};
+use zhtp::runtime::RuntimeOrchestrator;
 use tracing_subscriber;
 use std::env;
 use std::path::PathBuf;
@@ -26,25 +26,29 @@ async fn main() -> anyhow::Result<()> {
     let config = load_configuration(&args).await?;
 
     // ========================================================================
-    // Issue #454: Canonical startup dispatch based on node role
+    // Issue #454: Canonical startup dispatch based on canonical NodeType
     // ========================================================================
-    // Single dispatch to the appropriate startup function based on the configured
-    // node role. Each startup function validates it was called with the correct
-    // role and performs role-specific initialization.
+    // Single dispatch based on config.node_type (SINGLE SOURCE OF TRUTH)
+    // to the appropriate startup function. Each startup function validates
+    // it was called with the correct type and performs type-specific init.
     // ========================================================================
-    let node_role = config.node_role.clone();
-    let orchestrator = match node_role {
-        NodeRole::FullValidator => {
-            tracing::info!("Starting node as FullValidator (mining and consensus enabled)");
+    let node_type = config.node_type;
+    let orchestrator = match node_type {
+        NodeType::Validator => {
+            tracing::info!("Starting node as Validator (mining and consensus enabled)");
             RuntimeOrchestrator::start_validator(config).await?
         }
-        NodeRole::LightNode | NodeRole::MobileNode => {
-            tracing::info!("Starting node as {:?} (edge mode, headers only)", node_role);
+        NodeType::EdgeNode => {
+            tracing::info!("Starting node as EdgeNode (headers only, ZK proofs)");
             RuntimeOrchestrator::start_edge_node(config).await?
         }
-        NodeRole::Observer | NodeRole::BootstrapNode | NodeRole::ArchivalNode => {
-            tracing::info!("Starting node as {:?} (full blockchain, no mining)", node_role);
+        NodeType::FullNode => {
+            tracing::info!("Starting node as FullNode (complete blockchain, no mining)");
             RuntimeOrchestrator::start_full_node(config).await?
+        }
+        NodeType::Relay => {
+            tracing::info!("Starting node as Relay (routing only, no blockchain state)");
+            RuntimeOrchestrator::start_relay(config).await?
         }
     };
 
