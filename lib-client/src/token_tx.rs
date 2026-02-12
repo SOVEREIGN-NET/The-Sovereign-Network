@@ -348,6 +348,18 @@ pub fn build_transfer_tx(
     amount: u64,
     chain_id: u8,
 ) -> Result<String, String> {
+    build_transfer_tx_with_nonce(identity, token_id, to_pubkey, amount, chain_id, 0)
+}
+
+/// Build a signed token transfer transaction with explicit nonce for replay protection.
+pub fn build_transfer_tx_with_nonce(
+    identity: &Identity,
+    token_id: &[u8; 32],
+    to_pubkey: &[u8],
+    amount: u64,
+    chain_id: u8,
+    nonce: u64,
+) -> Result<String, String> {
     if *token_id == generate_lib_token_id() || *token_id == [0u8; 32] {
         return Err("SOV transfers require wallet_id; use build_sov_wallet_transfer_tx".to_string());
     }
@@ -371,7 +383,7 @@ pub fn build_transfer_tx(
         from: sender_pk.key_id,
         to: to_key_id,
         amount: amount as u128,
-        nonce: 0,
+        nonce,
     };
 
     let mut tx = Transaction::new_token_transfer_with_chain_id(
@@ -417,6 +429,18 @@ pub fn build_sov_wallet_transfer_tx(
     amount: u64,
     chain_id: u8,
 ) -> Result<String, String> {
+    build_sov_wallet_transfer_tx_with_nonce(identity, from_wallet_id, to_wallet_id, amount, chain_id, 0)
+}
+
+/// Build a signed SOV wallet-based transfer transaction with explicit nonce for replay protection.
+pub fn build_sov_wallet_transfer_tx_with_nonce(
+    identity: &Identity,
+    from_wallet_id: &[u8; 32],
+    to_wallet_id: &[u8; 32],
+    amount: u64,
+    chain_id: u8,
+    nonce: u64,
+) -> Result<String, String> {
     let sender_pk = create_public_key(identity.public_key.clone());
 
     let transfer_data = TokenTransferData {
@@ -424,7 +448,7 @@ pub fn build_sov_wallet_transfer_tx(
         from: *from_wallet_id,
         to: *to_wallet_id,
         amount: amount as u128,
-        nonce: 0,
+        nonce,
     };
 
     let mut tx = Transaction::new_token_transfer_with_chain_id(
