@@ -111,8 +111,10 @@ pub struct NodeConfig {
 
     // Canonical node type - SINGLE SOURCE OF TRUTH
     // Determined at startup from config and immutable thereafter
+    // If explicitly set in config, that value is preserved (especially for Relay).
+    // If not set, derived from validator_enabled and storage settings.
     #[serde(default)]
-    pub node_type: NodeType,
+    pub node_type: Option<NodeType>,
 
     // Node role determines what operations this node can perform
     // This is derived from validator_enabled and other config settings during aggregation
@@ -569,6 +571,9 @@ impl Default for NodeConfig {
             environment: Environment::Development,
             data_directory: "./lib-data".to_string(),
 
+            // node_type is not set by default; it will be derived during aggregation
+            node_type: None,
+
             // Default to Observer - can be overridden during aggregation
             // based on validator_enabled and storage configuration
             node_role: crate::runtime::node_runtime::NodeRole::Observer,
@@ -807,13 +812,40 @@ impl NodeConfig {
         };
     }
 
+    /// Check if this node configuration represents an edge node
+    /// 
+    /// Unified edge detection: A node is considered an edge node if:
+    /// 1. NOT configured as a validator (validator_enabled=false)
+    /// 2. NOT running smart contracts
+    /// 3. Hosted storage is zero (no DHT/hosting) OR edge_mode is explicitly enabled
+    fn is_edge_node_config(
+        validator_enabled: bool,
+        edge_mode: bool,
+        smart_contracts: bool,
+        hosted_storage_gb: u64,
+    ) -> bool {
+        !validator_enabled && !smart_contracts && (edge_mode || hosted_storage_gb == 0)
+    }
+
     /// Derive canonical node type from configuration (SINGLE SOURCE OF TRUTH)
     ///
+    /// Only derives node_type if it was NOT explicitly set in the config.
+    /// This allows users to set node_type="relay" in TOML and have it respected.
+    ///
     /// Determines the node's primary mode based on:
-    /// 1. Integer "node_type" field in config (if explicitly set)
-    /// 2. Validator flags (validator_enabled in consensus_config)
-    /// 3. Storage configuration (edge_mode, hosted_storage_gb)
+    /// 1. Validator flags (validator_enabled in consensus_config)
+    /// 2. Storage configuration (edge_mode, hosted_storage_gb, smart_contracts)
+    /// 3. Defaults to FullNode if neither validator nor edge criteria are met
     pub fn derive_node_type(&mut self) {
+        // Only derive if node_type was not explicitly set
+        if self.node_type.is_some() {
+            tracing::info!(
+                "✓ Using explicitly configured NodeType: {:?}",
+                self.node_type.as_ref().unwrap()
+            );
+            return;
+        }
+
         // Logic for determining node type from config fields
         let derived_type = if self.consensus_config.validator_enabled {
             // Validator enabled => this is a Validator node
@@ -821,10 +853,16 @@ impl NodeConfig {
                 "✓ Deriving NodeType: validator_enabled=true → Validator (full blockchain + block production)"
             );
             NodeType::Validator
-        } else if self.blockchain_config.edge_mode || self.storage_config.hosted_storage_gb == 0 {
-            // Edge mode OR no hosting storage => this is an Edge node
+        } else if Self::is_edge_node_config(
+            self.consensus_config.validator_enabled,
+            self.blockchain_config.edge_mode,
+            self.blockchain_config.smart_contracts,
+            self.storage_config.hosted_storage_gb,
+        ) {
+            // Edge node criteria met
             tracing::info!(
-                "✓ Deriving NodeType: edge_mode={} OR hosted_storage_gb={} → EdgeNode (headers only)",
+                "✓ Deriving NodeType: edge detection (validator={}, edge_mode={}, hosted_storage={}) → EdgeNode (headers only)",
+                self.consensus_config.validator_enabled,
                 self.blockchain_config.edge_mode,
                 self.storage_config.hosted_storage_gb
             );
@@ -837,7 +875,7 @@ impl NodeConfig {
             NodeType::FullNode
         };
 
-        self.node_type = derived_type;
+        self.node_type = Some(derived_type);
     }
 }
 

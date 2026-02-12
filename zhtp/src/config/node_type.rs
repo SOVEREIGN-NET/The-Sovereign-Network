@@ -14,7 +14,7 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
-    /// Full node: complete blockchain, can mine/validate
+    /// Full node: complete blockchain, can sync and verify
     #[serde(rename = "full")]
     FullNode,
 
@@ -40,8 +40,8 @@ impl Default for NodeType {
 impl fmt::Display for NodeType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NodeType::FullNode => write!(f, "full-node"),
-            NodeType::EdgeNode => write!(f, "edge-node"),
+            NodeType::FullNode => write!(f, "full"),
+            NodeType::EdgeNode => write!(f, "edge"),
             NodeType::Validator => write!(f, "validator"),
             NodeType::Relay => write!(f, "relay"),
         }
@@ -71,8 +71,9 @@ impl NodeType {
         matches!(self, NodeType::Validator)
     }
 
-    /// Check if this node can participate in consensus (includes validators)
-    pub fn can_validate(&self) -> bool {
+    /// Check if this node can verify blocks (syntactic/semantic validation)
+    /// Note: Only Validator nodes can participate in active consensus
+    pub fn can_verify_blocks(&self) -> bool {
         matches!(self, NodeType::FullNode | NodeType::Validator)
     }
 
@@ -87,8 +88,9 @@ impl NodeType {
     }
 
     /// Check if this node participates in mesh networking
+    /// All node types participate in mesh for communication/routing
     pub fn is_mesh_enabled(&self) -> bool {
-        !matches!(self, NodeType::Relay)
+        true
     }
 
     /// Check if this node maintains blockchain state
@@ -124,25 +126,25 @@ mod tests {
     fn test_nodetype_capabilities() {
         let validator = NodeType::Validator;
         assert!(validator.can_mine());
-        assert!(validator.can_validate());
+        assert!(validator.can_verify_blocks());
         assert!(validator.needs_full_blockchain());
         assert!(!validator.headers_only());
 
         let edge = NodeType::EdgeNode;
         assert!(!edge.can_mine());
-        assert!(!edge.can_validate());
+        assert!(!edge.can_verify_blocks());
         assert!(!edge.needs_full_blockchain());
         assert!(edge.headers_only());
 
         let full = NodeType::FullNode;
         assert!(!full.can_mine());
-        assert!(full.can_validate());
+        assert!(full.can_verify_blocks());
         assert!(full.needs_full_blockchain());
         assert!(!full.headers_only());
 
         let relay = NodeType::Relay;
         assert!(!relay.can_mine());
-        assert!(!relay.can_validate());
+        assert!(!relay.can_verify_blocks());
         assert!(!relay.needs_full_blockchain());
         assert!(!relay.headers_only());
     }
