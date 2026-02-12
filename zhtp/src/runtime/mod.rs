@@ -101,11 +101,17 @@ async fn try_initial_sync_from_peer(
     // Create a temporary bootstrap identity for initial sync
     // This is only used for the initial connection; once we have the chain,
     // the node will use its proper identity from wallet startup.
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let device_name = format!("bootstrap-sync-{}", timestamp);
+    
     let temp_identity = match lib_identity::ZhtpIdentity::new_unified(
         lib_identity::IdentityType::Device,
         None,  // age: not needed for Device type
         None,  // jurisdiction: not needed for Device type
-        "bootstrap-client",
+        &device_name,
         None,  // Generate random seed
     ) {
         Ok(id) => id,
@@ -149,7 +155,7 @@ async fn try_initial_sync_from_peer(
             // Connect to peer with timeout
             let connect_result = tokio::time::timeout(
                 std::time::Duration::from_secs(10),
-                client.connect(peer)
+                client.connect(&peer_addr.to_string())
             ).await;
             
             match connect_result {
@@ -240,7 +246,8 @@ async fn try_initial_sync_from_peer(
         if attempt + 1 < max_attempts {
             // Safely calculate delay: cap the shift to prevent overflow
             // Use checked_shl and handle overflow by capping at max delay
-            let shift_amount = attempt.min(63); // Max shift for u64
+            // Cap at 31 since we're shifting a u64 but shift amount is u32
+            let shift_amount = attempt.min(31);
             let multiplier = 1u64.checked_shl(shift_amount as u32).unwrap_or(u64::MAX);
             let delay = base_delay_ms.saturating_mul(multiplier);
             // Cap maximum delay at 60 seconds
