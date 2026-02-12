@@ -179,6 +179,10 @@ pub struct Blockchain {
     /// UBI registration block heights (identity_id -> block_height)
     #[serde(default)]
     pub ubi_blocks: HashMap<String, u64>,
+    /// Per-address nonce for token transfer replay protection
+    /// Key: sender address (wallet_id for SOV, key_id for custom tokens)
+    #[serde(default)]
+    pub token_nonces: HashMap<[u8; 32], u64>,
 }
 
 /// Validator information stored on-chain
@@ -411,6 +415,7 @@ impl BlockchainV1 {
             event_publisher: crate::events::BlockchainEventPublisher::new(),
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
+            token_nonces: HashMap::new(),
         }
     }
 }
@@ -539,6 +544,10 @@ struct BlockchainStorageV3 {
     // =========================================================================
     // ADD NEW FIELDS BELOW HERE ONLY - with #[serde(default)]
     // =========================================================================
+
+    /// Per-address nonce for token transfer replay protection
+    #[serde(default)]
+    pub token_nonces: HashMap<[u8; 32], u64>,
 }
 
 impl BlockchainStorageV3 {
@@ -618,6 +627,9 @@ impl BlockchainStorageV3 {
             // UBI
             ubi_registry: bc.ubi_registry.clone(),
             ubi_blocks: bc.ubi_blocks.clone(),
+
+            // Token nonces
+            token_nonces: bc.token_nonces.clone(),
         }
     }
 
@@ -706,6 +718,9 @@ impl BlockchainStorageV3 {
             // UBI
             ubi_registry: self.ubi_registry,
             ubi_blocks: self.ubi_blocks,
+
+            // Token nonces
+            token_nonces: self.token_nonces,
         }
     }
 }
@@ -777,6 +792,7 @@ impl Blockchain {
             event_publisher: crate::events::BlockchainEventPublisher::new(),
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
+            token_nonces: HashMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -1080,6 +1096,8 @@ impl Blockchain {
             kernel_mint_authority: None,
             locked_balances: std::collections::HashMap::new(),
             kernel_only_mode: false,
+            creator_did: None,
+            fee_schedule_bps: None,
         };
 
         Ok(Some(token_contract))
@@ -1917,7 +1935,23 @@ impl Blockchain {
             );
         }
 
+        // Credit collected fees to DAO treasury wallet (conservation invariant: total supply unchanged)
         if total_fees > 0 {
+            if let Some(ref treasury_wallet_id) = self.dao_treasury_wallet_id {
+                let treasury_wallet_id_bytes = hex::decode(treasury_wallet_id).unwrap_or_default();
+                if treasury_wallet_id_bytes.len() == 32 {
+                    let mut treasury_id = [0u8; 32];
+                    treasury_id.copy_from_slice(&treasury_wallet_id_bytes);
+                    let treasury_key = Self::wallet_key_for_sov(&treasury_id);
+                    let treasury_balance = sov_token.balance_of(&treasury_key);
+                    sov_token.balances.insert(treasury_key, treasury_balance.saturating_add(total_fees));
+                    debug!(
+                        "Block {} fees credited to DAO treasury: {} SOV",
+                        block.height(), total_fees
+                    );
+                }
+            }
+
             info!(
                 "Block {} fee collection: {} total from {} transactions",
                 block.height(),
@@ -3010,6 +3044,13 @@ impl Blockchain {
         None
     }
 
+    /// Get the current expected nonce for a sender address.
+    /// For SOV transfers, the address is the wallet_id bytes.
+    /// For custom token transfers, the address is the key_id bytes.
+    pub fn get_token_nonce(&self, address: &[u8; 32]) -> u64 {
+        self.token_nonces.get(address).copied().unwrap_or(0)
+    }
+
     /// Collect SOV backfill entries from wallet_registry for wallets missing token balances.
     ///
     /// Returns a list of (public_key_bytes, amount, wallet_id) that should be minted
@@ -3529,6 +3570,16 @@ impl Blockchain {
                         return Err(anyhow::anyhow!("TokenTransfer amount must be > 0"));
                     }
 
+                    // Replay protection: validate and increment nonce
+                    let nonce_key = transfer.from;
+                    let expected_nonce = self.token_nonces.get(&nonce_key).copied().unwrap_or(0);
+                    if transfer.nonce != expected_nonce {
+                        return Err(anyhow::anyhow!(
+                            "TokenTransfer nonce mismatch: expected {}, got {}",
+                            expected_nonce, transfer.nonce
+                        ));
+                    }
+
                     // Sender public key comes from transaction signature
                     let sender_pk = transaction.signature.public_key.clone();
 
@@ -3604,6 +3655,9 @@ impl Blockchain {
                         token.transfer(&ctx, &recipient_pk, amount_u64)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
                     };
+
+                    // Increment nonce after successful transfer
+                    *self.token_nonces.entry(nonce_key).or_insert(0) += 1;
 
                     if let Some(store) = &self.store {
                         if let Some(token) = self.token_contracts.get(&token_id) {
@@ -3695,8 +3749,18 @@ impl Blockchain {
                         self.ensure_sov_token_contract();
                     }
 
+                    let is_ubi_mint = std::str::from_utf8(&transaction.memo).ok()
+                        .map_or(false, |s| s.starts_with("UBI_DISTRIBUTION_V1:"));
+                    let is_migration = migration_from.is_some();
+
                     let token = self.token_contracts.get_mut(&token_id)
                         .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+
+                    // Creator authorization: custom token mints require signer == creator
+                    if !is_sov && !is_ubi_mint && !is_migration {
+                        token.check_mint_authorization(&transaction.signature.public_key)
+                            .map_err(|e| anyhow::anyhow!("{}", e))?;
+                    }
 
                     let amount_u64: u64 = mint.amount.try_into()
                         .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
@@ -3890,6 +3954,7 @@ impl Blockchain {
                 info!("Minted {} tokens to {:?}", amount, to.key_id);
             }
             "transfer" => {
+                warn!("DEPRECATED: ContractExecution/transfer is deprecated — use TokenTransfer transactions instead (issue #1132)");
                 // TransferParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
                 #[derive(serde::Deserialize)]
                 struct TransferParams {

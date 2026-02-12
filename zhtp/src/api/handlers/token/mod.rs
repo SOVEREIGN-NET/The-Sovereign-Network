@@ -602,6 +602,28 @@ impl TokenHandler {
         }))
     }
 
+    /// GET /api/v1/token/nonce/{address} - Get expected nonce for transfer replay protection
+    async fn handle_get_nonce(&self, address_hex: &str) -> Result<ZhtpResponse> {
+        let address_bytes = hex::decode(address_hex)
+            .map_err(|_| anyhow::anyhow!("Invalid address hex"))?;
+        if address_bytes.len() != 32 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Address must be 32 bytes (64 hex chars)".to_string()
+            ));
+        }
+        let mut address = [0u8; 32];
+        address.copy_from_slice(&address_bytes);
+
+        let blockchain = self.blockchain.read().await;
+        let nonce = blockchain.get_token_nonce(&address);
+
+        create_json_response(json!({
+            "address": address_hex,
+            "nonce": nonce
+        }))
+    }
+
     /// GET /api/v1/token/symbol/available/{symbol} - Check if symbol is available
     async fn handle_check_symbol_available(&self, symbol: &str) -> Result<ZhtpResponse> {
         let blockchain = self.blockchain.read().await;
@@ -954,6 +976,18 @@ impl ZhtpRequestHandler for TokenHandler {
                         ZhtpStatus::BadRequest,
                         "Invalid balance path format".to_string()
                     ))
+                }
+            }
+            // GET /api/v1/token/nonce/{address} - Get expected nonce for replay protection
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/nonce/") => {
+                let address = path.strip_prefix("/api/v1/token/nonce/").unwrap_or("");
+                if address.is_empty() {
+                    Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        "Address required".to_string()
+                    ))
+                } else {
+                    self.handle_get_nonce(address).await
                 }
             }
             _ => {
