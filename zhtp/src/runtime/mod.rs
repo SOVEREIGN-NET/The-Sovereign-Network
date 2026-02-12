@@ -1060,77 +1060,72 @@ impl RuntimeOrchestrator {
     // CANONICAL STARTUP METHODS - Issue #454
     // ========================================================================
     // These are THE canonical entry points per node type. CLI dispatches to one
-    // of these based on NodeRole. All node-type-specific initialization happens
+    // of these based on NodeType (not NodeRole). All node-type-specific initialization happens
     // within these methods, not scattered across component init functions.
     // ========================================================================
 
-    /// Internal helper for canonical startup methods.
-    /// Validates that the config's node_role matches the expected role,
-    /// then calls start_node() for the common startup sequence.
-    async fn start_with_role_validation<F>(
-        config: NodeConfig,
-        _method_name: &str,
-        validate: F,
-    ) -> Result<Self>
-    where
-        F: FnOnce(&node_runtime::NodeRole) -> Result<()>,
-    {
-        validate(&config.node_role)?;
+    /// Internal helper for validating NodeType matches expected type.
+    /// Returns the validated NodeType if it matches, or an error if it doesn't.
+    fn validate_node_type(config: &NodeConfig, expected: crate::config::NodeType) -> Result<crate::config::NodeType> {
+        match config.node_type {
+            Some(actual_type) => {
+                if actual_type == expected {
+                    Ok(actual_type)
+                } else {
+                    Err(anyhow::anyhow!(
+                        "NodeType mismatch: expected {:?}, got {:?}",
+                        expected,
+                        actual_type
+                    ))
+                }
+            }
+            None => Err(anyhow::anyhow!(
+                "NodeType is not set (expected {:?}). Runtime requires node_type to be derived during config aggregation.",
+                expected
+            )),
+        }
+    }
+
+    /// Start a full node - THE canonical way
+    ///
+    /// Full nodes (FullNode type) store the complete blockchain and verify all blocks,
+    /// but do NOT participate in consensus or mining.
+    ///
+    /// # Errors
+    /// Returns an error if config.node_type is not FullNode.
+    pub async fn start_full_node(config: NodeConfig) -> Result<Self> {
+        Self::validate_node_type(&config, crate::config::NodeType::FullNode)?;
         let orchestrator = Self::new(config).await?;
         orchestrator.start_node().await?;
         Ok(orchestrator)
     }
 
-    /// Start a full node - THE canonical way
-    ///
-    /// Full nodes (Observer role) store the complete blockchain and verify all blocks,
-    /// but do NOT participate in consensus or mining.
-    ///
-    /// # Errors
-    /// Returns an error if config.node_role is not compatible with full node operation
-    /// (i.e., if it's an edge/light node role or a validator role).
-    pub async fn start_full_node(config: NodeConfig) -> Result<Self> {
-        Self::start_with_role_validation(config, "start_full_node", |role| {
-            if role.is_light_node() {
-                return Err(anyhow::anyhow!("start_full_node called for light/edge node role: {:?}", role));
-            }
-            if role.can_mine() {
-                return Err(anyhow::anyhow!("start_full_node called for validator role: {:?} - use start_validator instead", role));
-            }
-            Ok(())
-        }).await
-    }
-
     /// Start an edge node - THE canonical way
     ///
-    /// Edge nodes (LightNode/MobileNode role) only store block headers and ZK proofs,
+    /// Edge nodes (EdgeNode type) only store block headers and ZK proofs,
     /// optimized for resource-constrained devices.
     ///
     /// # Errors
-    /// Returns an error if config.node_role is not a light/edge node role.
+    /// Returns an error if config.node_type is not EdgeNode.
     pub async fn start_edge_node(config: NodeConfig) -> Result<Self> {
-        Self::start_with_role_validation(config, "start_edge_node", |role| {
-            if !role.is_light_node() {
-                return Err(anyhow::anyhow!("start_edge_node called for non-edge role: {:?}", role));
-            }
-            Ok(())
-        }).await
+        Self::validate_node_type(&config, crate::config::NodeType::EdgeNode)?;
+        let orchestrator = Self::new(config).await?;
+        orchestrator.start_node().await?;
+        Ok(orchestrator)
     }
 
     /// Start a validator node - THE canonical way
     ///
-    /// Validator nodes (FullValidator role) store the complete blockchain, participate
+    /// Validator nodes (Validator type) store the complete blockchain, participate
     /// in consensus, and can mine blocks.
     ///
     /// # Errors
-    /// Returns an error if config.node_role is not FullValidator.
+    /// Returns an error if config.node_type is not Validator.
     pub async fn start_validator(config: NodeConfig) -> Result<Self> {
-        Self::start_with_role_validation(config, "start_validator", |role| {
-            if !role.can_mine() {
-                return Err(anyhow::anyhow!("start_validator called for non-validator role: {:?}", role));
-            }
-            Ok(())
-        }).await
+        Self::validate_node_type(&config, crate::config::NodeType::Validator)?;
+        let orchestrator = Self::new(config).await?;
+        orchestrator.start_node().await?;
+        Ok(orchestrator)
     }
 
     /// Start a relay node - THE canonical way
@@ -1142,12 +1137,26 @@ impl RuntimeOrchestrator {
     /// # Errors
     /// Returns an error if config.node_type is not Relay.
     pub async fn start_relay(config: NodeConfig) -> Result<Self> {
-        use crate::config::NodeType;
-        if config.node_type != NodeType::Relay {
-            return Err(anyhow::anyhow!("start_relay called for non-relay node type: {:?}", config.node_type));
-        }
+        Self::validate_node_type(&config, crate::config::NodeType::Relay)?;
+        
         let orchestrator = Self::new(config).await?;
-        orchestrator.start_node().await?;
+        
+        // For relay nodes, initialize ONLY mesh routing/networking components,
+        // NOT the full blockchain startup sequence. Relays should not maintain
+        // blockchain state or validate blocks - they only forward messages.
+        use crate::runtime::components::{CryptoComponent, NetworkComponent};
+        
+        info!("🚀 Starting Relay Node - initializing mesh/routing only (no blockchain state)");
+        
+        // Initialize crypto and network components for routing
+        orchestrator.register_component(Arc::new(CryptoComponent::new())).await?;
+        orchestrator.start_component(ComponentId::Crypto).await?;
+        
+        orchestrator.register_component(Arc::new(NetworkComponent::new())).await?;
+        orchestrator.start_component(ComponentId::Network).await?;
+        
+        info!("✓ Relay node initialized (routing-only mode)");
+        
         Ok(orchestrator)
     }
 
