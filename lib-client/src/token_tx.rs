@@ -340,23 +340,8 @@ pub fn build_contract_transaction(
 // Convenience: Token-specific API (backward compatible)
 // ============================================================================
 
-/// Build a signed token transfer transaction (nonce defaults to 0).
-///
-/// **Deprecated**: Use `build_transfer_tx_with_nonce()` instead.
-/// This wrapper only works for the sender's first transfer per token.
-#[deprecated(since = "0.1.0", note = "Use build_transfer_tx_with_nonce() — nonce=0 only works for first transfer")]
+/// Build a signed token transfer transaction with nonce for replay protection.
 pub fn build_transfer_tx(
-    identity: &Identity,
-    token_id: &[u8; 32],
-    to_pubkey: &[u8],
-    amount: u64,
-    chain_id: u8,
-) -> Result<String, String> {
-    build_transfer_tx_with_nonce(identity, token_id, to_pubkey, amount, chain_id, 0)
-}
-
-/// Build a signed token transfer transaction with explicit nonce for replay protection.
-pub fn build_transfer_tx_with_nonce(
     identity: &Identity,
     token_id: &[u8; 32],
     to_pubkey: &[u8],
@@ -425,23 +410,8 @@ pub fn build_transfer_tx_with_nonce(
     Ok(hex::encode(final_tx_bytes))
 }
 
-/// Build a signed SOV wallet-based transfer transaction (nonce defaults to 0).
-///
-/// **Deprecated**: Use `build_sov_wallet_transfer_tx_with_nonce()` instead.
-/// This wrapper only works for the sender's first transfer per token.
-#[deprecated(since = "0.1.0", note = "Use build_sov_wallet_transfer_tx_with_nonce() — nonce=0 only works for first transfer")]
+/// Build a signed SOV wallet-based transfer transaction with nonce for replay protection.
 pub fn build_sov_wallet_transfer_tx(
-    identity: &Identity,
-    from_wallet_id: &[u8; 32],
-    to_wallet_id: &[u8; 32],
-    amount: u64,
-    chain_id: u8,
-) -> Result<String, String> {
-    build_sov_wallet_transfer_tx_with_nonce(identity, from_wallet_id, to_wallet_id, amount, chain_id, 0)
-}
-
-/// Build a signed SOV wallet-based transfer transaction with explicit nonce for replay protection.
-pub fn build_sov_wallet_transfer_tx_with_nonce(
     identity: &Identity,
     from_wallet_id: &[u8; 32],
     to_wallet_id: &[u8; 32],
