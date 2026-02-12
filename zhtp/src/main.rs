@@ -32,7 +32,13 @@ async fn main() -> anyhow::Result<()> {
     // to the appropriate startup function. Each startup function validates
     // it was called with the correct type and performs type-specific init.
     // ========================================================================
-    let node_type = config.node_type;
+    let node_type = config.node_type.ok_or_else(|| {
+        anyhow::anyhow!(
+            "node_type not set during config aggregation. \
+             derive_node_type() must be called before runtime initialization."
+        )
+    })?;
+    
     let orchestrator = match node_type {
         NodeType::Validator => {
             tracing::info!("Starting node as Validator (mining and consensus enabled)");
