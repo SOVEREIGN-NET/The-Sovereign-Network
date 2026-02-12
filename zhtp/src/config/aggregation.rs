@@ -577,9 +577,6 @@ impl Default for NodeConfig {
             // Default to Observer - can be overridden during aggregation
             // based on validator_enabled and storage configuration
             node_role: crate::runtime::node_runtime::NodeRole::Observer,
-            
-            // Default to FullNode - will be derived from config during initialization
-            node_type: NodeType::FullNode,
 
             crypto_config: CryptoConfig {
                 post_quantum_enabled: true,
