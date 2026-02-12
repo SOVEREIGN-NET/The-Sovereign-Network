@@ -1146,7 +1146,7 @@ impl RuntimeOrchestrator {
         // blockchain state or validate blocks - they only forward messages.
         use crate::runtime::components::{CryptoComponent, NetworkComponent};
         
-        info!("🚀 Starting Relay Node - initializing mesh/routing only (no blockchain state)");
+        info!("Starting Relay Node - initializing mesh/routing only (no blockchain state)");
         
         // Initialize crypto and network components for routing
         orchestrator.register_component(Arc::new(CryptoComponent::new())).await?;
@@ -1155,7 +1155,7 @@ impl RuntimeOrchestrator {
         orchestrator.register_component(Arc::new(NetworkComponent::new())).await?;
         orchestrator.start_component(ComponentId::Network).await?;
         
-        info!("✓ Relay node initialized (routing-only mode)");
+        info!("Relay node initialized (routing-only mode - ready for routing)");
         
         Ok(orchestrator)
     }
