@@ -156,9 +156,10 @@ async fn try_initial_sync_from_peer(
             };
 
             // Connect to peer with timeout
+            // Note: ZhtpClient.connect() requires a string, not SocketAddr
             let connect_result = tokio::time::timeout(
                 std::time::Duration::from_secs(10),
-                client.connect(&peer_addr.to_string())
+                client.connect(peer)
             ).await;
             
             match connect_result {
@@ -184,17 +185,17 @@ async fn try_initial_sync_from_peer(
             let response = match export_result {
                 Ok(Ok(resp)) => resp,
                 Ok(Err(e)) => {
-                    warn!("⚠️  Failed to fetch export from {}: {}", peer, e);
+                    warn!("⚠️  Failed to fetch export from {}: {}", peer_addr, e);
                     continue;
                 }
                 Err(_) => {
-                    warn!("⚠️  Export request timeout from {}", peer);
+                    warn!("⚠️  Export request timeout from {}", peer_addr);
                     continue;
                 }
             };
 
             if !response.is_success() {
-                warn!("⚠️  Export request failed from {}: {}", peer, response.status_message);
+                warn!("⚠️  Export request failed from {}: {}", peer_addr, response.status_message);
                 continue;
             }
 
@@ -202,7 +203,7 @@ async fn try_initial_sync_from_peer(
             if response.body.len() > max_export_size {
                 warn!(
                     "⚠️  Export from {} too large ({} bytes, max {}). Refusing to import.",
-                    peer, response.body.len(), max_export_size
+                    peer_addr, response.body.len(), max_export_size
                 );
                 continue;
             }
@@ -211,13 +212,13 @@ async fn try_initial_sync_from_peer(
             let import: lib_blockchain::BlockchainImport = match bincode::deserialize(&response.body) {
                 Ok(i) => i,
                 Err(e) => {
-                    warn!("⚠️  Failed to deserialize export from {}: {}", peer, e);
+                    warn!("⚠️  Failed to deserialize export from {}: {}", peer_addr, e);
                     continue;
                 }
             };
 
             if import.blocks.is_empty() {
-                warn!("⚠️  Export from {} contained no blocks", peer);
+                warn!("⚠️  Export from {} contained no blocks", peer_addr);
                 continue;
             }
 
@@ -230,14 +231,14 @@ async fn try_initial_sync_from_peer(
                 Ok(result) => {
                     info!(
                         "✅ Initial sync imported {} blocks (final height={:?}) from {}",
-                        result.blocks_imported, result.final_height, peer
+                        result.blocks_imported, result.final_height, peer_addr
                     );
                     return true;
                 }
                 Err(e) => {
                     error!(
                         "❌ Failed to import blocks from {}: {}. Aborting initial sync to avoid inconsistent partial state.",
-                        peer, e
+                        peer_addr, e
                     );
                     // Don't retry - partial state may prevent successful import
                     return false;
@@ -249,7 +250,9 @@ async fn try_initial_sync_from_peer(
         if attempt + 1 < max_attempts {
             // Safely calculate delay with capped shift to prevent overflow
             let shift_amount = attempt.min(MAX_SHIFT_BITS);
-            let multiplier = 1u64.checked_shl(shift_amount as u32).unwrap_or(u64::MAX);
+            // Use sensible fallback if shift fails (should never happen with proper cap)
+            let multiplier = 1u64.checked_shl(shift_amount as u32)
+                .unwrap_or(1u64 << MAX_SHIFT_BITS);
             let delay = base_delay_ms.saturating_mul(multiplier);
             // Cap maximum delay
             let delay = delay.min(MAX_BACKOFF_DELAY_MS);
