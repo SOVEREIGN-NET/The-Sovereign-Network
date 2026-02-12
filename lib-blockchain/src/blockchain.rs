@@ -1938,17 +1938,24 @@ impl Blockchain {
         // Credit collected fees to DAO treasury wallet (conservation invariant: total supply unchanged)
         if total_fees > 0 {
             if let Some(ref treasury_wallet_id) = self.dao_treasury_wallet_id {
-                let treasury_wallet_id_bytes = hex::decode(treasury_wallet_id).unwrap_or_default();
-                if treasury_wallet_id_bytes.len() == 32 {
-                    let mut treasury_id = [0u8; 32];
-                    treasury_id.copy_from_slice(&treasury_wallet_id_bytes);
-                    let treasury_key = Self::wallet_key_for_sov(&treasury_id);
-                    let treasury_balance = sov_token.balance_of(&treasury_key);
-                    sov_token.balances.insert(treasury_key, treasury_balance.saturating_add(total_fees));
-                    debug!(
-                        "Block {} fees credited to DAO treasury: {} SOV",
-                        block.height(), total_fees
-                    );
+                match hex::decode(treasury_wallet_id) {
+                    Ok(bytes) if bytes.len() == 32 => {
+                        let mut treasury_id = [0u8; 32];
+                        treasury_id.copy_from_slice(&bytes);
+                        let treasury_key = Self::wallet_key_for_sov(&treasury_id);
+                        let treasury_balance = sov_token.balance_of(&treasury_key);
+                        sov_token.balances.insert(treasury_key, treasury_balance.saturating_add(total_fees));
+                        debug!(
+                            "Block {} fees credited to DAO treasury: {} SOV",
+                            block.height(), total_fees
+                        );
+                    }
+                    _ => {
+                        warn!(
+                            "Block {} fee crediting skipped: malformed dao_treasury_wallet_id '{}'",
+                            block.height(), treasury_wallet_id
+                        );
+                    }
                 }
             }
 

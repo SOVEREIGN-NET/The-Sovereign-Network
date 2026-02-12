@@ -604,8 +604,13 @@ impl TokenHandler {
 
     /// GET /api/v1/token/nonce/{token_id}/{address} - Get expected nonce for transfer replay protection
     async fn handle_get_nonce(&self, token_id_hex: &str, address_hex: &str) -> Result<ZhtpResponse> {
-        let token_id_bytes = hex::decode(token_id_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id_bytes = match hex::decode(token_id_hex) {
+            Ok(b) => b,
+            Err(_) => return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Invalid token_id hex".to_string()
+            )),
+        };
         if token_id_bytes.len() != 32 {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
@@ -615,8 +620,13 @@ impl TokenHandler {
         let mut token_id = [0u8; 32];
         token_id.copy_from_slice(&token_id_bytes);
 
-        let address_bytes = hex::decode(address_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid address hex"))?;
+        let address_bytes = match hex::decode(address_hex) {
+            Ok(b) => b,
+            Err(_) => return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Invalid address hex".to_string()
+            )),
+        };
         if address_bytes.len() != 32 {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
@@ -965,6 +975,22 @@ impl ZhtpRequestHandler for TokenHandler {
                     self.handle_get_balances_for_address(address).await
                 }
             }
+            // GET /api/v1/token/nonce/{token_id}/{address} - Get expected nonce for replay protection
+            // NOTE: Must be above the generic /api/v1/token/{id} matcher to avoid shadowing
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/nonce/") => {
+                let suffix = path.strip_prefix("/api/v1/token/nonce/").unwrap_or("");
+                let mut parts = suffix.split('/');
+                let token_id = parts.next().unwrap_or("");
+                let address = parts.next().unwrap_or("");
+                if token_id.is_empty() || address.is_empty() {
+                    Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        "token_id and address required".to_string()
+                    ))
+                } else {
+                    self.handle_get_nonce(token_id, address).await
+                }
+            }
             // GET /api/v1/token/{id}
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/") && !path.contains("/balance") => {
                 let token_id = path.strip_prefix("/api/v1/token/").unwrap_or("");
@@ -988,21 +1014,6 @@ impl ZhtpRequestHandler for TokenHandler {
                         ZhtpStatus::BadRequest,
                         "Invalid balance path format".to_string()
                     ))
-                }
-            }
-            // GET /api/v1/token/nonce/{token_id}/{address} - Get expected nonce for replay protection
-            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/nonce/") => {
-                let suffix = path.strip_prefix("/api/v1/token/nonce/").unwrap_or("");
-                let mut parts = suffix.split('/');
-                let token_id = parts.next().unwrap_or("");
-                let address = parts.next().unwrap_or("");
-                if token_id.is_empty() || address.is_empty() {
-                    Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        "token_id and address required".to_string()
-                    ))
-                } else {
-                    self.handle_get_nonce(token_id, address).await
                 }
             }
             _ => {

@@ -340,7 +340,11 @@ pub fn build_contract_transaction(
 // Convenience: Token-specific API (backward compatible)
 // ============================================================================
 
-/// Build a signed token transfer transaction
+/// Build a signed token transfer transaction (nonce defaults to 0).
+///
+/// **Deprecated**: Use `build_transfer_tx_with_nonce()` instead.
+/// This wrapper only works for the sender's first transfer per token.
+#[deprecated(since = "0.1.0", note = "Use build_transfer_tx_with_nonce() — nonce=0 only works for first transfer")]
 pub fn build_transfer_tx(
     identity: &Identity,
     token_id: &[u8; 32],
@@ -421,7 +425,11 @@ pub fn build_transfer_tx_with_nonce(
     Ok(hex::encode(final_tx_bytes))
 }
 
-/// Build a signed SOV wallet-based transfer transaction
+/// Build a signed SOV wallet-based transfer transaction (nonce defaults to 0).
+///
+/// **Deprecated**: Use `build_sov_wallet_transfer_tx_with_nonce()` instead.
+/// This wrapper only works for the sender's first transfer per token.
+#[deprecated(since = "0.1.0", note = "Use build_sov_wallet_transfer_tx_with_nonce() — nonce=0 only works for first transfer")]
 pub fn build_sov_wallet_transfer_tx(
     identity: &Identity,
     from_wallet_id: &[u8; 32],
