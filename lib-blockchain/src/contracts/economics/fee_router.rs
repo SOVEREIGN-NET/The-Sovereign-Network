@@ -44,8 +44,8 @@ use crate::integration::crypto_integration::PublicKey;
 // CRITICAL CONSTANTS - NEVER CHANGE
 // ============================================================================
 
-/// Fee rate in basis points: 100 = 1%
-pub const FEE_RATE_BASIS_POINTS: u16 = 100;
+/// Fee rate in basis points: 100 = 1% (re-exported from canonical source)
+pub use crate::contracts::tokens::constants::SOV_FEE_RATE_BPS as FEE_RATE_BASIS_POINTS;
 
 /// UBI allocation: 45%
 pub const UBI_ALLOCATION_PERCENT: u8 = 45;
