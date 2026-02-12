@@ -108,7 +108,7 @@ async fn try_initial_sync_from_peer(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let device_name = format!("bootstrap-sync-{}", timestamp);
+    let device_name = format!("temp-bootstrap-sync-{}", timestamp);
     
     let temp_identity = match lib_identity::ZhtpIdentity::new_unified(
         lib_identity::IdentityType::Device,
@@ -250,9 +250,9 @@ async fn try_initial_sync_from_peer(
         if attempt + 1 < max_attempts {
             // Safely calculate delay with capped shift to prevent overflow
             let shift_amount = attempt.min(MAX_SHIFT_BITS);
-            // Use sensible fallback if shift fails (should never happen with proper cap)
+            // Use reasonable fallback (max delay) if shift fails (should never happen with proper cap)
             let multiplier = 1u64.checked_shl(shift_amount as u32)
-                .unwrap_or(1u64 << MAX_SHIFT_BITS);
+                .unwrap_or(MAX_BACKOFF_DELAY_MS / base_delay_ms);
             let delay = base_delay_ms.saturating_mul(multiplier);
             // Cap maximum delay
             let delay = delay.min(MAX_BACKOFF_DELAY_MS);
