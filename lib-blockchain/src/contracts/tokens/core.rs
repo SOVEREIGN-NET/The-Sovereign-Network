@@ -69,6 +69,12 @@ pub struct TokenContract {
     /// mint(), burn(), and transfer(). Defaults to false for backward compat.
     #[serde(default)]
     pub kernel_only_mode: bool,
+    /// DID of the identity that created this token (for authorization checks)
+    #[serde(default)]
+    pub creator_did: Option<String>,
+    /// Per-token fee override in basis points (None = use protocol default)
+    #[serde(default)]
+    pub fee_schedule_bps: Option<u16>,
 }
 
 impl TokenContract {
@@ -98,18 +104,21 @@ impl TokenContract {
             kernel_mint_authority: None,
             locked_balances: HashMap::new(),
             kernel_only_mode: false,
+            creator_did: None,
+            fee_schedule_bps: None,
         }
     }
 
-    /// Create SOV native token (legacy supply cap retained for u64 compatibility)
+    /// Create SOV native token
     pub fn new_sov_native() -> Self {
+        use super::constants::*;
         let creator = PublicKey::new(vec![0u8; 1312]); // Mock creator for SOV
         Self::new(
             crate::contracts::utils::generate_lib_token_id(),
-            crate::contracts::SOV_NATIVE_NAME.to_string(),
-            crate::contracts::SOV_NATIVE_SYMBOL.to_string(),
-            crate::contracts::SOV_NATIVE_DECIMALS,
-            crate::contracts::SOV_NATIVE_MAX_SUPPLY,
+            SOV_TOKEN_NAME.to_string(),
+            SOV_TOKEN_SYMBOL.to_string(),
+            SOV_TOKEN_DECIMALS,
+            SOV_TOKEN_MAX_SUPPLY,
             false, // SOV is not deflationary
             0,     // No burn rate for SOV
             creator,
@@ -392,6 +401,20 @@ impl TokenContract {
         Ok(())
     }
 
+    /// Check if a public key is authorized to mint on this token.
+    /// Returns Ok(()) if authorized, Err with reason if not.
+    pub fn check_mint_authorization(&self, signer: &PublicKey) -> Result<(), String> {
+        if self.creator.key_id == signer.key_id {
+            return Ok(());
+        }
+        if let Some(ref authority) = self.kernel_mint_authority {
+            if authority.key_id == signer.key_id {
+                return Ok(());
+            }
+        }
+        Err("TokenMint unauthorized: signer is not token creator".to_string())
+    }
+
     // ─── Treasury Kernel internal operations ────────────────────────────
     // These methods are crate-internal, callable only by TreasuryKernel.
     // They perform low-level balance mutations without supply changes
@@ -607,7 +630,7 @@ mod tests {
         assert_eq!(token.name, "Sovereign");
         assert_eq!(token.symbol, "SOV");
         assert_eq!(token.decimals, 8);
-        assert_eq!(token.max_supply, crate::contracts::SOV_NATIVE_MAX_SUPPLY);
+        assert_eq!(token.max_supply, crate::contracts::tokens::constants::SOV_TOKEN_MAX_SUPPLY);
         assert!(!token.is_deflationary);
         assert_eq!(token.burn_rate, 0);
     }

@@ -87,7 +87,7 @@ pub use groups::GroupChat;
 #[cfg(feature = "contracts")]
 pub use messaging::{WhisperMessage, MessageContract, MessageThread, GroupThread};
 #[cfg(feature = "contracts")]
-pub use tokens::{TokenContract, functions};
+pub use tokens::TokenContract;
 #[cfg(feature = "contracts")]
 pub use treasuries::SovDaoTreasury;
 #[cfg(feature = "contracts")]
@@ -155,16 +155,15 @@ pub const GAS_CONTACT: u64 = 1500; // Gas cost for contact operations
 #[cfg(feature = "contracts")]
 pub const GAS_GROUP: u64 = 2500; // Gas cost for group operations
 
-/// SOV native token constants for the generic TokenContract
-/// (legacy supply cap retained for u64 compatibility)
+/// SOV native token constants — re-exported from canonical source (tokens::constants)
 #[cfg(feature = "contracts")]
-pub const SOV_NATIVE_SYMBOL: &str = "SOV";
+pub use tokens::constants::SOV_TOKEN_SYMBOL as SOV_NATIVE_SYMBOL;
 #[cfg(feature = "contracts")]
-pub const SOV_NATIVE_NAME: &str = "Sovereign";
+pub use tokens::constants::SOV_TOKEN_NAME as SOV_NATIVE_NAME;
 #[cfg(feature = "contracts")]
-pub const SOV_NATIVE_DECIMALS: u8 = 8;
+pub use tokens::constants::SOV_TOKEN_DECIMALS as SOV_NATIVE_DECIMALS;
 #[cfg(feature = "contracts")]
-pub const SOV_NATIVE_MAX_SUPPLY: u64 = 21_000_000 * 100_000_000; // Legacy cap (u64); keep stable for now
+pub use tokens::constants::SOV_TOKEN_MAX_SUPPLY as SOV_NATIVE_MAX_SUPPLY;
 
 /// Contract version information
 #[cfg(feature = "contracts")]

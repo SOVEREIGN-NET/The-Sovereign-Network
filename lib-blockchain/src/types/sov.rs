@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::convert::TryFrom;
 
-/// Maximum SOV supply (1 trillion tokens, fixed and non-mintable)
+/// Maximum SOV supply for TokenAmount bounds (u128 version).
+/// This is the distribution target. The runtime TokenContract uses a larger u64 ceiling
+/// (see contracts::tokens::constants::SOV_TOKEN_MAX_SUPPLY).
 pub const SOV_MAX_SUPPLY: u128 = 1_000_000_000_000;
 
 /// Strong type wrapper for token quantities (u128 for large numbers)

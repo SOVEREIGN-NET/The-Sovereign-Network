@@ -69,8 +69,9 @@ pub use session::Session;
 pub use token_tx::{
     // Generic contract transaction builder
     build_contract_transaction,
-    // Token-specific (backward compatible)
+    // Token-specific
     build_burn_tx, build_create_token_tx, build_mint_tx, build_transfer_tx,
+    build_sov_wallet_transfer_tx,
     // Domain-specific (new JSON-based API)
     build_domain_register_request, build_domain_update_request, build_domain_transfer_request,
     // Domain-specific (deprecated, use *_request functions instead)
@@ -806,7 +807,7 @@ pub extern "C" fn zhtp_client_handshake_result_get_peer_public_key(
 // Token Transaction FFI Exports
 // =============================================================================
 
-/// Build a signed token transfer transaction.
+/// Build a signed token transfer transaction with nonce for replay protection.
 /// Returns hex-encoded transaction ready to POST to /api/v1/token/transfer
 /// Caller must free with `zhtp_client_string_free`.
 ///
@@ -817,6 +818,7 @@ pub extern "C" fn zhtp_client_handshake_result_get_peer_public_key(
 /// - to_pubkey_len: Length of to_pubkey
 /// - amount: Amount to transfer (in smallest units)
 /// - chain_id: Network chain ID (0x02=testnet, 0x03=development)
+/// - nonce: Transfer nonce for replay protection (query /api/v1/token/nonce/{token_id}/{address})
 ///
 /// Note: SOV transfers require wallet_id; use `zhtp_client_build_sov_wallet_transfer`.
 #[no_mangle]
@@ -827,6 +829,7 @@ pub extern "C" fn zhtp_client_build_token_transfer(
     to_pubkey_len: usize,
     amount: u64,
     chain_id: u8,
+    nonce: u64,
 ) -> *mut std::ffi::c_char {
     if handle.is_null() || token_id.is_null() || to_pubkey.is_null() {
         return std::ptr::null_mut();
@@ -839,7 +842,7 @@ pub extern "C" fn zhtp_client_build_token_transfer(
     let mut token_id_arr = [0u8; 32];
     token_id_arr.copy_from_slice(token_id_slice);
 
-    match token_tx::build_transfer_tx(identity, &token_id_arr, to_pubkey_slice, amount, chain_id) {
+    match token_tx::build_transfer_tx(identity, &token_id_arr, to_pubkey_slice, amount, chain_id, nonce) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
@@ -848,7 +851,7 @@ pub extern "C" fn zhtp_client_build_token_transfer(
     }
 }
 
-/// Build a signed SOV wallet-based transfer transaction.
+/// Build a signed SOV wallet-based transfer transaction with nonce for replay protection.
 /// Returns hex-encoded transaction ready to POST to /api/v1/token/transfer
 /// Caller must free with `zhtp_client_string_free`.
 ///
@@ -858,6 +861,7 @@ pub extern "C" fn zhtp_client_build_token_transfer(
 /// - to_wallet_id: 32-byte wallet_id (recipient)
 /// - amount: Amount to transfer (in smallest units)
 /// - chain_id: Network chain ID (0x02=testnet, 0x03=development)
+/// - nonce: Transfer nonce for replay protection (query /api/v1/token/nonce/{token_id}/{address})
 #[no_mangle]
 pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
     handle: *const IdentityHandle,
@@ -865,6 +869,7 @@ pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
     to_wallet_id: *const u8,
     amount: u64,
     chain_id: u8,
+    nonce: u64,
 ) -> *mut std::ffi::c_char {
     if handle.is_null() || from_wallet_id.is_null() || to_wallet_id.is_null() {
         return std::ptr::null_mut();
@@ -879,7 +884,7 @@ pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
     from_arr.copy_from_slice(from_slice);
     to_arr.copy_from_slice(to_slice);
 
-    match token_tx::build_sov_wallet_transfer_tx(identity, &from_arr, &to_arr, amount, chain_id) {
+    match token_tx::build_sov_wallet_transfer_tx(identity, &from_arr, &to_arr, amount, chain_id, nonce) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
