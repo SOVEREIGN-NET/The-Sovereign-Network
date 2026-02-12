@@ -69,10 +69,16 @@ pub use identity_manager_provider::{initialize_global_identity_manager_provider,
 pub use network_blockchain_provider::ZhtpBlockchainProvider;
 pub use mesh_router_provider::{initialize_global_mesh_router_provider, set_global_mesh_router, get_broadcast_metrics};
 
+/// Try to sync blockchain from bootstrap peers using QUIC transport
+///
+/// This function creates a temporary bootstrap identity and uses the QUIC-based
+/// ZhtpClient to fetch the blockchain from discovered peers. This ensures we use
+/// the same transport layer as the rest of the system (QUIC/ZHTP) rather than HTTP.
+///
+/// Returns true if sync succeeded and blocks were imported to store.
 async fn try_initial_sync_from_peer(
     store: std::sync::Arc<lib_blockchain::storage::SledStore>,
     peers: &[String],
-    api_port: u16,
 ) -> bool {
     let max_attempts: usize = std::env::var("ZHTP_SYNC_MAX_ATTEMPTS")
         .ok()
@@ -84,66 +90,162 @@ async fn try_initial_sync_from_peer(
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|v| *v > 0)
         .unwrap_or(500);
-    let client = reqwest::Client::new();
+    
+    // Maximum response size to prevent DoS/OOM (100MB default)
+    const MAX_EXPORT_SIZE: usize = 100 * 1024 * 1024;
+    let max_export_size = std::env::var("ZHTP_SYNC_MAX_EXPORT_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(MAX_EXPORT_SIZE);
+
+    // Create a temporary bootstrap identity for initial sync
+    // This is only used for the initial connection; once we have the chain,
+    // the node will use its proper identity from wallet startup.
+    let temp_identity = match lib_identity::ZhtpIdentity::new_unified(
+        lib_identity::IdentityType::Device,
+        None,  // age: not needed for Device type
+        None,  // jurisdiction: not needed for Device type
+        "bootstrap-client",
+        None,  // Generate random seed
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            error!("❌ Failed to generate temporary identity for initial sync: {}", e);
+            return false;
+        }
+    };
 
     for attempt in 0..max_attempts {
         for peer in peers {
-            let socket = match peer.parse::<std::net::SocketAddr>() {
-                Ok(s) => s,
+            // Parse peer address
+            let peer_addr = match peer.parse::<std::net::SocketAddr>() {
+                Ok(addr) => addr,
                 Err(_) => {
                     warn!("⚠️  Skipping invalid bootstrap peer address: {}", peer);
                     continue;
                 }
             };
-            let url = format!("http://{}:{}/api/v1/blockchain/export", socket.ip(), api_port);
-            info!("🔄 Attempting initial chain sync from {} (attempt {}/{})", url, attempt + 1, max_attempts);
-            let response = match client.get(&url).send().await {
-                Ok(r) => r,
+            
+            info!("🔄 Attempting initial chain sync from {} (attempt {}/{})", peer_addr, attempt + 1, max_attempts);
+
+            // Create QUIC client in bootstrap mode for initial sync
+            use lib_network::client::{ZhtpClient, ZhtpClientConfig};
+            
+            let client_config = ZhtpClientConfig {
+                allow_bootstrap: true,
+            };
+            
+            let mut client = match ZhtpClient::new_bootstrap_with_config(
+                temp_identity.clone(),
+                client_config,
+            ).await {
+                Ok(c) => c,
                 Err(e) => {
-                    warn!("⚠️  Failed to fetch export from {}: {}", url, e);
+                    warn!("⚠️  Failed to create QUIC client: {}", e);
                     continue;
                 }
             };
-            if !response.status().is_success() {
-                warn!("⚠️  Export request failed {}: {}", url, response.status());
+
+            // Connect to peer with timeout
+            let connect_result = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                client.connect(peer)
+            ).await;
+            
+            match connect_result {
+                Ok(Ok(())) => {
+                    info!("✅ Connected to peer {}", peer);
+                }
+                Ok(Err(e)) => {
+                    warn!("⚠️  Failed to connect to {}: {}", peer, e);
+                    continue;
+                }
+                Err(_) => {
+                    warn!("⚠️  Connection timeout to {}", peer);
+                    continue;
+                }
+            }
+
+            // Fetch blockchain export with timeout and size limit
+            let export_result = tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                client.get("/api/v1/blockchain/export")
+            ).await;
+            
+            let response = match export_result {
+                Ok(Ok(resp)) => resp,
+                Ok(Err(e)) => {
+                    warn!("⚠️  Failed to fetch export from {}: {}", peer, e);
+                    continue;
+                }
+                Err(_) => {
+                    warn!("⚠️  Export request timeout from {}", peer);
+                    continue;
+                }
+            };
+
+            if !response.is_success() {
+                warn!("⚠️  Export request failed from {}: {}", peer, response.status_message);
                 continue;
             }
-            let bytes = match response.bytes().await {
-                Ok(b) => b.to_vec(),
-                Err(e) => {
-                    warn!("⚠️  Failed to read export bytes from {}: {}", url, e);
-                    continue;
-                }
-            };
-            let import: lib_blockchain::BlockchainImport = match bincode::deserialize(&bytes) {
+
+            // Check response size before reading
+            if response.body.len() > max_export_size {
+                warn!(
+                    "⚠️  Export from {} too large ({} bytes, max {}). Refusing to import.",
+                    peer, response.body.len(), max_export_size
+                );
+                continue;
+            }
+
+            // Deserialize the export
+            let import: lib_blockchain::BlockchainImport = match bincode::deserialize(&response.body) {
                 Ok(i) => i,
                 Err(e) => {
-                    warn!("⚠️  Failed to deserialize export from {}: {}", url, e);
+                    warn!("⚠️  Failed to deserialize export from {}: {}", peer, e);
                     continue;
                 }
             };
+
             if import.blocks.is_empty() {
-                warn!("⚠️  Export from {} contained no blocks", url);
+                warn!("⚠️  Export from {} contained no blocks", peer);
                 continue;
             }
+
+            // Import blocks into store
+            // NOTE: ChainSync::import_blocks commits blocks incrementally, so if it fails
+            // mid-way, the store may contain partial state. Since we don't have a clean
+            // way to clear the store, we abort on first failure rather than retry.
             let sync = lib_blockchain::sync::ChainSync::new(store.clone());
             match sync.import_blocks(import.blocks) {
                 Ok(result) => {
                     info!(
                         "✅ Initial sync imported {} blocks (final height={:?}) from {}",
-                        result.blocks_imported, result.final_height, url
+                        result.blocks_imported, result.final_height, peer
                     );
                     return true;
                 }
                 Err(e) => {
-                    warn!("⚠️  Failed to import blocks from {}: {}", url, e);
-                    continue;
+                    error!(
+                        "❌ Failed to import blocks from {}: {}. Aborting initial sync to avoid inconsistent partial state.",
+                        peer, e
+                    );
+                    // Don't retry - partial state may prevent successful import
+                    return false;
                 }
             }
         }
 
+        // Exponential backoff with saturation to prevent overflow
         if attempt + 1 < max_attempts {
-            let delay = base_delay_ms.saturating_mul(1u64 << attempt);
+            // Safely calculate delay: cap the shift to prevent overflow
+            // Use checked_shl and handle overflow by capping at max delay
+            let shift_amount = attempt.min(63); // Max shift for u64
+            let multiplier = 1u64.checked_shl(shift_amount as u32).unwrap_or(u64::MAX);
+            let delay = base_delay_ms.saturating_mul(multiplier);
+            // Cap maximum delay at 60 seconds
+            let delay = delay.min(60_000);
+            
             info!("⏳ Initial sync retry in {}ms (attempt {}/{})", delay, attempt + 1, max_attempts);
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
         }
@@ -1166,7 +1268,6 @@ impl RuntimeOrchestrator {
                         if try_initial_sync_from_peer(
                             store.clone(),
                             &net_info.bootstrap_peers,
-                            self.config.protocols_config.api_port,
                         ).await {
                             if let Some(bc) = lib_blockchain::Blockchain::load_from_store(store.clone())? {
                                 info!("📂 Synced chain from peer (height: {})", bc.height);
