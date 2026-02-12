@@ -80,6 +80,11 @@ async fn try_initial_sync_from_peer(
     store: std::sync::Arc<lib_blockchain::storage::SledStore>,
     peers: &[String],
 ) -> bool {
+    // Configuration constants
+    const MAX_EXPORT_SIZE: usize = 100 * 1024 * 1024; // 100MB default
+    const MAX_SHIFT_BITS: usize = 31; // Prevent overflow: 1u64 << 32 would overflow
+    const MAX_BACKOFF_DELAY_MS: u64 = 60_000; // 60 seconds max backoff
+    
     let max_attempts: usize = std::env::var("ZHTP_SYNC_MAX_ATTEMPTS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -91,8 +96,6 @@ async fn try_initial_sync_from_peer(
         .filter(|v| *v > 0)
         .unwrap_or(500);
     
-    // Maximum response size to prevent DoS/OOM (100MB default)
-    const MAX_EXPORT_SIZE: usize = 100 * 1024 * 1024;
     let max_export_size = std::env::var("ZHTP_SYNC_MAX_EXPORT_SIZE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -160,14 +163,14 @@ async fn try_initial_sync_from_peer(
             
             match connect_result {
                 Ok(Ok(())) => {
-                    info!("✅ Connected to peer {}", peer);
+                    info!("✅ Connected to peer {}", peer_addr);
                 }
                 Ok(Err(e)) => {
-                    warn!("⚠️  Failed to connect to {}: {}", peer, e);
+                    warn!("⚠️  Failed to connect to {}: {}", peer_addr, e);
                     continue;
                 }
                 Err(_) => {
-                    warn!("⚠️  Connection timeout to {}", peer);
+                    warn!("⚠️  Connection timeout to {}", peer_addr);
                     continue;
                 }
             }
@@ -244,14 +247,12 @@ async fn try_initial_sync_from_peer(
 
         // Exponential backoff with saturation to prevent overflow
         if attempt + 1 < max_attempts {
-            // Safely calculate delay: cap the shift to prevent overflow
-            // Use checked_shl and handle overflow by capping at max delay
-            // Cap at 31 since we're shifting a u64 but shift amount is u32
-            let shift_amount = attempt.min(31);
+            // Safely calculate delay with capped shift to prevent overflow
+            let shift_amount = attempt.min(MAX_SHIFT_BITS);
             let multiplier = 1u64.checked_shl(shift_amount as u32).unwrap_or(u64::MAX);
             let delay = base_delay_ms.saturating_mul(multiplier);
-            // Cap maximum delay at 60 seconds
-            let delay = delay.min(60_000);
+            // Cap maximum delay
+            let delay = delay.min(MAX_BACKOFF_DELAY_MS);
             
             info!("⏳ Initial sync retry in {}ms (attempt {}/{})", delay, attempt + 1, max_attempts);
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
