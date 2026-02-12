@@ -721,7 +721,7 @@ fn test_replay_protection_rejects_duplicate_nonce() {
     blockchain.process_token_transactions(&block1).unwrap();
 
     // Verify nonce incremented
-    assert_eq!(blockchain.get_token_nonce(&sender_wid), 1);
+    assert_eq!(blockchain.get_token_nonce(&sov_token_id, &sender_wid), 1);
 
     // Replay with nonce 0 again — must be rejected
     let tx_replay = token_transfer_tx_with_nonce(
@@ -759,11 +759,61 @@ fn test_sequential_nonces() {
         );
         let block = test_block(nonce + 1, vec![tx]);
         blockchain.process_token_transactions(&block).unwrap();
-        assert_eq!(blockchain.get_token_nonce(&sender_wid), nonce + 1);
+        assert_eq!(blockchain.get_token_nonce(&sov_token_id, &sender_wid), nonce + 1);
     }
 
     // Verify final balances
     let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
     assert_eq!(token.balance_of(&wallet_key(&sender_wid)), 1_000_000 - 30_000);
     assert_eq!(token.balance_of(&wallet_key(&recipient_wid)), 30_000);
+}
+
+/// Test 15: Nonces are independent per token for the same sender.
+#[test]
+fn test_nonces_are_per_token() {
+    let mut blockchain = Blockchain::default();
+    let sender_pk = test_pubkey(1);
+    let recipient_pk = test_pubkey(2);
+    let sender_wid = [0x71u8; 32];
+    let recipient_wid = [0x72u8; 32];
+    let sov_token_id = generate_lib_token_id();
+
+    insert_sov_token(&mut blockchain);
+    register_wallet(&mut blockchain, sender_wid, &sender_pk, 0);
+    register_wallet(&mut blockchain, recipient_wid, &recipient_pk, 0);
+    register_identity(&mut blockchain, "did:zhtp:recipient_02", &recipient_pk);
+
+    // Create a custom token and mint to sender
+    let custom_token = TokenContract::new_custom(
+        "CarbonBlue".to_string(),
+        "CBE".to_string(),
+        1_000_000,
+        sender_pk.clone(),
+    );
+    let custom_token_id = custom_token.token_id;
+    blockchain.token_contracts.insert(custom_token_id, custom_token);
+    blockchain.token_contracts.get_mut(&custom_token_id).unwrap()
+        .mint(&sender_pk, 500_000).unwrap();
+
+    // Mint SOV to sender wallet
+    let sender_key = wallet_key(&sender_wid);
+    blockchain.token_contracts.get_mut(&sov_token_id).unwrap()
+        .mint(&sender_key, 1_000_000).unwrap();
+
+    // SOV transfer with nonce 0
+    let tx1 = token_transfer_tx_with_nonce(
+        &sender_pk, sov_token_id, sender_wid, recipient_wid, 100_000, 50, 0,
+    );
+    let block1 = test_block(1, vec![tx1]);
+    blockchain.process_token_transactions(&block1).unwrap();
+
+    // Custom token transfer with nonce 0 should still succeed
+    let tx2 = token_transfer_tx_with_nonce(
+        &sender_pk, custom_token_id, sender_pk.key_id, recipient_pk.key_id, 25_000, 51, 0,
+    );
+    let block2 = test_block(2, vec![tx2]);
+    blockchain.process_token_transactions(&block2).unwrap();
+
+    assert_eq!(blockchain.get_token_nonce(&sov_token_id, &sender_wid), 1);
+    assert_eq!(blockchain.get_token_nonce(&custom_token_id, &sender_pk.key_id), 1);
 }

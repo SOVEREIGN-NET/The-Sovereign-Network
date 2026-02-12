@@ -602,8 +602,19 @@ impl TokenHandler {
         }))
     }
 
-    /// GET /api/v1/token/nonce/{address} - Get expected nonce for transfer replay protection
-    async fn handle_get_nonce(&self, address_hex: &str) -> Result<ZhtpResponse> {
+    /// GET /api/v1/token/nonce/{token_id}/{address} - Get expected nonce for transfer replay protection
+    async fn handle_get_nonce(&self, token_id_hex: &str, address_hex: &str) -> Result<ZhtpResponse> {
+        let token_id_bytes = hex::decode(token_id_hex)
+            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        if token_id_bytes.len() != 32 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "token_id must be 32 bytes (64 hex chars)".to_string()
+            ));
+        }
+        let mut token_id = [0u8; 32];
+        token_id.copy_from_slice(&token_id_bytes);
+
         let address_bytes = hex::decode(address_hex)
             .map_err(|_| anyhow::anyhow!("Invalid address hex"))?;
         if address_bytes.len() != 32 {
@@ -616,9 +627,10 @@ impl TokenHandler {
         address.copy_from_slice(&address_bytes);
 
         let blockchain = self.blockchain.read().await;
-        let nonce = blockchain.get_token_nonce(&address);
+        let nonce = blockchain.get_token_nonce(&token_id, &address);
 
         create_json_response(json!({
+            "token_id": token_id_hex,
             "address": address_hex,
             "nonce": nonce
         }))
@@ -978,16 +990,19 @@ impl ZhtpRequestHandler for TokenHandler {
                     ))
                 }
             }
-            // GET /api/v1/token/nonce/{address} - Get expected nonce for replay protection
+            // GET /api/v1/token/nonce/{token_id}/{address} - Get expected nonce for replay protection
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/nonce/") => {
-                let address = path.strip_prefix("/api/v1/token/nonce/").unwrap_or("");
-                if address.is_empty() {
+                let suffix = path.strip_prefix("/api/v1/token/nonce/").unwrap_or("");
+                let mut parts = suffix.split('/');
+                let token_id = parts.next().unwrap_or("");
+                let address = parts.next().unwrap_or("");
+                if token_id.is_empty() || address.is_empty() {
                     Ok(create_error_response(
                         ZhtpStatus::BadRequest,
-                        "Address required".to_string()
+                        "token_id and address required".to_string()
                     ))
                 } else {
-                    self.handle_get_nonce(address).await
+                    self.handle_get_nonce(token_id, address).await
                 }
             }
             _ => {

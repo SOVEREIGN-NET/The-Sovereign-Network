@@ -179,10 +179,10 @@ pub struct Blockchain {
     /// UBI registration block heights (identity_id -> block_height)
     #[serde(default)]
     pub ubi_blocks: HashMap<String, u64>,
-    /// Per-address nonce for token transfer replay protection
-    /// Key: sender address (wallet_id for SOV, key_id for custom tokens)
+    /// Per-token, per-address nonce for token transfer replay protection
+    /// Key: (token_id, sender address) where address is wallet_id for SOV or key_id for custom tokens
     #[serde(default)]
-    pub token_nonces: HashMap<[u8; 32], u64>,
+    pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
 }
 
 /// Validator information stored on-chain
@@ -545,9 +545,9 @@ struct BlockchainStorageV3 {
     // ADD NEW FIELDS BELOW HERE ONLY - with #[serde(default)]
     // =========================================================================
 
-    /// Per-address nonce for token transfer replay protection
+    /// Per-token, per-address nonce for token transfer replay protection
     #[serde(default)]
-    pub token_nonces: HashMap<[u8; 32], u64>,
+    pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
 }
 
 impl BlockchainStorageV3 {
@@ -3044,11 +3044,14 @@ impl Blockchain {
         None
     }
 
-    /// Get the current expected nonce for a sender address.
+    /// Get the current expected nonce for a sender address and token.
     /// For SOV transfers, the address is the wallet_id bytes.
     /// For custom token transfers, the address is the key_id bytes.
-    pub fn get_token_nonce(&self, address: &[u8; 32]) -> u64 {
-        self.token_nonces.get(address).copied().unwrap_or(0)
+    pub fn get_token_nonce(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u64 {
+        self.token_nonces
+            .get(&(*token_id, *address))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Collect SOV backfill entries from wallet_registry for wallets missing token balances.
@@ -3571,7 +3574,14 @@ impl Blockchain {
                     }
 
                     // Replay protection: validate and increment nonce
-                    let nonce_key = transfer.from;
+                    let is_sov = Self::is_sov_token_id(&transfer.token_id);
+                    let token_id = if is_sov {
+                        sov_token_id
+                    } else {
+                        transfer.token_id
+                    };
+
+                    let nonce_key = (token_id, transfer.from);
                     let expected_nonce = self.token_nonces.get(&nonce_key).copied().unwrap_or(0);
                     if transfer.nonce != expected_nonce {
                         return Err(anyhow::anyhow!(
@@ -3582,13 +3592,6 @@ impl Blockchain {
 
                     // Sender public key comes from transaction signature
                     let sender_pk = transaction.signature.public_key.clone();
-
-                    let is_sov = Self::is_sov_token_id(&transfer.token_id);
-                    let token_id = if is_sov {
-                        sov_token_id
-                    } else {
-                        transfer.token_id
-                    };
 
                     if token_id == sov_token_id {
                         self.ensure_sov_token_contract();
