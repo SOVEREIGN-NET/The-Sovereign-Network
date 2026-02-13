@@ -7,13 +7,12 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{DomainArgs, DomainAction, TrustFlags, ZhtpCli};
-use crate::commands::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore, validate_domain};
+use crate::argument_parsing::{DomainArgs, DomainAction, ZhtpCli};
+use crate::commands::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore, resolve_keystore_path, validate_domain};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use lib_crypto::sign_message;
 
 // ============================================================================
@@ -26,6 +25,7 @@ pub enum DomainOperation {
     Register,
     Check,
     Info,
+    Status,
     Transfer,
     Release,
     Migrate,
@@ -38,6 +38,7 @@ impl DomainOperation {
             DomainOperation::Register => "Register a new domain",
             DomainOperation::Check => "Check domain availability",
             DomainOperation::Info => "Get domain information",
+            DomainOperation::Status => "Get domain status",
             DomainOperation::Transfer => "Transfer domain to new owner",
             DomainOperation::Release => "Release domain from use",
             DomainOperation::Migrate => "Migrate legacy domain records",
@@ -53,6 +54,7 @@ pub fn action_to_operation(action: &DomainAction) -> DomainOperation {
         DomainAction::Register { .. } => DomainOperation::Register,
         DomainAction::Check { .. } => DomainOperation::Check,
         DomainAction::Info { .. } => DomainOperation::Info,
+        DomainAction::Status { .. } => DomainOperation::Status,
         DomainAction::Transfer { .. } => DomainOperation::Transfer,
         DomainAction::Release { .. } => DomainOperation::Release,
         DomainAction::Migrate { .. } => DomainOperation::Migrate,
@@ -182,6 +184,28 @@ async fn handle_domain_command_impl(
             )
             .await
         }
+        DomainAction::Status {
+            domain,
+            keystore,
+            trust,
+        } => {
+            let domain = validate_domain(&domain)?;
+
+            output.header("Domain Status")?;
+            output.print(&format!("Domain: {}", domain))?;
+
+            get_domain_info_impl(
+                &domain,
+                keystore.as_ref().map(|s| s.as_str()),
+                trust.pin_spki.as_deref(),
+                trust.node_did.as_deref(),
+                trust.tofu,
+                trust.trust_node,
+                &cli.server,
+                output,
+            )
+            .await
+        }
         DomainAction::Transfer {
             domain,
             new_owner,
@@ -199,7 +223,7 @@ async fn handle_domain_command_impl(
             transfer_domain_impl(
                 &domain,
                 &new_owner,
-                keystore.as_str(),
+                keystore.as_ref().map(|s| s.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -224,7 +248,7 @@ async fn handle_domain_command_impl(
             // Imperative: Network communication
             release_domain_impl(
                 &domain,
-                keystore.as_str(),
+                keystore.as_ref().map(|s| s.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -239,7 +263,7 @@ async fn handle_domain_command_impl(
             output.header("Migrate Domain Records")?;
 
             migrate_domains_impl(
-                keystore.as_str(),
+                keystore.as_ref().map(|s| s.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -267,9 +291,7 @@ async fn register_domain_impl(
 ) -> CliResult<()> {
     output.info(&format!("Registering domain '{}' for {} days...", domain, duration))?;
 
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required for register".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
@@ -327,9 +349,7 @@ async fn check_domain_impl(
 ) -> CliResult<()> {
     output.info(&format!("Checking availability for '{}'...", domain))?;
 
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required for check".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
@@ -366,9 +386,7 @@ async fn get_domain_info_impl(
     server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required for info".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
@@ -395,7 +413,7 @@ async fn get_domain_info_impl(
 async fn transfer_domain_impl(
     domain: &str,
     new_owner: &str,
-    keystore: &str,
+    keystore: Option<&str>,
     pin_spki: Option<&str>,
     node_did: Option<&str>,
     tofu: bool,
@@ -408,7 +426,7 @@ async fn transfer_domain_impl(
         domain, new_owner
     ))?;
 
-    let keystore_path = PathBuf::from(keystore);
+    let keystore_path = resolve_keystore_path(keystore)?;
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
@@ -448,7 +466,7 @@ async fn transfer_domain_impl(
 /// Release domain from use
 async fn release_domain_impl(
     domain: &str,
-    keystore: &str,
+    keystore: Option<&str>,
     pin_spki: Option<&str>,
     node_did: Option<&str>,
     tofu: bool,
@@ -459,7 +477,7 @@ async fn release_domain_impl(
 ) -> CliResult<()> {
     output.info(&format!("Releasing domain '{}'...", domain))?;
 
-    let keystore_path = PathBuf::from(keystore);
+    let keystore_path = resolve_keystore_path(keystore)?;
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
@@ -489,7 +507,7 @@ async fn release_domain_impl(
 
 /// Admin: migrate legacy domain records
 async fn migrate_domains_impl(
-    keystore: &str,
+    keystore: Option<&str>,
     pin_spki: Option<&str>,
     node_did: Option<&str>,
     tofu: bool,
@@ -497,7 +515,7 @@ async fn migrate_domains_impl(
     server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore_path = PathBuf::from(keystore);
+    let keystore_path = resolve_keystore_path(keystore)?;
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
@@ -522,6 +540,7 @@ async fn migrate_domains_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::argument_parsing::TrustFlags;
 
     #[test]
     fn test_validate_domain_name_valid_zhtp() {
