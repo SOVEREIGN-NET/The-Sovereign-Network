@@ -1148,7 +1148,7 @@ mod tests {
             build_dir: "./dist".to_string(),
             domain: "myapp.zhtp".to_string(),
             mode: Some("spa".to_string()),
-            keystore: "~/.zhtp/keystore".to_string(),
+            keystore: Some("~/.zhtp/keystore".to_string()),
             fee: None,
             dry_run: false,
             trust: crate::argument_parsing::TrustFlags {

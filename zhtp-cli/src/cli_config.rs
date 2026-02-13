@@ -108,7 +108,8 @@ pub fn default_config_path() -> PathBuf {
 
 pub fn load_config(path: Option<&str>) -> CliResult<CliConfig> {
     let config_path = path
-        .map(PathBuf::from)
+        .map(crate::logic::paths::expand_home_directory)
+        .transpose()?
         .unwrap_or_else(default_config_path);
 
     if !config_path.exists() {
@@ -196,12 +197,15 @@ pub fn merge_profile_config(
     }
 }
 
-pub fn config_path(path: Option<&str>) -> PathBuf {
-    path.map(PathBuf::from).unwrap_or_else(default_config_path)
+pub fn config_path(path: Option<&str>) -> CliResult<PathBuf> {
+    path
+        .map(crate::logic::paths::expand_home_directory)
+        .transpose()
+        .map(|p| p.unwrap_or_else(default_config_path))
 }
 
 pub fn save_config(path: Option<&str>, config: &CliConfig) -> CliResult<()> {
-    let config_path = config_path(path);
+    let config_path = config_path(path)?;
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             CliError::ConfigError(format!("Failed to create config directory: {}", e))
@@ -213,5 +217,4 @@ pub fn save_config(path: Option<&str>, config: &CliConfig) -> CliResult<()> {
     fs::write(&config_path, data)
         .map_err(|e| CliError::ConfigError(format!("Failed to write config: {}", e)))?;
     Ok(())
-}
 }

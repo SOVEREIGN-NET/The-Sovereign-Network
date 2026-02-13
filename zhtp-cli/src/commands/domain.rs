@@ -540,6 +540,7 @@ async fn migrate_domains_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::argument_parsing::TrustFlags;
 
     #[test]
     fn test_validate_domain_name_valid_zhtp() {

@@ -89,7 +89,7 @@ async fn handle_login(
 
     let keystore_path = resolve_optional("Keystore path", keystore, non_interactive)?;
     let identity_id = resolve_optional("Identity (DID)", identity, non_interactive)?;
-    let api_key_value = resolve_optional("API key", api_key, non_interactive)?;
+    let api_key_value = resolve_optional_secret("API key", api_key, non_interactive)?;
     let user_id_value = resolve_optional("User ID", user_id, non_interactive)?;
 
     let trust = resolve_trust_profile(
@@ -179,6 +179,32 @@ fn resolve_optional(
     }
 }
 
+fn resolve_optional_secret(
+    label: &str,
+    value: Option<String>,
+    non_interactive: bool,
+) -> CliResult<Option<String>> {
+    if let Some(value) = value {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(trimmed));
+    }
+
+    if non_interactive {
+        return Ok(None);
+    }
+
+    let entered = prompt_secret_input(label)?;
+    let trimmed = entered.trim();
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed.to_string()))
+    }
+}
+
 fn resolve_trust_profile(
     pin_spki: Option<String>,
     node_did: Option<String>,
@@ -251,6 +277,11 @@ fn prompt_input(label: &str, default: Option<&str>) -> CliResult<String> {
     } else {
         Ok(trimmed.to_string())
     }
+}
+
+fn prompt_secret_input(label: &str) -> CliResult<String> {
+    let prompt = format!("{}: ", label);
+    rpassword::prompt_password(prompt).map_err(CliError::IoError)
 }
 
 fn prompt_yes_no(label: &str, default: bool) -> CliResult<bool> {

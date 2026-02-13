@@ -1339,7 +1339,7 @@ pub async fn run_cli() -> Result<()> {
     }
 
     if let Some(profile_name) = profile_name {
-        if server_source != ValueSource::DefaultValue {
+        if server_source == ValueSource::CommandLine {
             return Err(anyhow::anyhow!(
                 "Cannot use --profile with --server. Use only one."
             ));

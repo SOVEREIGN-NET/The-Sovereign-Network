@@ -265,7 +265,7 @@ async fn init_config_impl(
     }
 
     let default_config = r#"# ZHTP CLI Configuration
-# This file defines CLI defaults and profiles.
+# This file defines CLI defaults, profiles, and servers.
 
 # default_profile = "central"
 
@@ -303,7 +303,7 @@ address = "central.sov:9334"
     })?;
 
     output.success(&format!("✓ Configuration initialized at {}", config_path.display()))?;
-    output.print("Edit the configuration file to customize your node settings")?;
+    output.print("Edit the configuration file to customize CLI defaults, servers, and profiles")?;
 
     Ok(())
 }
@@ -382,7 +382,7 @@ mod tests {
     fn test_default_config_path() {
         let path = default_config_path();
         assert!(path.to_string_lossy().contains(".zhtp"));
-        assert!(path.to_string_lossy().contains("config"));
+        assert!(path.to_string_lossy().contains(crate::cli_config::DEFAULT_CONFIG_FILENAME));
     }
 
     #[test]
