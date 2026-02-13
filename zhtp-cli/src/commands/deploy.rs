@@ -8,7 +8,7 @@
 //! - **Testability**: Output trait injection for testing
 
 use crate::argument_parsing::{DeployArgs, DeployAction, ZhtpCli};
-use crate::commands::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore, validate_domain};
+use crate::commands::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore, resolve_keystore_path, validate_domain};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
 
@@ -415,7 +415,7 @@ async fn handle_deploy_command_impl(
                 &build_dir,
                 &domain,
                 deploy_mode,
-                Some(keystore.as_str()),
+                keystore.as_deref(),
                 fee,
                 dry_run,
                 trust.pin_spki.as_deref(),
@@ -454,7 +454,7 @@ async fn handle_deploy_command_impl(
                 &build_dir,
                 &domain,
                 deploy_mode,
-                Some(keystore.as_str()),
+                keystore.as_deref(),
                 fee,
                 dry_run,
                 trust.pin_spki.as_deref(),
@@ -481,7 +481,7 @@ async fn handle_deploy_command_impl(
             // Imperative: Network communication
             delete_deployment_impl(
                 &domain,
-                Some(keystore.as_str()),
+                keystore.as_deref(),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -579,7 +579,7 @@ async fn handle_deploy_command_impl(
             rollback_deployment_impl(
                 &domain,
                 &to_version.to_string(),
-                Some(keystore.as_str()),
+                keystore.as_deref(),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -622,9 +622,7 @@ async fn deploy_site_impl(
         return Ok(());
     }
 
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required for deployment".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     output.info("Loading identity from keystore...")?;
     let loaded = load_identity_from_keystore(&keystore_path)?;
@@ -719,9 +717,7 @@ async fn deploy_update_impl(
         return Ok(());
     }
 
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required for update".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     output.info("Loading identity from keystore...")?;
     let loaded = load_identity_from_keystore(&keystore_path)?;
@@ -836,9 +832,7 @@ async fn delete_deployment_impl(
     _force: bool,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required for delete".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     output.info("Loading identity from keystore...")?;
     let loaded = load_identity_from_keystore(&keystore_path)?;
@@ -891,9 +885,7 @@ async fn check_deployment_status_impl(
     server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
@@ -957,9 +949,7 @@ async fn list_deployments_impl(
     server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
@@ -1007,9 +997,7 @@ async fn show_deployment_history_impl(
     server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
@@ -1076,9 +1064,7 @@ async fn rollback_deployment_impl(
     _force: bool,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
@@ -1162,7 +1148,7 @@ mod tests {
             build_dir: "./dist".to_string(),
             domain: "myapp.zhtp".to_string(),
             mode: Some("spa".to_string()),
-            keystore: "~/.zhtp/keystore".to_string(),
+            keystore: Some("~/.zhtp/keystore".to_string()),
             fee: None,
             dry_run: false,
             trust: crate::argument_parsing::TrustFlags {

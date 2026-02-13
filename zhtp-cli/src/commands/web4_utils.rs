@@ -81,12 +81,52 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
     Ok(LoadedIdentity { identity, keypair })
 }
 
+pub fn default_keystore_path() -> CliResult<PathBuf> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| CliError::ConfigError("Cannot determine home directory".to_string()))?;
+    Ok(home.join(".zhtp").join("keystore"))
+}
+
+pub fn resolve_keystore_path(keystore: Option<&str>) -> CliResult<PathBuf> {
+    if let Some(path) = keystore {
+        return crate::logic::paths::expand_home_directory(path);
+    }
+
+    let defaults = crate::cli_config::runtime_defaults();
+    if let Some(path) = defaults.keystore {
+        return crate::logic::paths::expand_home_directory(&path);
+    }
+
+    let fallback = default_keystore_path()?;
+    if fallback.exists() {
+        return Ok(fallback);
+    }
+
+    Err(CliError::IdentityError(
+        "Keystore path required. Provide --keystore or set defaults in ~/.zhtp/cli.toml".to_string(),
+    ))
+}
+
 pub fn build_trust_config(
     pin_spki: Option<&str>,
     node_did: Option<&str>,
     tofu: bool,
     trust_node: bool,
 ) -> CliResult<TrustConfig> {
+    let mut pin_spki = pin_spki.map(|s| s.to_string());
+    let mut node_did = node_did.map(|s| s.to_string());
+    let mut tofu = tofu;
+    let mut trust_node = trust_node;
+
+    if pin_spki.is_none() && node_did.is_none() && !tofu && !trust_node {
+        if let Some(defaults) = crate::cli_config::runtime_defaults().trust {
+            pin_spki = defaults.pin_spki;
+            node_did = defaults.node_did;
+            tofu = defaults.tofu.unwrap_or(false);
+            trust_node = defaults.trust_node.unwrap_or(false);
+        }
+    }
+
     if trust_node && pin_spki.is_some() {
         return Err(CliError::ConfigError(
             "Cannot use --trust-node (bootstrap mode) with --pin-spki (pinning mode)".to_string(),
@@ -108,7 +148,7 @@ pub fn build_trust_config(
     let mut config = if trust_node {
         TrustConfig::bootstrap()
     } else if let Some(pin) = pin_spki {
-        TrustConfig::with_pin(pin.to_string())
+        TrustConfig::with_pin(pin)
     } else if tofu {
         let trustdb_path = TrustConfig::default_trustdb_path()
             .map_err(|e| CliError::ConfigError(format!("Failed to resolve trustdb path: {}", e)))?;
@@ -118,7 +158,7 @@ pub fn build_trust_config(
     };
 
     if let Some(did) = node_did {
-        config = config.expect_node_did(did.to_string());
+        config = config.expect_node_did(did);
     }
 
     Ok(config)
@@ -152,10 +192,7 @@ pub async fn connect_client(
 /// - Default keystore at ~/.zhtp/keystore
 /// - Bootstrap mode (no TLS verification) for development convenience
 pub async fn connect_default(server: &str) -> CliResult<ZhtpClient> {
-    // Try to find default keystore
-    let default_keystore = dirs::home_dir()
-        .map(|h| h.join(".zhtp").join("keystore"))
-        .ok_or_else(|| CliError::ConfigError("Cannot determine home directory".to_string()))?;
+    let default_keystore = default_keystore_path()?;
 
     if !default_keystore.exists() {
         return Err(CliError::IdentityError(format!(

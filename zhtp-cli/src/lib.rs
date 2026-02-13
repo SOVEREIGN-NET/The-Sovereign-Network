@@ -16,6 +16,7 @@
 pub mod commands;
 pub mod argument_parsing;
 pub mod banner;
+pub mod cli_config;
 
 // Architecture modules (new)
 pub mod error;
