@@ -1,0 +1,7 @@
+[build]
+# Output into zhtp static assets for deployment
+dist = "../zhtp/static/explorer"
+public_url = "/"
+
+[watch]
+ignore = ["../zhtp/static/explorer"]
