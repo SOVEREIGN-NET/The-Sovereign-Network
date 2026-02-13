@@ -15,10 +15,11 @@ These environment variables apply to all commands:
 |----------|------|---------|-------------|
 | `ZHTP_SERVER` | string | `127.0.0.1:9333` | API server address (host:port) |
 | `ZHTP_FORMAT` | string | `table` | Output format (json, yaml, table) |
-| `ZHTP_CONFIG` | string | (optional) | Path to configuration file |
+| `ZHTP_CONFIG` | string | (optional) | Path to CLI config file |
 | `ZHTP_API_KEY` | string | (optional) | API authentication key |
 | `ZHTP_USER_ID` | string | (optional) | User ID for authenticated requests |
 | `ZHTP_VERBOSE` | bool | false | Enable verbose debug output |
+| `ZHTP_PROFILE` | string | (optional) | Named server profile from `~/.zhtp/cli.toml` |
 
 ## Node Command Options
 
@@ -34,6 +35,29 @@ Configuration for `zhtp-cli node start`:
 | `ZHTP_NODE_EDGE_MODE` | bool | false | Enable edge node mode (lightweight sync) |
 | `ZHTP_NODE_EDGE_MAX_HEADERS` | usize | 500 | Max headers in edge mode (~100KB per 500) |
 | `ZHTP_NODE_KEYSTORE` | string | `~/.zhtp/keystore` | Path to identity keystore directory |
+
+## CLI Config File
+
+The CLI can load defaults and server aliases from `~/.zhtp/cli.toml` (or via `--config` / `ZHTP_CONFIG`).
+
+Example:
+
+```toml
+[defaults]
+server = "127.0.0.1:9334"
+keystore = "~/.zhtp/keystore"
+
+[servers.central]
+address = "central.sov:9334"
+keystore = "~/.zhtp/keystore"
+```
+
+Usage:
+
+```bash
+zhtp-cli --profile central domain status central.sov
+zhtp-cli --server central domain info central.sov
+```
 
 ## Usage Examples
 
