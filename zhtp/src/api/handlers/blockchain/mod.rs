@@ -40,6 +40,77 @@ impl BlockchainHandler {
     async fn get_blockchain(&self) -> anyhow::Result<Arc<RwLock<Blockchain>>> {
         crate::runtime::blockchain_provider::get_global_blockchain().await
     }
+
+    fn parse_query_params(uri: &str) -> HashMap<String, String> {
+        let mut params = HashMap::new();
+        let query = match uri.split_once('?') {
+            Some((_, q)) => q,
+            None => return params,
+        };
+
+        for pair in query.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+            let mut iter = pair.splitn(2, '=');
+            let key = iter.next().unwrap_or("").trim();
+            let value = iter.next().unwrap_or("").trim();
+            if key.is_empty() {
+                continue;
+            }
+            let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into()).to_string();
+            let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into()).to_string();
+            params.insert(decoded_key, decoded_value);
+        }
+
+        params
+    }
+
+    fn parse_pagination(params: &HashMap<String, String>) -> (usize, usize) {
+        let page = params
+            .get("page")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(1)
+            .max(1);
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(20)
+            .max(1)
+            .min(100);
+        (page, limit)
+    }
+
+    fn is_hex_64(value: &str) -> bool {
+        value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
+    }
+
+    fn strip_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+        value
+            .strip_prefix(&format!("{}_", prefix))
+            .or_else(|| value.strip_prefix(&format!("{}:", prefix)))
+    }
+
+    fn tx_to_info(tx: &lib_blockchain::transaction::Transaction) -> TransactionInfo {
+        TransactionInfo {
+            hash: tx.hash().to_string(),
+            from: tx
+                .inputs
+                .first()
+                .map(|i| i.previous_output.to_string())
+                .unwrap_or_else(|| "genesis".to_string()),
+            to: tx
+                .outputs
+                .first()
+                .map(|o| format!("{:02x?}", &o.recipient.key_id[..8]))
+                .unwrap_or_else(|| "unknown".to_string()),
+            amount: 0, // Amount is hidden in commitment for privacy
+            fee: tx.fee,
+            transaction_type: format!("{:?}", tx.transaction_type),
+            timestamp: tx.signature.timestamp,
+            size: tx.size(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -47,7 +118,20 @@ impl ZhtpRequestHandler for BlockchainHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::info!("Blockchain handler: {} {}", request.method, request.uri);
 
-        let response = match (request.method, request.uri.as_str()) {
+        let uri_path = request.uri.split('?').next().unwrap_or(request.uri.as_str());
+        let response = match (request.method, uri_path) {
+            (ZhtpMethod::Get, "/api/v1/blockchain/blocks") => {
+                self.handle_list_blocks(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/blockchain/transactions") => {
+                self.handle_list_transactions(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/blockchain/stats") => {
+                self.handle_get_stats(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/blockchain/search") => {
+                self.handle_search(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/blockchain/status") => {
                 self.handle_blockchain_status(request).await
             }
@@ -56,6 +140,9 @@ impl ZhtpRequestHandler for BlockchainHandler {
             }
             (ZhtpMethod::Post, "/api/v1/blockchain/transaction") => {
                 self.handle_submit_transaction(request).await
+            }
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/block/hash/") => {
+                self.handle_get_block_by_hash(request).await
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/block/") => {
                 self.handle_get_block(request).await
@@ -192,6 +279,27 @@ struct BlockResponse {
 }
 
 #[derive(Serialize)]
+struct BlockSummary {
+    height: u64,
+    hash: String,
+    previous_hash: String,
+    timestamp: u64,
+    transaction_count: usize,
+    merkle_root: String,
+    nonce: u64,
+}
+
+#[derive(Serialize)]
+struct PaginatedBlocksResponse {
+    status: String,
+    page: usize,
+    limit: usize,
+    total: usize,
+    total_pages: usize,
+    blocks: Vec<BlockSummary>,
+}
+
+#[derive(Serialize)]
 struct TransactionSubmissionResponse {
     status: String,
     transaction_hash: String,
@@ -262,6 +370,38 @@ struct TransactionInfo {
     transaction_type: String,
     timestamp: u64,
     size: usize,
+}
+
+#[derive(Serialize)]
+struct PaginatedTransactionsResponse {
+    status: String,
+    page: usize,
+    limit: usize,
+    total: usize,
+    total_pages: usize,
+    transactions: Vec<TransactionInfo>,
+}
+
+#[derive(Serialize)]
+struct ExplorerStatsResponse {
+    status: String,
+    latest_height: u64,
+    latest_block_time: Option<u64>,
+    total_transactions: u64,
+    avg_block_time_secs: Option<u64>,
+    total_supply: u64,
+    total_ubi_distributed: u64,
+    active_validators: usize,
+    mempool_size: usize,
+}
+
+#[derive(Serialize)]
+struct SearchResponse {
+    status: String,
+    query: String,
+    result_type: Option<String>,
+    result: Option<serde_json::Value>,
+    message: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -452,6 +592,394 @@ impl BlockchainHandler {
             "application/json".to_string(),
             None,
         ))
+    }
+
+    /// Handle paginated block listing
+    async fn handle_list_blocks(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let params = Self::parse_query_params(&request.uri);
+        let (page, limit) = Self::parse_pagination(&params);
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+        let total = blockchain.blocks.len();
+
+        let total_pages = if total == 0 {
+            0
+        } else {
+            (total + limit - 1) / limit
+        };
+
+        let offset = (page - 1).saturating_mul(limit);
+        let blocks = if offset >= total {
+            Vec::new()
+        } else {
+            blockchain
+                .blocks
+                .iter()
+                .rev()
+                .skip(offset)
+                .take(limit)
+                .map(|block| BlockSummary {
+                    height: block.header.height,
+                    hash: block.header.block_hash.to_string(),
+                    previous_hash: block.header.previous_block_hash.to_string(),
+                    timestamp: block.header.timestamp,
+                    transaction_count: block.transactions.len(),
+                    merkle_root: block.header.merkle_root.to_string(),
+                    nonce: block.header.nonce,
+                })
+                .collect()
+        };
+
+        let response_data = PaginatedBlocksResponse {
+            status: "success".to_string(),
+            page,
+            limit,
+            total,
+            total_pages,
+            blocks,
+        };
+
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Handle paginated transaction listing (latest first, confirmed only)
+    async fn handle_list_transactions(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let params = Self::parse_query_params(&request.uri);
+        let (page, limit) = Self::parse_pagination(&params);
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let total: usize = blockchain.blocks.iter().map(|b| b.transactions.len()).sum();
+        let total_pages = if total == 0 {
+            0
+        } else {
+            (total + limit - 1) / limit
+        };
+
+        let offset = (page - 1).saturating_mul(limit);
+        let mut skipped = 0usize;
+        let mut transactions = Vec::new();
+
+        for block in blockchain.blocks.iter().rev() {
+            for tx in block.transactions.iter().rev() {
+                if skipped < offset {
+                    skipped += 1;
+                    continue;
+                }
+                if transactions.len() >= limit {
+                    break;
+                }
+                transactions.push(Self::tx_to_info(tx));
+            }
+            if transactions.len() >= limit {
+                break;
+            }
+        }
+
+        let response_data = PaginatedTransactionsResponse {
+            status: "success".to_string(),
+            page,
+            limit,
+            total,
+            total_pages,
+            transactions,
+        };
+
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Handle explorer stats endpoint
+    async fn handle_get_stats(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let total_transactions: u64 = blockchain
+            .blocks
+            .iter()
+            .map(|b| b.transactions.len() as u64)
+            .sum();
+
+        let latest_height = blockchain.blocks.last().map(|b| b.header.height).unwrap_or(0);
+        let latest_block_time = blockchain.blocks.last().map(|b| b.header.timestamp);
+
+        let avg_block_time_secs = if blockchain.blocks.len() >= 2 {
+            let mut total_delta = 0u64;
+            for window in blockchain.blocks.windows(2) {
+                let a = window[0].header.timestamp;
+                let b = window[1].header.timestamp;
+                total_delta = total_delta.saturating_add(b.saturating_sub(a));
+            }
+            Some(total_delta / (blockchain.blocks.len() as u64 - 1))
+        } else {
+            None
+        };
+
+        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+        let total_supply = blockchain
+            .token_contracts
+            .get(&sov_token_id)
+            .map(|token| token.total_supply)
+            .unwrap_or(0);
+
+        let total_ubi_distributed: u64 = blockchain
+            .ubi_registry
+            .values()
+            .map(|entry| entry.total_received)
+            .sum();
+
+        let active_validators = blockchain.get_active_validators().len();
+        let mempool_size = blockchain.get_pending_transactions().len();
+
+        let response_data = ExplorerStatsResponse {
+            status: "success".to_string(),
+            latest_height,
+            latest_block_time,
+            total_transactions,
+            avg_block_time_secs,
+            total_supply,
+            total_ubi_distributed,
+            active_validators,
+            mempool_size,
+        };
+
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Handle unified search endpoint with strict resolution order
+    async fn handle_search(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let params = Self::parse_query_params(&request.uri);
+        let query = params.get("q").cloned().unwrap_or_default();
+        if query.trim().is_empty() {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Search query (q) is required".to_string(),
+            ));
+        }
+
+        let explicit_type = params.get("type").map(|s| s.to_lowercase());
+
+        let mut search_type: Option<String> = None;
+        let mut value = query.trim().to_string();
+
+        if let Some(stripped) = Self::strip_prefix(&value, "tx") {
+            search_type = Some("tx".to_string());
+            value = stripped.to_string();
+        } else if let Some(stripped) = Self::strip_prefix(&value, "blk") {
+            search_type = Some("block".to_string());
+            value = stripped.to_string();
+        } else if let Some(stripped) = Self::strip_prefix(&value, "wal") {
+            search_type = Some("wallet".to_string());
+            value = stripped.to_string();
+        } else if let Some(stripped) = Self::strip_prefix(&value, "did") {
+            search_type = Some("did".to_string());
+            value = stripped.to_string();
+        }
+
+        if let Some(explicit) = explicit_type {
+            search_type = Some(explicit);
+        }
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+        let latest_height = blockchain.blocks.last().map(|b| b.header.height).unwrap_or(0);
+
+        let mut result_type: Option<String> = None;
+        let mut result: Option<serde_json::Value> = None;
+        let mut message: Option<String> = None;
+
+        let resolve_tx = |tx_hash: &str| -> Option<serde_json::Value> {
+            let tx_hash = Hash::from_hex(tx_hash).ok()?;
+            let pending_txs = blockchain.get_pending_transactions();
+            if let Some(pending_tx) = pending_txs.iter().find(|tx| tx.hash() == tx_hash) {
+                return Some(serde_json::json!({
+                    "transaction": Self::tx_to_info(pending_tx),
+                    "in_mempool": true
+                }));
+            }
+
+            for block in blockchain.blocks.iter().rev() {
+                if let Some(tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
+                    let confirmations = latest_height.saturating_sub(block.header.height) + 1;
+                    return Some(serde_json::json!({
+                        "transaction": Self::tx_to_info(tx),
+                        "block_height": block.header.height,
+                        "confirmations": confirmations,
+                        "in_mempool": false
+                    }));
+                }
+            }
+            None
+        };
+
+        let resolve_block = |block_hash: &str| -> Option<serde_json::Value> {
+            let block = blockchain
+                .blocks
+                .iter()
+                .find(|b| b.header.block_hash.to_string() == block_hash)?;
+            Some(serde_json::json!({
+                "height": block.header.height,
+                "hash": block.header.block_hash.to_string(),
+                "previous_hash": block.header.previous_block_hash.to_string(),
+                "timestamp": block.header.timestamp,
+                "transaction_count": block.transactions.len(),
+                "merkle_root": block.header.merkle_root.to_string(),
+                "nonce": block.header.nonce,
+            }))
+        };
+
+        let resolve_wallet = |wallet_id: &str| -> Option<serde_json::Value> {
+            let wallet = blockchain.wallet_registry.get(wallet_id)?;
+            Some(serde_json::json!({
+                "wallet_id": wallet_id,
+                "wallet_name": wallet.wallet_name,
+                "wallet_type": wallet.wallet_type,
+                "alias": wallet.alias,
+                "owner_identity_id": wallet.owner_identity_id,
+                "capabilities": wallet.capabilities,
+                "created_at": wallet.created_at,
+            }))
+        };
+
+        let resolve_identity = |did: &str| -> Option<serde_json::Value> {
+            let identity = blockchain.identity_registry.get(&did.to_string())?;
+            Some(serde_json::json!({
+                "did": identity.did,
+                "display_name": identity.display_name,
+                "identity_type": identity.identity_type,
+                "registration_fee": identity.registration_fee,
+                "created_at": identity.created_at,
+                "controlled_nodes": identity.controlled_nodes,
+                "owned_wallets": identity.owned_wallets,
+            }))
+        };
+
+        if let Some(kind) = search_type.as_deref() {
+            match kind {
+                "tx" => {
+                    result = resolve_tx(&value);
+                    if result.is_some() {
+                        result_type = Some("tx".to_string());
+                    }
+                }
+                "block" => {
+                    result = resolve_block(&value);
+                    if result.is_some() {
+                        result_type = Some("block".to_string());
+                    }
+                }
+                "wallet" => {
+                    result = resolve_wallet(&value);
+                    if result.is_some() {
+                        result_type = Some("wallet".to_string());
+                    }
+                }
+                "did" => {
+                    result = resolve_identity(&value);
+                    if result.is_some() {
+                        result_type = Some("did".to_string());
+                    }
+                }
+                _ => {
+                    message = Some("Unsupported search type. Use tx, block, wallet, did.".to_string());
+                }
+            }
+        } else if Self::is_hex_64(&value) {
+            result = if let Some(found) = resolve_tx(&value) {
+                result_type = Some("tx".to_string());
+                Some(found)
+            } else if let Some(found) = resolve_block(&value) {
+                result_type = Some("block".to_string());
+                Some(found)
+            } else {
+                let wallet = resolve_wallet(&value);
+                if wallet.is_some() {
+                    result_type = Some("wallet".to_string());
+                }
+                wallet
+            };
+        } else {
+            message = Some(
+                "Ambiguous identifier. Specify type: tx, block, wallet, did".to_string(),
+            );
+        }
+
+        if result.is_none() && message.is_none() {
+            message = Some("No results found".to_string());
+        }
+
+        let response_data = SearchResponse {
+            status: "success".to_string(),
+            query,
+            result_type,
+            result,
+            message,
+        };
+
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Handle get block by hash (explicit)
+    async fn handle_get_block_by_hash(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        let block_hash = path_parts
+            .get(6)
+            .ok_or_else(|| anyhow::anyhow!("Block hash required"))?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let block = blockchain
+            .blocks
+            .iter()
+            .find(|b| b.header.block_hash.to_string() == *block_hash);
+
+        match block {
+            Some(block) => {
+                let response_data = BlockResponse {
+                    status: "block_found".to_string(),
+                    height: block.header.height,
+                    hash: block.header.block_hash.to_string(),
+                    previous_hash: block.header.previous_block_hash.to_string(),
+                    timestamp: block.header.timestamp,
+                    transaction_count: block.transactions.len(),
+                    merkle_root: block.header.merkle_root.to_string(),
+                    nonce: block.header.nonce,
+                };
+
+                let json_response = serde_json::to_vec(&response_data)?;
+                Ok(ZhtpResponse::success_with_content_type(
+                    json_response,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            None => Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                format!("Block {} not found", block_hash),
+            )),
+        }
     }
 
     /// Handle get specific block

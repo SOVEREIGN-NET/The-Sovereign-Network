@@ -23,6 +23,7 @@ members = [
     "lib-storage",
     "zhtp",
     "zhtp-cli",
+    "explorer",
     "tests/lib-identity/test-lib-identity-imports",
     "tests/integration",
 ]
