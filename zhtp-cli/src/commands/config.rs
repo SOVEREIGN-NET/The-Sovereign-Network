@@ -77,11 +77,7 @@ pub fn validate_config_path(path_str: &str) -> CliResult<PathBuf> {
 ///
 /// Pure function - path construction only
 pub fn default_config_path() -> PathBuf {
-    if let Some(home) = dirs::home_dir() {
-        home.join(".zhtp").join("config.toml")
-    } else {
-        PathBuf::from("./zhtp-config.toml")
-    }
+    crate::cli_config::default_config_path()
 }
 
 /// Validate that configuration format is recognized
@@ -201,21 +197,9 @@ async fn validate_config_impl(
     config_path: &Path,
     output: &dyn Output,
 ) -> CliResult<()> {
-    if !config_path.exists() {
-        return Err(CliError::ConfigError(format!(
-            "Configuration file not found: {}",
-            config_path.display()
-        )));
-    }
-
-    fs::read_to_string(config_path).map_err(|e| {
-        CliError::ConfigError(format!("Failed to read config: {}", e))
-    })?;
-
-    // In a real implementation, we would validate the configuration structure
+    crate::cli_config::load_config_strict(config_path)?;
     output.success("✓ Configuration is valid")?;
     output.print(&format!("Config file: {}", config_path.display()))?;
-
     Ok(())
 }
 
@@ -280,36 +264,38 @@ async fn init_config_impl(
         })?;
     }
 
-    let default_config = r#"# ZHTP Orchestrator Configuration
-# This is the main configuration file for the ZHTP node
+    let default_config = r#"# ZHTP CLI Configuration
+# This file defines CLI defaults and profiles.
 
-[node]
-# Node identity and networking
-node_id = ""  # Leave empty for auto-generation
+# default_profile = "central"
 
-[network]
-# Network settings
-environment = "development"  # Options: development, testnet, mainnet
-mesh_port = 9999
+[defaults]
+# Default server to use when none is provided.
+server = "127.0.0.1:9334"
 
-[storage]
-# Storage configuration
-data_dir = "./data"
-storage_capacity_gb = 100
+# Default keystore path (optional).
+keystore = "~/.zhtp/keystore"
 
-[blockchain]
-# Blockchain settings
-sync_enabled = true
-validator_enabled = false
+# Default identity (optional).
+# identity = "did:zhtp:example:abc123"
 
-[consensus]
-# Consensus parameters
-consensus_type = "zhtp"
+# Optional API credentials (if your server requires them).
+# api_key = ""
+# user_id = ""
 
-[api]
-# API server settings
-api_port = 9333
-api_host = "127.0.0.1"
+[profiles.central]
+server = "central.sov:9334"
+keystore = "~/.zhtp/keystore"
+
+[profiles.central.trust]
+# pin_spki = "hex..."
+# node_did = "did:zhtp:node:abc"
+# tofu = true
+# trust_node = false
+
+[servers.central]
+# Legacy server alias (optional)
+address = "central.sov:9334"
 "#;
 
     fs::write(config_path, default_config).map_err(|e| {
