@@ -76,6 +76,7 @@ pub enum DeployOperation {
     List,
     History,
     Rollback,
+    FetchManifest,
 }
 
 impl DeployOperation {
@@ -89,6 +90,7 @@ impl DeployOperation {
             DeployOperation::List => "List deployments",
             DeployOperation::History => "Show deployment history",
             DeployOperation::Rollback => "Rollback to previous version",
+            DeployOperation::FetchManifest => "Fetch manifest by CID",
         }
     }
 }
@@ -105,6 +107,7 @@ pub fn action_to_operation(action: &DeployAction) -> DeployOperation {
         DeployAction::List { .. } => DeployOperation::List,
         DeployAction::History { .. } => DeployOperation::History,
         DeployAction::Rollback { .. } => DeployOperation::Rollback,
+        DeployAction::FetchManifest { .. } => DeployOperation::FetchManifest,
     }
 }
 
@@ -150,6 +153,36 @@ async fn post_bytes(
 
     serde_json::from_slice(&response.body)
         .map_err(|e| CliError::ConfigError(format!("Invalid JSON response: {}", e)))
+}
+
+async fn post_raw(
+    client: &ZhtpClient,
+    path: &str,
+    body: Vec<u8>,
+    content_type: &str,
+) -> CliResult<Vec<u8>> {
+    let request = ZhtpRequest::post(
+        path.to_string(),
+        body,
+        content_type.to_string(),
+        Some(client.identity().id.clone()),
+    )
+    .map_err(|e| CliError::ConfigError(format!("Failed to build request: {}", e)))?;
+
+    let response = client
+        .request(request)
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Request failed: {}", e)))?;
+
+    if !response.status.is_success() {
+        return Err(CliError::ConfigError(format!(
+            "Request failed: {} {}",
+            response.status.code(),
+            response.status_message
+        )));
+    }
+
+    Ok(response.body)
 }
 
 fn build_manifest(
@@ -590,7 +623,69 @@ async fn handle_deploy_command_impl(
             )
             .await
         }
+        DeployAction::FetchManifest { cid, keystore, trust } => {
+            if cid.trim().is_empty() {
+                return Err(CliError::ConfigError("CID cannot be empty".to_string()));
+            }
+
+            output.header("Fetch Manifest")?;
+            output.print(&format!("CID: {}", cid))?;
+
+            fetch_manifest_impl(
+                &cid,
+                keystore.as_deref(),
+                trust.pin_spki.as_deref(),
+                trust.node_did.as_deref(),
+                trust.tofu,
+                trust.trust_node,
+                &cli.server,
+                output,
+            )
+            .await
+        }
     }
+}
+
+async fn fetch_manifest_impl(
+    cid: &str,
+    keystore: Option<&str>,
+    pin_spki: Option<&str>,
+    node_did: Option<&str>,
+    tofu: bool,
+    trust_node: bool,
+    server: &str,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let keystore_path = resolve_keystore_path(keystore)?;
+
+    output.info("Loading identity from keystore...")?;
+    let loaded = load_identity_from_keystore(&keystore_path)?;
+    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
+
+    let body = serde_json::to_vec(&serde_json::json!({ "cid": cid }))
+        .map_err(|e| CliError::ConfigError(format!("Failed to encode request JSON: {}", e)))?;
+
+    let bytes = post_raw(&client, "/api/v1/web4/content/manifest", body, "application/json").await?;
+
+    // Server returns raw manifest bytes as octet-stream. It should be JSON.
+    let manifest_json: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+        CliError::ConfigError(format!(
+            "Fetched manifest is not valid JSON ({} bytes): {}",
+            bytes.len(),
+            e
+        ))
+    })?;
+
+    // Print pretty JSON to stdout (not via Output so it can be piped/redirected).
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&manifest_json)
+            .map_err(|e| CliError::ConfigError(format!("Failed to pretty print JSON: {}", e)))?
+    );
+
+    output.success("Manifest fetched")?;
+    Ok(())
 }
 
 /// Deploy a static site to Web4
