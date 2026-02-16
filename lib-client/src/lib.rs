@@ -73,7 +73,8 @@ pub use token_tx::{
     build_burn_tx, build_create_token_tx, build_mint_tx, build_transfer_tx,
     build_sov_wallet_transfer_tx,
     // Domain-specific (new JSON-based API)
-    build_domain_register_request, build_domain_update_request, build_domain_transfer_request,
+    build_domain_register_request, build_domain_register_request_with_fee_payment,
+    build_domain_update_request, build_domain_transfer_request,
     // Domain-specific (deprecated, use *_request functions instead)
     build_domain_register_tx, build_domain_update_tx, build_domain_transfer_tx,
     // Param types for serialization

@@ -14,7 +14,7 @@ use hex;
 // CRITICAL: These MUST be imported, not redefined locally, for bincode serialization to match
 use lib_blockchain::{Transaction, TransactionType};
 use lib_blockchain::contracts::utils::generate_lib_token_id;
-use lib_blockchain::transaction::TokenTransferData;
+use lib_blockchain::transaction::{TokenMintData, TokenTransferData};
 use lib_blockchain::types::{ContractType, ContractCall, CallPermissions};
 use lib_crypto::types::SignatureAlgorithm;
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey};
@@ -154,6 +154,8 @@ pub struct DomainRegisterParams {
     pub timestamp: u64,
     #[serde(default)]
     pub fee: Option<u64>,
+    #[serde(default)]
+    pub fee_payment_tx: Option<String>,
 }
 
 /// Content mapping for domain registration
@@ -548,15 +550,56 @@ pub fn build_mint_tx(
     amount: u64,
     chain_id: u8,
 ) -> Result<String, String> {
-    let params = MintParams {
-        token_id: *token_id,
-        to: to_pubkey.to_vec(),
-        amount,
+    let to_key_id = if to_pubkey.len() == 32 {
+        let mut key_id = [0u8; 32];
+        key_id.copy_from_slice(to_pubkey);
+        key_id
+    } else if to_pubkey.len() >= 2000 {
+        create_public_key(to_pubkey.to_vec()).key_id
+    } else {
+        return Err(format!(
+            "Invalid mint recipient key length: {} (expected 32-byte key_id or full Dilithium key)",
+            to_pubkey.len()
+        ));
     };
-    let params_bytes = bincode::serialize(&params)
-        .map_err(|e| format!("Failed to serialize params: {}", e))?;
 
-    build_contract_transaction(identity, ContractType::Token, "mint", params_bytes, chain_id)
+    let signer_pk = create_public_key(identity.public_key.clone());
+    let mint_data = TokenMintData {
+        token_id: *token_id,
+        to: to_key_id,
+        amount: amount as u128,
+    };
+
+    let mut tx = Transaction::new_token_mint_with_chain_id(
+        chain_id,
+        mint_data,
+        Signature {
+            signature: vec![],
+            public_key: signer_pk.clone(),
+            algorithm: SignatureAlgorithm::Dilithium2,
+            timestamp: 0,
+        },
+        Vec::new(),
+    );
+
+    tx.fee = 0;
+    let tx_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign: {}", e))?;
+
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: signer_pk,
+        algorithm: SignatureAlgorithm::Dilithium2,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let final_tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
+    Ok(hex::encode(final_tx_bytes))
 }
 
 /// Build a signed token creation transaction
@@ -582,19 +625,13 @@ pub fn build_create_token_tx(
 
 /// Build a signed token burn transaction
 pub fn build_burn_tx(
-    identity: &Identity,
+    _identity: &Identity,
     token_id: &[u8; 32],
     amount: u64,
-    chain_id: u8,
+    _chain_id: u8,
 ) -> Result<String, String> {
-    let params = BurnParams {
-        token_id: *token_id,
-        amount,
-    };
-    let params_bytes = bincode::serialize(&params)
-        .map_err(|e| format!("Failed to serialize params: {}", e))?;
-
-    build_contract_transaction(identity, ContractType::Token, "burn", params_bytes, chain_id)
+    let _ = (token_id, amount);
+    Err("Token burn via ContractExecution is disabled; use canonical typed token mutation transactions".to_string())
 }
 
 // ============================================================================
@@ -620,6 +657,24 @@ pub fn build_domain_register_request(
     domain: &str,
     content_mappings: Option<std::collections::HashMap<String, ContentMapping>>,
 ) -> Result<String, String> {
+    build_domain_register_request_with_fee_payment(
+        identity,
+        domain,
+        content_mappings,
+        None,
+    )
+}
+
+/// Build a signed domain registration request and attach a signed canonical fee tx.
+///
+/// `fee_payment_tx` must be a hex-encoded signed TokenTransfer transaction that pays
+/// the domain registration fee from owner's Primary wallet to the DAO treasury wallet.
+pub fn build_domain_register_request_with_fee_payment(
+    identity: &Identity,
+    domain: &str,
+    content_mappings: Option<std::collections::HashMap<String, ContentMapping>>,
+    fee_payment_tx: Option<String>,
+) -> Result<String, String> {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| format!("Failed to get timestamp: {}", e))?
@@ -638,6 +693,7 @@ pub fn build_domain_register_request(
         signature: hex::encode(&signature),
         timestamp,
         fee: Some(DOMAIN_REGISTRATION_FEE),
+        fee_payment_tx,
     };
 
     serde_json::to_string(&request)
