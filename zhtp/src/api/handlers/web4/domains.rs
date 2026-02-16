@@ -693,8 +693,9 @@ impl Web4Handler {
                 fee_payment_tx.chain_id
             ));
         }
-
-        if fee_transfer.token_id != lib_blockchain::contracts::utils::generate_lib_token_id() {
+        let is_sov = fee_transfer.token_id == lib_blockchain::contracts::utils::generate_lib_token_id()
+            || fee_transfer.token_id == [0u8; 32];
+        if !is_sov {
             return Err(anyhow!("fee_payment_tx must transfer SOV token"));
         }
         if fee_transfer.amount != registration_fee_sov as u128 {
@@ -1785,7 +1786,6 @@ mod tests {
             "fee_payment_tx": hex::encode(bincode::serialize(fee_payment_tx)?)
         }))
     }
-
     #[tokio::test]
     async fn register_domain_accepts_valid_fee_payment_tx() -> anyhow::Result<()> {
         let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) = setup_handler().await?;
