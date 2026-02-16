@@ -274,21 +274,13 @@ impl Web4Handler {
 
             let owner_wallet_id = blockchain.wallet_registry.values()
                 .find(|wallet| wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash) && wallet.wallet_type == "Primary")
-                .map(|wallet| wallet.wallet_id.clone())
+                .map(|wallet| wallet.wallet_id)
                 .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
-
-            let owner_wallet_id_bytes = hex::decode(&owner_wallet_id)
-                .map_err(|_| anyhow!("Invalid primary wallet_id"))?;
-            if owner_wallet_id_bytes.len() != 32 {
-                return Err(anyhow!("Invalid primary wallet_id length"));
-            }
-            let mut owner_wallet_key_id = [0u8; 32];
-            owner_wallet_key_id.copy_from_slice(&owner_wallet_id_bytes);
 
             let owner_wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
                 dilithium_pk: vec![],
                 kyber_pk: vec![],
-                key_id: owner_wallet_key_id,
+                key_id: owner_wallet_id.into(),
             };
 
             // Check if SOV token contract exists
@@ -315,20 +307,13 @@ impl Web4Handler {
 
             let owner_wallet_id = blockchain.wallet_registry.values()
                 .find(|wallet| wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash) && wallet.wallet_type == "Primary")
-                .map(|wallet| wallet.wallet_id.clone())
+                .map(|wallet| wallet.wallet_id)
                 .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
-            let owner_wallet_id_bytes = hex::decode(&owner_wallet_id)
-                .map_err(|_| anyhow!("Invalid primary wallet_id"))?;
-            if owner_wallet_id_bytes.len() != 32 {
-                return Err(anyhow!("Invalid primary wallet_id length"));
-            }
-            let mut owner_wallet_key_id = [0u8; 32];
-            owner_wallet_key_id.copy_from_slice(&owner_wallet_id_bytes);
 
             let owner_wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
                 dilithium_pk: vec![],
                 kyber_pk: vec![],
-                key_id: owner_wallet_key_id,
+                key_id: owner_wallet_id.into(),
             };
 
             // Get height before mutable borrow of token_contracts
