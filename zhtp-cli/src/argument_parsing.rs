@@ -984,6 +984,20 @@ pub enum DeployAction {
         #[command(flatten)]
         trust: TrustFlags,
     },
+
+    /// Fetch and print a Web4 manifest by CID (debug utility)
+    FetchManifest {
+        /// Manifest CID to fetch (bafk...)
+        #[arg(long)]
+        cid: String,
+
+        /// Path to identity keystore directory (used to establish a QUIC client session)
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        #[command(flatten)]
+        trust: TrustFlags,
+    },
 }
 
 /// Trust management commands
