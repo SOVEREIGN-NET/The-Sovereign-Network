@@ -1723,6 +1723,7 @@ name = "explorer"
 version = "0.1.0"
 dependencies = [
  "gloo-net 0.5.0",
+ "js-sys",
  "leptos",
  "leptos_router",
  "serde",
