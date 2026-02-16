@@ -116,6 +116,7 @@ struct WalletInfo {
 struct WalletsResponse {
     status: String,
     wallet_count: usize,
+    owner_filter: Option<String>,
     wallets: Vec<WalletInfo>,
 }
 
@@ -303,7 +304,8 @@ fn SearchView() -> impl IntoView {
             if query.is_empty() {
                 return None;
             }
-            fetch_json::<SearchResponse>(&format!("/api/v1/blockchain/search?q={}", query)).await
+            let encoded = js_sys::encode_uri_component(&query);
+            fetch_json::<SearchResponse>(&format!("/api/v1/blockchain/search?q={}", encoded)).await
         },
     );
 
@@ -330,11 +332,11 @@ fn SearchView() -> impl IntoView {
                                 <p>"Found block:"</p>
                                 <p><A href=format!("/block/{}", data.query)>"View block " {short_hash(&data.query)}</A></p>
                             }.into_view(),
-                            Some("transaction") => view! {
+                            Some("transaction") | Some("tx") => view! {
                                 <p>"Found transaction:"</p>
                                 <p><A href=format!("/tx/{}", data.query)>"View transaction " {short_hash(&data.query)}</A></p>
                             }.into_view(),
-                            Some("identity") => view! {
+                            Some("identity") | Some("did") => view! {
                                 <p>"Found identity:"</p>
                                 <p><A href=format!("/did/{}", data.query)>"View identity " {short_hash(&data.query)}</A></p>
                             }.into_view(),
@@ -450,7 +452,8 @@ fn WalletView() -> impl IntoView {
         move || id(),
         |wallet_id| async move {
             if wallet_id.is_empty() { return None; }
-            fetch_json::<WalletsResponse>(&format!("/api/v1/blockchain/wallets?owner_identity={}", wallet_id)).await
+            let encoded = js_sys::encode_uri_component(&wallet_id);
+            fetch_json::<WalletsResponse>(&format!("/api/v1/blockchain/wallets?owner_identity={}", encoded)).await
         },
     );
 
@@ -516,6 +519,11 @@ fn IdentityView() -> impl IntoView {
                 Some(Some(data)) => {
                     if data.status == "identity_not_found" {
                         return view! { <p>{data.message.unwrap_or_else(|| "Identity not found.".to_string())}</p> }.into_view();
+                    } else if !data.status.is_empty() && data.status != "identity_found" {
+                        let message = data
+                            .message
+                            .unwrap_or_else(|| format!("Unexpected identity status: {}", data.status));
+                        return view! { <p>{message}</p> }.into_view();
                     }
                     let did = data.did.unwrap_or_default();
                     let display_name = data.display_name.unwrap_or_else(|| "—".to_string());
@@ -582,20 +590,33 @@ fn format_timestamp(ts: u64) -> String {
     if ts == 0 {
         return "—".to_string();
     }
-    // Simple timestamp display — WASM doesn't have chrono, just show epoch seconds
-    // with a human-readable relative indicator
+    // Backend timestamps (ts) are Unix epoch seconds.
+    // js_sys::Date::now() returns milliseconds, so we divide by 1000 to match.
     let now = js_sys::Date::now() as u64 / 1000;
-    let diff = now.saturating_sub(ts);
-    let time_ago = if diff < 60 {
-        format!("{}s ago", diff)
-    } else if diff < 3600 {
-        format!("{}m ago", diff / 60)
-    } else if diff < 86400 {
-        format!("{}h ago", diff / 3600)
+    let relative = if ts > now {
+        let diff = ts - now;
+        if diff < 60 {
+            format!("in {}s", diff)
+        } else if diff < 3600 {
+            format!("in {}m", diff / 60)
+        } else if diff < 86400 {
+            format!("in {}h", diff / 3600)
+        } else {
+            format!("in {}d", diff / 86400)
+        }
     } else {
-        format!("{}d ago", diff / 86400)
+        let diff = now - ts;
+        if diff < 60 {
+            format!("{}s ago", diff)
+        } else if diff < 3600 {
+            format!("{}m ago", diff / 60)
+        } else if diff < 86400 {
+            format!("{}h ago", diff / 3600)
+        } else {
+            format!("{}d ago", diff / 86400)
+        }
     };
-    format!("{} ({})", ts, time_ago)
+    format!("{} ({})", ts, relative)
 }
 
 fn main() {
