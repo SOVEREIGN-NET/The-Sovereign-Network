@@ -9,7 +9,7 @@
 
 use anyhow::{anyhow, Result, Context};
 use std::path::PathBuf;
-use zhtp::web4_stub::{TrustDb, TrustConfig, TrustAuditEntry};
+use lib_network::web4::{TrustAuditEntry, TrustConfig, TrustDb};
 use crate::argument_parsing::{TrustArgs, TrustAction};
 
 // ============================================================================
@@ -59,14 +59,14 @@ pub fn action_to_operation(action: &TrustAction) -> TrustOperation {
 ///
 /// Pure function - path construction only
 pub fn get_trustdb_path() -> Result<String> {
-    TrustConfig::default_trustdb_path()
+    Ok(TrustConfig::default_trustdb_path()?.to_string_lossy().to_string())
 }
 
 /// Get default audit log path
 ///
 /// Pure function - path construction only
 pub fn get_audit_path() -> String {
-    TrustConfig::default_audit_path()
+    TrustConfig::default_audit_path().to_string_lossy().to_string()
 }
 
 /// Format audit entry for display
@@ -233,7 +233,6 @@ mod tests {
 
     #[test]
     fn test_format_audit_entry() {
-        use zhtp::web4_stub::TrustAuditEntry;
         let entry = TrustAuditEntry {
             timestamp: 1735689600u64,
             node_addr: "localhost:9002".to_string(),
