@@ -24,20 +24,24 @@
 //!
 //! ## The f < n/3 Theorem
 //!
-//! **Theorem**: In a BFT system with n validators, consensus can tolerate at most
-//! f = floor((n-1)/3) Byzantine (arbitrary) faults while maintaining both safety
+//! **Theorem**: In a classical BFT system with n = 3f + 1 validators, consensus can
+//! tolerate at most f Byzantine (arbitrary) faults while maintaining both safety
 //! and liveness.
 //!
 //! **Implication for Quorum**: To guarantee that any two quorums overlap in at least
-//! one honest validator (required for safety), we need quorum size Q >= 2n/3 + 1.
+//! one honest validator (required for safety), we use quorum size Q = 2f + 1
+//! (which is approximately 2n/3 + 1 when n = 3f + 1).
 //!
-//! **Proof Sketch**:
-//! - Total validators: n
-//! - Byzantine validators: f <= floor((n-1)/3)
-//! - Honest validators: n - f >= n - floor((n-1)/3) = ceil(2n/3 + 1/3) >= 2n/3 + 1
-//! - Quorum size: Q = floor(2n/3) + 1
-//! - Any two quorums Q1, Q2: |Q1 ∩ Q2| >= Q1 + Q2 - n >= 2Q - n = 2(2n/3+1) - n = n/3 + 2
-//! - Since f <= floor((n-1)/3) < n/3 + 1, the intersection must contain at least one honest validator
+//! **Proof Sketch** (integer-based):
+//! - Total validators: n = 3f + 1
+//! - Byzantine validators: at most f
+//! - Honest validators: at least n - f = (3f + 1) - f = 2f + 1
+//! - Quorum size: Q = 2f + 1
+//! - Any quorum contains at least Q - f = (2f + 1) - f = f + 1 honest validators
+//! - For any two quorums Q1, Q2 of size Q:
+//!   - Each has at least f + 1 honest validators
+//!   - There are at most f Byzantine validators in total
+//!   - Therefore, Q1 and Q2 must share at least one honest validator
 //!
 //! ## Liveness Failure Conditions
 //!
@@ -222,16 +226,17 @@ impl LivenessMonitor {
 
         // Update cached values
         self.total_validators = active_validators.len();
-        self.stall_threshold = (self.total_validators / 3) + 1;
-
-        // Safety assertion: Verify threshold never exceeds total validators
-        // This would be a logic error that could cause incorrect stall detection
-        debug_assert!(
-            self.stall_threshold <= self.total_validators,
-            "BFT Liveness: stall_threshold {} > total_validators {} (logic error)",
-            self.stall_threshold,
-            self.total_validators
-        );
+        if self.total_validators == 0 {
+            self.stall_threshold = usize::MAX;
+        } else {
+            self.stall_threshold = (self.total_validators / 3) + 1;
+            debug_assert!(
+                self.stall_threshold <= self.total_validators,
+                "BFT Liveness: stall_threshold {} > total_validators {} (logic error)",
+                self.stall_threshold,
+                self.total_validators
+            );
+        }
 
         // Safety assertion: Verify quorum is achievable with threshold
         // For BFT: quorum = floor(2n/3) + 1, stall when unable to reach quorum

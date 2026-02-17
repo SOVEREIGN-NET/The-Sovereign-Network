@@ -152,14 +152,16 @@ impl ConsensusEngine {
     /// to quorum. Combined with signature verification, this prevents Byzantine validators
     /// from forging votes or creating false quorums.
     pub(super) async fn validate_remote_vote(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
-        // Safety assertion: Votes must be for future or current height (never past)
+        // Runtime check: Votes must be for current or future height (never past)
         // Accepting votes for past heights could allow replay attacks
-        debug_assert!(
-            vote.height >= self.current_round.height,
-            "BFT Safety: vote height {} < current height {} (potential replay attack)",
-            vote.height,
-            self.current_round.height
-        );
+        if vote.height < self.current_round.height {
+            tracing::warn!(
+                "Vote rejected: vote height {} < current height {} (potential replay attack)",
+                vote.height,
+                self.current_round.height
+            );
+            return Ok(false);
+        }
         // 1. Verify signature
         if !self.verify_vote_signature(vote).await? {
             return Ok(false);

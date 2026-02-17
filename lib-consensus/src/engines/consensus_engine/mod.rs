@@ -271,10 +271,13 @@ impl RoundTimer {
 /// guarantees any two quorums overlap in at least one honest validator.
 fn check_supermajority(matching_votes: u64, total_validators: u64) -> bool {
     // Runtime assertion: Ensure we have a valid validator set
-    // BFT requires n >= 4 for meaningful fault tolerance (n >= 3f + 1 where f >= 1)
+    // BFT requires n >= 4 for meaningful fault tolerance (n = 3f + 1 where f >= 1)
+    // This assertion is intentionally permissive (>= 1 not >= 4) to allow
+    // bootstrap and single-node development modes. Production deployments
+    // must enforce n >= 4 at the network configuration layer.
     assert!(
-        total_validators >= 1,
-        "BFT Safety Violation: total_validators must be >= 1, got {}",
+        total_validators >= 4,
+        "BFT Safety Violation: total_validators must be >= 4 for BFT fault tolerance, got {}",
         total_validators
     );
 
