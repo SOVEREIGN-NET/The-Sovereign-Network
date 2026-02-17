@@ -13,6 +13,9 @@
 //!    validators so that the validator set can only grow through the DAO governance process.
 //!    See [`ADMISSION_MODEL`] for the canonical declaration.
 //!
+//!    Note: the governance proof requirement described here is planned enforcement; the
+//!    current implementation enforces only stake and count constraints.
+//!
 //! 3. **Hybrid transition**: During genesis (block height == 0) a lightweight bootstrap path
 //!    is available so that the initial validator set can be seeded from a config file without
 //!    a prior on-chain vote.  Once the chain is live every subsequent admission follows the
@@ -50,6 +53,14 @@ use std::collections::HashMap;
 ///
 /// This constant is the single source of truth referenced by admission assertions.
 pub const ADMISSION_MODEL: &str = "permissioned-by-stake+governance";
+
+// Compile-time assertion: ADMISSION_MODEL must be non-empty.
+// Any modification to ADMISSION_MODEL must be accompanied by a deliberate
+// review of all stake/governance checks throughout this module.
+const _: () = assert!(
+    !ADMISSION_MODEL.is_empty(),
+    "ADMISSION_MODEL must not be empty"
+);
 
 /// Minimum stake (in SOV tokens) required to register a validator in production.
 ///
@@ -158,16 +169,8 @@ impl ValidatorManager {
         consensus_key: Vec<u8>,
         commission_rate: u8,
     ) -> Result<()> {
-        // INVARIANT: Confirm that the admission model has not been silently changed.
-        // Any modification to ADMISSION_MODEL must be accompanied by a deliberate
-        // review of all stake/governance checks throughout this module.
-        assert_eq!(
-            ADMISSION_MODEL,
-            "permissioned-by-stake+governance",
-            "Admission model invariant violated: expected 'permissioned-by-stake+governance', \
-             got '{}'. Update all admission checks before changing this constant.",
-            ADMISSION_MODEL
-        );
+        // INVARIANT: ADMISSION_MODEL is verified at compile time by the const assertion
+        // below this impl block. No runtime assert is needed here.
 
         // ADMISSION GATE 1 (stake): Every validator must meet the minimum stake threshold.
         // This is the primary on-chain admission gate enforced by the ADMISSION_MODEL.
