@@ -36,6 +36,7 @@ pub const LIVENESS_THRESHOLD_DENOMINATOR: u64 = 3;
 
 /// Maximum allowed Byzantine validators given n total.
 pub const fn max_byzantine(n: u64) -> u64 {
+    if n == 0 { return 0; }
     (n - 1) / 3
 }
 
@@ -56,9 +57,8 @@ pub fn can_make_progress(online: u64, n: u64) -> bool {
 
 /// Returns true if the system is safe from split-brain (cannot have conflicting commits).
 /// This is always true in BFT — safety is unconditional once 2f+1 honest validators commit.
-pub const fn is_safe(_faulty: u64, n: u64) -> bool {
-    // Safety holds as long as faulty < n/3, which is enforced at admission
-    true // Enforced by validator admission constraints
+pub const fn is_safe(faulty: u64, n: u64) -> bool {
+    n >= 4 && faulty <= max_byzantine(n)
 }
 
 /// Creates a human-readable fault model summary.
