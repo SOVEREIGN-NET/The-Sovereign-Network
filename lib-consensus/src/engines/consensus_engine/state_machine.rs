@@ -500,6 +500,10 @@ impl ConsensusEngine {
     /// **CRITICAL**: This method is called AFTER achieving 2/3+1 commit votes.
     /// It is the ONLY safe way for network-received blocks to reach persistence.
     ///
+    /// **INVARIANT BFT-A-939**: This method MUST only be called after achieving
+    /// commit consensus (2/3+ commit votes). Non-committed blocks are rejected
+    /// before reaching persistence or state update paths.
+    ///
     /// Flow:
     /// 1. Network block arrives → submitted as proposal (proposal-only)
     /// 2. BFT consensus validates and votes
@@ -510,6 +514,34 @@ impl ConsensusEngine {
     /// This ensures Byzantine fault tolerance - no single node can inject blocks.
     #[allow(deprecated)]
     async fn process_committed_block(&mut self, proposal_id: &Hash) -> ConsensusResult<()> {
+        // SAFETY: Verify commit quorum before processing (Issue #939)
+        // This is a defense-in-depth check - callers must already verify commit votes
+        let commit_count = self.count_commits_for(
+            self.current_round.height,
+            self.current_round.round,
+            proposal_id
+        );
+        let total_validators = self.validator_manager.get_active_validators().len() as u64;
+
+        if !super::check_supermajority(commit_count, total_validators) {
+            return Err(ConsensusError::ValidatorError(
+                format!(
+                    "INVARIANT VIOLATION (BFT-A-939): Attempted to process block without commit quorum. \
+                    Commits: {}/{}, Proposal: {:?}",
+                    commit_count,
+                    total_validators,
+                    proposal_id
+                )
+            ));
+        }
+
+        tracing::debug!(
+            "✓ Commit quorum verified: {}/{} commits for proposal {:?}",
+            commit_count,
+            total_validators,
+            proposal_id
+        );
+
         // Find and process the committed proposal
         if let Some(proposal_index) = self
             .pending_proposals
@@ -757,6 +789,11 @@ impl ConsensusEngine {
     ///
     /// **CRITICAL**: This is the ONLY legitimate path for network blocks to reach persistence.
     /// This method is called AFTER BFT achieves 2/3+1 commit votes, ensuring Byzantine fault tolerance.
+    ///
+    /// **INVARIANT BFT-A-939**: This method MUST only be called for blocks that have
+    /// achieved commit consensus. The caller (process_committed_block) verifies commit
+    /// quorum before invoking this method. Non-committed blocks are rejected before
+    /// reaching persistence.
     ///
     /// # Safety Guarantee (Issue #938)
     /// Network-received blocks MUST flow through:
