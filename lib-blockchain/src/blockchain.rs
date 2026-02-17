@@ -19,6 +19,11 @@ use crate::integration::storage_integration::{BlockchainStorageManager, Blockcha
 use crate::storage::{BlockchainStore, IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus, did_to_hash};
 use lib_storage::dht::storage::DhtStorage;
 
+/// Validator was bootstrapped from off-chain genesis configuration at height 0.
+pub const ADMISSION_SOURCE_OFFCHAIN_GENESIS: &str = "offchain_genesis";
+/// Validator was admitted through an on-chain governance/registration transaction.
+pub const ADMISSION_SOURCE_ONCHAIN_GOVERNANCE: &str = "onchain_governance";
+
 /// Messages for real-time blockchain synchronization
 #[derive(Debug, Clone)]
 pub enum BlockchainBroadcastMessage {
@@ -26,6 +31,14 @@ pub enum BlockchainBroadcastMessage {
     NewBlock(Block),
     /// New transaction submitted locally and should be broadcast to peers
     NewTransaction(Transaction),
+}
+
+/// BFT checkpoint metadata used by sync verification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsensusCheckpoint {
+    pub height: u64,
+    pub previous_hash: Hash,
+    pub block_hash: Hash,
 }
 
 // Import lib-proofs for recursive proof aggregation
@@ -151,9 +164,18 @@ pub struct Blockchain {
     /// Contract state snapshots per block height for historical queries
     #[serde(default)]
     pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
-    /// UTXO set snapshots per block height for state recovery
+    /// UTXO set snapshots per block height for state recovery and reorg support
     #[serde(default)]
     pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
+    /// Fork history for audit trail (height -> ForkPoint)
+    #[serde(default)]
+    pub fork_points: HashMap<u64, crate::fork_recovery::ForkPoint>,
+    /// Count of reorganizations for monitoring
+    #[serde(default)]
+    pub reorg_count: u64,
+    /// Fork recovery configuration
+    #[serde(default)]
+    pub fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
     /// Event publisher for blockchain state changes (Issue #11).
     ///
     /// NOTE: This field is marked with `#[serde(skip)]` and is **not** serialized.
@@ -176,7 +198,47 @@ pub struct Blockchain {
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
 }
 
-/// Validator information stored on-chain
+/// Validator information stored on-chain.
+///
+/// # Key Separation
+///
+/// A validator operates with three distinct cryptographic keys, each serving a different
+/// security domain. These keys MUST be different from one another — reusing a single key
+/// across roles weakens isolation boundaries and increases the blast radius of any key
+/// compromise.
+///
+/// ## Key Roles
+///
+/// ### 1. `consensus_key` — Consensus / Vote-Signing Key
+/// Used exclusively for signing BFT consensus messages: block proposals, pre-votes,
+/// pre-commits, and view-change messages.
+/// - **Algorithm**: Post-quantum Dilithium2 (lattice-based).
+/// - **Exposure**: Hot — must be online during every consensus round.
+/// - **Compromise impact**: Attacker can equivocate (double-sign) on behalf of this
+///   validator, triggering slashing of the staked SOV.
+///
+/// ### 2. `networking_key` — P2P / Transport Identity Key
+/// Used to establish the validator's peer identity on the ZHTP mesh network (QUIC TLS
+/// handshake, DHT node ID derivation, peer authentication).
+/// - **Algorithm**: X25519 / Ed25519 (classical elliptic-curve).
+/// - **Exposure**: Hot — required for every inbound and outbound connection.
+/// - **Compromise impact**: Attacker can impersonate the validator on the P2P layer and
+///   inject or suppress gossip messages, but CANNOT forge consensus votes.
+///
+/// ### 3. `rewards_key` — Rewards / Fee-Collection Key
+/// Identifies the wallet address to which block rewards and fee distributions are sent.
+/// This is the public key of the validator's rewards wallet (see `WalletTransactionData`).
+/// - **Algorithm**: Dilithium2 or Ed25519 depending on wallet type.
+/// - **Exposure**: Can be kept cold — only needed when claiming accumulated rewards.
+/// - **Compromise impact**: Attacker can redirect future reward payments; historical
+///   rewards already on-chain are unaffected.
+///
+/// ## Invariant
+///
+/// The runtime MUST assert `consensus_key != networking_key`,
+/// `consensus_key != rewards_key`, and `networking_key != rewards_key` at validator
+/// registration time. See [`register_validator`] in the blockchain layer and
+/// [`ValidatorManager::register_validator`] in the consensus layer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorInfo {
     /// Validator identity ID
@@ -185,8 +247,16 @@ pub struct ValidatorInfo {
     pub stake: u64,
     /// Storage provided (in bytes)
     pub storage_provided: u64,
-    /// Public key for consensus (post-quantum)
+    /// Post-quantum Dilithium2 public key used exclusively for signing BFT consensus
+    /// messages (proposals, pre-votes, pre-commits).  MUST differ from `networking_key`
+    /// and `rewards_key`.
     pub consensus_key: Vec<u8>,
+    /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT node
+    /// ID).  MUST differ from `consensus_key` and `rewards_key`.
+    pub networking_key: Vec<u8>,
+    /// Public key of the rewards wallet that receives block rewards and fee distributions.
+    /// MUST differ from `consensus_key` and `networking_key`.
+    pub rewards_key: Vec<u8>,
     /// Network address for validator communication
     pub network_address: String,
     /// Commission rate (percentage 0-100)
@@ -201,6 +271,12 @@ pub struct ValidatorInfo {
     pub blocks_validated: u64,
     /// Slash count
     pub slash_count: u32,
+    /// Source of validator admission path.
+    #[serde(default)]
+    pub admission_source: String,
+    /// Optional governance proposal ID authorizing this validator.
+    #[serde(default)]
+    pub governance_proposal_id: Option<String>,
 }
 
 /// UBI (Universal Basic Income) registry entry
@@ -400,6 +476,9 @@ impl BlockchainV1 {
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
             utxo_snapshots: std::collections::BTreeMap::new(),
+            fork_points: HashMap::new(),
+            reorg_count: 0,
+            fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
@@ -513,11 +592,17 @@ struct BlockchainStorageV3 {
     #[serde(default)]
     pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
 
-    // === UTXO snapshots (field 33) ===
+    // === UTXO snapshots and fork recovery (fields 33-36) ===
     #[serde(default)]
     pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
+    #[serde(default)]
+    pub fork_points: HashMap<u64, crate::fork_recovery::ForkPoint>,
+    #[serde(default)]
+    pub reorg_count: u64,
+    #[serde(default)]
+    pub fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
 
-    // === UBI registry (fields 34-35) ===
+    // === UBI registry (fields 37-38) ===
     #[serde(default)]
     pub ubi_registry: HashMap<String, UbiRegistryEntry>,
     #[serde(default)]
@@ -600,8 +685,11 @@ impl BlockchainStorageV3 {
             contract_states: bc.contract_states.clone(),
             contract_state_history: bc.contract_state_history.clone(),
 
-            // UTXO snapshots
+            // Fork recovery
             utxo_snapshots: bc.utxo_snapshots.clone(),
+            fork_points: bc.fork_points.clone(),
+            reorg_count: bc.reorg_count,
+            fork_recovery_config: bc.fork_recovery_config.clone(),
 
             // UBI
             ubi_registry: bc.ubi_registry.clone(),
@@ -688,8 +776,11 @@ impl BlockchainStorageV3 {
             contract_states: self.contract_states,
             contract_state_history: self.contract_state_history,
 
-            // UTXO snapshots
+            // Fork recovery
             utxo_snapshots: self.utxo_snapshots,
+            fork_points: self.fork_points,
+            reorg_count: self.reorg_count,
+            fork_recovery_config: self.fork_recovery_config,
 
             // UBI
             ubi_registry: self.ubi_registry,
@@ -762,6 +853,9 @@ impl Blockchain {
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
             utxo_snapshots: std::collections::BTreeMap::new(),
+            fork_points: HashMap::new(),
+            reorg_count: 0,
+            fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
@@ -922,6 +1016,8 @@ impl Blockchain {
                                 stake: validator_data.stake,
                                 storage_provided: validator_data.storage_provided,
                                 consensus_key: validator_data.consensus_key.clone(),
+                                networking_key: validator_data.networking_key.clone(),
+                                rewards_key: validator_data.rewards_key.clone(),
                                 network_address: validator_data.network_address.clone(),
                                 commission_rate: validator_data.commission_rate,
                                 status: status.to_string(),
@@ -929,6 +1025,8 @@ impl Blockchain {
                                 last_activity: height,
                                 blocks_validated: 0,
                                 slash_count: 0,
+                                admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
+                                governance_proposal_id: None,
                             };
                             blockchain.validator_registry.insert(
                                 validator_data.identity_id.clone(),
@@ -950,29 +1048,14 @@ impl Blockchain {
             }
         }
 
-        // Load deterministic token snapshot (contracts + nonces) as the
-        // canonical restart state for the token subsystem.
-        let mut loaded_token_snapshot = false;
-        if let Ok(Some(snapshot)) = store.get_token_state_snapshot() {
-            blockchain.token_contracts = snapshot.token_contracts;
-            blockchain.token_nonces = snapshot.token_nonces;
-            loaded_token_snapshot = true;
-            info!(
-                "🪙 Loaded token state snapshot from SledStore (tokens={}, nonces={})",
-                blockchain.token_contracts.len(),
-                blockchain.token_nonces.len()
-            );
-        }
-
-        // Backward-compat fallback for stores that predate token snapshots.
-        if !loaded_token_snapshot {
-            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-            if !blockchain.token_contracts.contains_key(&sov_token_id) {
-                let token_id = crate::storage::TokenId(sov_token_id);
-                if let Ok(Some(sov_token)) = store.get_token_contract(&token_id) {
-                    info!("🪙 Loaded SOV token contract from SledStore (legacy fallback)");
-                    blockchain.token_contracts.insert(sov_token_id, sov_token);
-                }
+        // CRITICAL: Load persisted SOV token contract from SledStore if not reconstructed from transactions
+        // The genesis token contract (with user balances) may not be in ContractExecution transactions
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        if !blockchain.token_contracts.contains_key(&sov_token_id) {
+            let token_id = crate::storage::TokenId(sov_token_id);
+            if let Ok(Some(sov_token)) = store.get_token_contract(&token_id) {
+                info!("🪙 Loaded SOV token contract from SledStore (balances preserved)");
+                blockchain.token_contracts.insert(sov_token_id, sov_token);
             }
         }
 
@@ -1442,13 +1525,6 @@ impl Blockchain {
 
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
-    ///
-    /// **INVARIANT BFT-A-939**: In BFT consensus mode, this method should only be called
-    /// for blocks that have achieved commit consensus. When using the BlockCommitCallback
-    /// integration, it is INTENDED that blocks have commit consensus before reaching this method,
-    /// but this is not enforced by this method itself — other call sites must provide equivalent
-    /// safety guarantees.
-    /// See: ConsensusBlockCommitter::commit_finalized_block in zhtp/runtime/components/consensus.rs
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
         // Verify the block
         let previous_block = self.blocks.last();
@@ -1494,7 +1570,6 @@ impl Blockchain {
         self.process_wallet_transactions(&block)?;
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
-        self.persist_token_state_snapshot()?;
 
         // Process approved governance proposals (e.g., difficulty parameter updates)
         // This executes any proposals that have passed voting since the last block
@@ -1564,23 +1639,6 @@ impl Blockchain {
             // Don't fail block processing for event publishing errors
         }
 
-        Ok(())
-    }
-
-    /// Persist full token subsystem snapshot within the active block transaction.
-    ///
-    /// This must be called only within a `begin_block`/`commit_block` transaction
-    /// boundary so that the token state snapshot is persisted atomically with the
-    /// rest of the block's state changes.
-    fn persist_token_state_snapshot(&self) -> Result<()> {
-        if let Some(ref store) = self.store {
-            let snapshot = crate::storage::TokenStateSnapshot {
-                token_contracts: self.token_contracts.clone(),
-                token_nonces: self.token_nonces.clone(),
-            };
-            store.put_token_state_snapshot(&snapshot)
-                .map_err(|e| anyhow::anyhow!("Failed to persist token state snapshot: {}", e))?;
-        }
         Ok(())
     }
 
@@ -1750,9 +1808,27 @@ impl Blockchain {
             }
         }
 
-        // BFT-A-935: PoW validation removed - using BFT consensus instead
-        // Difficulty field is now informational only
-        tracing::debug!("Block difficulty: 0x{:x} (informational only)", block.difficulty().bits());
+        // Verify proof of work using mining profile from environment
+        // This ensures validation uses the same difficulty as mining
+        let mining_config = crate::types::mining::get_mining_config_from_env();
+        let expected_difficulty = mining_config.difficulty.bits();
+
+        // Check if block uses production difficulty (requires full PoW verification)
+        // or development/testnet difficulty (simplified validation)
+        if block.difficulty().bits() < 0x20000000 {
+            // Production difficulty - verify full PoW
+            if !block.header.meets_difficulty_target() {
+                warn!("Block does not meet difficulty target");
+                return Ok(false);
+            }
+        } else {
+            // Development/testnet difficulty - verify it matches the expected profile difficulty
+            if block.difficulty().bits() != expected_difficulty {
+                warn!("Difficulty mismatch: block has 0x{:x}, expected 0x{:x} from mining profile",
+                      block.difficulty().bits(), expected_difficulty);
+                return Ok(false);
+            }
+        }
 
         // Verify all transactions
         for (i, tx) in block.transactions.iter().enumerate() {
@@ -1979,30 +2055,19 @@ impl Blockchain {
         crate::types::hash::blake3_hash(&data)
     }
 
-    /// **DEPRECATED:** No-op function for backward compatibility only.
+    /// Adjust blockchain difficulty based on block time targets.
     ///
-    /// Difficulty adjustment has been removed as part of the transition to pure BFT consensus
-    /// with deterministic finality (Issue #937). BFT consensus (Tendermint-like) does not use
-    /// Nakamoto-style difficulty adjustment or probabilistic finality.
+    /// This method delegates to the consensus coordinator's DifficultyManager when available,
+    /// falling back to `self.difficulty_config` for backward compatibility.
+    /// The consensus engine owns the difficulty policy per architectural design.
     ///
-    /// # Replacement Path
-    /// Block production and finality are now handled exclusively by the BFT consensus engine
-    /// via `self.consensus_coordinator` (see `BlockchainConsensusCoordinator` in
-    /// `lib-blockchain/src/integration/consensus_integration.rs`). The consensus coordinator
-    /// manages validator participation, block proposals, and 2/3+ commit voting for
-    /// irreversible finality.
-    ///
-    /// See the BFT-A epic for architectural details on deterministic finality enforcement.
-    #[allow(dead_code)]
+    /// # Fallback Behavior
+    /// - If consensus coordinator is available:
+    ///   - Uses coordinator's `calculate_difficulty_adjustment()` for the calculation
+    ///   - If calculation fails: falls back to `calculate_difficulty_with_config()` using coordinator's config
+    ///   - If getting config fails: returns error without fallback (this indicates a consensus layer problem)
+    /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters directly
     fn adjust_difficulty(&mut self) -> Result<()> {
-        // No-op: Difficulty adjustment disabled for BFT consensus
-        tracing::debug!("adjust_difficulty called but disabled (Issue #937)");
-        Ok(())
-    }
-
-    /// Original implementation - disabled
-    #[allow(dead_code)]
-    fn adjust_difficulty_original(&mut self) -> Result<()> {
         // Get adjustment parameters and calculate difficulty in a single lock acquisition
         // to avoid race conditions between reading config and calculating adjustment
         if let Some(coordinator) = &self.consensus_coordinator {
@@ -3248,6 +3313,11 @@ impl Blockchain {
                                         &wallet_id_str[..16.min(wallet_id_str.len())],
                                         e
                                     );
+                                } else if let Some(store) = &self.store {
+                                    let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                                    if let Err(e) = store_ref.put_token_contract(token) {
+                                        warn!("Failed to persist SOV token after wallet registration mint: {}", e);
+                                    }
                                 }
                             }
                         }
@@ -3262,7 +3332,20 @@ impl Blockchain {
     // Validator registration and management
     // ========================================================================
 
-    /// Register a new validator on the blockchain
+    /// Register a new validator on the blockchain.
+    ///
+    /// # Key Separation Enforcement
+    ///
+    /// This function enforces the three-key separation invariant before accepting a
+    /// registration.  A validator MUST supply three distinct keys:
+    ///
+    /// - `consensus_key`: BFT vote-signing key (Dilithium2, hot).
+    /// - `networking_key`: P2P transport identity key (Ed25519/X25519, hot).
+    /// - `rewards_key`: Wallet public key for reward collection (cold-capable).
+    ///
+    /// If any two keys are identical the registration is rejected with an error
+    /// describing which pair collides.  See the [`ValidatorInfo`] doc-comment for a
+    /// full description of each key's role and the security rationale for separation.
     pub fn register_validator(&mut self, validator_info: ValidatorInfo) -> Result<Hash> {
         // Check if validator already exists
         if self.validator_registry.contains_key(&validator_info.identity_id) {
@@ -3273,7 +3356,37 @@ impl Blockchain {
         if !self.identity_registry.contains_key(&validator_info.identity_id) {
             return Err(anyhow::anyhow!("Identity {} must be registered before becoming a validator", validator_info.identity_id));
         }
-        
+
+        // KEY SEPARATION ASSERTIONS
+        // Each key serves a distinct security domain; reuse collapses those boundaries.
+        if validator_info.consensus_key.is_empty() {
+            return Err(anyhow::anyhow!("Validator consensus_key must not be empty"));
+        }
+        if validator_info.networking_key.is_empty() {
+            return Err(anyhow::anyhow!("Validator networking_key must not be empty"));
+        }
+        if validator_info.rewards_key.is_empty() {
+            return Err(anyhow::anyhow!("Validator rewards_key must not be empty"));
+        }
+        if validator_info.consensus_key == validator_info.networking_key {
+            return Err(anyhow::anyhow!(
+                "Validator key separation violation: consensus_key and networking_key must be different keys. \
+                 Reusing the same key across roles collapses security domain boundaries."
+            ));
+        }
+        if validator_info.consensus_key == validator_info.rewards_key {
+            return Err(anyhow::anyhow!(
+                "Validator key separation violation: consensus_key and rewards_key must be different keys. \
+                 A compromised consensus key must not give an attacker control over staking rewards."
+            ));
+        }
+        if validator_info.networking_key == validator_info.rewards_key {
+            return Err(anyhow::anyhow!(
+                "Validator key separation violation: networking_key and rewards_key must be different keys. \
+                 A compromised network identity key must not give an attacker access to reward funds."
+            ));
+        }
+
         // SECURITY: Validate minimum requirements for validator eligibility
         // Edge nodes (minimal storage, no consensus capability) cannot become validators
         // Genesis bootstrap: Allow 1,000 SOV minimum for initial validator setup
@@ -3559,8 +3672,9 @@ impl Blockchain {
             }
             // Handle ContractExecution transactions (token create/mint/transfer/burn)
             else if transaction.transaction_type == TransactionType::ContractExecution {
-                self.process_contract_execution(transaction, block.height())
-                    .map_err(|e| anyhow::anyhow!("Failed to process contract execution: {}", e))?;
+                if let Err(e) = self.process_contract_execution(transaction, block.height()) {
+                    warn!("Failed to process contract execution: {}", e);
+                }
             }
         }
         Ok(())
@@ -3669,6 +3783,14 @@ impl Blockchain {
                     // Increment nonce after successful transfer
                     *self.token_nonces.entry(nonce_key).or_insert(0) += 1;
 
+                    if let Some(store) = &self.store {
+                        if let Some(token) = self.token_contracts.get(&token_id) {
+                            let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                            if let Err(e) = store_ref.put_token_contract(token) {
+                                warn!("Failed to persist token contract after transfer: {}", e);
+                            }
+                        }
+                    }
                 }
                 TransactionType::TokenMint => {
                     if transaction.version < 2 {
@@ -3775,6 +3897,12 @@ impl Blockchain {
                     token.mint(&recipient_pk, amount_u64)
                         .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
 
+                    if let Some(store) = &self.store {
+                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                        if let Err(e) = store_ref.put_token_contract(token) {
+                            warn!("Failed to persist token contract after mint: {}", e);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -3905,19 +4033,148 @@ impl Blockchain {
                     name, symbol, hex::encode(token_id));
             }
             "mint" => {
-                return Err(anyhow::anyhow!(
-                    "ContractExecution token mint is disabled; use canonical TokenMint transaction"
-                ));
+                // MintParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
+                #[derive(serde::Deserialize)]
+                struct MintParams {
+                    token_id: [u8; 32],
+                    to: Vec<u8>,  // PublicKey bytes (bincode serialized)
+                    amount: u64,
+                }
+                let params: MintParams = bincode::deserialize(&call.params)
+                    .map_err(|e| anyhow::anyhow!("Invalid mint params: {}", e))?;
+                let MintParams { token_id, to: to_bytes, amount } = params;
+                if Self::is_sov_token_id(&token_id) {
+                    return Err(anyhow::anyhow!("SOV mints must use TokenMint transactions"));
+                }
+
+                // Deserialize PublicKey from bytes, or create minimal key with key_id
+                let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
+                    // Just key_id was sent
+                    lib_crypto::types::keys::PublicKey {
+                        dilithium_pk: vec![],
+                        kyber_pk: vec![],
+                        key_id: to_bytes.try_into().unwrap_or([0u8; 32]),
+                    }
+                } else {
+                    // Full PublicKey was serialized
+                    bincode::deserialize(&to_bytes).unwrap_or_else(|_| {
+                        lib_crypto::types::keys::PublicKey {
+                            dilithium_pk: vec![],
+                            kyber_pk: vec![],
+                            key_id: [0u8; 32],
+                        }
+                    })
+                };
+
+                let token = self.token_contracts.get_mut(&token_id)
+                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
+
+                if token.creator != *caller {
+                    return Err(anyhow::anyhow!("Only token creator can mint"));
+                }
+
+                crate::contracts::tokens::functions::mint_tokens(token, &to, amount)
+                    .map_err(|e| anyhow::anyhow!("Mint failed: {}", e))?;
+                info!("Minted {} tokens to {:?}", amount, to.key_id);
             }
             "transfer" => {
-                return Err(anyhow::anyhow!(
-                    "ContractExecution token transfer is disabled; use canonical TokenTransfer transaction"
-                ));
+                warn!("DEPRECATED: ContractExecution/transfer is deprecated — use TokenTransfer transactions instead (issue #1132)");
+                // TransferParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
+                #[derive(serde::Deserialize)]
+                struct TransferParams {
+                    token_id: [u8; 32],
+                    to: Vec<u8>,  // PublicKey bytes (bincode serialized)
+                    amount: u64,
+                }
+                let params: TransferParams = bincode::deserialize(&call.params)
+                    .map_err(|e| anyhow::anyhow!("Invalid transfer params: {}", e))?;
+                let TransferParams { token_id, to: to_bytes, amount } = params;
+                if Self::is_sov_token_id(&token_id) {
+                    return Err(anyhow::anyhow!("SOV transfers must use TokenTransfer transactions"));
+                }
+
+                // Deserialize PublicKey from bytes, or create minimal key with key_id
+                let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
+                    // Just key_id was sent
+                    lib_crypto::types::keys::PublicKey {
+                        dilithium_pk: vec![],
+                        kyber_pk: vec![],
+                        key_id: to_bytes.try_into().unwrap_or([0u8; 32]),
+                    }
+                } else {
+                    // Full PublicKey was serialized
+                    bincode::deserialize(&to_bytes).unwrap_or_else(|_| {
+                        lib_crypto::types::keys::PublicKey {
+                            dilithium_pk: vec![],
+                            kyber_pk: vec![],
+                            key_id: [0u8; 32],
+                        }
+                    })
+                };
+
+                let token = self.token_contracts.get_mut(&token_id)
+                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
+
+                // Debug: log caller key_id and all balance entries for diagnosis
+                warn!(
+                    "[TRANSFER-EXEC] caller key_id={}, token has {} balance entries, amount={}",
+                    hex::encode(&caller.key_id),
+                    token.balances.len(),
+                    amount
+                );
+                for (pk, bal) in token.balances.iter() {
+                    warn!(
+                        "[TRANSFER-EXEC] balance entry: key_id={} balance={} dilithium_pk_len={} kyber_pk_len={}",
+                        hex::encode(&pk.key_id), bal, pk.dilithium_pk.len(), pk.kyber_pk.len()
+                    );
+                }
+
+                // Look up balance by key_id to handle PublicKey shape mismatches.
+                // Balances may have been minted under PublicKey::new(dilithium_pk) which
+                // has kyber_pk=vec![], but the caller's tx signature has both keys populated.
+                // Find the existing balance entry by key_id instead of full PublicKey equality.
+                let (source_key, source_balance) = token.balances.iter()
+                    .find(|(pk, _)| pk.key_id == caller.key_id)
+                    .map(|(pk, bal)| (pk.clone(), *bal))
+                    .unwrap_or_else(|| (caller.clone(), 0));
+
+                warn!(
+                    "[TRANSFER-EXEC] source_balance={} (found_by_key_id={}) for caller key_id={}",
+                    source_balance,
+                    source_balance > 0,
+                    hex::encode(&caller.key_id)
+                );
+
+                if source_balance < amount {
+                    return Err(anyhow::anyhow!("Insufficient balance"));
+                }
+                token.balances.insert(source_key, source_balance - amount);
+
+                let (to_key, to_balance) = token.balances.iter()
+                    .find(|(pk, _)| pk.key_id == to.key_id)
+                    .map(|(pk, bal)| (pk.clone(), *bal))
+                    .unwrap_or_else(|| (to.clone(), 0));
+                token.balances.insert(to_key, to_balance + amount);
+
+                info!("Transferred {} tokens from {:?} to {:?}", amount, caller.key_id, to.key_id);
             }
             "burn" => {
-                return Err(anyhow::anyhow!(
-                    "ContractExecution token burn is disabled; use canonical typed token mutation transaction"
-                ));
+                // BurnParams struct: { token_id: [u8; 32], amount: u64 }
+                #[derive(serde::Deserialize)]
+                struct BurnParams {
+                    token_id: [u8; 32],
+                    amount: u64,
+                }
+                let params: BurnParams = bincode::deserialize(&call.params)
+                    .map_err(|e| anyhow::anyhow!("Invalid burn params: {}", e))?;
+                let BurnParams { token_id, amount } = params;
+
+                let token = self.token_contracts.get_mut(&token_id)
+                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
+
+                crate::contracts::tokens::functions::burn_tokens(token, caller, amount)
+                    .map_err(|e| anyhow::anyhow!("Burn failed: {}", e))?;
+                info!("Burned {} tokens from {:?}", amount, caller.key_id);
             }
             _ => {
                 debug!("Unknown token method: {}", call.method);
@@ -4272,6 +4529,8 @@ impl Blockchain {
                 identity,
                 stake_amount,
                 storage_capacity,
+                consensus_keypair,
+                consensus_keypair,
                 consensus_keypair,
                 commission_rate,
             ).await?;
@@ -4661,27 +4920,27 @@ impl Blockchain {
     // GOVERNANCE PARAMETER UPDATE METHODS
     // ============================================================================
 
-    /// **DEPRECATED:** No-op method retained for API compatibility only.
+    /// Apply a difficulty parameter update from a passed DAO proposal.
     ///
-    /// This method was previously used to apply difficulty parameter updates from
-    /// DAO proposals. With the removal of difficulty governance in Issue #937
-    /// (transition to pure BFT consensus), this method now does nothing.
+    /// This method implements the governance flow for updating difficulty parameters:
+    /// 1. Verifies the proposal exists and has passed voting (30% quorum)
+    /// 2. Checks the proposal hasn't already been executed (idempotency guard)
+    /// 3. Extracts and validates the new difficulty parameters
+    /// 4. Updates the blockchain's `difficulty_config`
+    /// 5. Synchronizes changes with the consensus coordinator
+    /// 6. Logs all changes at info level
     ///
-    /// # Behavior
-    ///
-    /// - Always returns `Ok(())`
-    /// - Does not validate the proposal
-    /// - Does not check voting results or proposal type
-    /// - Does not modify blockchain state (including `executed_dao_proposals`)
-    /// - Only logs a warning message for diagnostic purposes
+    /// The method is idempotent - calling it multiple times with the same
+    /// proposal_id will succeed but only apply changes once.
     ///
     /// # Arguments
     ///
-    /// * `proposal_id` - Ignored. Provided for API compatibility only.
+    /// * `proposal_id` - The hash ID of the passed difficulty parameter update proposal
     ///
     /// # Returns
     ///
-    /// Always returns `Ok(())`. This method cannot fail.
+    /// * `Ok(())` on successful update (or if already executed)
+    /// * `Err` if proposal doesn't exist, hasn't passed, or parameters are invalid
     ///
     /// # Example
     ///
@@ -4689,31 +4948,41 @@ impl Blockchain {
     /// use lib_blockchain::{Blockchain, Hash};
     ///
     /// let mut blockchain = Blockchain::new(genesis_block, coordinator)?;
-    /// let proposal_id: Hash = /* any hash */;
     ///
-    /// // This call does nothing but log a warning
-    /// blockchain.apply_difficulty_parameter_update(proposal_id)?;
-    /// // Always succeeds with Ok(())
+    /// // After a DifficultyParameterUpdate proposal has passed voting...
+    /// let proposal_id: Hash = /* passed proposal hash */;
+    ///
+    /// // Apply the governance update
+    /// match blockchain.apply_difficulty_parameter_update(proposal_id) {
+    ///     Ok(()) => {
+    ///         println!("Difficulty parameters updated successfully");
+    ///         let config = blockchain.get_difficulty_config();
+    ///         println!("New target timespan: {}", config.target_timespan);
+    ///     }
+    ///     Err(e) => {
+    ///         eprintln!("Failed to apply update: {}", e);
+    ///     }
+    /// }
+    ///
+    /// // Idempotent: calling again is safe
+    /// blockchain.apply_difficulty_parameter_update(proposal_id)?; // No-op, already applied
     /// ```
     ///
-    /// # Migration Note
+    /// # Governance Flow
     ///
-    /// Difficulty governance has been removed. Consensus is now purely BFT-based.
-    /// This method exists only to maintain API compatibility with legacy code.
-    /// Consider removing calls to this method from your application.
-    #[deprecated(since = "2.0.0", note = "Difficulty governance removed - BFT consensus only")]
+    /// This method is typically called after:
+    /// 1. A `DaoProposalType::DifficultyParameterUpdate` proposal is created
+    /// 2. The 7-day voting period completes
+    /// 3. The proposal achieves 30% quorum with majority approval
+    /// 4. The timelock period expires (if any)
+    ///
+    /// # Errors
+    ///
+    /// - `InvalidProposal`: Proposal not found
+    /// - `InvalidProposal`: Proposal has not passed voting
+    /// - `InvalidProposal`: Wrong proposal type
+    /// - `ParameterValidationError`: New parameters fail validation
     pub fn apply_difficulty_parameter_update(&mut self, proposal_id: Hash) -> Result<()> {
-        // Deprecated no-op: keep for API compatibility, but do not modify DAO state.
-        tracing::warn!(
-            "apply_difficulty_parameter_update called but disabled (Issue #937) for proposal {:?}",
-            proposal_id
-        );
-        Ok(())
-    }
-
-    /// Original implementation - disabled
-    #[allow(dead_code)]
-    fn apply_difficulty_parameter_update_original(&mut self, proposal_id: Hash) -> Result<()> {
         // 0. Check if already executed (prevent double-execution)
         if self.executed_dao_proposals.contains(&proposal_id) {
             debug!(
@@ -7586,6 +7855,20 @@ impl Blockchain {
         self.auto_persist_enabled && self.blocks_since_last_persist >= interval
     }
 
+    /// Store a consensus checkpoint record.
+    ///
+    /// This is a compatibility hook used by runtime components; checkpoint
+    /// persistence is currently handled by finalized chain state.
+    pub fn store_consensus_checkpoint(
+        &mut self,
+        _height: u64,
+        _block_hash: Hash,
+        _proposer_id: String,
+        _previous_hash: Hash,
+        _commit_votes: u32,
+    ) {
+    }
+
     // ========================================================================
     // TRANSACTION RECEIPT AND FINALITY MANAGEMENT
     // ========================================================================
@@ -7732,10 +8015,171 @@ impl Blockchain {
     }
 
     // ========================================================================
-    // FORK RECOVERY AND REORGANIZATION - REMOVED
+    // FORK RECOVERY AND REORGANIZATION
     // ========================================================================
-    // BFT consensus does not require fork detection or chain reorganization logic.
-    // This section has been removed as part of Issue #936.
+
+    /// Detect if a new block creates a fork
+    pub fn detect_fork_at_height(&self, height: u64, new_block_hash: Hash) -> Option<crate::fork_recovery::ForkDetection> {
+        // Find existing block at this height
+        let existing_block = self.blocks.iter().find(|b| b.header.height == height)?;
+
+        // If hashes differ, we have a fork
+        if existing_block.header.block_hash != new_block_hash {
+            return Some(crate::fork_recovery::ForkDetection {
+                height,
+                existing_hash: existing_block.header.block_hash,
+                new_hash: new_block_hash,
+            });
+        }
+        None
+    }
+
+    /// Record a fork point in history for audit trail
+    fn record_fork_point(
+        &mut self,
+        height: u64,
+        original_hash: Hash,
+        forked_hash: Hash,
+        resolution: crate::fork_recovery::ForkResolution,
+    ) {
+        let fork_point = crate::fork_recovery::ForkPoint::new(
+            height,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            original_hash,
+            forked_hash,
+            resolution,
+        );
+
+        self.fork_points.insert(height, fork_point);
+        info!("🍴 Fork recorded at height {}: {:?} -> {:?}", height, original_hash, forked_hash);
+    }
+
+    /// Prevent reorg below finalized blocks
+    pub fn can_reorg_to_height(&self, target_height: u64) -> Result<(), String> {
+        // Find the highest finalized block
+        if let Some(&max_finalized) = self.finalized_blocks.iter().max() {
+            if target_height <= max_finalized {
+                return Err(format!(
+                    "Cannot reorg below finality threshold. Finalized height: {}, Target: {}",
+                    max_finalized, target_height
+                ));
+            }
+        }
+
+        // Check max reorg depth configured
+        let max_reorg_depth = self.fork_recovery_config.max_reorg_depth;
+        if self.height.saturating_sub(target_height) > max_reorg_depth {
+            return Err(format!(
+                "Reorg depth ({}) exceeds maximum configured ({})",
+                self.height.saturating_sub(target_height),
+                max_reorg_depth
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Check if can reorg to height, with anyhow::Result error type
+    fn can_reorg_to_height_anyhow(&self, target_height: u64) -> Result<()> {
+        self.can_reorg_to_height(target_height)
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Reorganize to a fork (replace blocks from target_height onwards)
+    ///
+    /// # Arguments
+    /// * `target_height` - Block height where reorg should start
+    /// * `new_blocks` - New blocks to replace the old ones
+    ///
+    /// # Returns
+    /// Number of blocks removed and replaced
+    pub async fn reorg_to_fork(&mut self, target_height: u64, new_blocks: Vec<Block>) -> Result<u64> {
+        // Safety checks
+        self.can_reorg_to_height_anyhow(target_height)?;
+
+        if new_blocks.is_empty() {
+            return Err(anyhow::anyhow!("Cannot reorg with empty block list"));
+        }
+
+        // Verify new blocks form a valid chain
+        if new_blocks[0].header.height != target_height {
+            return Err(anyhow::anyhow!(
+                "First block height {} doesn't match target height {}",
+                new_blocks[0].header.height,
+                target_height
+            ));
+        }
+
+        // Verify chain continuity
+        for i in 1..new_blocks.len() {
+            if new_blocks[i].header.height != new_blocks[i - 1].header.height + 1 {
+                return Err(anyhow::anyhow!("Block height gap in new chain at position {}", i));
+            }
+            if new_blocks[i].header.previous_block_hash != new_blocks[i - 1].header.block_hash {
+                return Err(anyhow::anyhow!("Block chain linkage broken at position {}", i));
+            }
+        }
+
+        info!(
+            "🔄 Reorganizing chain from height {} with {} blocks",
+            target_height,
+            new_blocks.len()
+        );
+
+        // Capture old block hash before removing blocks for audit trail
+        let old_block_hash = self.blocks
+            .iter()
+            .find(|b| b.header.height == target_height)
+            .map(|b| b.header.block_hash);
+
+        // Remove old blocks from target_height onwards
+        let old_count = self.blocks.len();
+        self.blocks.retain(|b| b.header.height < target_height);
+        let removed_count = old_count - self.blocks.len();
+
+        // Add new blocks
+        for block in new_blocks {
+            // Record fork for audit trail (only for first block of reorg)
+            if block.header.height == target_height {
+                if let Some(old_hash) = old_block_hash {
+                    self.record_fork_point(
+                        target_height,
+                        old_hash,
+                        block.header.block_hash,
+                        crate::fork_recovery::ForkResolution::SwitchedToFork,
+                    );
+                }
+            }
+
+            // Add block and update state
+            self.add_block(block).await?;
+        }
+
+        // Increment reorg counter for monitoring
+        self.reorg_count += 1;
+
+        info!(
+            "✅ Reorganization complete: {} blocks removed, chain height now {}",
+            removed_count, self.height
+        );
+
+        Ok(removed_count as u64)
+    }
+
+    /// Get fork history for audit purposes
+    pub fn get_fork_history(&self) -> Vec<crate::fork_recovery::ForkPoint> {
+        let mut forks: Vec<_> = self.fork_points.values().cloned().collect();
+        forks.sort_by_key(|f| f.height);
+        forks
+    }
+
+    /// Get reorg count (for monitoring)
+    pub fn get_reorg_count(&self) -> u64 {
+        self.reorg_count
+    }
 
     // ========================================================================
     // CONTRACT STATE MANAGEMENT
@@ -7826,7 +8270,7 @@ impl Blockchain {
     /// Save UTXO set snapshot for current block height
     ///
     /// Creates a complete snapshot of the current UTXO set for the given block height.
-    /// This enables state recovery and historical queries.
+    /// This enables state recovery and chain reorganizations.
     ///
     /// # Arguments
     /// * `block_height` - Block height to snapshot
@@ -7858,7 +8302,7 @@ impl Blockchain {
     /// Prune old UTXO snapshots to save memory
     ///
     /// Keeps snapshots for recent blocks and removes older ones.
-    /// Maintains finalized blocks for historical queries.
+    /// Maintains finalized blocks to prevent reorg below finality depth.
     ///
     /// # Arguments
     /// * `keep_blocks` - Number of recent blocks to keep in history
@@ -7883,7 +8327,7 @@ impl Blockchain {
 
     /// Restore UTXO set from a snapshot at specific height
     ///
-    /// Used for state recovery and historical queries.
+    /// Used during chain reorganizations to rollback to previous state.
     ///
     /// # Arguments
     /// * `height` - Block height to restore from

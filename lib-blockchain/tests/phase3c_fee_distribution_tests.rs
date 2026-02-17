@@ -133,13 +133,10 @@ fn create_genesis_with_coinbase(coinbase: Transaction) -> Block {
         previous_block_hash: Hash::default(),
         merkle_root: Hash::default(),
         timestamp: 1000,
-        difficulty: Difficulty::default(),
-        nonce: 0,
         height: 0,
         block_hash,
         transaction_count: 1,
         block_size: 0,
-        cumulative_difficulty: Difficulty::default(),
         fee_model_version: 2,
     };
     Block::new(header, vec![coinbase])
@@ -203,13 +200,10 @@ fn create_block_with_txs(
         previous_block_hash: prev_hash,
         merkle_root: Hash::default(),
         timestamp: 1000 + height * 600,
-        difficulty: Difficulty::default(),
-        nonce: 0,
         height,
         block_hash,
         transaction_count: transactions.len() as u32,
         block_size: 0,
-        cumulative_difficulty: Difficulty::default(),
         fee_model_version: 2,
     };
     Block::new(header, transactions)

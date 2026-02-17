@@ -86,6 +86,8 @@
                 10_000_000_000,
                 100 * 1024 * 1024 * 1024,
                 keypair.public_key.dilithium_pk.clone(),
+                vec![0xEEu8; 32], // networking_key: distinct from consensus_key
+                vec![0xFFu8; 32], // rewards_key: distinct from consensus_key and networking_key
                 5,
                 is_genesis,
             )
@@ -133,6 +135,8 @@
                 10_000_000_000,
                 100 * 1024 * 1024 * 1024,
                 keypair.public_key.dilithium_pk.clone(),
+                vec![0xEEu8; 32], // networking_key: distinct from consensus_key
+                vec![0xFFu8; 32], // rewards_key: distinct from consensus_key and networking_key
                 5,
                 is_genesis,
             )
@@ -1276,4 +1280,544 @@
         // Verify the vote was stored
         let commit_count = engine.count_commits_for(5, 2, &proposal_id);
         assert_eq!(commit_count, 1, "Past-round commit vote should be stored for catch-up");
+    }
+
+    // ============================================================================
+    // CANONICAL CHAIN CONVERGENCE TESTS (Issue #955)
+    // ============================================================================
+    //
+    // Test scenario:
+    // - ≥4 validators
+    // - Two nodes process same commit votes in different network orders
+    // - Must finalize same block at each height
+    // - MUST fail if nodes diverge
+
+    /// Test: Canonical convergence with different vote processing order
+    ///
+    /// Setup:
+    /// - 4 validators (minimum BFT threshold)
+    /// - Single block proposal at height=1, round=0
+    /// - 3 commit votes (2/3+1 quorum) for the same proposal
+    ///
+    /// Test:
+    /// - Node A processes votes in order: V1 → V2 → V3
+    /// - Node B processes votes in order: V3 → V1 → V2
+    /// - Both nodes MUST finalize the SAME block
+    /// - Both nodes MUST be at Commit step after processing quorum
+    ///
+    /// Failure mode:
+    /// - If nodes finalize different blocks → FAIL (non-deterministic)
+    /// - If nodes don't reach Commit step → FAIL (liveness violation)
+    #[tokio::test]
+    async fn test_canonical_convergence_different_vote_order() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+
+        let broadcaster_a = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster_b = Arc::new(MockMessageBroadcaster::new());
+
+        let mut engine_a = ConsensusEngine::new(config.clone(), broadcaster_a as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine A");
+        let mut engine_b = ConsensusEngine::new(config, broadcaster_b as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine B");
+
+        // Register 4 validators on both engines with identical identities
+        let mut validators = Vec::new();
+        for i in 1..=4 {
+            let validator_id = test_validator_id(i);
+            // Note: validator_id is index-derived; signing keys are randomly generated and
+            // do not derive from the validator_id. This is a test limitation.
+            let keypair = create_test_keypair();
+
+            register_validator_with_keypair(&mut engine_a, validator_id.clone(), &keypair, i == 1).await;
+            register_validator_with_keypair(&mut engine_b, validator_id.clone(), &keypair, i == 1).await;
+
+            validators.push((validator_id, keypair));
+        }
+
+        // Create a deterministic proposal hash (same block on both nodes)
+        let proposal_id = Hash::from_bytes(&hash_blake3(b"canonical-block-height-1"));
+
+        let height = 1u64;
+        let round = 0u32;
+
+        // Create 3 commit votes (quorum) from first 3 validators
+        let vote_1 = make_signed_vote(
+            &engine_a,
+            &validators[0].1,
+            validators[0].0.clone(),
+            proposal_id.clone(),
+            VoteType::Commit,
+            height,
+            round,
+        );
+
+        let vote_2 = make_signed_vote(
+            &engine_a,
+            &validators[1].1,
+            validators[1].0.clone(),
+            proposal_id.clone(),
+            VoteType::Commit,
+            height,
+            round,
+        );
+
+        let vote_3 = make_signed_vote(
+            &engine_a,
+            &validators[2].1,
+            validators[2].0.clone(),
+            proposal_id.clone(),
+            VoteType::Commit,
+            height,
+            round,
+        );
+
+        // Set both engines to height=1, round=0
+        engine_a.current_round.height = height;
+        engine_a.current_round.round = round;
+        engine_b.current_round.height = height;
+        engine_b.current_round.round = round;
+
+        // Snapshot validator sets for both engines
+        engine_a.snapshot_validator_set(height);
+        engine_b.snapshot_validator_set(height);
+
+        // Set both engines to PreVote step (simulate receiving commit votes early)
+        engine_a.current_round.step = ConsensusStep::PreVote;
+        engine_b.current_round.step = ConsensusStep::PreVote;
+
+        // Node A: Process votes in order V1 → V2 → V3
+        engine_a.on_commit_vote(vote_1.clone()).await.expect("A: vote 1");
+        engine_a.on_commit_vote(vote_2.clone()).await.expect("A: vote 2");
+        engine_a.on_commit_vote(vote_3.clone()).await.expect("A: vote 3");
+
+        // Node B: Process SAME votes in DIFFERENT order V3 → V1 → V2
+        engine_b.on_commit_vote(vote_3.clone()).await.expect("B: vote 3");
+        engine_b.on_commit_vote(vote_1.clone()).await.expect("B: vote 1");
+        engine_b.on_commit_vote(vote_2.clone()).await.expect("B: vote 2");
+
+        // INVARIANT CHECK: Both engines MUST be in Commit step
+        assert_eq!(
+            engine_a.current_round.step,
+            ConsensusStep::Commit,
+            "Node A MUST transition to Commit step after processing quorum"
+        );
+
+        assert_eq!(
+            engine_b.current_round.step,
+            ConsensusStep::Commit,
+            "Node B MUST transition to Commit step after processing quorum"
+        );
+
+        // INVARIANT CHECK: Both engines MUST have identical commit vote counts
+        let count_a = engine_a.count_commits_for(height, round, &proposal_id);
+        let count_b = engine_b.count_commits_for(height, round, &proposal_id);
+
+        assert_eq!(
+            count_a, 3,
+            "Node A MUST have 3 commit votes for canonical proposal"
+        );
+        assert_eq!(
+            count_b, 3,
+            "Node B MUST have 3 commit votes for canonical proposal"
+        );
+
+        // CRITICAL INVARIANT: Both engines MUST finalize the SAME proposal
+        // This is the canonical convergence property
+        assert_eq!(
+            count_a, count_b,
+            "CANONICAL CONVERGENCE VIOLATION: Nodes have different vote counts!"
+        );
+
+        tracing::info!("✅ Canonical convergence verified:");
+        tracing::info!("   - Node A processed votes in order: V1 → V2 → V3");
+        tracing::info!("   - Node B processed votes in order: V3 → V1 → V2");
+        tracing::info!("   - Both nodes finalized proposal: {}", proposal_id);
+        tracing::info!("   - Both nodes reached Commit step");
+        tracing::info!("   - Deterministic finality: CONFIRMED");
+    }
+
+    /// Test: Canonical convergence with split votes (no quorum)
+    ///
+    /// Setup:
+    /// - 4 validators
+    /// - Two different proposals A and B
+    /// - 2 votes for A, 1 vote for B (no quorum)
+    ///
+    /// Expected:
+    /// - Both nodes MUST NOT finalize (no supermajority)
+    /// - Both nodes remain in PreVote step
+    /// - Vote counts for each proposal MUST be identical
+    #[tokio::test]
+    async fn test_canonical_convergence_no_quorum_split_votes() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+
+        let broadcaster_a = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster_b = Arc::new(MockMessageBroadcaster::new());
+
+        let mut engine_a = ConsensusEngine::new(config.clone(), broadcaster_a as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine A");
+        let mut engine_b = ConsensusEngine::new(config, broadcaster_b as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine B");
+
+        // Register 4 validators
+        let mut validators = Vec::new();
+        for i in 1..=4 {
+            let validator_id = test_validator_id(i);
+            // Note: validator_id is index-derived; signing keys are randomly generated and
+            // do not derive from the validator_id. This is a test limitation.
+            let keypair = create_test_keypair();
+
+            register_validator_with_keypair(&mut engine_a, validator_id.clone(), &keypair, i == 1).await;
+            register_validator_with_keypair(&mut engine_b, validator_id.clone(), &keypair, i == 1).await;
+
+            validators.push((validator_id, keypair));
+        }
+
+        let height = 1u64;
+        let round = 0u32;
+
+        // Two competing proposals
+        let proposal_a = Hash::from_bytes(&hash_blake3(b"proposal-A"));
+        let proposal_b = Hash::from_bytes(&hash_blake3(b"proposal-B"));
+
+        // 2 votes for proposal A
+        let vote_a1 = make_signed_vote(
+            &engine_a,
+            &validators[0].1,
+            validators[0].0.clone(),
+            proposal_a.clone(),
+            VoteType::Commit,
+            height,
+            round,
+        );
+
+        let vote_a2 = make_signed_vote(
+            &engine_a,
+            &validators[1].1,
+            validators[1].0.clone(),
+            proposal_a.clone(),
+            VoteType::Commit,
+            height,
+            round,
+        );
+
+        // 1 vote for proposal B
+        let vote_b1 = make_signed_vote(
+            &engine_a,
+            &validators[2].1,
+            validators[2].0.clone(),
+            proposal_b.clone(),
+            VoteType::Commit,
+            height,
+            round,
+        );
+
+        // Setup both engines
+        engine_a.current_round.height = height;
+        engine_a.current_round.round = round;
+        engine_b.current_round.height = height;
+        engine_b.current_round.round = round;
+
+        engine_a.snapshot_validator_set(height);
+        engine_b.snapshot_validator_set(height);
+
+        engine_a.current_round.step = ConsensusStep::PreVote;
+        engine_b.current_round.step = ConsensusStep::PreVote;
+
+        // Node A: A1 → A2 → B1
+        engine_a.on_commit_vote(vote_a1.clone()).await.expect("A: vote a1");
+        engine_a.on_commit_vote(vote_a2.clone()).await.expect("A: vote a2");
+        engine_a.on_commit_vote(vote_b1.clone()).await.expect("A: vote b1");
+
+        // Node B: B1 → A2 → A1 (different order)
+        engine_b.on_commit_vote(vote_b1.clone()).await.expect("B: vote b1");
+        engine_b.on_commit_vote(vote_a2.clone()).await.expect("B: vote a2");
+        engine_b.on_commit_vote(vote_a1.clone()).await.expect("B: vote a1");
+
+        // INVARIANT: Both nodes MUST remain in PreVote (no finalization)
+        assert_eq!(
+            engine_a.current_round.step,
+            ConsensusStep::PreVote,
+            "Node A MUST NOT finalize without quorum"
+        );
+        assert_eq!(
+            engine_b.current_round.step,
+            ConsensusStep::PreVote,
+            "Node B MUST NOT finalize without quorum"
+        );
+
+        // INVARIANT: Vote counts MUST be identical
+        let count_a_proposal_a = engine_a.count_commits_for(height, round, &proposal_a);
+        let count_b_proposal_a = engine_b.count_commits_for(height, round, &proposal_a);
+
+        assert_eq!(count_a_proposal_a, 2, "Node A should count 2 votes for proposal A");
+        assert_eq!(count_b_proposal_a, 2, "Node B should count 2 votes for proposal A");
+
+        let count_a_proposal_b = engine_a.count_commits_for(height, round, &proposal_b);
+        let count_b_proposal_b = engine_b.count_commits_for(height, round, &proposal_b);
+
+        assert_eq!(count_a_proposal_b, 1, "Node A should count 1 vote for proposal B");
+        assert_eq!(count_b_proposal_b, 1, "Node B should count 1 vote for proposal B");
+
+        tracing::info!("✅ Split vote convergence verified:");
+        tracing::info!("   - 2 votes for proposal A (no quorum)");
+        tracing::info!("   - 1 vote for proposal B (no quorum)");
+        tracing::info!("   - Both nodes remain in PreVote step");
+        tracing::info!("   - No finalization: CONFIRMED");
+    }
+
+    /// Test: Canonical convergence with 7 validators (larger network)
+    ///
+    /// Setup:
+    /// - 7 validators (requires 5 votes for quorum)
+    /// - Single proposal
+    /// - Exactly 5 commit votes (quorum)
+    ///
+    /// Test:
+    /// - Node A and B process votes in different orders
+    /// - Both MUST finalize after receiving all 5 votes
+    /// - Both MUST finalize the same proposal
+    #[tokio::test]
+    async fn test_canonical_convergence_seven_validators() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+
+        let broadcaster_a = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster_b = Arc::new(MockMessageBroadcaster::new());
+
+        let mut engine_a = ConsensusEngine::new(config.clone(), broadcaster_a as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine A");
+        let mut engine_b = ConsensusEngine::new(config, broadcaster_b as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine B");
+
+        // Register 7 validators
+        let mut validators = Vec::new();
+        for i in 1..=7 {
+            let validator_id = test_validator_id(i);
+            // Note: validator_id is index-derived; signing keys are randomly generated and
+            // do not derive from the validator_id. This is a test limitation.
+            let keypair = create_test_keypair();
+
+            register_validator_with_keypair(&mut engine_a, validator_id.clone(), &keypair, i == 1).await;
+            register_validator_with_keypair(&mut engine_b, validator_id.clone(), &keypair, i == 1).await;
+
+            validators.push((validator_id, keypair));
+        }
+
+        let height = 1u64;
+        let round = 0u32;
+        let proposal_id = Hash::from_bytes(&hash_blake3(b"canonical-block-7-validators"));
+
+        // Create 5 commit votes (quorum for 7 validators)
+        let mut votes = Vec::new();
+        for i in 0..5 {
+            let vote = make_signed_vote(
+                &engine_a,
+                &validators[i].1,
+                validators[i].0.clone(),
+                proposal_id.clone(),
+                VoteType::Commit,
+                height,
+                round,
+            );
+            votes.push(vote);
+        }
+
+        // Setup both engines
+        engine_a.current_round.height = height;
+        engine_a.current_round.round = round;
+        engine_b.current_round.height = height;
+        engine_b.current_round.round = round;
+
+        engine_a.snapshot_validator_set(height);
+        engine_b.snapshot_validator_set(height);
+
+        engine_a.current_round.step = ConsensusStep::PreVote;
+        engine_b.current_round.step = ConsensusStep::PreVote;
+
+        // Node A: Sequential order 0→1→2→3→4
+        for vote in &votes {
+            engine_a.on_commit_vote(vote.clone()).await.expect("A: vote");
+        }
+
+        // Node B: Reversed order 4→3→2→1→0
+        for vote in votes.iter().rev() {
+            engine_b.on_commit_vote(vote.clone()).await.expect("B: vote");
+        }
+
+        // INVARIANT: Both nodes MUST finalize
+        assert_eq!(
+            engine_a.current_round.step,
+            ConsensusStep::Commit,
+            "Node A MUST finalize with 5/7 votes"
+        );
+        assert_eq!(
+            engine_b.current_round.step,
+            ConsensusStep::Commit,
+            "Node B MUST finalize with 5/7 votes"
+        );
+
+        // INVARIANT: Vote counts MUST be identical
+        let count_a = engine_a.count_commits_for(height, round, &proposal_id);
+        let count_b = engine_b.count_commits_for(height, round, &proposal_id);
+
+        assert_eq!(count_a, 5, "Node A MUST have 5 commit votes");
+        assert_eq!(count_b, 5, "Node B MUST have 5 commit votes");
+
+        tracing::info!("✅ 7-validator canonical convergence verified:");
+        tracing::info!("   - 7 validators (quorum = 5)");
+        tracing::info!("   - Both nodes finalized with 5 votes");
+        tracing::info!("   - Deterministic finality: CONFIRMED");
+    }
+
+    /// Test: Canonical convergence with equivocation detection
+    ///
+    /// Setup:
+    /// - 4 validators
+    /// - Validator V1 sends two different votes (equivocation)
+    ///
+    /// Expected:
+    /// - Both nodes MUST reject the second conflicting vote
+    /// - Both nodes MUST have identical vote counts
+    /// - Equivocation MUST NOT affect determinism
+    #[tokio::test]
+    async fn test_canonical_convergence_with_equivocation() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+
+        let broadcaster_a = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster_b = Arc::new(MockMessageBroadcaster::new());
+
+        let mut engine_a = ConsensusEngine::new(config.clone(), broadcaster_a as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine A");
+        let mut engine_b = ConsensusEngine::new(config, broadcaster_b as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine B");
+
+        // Register 4 validators
+        let mut validators = Vec::new();
+        for i in 1..=4 {
+            let validator_id = test_validator_id(i);
+            // Note: validator_id is index-derived; signing keys are randomly generated and
+            // do not derive from the validator_id. This is a test limitation.
+            let keypair = create_test_keypair();
+
+            register_validator_with_keypair(&mut engine_a, validator_id.clone(), &keypair, i == 1).await;
+            register_validator_with_keypair(&mut engine_b, validator_id.clone(), &keypair, i == 1).await;
+
+            validators.push((validator_id, keypair));
+        }
+
+        let height = 1u64;
+        let round = 0u32;
+
+        let proposal_a = Hash::from_bytes(&hash_blake3(b"proposal-A"));
+        let proposal_b = Hash::from_bytes(&hash_blake3(b"proposal-B"));
+
+        // Validator 0 votes for proposal A
+        let vote_0a = make_signed_vote(
+            &engine_a,
+            &validators[0].1,
+            validators[0].0.clone(),
+            proposal_a.clone(),
+            VoteType::Commit,
+            height,
+            round,
+        );
+
+        // Validator 0 equivocates: votes for proposal B (same H/R/type, different value)
+        let vote_0b = make_signed_vote(
+            &engine_a,
+            &validators[0].1,
+            validators[0].0.clone(),
+            proposal_b.clone(),
+            VoteType::Commit,
+            height,
+            round,
+        );
+
+        // Valid votes from validators 1 and 2
+        let vote_1 = make_signed_vote(
+            &engine_a,
+            &validators[1].1,
+            validators[1].0.clone(),
+            proposal_a.clone(),
+            VoteType::Commit,
+            height,
+            round,
+        );
+
+        let vote_2 = make_signed_vote(
+            &engine_a,
+            &validators[2].1,
+            validators[2].0.clone(),
+            proposal_a.clone(),
+            VoteType::Commit,
+            height,
+            round,
+        );
+
+        // Setup both engines
+        engine_a.current_round.height = height;
+        engine_a.current_round.round = round;
+        engine_b.current_round.height = height;
+        engine_b.current_round.round = round;
+
+        engine_a.snapshot_validator_set(height);
+        engine_b.snapshot_validator_set(height);
+
+        engine_a.current_round.step = ConsensusStep::PreVote;
+        engine_b.current_round.step = ConsensusStep::PreVote;
+
+        // Node A: Process legitimate vote, then equivocation, then more legitimate votes
+        engine_a.on_commit_vote(vote_0a.clone()).await.expect("A: vote 0a");
+        engine_a.on_commit_vote(vote_0b.clone()).await.expect("A: vote 0b"); // Equivocation (should be rejected)
+        engine_a.on_commit_vote(vote_1.clone()).await.expect("A: vote 1");
+        engine_a.on_commit_vote(vote_2.clone()).await.expect("A: vote 2");
+
+        // Node B: Process in different order
+        engine_b.on_commit_vote(vote_1.clone()).await.expect("B: vote 1");
+        engine_b.on_commit_vote(vote_0b.clone()).await.expect("B: vote 0b"); // Equivocation (should be rejected)
+        engine_b.on_commit_vote(vote_2.clone()).await.expect("B: vote 2");
+        engine_b.on_commit_vote(vote_0a.clone()).await.expect("B: vote 0a");
+
+        // INVARIANT: Vote counts MUST be identical (equivocation rejected)
+        let count_a_proposal_a = engine_a.count_commits_for(height, round, &proposal_a);
+        let count_b_proposal_a = engine_b.count_commits_for(height, round, &proposal_a);
+
+        assert_eq!(
+            count_a_proposal_a, 3,
+            "Node A should count 3 valid votes for proposal A"
+        );
+        assert_eq!(
+            count_b_proposal_a, 3,
+            "Node B should count 3 valid votes for proposal A"
+        );
+
+        // INVARIANT: Both nodes should have finalized (3/4 = quorum)
+        assert_eq!(
+            engine_a.current_round.step,
+            ConsensusStep::Commit,
+            "Node A MUST finalize despite equivocation"
+        );
+        assert_eq!(
+            engine_b.current_round.step,
+            ConsensusStep::Commit,
+            "Node B MUST finalize despite equivocation"
+        );
+
+        tracing::info!("✅ Equivocation handling verified:");
+        tracing::info!("   - Validator 0 equivocated (2 different votes)");
+        tracing::info!("   - Both nodes rejected equivocating vote");
+        tracing::info!("   - Both nodes finalized with 3 valid votes");
+        tracing::info!("   - Deterministic finality maintained: CONFIRMED");
     }

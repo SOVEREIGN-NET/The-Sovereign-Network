@@ -15,4 +15,11 @@ pub mod liveness_monitor;
 
 pub use codec::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
 pub use heartbeat::{HeartbeatProcessingResult, HeartbeatTracker, HeartbeatValidationError};
-pub use liveness_monitor::LivenessMonitor;
+pub use liveness_monitor::{
+    LivenessMonitor,
+    MAX_MISSED_BLOCKS,
+    ROUND_TIMEOUT_SECS,
+    LIVENESS_JAIL_THRESHOLD,
+    MAX_CONSECUTIVE_ROUND_TIMEOUTS,
+    HEARTBEAT_LIVENESS_TIMEOUT_SECS,
+};

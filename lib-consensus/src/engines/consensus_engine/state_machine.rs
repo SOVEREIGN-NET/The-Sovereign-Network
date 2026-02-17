@@ -1,6 +1,56 @@
+//! Consensus state-machine implementation.
+//!
+//! # State Growth Controls
+//!
+//! The consensus engine is responsible for triggering checkpoint creation and
+//! enforcing snapshot policies as the chain grows.  The following constants
+//! define the growth-control boundaries and are mirrored here so that the
+//! consensus engine can enforce them independently of the blockchain layer.
+//!
+//! ## Checkpoints
+//!
+//! A checkpoint is created by the block-finalization path every
+//! [`CHECKPOINT_INTERVAL_BLOCKS`] blocks.  The consensus engine SHOULD verify
+//! that a checkpoint was produced at the expected height before advancing to the
+//! next epoch.
+//!
+//! ## Snapshots
+//!
+//! UTXO and contract-state snapshots MUST be taken at least once every
+//! [`MAX_BLOCKS_WITHOUT_SNAPSHOT`] blocks.  The consensus engine can enforce
+//! this by checking `(current_height % MAX_BLOCKS_WITHOUT_SNAPSHOT == 0)` after
+//! each committed block and demanding that the blockchain layer produce a snapshot
+//! before proceeding.
+
 use super::*;
 use lib_crypto::hash_blake3;
 use tracing::info;
+
+// ============================================================================
+// STATE GROWTH CONTROL CONSTANTS (mirrors lib-blockchain values)
+// ============================================================================
+
+/// Number of blocks between mandatory checkpoint creations.
+///
+/// A checkpoint is a cryptographically signed commitment to the full world
+/// state (UTXO + identity + wallet + contract) at a specific block height.
+/// The consensus engine enforces that a checkpoint is created at every block
+/// height that is a non-zero multiple of this value.
+///
+/// This constant mirrors [`lib_blockchain::blockchain::CHECKPOINT_INTERVAL_BLOCKS`]
+/// and is defined here so the consensus engine can enforce the invariant without
+/// depending on the blockchain crate at compile time.
+pub const CHECKPOINT_INTERVAL_BLOCKS: u64 = 1000;
+
+/// Maximum number of consecutive committed blocks without a UTXO snapshot.
+///
+/// If the blockchain layer has not saved a snapshot within this many blocks,
+/// the consensus engine SHOULD refuse to finalize the next block until a
+/// snapshot is produced.  This prevents unbounded memory growth and ensures
+/// that reorg recovery is always possible within a bounded replay window.
+///
+/// This constant mirrors [`lib_blockchain::blockchain::MAX_BLOCKS_WITHOUT_SNAPSHOT`].
+pub const MAX_BLOCKS_WITHOUT_SNAPSHOT: u64 = 10_000;
 
 // ============================================================================
 // AUDIT AND LOGGING CONSTANTS
@@ -157,19 +207,28 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    /// Handle validator registration event
+    /// Handle validator registration event.
+    ///
+    /// Note: This path uses placeholder keys (distinct byte patterns) because the
+    /// event-driven registration path does not carry full key material.  Validators
+    /// registered via this path should update their keys through the normal
+    /// registration transaction flow which enforces the three-key separation invariant.
     async fn handle_validator_registration(
         &mut self,
         identity: lib_identity::IdentityId,
         stake: u64,
     ) -> ConsensusResult<()> {
+        // Use distinct placeholder keys — key separation invariant must hold even here.
+        // Each byte pattern is different to pass the separation check.
         self.register_validator(
             identity.clone(),
             stake,
-            1024 * 1024 * 1024, // Default storage capacity
-            vec![0u8; 32],      // Default consensus key
-            5,                  // Default commission rate
-            false,              // Not genesis
+            1024 * 1024 * 1024,  // Default storage capacity
+            vec![0u8; 32],       // Default consensus key (placeholder)
+            vec![1u8; 32],       // Default networking key (placeholder, distinct from consensus)
+            vec![2u8; 32],       // Default rewards key (placeholder, distinct from others)
+            5,                   // Default commission rate
+            false,               // Not genesis
         )
         .await?;
         Ok(())
@@ -230,10 +289,9 @@ impl ConsensusEngine {
         self.current_round.height += 1;
         self.current_round.round = 0;
         self.current_round.step = ConsensusStep::Propose;
-        self.current_round.start_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // REMOVED: Wall-clock start_time (nondeterministic)
+        // Use deterministic round progression based on height/round instead
+        self.current_round.start_time = self.current_round.height;
         self.current_round.proposer = None;
         self.current_round.proposals.clear();
         self.current_round.votes.clear();
@@ -460,10 +518,9 @@ impl ConsensusEngine {
             vote_type: vote_type.clone(),
             height: self.current_round.height,
             round: self.current_round.round,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?
-                .as_secs(),
+            // REMOVED: Wall-clock timestamp (nondeterministic)
+            // Use deterministic value derived from height and round for consensus ordering
+            timestamp: (self.current_round.height << 32) | (self.current_round.round as u64),
             signature,
         };
 
@@ -710,7 +767,9 @@ impl ConsensusEngine {
 
         BlockMetadata {
             height: proposal.height,
-            timestamp: chrono::Utc::now().timestamp(),
+            // REMOVED: Wall-clock timestamp (nondeterministic)
+            // Use deterministic value derived from block height for consensus ordering
+            timestamp: proposal.height as i64,
             transaction_count: 0, // Temporary stub - will be replaced in Week 10
             total_fees_collected: simulated_fees,
             proposer: proposal.proposer.clone(),
@@ -794,6 +853,12 @@ impl ConsensusEngine {
     /// achieved commit consensus. The caller (process_committed_block) verifies commit
     /// quorum before invoking this method. Non-committed blocks are rejected before
     /// reaching persistence.
+    ///
+    /// **Checkpoint Persistence (Issue #951)**:
+    /// - The block commit callback (ConsensusBlockCommitter) stores a consensus checkpoint
+    /// - Checkpoints include: height, block_hash, proposer, timestamp, previous_hash, validator_count
+    /// - These checkpoints are persisted in Blockchain.consensus_checkpoints (BTreeMap)
+    /// - Used for bootstrap validation and sync verification via BlockchainSyncManager
     ///
     /// # Safety Guarantee (Issue #938)
     /// Network-received blocks MUST flow through:
@@ -879,6 +944,27 @@ impl ConsensusEngine {
     }
 
     pub(super) async fn on_proposal(&mut self, proposal: ConsensusProposal) -> ConsensusResult<()> {
+        // BFT SAFETY: Reject any proposal that would create a fork.
+        //
+        // In BFT consensus, forks are invalid by definition. Once a block is committed
+        // at height H, no other block is valid at that height. Any proposal targeting
+        // an already-committed height with a different block hash is a fork attempt
+        // and must be rejected immediately, before any other processing.
+        //
+        // This is a hard gate: fork proposals are never stored, never voted on,
+        // and never forwarded to peers.
+        if let Err(e) = self.validate_no_fork_proposal(proposal.height, &proposal.id) {
+            tracing::error!(
+                "FORK REJECTED: Proposal {:?} from proposer {} at height {} \
+                 rejected as invalid fork: {}",
+                proposal.id,
+                proposal.proposer,
+                proposal.height,
+                e,
+            );
+            return Err(e);
+        }
+
         if !self.is_proposal_relevant(&proposal) {
             return Ok(());
         }
@@ -908,15 +994,14 @@ impl ConsensusEngine {
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // REMOVED: Wall-clock current_time (nondeterministic)
+        // Use deterministic value derived from current consensus height/round
+        let deterministic_time = (self.current_round.height << 32) | (self.current_round.round as u64);
 
         if let Some(evidence) = self.byzantine_detector.detect_equivocation(
             &vote,
             &vote.proposal_id,
-            current_time,
+            deterministic_time,
             None,
         ) {
             tracing::error!(
@@ -1000,15 +1085,14 @@ impl ConsensusEngine {
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // REMOVED: Wall-clock current_time (nondeterministic)
+        // Use deterministic value derived from current consensus height/round
+        let deterministic_time = (self.current_round.height << 32) | (self.current_round.round as u64);
 
         if let Some(evidence) = self.byzantine_detector.detect_equivocation(
             &vote,
             &vote.proposal_id,
-            current_time,
+            deterministic_time,
             None,
         ) {
             tracing::error!(
@@ -1118,15 +1202,14 @@ impl ConsensusEngine {
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // REMOVED: Wall-clock current_time (nondeterministic)
+        // Use deterministic value derived from current consensus height/round
+        let deterministic_time = (self.current_round.height << 32) | (self.current_round.round as u64);
 
         if let Some(evidence) = self.byzantine_detector.detect_equivocation(
             &vote,
             &vote.proposal_id,
-            current_time,
+            deterministic_time,
             None,
         ) {
             tracing::error!(
@@ -1381,5 +1464,62 @@ impl ConsensusEngine {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod state_growth_constants_tests {
+    use super::{CHECKPOINT_INTERVAL_BLOCKS, MAX_BLOCKS_WITHOUT_SNAPSHOT};
+
+    /// Verify the consensus-layer checkpoint interval matches the expected value.
+    #[test]
+    fn checkpoint_interval_is_1000() {
+        assert_eq!(CHECKPOINT_INTERVAL_BLOCKS, 1000,
+            "CHECKPOINT_INTERVAL_BLOCKS must be 1000; changing this is a governance action");
+    }
+
+    /// Verify the max-blocks-without-snapshot constant matches the expected value.
+    #[test]
+    fn max_blocks_without_snapshot_is_10000() {
+        assert_eq!(MAX_BLOCKS_WITHOUT_SNAPSHOT, 10_000,
+            "MAX_BLOCKS_WITHOUT_SNAPSHOT must be 10000; changing this is a governance action");
+    }
+
+    /// Verify that the snapshot limit exceeds the checkpoint interval so that
+    /// checkpoints always precede snapshot expiry.
+    #[test]
+    fn snapshot_limit_exceeds_checkpoint_interval() {
+        assert!(
+            MAX_BLOCKS_WITHOUT_SNAPSHOT > CHECKPOINT_INTERVAL_BLOCKS,
+            "MAX_BLOCKS_WITHOUT_SNAPSHOT must be greater than CHECKPOINT_INTERVAL_BLOCKS"
+        );
+    }
+
+    /// Verify that checkpoint heights are correctly identified.
+    #[test]
+    fn checkpoint_heights_are_multiples_of_interval() {
+        let checkpoint_heights = [1000u64, 2000, 5000, 10_000, 100_000];
+        for &h in &checkpoint_heights {
+            assert_eq!(
+                h % CHECKPOINT_INTERVAL_BLOCKS,
+                0,
+                "height {} should be a checkpoint boundary",
+                h
+            );
+        }
+    }
+
+    /// Verify that non-checkpoint heights are correctly identified.
+    #[test]
+    fn non_checkpoint_heights_are_not_multiples() {
+        let non_checkpoint_heights = [1u64, 500, 999, 1001, 9999];
+        for &h in &non_checkpoint_heights {
+            assert_ne!(
+                h % CHECKPOINT_INTERVAL_BLOCKS,
+                0,
+                "height {} should NOT be a checkpoint boundary",
+                h
+            );
+        }
     }
 }

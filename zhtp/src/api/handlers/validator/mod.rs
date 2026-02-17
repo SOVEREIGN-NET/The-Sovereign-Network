@@ -245,12 +245,15 @@ impl ValidatorHandler {
         let existing_validator = blockchain_guard.get_validator(&identity_id_str)
             .ok_or_else(|| anyhow::anyhow!("Validator not found"))?;
 
-        // Create updated ValidatorInfo with existing values as defaults
+        // Create updated ValidatorInfo — preserve all three key fields from existing record
+        // to maintain key separation invariant across updates.
         let updated_info = lib_blockchain::blockchain::ValidatorInfo {
             identity_id: identity_id_str.clone(),
             stake: request.stake.unwrap_or(existing_validator.stake),
             storage_provided: request.storage_provided.unwrap_or(existing_validator.storage_provided),
-            consensus_key: existing_validator.consensus_key.clone(), // Keep existing consensus key
+            consensus_key: existing_validator.consensus_key.clone(),
+            networking_key: existing_validator.networking_key.clone(),
+            rewards_key: existing_validator.rewards_key.clone(),
             network_address: request.endpoints
                 .as_ref()
                 .and_then(|eps| eps.get(0))
@@ -264,6 +267,10 @@ impl ValidatorHandler {
             last_activity: chrono::Utc::now().timestamp() as u64, // Update activity time
             blocks_validated: existing_validator.blocks_validated,
             slash_count: existing_validator.slash_count,
+            // Preserve the original admission source and governance proposal reference
+            // on update — the admission path cannot be changed after registration.
+            admission_source: existing_validator.admission_source.clone(),
+            governance_proposal_id: existing_validator.governance_proposal_id.clone(),
         };
 
         // Update validator through blockchain
