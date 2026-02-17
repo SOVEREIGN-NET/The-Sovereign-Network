@@ -4818,7 +4818,7 @@ impl Blockchain {
     /// **DEPRECATED:** No-op method retained for API compatibility only.
     ///
     /// This method was previously used to apply difficulty parameter updates from
-    /// DAO proposals. With the removal of difficulty governance in Issue #937 
+    /// DAO proposals. With the removal of difficulty governance in Issue #937
     /// (transition to pure BFT consensus), this method now does nothing.
     ///
     /// # Behavior
