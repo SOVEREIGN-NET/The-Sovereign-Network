@@ -148,11 +148,12 @@ pub fn verify_genesis_invariants(block: &Block) -> Result<(), String> {
     Ok(())
 }
 
-/// Fixed UTC timestamp for the genesis block: November 1, 2025 00:00:00 UTC.
+/// Fixed UTC timestamp for the genesis block.
 ///
-/// This value is hardcoded so that every node independently derives the same
-/// genesis block hash. It MUST NOT be changed after network launch.
-pub const GENESIS_FIXED_TIMESTAMP: u64 = 1730419200;
+/// Aliased to `crate::GENESIS_TIMESTAMP` so that both names always refer to
+/// the same value. Any change to the genesis timestamp must be made in
+/// `lib-blockchain/src/lib.rs` and will be reflected here automatically.
+pub const GENESIS_FIXED_TIMESTAMP: u64 = crate::GENESIS_TIMESTAMP;
 
 /// ZHTP blockchain block
 #[derive(Debug, Clone, Serialize, Deserialize)]
