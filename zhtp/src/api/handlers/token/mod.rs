@@ -230,7 +230,7 @@ impl TokenHandler {
         let mint_req: MintTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let (tx, call) = match self.decode_signed_tx(&mint_req.signed_tx) {
+        let tx = match self.decode_signed_tx_raw(&mint_req.signed_tx) {
             Ok(parsed) => parsed,
             Err(e) => {
                 return Ok(create_error_response(
@@ -239,27 +239,26 @@ impl TokenHandler {
                 ));
             }
         };
-        if let Err(e) = self.ensure_token_call(&call, "mint") {
-            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
+
+        if tx.transaction_type != lib_blockchain::TransactionType::TokenMint {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Token mint requires TransactionType::TokenMint".to_string(),
+            ));
         }
 
-        // Must match MintParams from lib-client
-        #[derive(serde::Deserialize)]
-        struct MintParams {
-            token_id: [u8; 32],
-            to: Vec<u8>,
-            amount: u64,
-        }
-        let params: MintParams = match bincode::deserialize(&call.params) {
-            Ok(p) => p,
-            Err(e) => {
+        let mint = match tx.token_mint_data.as_ref() {
+            Some(m) => m,
+            None => {
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Invalid mint params: {}", e),
+                    "TokenMint missing token_mint_data".to_string(),
                 ));
             }
         };
-        let MintParams { token_id, to, amount } = params;
+        let token_id = mint.token_id;
+        let to = mint.to;
+        let amount = mint.amount;
 
         if let Err(e) = self.submit_to_mempool(tx).await {
             return Ok(create_error_response(
@@ -273,7 +272,7 @@ impl TokenHandler {
         create_json_response(json!({
             "success": true,
             "token_id": hex::encode(token_id),
-            "to": format!("0x{}", hex::encode(&to)),
+            "to": format!("0x{}", hex::encode(to)),
             "amount_minted": amount,
             "tx_status": "submitted_to_mempool"
         }))
@@ -322,10 +321,7 @@ impl TokenHandler {
             }
         };
 
-        // Accept both TokenTransfer (with token_transfer_data) and ContractExecution
-        // (with Token/transfer contract call in memo). The mobile client currently sends
-        // ContractExecution via build_contract_transaction(), while the proper path uses
-        // TokenTransfer via build_transfer_tx().
+        // Canonical path: TokenTransfer only.
         let (recipient_hex, token_id_hex, amount) = if tx.transaction_type == lib_blockchain::TransactionType::TokenTransfer {
             // Native TokenTransfer path
             match tx.token_transfer_data.as_ref() {
@@ -338,53 +334,14 @@ impl TokenHandler {
                     ));
                 }
             }
-        } else if tx.transaction_type == lib_blockchain::TransactionType::ContractExecution {
-            // ContractExecution path (mobile client sends this)
-            tracing::info!("[TRANSFER] ContractExecution path - extracting from memo");
-            let call = match self.extract_contract_call(&tx) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!("[TRANSFER] FAIL: extract_contract_call: {}", e);
-                    return Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        e.to_string(),
-                    ));
-                }
-            };
-            if let Err(e) = self.ensure_token_call(&call, "transfer") {
-                tracing::error!("[TRANSFER] FAIL: ensure_token_call: {}", e);
-                return Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    e.to_string(),
-                ));
-            }
-            // Extract TransferParams from contract call params
-            // TransferParams mirrors lib-client's TransferParams for bincode compat
-            #[derive(serde::Deserialize)]
-            struct ContractTransferParams {
-                token_id: [u8; 32],
-                to: Vec<u8>,
-                amount: u64,
-            }
-            let params: ContractTransferParams = match bincode::deserialize(&call.params) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!("[TRANSFER] FAIL: deserialize TransferParams: {}", e);
-                    return Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        format!("Invalid transfer params: {}", e),
-                    ));
-                }
-            };
-            (hex::encode(params.to), hex::encode(params.token_id), params.amount as u128)
         } else {
             tracing::error!(
-                "[TRANSFER] FAIL: wrong tx type: {:?} (expected TokenTransfer or ContractExecution)",
+                "[TRANSFER] FAIL: wrong tx type: {:?} (expected TokenTransfer)",
                 tx.transaction_type
             );
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                format!("Token transfer requires TransactionType::TokenTransfer or ContractExecution, got {:?}", tx.transaction_type),
+                format!("Token transfer requires TransactionType::TokenTransfer, got {:?}", tx.transaction_type),
             ));
         };
         tracing::info!(
@@ -449,7 +406,7 @@ impl TokenHandler {
         let burn_req: BurnTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let (tx, call) = match self.decode_signed_tx(&burn_req.signed_tx) {
+        let tx = match self.decode_signed_tx_raw(&burn_req.signed_tx) {
             Ok(parsed) => parsed,
             Err(e) => {
                 return Ok(create_error_response(
@@ -458,42 +415,11 @@ impl TokenHandler {
                 ));
             }
         };
-        if let Err(e) = self.ensure_token_call(&call, "burn") {
-            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
-        }
-
-        // Must match BurnParams from lib-client
-        #[derive(serde::Deserialize)]
-        struct BurnParams {
-            token_id: [u8; 32],
-            amount: u64,
-        }
-        let params: BurnParams = match bincode::deserialize(&call.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    format!("Invalid burn params: {}", e),
-                ));
-            }
-        };
-        let BurnParams { token_id, amount } = params;
-
-        if let Err(e) = self.submit_to_mempool(tx).await {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                e.to_string(),
-            ));
-        }
-
-        info!("Burn submitted for token {}", hex::encode(token_id));
-
-        create_json_response(json!({
-            "success": true,
-            "token_id": hex::encode(token_id),
-            "amount": amount,
-            "tx_status": "submitted_to_mempool"
-        }))
+        let _ = tx;
+        Ok(create_error_response(
+            ZhtpStatus::BadRequest,
+            "Token burn via ContractExecution is disabled; use canonical typed token mutation transactions".to_string(),
+        ))
     }
 
     /// GET /api/v1/token/{id} - Get token info

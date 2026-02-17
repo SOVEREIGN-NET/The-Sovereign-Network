@@ -1,7 +1,8 @@
 //! ZHTP Token Contract Specification v2
 //!
-//! This crate defines the canonical token contract structure and execution
-//! semantics for Phase 2 consensus.
+//! This crate defines token contract primitives.
+//!
+//! Consensus token execution is enforced in `lib-blockchain`.
 //!
 //! # Key Types
 //!

@@ -477,9 +477,9 @@ fn test_custom_token_transfer() {
     assert_eq!(token.balance_of(&recipient), 250_000, "Recipient should have 250K");
 }
 
-/// Test 6: Burn tokens via ContractExecution.
+/// Test 6: ContractExecution token burn is rejected.
 #[test]
-fn test_burn_token() {
+fn test_contract_execution_burn_rejected() {
     let mut blockchain = Blockchain::default();
     let creator = test_pubkey(1);
 
@@ -508,11 +508,50 @@ fn test_burn_token() {
     let tx = contract_execution_tx(&creator, "burn", params_bytes);
     let block = test_block(1, vec![tx]);
 
-    blockchain.process_contract_transactions(&block).unwrap();
+    let result = blockchain.process_contract_transactions(&block);
+    assert!(result.is_err(), "ContractExecution burn must be rejected");
 
     let token = blockchain.token_contracts.get(&token_id).unwrap();
-    assert_eq!(token.balance_of(&creator), 900_000, "Creator balance should decrease by burn amount");
-    assert_eq!(token.total_supply, initial_supply - 100_000, "Total supply should decrease by burn amount");
+    assert_eq!(token.balance_of(&creator), 1_000_000, "Creator balance should be unchanged");
+    assert_eq!(token.total_supply, initial_supply, "Total supply should be unchanged");
+}
+
+/// Test 6b: ContractExecution token transfer is rejected.
+#[test]
+fn test_contract_execution_transfer_rejected() {
+    let mut blockchain = Blockchain::default();
+    let creator = test_pubkey(1);
+    let recipient = test_pubkey(2);
+
+    let token = TokenContract::new_custom(
+        "CarbonBlue".to_string(),
+        "CBE".to_string(),
+        1_000_000,
+        creator.clone(),
+    );
+    let token_id = token.token_id;
+    blockchain.token_contracts.insert(token_id, token);
+
+    #[derive(serde::Serialize)]
+    struct TransferParams {
+        token_id: [u8; 32],
+        to: Vec<u8>,
+        amount: u64,
+    }
+    let params = TransferParams {
+        token_id,
+        to: recipient.key_id.to_vec(),
+        amount: 10_000,
+    };
+    let tx = contract_execution_tx(&creator, "transfer", bincode::serialize(&params).unwrap());
+    let block = test_block(1, vec![tx]);
+
+    let result = blockchain.process_contract_transactions(&block);
+    assert!(result.is_err(), "ContractExecution transfer must be rejected");
+
+    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    assert_eq!(token.balance_of(&creator), 1_000_000);
+    assert_eq!(token.balance_of(&recipient), 0);
 }
 
 /// Test 7: Balance queries return correct values after mixed operations.
@@ -682,8 +721,8 @@ fn test_duplicate_symbol_rejected() {
     let tx = contract_execution_tx(&creator, "create_custom_token", params_bytes);
     let block = test_block(1, vec![tx]);
 
-    // process_contract_transactions logs warnings but doesn't return Err for individual tx failures
-    blockchain.process_contract_transactions(&block).unwrap();
+    let result = blockchain.process_contract_transactions(&block);
+    assert!(result.is_err(), "Duplicate symbol contract execution should be rejected");
 
     // Verify only the original token exists (no duplicate created)
     let count = blockchain.token_contracts.values()
