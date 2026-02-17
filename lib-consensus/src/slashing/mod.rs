@@ -390,8 +390,8 @@ mod tests {
 
     #[test]
     fn test_min_stake_to_unjail_value() {
-        // 100 SOV in micro-SOV
-        assert_eq!(MIN_STAKE_TO_UNJAIL, 100 * 1_000_000);
+        // 1000 SOV in micro-SOV
+        assert_eq!(MIN_STAKE_TO_UNJAIL, 1000 * 1_000_000);
     }
 
     #[test]
