@@ -524,7 +524,7 @@ impl ConsensusEngine {
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
         if !super::check_supermajority(commit_count, total_validators) {
-            return Err(ConsensusError::ConsensusError(
+            return Err(ConsensusError::ValidatorError(
                 format!(
                     "INVARIANT VIOLATION (BFT-A-939): Attempted to process block without commit quorum. \
                     Commits: {}/{}, Proposal: {:?}",

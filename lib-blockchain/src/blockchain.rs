@@ -1445,7 +1445,9 @@ impl Blockchain {
     ///
     /// **INVARIANT BFT-A-939**: In BFT consensus mode, this method should only be called
     /// for blocks that have achieved commit consensus. When using the BlockCommitCallback
-    /// integration, blocks are guaranteed to be committed before reaching this method.
+    /// integration, it is INTENDED that blocks have commit consensus before reaching this method,
+    /// but this is not enforced by this method itself — other call sites must provide equivalent
+    /// safety guarantees.
     /// See: ConsensusBlockCommitter::commit_finalized_block in zhtp/runtime/components/consensus.rs
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
         // Verify the block
