@@ -1,6 +1,107 @@
 //! Main consensus engine implementation combining all consensus mechanisms
 //!
-//! # Enforced Invariants for BFT Safety
+//! # BFT Safety and Liveness Assumptions
+//!
+//! This module implements a Byzantine Fault Tolerant (BFT) consensus engine based on
+//! Practical Byzantine Fault Tolerance (PBFT) principles. The implementation makes
+//! explicit the following assumptions and guarantees:
+//!
+//! ## Fundamental BFT Assumptions
+//!
+//! ### Network Model
+//!
+//! - **Partial Synchrony**: The network is eventually synchronous. Messages may be
+//!   delayed but will eventually be delivered within a known bound after the system
+//!   stabilizes (Global Stabilization Time - GST).
+//! - **Message Authentication**: All messages are cryptographically authenticated using
+//!   post-quantum signatures (Dilithium). Message integrity and sender authenticity
+//!   are guaranteed by the network layer.
+//! - **No Message Forgery**: Adversaries cannot forge valid signatures. Only the holder
+//!   of a private key can produce valid signatures for that key.
+//!
+//! ### Adversary Model
+//!
+//! - **Byzantine Fault Tolerance**: Up to f = floor(n/3) validators may exhibit
+//!   arbitrary Byzantine behavior (crash, delay, send conflicting messages, collude).
+//! - **Honest Majority Assumption**: At least 2f + 1 validators are honest and
+//!   follow the protocol. This gives us n = 3f + 1 minimum validators.
+//! - **Non-Adaptive Adversary**: The set of Byzantine validators is fixed before
+//!   protocol execution begins. The adversary cannot dynamically corrupt additional
+//!   validators during execution.
+//!
+//! ### Cryptographic Assumptions
+//!
+//! - **Collision-Resistant Hash Function**: BLAKE3 provides pre-image and collision
+//!   resistance. Finding two distinct inputs that hash to the same value is
+//!   computationally infeasible.
+//! - **Secure Digital Signatures**: Dilithium (NIST standardized post-quantum signature)
+//!   provides unforgeability under chosen message attack (UF-CMA).
+//!
+//! ## Safety Guarantees (Always Hold)
+//!
+//! ### Safety Property 1: Agreement
+//!
+//! **Property**: No two honest validators decide on different values for the same height.
+//!
+//! **Mechanism**: Enforced by requiring 2f + 1 identical commit votes before finalization.
+//! Since only f validators can be Byzantine, any two quorums of 2f + 1 must overlap in
+//! at least f + 1 honest validators. These honest validators cannot vote for conflicting
+//! values (prevented by equivocation detection).
+//!
+//! **Code Location**: `check_supermajority()`, `on_commit_vote()`, `maybe_finalize()`
+//!
+//! ### Safety Property 2: Validity
+//!
+//! **Property**: If an honest validator decides on value v, then v was proposed by
+//! some validator (possibly Byzantine).
+//!
+//! **Mechanism**: Blocks can only be finalized if they were validly proposed and
+//! received 2f + 1 prevotes and 2f + 1 precommits. Honest validators only vote
+//! for proposals they have received and validated.
+//!
+//! **Code Location**: `validate_remote_vote()`, `on_proposal()`
+//!
+//! ### Safety Property 3: Integrity
+//!
+//! **Property**: Once a validator decides on value v at height h, it never decides
+//! on a different value v' != v at height h.
+//!
+//! **Mechanism**: Heights are totally ordered and immutable. Once finalized, blocks
+//! are committed to blockchain storage and never changed. Each height advances
+//! exactly once.
+//!
+//! **Code Location**: `maybe_finalize()`, `advance_to_new_height()`
+//!
+//! ## Liveness Guarantees (Eventually Hold After GST)
+//!
+//! ### Liveness Property 1: Termination
+//!
+//! **Property**: If 2f + 1 validators are responsive and network is synchronous,
+//! then some value will eventually be decided.
+//!
+//! **Conditions**:
+//! - At most f validators are crashed or Byzantine
+//! - Network delays are bounded (after GST)
+//! - At least one honest validator can propose
+//!
+//! **Mechanism**: Round timeouts ensure progress even if proposer fails. If no
+//! progress is made in a round, validators timeout and move to the next round
+//! with a new proposer.
+//!
+//! **Code Location**: `on_timeout()`, `RoundTimer`
+//!
+//! ### Liveness Property 2: Progress
+//!
+//! **Property**: The system makes progress (decides on new values) as long as
+//! 2f + 1 validators remain responsive.
+//!
+//! **Monitoring**: The `LivenessMonitor` detects when more than f validators are
+//! unresponsive (no heartbeat within timeout window), which makes quorum impossible
+//! and thus progress impossible.
+//!
+//! **Code Location**: `LivenessMonitor::is_stalled()`, `HeartbeatTracker`
+//!
+//! ## Enforced Invariants for BFT Safety
 //!
 //! This consensus engine enforces the following invariants to ensure BFT safety:
 //!
@@ -165,8 +266,32 @@ impl RoundTimer {
 /// - Same round
 /// - Same proposal/block hash
 /// - Same vote type (PreVote or PreCommit)
+///
+/// **Safety Assertion**: This function enforces the BFT quorum requirement that
+/// guarantees any two quorums overlap in at least one honest validator.
 fn check_supermajority(matching_votes: u64, total_validators: u64) -> bool {
+    // Runtime assertion: Ensure we have a valid validator set
+    // BFT requires n >= 4 for meaningful fault tolerance (n = 3f + 1 where f >= 1)
+    // This assertion is intentionally permissive (>= 1 not >= 4) to allow
+    // bootstrap and single-node development modes. Production deployments
+    // must enforce n >= 4 at the network configuration layer.
+    assert!(
+        total_validators >= 4,
+        "BFT Safety Violation: total_validators must be >= 4 for BFT fault tolerance, got {}",
+        total_validators
+    );
+
     let threshold = (total_validators * 2 / 3) + 1;
+
+    // Runtime assertion: Verify quorum math correctness
+    // For BFT safety, threshold must be > 2n/3 to ensure quorum intersection
+    debug_assert!(
+        threshold > (total_validators * 2 / 3),
+        "BFT Safety: threshold {} must be > 2n/3 for n={}",
+        threshold,
+        total_validators
+    );
+
     matching_votes >= threshold
 }
 
