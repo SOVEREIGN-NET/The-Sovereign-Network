@@ -229,10 +229,9 @@ impl ConsensusEngine {
         self.current_round.height += 1;
         self.current_round.round = 0;
         self.current_round.step = ConsensusStep::Propose;
-        self.current_round.start_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // REMOVED: Wall-clock start_time (nondeterministic)
+        // Use deterministic round progression based on height/round instead
+        self.current_round.start_time = self.current_round.height;
         self.current_round.proposer = None;
         self.current_round.proposals.clear();
         self.current_round.votes.clear();
@@ -459,10 +458,9 @@ impl ConsensusEngine {
             vote_type: vote_type.clone(),
             height: self.current_round.height,
             round: self.current_round.round,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?
-                .as_secs(),
+            // REMOVED: Wall-clock timestamp (nondeterministic)
+            // Use deterministic value derived from height and round for consensus ordering
+            timestamp: (self.current_round.height << 32) | (self.current_round.round as u64),
             signature,
         };
 
@@ -665,7 +663,9 @@ impl ConsensusEngine {
 
         BlockMetadata {
             height: proposal.height,
-            timestamp: chrono::Utc::now().timestamp(),
+            // REMOVED: Wall-clock timestamp (nondeterministic)
+            // Use deterministic value derived from block height for consensus ordering
+            timestamp: proposal.height as i64,
             transaction_count: 0, // Temporary stub - will be replaced in Week 10
             total_fees_collected: simulated_fees,
             proposer: proposal.proposer.clone(),
@@ -849,15 +849,14 @@ impl ConsensusEngine {
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // REMOVED: Wall-clock current_time (nondeterministic)
+        // Use deterministic value derived from current consensus height/round
+        let deterministic_time = (self.current_round.height << 32) | (self.current_round.round as u64);
 
         if let Some(evidence) = self.byzantine_detector.detect_equivocation(
             &vote,
             &vote.proposal_id,
-            current_time,
+            deterministic_time,
             None,
         ) {
             tracing::error!(
@@ -941,15 +940,14 @@ impl ConsensusEngine {
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // REMOVED: Wall-clock current_time (nondeterministic)
+        // Use deterministic value derived from current consensus height/round
+        let deterministic_time = (self.current_round.height << 32) | (self.current_round.round as u64);
 
         if let Some(evidence) = self.byzantine_detector.detect_equivocation(
             &vote,
             &vote.proposal_id,
-            current_time,
+            deterministic_time,
             None,
         ) {
             tracing::error!(
@@ -1059,15 +1057,14 @@ impl ConsensusEngine {
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // REMOVED: Wall-clock current_time (nondeterministic)
+        // Use deterministic value derived from current consensus height/round
+        let deterministic_time = (self.current_round.height << 32) | (self.current_round.round as u64);
 
         if let Some(evidence) = self.byzantine_detector.detect_equivocation(
             &vote,
             &vote.proposal_id,
-            current_time,
+            deterministic_time,
             None,
         ) {
             tracing::error!(
