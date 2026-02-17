@@ -303,7 +303,7 @@ impl ConsensusEngine {
         if proposal_height < self.current_round.height {
             return Err(ConsensusError::ByzantineFault(format!(
                 "BFT FORK REJECTED: proposal {:?} targets height {} which is below the \
-                 current committed height {}. In BFT consensus, committed blocks are \
+                 current proposal height {}. In BFT consensus, committed blocks are \
                  final and irreversible. A proposal for an already-committed height is \
                  an invalid fork attempt and is rejected immediately.",
                 proposal_id,
@@ -312,15 +312,16 @@ impl ConsensusEngine {
             )));
         }
 
-        // If the proposal targets the current round height but there is already a
-        // committed proposal at this height with a different hash, reject it as a fork.
+        // If the proposal targets the current round height but there is already an
+        // agreed-upon proposal (valid_proposal) at this height with a different hash,
+        // reject it as a fork.
         //
         // This can happen if consensus committed a block in a prior round but the
         // engine has not yet advanced to the next height. Any conflicting proposal
         // at the same height is a fork and MUST be rejected.
         if proposal_height == self.current_round.height {
-            // Check if we already committed a block at this height (locked_proposal / valid_proposal
-            // represent the agreed-upon value in the current round).
+            // Check if we already have an agreed-upon block at this height (valid_proposal
+            // represents the agreed-upon value in the current round).
             // A non-nil valid_proposal that differs from the incoming proposal signals a fork.
             if let Some(committed_id) = &self.current_round.valid_proposal {
                 if committed_id != proposal_id {
