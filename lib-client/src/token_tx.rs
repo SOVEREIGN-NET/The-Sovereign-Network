@@ -688,7 +688,6 @@ pub fn build_domain_register_request_with_fee_payment(
                 .to_string(),
         );
     }
-
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| format!("Failed to get timestamp: {}", e))?
