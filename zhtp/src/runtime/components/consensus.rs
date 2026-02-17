@@ -355,6 +355,35 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                     mined_block.transactions.len()
                 );
 
+                // Store consensus checkpoint for this committed block
+                let block_hash = lib_blockchain::types::Hash::new(mined_block.hash().as_array());
+                let proposer_id = proposal.proposer.to_string();
+                // Convert lib_crypto::Hash to lib_blockchain::Hash
+                let prev_hash_bytes: [u8; 32] = match proposal.previous_hash.as_bytes().try_into() {
+                    Ok(bytes) => bytes,
+                    Err(_) => {
+                        let actual_len = proposal.previous_hash.as_bytes().len();
+                        tracing::error!(
+                            "Unexpected previous_hash length: expected 32 bytes, got {}",
+                            actual_len
+                        );
+                        return Err(anyhow::anyhow!(
+                            "failed to convert previous_hash to 32-byte array: length {}",
+                            actual_len
+                        ));
+                    }
+                };
+                let prev_hash = lib_blockchain::types::Hash::new(prev_hash_bytes);
+
+                blockchain.store_consensus_checkpoint(
+                    proposal.height,
+                    block_hash,
+                    proposer_id,
+                    prev_hash,
+                    0, // 0 = unknown; replace with actual count from consensus when available
+                );
+                info!("📍 Stored consensus checkpoint for height {}", proposal.height);
+
                 // Auto-persist blockchain after BFT commit
                 blockchain.increment_persist_counter();
                 let persist_path_str = self.environment.blockchain_data_path();

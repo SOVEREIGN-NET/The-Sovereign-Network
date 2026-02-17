@@ -795,6 +795,12 @@ impl ConsensusEngine {
     /// quorum before invoking this method. Non-committed blocks are rejected before
     /// reaching persistence.
     ///
+    /// **Checkpoint Persistence (Issue #951)**:
+    /// - The block commit callback (ConsensusBlockCommitter) stores a consensus checkpoint
+    /// - Checkpoints include: height, block_hash, proposer, timestamp, previous_hash, validator_count
+    /// - These checkpoints are persisted in Blockchain.consensus_checkpoints (BTreeMap)
+    /// - Used for bootstrap validation and sync verification via BlockchainSyncManager
+    ///
     /// # Safety Guarantee (Issue #938)
     /// Network-received blocks MUST flow through:
     /// 1. Network → proposal submission (proposal-only, no persistence)
