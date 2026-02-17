@@ -43,7 +43,7 @@
 //! The *effective connection count* used against `MAX_TOTAL_CONNECTIONS` is the
 //! sum of weighted costs, not a raw count.  This means that 50 authenticated
 //! peers (weight 1 each) + 25 unauthenticated peers (weight 2 each) = 100,
-//! which hits the total limit.  This incentivises peers to complete
+//! which hits the total limit.  This incentivizes peers to complete
 //! authentication quickly.
 //!
 //! # Why These Values?
@@ -212,7 +212,7 @@ pub fn assert_connection_limits(
     // Invariant 1: pending connection cap
     if is_pending && snapshot.pending_count >= MAX_PENDING_CONNECTIONS {
         return Err(format!(
-            "DOS LIMIT: pending connections ({}) >= MAX_PENDING_CONNECTIONS ({}); \
+            "DoS LIMIT: pending connections ({}) >= MAX_PENDING_CONNECTIONS ({}); \
              refusing handshake from {}",
             snapshot.pending_count, MAX_PENDING_CONNECTIONS, remote_ip,
         ));
@@ -223,7 +223,7 @@ pub fn assert_connection_limits(
     let projected_weighted = snapshot.weighted_total() + new_weight;
     if projected_weighted > MAX_TOTAL_CONNECTIONS {
         return Err(format!(
-            "DOS LIMIT: projected weighted total ({}) > MAX_TOTAL_CONNECTIONS ({}); \
+            "DoS LIMIT: projected weighted total ({}) > MAX_TOTAL_CONNECTIONS ({}); \
              refusing connection from {}",
             projected_weighted, MAX_TOTAL_CONNECTIONS, remote_ip,
         ));
@@ -233,7 +233,7 @@ pub fn assert_connection_limits(
     let current_ip_count = snapshot.per_ip_counts.get(remote_ip).copied().unwrap_or(0);
     if current_ip_count >= MAX_CONNECTIONS_PER_IP {
         return Err(format!(
-            "DOS LIMIT: IP {} already has {} connections (max {}); refusing new connection",
+            "DoS LIMIT: IP {} already has {} connections (max {}); refusing new connection",
             remote_ip, current_ip_count, MAX_CONNECTIONS_PER_IP,
         ));
     }
@@ -248,7 +248,7 @@ pub fn assert_connection_limits(
 pub fn assert_pending_limit(pending_count: usize) -> Result<(), String> {
     if pending_count >= MAX_PENDING_CONNECTIONS {
         return Err(format!(
-            "DOS LIMIT: pending connections ({}) >= MAX_PENDING_CONNECTIONS ({})",
+            "DoS LIMIT: pending connections ({}) >= MAX_PENDING_CONNECTIONS ({})",
             pending_count, MAX_PENDING_CONNECTIONS,
         ));
     }
@@ -259,7 +259,7 @@ pub fn assert_pending_limit(pending_count: usize) -> Result<(), String> {
 pub fn assert_per_ip_limit(ip: &IpAddr, count: usize) -> Result<(), String> {
     if count >= MAX_CONNECTIONS_PER_IP {
         return Err(format!(
-            "DOS LIMIT: IP {} has {} connections >= MAX_CONNECTIONS_PER_IP ({})",
+            "DoS LIMIT: IP {} has {} connections >= MAX_CONNECTIONS_PER_IP ({})",
             ip, count, MAX_CONNECTIONS_PER_IP,
         ));
     }
@@ -335,7 +335,7 @@ mod tests {
         let ip = ipv4(1, 2, 3, 4);
         let result = assert_connection_limits(&snap, &ip, true);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("DOS LIMIT"));
+        assert!(result.unwrap_err().contains("DoS LIMIT"));
     }
 
     #[test]
@@ -416,7 +416,7 @@ mod tests {
         let ip = IpAddr::V6(Ipv6Addr::LOCALHOST);
         let result = assert_per_ip_limit(&ip, MAX_CONNECTIONS_PER_IP);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("DOS LIMIT"));
+        assert!(result.unwrap_err().contains("DoS LIMIT"));
     }
 
     // ---- ipv6 ----
