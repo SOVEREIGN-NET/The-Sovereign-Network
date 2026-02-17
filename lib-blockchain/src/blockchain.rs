@@ -8270,7 +8270,9 @@ impl Blockchain {
                 block_height,
                 CHECKPOINT_INTERVAL_BLOCKS
             );
-            // A snapshot at this height exists (we just saved it), so checkpoint_exists = true.
+            // Note: checkpoint_exists is always true here because we just created the snapshot.
+            // This makes the invariant check tautological; it cannot detect missing checkpoints.
+            // TODO: enforce checkpoint invariant at the checkpoint creation site instead.
             assert_checkpoint_at_interval(block_height, true);
         }
 

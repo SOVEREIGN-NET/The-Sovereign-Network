@@ -4,7 +4,7 @@
 //!
 //! The consensus engine is responsible for triggering checkpoint creation and
 //! enforcing snapshot policies as the chain grows.  The following constants
-//! define the growth-control boundaries and are re-exported here so that the
+//! define the growth-control boundaries and are mirrored here so that the
 //! consensus engine can enforce them independently of the blockchain layer.
 //!
 //! ## Checkpoints
