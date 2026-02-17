@@ -23,8 +23,8 @@ pub use creation::{
     BlockBuilder,
     create_block,
     create_genesis_block_with_transactions,
-    mine_block,
-    mine_block_with_config,
+    mine_block,  // Deprecated stub - BFT-A-935
+    mine_block_with_config,  // Deprecated stub - BFT-A-935
     estimate_block_time,
     select_transactions_for_block,
 };
