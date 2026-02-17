@@ -198,14 +198,10 @@ pub const BFT_MIN_VALIDATORS: usize = 4;
 
 // Compile-time assertion: BFT_MIN_VALIDATORS must equal crate::types::MIN_BFT_VALIDATORS.
 // If this fails, the constant above is out of sync with the types module.
-const _: () = {
-    // This assertion is evaluated at compile time.
-    // We use a byte-level trick since `assert!` in const context requires Rust 1.57+.
-    assert!(
-        BFT_MIN_VALIDATORS == 4,
-        "BFT_MIN_VALIDATORS must be 4 (the minimum for f>=1 Byzantine fault tolerance)"
-    );
-};
+const _: () = assert!(
+    BFT_MIN_VALIDATORS == crate::types::MIN_BFT_VALIDATORS,
+    "BFT_MIN_VALIDATORS (consensus engine) must equal MIN_BFT_VALIDATORS (types module)"
+);
 
 /// Token binding a timer to a specific consensus state
 ///
@@ -581,6 +577,9 @@ impl ConsensusEngine {
     ///
     /// `Some(IdentityId)` if there is at least one validator, `None` if the validator
     /// set is empty (should not happen in normal operation).
+    /// NOTE: This method duplicates the selection logic in `ValidatorManager::select_proposer`.
+    /// TODO: Consolidate by delegating to `self.validator_manager.get_proposer_for_round(height, round)`
+    /// once the return type (IdentityId vs &Validator) difference is resolved.
     pub fn compute_proposer_for_round(&self, height: u64, round: u32) -> Option<IdentityId> {
         let mut validators: Vec<IdentityId> = self
             .validator_manager
@@ -599,16 +598,7 @@ impl ConsensusEngine {
         let n = validators.len() as u64;
         let index = (height.wrapping_add(round as u64)) % n;
 
-        // Runtime assertion: index must be within bounds.
-        assert!(
-            (index as usize) < validators.len(),
-            "Proposer index {} out of bounds for {} validators (height={}, round={})",
-            index,
-            validators.len(),
-            height,
-            round,
-        );
-
+        // No assertion needed: modulo guarantees index in bounds.
         Some(validators[index as usize].clone())
     }
 
