@@ -41,8 +41,16 @@
 //! - **REC-INV-2**: Liveness-slashed validators MUST wait JAIL_EXIT_WAIT_BLOCKS
 //! - **REC-INV-3**: Unjail is only permitted if remaining stake >= MIN_STAKE_TO_UNJAIL
 //! - **REC-INV-4**: Slashed stake is NOT restored on unjail (slash is permanent loss)
-//! - **REC-INV-5**: Validator must explicitly submit unjail tx (no auto-release)
 //! - **REC-INV-6**: JAIL_EXIT_WAIT_BLOCKS must be >= 100 blocks
+//!
+//! # Planned Behavior (Not Yet Enforced Here)
+//!
+//! - Validators SHOULD eventually be required to explicitly submit an unjail
+//!   transaction to exit jail (no automatic unjail based solely on time/height).
+//! - As of the current implementation, other parts of the validator lifecycle
+//!   may still auto-release jailed validators when their jail period elapses.
+//!   This module documents the target policy but does not, by itself, disable
+//!   any existing auto-release paths.
 
 // =============================================================================
 // RECOVERY CONSTANTS
