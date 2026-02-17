@@ -52,6 +52,12 @@ pub struct ManifestDomainRegistrationRequest {
     pub deploy_manifest_cid: String,
     /// Owner DID (did:zhtp:hex format)
     pub owner: String,
+    /// Optional declared fee amount in SOV tokens (minimum 10 SOV)
+    #[serde(default)]
+    pub fee: Option<u64>,
+    /// Canonical on-chain SOV fee payment transaction (hex-encoded bincode Transaction)
+    #[serde(default)]
+    pub fee_payment_tx: Option<String>,
 }
 
 /// Simple domain registration request (for easier testing)
@@ -74,6 +80,10 @@ pub struct SimpleDomainRegistrationRequest {
     /// Fee amount in SOV tokens (fixed: 10 SOV for domain registration)
     #[serde(default)]
     pub fee: Option<u64>,
+    /// Canonical on-chain SOV fee payment transaction (hex-encoded bincode Transaction)
+    /// Must be a TokenTransfer from owner's Primary wallet to DAO treasury wallet.
+    #[serde(default)]
+    pub fee_payment_tx: Option<String>,
 }
 
 /// Content mapping for simple registration
@@ -164,13 +174,11 @@ impl Web4Handler {
         // Domain registration fee: fixed 10 SOV
         const DOMAIN_REGISTRATION_FEE_SOV: u64 = 10;
 
-        // Get the fee the user provided (should be 10 SOV)
+        // Fee is fixed; if the client provides it explicitly, it must match.
         let user_provided_fee = simple_request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV);
-
-        // Validate user's fee matches required amount
-        if user_provided_fee < DOMAIN_REGISTRATION_FEE_SOV {
+        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV {
             return Err(anyhow!(
-                "Insufficient fee: provided {} SOV, required {} SOV for domain registration",
+                "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
                 user_provided_fee, DOMAIN_REGISTRATION_FEE_SOV
             ));
         }
@@ -270,7 +278,7 @@ impl Web4Handler {
 
         // Check SOV balance
         {
-            let mut blockchain = self.blockchain.write().await;
+            let blockchain = self.blockchain.read().await;
 
             let owner_wallet_id = blockchain.wallet_registry.values()
                 .find(|wallet| wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash) && wallet.wallet_type == "Primary")
@@ -301,76 +309,21 @@ impl Web4Handler {
             }
         }
 
-        // Perform SOV token transfer to treasury
-        {
-            let mut blockchain = self.blockchain.write().await;
-
-            let owner_wallet_id = blockchain.wallet_registry.values()
-                .find(|wallet| wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash) && wallet.wallet_type == "Primary")
-                .map(|wallet| wallet.wallet_id)
-                .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
-
-            let owner_wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
-                key_id: owner_wallet_id.into(),
-            };
-
-            // Get height before mutable borrow of token_contracts
-            let current_block_number = blockchain.height;
-
-            // Get treasury public key (network fee collection address)
-            let treasury_pubkey = lib_blockchain::integration::crypto_integration::PublicKey::new(
-                b"genesis_system_treasury".to_vec()
-            );
-
-            // Create execution context for the transfer
-            let ctx = lib_blockchain::contracts::executor::ExecutionContext {
-                caller: owner_wallet_key.clone(),
-                contract: owner_wallet_key.clone(),
-                call_origin: lib_blockchain::contracts::executor::CallOrigin::User,
-                block_number: current_block_number,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                gas_limit: 100_000,
-                gas_used: 0,
-                tx_hash: [0u8; 32],
-                call_depth: 0,
-                max_call_depth: 10,
-            };
-
-            let sov_token = blockchain.token_contracts.get_mut(&sov_token_id)
-                .ok_or_else(|| anyhow!("SOV token contract not found"))?;
-
-            // Transfer SOV to treasury
-            sov_token.transfer(&ctx, &treasury_pubkey, registration_fee_sov)
-                .map_err(|e| anyhow!("SOV transfer failed: {}", e))?;
-
-            info!(" SOV payment successful: {} SOV transferred to treasury", registration_fee_sov);
-        }
-
-        // Persist SOV token contract to SledStore after transfer (separate borrow scope)
-        {
-            let blockchain = self.blockchain.read().await;
-            if let (Some(store), Some(sov_token)) = (&blockchain.store, blockchain.token_contracts.get(&sov_token_id)) {
-                let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
-                if let Err(e) = store_ref.put_token_contract(sov_token) {
-                    warn!("Failed to persist SOV token after transfer: {}", e);
-                } else {
-                    info!("🪙 SOV token contract persisted after fee deduction");
-                }
-            }
-        }
-
-        // Generate a transaction hash for tracking (based on domain + timestamp)
-        let tx_hash_data = format!("domain_reg:{}:{}:{}", simple_request.domain, simple_request.timestamp, registration_fee_sov);
-        let tx_hash = lib_blockchain::Hash::from_slice(&lib_crypto::hash_blake3(tx_hash_data.as_bytes())[..32]);
+        let fee_payment_tx_raw = simple_request
+            .fee_payment_tx
+            .as_deref()
+            .ok_or_else(|| anyhow!(
+                "fee_payment_tx is required. Submit a signed canonical TokenTransfer \
+                 from owner Primary wallet to DAO treasury wallet for {} SOV.",
+                registration_fee_sov
+            ))?;
+        let fee_tx_hash_hex = self
+            .validate_and_submit_domain_fee_tx(&owner_identity, registration_fee_sov, fee_payment_tx_raw)
+            .await?;
 
         info!(" Domain registration payment complete!");
         info!("   Fee paid: {} SOV", registration_fee_sov);
-        info!("   Transaction ref: {}", hex::encode(tx_hash.as_bytes()));
+        info!("   Transaction ref: {}", fee_tx_hash_hex);
 
         // Prepare content mappings WITH RICH METADATA for storage
         let mut initial_content = HashMap::new();
@@ -494,10 +447,10 @@ impl Web4Handler {
         }
 
         // ========================================================================
-        // NOTE: Domain registration fees are paid via SOV token transfer above
+        // NOTE: Domain registration fees are paid via canonical SOV TokenTransfer above.
         // Contract deployment handled separately from fee payment
         // ========================================================================
-        let domain_tx_hash = Some(hex::encode(tx_hash.as_bytes()));
+        let domain_tx_hash = Some(fee_tx_hash_hex);
         info!(" Web4 domain registration transaction completed: {:?}", domain_tx_hash);
 
         // Register content ownership with wallet using ACTUAL owner identity
@@ -600,6 +553,27 @@ impl Web4Handler {
             ));
         }
 
+        const DOMAIN_REGISTRATION_FEE_SOV: u64 = 10;
+        let user_provided_fee = request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV);
+        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV {
+            return Err(anyhow!(
+                "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
+                user_provided_fee, DOMAIN_REGISTRATION_FEE_SOV
+            ));
+        }
+        let fee_payment_tx_raw = request
+            .fee_payment_tx
+            .as_deref()
+            .ok_or_else(|| anyhow!(
+                "fee_payment_tx is required. Submit a signed canonical TokenTransfer \
+                 from owner Primary wallet to DAO treasury wallet for {} SOV.",
+                DOMAIN_REGISTRATION_FEE_SOV
+            ))?;
+        let fee_tx_hash_hex = self
+            .validate_and_submit_domain_fee_tx(&owner_identity, DOMAIN_REGISTRATION_FEE_SOV, fee_payment_tx_raw)
+            .await?;
+        info!(" Manifest domain registration fee tx accepted: {}", fee_tx_hash_hex);
+
         // Register domain using manifest CID
         info!("Registering domain from manifest: {}", request.domain);
 
@@ -611,10 +585,10 @@ impl Web4Handler {
             tags: vec!["web4".to_string(), "manifest".to_string()],
             public: true,
             economic_settings: DomainEconomicSettings {
-                registration_fee: 0.0,
-                renewal_fee: 0.0,
-                transfer_fee: 0.0,
-                hosting_budget: 0.0,
+                registration_fee: 10.0,
+                renewal_fee: 5.0,
+                transfer_fee: 2.0,
+                hosting_budget: 100.0,
             },
         };
 
@@ -654,6 +628,8 @@ impl Web4Handler {
             "deploy_manifest_cid": request.deploy_manifest_cid,
             "owner": owner_did,
             "registration_id": registration_result.registration_id,
+            "fees_charged": DOMAIN_REGISTRATION_FEE_SOV,
+            "fee_payment_tx_hash": fee_tx_hash_hex,
             "message": "Domain registered successfully"
         });
 
@@ -662,6 +638,93 @@ impl Web4Handler {
             "application/json".to_string(),
             None,
         ))
+    }
+
+    async fn validate_and_submit_domain_fee_tx(
+        &self,
+        owner_identity: &ZhtpIdentity,
+        registration_fee_sov: u64,
+        fee_payment_tx_raw: &str,
+    ) -> anyhow::Result<String> {
+        let fee_payment_tx_bytes = hex::decode(fee_payment_tx_raw)
+            .map_err(|_| anyhow!("Invalid fee_payment_tx hex encoding"))?;
+        let fee_payment_tx: lib_blockchain::transaction::Transaction =
+            bincode::deserialize(&fee_payment_tx_bytes)
+                .map_err(|e| anyhow!("Invalid fee_payment_tx payload: {}", e))?;
+
+        let fee_transfer = fee_payment_tx
+            .token_transfer_data
+            .as_ref()
+            .ok_or_else(|| anyhow!("fee_payment_tx missing token_transfer_data"))?;
+        if fee_payment_tx.transaction_type != lib_blockchain::TransactionType::TokenTransfer {
+            return Err(anyhow!(
+                "fee_payment_tx must use TransactionType::TokenTransfer"
+            ));
+        }
+        if fee_payment_tx.chain_id != 0x03 {
+            return Err(anyhow!(
+                "fee_payment_tx must use chain_id 0x03, got {}",
+                fee_payment_tx.chain_id
+            ));
+        }
+
+        if fee_transfer.token_id != lib_blockchain::contracts::utils::generate_lib_token_id() {
+            return Err(anyhow!("fee_payment_tx must transfer SOV token"));
+        }
+        if fee_transfer.amount != registration_fee_sov as u128 {
+            return Err(anyhow!(
+                "fee_payment_tx amount mismatch: expected {} SOV, got {}",
+                registration_fee_sov, fee_transfer.amount
+            ));
+        }
+
+        let fee_tx_hash = fee_payment_tx.hash();
+        let fee_tx_hash_hex = hex::encode(fee_tx_hash.as_bytes());
+
+        let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
+        {
+            let blockchain = self.blockchain.read().await;
+            let owner_wallet = blockchain.wallet_registry.values()
+                .find(|wallet| wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash) && wallet.wallet_type == "Primary")
+                .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
+            if fee_transfer.from != owner_wallet.wallet_id.as_array() {
+                return Err(anyhow!("fee_payment_tx sender wallet does not match owner Primary wallet"));
+            }
+
+            let owner_wallet_pubkey = lib_blockchain::integration::crypto_integration::PublicKey::new(
+                owner_wallet.public_key.clone()
+            );
+            if fee_payment_tx.signature.public_key.key_id != owner_wallet_pubkey.key_id {
+                return Err(anyhow!("fee_payment_tx signature does not match owner Primary wallet public key"));
+            }
+
+            let treasury_wallet_id = blockchain.get_dao_treasury_wallet_id()
+                .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?;
+            let treasury_wallet_bytes = hex::decode(treasury_wallet_id)
+                .map_err(|_| anyhow!("DAO treasury wallet id is malformed"))?;
+            if treasury_wallet_bytes.len() != 32 {
+                return Err(anyhow!("DAO treasury wallet id must be 32 bytes"));
+            }
+            let mut treasury_wallet = [0u8; 32];
+            treasury_wallet.copy_from_slice(&treasury_wallet_bytes);
+            if fee_transfer.to != treasury_wallet {
+                return Err(anyhow!("fee_payment_tx recipient must be the DAO treasury wallet"));
+            }
+
+            let already_confirmed = blockchain.blocks.iter().any(|block| {
+                block.transactions.iter().any(|tx| tx.hash() == fee_tx_hash)
+            });
+            let already_pending = blockchain.pending_transactions.iter().any(|tx| tx.hash() == fee_tx_hash);
+
+            if !already_confirmed && !already_pending {
+                drop(blockchain);
+                let mut blockchain = self.blockchain.write().await;
+                blockchain.add_pending_transaction(fee_payment_tx)
+                    .map_err(|e| anyhow!("Failed to submit fee_payment_tx to mempool: {}", e))?;
+            }
+        }
+
+        Ok(fee_tx_hash_hex)
     }
 
     /// Register a new Web4 domain
@@ -1455,5 +1518,290 @@ impl Web4Handler {
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use lib_blockchain::contracts::TokenContract;
+    use lib_blockchain::contracts::utils::generate_lib_token_id;
+    use lib_blockchain::integration::crypto_integration::{PublicKey as BcPublicKey, Signature as BcSignature, SignatureAlgorithm as BcSignatureAlgorithm};
+    use lib_blockchain::transaction::{TokenTransferData, Transaction, WalletTransactionData};
+    use lib_identity::IdentityManager;
+    use lib_identity::types::IdentityType;
+    use lib_network::storage_stub::UnifiedStorage;
+    use lib_network::web4::{ContentPublisher, DomainRegistry};
+    use serde_json::json;
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::{Arc, RwLock as StdRwLock};
+    use tokio::sync::RwLock;
+
+    #[derive(Clone, Default)]
+    struct TestStorage {
+        domains: Arc<StdRwLock<StdHashMap<String, Vec<u8>>>>,
+        manifests: Arc<StdRwLock<StdHashMap<String, Vec<u8>>>>,
+    }
+
+    #[async_trait]
+    impl UnifiedStorage for TestStorage {
+        async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> anyhow::Result<()> {
+            self.domains.write().unwrap().insert(domain.to_string(), data);
+            Ok(())
+        }
+
+        async fn load_domain_record(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(self.domains.read().unwrap().get(domain).cloned())
+        }
+
+        async fn delete_domain_record(&self, domain: &str) -> anyhow::Result<()> {
+            self.domains.write().unwrap().remove(domain);
+            Ok(())
+        }
+
+        async fn list_domain_records(&self) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+            Ok(self
+                .domains
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect())
+        }
+
+        async fn store_manifest(&self, domain: &str, manifest_data: Vec<u8>) -> anyhow::Result<()> {
+            self.manifests
+                .write()
+                .unwrap()
+                .insert(domain.to_string(), manifest_data);
+            Ok(())
+        }
+
+        async fn load_manifest(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(self.manifests.read().unwrap().get(domain).cloned())
+        }
+
+        fn is_stub(&self) -> bool {
+            false
+        }
+    }
+
+    fn wallet_data(
+        wallet_id: [u8; 32],
+        wallet_type: &str,
+        owner_identity_id: Option<lib_blockchain::Hash>,
+        public_key: Vec<u8>,
+    ) -> WalletTransactionData {
+        WalletTransactionData {
+            wallet_id: lib_blockchain::Hash::new(wallet_id),
+            wallet_type: wallet_type.to_string(),
+            wallet_name: format!("{}-wallet", wallet_type),
+            alias: None,
+            public_key,
+            owner_identity_id,
+            seed_commitment: lib_blockchain::Hash::zero(),
+            created_at: 1_700_000_000,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance: 0,
+        }
+    }
+
+    fn fee_payment_tx(
+        signer: BcPublicKey,
+        signer_private: lib_crypto::PrivateKey,
+        from_wallet: [u8; 32],
+        to_wallet: [u8; 32],
+        amount: u64,
+        nonce: u64,
+    ) -> Transaction {
+        let mut tx = Transaction::new_token_transfer_with_chain_id(
+            0x03,
+            TokenTransferData {
+                token_id: generate_lib_token_id(),
+                from: from_wallet,
+                to: to_wallet,
+                amount: amount as u128,
+                nonce,
+            },
+            BcSignature {
+                signature: vec![],
+                public_key: signer.clone(),
+                algorithm: BcSignatureAlgorithm::Dilithium5,
+                timestamp: 0,
+            },
+            Vec::new(),
+        );
+        // Mempool stateful validator currently enforces minimum fee for non-system txs,
+        // including TokenTransfer in this path.
+        tx.fee = 1_000;
+
+        let keypair = lib_crypto::KeyPair {
+            public_key: signer,
+            private_key: signer_private,
+        };
+        let sign = |tx: &mut Transaction| {
+            let signing_hash = tx.signing_hash();
+            let sig = lib_crypto::sign_message(&keypair, signing_hash.as_bytes())
+                .expect("fee tx should sign");
+            tx.signature.signature = sig.signature;
+            tx.signature.timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be valid")
+                .as_secs();
+        };
+        sign(&mut tx);
+
+        // Ensure fee meets current minimum based on signed transaction size.
+        let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
+        if tx.fee < min_fee {
+            tx.fee = min_fee;
+            sign(&mut tx);
+        }
+        tx
+    }
+
+    async fn setup_handler() -> anyhow::Result<(Web4Handler, lib_identity::ZhtpIdentity, [u8; 32], [u8; 32], lib_crypto::PrivateKey)> {
+        let storage: Arc<dyn UnifiedStorage> = Arc::new(TestStorage::default());
+        let registry = Arc::new(DomainRegistry::new(storage.clone()).await?);
+        let publisher = Arc::new(ContentPublisher::new(registry.clone(), storage.clone()));
+
+        let owner_identity = lib_identity::ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "domain-fee-test-owner",
+            None,
+        )?;
+
+        let mut identity_manager = IdentityManager::new();
+        identity_manager.add_identity(owner_identity.clone());
+        let identity_manager = Arc::new(RwLock::new(identity_manager));
+
+        let mut blockchain = lib_blockchain::Blockchain::new()?;
+        let owner_wallet_id = [0x11u8; 32];
+        let treasury_wallet_id = [0x22u8; 32];
+        let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
+
+        // Set wallet public key deterministically for fee tx signer check.
+        let owner_wallet_pk = owner_identity.public_key.dilithium_pk.clone();
+        blockchain.wallet_registry.insert(
+            hex::encode(owner_wallet_id),
+            wallet_data(
+                owner_wallet_id,
+                "Primary",
+                Some(owner_identity_hash),
+                owner_wallet_pk.clone(),
+            ),
+        );
+        blockchain.wallet_registry.insert(
+            hex::encode(treasury_wallet_id),
+            wallet_data(treasury_wallet_id, "Treasury", None, vec![8u8; 32]),
+        );
+        blockchain.set_dao_treasury_wallet(hex::encode(treasury_wallet_id))?;
+
+        // Ensure owner has enough SOV for the pre-validation balance check.
+        let mut sov = TokenContract::new_sov_native();
+        let owner_wallet_key = BcPublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: owner_wallet_id,
+        };
+        sov.mint(&owner_wallet_key, 100).unwrap();
+        blockchain.token_contracts.insert(generate_lib_token_id(), sov);
+
+        let blockchain = Arc::new(RwLock::new(blockchain));
+        let owner_private = owner_identity.private_key.clone().expect("test identity should include private key");
+        let handler = Web4Handler::new_with_registry(
+            registry,
+            publisher,
+            identity_manager,
+            blockchain,
+        )
+        .await?;
+
+        Ok((handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private))
+    }
+
+    fn sign_simple_registration(identity: &lib_identity::ZhtpIdentity, domain: &str, timestamp: u64, fee: u64) -> String {
+        let message = format!("{}|{}|{}", domain, timestamp, fee);
+        let keypair = lib_crypto::KeyPair {
+            public_key: identity.public_key.clone(),
+            private_key: identity.private_key.clone().expect("test identity must have private key"),
+        };
+        let sig = lib_crypto::sign_message(&keypair, message.as_bytes())
+            .expect("signature should be generated");
+        hex::encode(sig.signature)
+    }
+
+    fn simple_registration_request(
+        owner_identity: &lib_identity::ZhtpIdentity,
+        domain: &str,
+        html_content: &str,
+        fee_payment_tx: &Transaction,
+    ) -> anyhow::Result<serde_json::Value> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        Ok(json!({
+            "domain": domain,
+            "owner": owner_identity.did,
+            "content_mappings": {
+                "/": {
+                    "content": base64::engine::general_purpose::STANDARD.encode(html_content),
+                    "content_type": "text/html"
+                }
+            },
+            "signature": sign_simple_registration(owner_identity, domain, timestamp, 10),
+            "timestamp": timestamp,
+            "fee": 10,
+            "fee_payment_tx": hex::encode(bincode::serialize(fee_payment_tx)?)
+        }))
+    }
+
+    #[tokio::test]
+    async fn register_domain_accepts_valid_fee_payment_tx() -> anyhow::Result<()> {
+        let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) = setup_handler().await?;
+        let fee_signer = BcPublicKey::new(owner_identity.public_key.dilithium_pk.clone());
+        let tx = fee_payment_tx(fee_signer, owner_private, owner_wallet_id, treasury_wallet_id, 10, 0);
+        let tx_hash_hex = hex::encode(tx.hash().as_bytes());
+        let request =
+            simple_registration_request(&owner_identity, "valid-fee.zhtp", "<html>ok</html>", &tx)?;
+
+        let response = handler.register_domain_simple(serde_json::to_vec(&request)?).await?;
+        assert_eq!(response.status, ZhtpStatus::Ok);
+        let body: serde_json::Value = serde_json::from_slice(&response.body)?;
+        assert_eq!(body["success"], serde_json::Value::Bool(true));
+        assert_eq!(body["blockchain_transaction"], serde_json::Value::String(tx_hash_hex.clone()));
+
+        let blockchain = handler.blockchain.read().await;
+        let found_in_mempool = blockchain
+            .pending_transactions
+            .iter()
+            .any(|pending| hex::encode(pending.hash().as_bytes()) == tx_hash_hex);
+        assert!(found_in_mempool, "fee tx should be submitted to mempool");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn register_domain_rejects_invalid_fee_payment_tx_amount() -> anyhow::Result<()> {
+        let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) = setup_handler().await?;
+        let fee_signer = BcPublicKey::new(owner_identity.public_key.dilithium_pk.clone());
+        let tx = fee_payment_tx(fee_signer, owner_private, owner_wallet_id, treasury_wallet_id, 9, 0);
+        let request = simple_registration_request(
+            &owner_identity,
+            "invalid-fee.zhtp",
+            "<html>bad</html>",
+            &tx,
+        )?;
+
+        let result = handler.register_domain_simple(serde_json::to_vec(&request)?).await;
+        assert!(result.is_err(), "invalid fee tx amount should be rejected");
+        let err = format!("{}", result.err().unwrap());
+        assert!(err.contains("amount mismatch"), "unexpected error: {}", err);
+
+        Ok(())
     }
 }
