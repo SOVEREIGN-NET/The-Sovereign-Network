@@ -3,7 +3,7 @@
 //! Defines the fundamental block data structures used in the ZHTP blockchain.
 
 use serde::{Serialize, Deserialize};
-use crate::types::Hash;
+use crate::types::{Hash, Difficulty};
 use crate::transaction::Transaction;
 
 /// ZHTP blockchain block
@@ -24,8 +24,31 @@ pub struct BlockHeader {
     pub previous_block_hash: Hash,
     /// Merkle root of all transactions in this block
     pub merkle_root: Hash,
+    /// Canonical state commitment (state root hash)
+    ///
+    /// This field provides an explicit, deterministic commitment to the entire
+    /// blockchain state at this block height. It enables:
+    /// - Deterministic state verification across all nodes
+    /// - Light client state proofs
+    /// - Fork detection and resolution
+    /// - State synchronization checkpoints
+    ///
+    /// The state_root is computed from all consensus-critical state including:
+    /// - UTXO set
+    /// - Identity registry
+    /// - Wallet registry
+    /// - Contract state
+    /// - Governance state
+    ///
+    /// This is a consensus-critical field that MUST be verified by all nodes.
+    #[serde(default = "default_state_root")]
+    pub state_root: Hash,
     /// Block creation timestamp
     pub timestamp: u64,
+    /// Current difficulty target
+    pub difficulty: Difficulty,
+    /// Mining nonce for proof-of-work
+    pub nonce: u64,
     /// Block height in the chain
     pub height: u64,
     /// Hash of the block (calculated)
@@ -34,6 +57,8 @@ pub struct BlockHeader {
     pub transaction_count: u32,
     /// Total size of the block in bytes
     pub block_size: u32,
+    /// Cumulative difficulty from genesis
+    pub cumulative_difficulty: Difficulty,
     /// Fee model version for this block (Phase 3B)
     ///
     /// - Version 1: Legacy fee model (before activation height)
@@ -48,6 +73,11 @@ pub struct BlockHeader {
 /// Default fee model version for backwards compatibility
 fn default_fee_model_version() -> u16 {
     1 // Legacy default for deserializing old blocks
+}
+
+/// Default state root for backwards compatibility
+fn default_state_root() -> Hash {
+    Hash::default() // Empty state root for deserializing old blocks
 }
 
 impl Block {
@@ -84,6 +114,10 @@ impl Block {
         self.header.timestamp
     }
 
+    /// Get the difficulty
+    pub fn difficulty(&self) -> Difficulty {
+        self.header.difficulty
+    }
 
     /// Get the number of transactions
     pub fn transaction_count(&self) -> usize {
@@ -152,7 +186,6 @@ impl Block {
         matches
     }
 
-
     /// Get all transaction IDs in the block
     pub fn transaction_ids(&self) -> Vec<Hash> {
         self.transactions.iter().map(|tx| tx.hash()).collect()
@@ -194,19 +227,59 @@ impl BlockHeader {
         previous_block_hash: Hash,
         merkle_root: Hash,
         timestamp: u64,
+        difficulty: Difficulty,
         height: u64,
         transaction_count: u32,
         block_size: u32,
+        cumulative_difficulty: Difficulty,
     ) -> Self {
         let mut header = Self {
             version,
             previous_block_hash,
             merkle_root,
+            state_root: Hash::default(), // Will be set by blockchain after state update
             timestamp,
+            difficulty,
+            nonce: 0,
             height,
             block_hash: Hash::default(),
             transaction_count,
             block_size,
+            cumulative_difficulty,
+            fee_model_version: 1, // Default to v1 for backwards compatibility
+        };
+
+        // Calculate and set the block hash
+        header.block_hash = header.calculate_hash();
+        header
+    }
+
+    /// Create a new block header with explicit state root
+    pub fn new_with_state_root(
+        version: u32,
+        previous_block_hash: Hash,
+        merkle_root: Hash,
+        state_root: Hash,
+        timestamp: u64,
+        difficulty: Difficulty,
+        height: u64,
+        transaction_count: u32,
+        block_size: u32,
+        cumulative_difficulty: Difficulty,
+    ) -> Self {
+        let mut header = Self {
+            version,
+            previous_block_hash,
+            merkle_root,
+            state_root,
+            timestamp,
+            difficulty,
+            nonce: 0,
+            height,
+            block_hash: Hash::default(),
+            transaction_count,
+            block_size,
+            cumulative_difficulty,
             fee_model_version: 1, // Default to v1 for backwards compatibility
         };
 
@@ -216,17 +289,23 @@ impl BlockHeader {
     }
 
     /// Calculate the hash of this block header
+    ///
+    /// This is a consensus-critical function. The block hash includes the state_root
+    /// to ensure that any state divergence results in different block hashes,
+    /// enabling deterministic fork detection and resolution.
     pub fn calculate_hash(&self) -> Hash {
         let mut hasher = blake3::Hasher::new();
 
         hasher.update(&self.version.to_le_bytes());
         hasher.update(self.previous_block_hash.as_bytes());
         hasher.update(self.merkle_root.as_bytes());
+        hasher.update(self.state_root.as_bytes()); // Canonical state commitment
         hasher.update(&self.timestamp.to_le_bytes());
+        hasher.update(&self.difficulty.bits().to_le_bytes());
+        hasher.update(&self.nonce.to_le_bytes());
         hasher.update(&self.height.to_le_bytes());
         hasher.update(&self.transaction_count.to_le_bytes());
         hasher.update(&self.block_size.to_le_bytes());
-        hasher.update(&self.fee_model_version.to_le_bytes());
 
         Hash::from_slice(hasher.finalize().as_bytes())
     }
@@ -236,6 +315,14 @@ impl BlockHeader {
         self.block_hash
     }
 
+    /// Set the state root and recalculate hash
+    ///
+    /// This should be called after block creation,
+    /// once the state transitions have been computed.
+    pub fn set_state_root(&mut self, state_root: Hash) {
+        self.state_root = state_root;
+        self.block_hash = self.calculate_hash();
+    }
 
     /// Get time since previous block (requires previous block timestamp)
     pub fn time_since_previous(&self, previous_timestamp: u64) -> u64 {
@@ -275,25 +362,28 @@ impl crate::types::hash::Hashable for BlockHeader {
 /// Genesis block creation
 pub fn create_genesis_block() -> Block {
     // FIXED genesis timestamp for network consistency
-    // November 1, 2024 00:00:00 UTC - ensures all nodes create identical genesis
-    // (1730419200 = 2024-11-01T00:00:00Z)
+    // November 1, 2025 00:00:00 UTC - ensures all nodes create identical genesis
     let genesis_timestamp = 1730419200;
-
+    // Genesis blocks should use easy consensus difficulty like other system transaction blocks
+    let genesis_difficulty = Difficulty::from_bits(0x1fffffff);
+    
     let header = BlockHeader::new(
         1, // version
         Hash::default(), // previous_block_hash (none for genesis)
         Hash::default(), // merkle_root (will be calculated)
         genesis_timestamp,
+        genesis_difficulty,
         0, // height
         0, // transaction_count
         0, // block_size
+        genesis_difficulty, // cumulative_difficulty
     );
 
     let genesis_block = Block::new(header, Vec::new());
-
+    
     // For genesis block, we might want to add special transactions
     // This is handled by the blockchain initialization logic
-
+    
     genesis_block
 }
 

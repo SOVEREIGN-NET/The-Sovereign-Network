@@ -836,6 +836,7 @@ mod tests {
             version: 1,
             previous_block_hash: prev_hash,
             merkle_root: Hash::default(),
+            state_root: Hash::default(),
             timestamp: 1000 + height,
             height,
             block_hash,

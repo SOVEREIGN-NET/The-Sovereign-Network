@@ -689,6 +689,7 @@ mod tests {
             version: 1,
             previous_block_hash: Hash::zero(),
             merkle_root: Hash::zero(),
+            state_root: Hash::default(),
             timestamp: 1700000000 + height * 10,
             height,
             block_hash: Hash::zero(),
