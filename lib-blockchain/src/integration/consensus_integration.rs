@@ -27,7 +27,7 @@ use crate::{
     mempool::Mempool,
     utils::time::current_timestamp,
     transaction::IdentityTransactionData,
-    fork_recovery::{ForkDetector, ChainEvaluation},
+    fork_recovery::ForkDetector,
 };
 
 /// Validator keypair for cryptographic operations
@@ -536,31 +536,19 @@ impl BlockchainConsensusCoordinator {
                 return Err(anyhow::anyhow!("Block verification failed for proposal"));
             }
 
-            // Check for fork - if block at same height exists with different hash
+            // Check for fork - if block at same height exists with different hash.
+            // In BFT mode, forks are impossible under correct operation. If a block at this
+            // height already exists with a different hash, reject the proposal immediately.
+            // ForkDetector::evaluate_chains is forbidden in BFT mode (it panics with
+            // unreachable!). Fork-choice is handled exclusively by the consensus engine.
             if let Some(existing_block) = blockchain.get_block(block.header.height) {
                 if let Some(fork) = ForkDetector::detect_fork(existing_block, &block) {
-                    // Fork detected - evaluate chains to determine canonical block
-                    info!("Fork detected at height {}: existing={}, new={}",
+                    warn!("BFT INVARIANT: fork detected at height {} (existing={}, new={});                            rejecting conflicting proposal",
                           fork.height, fork.existing_hash, fork.new_hash);
-
-                    // Build chains for evaluation - use just the last blocks for comparison
-                    // since we're comparing fork point blocks
-                    let our_chain = vec![existing_block.clone()];
-                    let candidate_chain = vec![block.clone()];
-
-                    let evaluation = ForkDetector::evaluate_chains(&our_chain, &candidate_chain);
-                    match evaluation {
-                        ChainEvaluation::KeepOurChain { our_work, candidate_work, reason } => {
-                            info!("Fork resolution: keeping our chain (our_work={}, candidate_work={}, reason={})",
-                                  our_work, candidate_work, reason);
-                            return Err(anyhow::anyhow!("Fork detected: keeping our chain - {}", reason));
-                        }
-                        ChainEvaluation::SwitchToCandidate { our_work, candidate_work, reason } => {
-                            info!("Fork resolution: candidate block is better (our_work={}, candidate_work={}, reason={})",
-                                  our_work, candidate_work, reason);
-                            // Continue to vote on proposal - consensus will handle reorganization if needed
-                        }
-                    }
+                    return Err(anyhow::anyhow!(
+                        "Fork rejected at height {}: BFT consensus does not permit fork recovery.                          A block at this height already exists with hash {}.",
+                        fork.height, fork.existing_hash
+                    ));
                 }
             }
         }
