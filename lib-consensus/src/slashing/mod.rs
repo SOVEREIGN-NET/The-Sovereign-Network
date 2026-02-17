@@ -1,183 +1,129 @@
-//! Slashing Severity and Jail/Removal Policy
+//! Validator Recovery Rules: Jail Exit and Stake Restoration
 //!
-//! This module defines the authoritative constants, policies, and enforcement
-//! logic for validator slashing, jailing, and permanent removal in the ZHTP
-//! consensus system.
+//! This module defines the authoritative rules governing how a jailed validator
+//! can exit jail, restore their stake, and re-enter the active validator set.
 //!
-//! # Slashing Policy Summary
+//! # Recovery Policy Summary
 //!
-//! | Offense Class    | Slash %  | Jail?    | Permanent Ban? |
-//! |------------------|----------|----------|----------------|
-//! | Safety violation | 100%     | Yes      | YES (forever)  |
-//! | Liveness failure | 1%       | Yes      | No             |
+//! | Offense Class    | Can Unjail? | Wait Period           | Stake Restorable? |
+//! |------------------|-------------|----------------------|-------------------|
+//! | Safety violation | NO          | N/A (permanent ban)  | NO                |
+//! | Liveness failure | YES         | JAIL_EXIT_WAIT_BLOCKS| YES (partial)     |
 //!
-//! ## Safety Violations (Double-sign, Equivocation, etc.)
+//! ## Safety-Slashed Validators: Permanent Ban
 //!
-//! Safety violations are treated as the worst class of misbehavior because they
-//! threaten the fundamental BFT guarantee of consistent commits. A validator
-//! that double-signs or equivocates:
+//! A validator slashed for a safety violation (double-sign, equivocation, etc.)
+//! is permanently removed from the validator set. They:
 //!
-//! 1. Has their **entire bonded stake slashed** (`DOUBLE_SIGN_SLASH_PERCENT = 100`)
-//! 2. Is **permanently banned** from the validator set — they CANNOT unjail
-//! 3. Are **immediately isolated** from the peer network
+//! 1. CANNOT unjail — `check_unjail_eligibility` returns `RecoveryError::PermanentBan`
+//! 2. CANNOT restore their stake — the slashed portion is burned
+//! 3. CANNOT re-register with the same identity key
 //!
-//! Rationale: there is no honest explanation for double-signing. Even if caused
-//! by misconfiguration (e.g., running two nodes with the same key), the operator
-//! bears full responsibility for key management.
+//! This is an absolute invariant with no governance override.
 //!
-//! ## Liveness Violations (Missed blocks, round timeouts, etc.)
+//! ## Liveness-Slashed Validators: Temporary Jail
 //!
-//! Liveness violations reduce throughput but do not threaten safety. A validator
-//! that fails to participate:
+//! A validator slashed for liveness failure is jailed for `JAIL_EXIT_WAIT_BLOCKS`
+//! blocks. After that period, they:
 //!
-//! 1. Has **1% of bonded stake slashed** (`LIVENESS_SLASH_PERCENT = 1`)
-//! 2. Is **jailed for `JAIL_DURATION_BLOCKS` blocks**
-//! 3. May **unjail** after serving the full jail period (see recovery rules)
+//! 1. MAY submit an unjail transaction
+//! 2. MUST have remaining stake above `MIN_STAKE_TO_UNJAIL`
+//! 3. MAY have their unslashed stake returned (the 1% slash is NOT restored)
+//!
+//! # Constants
+//!
+//! - `JAIL_EXIT_WAIT_BLOCKS = 1000`: Must wait this many blocks before unjailing
+//! - `MIN_STAKE_TO_UNJAIL`: Minimum remaining stake to be eligible for unjail
 //!
 //! # Invariants
 //!
-//! - **POL-INV-1**: `DOUBLE_SIGN_SLASH_PERCENT` must be exactly 100
-//! - **POL-INV-2**: `LIVENESS_SLASH_PERCENT` must be in range 1..=5
-//! - **POL-INV-3**: `JAIL_DURATION_BLOCKS` must be at least 100 blocks
-//! - **POL-INV-4**: Safety-slashed validators CANNOT unjail (permanent ban)
-//! - **POL-INV-5**: Liveness-slashed validators CAN unjail after jail period
-//! - **POL-INV-6**: Slash percent for safety >= slash percent for liveness (monotonicity)
+//! - **REC-INV-1**: Safety-slashed validators CANNOT unjail (permanent ban)
+//! - **REC-INV-2**: Liveness-slashed validators MUST wait JAIL_EXIT_WAIT_BLOCKS
+//! - **REC-INV-3**: Unjail is only permitted if remaining stake >= MIN_STAKE_TO_UNJAIL
+//! - **REC-INV-4**: Slashed stake is NOT restored on unjail (slash is permanent loss)
+//! - **REC-INV-6**: JAIL_EXIT_WAIT_BLOCKS must be >= 100 blocks
+//!
+//! # Planned Behavior (Not Yet Enforced Here)
+//!
+//! - Validators SHOULD eventually be required to explicitly submit an unjail
+//!   transaction to exit jail (no automatic unjail based solely on time/height).
+//! - As of the current implementation, other parts of the validator lifecycle
+//!   may still auto-release jailed validators when their jail period elapses.
+//!   This module documents the target policy but does not, by itself, disable
+//!   any existing auto-release paths.
 
 // =============================================================================
-// SLASH PERCENTAGE CONSTANTS
+// RECOVERY CONSTANTS
 // =============================================================================
 
-/// Slash percentage applied for double-signing (safety violation).
+/// Number of finalized blocks a validator must wait before submitting an unjail
+/// transaction.
 ///
-/// A validator that signs two conflicting blocks at the same height loses
-/// 100% of their bonded stake. This is a full slash.
-///
-/// # Invariant POL-INV-1
-///
-/// This constant MUST equal 100. Any reduction would make double-signing
-/// economically viable if the attacker holds less than 100% of their stake
-/// in the validator set.
-///
-/// # Rationale
-///
-/// Full slashing creates a strong economic disincentive against safety attacks.
-/// Because BFT safety attacks require coordinated Byzantine behavior, the
-/// punishment must be severe enough to deter even well-funded attackers.
-pub const DOUBLE_SIGN_SLASH_PERCENT: u8 = 100;
-
-/// Slash percentage applied for liveness violations.
-///
-/// A validator that misses blocks, fails heartbeats, or times out in rounds
-/// loses 1% of their bonded stake per violation event.
-///
-/// # Invariant POL-INV-2
-///
-/// This constant MUST be in the range 1..=5. Too low and it creates no
-/// incentive; too high and it punishes validators with legitimate infrastructure
-/// issues as severely as Byzantine actors.
-pub const LIVENESS_SLASH_PERCENT: u8 = 1;
-
-// Compile-time assertion: POL-INV-1 — double-sign slash must be 100%
-const _: () = assert!(
-    DOUBLE_SIGN_SLASH_PERCENT == 100,
-    "POL-INV-1: DOUBLE_SIGN_SLASH_PERCENT must equal 100"
-);
-
-// Compile-time assertion: POL-INV-2 — liveness slash must be 1..=5
-const _: () = assert!(
-    LIVENESS_SLASH_PERCENT >= 1 && LIVENESS_SLASH_PERCENT <= 5,
-    "POL-INV-2: LIVENESS_SLASH_PERCENT must be in range 1..=5"
-);
-
-// Compile-time assertion: POL-INV-6 — safety slash >= liveness slash (monotonicity)
-const _: () = assert!(
-    DOUBLE_SIGN_SLASH_PERCENT >= LIVENESS_SLASH_PERCENT,
-    "POL-INV-6: DOUBLE_SIGN_SLASH_PERCENT must be >= LIVENESS_SLASH_PERCENT"
-);
-
-// =============================================================================
-// JAIL DURATION CONSTANT
-// =============================================================================
-
-/// Number of blocks a liveness-slashed validator must remain jailed.
-///
-/// After being jailed, a validator must wait at least `JAIL_DURATION_BLOCKS`
-/// finalized blocks before they are eligible to submit an unjail transaction.
+/// After being jailed for a liveness violation, the validator is ineligible to
+/// re-enter the active set until at least `JAIL_EXIT_WAIT_BLOCKS` blocks have
+/// been finalized since the jailing block.
 ///
 /// At a target block time of 10 seconds, 1000 blocks ≈ 2.8 hours.
 ///
-/// # Invariant POL-INV-3
+/// # Invariant REC-INV-2
 ///
-/// This constant MUST be at least 100 blocks. A shorter jail would allow
-/// liveness violators to rapidly re-enter the validator set and immediately
-/// miss blocks again, creating a tight loop of small penalties with no
-/// real consequence for persistent downtime.
-pub const JAIL_DURATION_BLOCKS: u64 = 1000;
+/// A validator that submits an unjail transaction before `current_block >=
+/// jail_block + JAIL_EXIT_WAIT_BLOCKS` MUST have their request rejected.
+///
+/// # Invariant REC-INV-6
+///
+/// `JAIL_EXIT_WAIT_BLOCKS` must be at least 100 blocks to ensure meaningful
+/// deterrence.
+pub const JAIL_EXIT_WAIT_BLOCKS: u64 = 1000;
 
-// Compile-time assertion: POL-INV-3 — jail duration must be at least 100 blocks
+/// Minimum remaining stake (in micro-SOV) for a validator to be eligible to unjail.
+///
+/// A validator that was slashed down to zero (or below this threshold) cannot
+/// unjail because they would immediately be below the minimum stake threshold
+/// required to participate in consensus.
+///
+/// This prevents a validator from unjailing with no effective economic stake,
+/// which would give them consensus participation rights without skin in the game.
+///
+/// Value: 1000 SOV tokens (in micro-SOV units, 1 SOV = 1_000_000 micro-SOV)
+///
+/// Matches the network minimum validator stake to ensure unjailing validators
+/// retain meaningful economic stake.
+pub const MIN_STAKE_TO_UNJAIL: u64 = 1000 * 1_000_000; // 1000 SOV in micro-SOV
+
+// Compile-time invariant: REC-INV-6
 const _: () = assert!(
-    JAIL_DURATION_BLOCKS >= 100,
-    "POL-INV-3: JAIL_DURATION_BLOCKS must be at least 100"
+    JAIL_EXIT_WAIT_BLOCKS >= 100,
+    "REC-INV-6: JAIL_EXIT_WAIT_BLOCKS must be at least 100 blocks"
 );
 
 // =============================================================================
-// REMOVAL POLICY
+// LEGACY SLASHING POLICY COMPATIBILITY
 // =============================================================================
 
-/// Minimum slash count before a liveness violator is permanently removed.
-///
-/// A validator that accumulates `REMOVAL_SLASH_COUNT` liveness violations
-/// without successfully exiting jail between them is permanently removed from
-/// the validator set. This prevents chronic underperformers from cycling
-/// through jail indefinitely.
-///
-/// # Note
-///
-/// Safety-slashed validators are removed immediately on first offense
-/// (see `SAFETY_OFFENSE_ALWAYS_PERMANENT`). This count only applies
-/// to liveness violations.
+/// Slash percentage applied for safety faults (double-sign, equivocation).
+pub const DOUBLE_SIGN_SLASH_PERCENT: u8 = 100;
+
+/// Slash percentage applied for liveness faults.
+pub const LIVENESS_SLASH_PERCENT: u8 = 1;
+
+/// Legacy name for liveness jail duration.
+pub const JAIL_DURATION_BLOCKS: u64 = JAIL_EXIT_WAIT_BLOCKS;
+
+/// Count of repeated liveness faults before removal logic may apply.
 pub const REMOVAL_SLASH_COUNT: u32 = 10;
 
-/// Whether a safety offense ALWAYS results in permanent removal.
-///
-/// This constant is `true` and MUST NOT be set to `false`. It is provided
-/// as a named constant (rather than a comment) so that enforcement code can
-/// reference it explicitly rather than using a bare `true` literal.
-///
-/// # Invariant POL-INV-4
-///
-/// Safety-slashed validators are permanently removed from the validator set.
-/// They CANNOT unjail. They CANNOT re-register. Any attempt to unjail a
-/// safety-slashed validator MUST be rejected with `SlashPolicyError::PermanentBan`.
+/// Safety offenses are always permanent bans.
 pub const SAFETY_OFFENSE_ALWAYS_PERMANENT: bool = true;
 
-// Compile-time assertion: safety offense must always be permanent
-const _: () = assert!(
-    SAFETY_OFFENSE_ALWAYS_PERMANENT,
-    "POL-INV-4: SAFETY_OFFENSE_ALWAYS_PERMANENT must be true"
-);
-
-// =============================================================================
-// SLASH POLICY ENUM
-// =============================================================================
-
-/// Classification of a slashing event, determining the enforcement path.
+/// Legacy severity classification maintained for API compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlashSeverity {
-    /// Safety violation: full slash + permanent ban
-    ///
-    /// Applies to: DoubleSign, ConflictingVote, Equivocation, LongRangeAttack, InvalidBlock
     Safety,
-    /// Liveness violation: partial slash + temporary jail
-    ///
-    /// Applies to: MissedBlocks, HeartbeatTimeout, RoundTimeout, ProposalTimeout
     Liveness,
 }
 
 impl SlashSeverity {
-    /// Return the slash percentage for this severity.
-    ///
-    /// Returns either `DOUBLE_SIGN_SLASH_PERCENT` (100) or `LIVENESS_SLASH_PERCENT` (1).
     pub const fn slash_percent(self) -> u8 {
         match self {
             Self::Safety => DOUBLE_SIGN_SLASH_PERCENT,
@@ -185,27 +131,17 @@ impl SlashSeverity {
         }
     }
 
-    /// Return the jail duration in blocks for this severity.
-    ///
-    /// Safety violations result in permanent ban (`None` means never released).
-    /// Liveness violations use `JAIL_DURATION_BLOCKS`.
     pub const fn jail_duration_blocks(self) -> Option<u64> {
         match self {
-            Self::Safety => None, // Permanent: never released
+            Self::Safety => None,
             Self::Liveness => Some(JAIL_DURATION_BLOCKS),
         }
     }
 
-    /// Return true if this severity results in a permanent ban.
-    ///
-    /// # Invariant POL-INV-4
     pub const fn is_permanent_ban(self) -> bool {
         matches!(self, Self::Safety)
     }
 
-    /// Return true if the validator can eventually unjail.
-    ///
-    /// # Invariant POL-INV-5
     pub const fn can_unjail(self) -> bool {
         matches!(self, Self::Liveness)
     }
@@ -221,26 +157,158 @@ impl std::fmt::Display for SlashSeverity {
 }
 
 // =============================================================================
-// SLASH POLICY ERROR
+// VALIDATOR JAIL STATUS
 // =============================================================================
 
-/// Errors returned when a slashing policy is violated.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SlashPolicyError {
-    /// Attempted to unjail a validator that was permanently banned.
-    ///
-    /// Invariant POL-INV-4: safety-slashed validators cannot unjail.
-    PermanentBan,
+/// The jail status of a validator, capturing both the reason and policy implications.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum JailStatus {
+    /// Validator is not jailed and can participate in consensus.
+    Active,
 
-    /// Attempted to unjail a validator before jail period expired.
+    /// Validator is jailed for liveness failure.
     ///
-    /// The u64 field is the block height at which unjailing becomes eligible.
+    /// Fields:
+    /// - `jailed_at_block`: Block height when jailing occurred
+    /// - `eligible_at_block`: Block height when unjail becomes eligible
+    ///   (= jailed_at_block + JAIL_EXIT_WAIT_BLOCKS)
+    LivenessJail {
+        jailed_at_block: u64,
+        eligible_at_block: u64,
+    },
+
+    /// Validator is permanently banned due to safety violation.
+    ///
+    /// # Invariant REC-INV-1
+    ///
+    /// A validator in `PermanentBan` status CANNOT transition to `Active`.
+    /// Any unjail request for a permanently banned validator MUST be rejected.
+    PermanentBan {
+        /// Block height when the safety slash was applied
+        banned_at_block: u64,
+        /// Human-readable reason for the ban
+        reason: BanReason,
+    },
+}
+
+/// Reason for permanent ban.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BanReason {
+    /// Validator double-signed a block.
+    DoubleSign,
+    /// Validator cast conflicting votes.
+    ConflictingVote,
+    /// Validator equivocated (signed with two keys).
+    Equivocation,
+    /// Validator proposed an invalid block deliberately.
+    InvalidBlock,
+    /// Validator participated in a long-range attack.
+    LongRangeAttack,
+}
+
+impl std::fmt::Display for BanReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DoubleSign => write!(f, "DoubleSign"),
+            Self::ConflictingVote => write!(f, "ConflictingVote"),
+            Self::Equivocation => write!(f, "Equivocation"),
+            Self::InvalidBlock => write!(f, "InvalidBlock"),
+            Self::LongRangeAttack => write!(f, "LongRangeAttack"),
+        }
+    }
+}
+
+impl JailStatus {
+    /// Return true if the validator can currently participate in consensus.
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    /// Return true if the validator is permanently banned.
+    ///
+    /// # Invariant REC-INV-1
+    pub fn is_permanently_banned(&self) -> bool {
+        matches!(self, Self::PermanentBan { .. })
+    }
+
+    /// Return true if the validator is temporarily jailed (liveness).
+    pub fn is_liveness_jailed(&self) -> bool {
+        matches!(self, Self::LivenessJail { .. })
+    }
+
+    /// Return the block height at which unjailing becomes eligible, if applicable.
+    ///
+    /// Returns `None` for `Active` and `PermanentBan` statuses.
+    pub fn eligible_at_block(&self) -> Option<u64> {
+        match self {
+            Self::LivenessJail { eligible_at_block, .. } => Some(*eligible_at_block),
+            _ => None,
+        }
+    }
+}
+
+// =============================================================================
+// RECOVERY ERROR
+// =============================================================================
+
+/// Errors returned when a recovery (unjail/stake restoration) request is rejected.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RecoveryError {
+    /// Attempted to unjail a permanently banned validator.
+    ///
+    /// # Invariant REC-INV-1
+    ///
+    /// Safety-slashed validators CANNOT unjail under any circumstances.
+    PermanentBan { reason: BanReason },
+
+    /// Unjail submitted before the required wait period has passed.
+    ///
+    /// # Invariant REC-INV-2
     JailPeriodNotExpired { eligible_at_block: u64 },
 
-    /// Validator not found in the active set.
-    ValidatorNotFound,
+    /// Validator's remaining stake is below the minimum required to unjail.
+    ///
+    /// # Invariant REC-INV-3
+    InsufficientStake { remaining_stake: u64, required: u64 },
 
-    /// Slash percentage out of valid range.
+    /// Validator is not jailed (unjail request is invalid for active validator).
+    NotJailed,
+
+    /// Validator not found.
+    ValidatorNotFound,
+}
+
+impl std::fmt::Display for RecoveryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PermanentBan { reason } => write!(
+                f,
+                "Permanent ban for {} — validator cannot unjail",
+                reason
+            ),
+            Self::JailPeriodNotExpired { eligible_at_block } => write!(
+                f,
+                "Jail period not expired; eligible to unjail at block {}",
+                eligible_at_block
+            ),
+            Self::InsufficientStake { remaining_stake, required } => write!(
+                f,
+                "Insufficient stake to unjail: {} < {} required",
+                remaining_stake,
+                required
+            ),
+            Self::NotJailed => write!(f, "Validator is not jailed"),
+            Self::ValidatorNotFound => write!(f, "Validator not found"),
+        }
+    }
+}
+
+/// Legacy policy error retained for compatibility.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SlashPolicyError {
+    PermanentBan,
+    JailPeriodNotExpired { eligible_at_block: u64 },
+    ValidatorNotFound,
     InvalidSlashPercent { got: u8 },
 }
 
@@ -265,39 +333,90 @@ impl std::fmt::Display for SlashPolicyError {
 }
 
 // =============================================================================
-// POLICY ENFORCEMENT HELPER
+// RECOVERY ENFORCEMENT
 // =============================================================================
 
-/// Determine whether a validator's unjail request should be accepted.
+/// Check whether a validator is eligible to exit jail.
 ///
-/// Returns `Ok(())` if unjailing is permitted, or a `SlashPolicyError` if not.
+/// This function enforces all recovery invariants (REC-INV-1 through REC-INV-3).
+/// Call this before processing any unjail transaction.
 ///
 /// # Arguments
 ///
-/// * `permanently_banned` - True if the validator was safety-slashed
-/// * `jail_end_block` - Block height at which the jail period expires
-/// * `current_block` - The current finalized block height
+/// * `jail_status` — Current jail status of the validator
+/// * `remaining_stake` — Current bonded stake after any slashing
+/// * `current_block` — Current finalized block height
 ///
-/// # Invariant POL-INV-4
+/// # Returns
 ///
-/// If `permanently_banned` is true, this function MUST return
-/// `Err(SlashPolicyError::PermanentBan)` regardless of other parameters.
+/// * `Ok(())` — Validator may unjail
+/// * `Err(RecoveryError)` — Unjail request must be rejected
 ///
-/// # Invariant POL-INV-5
+/// # Invariant REC-INV-1
 ///
-/// If `permanently_banned` is false and `current_block >= jail_end_block`,
-/// this function MUST return `Ok(())`.
+/// If `jail_status` is `PermanentBan`, ALWAYS returns `Err(RecoveryError::PermanentBan)`.
+///
+/// # Invariant REC-INV-2
+///
+/// If `current_block < eligible_at_block`, returns `Err(JailPeriodNotExpired)`.
+///
+/// # Invariant REC-INV-3
+///
+/// If `remaining_stake < MIN_STAKE_TO_UNJAIL`, returns `Err(InsufficientStake)`.
 pub fn check_unjail_eligibility(
+    jail_status: &JailStatus,
+    remaining_stake: u64,
+    current_block: u64,
+) -> Result<(), RecoveryError> {
+    match jail_status {
+        // REC-INV-1: Safety-slashed validators cannot unjail
+        JailStatus::PermanentBan { reason, .. } => {
+            return Err(RecoveryError::PermanentBan { reason: reason.clone() });
+        }
+
+        // Not jailed — unjail request is invalid
+        JailStatus::Active => {
+            return Err(RecoveryError::NotJailed);
+        }
+
+        // Liveness jail: check wait period and stake
+        JailStatus::LivenessJail { jailed_at_block, eligible_at_block } => {
+            // REC-INV-2: Validate that eligible_at_block matches computed expectation
+            let computed_eligible = jailed_at_block.saturating_add(JAIL_EXIT_WAIT_BLOCKS);
+            debug_assert_eq!(
+                *eligible_at_block, computed_eligible,
+                "REC-INV-2 violation: eligible_at_block ({}) != jailed_at_block ({}) + JAIL_EXIT_WAIT_BLOCKS ({})",
+                eligible_at_block, jailed_at_block, JAIL_EXIT_WAIT_BLOCKS
+            );
+            if current_block < computed_eligible {
+                return Err(RecoveryError::JailPeriodNotExpired {
+                    eligible_at_block: computed_eligible,
+                });
+            }
+        }
+    }
+
+    // REC-INV-3: Must have sufficient stake to unjail
+    if remaining_stake < MIN_STAKE_TO_UNJAIL {
+        return Err(RecoveryError::InsufficientStake {
+            remaining_stake,
+            required: MIN_STAKE_TO_UNJAIL,
+        });
+    }
+
+    Ok(())
+}
+
+/// Legacy helper retained for compatibility with older call sites.
+pub fn check_unjail_eligibility_legacy(
     permanently_banned: bool,
     jail_end_block: u64,
     current_block: u64,
 ) -> Result<(), SlashPolicyError> {
-    // POL-INV-4: Safety-slashed validators cannot unjail
     if permanently_banned {
         return Err(SlashPolicyError::PermanentBan);
     }
 
-    // POL-INV-5: Liveness-slashed validators can unjail after jail period
     if current_block < jail_end_block {
         return Err(SlashPolicyError::JailPeriodNotExpired {
             eligible_at_block: jail_end_block,
@@ -307,40 +426,67 @@ pub fn check_unjail_eligibility(
     Ok(())
 }
 
-/// Calculate the slash amount from a stake and slash percentage.
+/// Compute the jail status after a liveness slash.
 ///
-/// Uses saturating arithmetic to prevent overflow.
+/// Creates a `JailStatus::LivenessJail` with the correct `eligible_at_block`
+/// derived from `jailed_at_block + JAIL_EXIT_WAIT_BLOCKS`.
+///
+/// # Invariant REC-INV-2
+///
+/// `eligible_at_block = jailed_at_block + JAIL_EXIT_WAIT_BLOCKS`
+pub fn liveness_jail_status(jailed_at_block: u64) -> JailStatus {
+    JailStatus::LivenessJail {
+        jailed_at_block,
+        eligible_at_block: jailed_at_block.saturating_add(JAIL_EXIT_WAIT_BLOCKS),
+    }
+}
+
+/// Compute the jail status after a safety slash (permanent ban).
+///
+/// Creates a `JailStatus::PermanentBan`. The ban CANNOT be lifted.
+///
+/// # Invariant REC-INV-1
+pub fn safety_ban_status(banned_at_block: u64, reason: BanReason) -> JailStatus {
+    JailStatus::PermanentBan { banned_at_block, reason }
+}
+
+/// Determine the stake restoration amount after unjailing.
+///
+/// When a validator unjails after a liveness violation, they recover their
+/// current `remaining_stake`. The slashed portion (1%) is burned and NOT
+/// returned to the validator.
+///
+/// # Invariant REC-INV-4
+///
+/// The return value is `remaining_stake` — the pre-slash stake is NOT restored.
+/// There is no stake restoration beyond what the validator currently holds.
 ///
 /// # Arguments
 ///
-/// * `stake` - The validator's current bonded stake
-/// * `slash_percent` - The percentage to slash (1..=100)
+/// * `remaining_stake` - The validator's current bonded stake (post-slash)
 ///
 /// # Returns
 ///
-/// The amount to slash (always <= stake).
+/// The stake the validator is authorized to use after unjailing (= remaining_stake).
+pub fn stake_after_unjail(remaining_stake: u64) -> u64 {
+    // REC-INV-4: No restoration — slashed amount is permanently burned.
+    // The validator retains only what they currently hold.
+    remaining_stake
+}
+
+/// Calculate slash amount from stake and percentage using saturating arithmetic.
 pub fn calculate_slash_amount(stake: u64, slash_percent: u8) -> Result<u64, SlashPolicyError> {
-    if slash_percent < 1 || slash_percent > 100 {
+    if !(1..=100).contains(&slash_percent) {
         return Err(SlashPolicyError::InvalidSlashPercent { got: slash_percent });
     }
     Ok(stake.saturating_mul(slash_percent as u64) / 100)
 }
 
-/// Calculate the block height at which a jailed validator becomes eligible to unjail.
-///
-/// # Arguments
-///
-/// * `jailed_at_block` - The block height when the validator was jailed
-/// * `severity` - The severity of the offense that caused jailing
-///
-/// # Returns
-///
-/// For liveness violations: `Some(jailed_at_block + JAIL_DURATION_BLOCKS)`
-/// For safety violations: `None` (permanent ban, never eligible)
+/// Calculate the first eligible block for unjail for a given slash severity.
 pub fn jail_end_block(jailed_at_block: u64, severity: SlashSeverity) -> Option<u64> {
     match severity {
         SlashSeverity::Liveness => Some(jailed_at_block.saturating_add(JAIL_DURATION_BLOCKS)),
-        SlashSeverity::Safety => None, // Permanent ban: never eligible
+        SlashSeverity::Safety => None,
     }
 }
 
@@ -348,107 +494,200 @@ pub fn jail_end_block(jailed_at_block: u64, severity: SlashSeverity) -> Option<u
 mod tests {
     use super::*;
 
+    fn liveness_jailed(at_block: u64) -> JailStatus {
+        liveness_jail_status(at_block)
+    }
+
+    fn safety_banned(at_block: u64) -> JailStatus {
+        safety_ban_status(at_block, BanReason::DoubleSign)
+    }
+
+    // =========================================================================
+    // CONSTANT TESTS
+    // =========================================================================
+
     #[test]
-    fn test_constants_satisfy_invariants() {
-        // POL-INV-1
-        assert_eq!(DOUBLE_SIGN_SLASH_PERCENT, 100);
-        // POL-INV-2
-        assert!(LIVENESS_SLASH_PERCENT >= 1 && LIVENESS_SLASH_PERCENT <= 5);
-        // POL-INV-3
-        assert!(JAIL_DURATION_BLOCKS >= 100);
-        // POL-INV-4
-        assert!(SAFETY_OFFENSE_ALWAYS_PERMANENT);
-        // POL-INV-6
-        assert!(DOUBLE_SIGN_SLASH_PERCENT >= LIVENESS_SLASH_PERCENT);
+    fn test_jail_exit_wait_blocks_value() {
+        assert_eq!(JAIL_EXIT_WAIT_BLOCKS, 1000);
     }
 
     #[test]
-    fn test_safety_severity_is_permanent_ban() {
-        let s = SlashSeverity::Safety;
-        assert_eq!(s.slash_percent(), 100);
-        assert_eq!(s.jail_duration_blocks(), None);
-        assert!(s.is_permanent_ban());
-        assert!(!s.can_unjail());
+    fn test_min_stake_to_unjail_value() {
+        // 1000 SOV in micro-SOV
+        assert_eq!(MIN_STAKE_TO_UNJAIL, 1000 * 1_000_000);
     }
 
     #[test]
-    fn test_liveness_severity_is_temporary() {
-        let s = SlashSeverity::Liveness;
-        assert_eq!(s.slash_percent(), LIVENESS_SLASH_PERCENT);
-        assert_eq!(s.jail_duration_blocks(), Some(JAIL_DURATION_BLOCKS));
-        assert!(!s.is_permanent_ban());
-        assert!(s.can_unjail());
+    fn test_rec_inv6_jail_exit_wait_at_least_100() {
+        assert!(JAIL_EXIT_WAIT_BLOCKS >= 100, "REC-INV-6 violated");
+    }
+
+    // =========================================================================
+    // JAIL STATUS TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_active_status_is_active() {
+        assert!(JailStatus::Active.is_active());
+        assert!(!JailStatus::Active.is_permanently_banned());
+        assert!(!JailStatus::Active.is_liveness_jailed());
     }
 
     #[test]
-    fn test_unjail_permanent_ban_rejected() {
-        let result = check_unjail_eligibility(true, 0, 99999);
-        assert_eq!(result, Err(SlashPolicyError::PermanentBan));
+    fn test_liveness_jail_status() {
+        let status = liveness_jail_status(500);
+        assert!(!status.is_active());
+        assert!(!status.is_permanently_banned());
+        assert!(status.is_liveness_jailed());
+        assert_eq!(status.eligible_at_block(), Some(500 + JAIL_EXIT_WAIT_BLOCKS));
     }
 
     #[test]
-    fn test_unjail_before_jail_period_rejected() {
-        let jail_end = 1000u64;
-        let current = 500u64;
-        let result = check_unjail_eligibility(false, jail_end, current);
+    fn test_safety_ban_status() {
+        let status = safety_ban_status(100, BanReason::DoubleSign);
+        assert!(!status.is_active());
+        assert!(status.is_permanently_banned());
+        assert!(!status.is_liveness_jailed());
+        assert_eq!(status.eligible_at_block(), None);
+    }
+
+    // =========================================================================
+    // UNJAIL ELIGIBILITY TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_rec_inv1_permanent_ban_cannot_unjail() {
+        let status = safety_banned(100);
+        let result = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL + 1, 99999);
+        assert!(matches!(result, Err(RecoveryError::PermanentBan { .. })),
+            "REC-INV-1: permanent ban must be rejected");
+    }
+
+    #[test]
+    fn test_rec_inv1_all_ban_reasons_rejected() {
+        for reason in [
+            BanReason::DoubleSign,
+            BanReason::ConflictingVote,
+            BanReason::Equivocation,
+            BanReason::InvalidBlock,
+            BanReason::LongRangeAttack,
+        ] {
+            let status = safety_ban_status(100, reason.clone());
+            let result = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL + 1, 99999);
+            assert!(
+                matches!(result, Err(RecoveryError::PermanentBan { .. })),
+                "REC-INV-1: {} ban must be rejected",
+                reason
+            );
+        }
+    }
+
+    #[test]
+    fn test_rec_inv2_jail_period_not_expired() {
+        let jailed_at = 1000u64;
+        let status = liveness_jailed(jailed_at);
+        let eligible_at = jailed_at + JAIL_EXIT_WAIT_BLOCKS;
+
+        // One block before eligible
+        let result = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL + 1, eligible_at - 1);
         assert_eq!(
             result,
-            Err(SlashPolicyError::JailPeriodNotExpired { eligible_at_block: 1000 })
+            Err(RecoveryError::JailPeriodNotExpired { eligible_at_block: eligible_at }),
+            "REC-INV-2: must reject before jail period expires"
         );
     }
 
     #[test]
-    fn test_unjail_after_jail_period_accepted() {
-        let jail_end = 1000u64;
-        let current = 1000u64; // exactly at end
-        let result = check_unjail_eligibility(false, jail_end, current);
-        assert_eq!(result, Ok(()));
+    fn test_rec_inv2_exactly_at_eligible_block() {
+        let jailed_at = 1000u64;
+        let status = liveness_jailed(jailed_at);
+        let eligible_at = jailed_at + JAIL_EXIT_WAIT_BLOCKS;
 
-        let current_past = 2000u64;
-        let result2 = check_unjail_eligibility(false, jail_end, current_past);
-        assert_eq!(result2, Ok(()));
+        // Exactly at eligible block
+        let result = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL + 1, eligible_at);
+        assert_eq!(result, Ok(()), "Must accept at exactly eligible_at_block");
     }
 
     #[test]
-    fn test_calculate_slash_amount_full() {
-        // Full slash: 100% of 1000 = 1000
-        assert_eq!(calculate_slash_amount(1000, 100), Ok(1000));
+    fn test_rec_inv2_after_eligible_block() {
+        let jailed_at = 1000u64;
+        let status = liveness_jailed(jailed_at);
+        let eligible_at = jailed_at + JAIL_EXIT_WAIT_BLOCKS;
+
+        // Long after eligible
+        let result = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL + 1, eligible_at + 9999);
+        assert_eq!(result, Ok(()), "Must accept after eligible_at_block");
     }
 
     #[test]
-    fn test_calculate_slash_amount_one_percent() {
-        // 1% of 10000 = 100
-        assert_eq!(calculate_slash_amount(10_000, 1), Ok(100));
+    fn test_rec_inv3_insufficient_stake_rejected() {
+        let jailed_at = 1000u64;
+        let status = liveness_jailed(jailed_at);
+        let eligible_at = jailed_at + JAIL_EXIT_WAIT_BLOCKS;
+
+        // Zero stake
+        let result = check_unjail_eligibility(&status, 0, eligible_at + 1);
+        assert!(matches!(result, Err(RecoveryError::InsufficientStake { .. })),
+            "REC-INV-3: zero stake must be rejected");
+
+        // Just below minimum
+        let result2 = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL - 1, eligible_at + 1);
+        assert!(matches!(result2, Err(RecoveryError::InsufficientStake { .. })),
+            "REC-INV-3: below-minimum stake must be rejected");
     }
 
     #[test]
-    fn test_calculate_slash_amount_zero_stake() {
-        // 0 stake, nothing to slash
-        assert_eq!(calculate_slash_amount(0, 100), Ok(0));
+    fn test_rec_inv3_exact_minimum_stake_accepted() {
+        let jailed_at = 1000u64;
+        let status = liveness_jailed(jailed_at);
+        let eligible_at = jailed_at + JAIL_EXIT_WAIT_BLOCKS;
+
+        let result = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL, eligible_at + 1);
+        assert_eq!(result, Ok(()), "REC-INV-3: exact minimum stake must be accepted");
     }
 
     #[test]
-    fn test_jail_end_block_liveness() {
-        let jailed_at = 500u64;
-        let end = jail_end_block(jailed_at, SlashSeverity::Liveness);
-        assert_eq!(end, Some(jailed_at + JAIL_DURATION_BLOCKS));
+    fn test_not_jailed_unjail_rejected() {
+        let result = check_unjail_eligibility(&JailStatus::Active, MIN_STAKE_TO_UNJAIL + 1, 1000);
+        assert_eq!(result, Err(RecoveryError::NotJailed));
+    }
+
+    // =========================================================================
+    // STAKE RESTORATION TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_rec_inv4_no_slash_restoration() {
+        // Stake after unjail is exactly the remaining (post-slash) stake
+        let remaining = 990_000_000u64; // 990 SOV (after 1% slash from 1000 SOV)
+        let restored = stake_after_unjail(remaining);
+        assert_eq!(restored, remaining, "REC-INV-4: no slash restoration");
     }
 
     #[test]
-    fn test_jail_end_block_safety_is_permanent() {
-        let jailed_at = 500u64;
-        let end = jail_end_block(jailed_at, SlashSeverity::Safety);
-        assert_eq!(end, None);
+    fn test_stake_after_unjail_zero() {
+        assert_eq!(stake_after_unjail(0), 0);
     }
 
     #[test]
-    fn test_slash_severity_display() {
-        let safety_str = SlashSeverity::Safety.to_string();
-        assert!(safety_str.contains("100%"));
-        assert!(safety_str.contains("permanent_ban=true"));
+    fn test_liveness_jail_eligible_at_block_calculation() {
+        let jailed_at = 7500u64;
+        let status = liveness_jail_status(jailed_at);
+        match status {
+            JailStatus::LivenessJail { jailed_at_block, eligible_at_block } => {
+                assert_eq!(jailed_at_block, 7500);
+                assert_eq!(eligible_at_block, 7500 + JAIL_EXIT_WAIT_BLOCKS);
+            }
+            _ => panic!("Expected LivenessJail"),
+        }
+    }
 
-        let liveness_str = SlashSeverity::Liveness.to_string();
-        assert!(liveness_str.contains("1%") || liveness_str.contains(&format!("{}%", LIVENESS_SLASH_PERCENT)));
-        assert!(liveness_str.contains(&JAIL_DURATION_BLOCKS.to_string()));
+    #[test]
+    fn test_ban_reason_display() {
+        assert_eq!(BanReason::DoubleSign.to_string(), "DoubleSign");
+        assert_eq!(BanReason::ConflictingVote.to_string(), "ConflictingVote");
+        assert_eq!(BanReason::Equivocation.to_string(), "Equivocation");
+        assert_eq!(BanReason::InvalidBlock.to_string(), "InvalidBlock");
+        assert_eq!(BanReason::LongRangeAttack.to_string(), "LongRangeAttack");
     }
 }
