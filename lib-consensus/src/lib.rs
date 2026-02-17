@@ -20,6 +20,7 @@ pub mod mining;
 pub mod network;
 pub mod proofs;
 pub mod rewards;
+pub mod slashing;
 pub mod testing;
 pub mod types;
 pub mod validators;
@@ -37,6 +38,11 @@ pub use testing::NoOpBroadcaster;
 pub use types::*;
 pub use validators::{Validator, ValidatorManager};
 pub use evidence::{Evidence, EvidenceStore, EvidenceRecord, SlashingParams, IsolationAction, isolation_action};
+pub use slashing::{
+    JAIL_EXIT_WAIT_BLOCKS, MIN_STAKE_TO_UNJAIL,
+    JailStatus, BanReason, RecoveryError,
+    check_unjail_eligibility, liveness_jail_status, safety_ban_status, stake_after_unjail,
+};
 
 #[cfg(feature = "dao")]
 pub use dao::*;
