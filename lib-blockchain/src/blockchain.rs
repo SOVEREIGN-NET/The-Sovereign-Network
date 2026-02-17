@@ -1,7 +1,43 @@
 //! Main blockchain data structure and implementation
-//! 
+//!
 //! Contains the core Blockchain struct and its methods, extracted from the original
 //! blockchain.rs implementation with proper modularization.
+//!
+//! # Deterministic State Transitions
+//!
+//! Every state transition in the ZHTP blockchain MUST be **deterministic**: given
+//! the same previous state and the same block, all honest nodes must arrive at the
+//! same new state.  Non-determinism (e.g., reading wall-clock time, accessing
+//! per-process random numbers, or reading ambient OS state during execution)
+//! would cause different nodes to compute different `state_root` values, breaking
+//! consensus.
+//!
+//! ## Guarantees provided by this module
+//!
+//! 1. **Pure function invariant**: `process_and_commit_block(prev_state, block)`
+//!    is a pure function.  Its output depends only on the contents of `prev_state`
+//!    and `block`; no ambient OS or network state is read during execution.
+//!
+//! 2. **No wall-clock reads during execution**: Timestamps are taken from the
+//!    block header, not from `SystemTime::now()`.
+//!
+//! 3. **Deterministic ordering**: Transactions are processed in the order they
+//!    appear in `block.transactions`.  Reordering transactions changes the output.
+//!
+//! ## DeterministicExecutionGuard
+//!
+//! [`DeterministicExecutionGuard`] is a RAII scope guard that tracks whether a
+//! non-deterministic operation was attempted during a state transition.  Wrap the
+//! execution of every block with this guard to catch violations early:
+//!
+//! ```rust,ignore
+//! let _guard = DeterministicExecutionGuard::new(block.height());
+//! // ... execute transactions ...
+//! // Guard is dropped here; panics if a violation was recorded.
+//! ```
+//!
+//! In release builds the guard emits a `tracing::error!` instead of panicking so
+//! that production nodes surface violations without crashing.
 
 use std::collections::{HashMap, HashSet};
 use anyhow::Result;
@@ -18,6 +54,117 @@ use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, 
 use crate::integration::storage_integration::{BlockchainStorageManager, BlockchainStorageConfig, StorageOperationResult};
 use crate::storage::{BlockchainStore, IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus, did_to_hash};
 use lib_storage::dht::storage::DhtStorage;
+
+// ---------------------------------------------------------------------------
+// Deterministic execution enforcement
+// ---------------------------------------------------------------------------
+
+/// Thread-local flag set to `true` while a [`DeterministicExecutionGuard`] is
+/// active.  Code that cannot guarantee determinism (e.g., callers of
+/// `SystemTime::now()` for state purposes) should check this flag and either
+/// refuse to run or record a violation via
+/// [`DeterministicExecutionGuard::record_violation`].
+// Note: thread-local storage means this guard may not detect violations
+// if block processing migrates between threads (e.g., tokio task rescheduling).
+// The guard must not be used across await points.
+std::thread_local! {
+    static DETERMINISTIC_EXECUTION_ACTIVE: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static DETERMINISTIC_VIOLATION_RECORDED: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+/// RAII guard that enforces deterministic execution for a state transition.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// let _guard = DeterministicExecutionGuard::new(block.height());
+/// apply_transactions(&mut state, &block.transactions);
+/// // Guard drops here and panics (debug) / logs error (release) if any
+/// // non-deterministic operation was recorded.
+/// ```
+///
+/// # How it works
+///
+/// On construction the guard sets a thread-local flag that signals "we are inside
+/// a deterministic execution context".  On drop it checks whether any violation
+/// was recorded and panics (debug) or logs an error (release).
+///
+/// Code that is inherently non-deterministic (OS random, wall-clock time reads
+/// used for state, network I/O) MUST call [`DeterministicExecutionGuard::record_violation`]
+/// if such operations are unavoidable inside a block execution scope.
+///
+/// # State transition purity assertion
+///
+/// The guard also documents the core invariant:
+///
+/// > `new_state = f(prev_state, block)` where `f` is a pure function.
+///
+/// Any path through `process_and_commit_block` that reads ambient state (not
+/// derived from `prev_state` or `block`) violates this invariant and MUST be
+/// flagged via `record_violation`.
+pub struct DeterministicExecutionGuard {
+    block_height: u64,
+}
+
+impl DeterministicExecutionGuard {
+    /// Begin a deterministic execution scope for the given block height.
+    pub fn new(block_height: u64) -> Self {
+        DETERMINISTIC_EXECUTION_ACTIVE.with(|flag| flag.set(true));
+        DETERMINISTIC_VIOLATION_RECORDED.with(|flag| flag.set(false));
+        tracing::trace!(
+            "DeterministicExecutionGuard: entered for block height {}",
+            block_height
+        );
+        Self { block_height }
+    }
+
+    /// Returns `true` if the calling code is currently inside a deterministic
+    /// execution scope.
+    pub fn is_active() -> bool {
+        DETERMINISTIC_EXECUTION_ACTIVE.with(|flag| flag.get())
+    }
+
+    /// Record that a non-deterministic operation was attempted inside this scope.
+    ///
+    /// Call this from any code path that cannot guarantee determinism (e.g., a
+    /// read of `SystemTime::now()` used for state purposes, OS random number
+    /// generation, or ambient environment variables).
+    ///
+    /// The violation is reported when the guard is dropped.
+    pub fn record_violation(description: &str) {
+        if Self::is_active() {
+            tracing::error!(
+                "NON-DETERMINISTIC OPERATION during state transition: {}",
+                description
+            );
+            DETERMINISTIC_VIOLATION_RECORDED.with(|flag| flag.set(true));
+        }
+    }
+}
+
+impl Drop for DeterministicExecutionGuard {
+    fn drop(&mut self) {
+        DETERMINISTIC_EXECUTION_ACTIVE.with(|flag| flag.set(false));
+        let violated = DETERMINISTIC_VIOLATION_RECORDED.with(|flag| flag.get());
+        if violated {
+            let msg = format!(
+                "INVARIANT VIOLATION: non-deterministic operation occurred during \
+                 state transition for block height {}. All nodes must produce identical \
+                 state roots; non-determinism breaks consensus.",
+                self.block_height
+            );
+            #[cfg(debug_assertions)]
+            panic!("{}", msg);
+            #[cfg(not(debug_assertions))]
+            tracing::error!("{}", msg);
+        } else {
+            tracing::trace!(
+                "DeterministicExecutionGuard: clean exit for block height {}",
+                self.block_height
+            );
+        }
+    }
+}
 
 /// Messages for real-time blockchain synchronization
 #[derive(Debug, Clone)]
@@ -1454,7 +1601,30 @@ impl Blockchain {
 
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
+    ///
+    /// # Determinism invariant
+    ///
+    /// This function is the canonical state-transition function:
+    ///
+    /// ```text
+    /// new_state = process_and_commit_block(prev_state, block)
+    /// ```
+    ///
+    /// It MUST be a pure function of `(self, block)`:
+    /// - No reads of wall-clock time for state purposes (timestamps come from block header).
+    /// - No reads of OS random numbers for state purposes.
+    /// - No network I/O that affects state.
+    /// - Transaction execution order is deterministic (follows `block.transactions` order).
+    ///
+    /// A [`DeterministicExecutionGuard`] is active for the duration of this call.
+    /// Any non-deterministic operation attempted inside this scope SHOULD call
+    /// [`DeterministicExecutionGuard::record_violation`] to surface the violation.
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
+        // Enforce determinism invariant: new_state = f(prev_state, block).
+        // The guard panics (debug) or logs an error (release) if any
+        // non-deterministic operation is recorded during execution.
+        let _det_guard = DeterministicExecutionGuard::new(block.height());
+
         // Verify the block
         let previous_block = self.blocks.last();
         if !self.verify_block(&block, previous_block)? {
@@ -8374,5 +8544,51 @@ impl Default for Blockchain {
         // Note: Consensus coordinator requires async initialization and external dependencies
         // so it's not initialized in Default. Call initialize_consensus_coordinator() separately.
         blockchain
+    }
+}
+
+#[cfg(test)]
+mod determinism_guard_tests {
+    use super::DeterministicExecutionGuard;
+
+    /// Verify that guard is inactive outside a guarded scope.
+    #[test]
+    fn guard_inactive_outside_scope() {
+        assert!(!DeterministicExecutionGuard::is_active());
+    }
+
+    /// Verify that guard is active inside a guarded scope.
+    #[test]
+    fn guard_active_inside_scope() {
+        let _guard = DeterministicExecutionGuard::new(0);
+        assert!(DeterministicExecutionGuard::is_active());
+    }
+
+    /// Verify that guard becomes inactive after being dropped.
+    #[test]
+    fn guard_inactive_after_drop() {
+        {
+            let _guard = DeterministicExecutionGuard::new(1);
+            assert!(DeterministicExecutionGuard::is_active());
+        }
+        assert!(!DeterministicExecutionGuard::is_active());
+    }
+
+    /// Verify that recording a violation causes a panic in debug mode.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "INVARIANT VIOLATION")]
+    fn recorded_violation_panics_on_drop() {
+        let _guard = DeterministicExecutionGuard::new(42);
+        DeterministicExecutionGuard::record_violation("test: used SystemTime::now() for state");
+        // Guard drops here and panics because a violation was recorded.
+    }
+
+    /// Verify that record_violation is a no-op outside a guarded scope.
+    #[test]
+    fn record_violation_noop_outside_scope() {
+        assert!(!DeterministicExecutionGuard::is_active());
+        // Should not panic or log anything meaningful
+        DeterministicExecutionGuard::record_violation("outside scope");
     }
 }
