@@ -1996,7 +1996,18 @@ impl Blockchain {
     ///   - If calculation fails: falls back to `calculate_difficulty_with_config()` using coordinator's config
     ///   - If getting config fails: returns error without fallback (this indicates a consensus layer problem)
     /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters directly
+    /// DEPRECATED: Difficulty adjustment removed (Issue #937)
+    /// BFT consensus does not use Nakamoto-style difficulty adjustment
+    #[allow(dead_code)]
     fn adjust_difficulty(&mut self) -> Result<()> {
+        // No-op: Difficulty adjustment disabled for BFT consensus
+        tracing::debug!("adjust_difficulty called but disabled (Issue #937)");
+        Ok(())
+    }
+
+    /// Original implementation - disabled
+    #[allow(dead_code)]
+    fn adjust_difficulty_original(&mut self) -> Result<()> {
         // Get adjustment parameters and calculate difficulty in a single lock acquisition
         // to avoid race conditions between reading config and calculating adjustment
         if let Some(coordinator) = &self.consensus_coordinator {
@@ -4866,7 +4877,27 @@ impl Blockchain {
     /// - `InvalidProposal`: Proposal has not passed voting
     /// - `InvalidProposal`: Wrong proposal type
     /// - `ParameterValidationError`: New parameters fail validation
+    ///
+    /// DEPRECATED: Difficulty governance removed (Issue #937)
+    #[deprecated(since = "2.0.0", note = "Difficulty governance removed - BFT consensus only")]
     pub fn apply_difficulty_parameter_update(&mut self, proposal_id: Hash) -> Result<()> {
+        // No-op: Just mark as executed to maintain DAO state consistency
+        tracing::warn!(
+            "apply_difficulty_parameter_update called but disabled (Issue #937) for proposal {:?}",
+            proposal_id
+        );
+
+        // Mark as executed to prevent repeated attempts
+        if !self.executed_dao_proposals.contains(&proposal_id) {
+            self.executed_dao_proposals.insert(proposal_id);
+        }
+
+        Ok(())
+    }
+
+    /// Original implementation - disabled
+    #[allow(dead_code)]
+    fn apply_difficulty_parameter_update_original(&mut self, proposal_id: Hash) -> Result<()> {
         // 0. Check if already executed (prevent double-execution)
         if self.executed_dao_proposals.contains(&proposal_id) {
             debug!(
