@@ -192,7 +192,7 @@ fn test_fault_processing_and_slashing() -> Result<()> {
     let faults = detector.detect_faults(&validator_manager)?;
 
     // Process the faults (apply slashing)
-    detector.process_faults(faults, &mut validator_manager)?;
+    detector.process_faults(faults, &mut validator_manager, 100)?;
 
     // Verify slashing was applied
     let validator = validator_manager.get_validator(&validator_id).unwrap();

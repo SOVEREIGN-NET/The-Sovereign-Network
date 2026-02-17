@@ -255,10 +255,16 @@ impl ByzantineFaultDetector {
     }
 
     /// Process detected faults and apply penalties
+    ///
+    /// # Arguments
+    /// * `faults` - List of detected Byzantine faults
+    /// * `validator_manager` - Validator manager to apply slashing
+    /// * `current_block` - Current block height for jail tracking
     pub fn process_faults(
         &mut self,
         faults: Vec<ByzantineFault>,
         validator_manager: &mut ValidatorManager,
+        current_block: u64,
     ) -> Result<()> {
         for fault in faults {
             match fault.fault_type {
@@ -272,6 +278,7 @@ impl ByzantineFaultDetector {
                         &fault.validator,
                         SlashType::DoubleSign,
                         slash_percentage,
+                        current_block,
                     ) {
                         tracing::warn!("Failed to slash validator for double signing: {}", e);
                     }
@@ -286,6 +293,7 @@ impl ByzantineFaultDetector {
                         &fault.validator,
                         SlashType::Liveness,
                         slash_percentage,
+                        current_block,
                     ) {
                         tracing::warn!("Failed to slash validator for liveness violation: {}", e);
                     }
@@ -295,6 +303,7 @@ impl ByzantineFaultDetector {
                         &fault.validator,
                         SlashType::InvalidProposal,
                         2, // 2% slash for invalid proposals
+                        current_block,
                     ) {
                         tracing::warn!("Failed to slash validator for invalid proposal: {}", e);
                     }
