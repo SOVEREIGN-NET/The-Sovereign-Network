@@ -39,14 +39,19 @@ fn create_test_transaction(memo: &str) -> Result<Transaction> {
     Ok(transaction)
 }
 
-// Helper function to create a validator info for testing
+// Helper function to create a validator info for testing.
+// Each of the three keys uses a distinct byte pattern to satisfy the key separation invariant.
 fn create_test_validator(id: &str, stake: u64) -> ValidatorInfo {
     ValidatorInfo {
         identity_id: id.to_string(),
         stake,
         storage_provided: 1000000u64,
-        // Use realistic 32-byte key size (similar to post-quantum key representations)
+        // consensus_key: BFT vote-signing key (Dilithium2, hot)
         consensus_key: vec![1u8; 32],
+        // networking_key: P2P transport identity key (Ed25519/X25519, hot)
+        networking_key: vec![2u8; 32],
+        // rewards_key: Rewards wallet public key (cold-capable)
+        rewards_key: vec![3u8; 32],
         network_address: format!("127.0.0.1:{}", 8000 + stake % 1000),
         commission_rate: 5u8,
         status: "active".to_string(),
@@ -54,6 +59,10 @@ fn create_test_validator(id: &str, stake: u64) -> ValidatorInfo {
         last_activity: 1000u64,
         blocks_validated: 0u64,
         slash_count: 0u32,
+        // Test validators use the genesis off-chain source by convention since they are
+        // registered at height 0 in the test harness.
+        admission_source: lib_blockchain::blockchain::ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string(),
+        governance_proposal_id: None,
     }
 }
 
@@ -82,21 +91,16 @@ fn create_mined_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -
         crate::transaction::hashing::calculate_transaction_merkle_root(&transactions)
     };
     
-    let mut header = BlockHeader::new(
+    let header = BlockHeader::new(
         1,
         blockchain.latest_block().unwrap().hash(),
         merkle_root,
         blockchain.latest_block().unwrap().timestamp() + 10,
-        mining_config.difficulty,
         blockchain.height + 1,
         transactions.len() as u32,
         transactions.iter().map(|tx| tx.size()).sum::<usize>() as u32,
-        mining_config.difficulty,
     );
-    
-    // Set nonce to 0 for easy difficulty
-    header.set_nonce(0);
-    
+
     Ok(Block::new(header, transactions))
 }
 
@@ -310,29 +314,25 @@ async fn test_block_verification() -> Result<()> {
         blockchain.latest_block().unwrap().hash(),
         Hash::default(),
         blockchain.latest_block().unwrap().timestamp() + 10,
-        mining_config.difficulty,
         1,
         0,
         0,
-        mining_config.difficulty,
     );
-    
+
     let valid_block = Block::new(valid_header, Vec::new());
-    
+
     // Should verify successfully
     assert!(blockchain.verify_block(&valid_block, blockchain.latest_block())?);
-    
+
     // Create an invalid block (wrong previous hash)
     let invalid_header = BlockHeader::new(
         1,
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?, // Wrong previous hash
         Hash::default(),
         blockchain.latest_block().unwrap().timestamp() + 10,
-        mining_config.difficulty,
         1,
         0,
         0,
-        mining_config.difficulty,
     );
     
     let invalid_block = Block::new(invalid_header, Vec::new());

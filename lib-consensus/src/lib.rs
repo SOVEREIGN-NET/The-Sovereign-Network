@@ -20,9 +20,11 @@ pub mod mining;
 pub mod network;
 pub mod proofs;
 pub mod rewards;
+pub mod slashing;
 pub mod testing;
 pub mod types;
 pub mod validators;
+pub mod fault_model;
 
 // Re-export commonly used types
 pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
@@ -35,8 +37,23 @@ pub use network::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
 pub use proofs::*;
 pub use testing::NoOpBroadcaster;
 pub use types::*;
-pub use validators::{Validator, ValidatorManager};
+pub use validators::{
+    Validator, ValidatorManager,
+    MIN_VALIDATORS, MAX_VALIDATORS, MAX_VALIDATORS_HARD_CAP,
+};
 pub use evidence::{Evidence, EvidenceStore, EvidenceRecord, SlashingParams, IsolationAction, isolation_action};
+pub use slashing::{
+    DOUBLE_SIGN_SLASH_PERCENT,
+    LIVENESS_SLASH_PERCENT,
+    JAIL_DURATION_BLOCKS,
+    SAFETY_OFFENSE_ALWAYS_PERMANENT,
+    REMOVAL_SLASH_COUNT,
+    SlashSeverity,
+    SlashPolicyError,
+    check_unjail_eligibility,
+    calculate_slash_amount,
+    jail_end_block,
+};
 
 #[cfg(feature = "dao")]
 pub use dao::*;
@@ -142,3 +159,4 @@ mod tests {
         assert!(result.is_ok());
     }
 }
+pub mod finality_model;

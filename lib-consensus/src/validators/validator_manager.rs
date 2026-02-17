@@ -6,10 +6,26 @@ use anyhow::Result;
 use lib_identity::IdentityId;
 use std::collections::HashMap;
 
-/// Trait for validator info structures that can be synced from blockchain
+/// Minimum validator count required for BFT safety.
+pub const MIN_VALIDATORS: usize = crate::types::MIN_BFT_VALIDATORS;
+/// Default governance target for maximum active validators.
+pub const MAX_VALIDATORS: u32 = 100;
+/// Hard protocol cap for maximum active validators.
+pub const MAX_VALIDATORS_HARD_CAP: u32 = 256;
+
+/// Trait for validator info structures that can be synced from blockchain.
 ///
-/// This allows ValidatorManager to sync from different validator data sources
+/// This allows `ValidatorManager` to sync from different validator data sources
 /// (blockchain registry, genesis config, etc.) without tight coupling.
+///
+/// # Key Separation
+///
+/// Implementors MUST return three distinct keys from [`consensus_key`],
+/// [`networking_key`], and [`rewards_key`].  `ValidatorManager::sync_from_validator_list`
+/// delegates key-separation enforcement to [`ValidatorManager::register_validator`],
+/// which checks that no two keys are equal before inserting a new validator.
+///
+/// See [`Validator`] for a full description of each key's role.
 pub trait ValidatorInfo {
     /// Get validator identity
     fn identity_id(&self) -> IdentityId;
@@ -17,8 +33,21 @@ pub trait ValidatorInfo {
     fn stake(&self) -> u64;
     /// Get storage provided
     fn storage_provided(&self) -> u64;
-    /// Get consensus key
+    /// Get the BFT vote-signing key (Dilithium2, hot).
+    ///
+    /// Used exclusively for signing block proposals, pre-votes, pre-commits, and
+    /// view-change messages.  MUST differ from [`networking_key`] and [`rewards_key`].
     fn consensus_key(&self) -> Vec<u8>;
+    /// Get the P2P transport identity key (Ed25519/X25519, hot).
+    ///
+    /// Used for QUIC TLS handshakes, DHT node ID derivation, and peer authentication.
+    /// MUST differ from [`consensus_key`] and [`rewards_key`].
+    fn networking_key(&self) -> Vec<u8>;
+    /// Get the rewards wallet public key (cold-capable).
+    ///
+    /// Identifies the wallet that receives block rewards and protocol fee distributions.
+    /// MUST differ from [`consensus_key`] and [`networking_key`].
+    fn rewards_key(&self) -> Vec<u8>;
     /// Get commission rate
     fn commission_rate(&self) -> u8;
 }
@@ -65,13 +94,27 @@ impl ValidatorManager {
         }
     }
 
-    /// Register a new validator
+    /// Register a new validator.
+    ///
+    /// # Key Separation Enforcement
+    ///
+    /// The three key parameters — `consensus_key`, `networking_key`, and `rewards_key`
+    /// — MUST all be non-empty and pairwise distinct.  Registration is rejected with a
+    /// descriptive error if any two keys are equal.
+    ///
+    /// | Key | Role | Exposure |
+    /// |-----|------|----------|
+    /// | `consensus_key` | BFT vote signing (Dilithium2) | Hot |
+    /// | `networking_key` | P2P transport identity (Ed25519/X25519) | Hot |
+    /// | `rewards_key` | Reward wallet public key | Cold-capable |
     pub fn register_validator(
         &mut self,
         identity: IdentityId,
         stake: u64,
         storage_provided: u64,
         consensus_key: Vec<u8>,
+        networking_key: Vec<u8>,
+        rewards_key: Vec<u8>,
         commission_rate: u8,
     ) -> Result<()> {
         // Check minimum requirements - ONLY stake is required for validators
@@ -99,12 +142,43 @@ impl ValidatorManager {
             return Err(anyhow::anyhow!("Validator already registered"));
         }
 
+        // KEY SEPARATION ASSERTIONS
+        if consensus_key.is_empty() {
+            return Err(anyhow::anyhow!("consensus_key must not be empty"));
+        }
+        if networking_key.is_empty() {
+            return Err(anyhow::anyhow!("networking_key must not be empty"));
+        }
+        if rewards_key.is_empty() {
+            return Err(anyhow::anyhow!("rewards_key must not be empty"));
+        }
+        if consensus_key == networking_key {
+            return Err(anyhow::anyhow!(
+                "Key separation violation: consensus_key and networking_key must be different. \
+                 Reusing the same key across roles collapses security domain boundaries."
+            ));
+        }
+        if consensus_key == rewards_key {
+            return Err(anyhow::anyhow!(
+                "Key separation violation: consensus_key and rewards_key must be different. \
+                 A compromised consensus key must not give an attacker control over staking rewards."
+            ));
+        }
+        if networking_key == rewards_key {
+            return Err(anyhow::anyhow!(
+                "Key separation violation: networking_key and rewards_key must be different. \
+                 A compromised network identity key must not give an attacker access to reward funds."
+            ));
+        }
+
         // Create new validator
         let validator = Validator::new(
             identity.clone(),
             stake,
             storage_provided,
             consensus_key,
+            networking_key,
+            rewards_key,
             commission_rate,
         );
 
@@ -328,6 +402,8 @@ impl ValidatorManager {
                 validator_info.stake(),
                 validator_info.storage_provided(),
                 validator_info.consensus_key(),
+                validator_info.networking_key(),
+                validator_info.rewards_key(),
                 validator_info.commission_rate(),
             ) {
                 Ok(_) => {

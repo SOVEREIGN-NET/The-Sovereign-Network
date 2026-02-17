@@ -1961,13 +1961,21 @@ mod tests {
             let pk = lib_crypto::PublicKey::new(validator_kp.public_key.dilithium_pk.clone());
             format!("did:zhtp:{}", hex::encode(pk.key_id))
         };
+        // Use distinct byte patterns for each key role to satisfy the key separation invariant.
+        let consensus_key = validator_kp.public_key.dilithium_pk.clone();
+        let mut networking_key = validator_kp.public_key.dilithium_pk.clone();
+        networking_key.iter_mut().for_each(|b| *b ^= 0xFF); // distinct from consensus_key
+        let mut rewards_key = validator_kp.public_key.dilithium_pk.clone();
+        rewards_key.iter_mut().for_each(|b| *b = b.wrapping_add(1)); // distinct from others
         bc.validator_registry.insert(
             validator_did.clone(),
             lib_blockchain::ValidatorInfo {
                 identity_id: validator_did,
                 stake: 1_000,
                 storage_provided: 0,
-                consensus_key: validator_kp.public_key.dilithium_pk.clone(),
+                consensus_key,
+                networking_key,
+                rewards_key,
                 network_address: "127.0.0.1:0".to_string(),
                 commission_rate: 0,
                 status: "active".to_string(),
@@ -1975,6 +1983,10 @@ mod tests {
                 last_activity: 0,
                 blocks_validated: 0,
                 slash_count: 0,
+                // Test helper: use genesis (off-chain) source since this is inserted
+                // directly into the registry at height 0 for testing purposes.
+                admission_source: lib_blockchain::blockchain::ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string(),
+                governance_proposal_id: None,
             },
         );
 

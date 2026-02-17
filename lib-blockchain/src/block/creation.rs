@@ -5,7 +5,7 @@
 use anyhow::Result;
 use crate::block::{Block, BlockHeader};
 use crate::transaction::Transaction;
-use crate::types::{Hash, Difficulty};
+use crate::types::{Difficulty, Hash, MiningConfig};
 
 /// Block builder for constructing new blocks
 #[derive(Debug)]
@@ -69,14 +69,11 @@ impl BlockBuilder {
     pub fn build(self) -> Result<Block> {
         // Calculate merkle root
         let merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
-        
+
         // Calculate block size
         let transaction_count = self.transactions.len() as u32;
         let block_size = self.calculate_block_size();
-        
-        // Calculate cumulative difficulty (simplified)
-        let cumulative_difficulty = self.difficulty;
-        
+
         // Create header
         let header = BlockHeader::new(
             self.version,
@@ -87,7 +84,7 @@ impl BlockBuilder {
             self.height,
             transaction_count,
             block_size,
-            cumulative_difficulty,
+            self.difficulty,
         );
 
         Ok(Block::new(header, self.transactions))
@@ -118,47 +115,53 @@ pub fn create_block(
 
 /// Create genesis block
 pub fn create_genesis_block_with_transactions(transactions: Vec<Transaction>) -> Result<Block> {
-    BlockBuilder::new(Hash::default(), 0, Difficulty::minimum())
+    BlockBuilder::new(Hash::default(), 0, Difficulty::maximum())
         .timestamp(crate::GENESIS_TIMESTAMP)
         .transactions(transactions)
         .build()
 }
 
-// PoW mining functions removed as part of BFT-A-935
-// Stub implementations provided for backward compatibility
-// These functions now just return the block without PoW mining
-
-/// Legacy mine_block stub - no longer performs PoW mining
-///
-/// # Deprecated
-/// This function is deprecated and will be removed in a future version.
-/// Blocks are now validated through BFT consensus, not PoW.
-#[deprecated(note = "PoW mining removed - blocks validated through BFT consensus")]
-pub fn mine_block(block: Block, _max_iterations: u64) -> Result<Block> {
-    tracing::debug!("mine_block called but PoW mining is disabled (BFT-A-935)");
-    Ok(block)
+/// Mine a block with a bounded number of nonce iterations.
+pub fn mine_block(block: Block, max_iterations: u64) -> Result<Block> {
+    let mut config = MiningConfig::testnet();
+    config.max_iterations = max_iterations;
+    config.difficulty = block.header.difficulty;
+    mine_block_with_config(block, &config)
 }
 
-/// Legacy mine_block_with_config stub - no longer performs PoW mining
-///
-/// # Deprecated
-/// This function is deprecated and will be removed in a future version.
-/// Blocks are now validated through BFT consensus, not PoW.
-#[deprecated(note = "PoW mining removed - blocks validated through BFT consensus")]
-pub fn mine_block_with_config(block: Block, _config: &crate::types::MiningConfig) -> Result<Block> {
-    tracing::debug!("mine_block_with_config called but PoW mining is disabled (BFT-A-935)");
-    Ok(block)
+/// Mine a block using a provided mining configuration.
+pub fn mine_block_with_config(mut block: Block, config: &MiningConfig) -> Result<Block> {
+    block.header.difficulty = config.difficulty;
+
+    if config.allow_instant_mining {
+        block.header.nonce = 0;
+        block.header.block_hash = block.header.calculate_hash();
+        return Ok(block);
+    }
+
+    for nonce in 0..config.max_iterations {
+        block.header.nonce = nonce;
+        let block_hash = block.header.calculate_hash();
+        if config.difficulty.check_hash(&block_hash) {
+            block.header.block_hash = block_hash;
+            return Ok(block);
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "failed to mine block within {} iterations",
+        config.max_iterations
+    ))
 }
 
-/// Estimate block creation time
-pub fn estimate_block_time(transaction_count: usize, difficulty: Difficulty) -> u64 {
-    // Very rough estimation based on transaction count and difficulty
-    let base_time = 10; // 10 seconds base
-    let tx_time = transaction_count as u64 / 100; // 100 tx/second processing
-    let difficulty_factor = difficulty.bits() >> 24; // Rough difficulty scaling
-    
-    base_time + tx_time + difficulty_factor as u64
+/// Estimate expected mining time in seconds at a given hash rate.
+pub fn estimate_block_time(difficulty: Difficulty, hash_rate_hps: f64) -> f64 {
+    if hash_rate_hps <= 0.0 {
+        return f64::INFINITY;
+    }
+    (difficulty.bits() as f64).max(1.0) / hash_rate_hps
 }
+
 
 /// Select transactions for block creation
 pub fn select_transactions_for_block(

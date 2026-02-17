@@ -836,14 +836,12 @@ mod tests {
             version: 1,
             previous_block_hash: prev_hash,
             merkle_root: Hash::default(),
+            state_root: Hash::default(),
             timestamp: 1000 + height,
-            difficulty: Difficulty::default(),
-            nonce: 0,
             height,
             block_hash,
             transaction_count: 0,
             block_size: 0,
-            cumulative_difficulty: Difficulty::default(),
             fee_model_version: 2, // Phase 2+ uses v2
         };
         Block::new(header, vec![])

@@ -1,5 +1,154 @@
+//! Consensus Validation and Nondeterminism Detection
+//!
+//! This module implements strict validation rules for BFT consensus and provides
+//! fail-fast detection of nondeterministic operations that could lead to chain splits.
+//!
+//! # Determinism Guarantees
+//!
+//! All validation functions in this module are designed to be **deterministic**:
+//! given the same inputs, they always produce the same output on every node.
+//! This is a hard requirement for BFT consensus — if two honest validators
+//! disagree about whether a block is valid, liveness is broken.
+//!
+//! ## Determinism Rules Enforced Here
+//!
+//! 1. **Validator set is snapshot-based**: [`ConsensusEngine::is_validator_member`]
+//!    looks up a *snapshot* of the validator set at the target height, not the
+//!    current live set.  This makes membership checks a pure function of height.
+//!
+//! 2. **Signature verification is stateless**: [`ConsensusEngine::verify_signature`]
+//!    and [`ConsensusEngine::verify_vote_signature`] depend only on the provided
+//!    data and the public key stored in the validator registry — no ambient state.
+//!
+//! 3. **Vote data is reconstructed deterministically**: The signed bytes fed into
+//!    [`ConsensusEngine::verify_vote_signature`] are derived solely from the vote
+//!    fields (id, voter, proposal_id, vote_type, height, round).
+//!
+//! 4. **State transitions are pure**: [`ConsensusEngine::validate_remote_vote`]
+//!    returns the same `bool` for the same `(vote, engine_state)` pair regardless
+//!    of wall-clock time or process identity.
+//!
+//! # Nondeterminism Detection
+//!
+//! Blockchain consensus requires deterministic execution across all validators.
+//! Nondeterministic inputs such as:
+//! - Wall-clock time (SystemTime::now(), chrono::Utc::now())
+//! - Random number generation (rand::random(), OsRng)
+//! - Network timing
+//! - Thread scheduling
+//!
+//! Can cause different validators to reach different conclusions about the same block,
+//! leading to chain splits and consensus failures.
+//!
+//! ## Fail-Fast Guards
+//!
+//! This module provides runtime guards that detect nondeterministic operations during
+//! consensus-critical sections:
+//!
+//! 1. **Consensus scope guards**: Mark critical sections where nondeterminism is forbidden
+//! 2. **Assertion helpers**: Panic immediately if nondeterministic ops are detected
+//! 3. **Integration points**: Hook into time/random utilities to enforce determinism
+//! ## Usage
+//!
+//! Consensus-critical code sections are wrapped with scope guards:
+//!
+//! ```rust,ignore
+//! determinism_guard::enter_consensus_scope();
+//! let _guard = scopeguard::guard((), |_| {
+//!     determinism_guard::exit_consensus_scope();
+//! });
+//! // ... consensus logic here ...
+//! ```
+//!
+//! Any attempt to access nondeterministic sources during this section will panic
+//! with a clear error message indicating the violation.
+
 use super::*;
 use lib_crypto::PostQuantumSignature;
+
+/// Assert that a state transition is deterministic by executing it twice and
+/// comparing the results.
+///
+/// # Parameters
+///
+/// - `label`: Human-readable name of the transition (for error messages).
+/// - `prev_state_hash`: A hash of the initial state before the transition.
+/// - `block_hash`: The hash of the block being applied.
+/// - `result_state_hash_1`: State root produced by the first execution.
+/// - `result_state_hash_2`: State root produced by the second execution.
+///
+/// # Panics (debug) / Logs error (release)
+///
+/// Panics if the two result hashes differ, indicating that the transition is
+/// non-deterministic.
+pub fn assert_deterministic_state_transition(
+    label: &str,
+    prev_state_hash: &[u8; 32],
+    block_hash: &[u8; 32],
+    result_state_hash_1: &[u8; 32],
+    result_state_hash_2: &[u8; 32],
+) {
+    if result_state_hash_1 != result_state_hash_2 {
+        let msg = format!(
+            "NON-DETERMINISTIC state transition detected in '{}': \
+             prev_state={}, block={}, result1={}, result2={}. \
+             State transitions must be pure functions of (prev_state, block).",
+            label,
+            hex::encode(prev_state_hash),
+            hex::encode(block_hash),
+            hex::encode(result_state_hash_1),
+            hex::encode(result_state_hash_2),
+        );
+        #[cfg(debug_assertions)]
+        panic!("{}", msg);
+        #[cfg(not(debug_assertions))]
+        tracing::error!("{}", msg);
+    }
+}
+
+/// Nondeterminism detection guard
+///
+/// This module provides runtime checks to detect nondeterministic behavior
+/// during consensus execution. Nondeterministic operations like system time
+/// access or random number generation during consensus can lead to chain splits.
+pub(super) mod determinism_guard {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CONSENSUS_ACTIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    /// Mark consensus as active (during critical consensus operations)
+    pub fn enter_consensus_scope() {
+        CONSENSUS_ACTIVE_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Mark consensus as inactive
+    pub fn exit_consensus_scope() {
+        let prev = CONSENSUS_ACTIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
+        debug_assert!(prev > 0, "exit_consensus_scope called more times than enter_consensus_scope");
+    }
+
+    /// Check if we're currently in a consensus-critical section
+    pub fn is_consensus_active() -> bool {
+        CONSENSUS_ACTIVE_COUNT.load(Ordering::SeqCst) > 0
+    }
+
+    /// Assert that no nondeterministic operation is occurring during consensus
+    ///
+    /// # Panics
+    ///
+    /// Panics if called during active consensus with details about the violation
+    #[track_caller]
+    pub fn assert_no_nondeterminism(operation: &str) {
+        if is_consensus_active() {
+            panic!(
+                "CONSENSUS NONDETERMINISM DETECTED: {} called during active consensus. \
+                This operation can lead to chain splits. Location: {}",
+                operation,
+                std::panic::Location::caller()
+            );
+        }
+    }
+}
 
 impl ConsensusEngine {
     /// Verify a signature
@@ -259,5 +408,111 @@ impl ConsensusEngine {
         }
 
         Ok(())
+    }
+
+    /// Validate that a block proposal does not create a fork.
+    ///
+    /// # BFT Fork Invariant
+    ///
+    /// In Byzantine Fault Tolerant (BFT) consensus, **forks are invalid by definition**.
+    /// Once 2/3+1 validators have committed a block at height H with hash X, that block
+    /// is final and irreversible. Any proposal arriving at height H with a different block
+    /// hash Y is a fork attempt and MUST be rejected immediately.
+    ///
+    /// This property differs fundamentally from Nakamoto (PoW) consensus:
+    /// - In PoW, forks are possible and resolved by longest-chain rule.
+    /// - In BFT, finality is immediate: a committed block cannot be replaced.
+    ///   A conflicting proposal is therefore provably invalid, not merely a candidate.
+    ///
+    /// # Arguments
+    /// * `proposal_height` - The height claimed by the incoming proposal
+    /// * `proposal_id` - The block/proposal hash of the incoming proposal (for logging)
+    ///
+    /// # Errors
+    /// Returns `ConsensusError::ByzantineFault` if the proposal height already has a
+    /// different committed block. The error message identifies the conflicting hashes
+    /// so the evidence can be used for validator accountability.
+    ///
+    /// # Invariant
+    /// This check MUST be applied to every incoming proposal before it is accepted
+    /// into the pending proposal queue. It is a hard gate: a fork proposal is never
+    /// stored, never voted on, and never forwarded to peers.
+    pub(super) fn validate_no_fork_proposal(
+        &self,
+        proposal_height: u64,
+        proposal_id: &Hash,
+    ) -> ConsensusResult<()> {
+        // If the proposal is for a height strictly below the current round height,
+        // it is for an already-committed block. Reject it unconditionally.
+        //
+        // Note: current_round.height is the height we are currently deciding.
+        // All heights below it have already been committed and are immutable in BFT.
+        if proposal_height < self.current_round.height {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "BFT FORK REJECTED: proposal {:?} targets height {} which is below the \
+                 current proposal height {}. In BFT consensus, committed blocks are \
+                 final and irreversible. A proposal for an already-committed height is \
+                 an invalid fork attempt and is rejected immediately.",
+                proposal_id,
+                proposal_height,
+                self.current_round.height,
+            )));
+        }
+
+        // If the proposal targets the current round height but there is already an
+        // agreed-upon proposal (valid_proposal) at this height with a different hash,
+        // reject it as a fork.
+        //
+        // This can happen if consensus committed a block in a prior round but the
+        // engine has not yet advanced to the next height. Any conflicting proposal
+        // at the same height is a fork and MUST be rejected.
+        if proposal_height == self.current_round.height {
+            // Check if we already have an agreed-upon block at this height (valid_proposal
+            // represents the agreed-upon value in the current round).
+            // A non-nil valid_proposal that differs from the incoming proposal signals a fork.
+            if let Some(committed_id) = &self.current_round.valid_proposal {
+                if committed_id != proposal_id {
+                    return Err(ConsensusError::ByzantineFault(format!(
+                        "BFT FORK REJECTED: proposal {:?} conflicts with already-agreed \
+                         proposal {:?} at height {}. In BFT consensus, once 2/3+1 validators \
+                         have pre-committed a block, no other block is valid at that height. \
+                         This conflicting proposal is an invalid fork attempt.",
+                        proposal_id,
+                        committed_id,
+                        proposal_height,
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod determinism_tests {
+    use super::assert_deterministic_state_transition;
+
+    /// Verify that identical executions are accepted as deterministic.
+    #[test]
+    fn identical_state_transitions_pass() {
+        let prev = [0u8; 32];
+        let block = [1u8; 32];
+        let result = [2u8; 32];
+        // Should not panic: both results are the same.
+        assert_deterministic_state_transition("test_transition", &prev, &block, &result, &result);
+    }
+
+    /// Verify that differing executions are flagged as non-deterministic.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "NON-DETERMINISTIC state transition detected")]
+    fn differing_state_transitions_panic() {
+        let prev = [0u8; 32];
+        let block = [1u8; 32];
+        let result1 = [2u8; 32];
+        let mut result2 = [2u8; 32];
+        result2[0] = 0xff; // differs in first byte
+        assert_deterministic_state_transition("test_transition", &prev, &block, &result1, &result2);
     }
 }

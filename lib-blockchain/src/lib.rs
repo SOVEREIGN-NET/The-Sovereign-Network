@@ -20,7 +20,7 @@ pub mod utils;
 pub mod edge_node_state;
 pub mod dht_index;
 pub mod receipts;
-pub mod fork_recovery;
+mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
 pub mod events;
 pub mod byzantine_evidence;
 pub mod storage;
@@ -31,6 +31,7 @@ pub mod sync;
 pub mod protocol;
 pub mod resources;
 pub mod snapshot;
+pub mod vm;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
@@ -74,7 +75,8 @@ pub use block::{
 
 // Blockchain module
 pub use blockchain::{
-    Blockchain, BlockchainImport, BlockchainBroadcastMessage, EconomicsTransaction, ValidatorInfo
+    Blockchain, BlockchainImport, BlockchainBroadcastMessage, EconomicsTransaction, ValidatorInfo,
+    ConsensusCheckpoint
 };
 
 // Mempool module
@@ -313,3 +315,4 @@ pub struct BlockchainInfo {
 // Use zhtp::runtime::blockchain_provider::get_global_blockchain() instead.
 // This provides better control over blockchain initialization and lifecycle.
 
+pub mod execution_limits;
