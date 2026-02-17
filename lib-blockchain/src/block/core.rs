@@ -24,33 +24,13 @@ pub struct BlockHeader {
     pub previous_block_hash: Hash,
     /// Merkle root of all transactions in this block
     pub merkle_root: Hash,
-    /// Canonical state commitment (state root hash)
-    ///
-    /// This field provides an explicit, deterministic commitment to the entire
-    /// blockchain state at this block height. It enables:
-    /// - Deterministic state verification across all nodes
-    /// - Light client state proofs
-    /// - Fork detection and resolution
-    /// - State synchronization checkpoints
-    ///
-    /// The state_root is computed from all consensus-critical state including:
-    /// - UTXO set
-    /// - Identity registry
-    /// - Wallet registry
-    /// - Contract state
-    /// - Governance state
-    ///
-    /// This is a consensus-critical field that MUST be verified by all nodes.
-    #[serde(default = "default_state_root")]
-    pub state_root: Hash,
     /// Block creation timestamp
     pub timestamp: u64,
-    // Retained for API backward compatibility but not used in BFT consensus.
-    // These PoW fields are ignored in BFT consensus (Issue #935, #947).
-    // When full PoW removal is complete (Issue #947), these will be removed.
-    /// Current difficulty target
+    /// Current difficulty target (not serialized - PoW removed)
+    #[serde(skip, default)]
     pub difficulty: Difficulty,
-    /// Mining nonce for proof-of-work
+    /// Mining nonce for proof-of-work (not serialized - PoW removed)
+    #[serde(skip, default)]
     pub nonce: u64,
     /// Block height in the chain
     pub height: u64,
@@ -60,7 +40,8 @@ pub struct BlockHeader {
     pub transaction_count: u32,
     /// Total size of the block in bytes
     pub block_size: u32,
-    /// Cumulative difficulty from genesis
+    /// Cumulative difficulty from genesis (not serialized - PoW removed)
+    #[serde(skip, default)]
     pub cumulative_difficulty: Difficulty,
     /// Fee model version for this block (Phase 3B)
     ///
@@ -76,11 +57,6 @@ pub struct BlockHeader {
 /// Default fee model version for backwards compatibility
 fn default_fee_model_version() -> u16 {
     1 // Legacy default for deserializing old blocks
-}
-
-/// Default state root for backwards compatibility
-fn default_state_root() -> Hash {
-    Hash::default() // Empty state root for deserializing old blocks
 }
 
 impl Block {
@@ -189,6 +165,12 @@ impl Block {
         matches
     }
 
+    /// Verify the block meets the difficulty target
+    pub fn meets_difficulty_target(&self) -> bool {
+        let block_hash = self.hash();
+        self.header.difficulty.meets_target(&block_hash)
+    }
+
     /// Get all transaction IDs in the block
     pub fn transaction_ids(&self) -> Vec<Hash> {
         self.transactions.iter().map(|tx| tx.hash()).collect()
@@ -240,41 +222,6 @@ impl BlockHeader {
             version,
             previous_block_hash,
             merkle_root,
-            state_root: Hash::default(), // Will be set by blockchain after state update
-            timestamp,
-            difficulty,
-            nonce: 0,
-            height,
-            block_hash: Hash::default(),
-            transaction_count,
-            block_size,
-            cumulative_difficulty,
-            fee_model_version: 1, // Default to v1 for backwards compatibility
-        };
-
-        // Calculate and set the block hash
-        header.block_hash = header.calculate_hash();
-        header
-    }
-
-    /// Create a new block header with explicit state root
-    pub fn new_with_state_root(
-        version: u32,
-        previous_block_hash: Hash,
-        merkle_root: Hash,
-        state_root: Hash,
-        timestamp: u64,
-        difficulty: Difficulty,
-        height: u64,
-        transaction_count: u32,
-        block_size: u32,
-        cumulative_difficulty: Difficulty,
-    ) -> Self {
-        let mut header = Self {
-            version,
-            previous_block_hash,
-            merkle_root,
-            state_root,
             timestamp,
             difficulty,
             nonce: 0,
@@ -292,24 +239,19 @@ impl BlockHeader {
     }
 
     /// Calculate the hash of this block header
-    ///
-    /// This is a consensus-critical function. The block hash includes the state_root
-    /// to ensure that any state divergence results in different block hashes,
-    /// enabling deterministic fork detection and resolution.
     pub fn calculate_hash(&self) -> Hash {
         let mut hasher = blake3::Hasher::new();
-
+        
         hasher.update(&self.version.to_le_bytes());
         hasher.update(self.previous_block_hash.as_bytes());
         hasher.update(self.merkle_root.as_bytes());
-        hasher.update(self.state_root.as_bytes()); // Canonical state commitment
         hasher.update(&self.timestamp.to_le_bytes());
         hasher.update(&self.difficulty.bits().to_le_bytes());
         hasher.update(&self.nonce.to_le_bytes());
         hasher.update(&self.height.to_le_bytes());
         hasher.update(&self.transaction_count.to_le_bytes());
         hasher.update(&self.block_size.to_le_bytes());
-
+        
         Hash::from_slice(hasher.finalize().as_bytes())
     }
 
@@ -318,13 +260,25 @@ impl BlockHeader {
         self.block_hash
     }
 
-    /// Set the state root and recalculate hash
-    ///
-    /// This should be called after block creation,
-    /// once the state transitions have been computed.
-    pub fn set_state_root(&mut self, state_root: Hash) {
-        self.state_root = state_root;
+    /// Set the nonce and recalculate hash
+    pub fn set_nonce(&mut self, nonce: u64) {
+        self.nonce = nonce;
         self.block_hash = self.calculate_hash();
+    }
+
+    /// Check if the block hash meets the difficulty target
+    pub fn meets_difficulty_target(&self) -> bool {
+        self.difficulty.check_hash(&self.block_hash)
+    }
+
+    /// Get the target value for this difficulty
+    pub fn target(&self) -> [u8; 32] {
+        self.difficulty.target()
+    }
+
+    /// Check if this header represents a valid proof-of-work
+    pub fn is_valid_proof_of_work(&self) -> bool {
+        self.meets_difficulty_target()
     }
 
     /// Get time since previous block (requires previous block timestamp)
