@@ -251,6 +251,7 @@ mod tests {
                 version: 1,
                 previous_block_hash: previous_hash,
                 merkle_root: Hash::default(),
+                state_root: Hash::default(),
                 timestamp: height * 1000, // Deterministic timestamps
                 difficulty: Difficulty::from_bits(1),
                 nonce: identifier,

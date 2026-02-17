@@ -343,6 +343,7 @@ mod tests {
                 timestamp: 0,
                 previous_block_hash: Hash::default(),
                 merkle_root: Hash::default(),
+                state_root: Hash::default(),
                 block_hash: Hash::default(),
                 nonce: 0,
                 difficulty: Difficulty::from_bits(1),

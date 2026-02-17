@@ -24,6 +24,25 @@ pub struct BlockHeader {
     pub previous_block_hash: Hash,
     /// Merkle root of all transactions in this block
     pub merkle_root: Hash,
+    /// Canonical state commitment (state root hash)
+    ///
+    /// This field provides an explicit, deterministic commitment to the entire
+    /// blockchain state at this block height. It enables:
+    /// - Deterministic state verification across all nodes
+    /// - Light client state proofs
+    /// - Fork detection and resolution
+    /// - State synchronization checkpoints
+    ///
+    /// The state_root is computed from all consensus-critical state including:
+    /// - UTXO set
+    /// - Identity registry
+    /// - Wallet registry
+    /// - Contract state
+    /// - Governance state
+    ///
+    /// This is a consensus-critical field that MUST be verified by all nodes.
+    #[serde(default = "default_state_root")]
+    pub state_root: Hash,
     /// Block creation timestamp
     pub timestamp: u64,
     /// Current difficulty target
@@ -54,6 +73,11 @@ pub struct BlockHeader {
 /// Default fee model version for backwards compatibility
 fn default_fee_model_version() -> u16 {
     1 // Legacy default for deserializing old blocks
+}
+
+/// Default state root for backwards compatibility
+fn default_state_root() -> Hash {
+    Hash::default() // Empty state root for deserializing old blocks
 }
 
 impl Block {
@@ -219,6 +243,41 @@ impl BlockHeader {
             version,
             previous_block_hash,
             merkle_root,
+            state_root: Hash::default(), // Will be set by blockchain after state update
+            timestamp,
+            difficulty,
+            nonce: 0,
+            height,
+            block_hash: Hash::default(),
+            transaction_count,
+            block_size,
+            cumulative_difficulty,
+            fee_model_version: 1, // Default to v1 for backwards compatibility
+        };
+
+        // Calculate and set the block hash
+        header.block_hash = header.calculate_hash();
+        header
+    }
+
+    /// Create a new block header with explicit state root
+    pub fn new_with_state_root(
+        version: u32,
+        previous_block_hash: Hash,
+        merkle_root: Hash,
+        state_root: Hash,
+        timestamp: u64,
+        difficulty: Difficulty,
+        height: u64,
+        transaction_count: u32,
+        block_size: u32,
+        cumulative_difficulty: Difficulty,
+    ) -> Self {
+        let mut header = Self {
+            version,
+            previous_block_hash,
+            merkle_root,
+            state_root,
             timestamp,
             difficulty,
             nonce: 0,
@@ -236,19 +295,24 @@ impl BlockHeader {
     }
 
     /// Calculate the hash of this block header
+    ///
+    /// This is a consensus-critical function. The block hash includes the state_root
+    /// to ensure that any state divergence results in different block hashes,
+    /// enabling deterministic fork detection and resolution.
     pub fn calculate_hash(&self) -> Hash {
         let mut hasher = blake3::Hasher::new();
-        
+
         hasher.update(&self.version.to_le_bytes());
         hasher.update(self.previous_block_hash.as_bytes());
         hasher.update(self.merkle_root.as_bytes());
+        hasher.update(self.state_root.as_bytes()); // Canonical state commitment
         hasher.update(&self.timestamp.to_le_bytes());
         hasher.update(&self.difficulty.bits().to_le_bytes());
         hasher.update(&self.nonce.to_le_bytes());
         hasher.update(&self.height.to_le_bytes());
         hasher.update(&self.transaction_count.to_le_bytes());
         hasher.update(&self.block_size.to_le_bytes());
-        
+
         Hash::from_slice(hasher.finalize().as_bytes())
     }
 
@@ -260,6 +324,15 @@ impl BlockHeader {
     /// Set the nonce and recalculate hash
     pub fn set_nonce(&mut self, nonce: u64) {
         self.nonce = nonce;
+        self.block_hash = self.calculate_hash();
+    }
+
+    /// Set the state root and recalculate hash
+    ///
+    /// This should be called after block creation but before mining,
+    /// once the state transitions have been computed.
+    pub fn set_state_root(&mut self, state_root: Hash) {
+        self.state_root = state_root;
         self.block_hash = self.calculate_hash();
     }
 

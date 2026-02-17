@@ -1454,7 +1454,7 @@ impl Blockchain {
 
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
-    async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
+    async fn process_and_commit_block(&mut self, mut block: Block) -> Result<()> {
         // Verify the block
         let previous_block = self.blocks.last();
         if !self.verify_block(&block, previous_block)? {
@@ -1483,6 +1483,21 @@ impl Blockchain {
         self.update_utxo_set(&block)?;
         self.save_utxo_snapshot(self.height)?;
         self.adjust_difficulty()?;
+
+        // Compute and set state root after state updates (for locally mined blocks)
+        // For blocks received from network, state_root should already be set and verified
+        if block.header.state_root == Hash::default() {
+            let state_root = self.calculate_state_root();
+            // Update the block in the blockchain with the computed state root
+            if let Some(last_block) = self.blocks.last_mut() {
+                last_block.header.set_state_root(state_root);
+                tracing::info!(
+                    "Computed state root for block {}: {}",
+                    last_block.height(),
+                    hex::encode(state_root.as_bytes())
+                );
+            }
+        }
 
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
@@ -1721,10 +1736,83 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Calculate canonical state root for the current blockchain state
+    ///
+    /// This computes a deterministic hash commitment over all consensus-critical state:
+    /// - UTXO set (sorted by commitment hash)
+    /// - Identity registry (sorted by identity ID)
+    /// - Wallet registry (sorted by wallet ID)
+    /// - Contract state (sorted by contract ID)
+    /// - Governance state (executed proposals, sorted by proposal ID)
+    ///
+    /// The state root enables:
+    /// - Deterministic state verification across all nodes
+    /// - Fork detection at the state level (not just chain structure)
+    /// - Light client state proofs
+    /// - State synchronization checkpoints
+    pub fn calculate_state_root(&self) -> Hash {
+        let mut hasher = blake3::Hasher::new();
+
+        // 1. Hash UTXO set (deterministically sorted)
+        let mut utxo_keys: Vec<_> = self.utxo_set.keys().collect();
+        utxo_keys.sort();
+        for key in utxo_keys {
+            hasher.update(key.as_bytes());
+            if let Some(utxo) = self.utxo_set.get(key) {
+                hasher.update(utxo.commitment.as_bytes());
+                hasher.update(utxo.note.as_bytes());
+                hasher.update(&utxo.amount.to_le_bytes());
+            }
+        }
+
+        // 2. Hash identity registry (deterministically sorted)
+        let mut identity_keys: Vec<_> = self.identity_registry.keys().collect();
+        identity_keys.sort();
+        for key in identity_keys {
+            hasher.update(key.as_bytes());
+            if let Some(identity) = self.identity_registry.get(key) {
+                hasher.update(&identity.did_hash);
+                hasher.update(&identity.owner);
+                hasher.update(&identity.public_key_hash);
+            }
+        }
+
+        // 3. Hash wallet registry (deterministically sorted)
+        let mut wallet_keys: Vec<_> = self.wallet_registry.keys().collect();
+        wallet_keys.sort();
+        for key in wallet_keys {
+            hasher.update(key.as_bytes());
+            if let Some(wallet) = self.wallet_registry.get(key) {
+                hasher.update(wallet.wallet_id.as_bytes());
+                hasher.update(&wallet.public_key);
+                hasher.update(wallet.owner_identity_id.as_bytes());
+            }
+        }
+
+        // 4. Hash contract states (deterministically sorted)
+        let mut contract_keys: Vec<_> = self.contract_states.keys().collect();
+        contract_keys.sort();
+        for key in contract_keys {
+            hasher.update(key.as_bytes());
+            if let Some(state) = self.contract_states.get(key) {
+                hasher.update(state);
+            }
+        }
+
+        // 5. Hash executed proposals (deterministically sorted)
+        let mut proposal_ids: Vec<_> = self.executed_dao_proposals.iter().collect();
+        proposal_ids.sort();
+        for proposal_id in proposal_ids {
+            hasher.update(proposal_id.as_bytes());
+        }
+
+        Hash::from_slice(hasher.finalize().as_bytes())
+    }
+
     /// Verify a block against the current chain state
     pub fn verify_block(&self, block: &Block, previous_block: Option<&Block>) -> Result<bool> {
         info!("Starting block verification for height {}", block.height());
-        
+
         // Verify block header
         if let Some(prev) = previous_block {
             if block.previous_hash() != prev.hash() {
@@ -1771,6 +1859,16 @@ impl Blockchain {
         if !block.verify_merkle_root() {
             warn!("Merkle root verification failed");
             return Ok(false);
+        }
+
+        // Verify state root (if not genesis block and state root is set)
+        // Note: Genesis blocks and legacy blocks may have default/zero state roots
+        if block.height() > 0 && block.header.state_root != Hash::default() {
+            // To verify state root, we need to apply the block's transactions to current state
+            // and check if resulting state matches the block's state_root
+            // For now, we log a warning if state root verification is needed
+            // Full state root verification will be implemented in a follow-up
+            tracing::info!("State root present in block {}: {:?}", block.height(), block.header.state_root);
         }
 
         info!("Block verification successful for height {}", block.height());
