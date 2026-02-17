@@ -346,11 +346,11 @@ cargo test -p lib-network --features ble-mock
 
 ## Resources
 
-- **Main README:** `/README.md`
-- **CLI User Guide:** `/CLI_USER_GUIDE.md`
-- **Encryption Docs:** `/docs/encryption/`
-- **Node Connection Guide:** `/docs/NODE_CONNECTION_GUIDE.md`
-- **Network Rules:** `/docs/NETWORK_RULES.md`
+- **Main README:** `README.md`
+- **CLI User Guide:** `CLI_USER_GUIDE.md`
+- **Encryption Docs:** `docs/encryption/`
+- **Node Connection Guide:** `docs/NODE_CONNECTION_GUIDE.md`
+- **Network Rules:** `docs/NETWORK_RULES.md`
 
 ### Important Configuration Files
 
