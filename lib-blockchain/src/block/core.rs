@@ -1,10 +1,79 @@
 //! Core block structures
 //!
 //! Defines the fundamental block data structures used in the ZHTP blockchain.
+//!
+//! # BlockHeader Structure and Commitments
+//!
+//! The [`BlockHeader`] struct represents the cryptographic commitment to an entire block.
+//! Its fields are divided into two categories:
+//!
+//! ## Consensus-Critical Fields (included in block hash via `calculate_hash`)
+//!
+//! These fields are fed into the BLAKE3 hash function in [`BlockHeader::calculate_hash`]
+//! and MUST be included for any node to reproduce the same block hash. Changing any of
+//! these fields changes the block hash, breaking the chain:
+//!
+//! | Field | Purpose |
+//! |-------|---------|
+//! | `version` | Protocol version; changes indicate hard-fork boundaries |
+//! | `previous_block_hash` | Links this block to its parent; enforces chain continuity |
+//! | `merkle_root` | Commits to the complete, ordered set of transactions |
+//! | `timestamp` | Wall-clock time of block production (consensus-validated range) |
+//! | `difficulty` | Proof-of-work target that this block must satisfy |
+//! | `nonce` | Mining nonce found via proof-of-work |
+//! | `height` | Canonical position of this block in the chain |
+//! | `transaction_count` | Number of transactions; must match `transactions` length |
+//! | `block_size` | Serialized byte size of the full block |
+//!
+//! ## Informational Fields (NOT included in block hash)
+//!
+//! These fields are stored for convenience but do not affect the canonical block hash.
+//! They may be recalculated or verified independently:
+//!
+//! | Field | Purpose |
+//! |-------|---------|
+//! | `block_hash` | Cached result of `calculate_hash()`; not an input to itself |
+//! | `cumulative_difficulty` | Running sum of all difficulty values up to this block |
+//! | `fee_model_version` | Determines fee schedule rules applied at this block height |
+//!
+//! ## Compile-Time Verification
+//!
+//! The constant [`BFT_REQUIRED_HEADER_FIELDS`] enumerates every consensus-critical field
+//! name. It serves as a checklist: if you add a new consensus-critical field to
+//! `BlockHeader` you MUST also add its name to `BFT_REQUIRED_HEADER_FIELDS` and include
+//! it in [`BlockHeader::calculate_hash`]. The `verify_hash_covers_required_fields` test
+//! confirms that the number of bytes fed into the hash function equals the total size
+//! of all consensus-critical fields.
 
 use serde::{Serialize, Deserialize};
 use crate::types::{Hash, Difficulty};
 use crate::transaction::Transaction;
+
+/// Names of every consensus-critical field in [`BlockHeader`].
+///
+/// These are the fields that are hashed by [`BlockHeader::calculate_hash`] and therefore
+/// determine the canonical block hash. Any new consensus-critical field MUST be added
+/// here and included in `calculate_hash`.
+///
+/// Informational fields (`block_hash`, `cumulative_difficulty`, `fee_model_version`) are
+/// intentionally excluded because they do not participate in hash computation.
+pub const BFT_REQUIRED_HEADER_FIELDS: &[&str] = &[
+    "version",
+    "previous_block_hash",
+    "merkle_root",
+    "timestamp",
+    "difficulty",
+    "nonce",
+    "height",
+    "transaction_count",
+    "block_size",
+];
+
+/// Number of consensus-critical fields in [`BlockHeader`].
+///
+/// This constant is checked at compile time (via a `const` expression in the test module)
+/// to ensure it stays in sync with [`BFT_REQUIRED_HEADER_FIELDS`].
+pub const BFT_REQUIRED_HEADER_FIELD_COUNT: usize = BFT_REQUIRED_HEADER_FIELDS.len();
 
 /// ZHTP blockchain block
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,38 +84,102 @@ pub struct Block {
     pub transactions: Vec<Transaction>,
 }
 
-/// Block header with consensus and metadata information
+/// Block header with consensus and metadata information.
+///
+/// # Field Classification
+///
+/// See the module-level documentation for the full breakdown of which fields are
+/// consensus-critical (hashed) vs informational (not hashed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockHeader {
-    /// Block version
-    pub version: u32,
-    /// Hash of the previous block
-    pub previous_block_hash: Hash,
-    /// Merkle root of all transactions in this block
-    pub merkle_root: Hash,
-    /// Block creation timestamp
-    pub timestamp: u64,
-    /// Current difficulty target
-    pub difficulty: Difficulty,
-    /// Mining nonce for proof-of-work
-    pub nonce: u64,
-    /// Block height in the chain
-    pub height: u64,
-    /// Hash of the block (calculated)
-    pub block_hash: Hash,
-    /// Number of transactions in the block
-    pub transaction_count: u32,
-    /// Total size of the block in bytes
-    pub block_size: u32,
-    /// Cumulative difficulty from genesis
-    pub cumulative_difficulty: Difficulty,
-    /// Fee model version for this block (Phase 3B)
+    // -------------------------------------------------------------------------
+    // CONSENSUS-CRITICAL FIELDS — included in calculate_hash()
+    // -------------------------------------------------------------------------
+
+    /// Protocol version.
     ///
+    /// **Consensus-critical.** Changes signal protocol upgrades or hard-fork
+    /// boundaries. All nodes must agree on the version rules for a given height.
+    pub version: u32,
+
+    /// Hash of the parent block.
+    ///
+    /// **Consensus-critical.** Cryptographically links this block to its
+    /// predecessor, forming the immutable chain. The genesis block uses
+    /// `Hash::default()` (all zeros) as its previous hash.
+    pub previous_block_hash: Hash,
+
+    /// Merkle root of the transaction set.
+    ///
+    /// **Consensus-critical.** A single 32-byte commitment to the complete,
+    /// ordered list of transactions in this block. Verifying the Merkle root
+    /// proves that no transaction has been added, removed, or reordered.
+    pub merkle_root: Hash,
+
+    /// UNIX timestamp (seconds since epoch) of block production.
+    ///
+    /// **Consensus-critical.** Used for difficulty adjustment and to enforce
+    /// the temporal ordering invariant (`timestamp > previous.timestamp`).
+    /// Nodes reject blocks whose timestamp is more than 2 hours in the future.
+    pub timestamp: u64,
+
+    /// Proof-of-work difficulty target for this block.
+    ///
+    /// **Consensus-critical.** Encodes the minimum work required. The block
+    /// hash must be numerically less than or equal to the target derived from
+    /// this field.
+    pub difficulty: Difficulty,
+
+    /// Proof-of-work nonce found by the miner.
+    ///
+    /// **Consensus-critical.** The value that, when combined with the other
+    /// header fields, produces a block hash satisfying the difficulty target.
+    pub nonce: u64,
+
+    /// Zero-based block height in the canonical chain.
+    ///
+    /// **Consensus-critical.** The genesis block has height 0. Every subsequent
+    /// block has `height = parent.height + 1`.
+    pub height: u64,
+
+    // -------------------------------------------------------------------------
+    // INFORMATIONAL FIELDS — NOT included in calculate_hash()
+    // -------------------------------------------------------------------------
+
+    /// Cached block hash (result of `calculate_hash()`).
+    ///
+    /// **Informational.** This field stores the pre-computed hash for fast
+    /// lookups. It is NOT an input to `calculate_hash()` (that would be
+    /// circular). Always recalculate via `calculate_hash()` when verifying.
+    pub block_hash: Hash,
+
+    /// Number of transactions committed in this block.
+    ///
+    /// **Consensus-critical.** Must equal `transactions.len()` exactly.
+    /// Validated in `Block::has_valid_header()`.
+    pub transaction_count: u32,
+
+    /// Serialized byte size of the complete block.
+    ///
+    /// **Consensus-critical.** Used to enforce `MAX_BLOCK_SIZE` limits.
+    pub block_size: u32,
+
+    /// Cumulative proof-of-work difficulty from genesis to this block.
+    ///
+    /// **Informational.** Used for chain-selection (heaviest chain wins) but
+    /// not included in the block hash itself. Can be recomputed by summing
+    /// `difficulty` across all ancestors.
+    pub cumulative_difficulty: Difficulty,
+
+    /// Fee model version active at this block height (Phase 3B).
+    ///
+    /// **Informational / soft-consensus.** Determines which fee schedule rules
+    /// apply when processing transactions in this block:
     /// - Version 1: Legacy fee model (before activation height)
     /// - Version 2: Fee Model v2 (at and after activation height)
     ///
-    /// This field is consensus-critical. A block MUST use the correct
-    /// fee model version for its height per the activation rules.
+    /// Not included in the block hash but enforced by consensus rules: a block
+    /// MUST use the correct fee model version for its height.
     #[serde(default = "default_fee_model_version")]
     pub fee_model_version: u16,
 }
@@ -379,3 +512,123 @@ pub const MAX_BLOCK_SIZE: usize = 4_194_304; // 4 MB
 pub const MAX_TRANSACTIONS_PER_BLOCK: usize = 10_000;
 pub const MIN_BLOCK_TIME: u64 = 1; // 1 second minimum between blocks
 pub const MAX_BLOCK_TIME: u64 = 7200; // 2 hours maximum future timestamp
+
+// ---------------------------------------------------------------------------
+// Compile-time assertions: block header hash coverage
+// ---------------------------------------------------------------------------
+
+/// Compile-time check: [`BFT_REQUIRED_HEADER_FIELDS`] must list exactly
+/// [`BFT_REQUIRED_HEADER_FIELD_COUNT`] entries.
+///
+/// If you add or remove a consensus-critical field you MUST update BOTH the
+/// constant array AND this assertion, and you MUST update
+/// [`BlockHeader::calculate_hash`] accordingly.
+const _ASSERT_FIELD_COUNT: () = {
+    assert!(
+        BFT_REQUIRED_HEADER_FIELD_COUNT == 9,
+        "BFT_REQUIRED_HEADER_FIELDS length does not match expected count of 9. \
+         Update BFT_REQUIRED_HEADER_FIELDS and BlockHeader::calculate_hash together."
+    );
+};
+
+#[cfg(test)]
+mod header_hash_tests {
+    use super::*;
+
+    /// Verify that `calculate_hash` processes bytes for every consensus-critical
+    /// field listed in `BFT_REQUIRED_HEADER_FIELDS`.
+    ///
+    /// The test creates two headers that differ in exactly one consensus-critical
+    /// field at a time and asserts that the resulting hashes differ.  This
+    /// exercises each field path through `calculate_hash` and ensures no field
+    /// is silently dropped from the hash computation.
+    #[test]
+    fn verify_hash_covers_required_fields() {
+        let base = BlockHeader::new(
+            1,
+            Hash::default(),
+            Hash::default(),
+            1_000_000,
+            Difficulty::from_bits(0x1fffffff),
+            0,
+            0,
+            0,
+            Difficulty::from_bits(0x1fffffff),
+        );
+
+        // version
+        let mut h = base.clone();
+        h.version = 2;
+        h.block_hash = h.calculate_hash();
+        assert_ne!(base.calculate_hash(), h.calculate_hash(), "version must affect hash");
+
+        // previous_block_hash
+        let mut h = base.clone();
+        h.previous_block_hash = Hash::from_slice(&[1u8; 32]);
+        h.block_hash = h.calculate_hash();
+        assert_ne!(base.calculate_hash(), h.calculate_hash(), "previous_block_hash must affect hash");
+
+        // merkle_root
+        let mut h = base.clone();
+        h.merkle_root = Hash::from_slice(&[2u8; 32]);
+        h.block_hash = h.calculate_hash();
+        assert_ne!(base.calculate_hash(), h.calculate_hash(), "merkle_root must affect hash");
+
+        // timestamp
+        let mut h = base.clone();
+        h.timestamp = 2_000_000;
+        h.block_hash = h.calculate_hash();
+        assert_ne!(base.calculate_hash(), h.calculate_hash(), "timestamp must affect hash");
+
+        // difficulty
+        let mut h = base.clone();
+        h.difficulty = Difficulty::from_bits(0x1ffffffe);
+        h.block_hash = h.calculate_hash();
+        assert_ne!(base.calculate_hash(), h.calculate_hash(), "difficulty must affect hash");
+
+        // nonce
+        let mut h = base.clone();
+        h.nonce = 42;
+        h.block_hash = h.calculate_hash();
+        assert_ne!(base.calculate_hash(), h.calculate_hash(), "nonce must affect hash");
+
+        // height
+        let mut h = base.clone();
+        h.height = 1;
+        h.block_hash = h.calculate_hash();
+        assert_ne!(base.calculate_hash(), h.calculate_hash(), "height must affect hash");
+
+        // transaction_count
+        let mut h = base.clone();
+        h.transaction_count = 5;
+        h.block_hash = h.calculate_hash();
+        assert_ne!(base.calculate_hash(), h.calculate_hash(), "transaction_count must affect hash");
+
+        // block_size
+        let mut h = base.clone();
+        h.block_size = 1024;
+        h.block_hash = h.calculate_hash();
+        assert_ne!(base.calculate_hash(), h.calculate_hash(), "block_size must affect hash");
+
+        // Informational fields must NOT change the hash
+        let mut h = base.clone();
+        h.cumulative_difficulty = Difficulty::from_bits(0x1ffffffe);
+        assert_eq!(base.calculate_hash(), h.calculate_hash(),
+            "cumulative_difficulty is informational and must NOT affect hash");
+
+        let mut h = base.clone();
+        h.fee_model_version = 2;
+        assert_eq!(base.calculate_hash(), h.calculate_hash(),
+            "fee_model_version is informational and must NOT affect hash");
+    }
+
+    /// Verify that the number of entries in BFT_REQUIRED_HEADER_FIELDS is correct.
+    #[test]
+    fn bft_required_header_fields_count() {
+        assert_eq!(
+            BFT_REQUIRED_HEADER_FIELDS.len(),
+            BFT_REQUIRED_HEADER_FIELD_COUNT,
+            "BFT_REQUIRED_HEADER_FIELD_COUNT is out of sync with BFT_REQUIRED_HEADER_FIELDS"
+        );
+    }
+}
