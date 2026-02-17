@@ -8505,14 +8505,14 @@ impl Default for Blockchain {
 //   apply_block(state_n, block_n+1) == state_n+1
 // produces identical results on every honest validator node.
 //
-// Determinism requirements:
-// 1. No wall-clock time in execution paths (enforced by #952)
-// 2. No randomness in execution paths (enforced by #953)
+// Determinism requirements (design goals; enforcement is planned per-issue):
+// 1. No wall-clock time in execution paths (planned for #952)
+// 2. No randomness in execution paths (planned for #953)
 // 3. No floating-point arithmetic with undefined rounding
 // 4. No hash map iteration order dependencies (use BTreeMap for ordered state)
 // 5. No external I/O (filesystem, network) during block execution
 //
-// Enforcement:
-// - DeterministicExecutionGuard (from #953) wraps all consensus-critical paths
-// - State root (from #948) provides post-execution determinism proof
-// - Tests (from #955, #957) verify cross-node convergence
+// Planned enforcement:
+// - DeterministicExecutionGuard (planned) will enforce consensus-critical path isolation (#953)
+// - State root (planned for #948) will provide post-execution determinism proof
+// - Tests (planned for #955, #957) will verify cross-node convergence
