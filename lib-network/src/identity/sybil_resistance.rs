@@ -4,7 +4,7 @@
 //!
 //! ## Identity = Public Key
 //!
-//! Every ZHTP peer is identified by its **Dilithium3 public key** (`PublicKey`).
+//! Every ZHTP peer is identified by its **Dilithium5 public key** (`PublicKey`).
 //! The key serves as a self-certifying identifier: any node can verify the
 //! identity of a message sender without consulting a central authority by
 //! checking the signature against the claimed public key.
@@ -14,7 +14,7 @@
 //!
 //! | Field        | Derivation                            | Purpose                          |
 //! |--------------|---------------------------------------|----------------------------------|
-//! | `public_key` | Raw Dilithium3 key pair (generated)   | Canonical identity; signs msgs   |
+//! | `public_key` | Raw Dilithium5 key pair (generated)   | Canonical identity; signs msgs   |
 //! | `node_id`    | BLAKE3(DID + device_name)             | Compact routing address in DHT   |
 //! | `did`        | W3C DID derived from public key       | Human-readable identity string   |
 //!
@@ -22,11 +22,11 @@
 //!
 //! 1. **Handshake**: Upon connecting, both peers perform the UHP (Unified
 //!    Handshake Protocol) key exchange.  Each peer signs the handshake
-//!    transcript with its Dilithium3 private key.  The other side verifies
+//!    transcript with its Dilithium5 private key.  The other side verifies
 //!    the signature against the claimed `PublicKey`.
 //!
 //! 2. **Per-message authentication**: Every `ValidatorMessage` received over
-//!    the mesh MUST carry a Dilithium3 signature over the canonical serialised
+//!    the mesh MUST carry a Dilithium5 signature over the canonical serialised
 //!    message bytes.  `ValidatorProtocol` middleware verifies this signature
 //!    before forwarding the message to the consensus engine.
 //!    See `assert_consensus_sender_is_validator()` below.
@@ -146,23 +146,22 @@ pub fn assert_consensus_sender_is_validator(
     Ok(())
 }
 
-/// Assert that a peer identity has a non-empty public key.
+/// Assert that a peer identity has a valid (non-zero) key_id.
 ///
-/// A peer with an empty or zeroed key_id MUST be rejected immediately.  Empty
-/// key_ids are a degenerate case that would break all downstream identity checks.
+/// A peer with an all-zero key_id MUST be rejected immediately.  An all-zero
+/// key_id indicates an uninitialized key and would break all downstream identity
+/// checks.  Since key_id is `[u8; 32]`, it is never empty; only the all-zero
+/// case is checked.
 ///
 /// # Errors
 ///
-/// Returns `Err` when the public key's `key_id` is empty or all-zero.
+/// Returns `Err` when the public key's `key_id` is all-zero (uninitialized).
 pub fn assert_peer_identity_valid(peer_key: &PublicKey) -> Result<(), String> {
-    if peer_key.key_id.is_empty() {
+    // Check that key_id is not all zeros (which would indicate an uninitialized key).
+    // key_id is [u8; 32] so is_empty() does not apply; the all-zero check is sufficient.
+    if peer_key.key_id == [0u8; 32] {
         return Err(
-            "IDENTITY INVARIANT: peer public key has empty key_id".to_string()
-        );
-    }
-    if peer_key.key_id.iter().all(|b| *b == 0) {
-        return Err(
-            "IDENTITY INVARIANT: peer public key has all-zero key_id (null identity)".to_string()
+            "IDENTITY INVARIANT: peer public key has all-zero key_id (uninitialized key)".to_string()
         );
     }
     Ok(())
@@ -236,16 +235,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_key_is_invalid() {
-        let key = make_key(&[]);
-        let result = assert_peer_identity_valid(&key);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("empty key_id"));
-    }
-
-    #[test]
     fn all_zero_key_is_invalid() {
-        let key = make_key(&[0, 0, 0, 0, 0, 0, 0, 0]);
+        // [u8; 32] cannot be empty, but an all-zero key_id signals an uninitialized key.
+        let key = make_key(&[0u8; 32]);
         let result = assert_peer_identity_valid(&key);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("all-zero"));
