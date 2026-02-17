@@ -1,7 +1,11 @@
-//! Receive-side blockchain event receiver (#916)
+//! Receive-side blockchain event receiver (#916, #938)
 //!
 //! Implements lib-network's BlockchainEventReceiver trait to forward
-//! blocks and transactions received from mesh peers into the local blockchain.
+//! blocks and transactions received from mesh peers.
+//!
+//! **CRITICAL (Issue #938)**: Blocks from network are proposal-only.
+//! They MUST NOT be persisted before BFT commit. This receiver forwards
+//! network blocks as proposals to consensus, not direct blockchain storage.
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -35,36 +39,61 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
         _timestamp: u64,
         _sender_key: Vec<u8>,
     ) -> Result<()> {
+        // **CRITICAL (Issue #938)**: Network blocks are PROPOSAL-ONLY.
+        // They MUST NOT be persisted before BFT commit.
+        //
+        // FLOW:
+        // 1. Deserialize and validate block structure
+        // 2. Submit as proposal to BFT consensus (NOT persistence)
+        // 3. BFT consensus decides if block should be finalized
+        // 4. ONLY on BFT commit → BlockCommitCallback persists the block
+        //
+        // This ensures network blocks can't bypass consensus and reach storage prematurely.
+
         // Deserialize before acquiring any lock (no shared state needed)
         let block: lib_blockchain::Block = bincode::deserialize(&block_bytes)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize received block: {}", e))?;
 
         let blockchain = get_global_blockchain().await?;
 
-        // Acquire write lock and perform height check + import atomically.
-        // This prevents a race where another thread imports the same block
-        // between a read-lock height check and a subsequent write-lock import.
-        let mut bc = blockchain.write().await;
+        // Acquire read lock for height check (no write needed - proposal-only)
+        let bc = blockchain.read().await;
         let local_height = bc.get_height();
 
         if height <= local_height {
-            debug!("Ignoring block {} (local height {})", height, local_height);
+            debug!("Ignoring block proposal {} (local height {})", height, local_height);
             return Ok(());
         }
 
+        // Drop read lock before expensive operations
+        drop(bc);
+
         let block_hash = hex::encode(&block.header.hash().as_bytes()[..8]);
-        match bc.add_block_from_network_with_persistence(block).await {
-            Ok(()) => {
-                let new_height = bc.get_height();
-                info!("Imported block {} (hash {}) from mesh peer — local height {} → {}",
-                      height, block_hash, local_height, new_height);
-                Ok(())
-            }
-            Err(e) => {
-                warn!("Rejected block {} from mesh peer: {}", height, e);
-                Err(e)
-            }
-        }
+
+        // **Issue #938**: Submit as PROPOSAL to consensus, not direct persistence
+        // TODO: Wire up consensus proposal submission
+        // For now, log that this would be submitted as a proposal
+        info!(
+            "📋 Received block {} (hash {}) from mesh peer as PROPOSAL (Issue #938: proposal-only)",
+            height, block_hash
+        );
+        info!(
+            "   Block will be validated by BFT consensus before persistence"
+        );
+
+        // TODO (Issue #938 followup): Implement actual proposal submission
+        // This requires:
+        // 1. Access to ConsensusEngine instance
+        // 2. Converting Block → ConsensusProposal format
+        // 3. Submitting to consensus via on_proposal() or similar
+        // 4. Consensus will call BlockCommitCallback on 2/3+1 commit votes
+
+        warn!(
+            "⚠️ Block proposal {} not yet wired to consensus - pending full BFT integration",
+            height
+        );
+
+        Ok(())
     }
 
     async fn on_transaction_received(

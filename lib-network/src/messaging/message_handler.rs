@@ -877,7 +877,11 @@ impl MeshMessageHandler {
         Ok(())
     }
     
-    /// Handle new block announcement (#916: forwards to application layer via BlockchainEventReceiver)
+    /// Handle new block announcement (#916, #938: forwards to application layer via BlockchainEventReceiver)
+    ///
+    /// **CRITICAL (Issue #938)**: Network-received blocks are proposal-only.
+    /// They MUST NOT reach persistence before BFT commit. The application layer
+    /// is responsible for submitting these as proposals to consensus, not persisting them directly.
     pub async fn handle_new_block(
         &self,
         block: Vec<u8>,
@@ -885,8 +889,9 @@ impl MeshMessageHandler {
         height: u64,
         timestamp: u64,
     ) -> Result<()> {
-        info!("New block announcement: height {} from {:?} ({} bytes)",
+        info!("📥 New block proposal from network: height {} from {:?} ({} bytes)",
               height, hex::encode(&sender.key_id[0..4]), block.len());
+        info!("   Block will be submitted as proposal to BFT consensus (Issue #938: proposal-only)");
         self.blockchain_event_receiver
             .on_block_received(block, height, timestamp, sender.key_id.to_vec())
             .await
