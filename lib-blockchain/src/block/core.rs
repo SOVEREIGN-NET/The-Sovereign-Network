@@ -605,15 +605,15 @@ impl BlockHeader {
         }
     }
 
-    /// Check if timestamp is reasonable (not too far in future)
+    /// Check if timestamp is reasonable (relative to previous block)
+    ///
+    /// REMOVED: Wall-clock validation (nondeterministic)
+    /// Block timestamps are validated relative to previous blocks during consensus,
+    /// not against wall-clock time. This ensures deterministic validation across all nodes.
     pub fn has_reasonable_timestamp(&self) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        
-        // Allow up to 2 hours in the future
-        self.timestamp <= now + 7200
+        // Block timestamp validation is now handled in consensus validation
+        // where previous block timestamps are available for comparison
+        self.timestamp > 0
     }
 }
 

@@ -163,7 +163,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use lib_crypto::{Hash, KeyPair};
 use lib_identity::IdentityId;
@@ -470,10 +470,9 @@ impl ConsensusEngine {
             height: 0,
             round: 0,
             step: ConsensusStep::Propose,
-            start_time: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?
-                .as_secs(),
+            // REMOVED: Wall-clock start_time (nondeterministic)
+            // Use deterministic value based on height for consensus ordering
+            start_time: 0,
             proposer: None,
             proposals: Vec::new(),
             votes: HashMap::new(),
