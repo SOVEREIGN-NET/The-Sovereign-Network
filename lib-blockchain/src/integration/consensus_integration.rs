@@ -228,16 +228,23 @@ impl BlockchainConsensusCoordinator {
         stake_amount: u64,
         storage_capacity: u64,
         consensus_keypair: &KeyPair,
+        networking_keypair: &KeyPair,
+        rewards_keypair: &KeyPair,
         commission_rate: u8,
     ) -> Result<()> {
         let mut consensus_engine = self.consensus_engine.write().await;
-        
-        // Register with the consensus engine
+
+        // Register with the consensus engine — three-key separation is required:
+        //   consensus_key : BFT vote-signing (Dilithium2, hot)
+        //   networking_key: P2P transport identity (Ed25519/X25519, hot)
+        //   rewards_key   : Reward wallet public key (cold-capable)
         consensus_engine.register_validator(
             identity.clone(),
             stake_amount,
             storage_capacity,
             consensus_keypair.public_key.dilithium_pk.clone(),
+            networking_keypair.public_key.dilithium_pk.clone(),
+            rewards_keypair.public_key.dilithium_pk.clone(),
             commission_rate,
             false, // Not genesis validator
         ).await.map_err(|e| anyhow::anyhow!("Consensus registration failed: {}", e))?;

@@ -4,7 +4,37 @@ use crate::types::{SlashType, ValidatorStatus};
 use lib_identity::IdentityId;
 use serde::{Deserialize, Serialize};
 
-/// Consensus validator information
+/// Consensus-layer representation of a registered validator.
+///
+/// # Key Separation
+///
+/// A validator operates with three distinct cryptographic keys.  Each key is isolated
+/// to a specific security domain so that the compromise of one key does not automatically
+/// compromise the others.  All three keys MUST be different — the consensus engine
+/// asserts this invariant at registration time.
+///
+/// ## Key Roles
+///
+/// ### `consensus_key` — BFT Vote-Signing Key
+/// Signs block proposals, pre-votes, pre-commits, and view-change messages.
+/// - **Algorithm**: Post-quantum Dilithium2.
+/// - **Exposure**: Hot — present online during every consensus round.
+/// - **Compromise impact**: Attacker can equivocate (double-sign), triggering slashing.
+///
+/// ### `networking_key` — P2P Transport Identity Key
+/// Establishes the validator's peer identity on the ZHTP mesh network (QUIC TLS
+/// handshake, DHT node ID, peer authentication).
+/// - **Algorithm**: Ed25519 / X25519.
+/// - **Exposure**: Hot — required for all inbound and outbound connections.
+/// - **Compromise impact**: Attacker can impersonate the validator on the network
+///   layer but CANNOT forge signed consensus votes.
+///
+/// ### `rewards_key` — Rewards / Fee-Collection Key
+/// Identifies the wallet that receives block rewards and protocol fee distributions.
+/// - **Algorithm**: Dilithium2 or Ed25519 depending on wallet type.
+/// - **Exposure**: Can be kept cold — only needed when claiming accumulated rewards.
+/// - **Compromise impact**: Attacker can redirect future rewards; past on-chain
+///   balances already credited are unaffected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Validator {
     /// Validator identity
@@ -15,8 +45,16 @@ pub struct Validator {
     pub storage_provided: u64,
     /// Validator status
     pub status: ValidatorStatus,
-    /// Public key for consensus
+    /// Post-quantum Dilithium2 public key used exclusively for signing BFT consensus
+    /// messages (proposals, pre-votes, pre-commits).  MUST differ from `networking_key`
+    /// and `rewards_key`.
     pub consensus_key: Vec<u8>,
+    /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT node
+    /// ID).  MUST differ from `consensus_key` and `rewards_key`.
+    pub networking_key: Vec<u8>,
+    /// Public key of the rewards wallet that receives block rewards and fee
+    /// distributions.  MUST differ from `consensus_key` and `networking_key`.
+    pub rewards_key: Vec<u8>,
     /// Voting power (calculated from stake + storage)
     pub voting_power: u64,
     /// Commission rate (percentage)
@@ -32,14 +70,38 @@ pub struct Validator {
 }
 
 impl Validator {
-    /// Create a new validator
+    /// Create a new validator.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds (and returns an error in release builds via the caller's
+    /// [`ValidatorManager::register_validator`]) if any two of `consensus_key`,
+    /// `networking_key`, and `rewards_key` are identical.  Key separation is a
+    /// hard invariant — see the [`Validator`] struct documentation for the full
+    /// rationale.
     pub fn new(
         identity: IdentityId,
         stake: u64,
         storage_provided: u64,
         consensus_key: Vec<u8>,
+        networking_key: Vec<u8>,
+        rewards_key: Vec<u8>,
         commission_rate: u8,
     ) -> Self {
+        // Enforce key separation invariant at construction time.
+        debug_assert_ne!(
+            consensus_key, networking_key,
+            "Key separation violation: consensus_key and networking_key must be different"
+        );
+        debug_assert_ne!(
+            consensus_key, rewards_key,
+            "Key separation violation: consensus_key and rewards_key must be different"
+        );
+        debug_assert_ne!(
+            networking_key, rewards_key,
+            "Key separation violation: networking_key and rewards_key must be different"
+        );
+
         let voting_power = Self::calculate_voting_power(stake, storage_provided);
 
         Self {
@@ -48,6 +110,8 @@ impl Validator {
             storage_provided,
             status: ValidatorStatus::Active,
             consensus_key,
+            networking_key,
+            rewards_key,
             voting_power,
             commission_rate,
             reputation: 100, // Start with perfect reputation

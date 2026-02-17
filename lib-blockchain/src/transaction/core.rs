@@ -587,7 +587,19 @@ pub struct WalletPrivateData {
     pub metadata: std::collections::HashMap<String, String>,
 }
 
-/// Validator registration transaction data (processed by lib-consensus package)
+/// Validator registration transaction data (processed by lib-consensus package).
+///
+/// # Key Separation
+///
+/// Validators must supply three cryptographically independent keys.  See
+/// [`ValidatorInfo`](crate::blockchain::ValidatorInfo) for the full rationale.
+///
+/// - `consensus_key`: Signs BFT votes/proposals (Dilithium2, hot).
+/// - `networking_key`: P2P / QUIC transport identity (Ed25519/X25519, hot).
+/// - `rewards_key`: Rewards wallet public key for fee/block-reward collection (cold-capable).
+///
+/// All three fields are required and must be distinct; the blockchain rejects
+/// registrations where any two keys are equal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorTransactionData {
     /// Identity ID of the validator (must be pre-registered)
@@ -596,8 +608,15 @@ pub struct ValidatorTransactionData {
     pub stake: u64,
     /// Storage provided in bytes
     pub storage_provided: u64,
-    /// Post-quantum consensus public key
+    /// Post-quantum Dilithium2 public key used exclusively for signing BFT consensus
+    /// messages (proposals, pre-votes, pre-commits).
     pub consensus_key: Vec<u8>,
+    /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT
+    /// node ID derivation, peer authentication).
+    pub networking_key: Vec<u8>,
+    /// Public key of the rewards wallet that receives block rewards and fee
+    /// distributions.
+    pub rewards_key: Vec<u8>,
     /// Network address for validator communication (host:port)
     pub network_address: String,
     /// Commission rate percentage (0-100)

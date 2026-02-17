@@ -39,14 +39,19 @@ fn create_test_transaction(memo: &str) -> Result<Transaction> {
     Ok(transaction)
 }
 
-// Helper function to create a validator info for testing
+// Helper function to create a validator info for testing.
+// Each of the three keys uses a distinct byte pattern to satisfy the key separation invariant.
 fn create_test_validator(id: &str, stake: u64) -> ValidatorInfo {
     ValidatorInfo {
         identity_id: id.to_string(),
         stake,
         storage_provided: 1000000u64,
-        // Use realistic 32-byte key size (similar to post-quantum key representations)
+        // consensus_key: BFT vote-signing key (Dilithium2, hot)
         consensus_key: vec![1u8; 32],
+        // networking_key: P2P transport identity key (Ed25519/X25519, hot)
+        networking_key: vec![2u8; 32],
+        // rewards_key: Rewards wallet public key (cold-capable)
+        rewards_key: vec![3u8; 32],
         network_address: format!("127.0.0.1:{}", 8000 + stake % 1000),
         commission_rate: 5u8,
         status: "active".to_string(),

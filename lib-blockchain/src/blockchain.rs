@@ -185,7 +185,47 @@ pub struct Blockchain {
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
 }
 
-/// Validator information stored on-chain
+/// Validator information stored on-chain.
+///
+/// # Key Separation
+///
+/// A validator operates with three distinct cryptographic keys, each serving a different
+/// security domain. These keys MUST be different from one another — reusing a single key
+/// across roles weakens isolation boundaries and increases the blast radius of any key
+/// compromise.
+///
+/// ## Key Roles
+///
+/// ### 1. `consensus_key` — Consensus / Vote-Signing Key
+/// Used exclusively for signing BFT consensus messages: block proposals, pre-votes,
+/// pre-commits, and view-change messages.
+/// - **Algorithm**: Post-quantum Dilithium2 (lattice-based).
+/// - **Exposure**: Hot — must be online during every consensus round.
+/// - **Compromise impact**: Attacker can equivocate (double-sign) on behalf of this
+///   validator, triggering slashing of the staked SOV.
+///
+/// ### 2. `networking_key` — P2P / Transport Identity Key
+/// Used to establish the validator's peer identity on the ZHTP mesh network (QUIC TLS
+/// handshake, DHT node ID derivation, peer authentication).
+/// - **Algorithm**: X25519 / Ed25519 (classical elliptic-curve).
+/// - **Exposure**: Hot — required for every inbound and outbound connection.
+/// - **Compromise impact**: Attacker can impersonate the validator on the P2P layer and
+///   inject or suppress gossip messages, but CANNOT forge consensus votes.
+///
+/// ### 3. `rewards_key` — Rewards / Fee-Collection Key
+/// Identifies the wallet address to which block rewards and fee distributions are sent.
+/// This is the public key of the validator's rewards wallet (see `WalletTransactionData`).
+/// - **Algorithm**: Dilithium2 or Ed25519 depending on wallet type.
+/// - **Exposure**: Can be kept cold — only needed when claiming accumulated rewards.
+/// - **Compromise impact**: Attacker can redirect future reward payments; historical
+///   rewards already on-chain are unaffected.
+///
+/// ## Invariant
+///
+/// The runtime MUST assert `consensus_key != networking_key`,
+/// `consensus_key != rewards_key`, and `networking_key != rewards_key` at validator
+/// registration time. See [`register_validator`] in the blockchain layer and
+/// [`ValidatorManager::register_validator`] in the consensus layer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorInfo {
     /// Validator identity ID
@@ -194,8 +234,16 @@ pub struct ValidatorInfo {
     pub stake: u64,
     /// Storage provided (in bytes)
     pub storage_provided: u64,
-    /// Public key for consensus (post-quantum)
+    /// Post-quantum Dilithium2 public key used exclusively for signing BFT consensus
+    /// messages (proposals, pre-votes, pre-commits).  MUST differ from `networking_key`
+    /// and `rewards_key`.
     pub consensus_key: Vec<u8>,
+    /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT node
+    /// ID).  MUST differ from `consensus_key` and `rewards_key`.
+    pub networking_key: Vec<u8>,
+    /// Public key of the rewards wallet that receives block rewards and fee distributions.
+    /// MUST differ from `consensus_key` and `networking_key`.
+    pub rewards_key: Vec<u8>,
     /// Network address for validator communication
     pub network_address: String,
     /// Commission rate (percentage 0-100)
@@ -949,6 +997,8 @@ impl Blockchain {
                                 stake: validator_data.stake,
                                 storage_provided: validator_data.storage_provided,
                                 consensus_key: validator_data.consensus_key.clone(),
+                                networking_key: validator_data.networking_key.clone(),
+                                rewards_key: validator_data.rewards_key.clone(),
                                 network_address: validator_data.network_address.clone(),
                                 commission_rate: validator_data.commission_rate,
                                 status: status.to_string(),
@@ -3261,7 +3311,20 @@ impl Blockchain {
     // Validator registration and management
     // ========================================================================
 
-    /// Register a new validator on the blockchain
+    /// Register a new validator on the blockchain.
+    ///
+    /// # Key Separation Enforcement
+    ///
+    /// This function enforces the three-key separation invariant before accepting a
+    /// registration.  A validator MUST supply three distinct keys:
+    ///
+    /// - `consensus_key`: BFT vote-signing key (Dilithium2, hot).
+    /// - `networking_key`: P2P transport identity key (Ed25519/X25519, hot).
+    /// - `rewards_key`: Wallet public key for reward collection (cold-capable).
+    ///
+    /// If any two keys are identical the registration is rejected with an error
+    /// describing which pair collides.  See the [`ValidatorInfo`] doc-comment for a
+    /// full description of each key's role and the security rationale for separation.
     pub fn register_validator(&mut self, validator_info: ValidatorInfo) -> Result<Hash> {
         // Check if validator already exists
         if self.validator_registry.contains_key(&validator_info.identity_id) {
@@ -3272,7 +3335,37 @@ impl Blockchain {
         if !self.identity_registry.contains_key(&validator_info.identity_id) {
             return Err(anyhow::anyhow!("Identity {} must be registered before becoming a validator", validator_info.identity_id));
         }
-        
+
+        // KEY SEPARATION ASSERTIONS
+        // Each key serves a distinct security domain; reuse collapses those boundaries.
+        if validator_info.consensus_key.is_empty() {
+            return Err(anyhow::anyhow!("Validator consensus_key must not be empty"));
+        }
+        if validator_info.networking_key.is_empty() {
+            return Err(anyhow::anyhow!("Validator networking_key must not be empty"));
+        }
+        if validator_info.rewards_key.is_empty() {
+            return Err(anyhow::anyhow!("Validator rewards_key must not be empty"));
+        }
+        if validator_info.consensus_key == validator_info.networking_key {
+            return Err(anyhow::anyhow!(
+                "Validator key separation violation: consensus_key and networking_key must be different keys. \
+                 Reusing the same key across roles collapses security domain boundaries."
+            ));
+        }
+        if validator_info.consensus_key == validator_info.rewards_key {
+            return Err(anyhow::anyhow!(
+                "Validator key separation violation: consensus_key and rewards_key must be different keys. \
+                 A compromised consensus key must not give an attacker control over staking rewards."
+            ));
+        }
+        if validator_info.networking_key == validator_info.rewards_key {
+            return Err(anyhow::anyhow!(
+                "Validator key separation violation: networking_key and rewards_key must be different keys. \
+                 A compromised network identity key must not give an attacker access to reward funds."
+            ));
+        }
+
         // SECURITY: Validate minimum requirements for validator eligibility
         // Edge nodes (minimal storage, no consensus capability) cannot become validators
         // Genesis bootstrap: Allow 1,000 SOV minimum for initial validator setup
