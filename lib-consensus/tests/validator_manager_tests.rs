@@ -270,14 +270,15 @@ fn test_slashing_double_sign() -> Result<()> {
     let initial_voting_power = manager.get_validator(&identity).unwrap().voting_power;
 
     // Slash for double signing (5%)
-    let slashed_amount = manager.slash_validator(&identity, SlashType::DoubleSign, 5)?;
+    let slashed_amount = manager.slash_validator(&identity, SlashType::DoubleSign, 5, 100)?;
 
     let validator = manager.get_validator(&identity).unwrap();
     assert_eq!(slashed_amount, initial_stake * 5 / 100);
     assert_eq!(validator.stake, initial_stake - slashed_amount);
     assert!(validator.voting_power < initial_voting_power);
-    // For 5% slashing, validator remains Active (not severe enough for jailing)
-    assert_eq!(validator.status, ValidatorStatus::Active);
+    // Double-signing results in permanent ban (not Active)
+    assert_eq!(validator.status, ValidatorStatus::Slashed);
+    assert!(validator.jail_status.is_permanently_banned());
 
     Ok(())
 }
@@ -298,7 +299,7 @@ fn test_slashing_liveness() -> Result<()> {
     )?;
 
     // Slash for liveness violation (1%)
-    let slashed_amount = manager.slash_validator(&identity, SlashType::Liveness, 1)?;
+    let slashed_amount = manager.slash_validator(&identity, SlashType::Liveness, 1, 100)?;
 
     let validator = manager.get_validator(&identity).unwrap();
     assert_eq!(slashed_amount, initial_stake * 1 / 100);
@@ -312,7 +313,7 @@ fn test_slash_nonexistent_validator() {
     let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
 
     let identity = create_test_identity("nonexistent");
-    let result = manager.slash_validator(&identity, SlashType::DoubleSign, 5);
+    let result = manager.slash_validator(&identity, SlashType::DoubleSign, 5, 100);
 
     assert!(result.is_err());
     assert!(result
