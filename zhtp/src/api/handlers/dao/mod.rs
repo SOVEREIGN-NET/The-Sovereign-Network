@@ -581,7 +581,18 @@ impl DaoHandler {
 
         // Filter by status if provided
         if let Some(status_filter) = &query.status {
-            let wanted = status_filter.to_lowercase();
+            let wanted = status_filter.trim().to_lowercase();
+            const SUPPORTED_STATUS_FILTERS: &[&str] = &["active", "passed", "executed"];
+            if !SUPPORTED_STATUS_FILTERS.contains(&wanted.as_str()) {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!(
+                        "Unsupported status filter '{}'. Supported values: {}",
+                        status_filter,
+                        SUPPORTED_STATUS_FILTERS.join(", ")
+                    ),
+                ));
+            }
             filtered_proposals.retain(|p| {
                 let executed = all_executions.iter().any(|e| e.proposal_id == p.proposal_id);
                 let passed = blockchain.has_proposal_passed(&p.proposal_id, p.quorum_required as u32).unwrap_or(false);
