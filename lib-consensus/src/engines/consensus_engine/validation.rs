@@ -333,6 +333,84 @@ impl ConsensusEngine {
 
         Ok(())
     }
+
+    /// Validate that a block proposal does not create a fork.
+    ///
+    /// # BFT Fork Invariant
+    ///
+    /// In Byzantine Fault Tolerant (BFT) consensus, **forks are invalid by definition**.
+    /// Once 2/3+1 validators have committed a block at height H with hash X, that block
+    /// is final and irreversible. Any proposal arriving at height H with a different block
+    /// hash Y is a fork attempt and MUST be rejected immediately.
+    ///
+    /// This property differs fundamentally from Nakamoto (PoW) consensus:
+    /// - In PoW, forks are possible and resolved by longest-chain rule.
+    /// - In BFT, finality is immediate: a committed block cannot be replaced.
+    ///   A conflicting proposal is therefore provably invalid, not merely a candidate.
+    ///
+    /// # Arguments
+    /// * `proposal_height` - The height claimed by the incoming proposal
+    /// * `proposal_id` - The block/proposal hash of the incoming proposal (for logging)
+    ///
+    /// # Errors
+    /// Returns `ConsensusError::ByzantineFault` if the proposal height already has a
+    /// different committed block. The error message identifies the conflicting hashes
+    /// so the evidence can be used for validator accountability.
+    ///
+    /// # Invariant
+    /// This check MUST be applied to every incoming proposal before it is accepted
+    /// into the pending proposal queue. It is a hard gate: a fork proposal is never
+    /// stored, never voted on, and never forwarded to peers.
+    pub(super) fn validate_no_fork_proposal(
+        &self,
+        proposal_height: u64,
+        proposal_id: &Hash,
+    ) -> ConsensusResult<()> {
+        // If the proposal is for a height strictly below the current round height,
+        // it is for an already-committed block. Reject it unconditionally.
+        //
+        // Note: current_round.height is the height we are currently deciding.
+        // All heights below it have already been committed and are immutable in BFT.
+        if proposal_height < self.current_round.height {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "BFT FORK REJECTED: proposal {:?} targets height {} which is below the \
+                 current proposal height {}. In BFT consensus, committed blocks are \
+                 final and irreversible. A proposal for an already-committed height is \
+                 an invalid fork attempt and is rejected immediately.",
+                proposal_id,
+                proposal_height,
+                self.current_round.height,
+            )));
+        }
+
+        // If the proposal targets the current round height but there is already an
+        // agreed-upon proposal (valid_proposal) at this height with a different hash,
+        // reject it as a fork.
+        //
+        // This can happen if consensus committed a block in a prior round but the
+        // engine has not yet advanced to the next height. Any conflicting proposal
+        // at the same height is a fork and MUST be rejected.
+        if proposal_height == self.current_round.height {
+            // Check if we already have an agreed-upon block at this height (valid_proposal
+            // represents the agreed-upon value in the current round).
+            // A non-nil valid_proposal that differs from the incoming proposal signals a fork.
+            if let Some(committed_id) = &self.current_round.valid_proposal {
+                if committed_id != proposal_id {
+                    return Err(ConsensusError::ByzantineFault(format!(
+                        "BFT FORK REJECTED: proposal {:?} conflicts with already-agreed \
+                         proposal {:?} at height {}. In BFT consensus, once 2/3+1 validators \
+                         have pre-committed a block, no other block is valid at that height. \
+                         This conflicting proposal is an invalid fork attempt.",
+                        proposal_id,
+                        committed_id,
+                        proposal_height,
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -885,6 +885,27 @@ impl ConsensusEngine {
     }
 
     pub(super) async fn on_proposal(&mut self, proposal: ConsensusProposal) -> ConsensusResult<()> {
+        // BFT SAFETY: Reject any proposal that would create a fork.
+        //
+        // In BFT consensus, forks are invalid by definition. Once a block is committed
+        // at height H, no other block is valid at that height. Any proposal targeting
+        // an already-committed height with a different block hash is a fork attempt
+        // and must be rejected immediately, before any other processing.
+        //
+        // This is a hard gate: fork proposals are never stored, never voted on,
+        // and never forwarded to peers.
+        if let Err(e) = self.validate_no_fork_proposal(proposal.height, &proposal.id) {
+            tracing::error!(
+                "FORK REJECTED: Proposal {:?} from proposer {} at height {} \
+                 rejected as invalid fork: {}",
+                proposal.id,
+                proposal.proposer,
+                proposal.height,
+                e,
+            );
+            return Err(e);
+        }
+
         if !self.is_proposal_relevant(&proposal) {
             return Ok(());
         }
