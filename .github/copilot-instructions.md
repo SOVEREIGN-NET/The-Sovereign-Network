@@ -253,7 +253,7 @@ sudo apt-get install -y libudev-dev libdbus-1-dev pkg-config
 # Build workspace (always use --locked)
 cargo build --workspace --locked
 
-# Build release binary (on main/development pushes)
+# Build release binary for orchestrator node (on main/development pushes)
 cargo build --release -p zhtp --locked
 
 # Run all test suites
@@ -354,11 +354,11 @@ cargo test -p lib-network --features ble-mock
 
 ### Important Configuration Files
 
-- **Workspace Config:** `/Cargo.toml` - Defines all workspace members and shared dependencies
-- **Node Configs:** `/zhtp/configs/*.toml` - Test node configurations
-- **Build Scripts:** `/build.sh`, `/build.ps1`, `/run-node.sh`, `/run-node.ps1`
-- **CI Workflows:** `/.github/workflows/ci.yml` - Main build and test pipeline
-- **Git Config:** `/.gitmessage` - Commit message template
+- **Workspace Config:** `Cargo.toml` - Defines all workspace members and shared dependencies
+- **Node Configs:** `zhtp/configs/*.toml` - Test node configurations
+- **Build Scripts:** `build.sh`, `build.ps1`, `run-node.sh`, `run-node.ps1`
+- **CI Workflows:** `.github/workflows/ci.yml` - Main build and test pipeline
+- **Git Config:** `.gitmessage` - Commit message template
 
 ### Key Source Files
 
