@@ -48,6 +48,10 @@ pub trait TokenStore {
 ///
 /// * `Ok(TransferResult)` - Transfer details on success
 /// * `Err(TokenError)` - Error describing failure
+#[deprecated(
+    since = "0.1.0",
+    note = "Consensus token execution is implemented in lib-blockchain; this helper is non-canonical."
+)]
 pub fn apply_token_transfer(
     store: &dyn TokenStore,
     contract: &mut TokenContract,

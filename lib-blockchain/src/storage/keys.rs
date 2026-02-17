@@ -193,6 +193,9 @@ pub mod meta {
 
     /// Key for chain ID
     pub const CHAIN_ID: &[u8] = b"chain_id";
+
+    /// Key for token consensus snapshot (contracts + nonces)
+    pub const TOKEN_STATE_SNAPSHOT: &[u8] = b"token_state_snapshot";
 }
 
 // =============================================================================

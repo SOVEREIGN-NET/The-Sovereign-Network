@@ -977,14 +977,29 @@ impl Blockchain {
             }
         }
 
-        // CRITICAL: Load persisted SOV token contract from SledStore if not reconstructed from transactions
-        // The genesis token contract (with user balances) may not be in ContractExecution transactions
-        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        if !blockchain.token_contracts.contains_key(&sov_token_id) {
-            let token_id = crate::storage::TokenId(sov_token_id);
-            if let Ok(Some(sov_token)) = store.get_token_contract(&token_id) {
-                info!("🪙 Loaded SOV token contract from SledStore (balances preserved)");
-                blockchain.token_contracts.insert(sov_token_id, sov_token);
+        // Load deterministic token snapshot (contracts + nonces) as the
+        // canonical restart state for the token subsystem.
+        let mut loaded_token_snapshot = false;
+        if let Ok(Some(snapshot)) = store.get_token_state_snapshot() {
+            blockchain.token_contracts = snapshot.token_contracts;
+            blockchain.token_nonces = snapshot.token_nonces;
+            loaded_token_snapshot = true;
+            info!(
+                "🪙 Loaded token state snapshot from SledStore (tokens={}, nonces={})",
+                blockchain.token_contracts.len(),
+                blockchain.token_nonces.len()
+            );
+        }
+
+        // Backward-compat fallback for stores that predate token snapshots.
+        if !loaded_token_snapshot {
+            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+            if !blockchain.token_contracts.contains_key(&sov_token_id) {
+                let token_id = crate::storage::TokenId(sov_token_id);
+                if let Ok(Some(sov_token)) = store.get_token_contract(&token_id) {
+                    info!("🪙 Loaded SOV token contract from SledStore (legacy fallback)");
+                    blockchain.token_contracts.insert(sov_token_id, sov_token);
+                }
             }
         }
 
@@ -1499,6 +1514,7 @@ impl Blockchain {
         self.process_wallet_transactions(&block)?;
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
+        self.persist_token_state_snapshot()?;
 
         // Process approved governance proposals (e.g., difficulty parameter updates)
         // This executes any proposals that have passed voting since the last block
@@ -1568,6 +1584,19 @@ impl Blockchain {
             // Don't fail block processing for event publishing errors
         }
 
+        Ok(())
+    }
+
+    /// Persist full token subsystem snapshot within the active block transaction.
+    fn persist_token_state_snapshot(&self) -> Result<()> {
+        if let Some(ref store) = self.store {
+            let snapshot = crate::storage::TokenStateSnapshot {
+                token_contracts: self.token_contracts.clone(),
+                token_nonces: self.token_nonces.clone(),
+            };
+            store.put_token_state_snapshot(&snapshot)
+                .map_err(|e| anyhow::anyhow!("Failed to persist token state snapshot: {}", e))?;
+        }
         Ok(())
     }
 
@@ -3242,11 +3271,6 @@ impl Blockchain {
                                         &wallet_id_str[..16.min(wallet_id_str.len())],
                                         e
                                     );
-                                } else if let Some(store) = &self.store {
-                                    let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                                    if let Err(e) = store_ref.put_token_contract(token) {
-                                        warn!("Failed to persist SOV token after wallet registration mint: {}", e);
-                                    }
                                 }
                             }
                         }
@@ -3558,9 +3582,8 @@ impl Blockchain {
             }
             // Handle ContractExecution transactions (token create/mint/transfer/burn)
             else if transaction.transaction_type == TransactionType::ContractExecution {
-                if let Err(e) = self.process_contract_execution(transaction, block.height()) {
-                    warn!("Failed to process contract execution: {}", e);
-                }
+                self.process_contract_execution(transaction, block.height())
+                    .map_err(|e| anyhow::anyhow!("Failed to process contract execution: {}", e))?;
             }
         }
         Ok(())
@@ -3669,14 +3692,6 @@ impl Blockchain {
                     // Increment nonce after successful transfer
                     *self.token_nonces.entry(nonce_key).or_insert(0) += 1;
 
-                    if let Some(store) = &self.store {
-                        if let Some(token) = self.token_contracts.get(&token_id) {
-                            let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                            if let Err(e) = store_ref.put_token_contract(token) {
-                                warn!("Failed to persist token contract after transfer: {}", e);
-                            }
-                        }
-                    }
                 }
                 TransactionType::TokenMint => {
                     if transaction.version < 2 {
@@ -3783,12 +3798,6 @@ impl Blockchain {
                     token.mint(&recipient_pk, amount_u64)
                         .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
 
-                    if let Some(store) = &self.store {
-                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                        if let Err(e) = store_ref.put_token_contract(token) {
-                            warn!("Failed to persist token contract after mint: {}", e);
-                        }
-                    }
                 }
                 _ => {}
             }
@@ -3919,148 +3928,19 @@ impl Blockchain {
                     name, symbol, hex::encode(token_id));
             }
             "mint" => {
-                // MintParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
-                #[derive(serde::Deserialize)]
-                struct MintParams {
-                    token_id: [u8; 32],
-                    to: Vec<u8>,  // PublicKey bytes (bincode serialized)
-                    amount: u64,
-                }
-                let params: MintParams = bincode::deserialize(&call.params)
-                    .map_err(|e| anyhow::anyhow!("Invalid mint params: {}", e))?;
-                let MintParams { token_id, to: to_bytes, amount } = params;
-                if Self::is_sov_token_id(&token_id) {
-                    return Err(anyhow::anyhow!("SOV mints must use TokenMint transactions"));
-                }
-
-                // Deserialize PublicKey from bytes, or create minimal key with key_id
-                let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
-                    // Just key_id was sent
-                    lib_crypto::types::keys::PublicKey {
-                        dilithium_pk: vec![],
-                        kyber_pk: vec![],
-                        key_id: to_bytes.try_into().unwrap_or([0u8; 32]),
-                    }
-                } else {
-                    // Full PublicKey was serialized
-                    bincode::deserialize(&to_bytes).unwrap_or_else(|_| {
-                        lib_crypto::types::keys::PublicKey {
-                            dilithium_pk: vec![],
-                            kyber_pk: vec![],
-                            key_id: [0u8; 32],
-                        }
-                    })
-                };
-
-                let token = self.token_contracts.get_mut(&token_id)
-                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-                if token.creator != *caller {
-                    return Err(anyhow::anyhow!("Only token creator can mint"));
-                }
-
-                crate::contracts::tokens::functions::mint_tokens(token, &to, amount)
-                    .map_err(|e| anyhow::anyhow!("Mint failed: {}", e))?;
-                info!("Minted {} tokens to {:?}", amount, to.key_id);
+                return Err(anyhow::anyhow!(
+                    "ContractExecution token mint is disabled; use canonical TokenMint transaction"
+                ));
             }
             "transfer" => {
-                warn!("DEPRECATED: ContractExecution/transfer is deprecated — use TokenTransfer transactions instead (issue #1132)");
-                // TransferParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
-                #[derive(serde::Deserialize)]
-                struct TransferParams {
-                    token_id: [u8; 32],
-                    to: Vec<u8>,  // PublicKey bytes (bincode serialized)
-                    amount: u64,
-                }
-                let params: TransferParams = bincode::deserialize(&call.params)
-                    .map_err(|e| anyhow::anyhow!("Invalid transfer params: {}", e))?;
-                let TransferParams { token_id, to: to_bytes, amount } = params;
-                if Self::is_sov_token_id(&token_id) {
-                    return Err(anyhow::anyhow!("SOV transfers must use TokenTransfer transactions"));
-                }
-
-                // Deserialize PublicKey from bytes, or create minimal key with key_id
-                let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
-                    // Just key_id was sent
-                    lib_crypto::types::keys::PublicKey {
-                        dilithium_pk: vec![],
-                        kyber_pk: vec![],
-                        key_id: to_bytes.try_into().unwrap_or([0u8; 32]),
-                    }
-                } else {
-                    // Full PublicKey was serialized
-                    bincode::deserialize(&to_bytes).unwrap_or_else(|_| {
-                        lib_crypto::types::keys::PublicKey {
-                            dilithium_pk: vec![],
-                            kyber_pk: vec![],
-                            key_id: [0u8; 32],
-                        }
-                    })
-                };
-
-                let token = self.token_contracts.get_mut(&token_id)
-                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-                // Debug: log caller key_id and all balance entries for diagnosis
-                warn!(
-                    "[TRANSFER-EXEC] caller key_id={}, token has {} balance entries, amount={}",
-                    hex::encode(&caller.key_id),
-                    token.balances.len(),
-                    amount
-                );
-                for (pk, bal) in token.balances.iter() {
-                    warn!(
-                        "[TRANSFER-EXEC] balance entry: key_id={} balance={} dilithium_pk_len={} kyber_pk_len={}",
-                        hex::encode(&pk.key_id), bal, pk.dilithium_pk.len(), pk.kyber_pk.len()
-                    );
-                }
-
-                // Look up balance by key_id to handle PublicKey shape mismatches.
-                // Balances may have been minted under PublicKey::new(dilithium_pk) which
-                // has kyber_pk=vec![], but the caller's tx signature has both keys populated.
-                // Find the existing balance entry by key_id instead of full PublicKey equality.
-                let (source_key, source_balance) = token.balances.iter()
-                    .find(|(pk, _)| pk.key_id == caller.key_id)
-                    .map(|(pk, bal)| (pk.clone(), *bal))
-                    .unwrap_or_else(|| (caller.clone(), 0));
-
-                warn!(
-                    "[TRANSFER-EXEC] source_balance={} (found_by_key_id={}) for caller key_id={}",
-                    source_balance,
-                    source_balance > 0,
-                    hex::encode(&caller.key_id)
-                );
-
-                if source_balance < amount {
-                    return Err(anyhow::anyhow!("Insufficient balance"));
-                }
-                token.balances.insert(source_key, source_balance - amount);
-
-                let (to_key, to_balance) = token.balances.iter()
-                    .find(|(pk, _)| pk.key_id == to.key_id)
-                    .map(|(pk, bal)| (pk.clone(), *bal))
-                    .unwrap_or_else(|| (to.clone(), 0));
-                token.balances.insert(to_key, to_balance + amount);
-
-                info!("Transferred {} tokens from {:?} to {:?}", amount, caller.key_id, to.key_id);
+                return Err(anyhow::anyhow!(
+                    "ContractExecution token transfer is disabled; use canonical TokenTransfer transaction"
+                ));
             }
             "burn" => {
-                // BurnParams struct: { token_id: [u8; 32], amount: u64 }
-                #[derive(serde::Deserialize)]
-                struct BurnParams {
-                    token_id: [u8; 32],
-                    amount: u64,
-                }
-                let params: BurnParams = bincode::deserialize(&call.params)
-                    .map_err(|e| anyhow::anyhow!("Invalid burn params: {}", e))?;
-                let BurnParams { token_id, amount } = params;
-
-                let token = self.token_contracts.get_mut(&token_id)
-                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-                crate::contracts::tokens::functions::burn_tokens(token, caller, amount)
-                    .map_err(|e| anyhow::anyhow!("Burn failed: {}", e))?;
-                info!("Burned {} tokens from {:?}", amount, caller.key_id);
+                return Err(anyhow::anyhow!(
+                    "ContractExecution token burn is disabled; use canonical typed token mutation transaction"
+                ));
             }
             _ => {
                 debug!("Unknown token method: {}", call.method);
