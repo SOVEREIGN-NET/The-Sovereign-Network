@@ -395,7 +395,7 @@ impl DaoHandler {
 
         let proposal_data = DaoProposalData {
             proposal_id,
-            proposer: proposer_identity.did.clone(),
+            proposer: proposer_hex.clone(),
             title: request_data.title.clone(),
             description: request_data.description.clone(),
             proposal_type: Self::proposal_type_to_string(&proposal_type),
@@ -488,10 +488,11 @@ impl DaoHandler {
             &now.to_le_bytes(),
         ]);
         let metadata_bytes = serde_json::to_vec(&metadata)?;
+        let authenticated_hex = hex::encode(authenticated_identity_id.as_bytes());
 
         let execution_data = DaoExecutionData {
             proposal_id,
-            executor: identity.did.clone(),
+            executor: authenticated_hex,
             execution_type: execution_type.to_string(),
             recipient: Some(user_did.clone()),
             amount: None,
@@ -804,10 +805,10 @@ impl DaoHandler {
         let already_voted_confirmed = blockchain
             .get_dao_votes_for_proposal(&proposal_id)
             .iter()
-            .any(|v| v.voter == voter_identity.did);
+            .any(|v| v.voter == authenticated_hex);
         let already_voted_pending = blockchain.pending_transactions.iter().any(|tx| {
             tx.transaction_type == lib_blockchain::TransactionType::DaoVote
-                && tx.dao_vote_data.as_ref().map(|v| v.proposal_id == proposal_id && v.voter == voter_identity.did).unwrap_or(false)
+                && tx.dao_vote_data.as_ref().map(|v| v.proposal_id == proposal_id && v.voter == authenticated_hex).unwrap_or(false)
         });
         if already_voted_confirmed || already_voted_pending {
             return Ok(create_error_response(
@@ -826,7 +827,7 @@ impl DaoHandler {
         let vote_data = DaoVoteData {
             vote_id,
             proposal_id,
-            voter: voter_identity.did.clone(),
+            voter: authenticated_hex.clone(),
             vote_choice: vote_choice_str,
             voting_power: 1,
             justification: request_data.justification.clone(),
