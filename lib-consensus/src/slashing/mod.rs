@@ -125,6 +125,8 @@ pub enum SlashableOffense {
     // =========================================================================
     // LIVENESS VIOLATIONS — severity 1–20 — temporary jail
     // =========================================================================
+    // Note: severity (1-100) is a conceptual ordering, NOT a direct slash percentage.
+    // The actual slash percentage is determined by the offense category, not severity value.
 
     /// Validator missed more than `MAX_MISSED_BLOCKS` consecutive blocks.
     ///
