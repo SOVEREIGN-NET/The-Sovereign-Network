@@ -531,31 +531,8 @@ async fn test_finalize_blocks_tracking() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_cannot_reorg_below_finality() -> Result<()> {
-    let mut blockchain = Blockchain::new()?;
-
-    // Manually mark blocks 1-5 as finalized
-    for height in 1..=5 {
-        blockchain.mark_block_finalized(height);
-    }
-
-    // Try to reorg to height 3 (below finality)
-    let reorg_result = blockchain.can_reorg_to_height(3);
-
-    // Should fail due to finality
-    assert!(reorg_result.is_err(), "Cannot reorg below finality threshold");
-
-    // Try to reorg to height 6 (above finality)
-    let reorg_result = blockchain.can_reorg_to_height(6);
-
-    // Should succeed (or give a different error, but not finality-related)
-    if let Err(e) = &reorg_result {
-        assert!(!e.contains("finality"), "Error should not be finality-related for height above finality");
-    }
-
-    Ok(())
-}
+// Test removed - fork detection and reorg logic removed in Issue #936
+// BFT consensus does not require chain reorganization
 
 #[tokio::test]
 async fn test_finalized_blocks_set_operations() -> Result<()> {
