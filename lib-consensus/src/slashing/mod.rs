@@ -77,8 +77,11 @@ pub const JAIL_EXIT_WAIT_BLOCKS: u64 = 1000;
 /// This prevents a validator from unjailing with no effective economic stake,
 /// which would give them consensus participation rights without skin in the game.
 ///
-/// Value: 100 SOV tokens (in micro-SOV units, 1 SOV = 1_000_000 micro-SOV)
-pub const MIN_STAKE_TO_UNJAIL: u64 = 100 * 1_000_000; // 100 SOV
+/// Value: 1000 SOV tokens (in micro-SOV units, 1 SOV = 1_000_000 micro-SOV)
+///
+/// Matches the network minimum validator stake to ensure unjailing validators
+/// retain meaningful economic stake.
+pub const MIN_STAKE_TO_UNJAIL: u64 = 1000 * 1_000_000; // 1000 SOV in micro-SOV
 
 // Compile-time invariant: REC-INV-6
 const _: () = assert!(
@@ -281,11 +284,17 @@ pub fn check_unjail_eligibility(
         }
 
         // Liveness jail: check wait period and stake
-        JailStatus::LivenessJail { eligible_at_block, .. } => {
-            // REC-INV-2: Must wait JAIL_EXIT_WAIT_BLOCKS
-            if current_block < *eligible_at_block {
+        JailStatus::LivenessJail { jailed_at_block, eligible_at_block } => {
+            // REC-INV-2: Validate that eligible_at_block matches computed expectation
+            let computed_eligible = jailed_at_block.saturating_add(JAIL_EXIT_WAIT_BLOCKS);
+            debug_assert_eq!(
+                *eligible_at_block, computed_eligible,
+                "REC-INV-2 violation: eligible_at_block ({}) != jailed_at_block ({}) + JAIL_EXIT_WAIT_BLOCKS ({})",
+                eligible_at_block, jailed_at_block, JAIL_EXIT_WAIT_BLOCKS
+            );
+            if current_block < computed_eligible {
                 return Err(RecoveryError::JailPeriodNotExpired {
-                    eligible_at_block: *eligible_at_block,
+                    eligible_at_block: computed_eligible,
                 });
             }
         }
