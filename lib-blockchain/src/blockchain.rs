@@ -7805,6 +7805,20 @@ impl Blockchain {
         self.finalized_blocks.contains(&block_height)
     }
 
+    /// Get the hash of the committed block at a specific height, if one exists.
+    ///
+    /// In BFT consensus, once a block is committed at height H, no other block
+    /// is valid at that height. This method is used to detect fork attempts:
+    /// if a proposal arrives for height H but its block hash differs from the
+    /// already-committed block at H, it is a fork and must be rejected.
+    ///
+    /// # Returns
+    /// - `Some(hash)` if a committed block exists at the given height
+    /// - `None` if no block has been committed at that height yet
+    pub fn get_committed_block_hash(&self, height: u64) -> Option<Hash> {
+        self.get_block(height).map(|b| b.header.block_hash)
+    }
+
     /// Mark a block as finalized
     pub fn mark_block_finalized(&mut self, block_height: u64) {
         self.finalized_blocks.insert(block_height);
