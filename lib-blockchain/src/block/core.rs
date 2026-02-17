@@ -62,8 +62,8 @@ pub const BFT_REQUIRED_HEADER_FIELDS: &[&str] = &[
     "previous_block_hash",
     "merkle_root",
     "timestamp",
-    "difficulty",
-    "nonce",
+    "difficulty", // Legacy PoW fields retained for backward compatibility; not validated in BFT consensus
+    "nonce",      // Legacy PoW fields retained for backward compatibility; not validated in BFT consensus
     "height",
     "transaction_count",
     "block_size",
@@ -114,6 +114,12 @@ pub struct BlockHeader {
     /// **Consensus-critical.** A single 32-byte commitment to the complete,
     /// ordered list of transactions in this block. Verifying the Merkle root
     /// proves that no transaction has been added, removed, or reordered.
+    ///
+    /// # Commitment scheme
+    ///
+    /// Computed by [`crate::transaction::hashing::calculate_transaction_merkle_root`]
+    /// using a standard binary Merkle tree with BLAKE3. Odd nodes are duplicated before
+    /// hashing parents. Transaction leaf hashes use zeroed signatures.
     pub merkle_root: Hash,
 
     /// UNIX timestamp (seconds since epoch) of block production.
@@ -620,6 +626,12 @@ mod header_hash_tests {
         h.fee_model_version = 2;
         assert_eq!(base.calculate_hash(), h.calculate_hash(),
             "fee_model_version is informational and must NOT affect hash");
+
+        // block_hash itself must NOT affect hash calculation (it is the output, not an input)
+        let mut h = base.clone();
+        h.block_hash = Hash::from_slice(&[3u8; 32]);
+        assert_eq!(base.calculate_hash(), h.calculate_hash(),
+            "block_hash is the output and must NOT affect hash calculation");
     }
 
     /// Verify that the number of entries in BFT_REQUIRED_HEADER_FIELDS is correct.
