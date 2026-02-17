@@ -218,7 +218,15 @@ impl lib_consensus::validators::ValidatorInfo for BlockchainValidatorAdapter {
     fn consensus_key(&self) -> Vec<u8> {
         self.0.consensus_key.clone()
     }
-    
+
+    fn networking_key(&self) -> Vec<u8> {
+        self.0.networking_key.clone()
+    }
+
+    fn rewards_key(&self) -> Vec<u8> {
+        self.0.rewards_key.clone()
+    }
+
     fn commission_rate(&self) -> u8 {
         self.0.commission_rate
     }

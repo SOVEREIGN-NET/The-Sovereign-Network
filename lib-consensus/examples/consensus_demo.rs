@@ -69,7 +69,13 @@ async fn main() -> Result<()> {
 
     for (i, (name, stake, storage)) in validators.iter().enumerate() {
         let identity = create_identity_from_string(&format!("validator_{}", name))?;
-        let consensus_key = vec![i as u8; 32]; // Simple key for demo
+        // Demo uses distinct byte patterns per role to satisfy key separation invariant:
+        //   consensus_key  (byte pattern i*3+0): BFT vote-signing key
+        //   networking_key (byte pattern i*3+1): P2P transport identity key
+        //   rewards_key    (byte pattern i*3+2): Rewards wallet public key
+        let consensus_key = vec![(i * 3) as u8; 32];
+        let networking_key = vec![(i * 3 + 1) as u8; 32];
+        let rewards_key = vec![(i * 3 + 2) as u8; 32];
         let commission_rate = 5; // 5% commission
 
         consensus_engine
@@ -78,6 +84,8 @@ async fn main() -> Result<()> {
                 *stake,
                 *storage,
                 consensus_key,
+                networking_key,
+                rewards_key,
                 commission_rate,
                 i == 0, // First validator is genesis
             )

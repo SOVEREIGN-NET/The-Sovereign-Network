@@ -357,7 +357,12 @@ struct PendingValidatorAdd {
     identity: IdentityId,
     stake: u64,
     storage_capacity: u64,
+    /// BFT vote-signing key (Dilithium2, hot). Must differ from networking_key and rewards_key.
     consensus_key: Vec<u8>,
+    /// P2P transport identity key (Ed25519/X25519, hot). Must differ from consensus_key and rewards_key.
+    networking_key: Vec<u8>,
+    /// Rewards wallet public key (cold-capable). Must differ from consensus_key and networking_key.
+    rewards_key: Vec<u8>,
     commission_rate: u8,
 }
 
@@ -817,13 +822,22 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    /// Register as a validator
+    /// Register as a validator.
+    ///
+    /// # Key Separation
+    ///
+    /// Three distinct keys are required — `consensus_key`, `networking_key`, and
+    /// `rewards_key` — each serving a separate security domain.  All three must be
+    /// non-empty and pairwise distinct; this method returns an error if any two are
+    /// equal.  See [`Validator`](crate::validators::Validator) for the full rationale.
     pub async fn register_validator(
         &mut self,
         identity: IdentityId,
         stake: u64,
         storage_capacity: u64,
         consensus_key: Vec<u8>,
+        networking_key: Vec<u8>,
+        rewards_key: Vec<u8>,
         commission_rate: u8,
         is_genesis: bool,
     ) -> ConsensusResult<()> {
@@ -865,6 +879,8 @@ impl ConsensusEngine {
                     stake,
                     storage_capacity,
                     consensus_key.clone(),
+                    networking_key.clone(),
+                    rewards_key.clone(),
                     commission_rate,
                 )
                 .map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;
@@ -874,6 +890,8 @@ impl ConsensusEngine {
                 stake,
                 storage_capacity,
                 consensus_key: consensus_key.clone(),
+                networking_key: networking_key.clone(),
+                rewards_key: rewards_key.clone(),
                 commission_rate,
             })?;
         }
@@ -1093,6 +1111,8 @@ impl ConsensusEngine {
                                 add.stake,
                                 add.storage_capacity,
                                 add.consensus_key,
+                                add.networking_key,
+                                add.rewards_key,
                                 add.commission_rate,
                             )
                             .map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;

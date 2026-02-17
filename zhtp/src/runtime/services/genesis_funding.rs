@@ -351,11 +351,25 @@ impl GenesisFundingService {
                 .unwrap()
                 .as_secs();
             
+            // Genesis validators use identity-derived keys as placeholders.
+            // Key separation invariant: consensus_key, networking_key, and rewards_key
+            // MUST be distinct.  We derive each from the identity bytes with a unique
+            // domain-separation prefix so they are guaranteed to differ.
+            let identity_bytes = validator.identity_id.as_bytes().to_vec();
+            let mut consensus_key = identity_bytes.clone();
+            consensus_key.insert(0, 0x01); // domain: consensus
+            let mut networking_key = identity_bytes.clone();
+            networking_key.insert(0, 0x02); // domain: networking
+            let mut rewards_key = identity_bytes.clone();
+            rewards_key.insert(0, 0x03); // domain: rewards
+
             let validator_info = lib_blockchain::blockchain::ValidatorInfo {
                 identity_id: validator_did.clone(),
                 stake: validator.stake,
                 storage_provided: validator.storage_provided,
-                consensus_key: validator.identity_id.as_bytes().to_vec(),
+                consensus_key,
+                networking_key,
+                rewards_key,
                 network_address: "127.0.0.1:9333".to_string(),
                 commission_rate: (validator.commission_rate.min(10000) / 100) as u8,
                 status: "active".to_string(),

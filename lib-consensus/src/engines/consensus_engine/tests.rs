@@ -86,6 +86,8 @@
                 10_000_000_000,
                 100 * 1024 * 1024 * 1024,
                 keypair.public_key.dilithium_pk.clone(),
+                vec![0xEEu8; 32], // networking_key: distinct from consensus_key
+                vec![0xFFu8; 32], // rewards_key: distinct from consensus_key and networking_key
                 5,
                 is_genesis,
             )
@@ -133,6 +135,8 @@
                 10_000_000_000,
                 100 * 1024 * 1024 * 1024,
                 keypair.public_key.dilithium_pk.clone(),
+                vec![0xEEu8; 32], // networking_key: distinct from consensus_key
+                vec![0xFFu8; 32], // rewards_key: distinct from consensus_key and networking_key
                 5,
                 is_genesis,
             )
