@@ -640,6 +640,32 @@ impl Web4Handler {
         ))
     }
 
+    /// Validates and submits a domain registration fee payment transaction.
+    ///
+    /// This function ensures the provided fee transaction is a properly signed canonical
+    /// `TokenTransfer` from the owner's Primary wallet to the DAO treasury for the required
+    /// SOV amount. It performs the following validations:
+    ///
+    /// * Transaction type must be `TokenTransfer`
+    /// * Chain ID must be 0x03 (mainnet)
+    /// * Token must be SOV (the canonical token)
+    /// * Transfer amount must exactly match the required registration fee
+    /// * Sender must be the owner's Primary wallet
+    /// * Signature must match the Primary wallet's public key
+    /// * Recipient must be the DAO treasury wallet
+    ///
+    /// If the transaction passes all validations and is not already confirmed or pending,
+    /// it will be submitted to the blockchain's pending transaction pool.
+    ///
+    /// # Arguments
+    ///
+    /// * `owner_identity` - The identity of the domain owner
+    /// * `registration_fee_sov` - The required registration fee in SOV
+    /// * `fee_payment_tx_raw` - Hex-encoded serialized transaction
+    ///
+    /// # Returns
+    ///
+    /// Returns the transaction hash as a hex string on success, or an error if validation fails.
     async fn validate_and_submit_domain_fee_tx(
         &self,
         owner_identity: &ZhtpIdentity,
