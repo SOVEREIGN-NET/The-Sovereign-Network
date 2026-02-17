@@ -31,6 +31,7 @@ pub mod sync;
 pub mod protocol;
 pub mod resources;
 pub mod snapshot;
+pub mod vm;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
