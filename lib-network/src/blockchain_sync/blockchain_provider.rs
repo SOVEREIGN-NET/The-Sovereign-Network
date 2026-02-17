@@ -25,19 +25,26 @@ use lib_proofs::ChainRecursiveProof;
 pub trait BlockchainProvider: Send + Sync {
     /// Get current blockchain height
     async fn get_current_height(&self) -> Result<u64>;
-    
+
+    /// Get the highest BFT-committed block height.
+    ///
+    /// This is the authoritative sync target for Issue #950. Sync always
+    /// targets the peer's highest committed BFT height rather than any
+    /// longest-chain or total-work score.
+    async fn get_highest_committed_bft_height(&self) -> Result<u64>;
+
     /// Get block headers starting from a specific height
     /// Returns up to `count` headers
     async fn get_headers(&self, start_height: u64, count: u64) -> Result<Vec<BlockHeader>>;
-    
+
     /// Get or generate a recursive chain proof for bootstrapping edge nodes
     /// This should return a cached proof if available, or generate a new one
     async fn get_chain_proof(&self, up_to_height: u64) -> Result<ChainRecursiveProof>;
-    
+
     /// Get the full blockchain data (for bootstrap sync)
     /// This returns the serialized blockchain for new nodes to download
     async fn get_full_blockchain(&self) -> Result<Vec<u8>>;
-    
+
     /// Check if blockchain is available
     async fn is_available(&self) -> bool;
 }
@@ -51,19 +58,23 @@ impl BlockchainProvider for NullBlockchainProvider {
     async fn get_current_height(&self) -> Result<u64> {
         Err(anyhow::anyhow!("Blockchain not available"))
     }
-    
+
+    async fn get_highest_committed_bft_height(&self) -> Result<u64> {
+        Err(anyhow::anyhow!("Blockchain not available"))
+    }
+
     async fn get_headers(&self, _start_height: u64, _count: u64) -> Result<Vec<BlockHeader>> {
         Err(anyhow::anyhow!("Blockchain not available"))
     }
-    
+
     async fn get_chain_proof(&self, _up_to_height: u64) -> Result<ChainRecursiveProof> {
         Err(anyhow::anyhow!("Blockchain not available"))
     }
-    
+
     async fn get_full_blockchain(&self) -> Result<Vec<u8>> {
         Err(anyhow::anyhow!("Blockchain not available"))
     }
-    
+
     async fn is_available(&self) -> bool {
         false
     }

@@ -6397,209 +6397,72 @@ impl Blockchain {
             }
         }
 
-        // Create chain summaries for consensus evaluation
-        let local_summary = self.create_local_chain_summary_async().await;
-        let imported_summary = self.create_imported_chain_summary(
-            &import.blocks,
-            &import.identity_registry,
-            &import.utxo_set,
-            &import.token_contracts,
-            &import.web4_contracts
-        );
+        // Determine sync target using highest committed BFT height (Issue #950).
+        //
+        // BFT consensus provides finality: once 2/3+ validators have committed a
+        // block at height H, that block is irreversible. We therefore use the
+        // highest committed BFT height as the authoritative sync target instead of
+        // any Nakamoto-style longest-chain or total-work scoring.
+        //
+        // Decision rule:
+        //   - If the imported chain's tip height > our local tip height, the peer
+        //     is ahead in committed BFT height; adopt its chain.
+        //   - Otherwise keep the local chain (we are at least as far ahead).
+        //
+        // Note: block verification has already passed above, so both chains are
+        // structurally valid. Finality is determined by BFT commitment, not work.
 
-        // DEBUG: Log genesis hashes being compared
-        info!(" Comparing blockchains for merge:");
-        info!("   Local genesis hash:    {}", local_summary.genesis_hash);
-        info!("   Imported genesis hash: {}", imported_summary.genesis_hash);
-        info!("   Hashes equal: {}", local_summary.genesis_hash == imported_summary.genesis_hash);
+        let local_height = self.get_height();
+        let imported_height = if import.blocks.is_empty() {
+            0
+        } else {
+            import.blocks.len() as u64 - 1
+        };
 
-        // Use consensus rules to decide which chain to adopt
-        let decision = lib_consensus::ChainEvaluator::evaluate_chains(&local_summary, &imported_summary);
+        info!("BFT sync evaluation (Issue #950 - highest committed height):");
+        info!("  Local committed height:    {}", local_height);
+        info!("  Imported committed height: {}", imported_height);
 
-        match decision {
-            lib_consensus::ChainDecision::KeepLocal => {
-                info!(" Local chain is better - keeping current state");
-                info!("   Local: height={}, work={}, identities={}", 
-                      local_summary.height, local_summary.total_work, local_summary.total_identities);
-                info!("   Imported: height={}, work={}, identities={}", 
-                      imported_summary.height, imported_summary.total_work, imported_summary.total_identities);
-                Ok(lib_consensus::ChainMergeResult::LocalKept)
-            },
-            lib_consensus::ChainDecision::MergeContentOnly => {
-                info!(" Local chain is longer - merging unique content from shorter chain");
-                info!("   Local: height={}, work={}, identities={}", 
-                      local_summary.height, local_summary.total_work, local_summary.total_identities);
-                info!("   Imported: height={}, work={}, identities={}", 
-                      imported_summary.height, imported_summary.total_work, imported_summary.total_identities);
-                
-                // Extract unique content from imported chain (shorter) into local (longer)
-                match self.merge_unique_content(&import) {
-                    Ok(merged_items) => {
-                        info!(" Successfully merged unique content: {}", merged_items);
-                        Ok(lib_consensus::ChainMergeResult::ContentMerged)
-                    },
-                    Err(e) => {
-                        warn!("Failed to merge content: {} - keeping local only", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!("Content merge error: {}", e)))
+        if imported_height > local_height {
+            info!("Imported chain has higher committed BFT height ({} > {}) - adopting", imported_height, local_height);
+
+            self.blocks = import.blocks;
+            self.height = imported_height;
+            self.utxo_set = import.utxo_set;
+            self.identity_registry = import.identity_registry;
+            // Convert wallet references to full data (sensitive data will need DHT retrieval)
+            self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
+            self.validator_registry = import.validator_registry;
+            self.token_contracts = import.token_contracts;
+            self.web4_contracts = import.web4_contracts;
+            self.contract_blocks = import.contract_blocks;
+
+            // Rebuild nullifier set from the newly adopted chain
+            self.nullifier_set.clear();
+            for block in &self.blocks {
+                for tx in &block.transactions {
+                    for input in &tx.inputs {
+                        self.nullifier_set.insert(input.nullifier);
                     }
                 }
-            },
-            lib_consensus::ChainDecision::AdoptImported => {
-                info!(" Imported chain is better - performing intelligent merge");
-                info!("   Local: height={}, work={}, identities={}", 
-                      local_summary.height, local_summary.total_work, local_summary.total_identities);
-                info!("   Imported: height={}, work={}, identities={}", 
-                      imported_summary.height, imported_summary.total_work, imported_summary.total_identities);
-                
-                // Check if this is a genesis replacement (different genesis blocks)
-                // IMPORTANT: Use merkle_root comparison to match ChainEvaluator logic
-                // Different validators in genesis = different merkle roots = different networks
-                let is_genesis_replacement = if !self.blocks.is_empty() && !import.blocks.is_empty() {
-                    self.blocks[0].header.merkle_root != import.blocks[0].header.merkle_root
-                } else {
-                    false
-                };
-                
-                if is_genesis_replacement {
-                    info!("🔀 Genesis mismatch detected - performing full consolidation merge");
-                    info!("   Old genesis merkle: {}", hex::encode(self.blocks[0].header.merkle_root.as_bytes()));
-                    info!("   New genesis merkle: {}", hex::encode(import.blocks[0].header.merkle_root.as_bytes()));
-                    
-                    // Perform intelligent merge: adopt imported chain but preserve unique local data
-                    match self.merge_with_genesis_mismatch(&import) {
-                        Ok(merge_report) => {
-                            info!(" Successfully merged chains with genesis consolidation");
-                            info!("{}", merge_report);
-                            Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
-                        }
-                        Err(e) => {
-                            warn!(" Genesis merge failed: {} - adopting imported chain only", e);
-                            // Fallback: just adopt imported chain
-                            self.blocks = import.blocks;
-                            self.height = self.blocks.len() as u64 - 1;
-                            self.utxo_set = import.utxo_set;
-                            self.identity_registry = import.identity_registry;
-                            // Convert wallet references to full data (sensitive data will need DHT retrieval)
-                            self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
-                            self.validator_registry = import.validator_registry;
-                            self.token_contracts = import.token_contracts;
-                            self.web4_contracts = import.web4_contracts;
-                            self.contract_blocks = import.contract_blocks;
-                            Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
-                        }
-                    }
-                } else {
-                    info!(" Same genesis - adopting longer chain");
-                    // Simple case: same genesis, just adopt imported chain
-                    self.blocks = import.blocks;
-                    self.height = self.blocks.len() as u64 - 1;
-                    self.utxo_set = import.utxo_set;
-                    self.identity_registry = import.identity_registry;
-                    // Convert wallet references to full data (sensitive data will need DHT retrieval)
-                    self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
-                    self.validator_registry = import.validator_registry;
-                    self.token_contracts = import.token_contracts;
-                    self.web4_contracts = import.web4_contracts;
-                    self.contract_blocks = import.contract_blocks;
-                    
-                    // Clear nullifier set and rebuild from new chain
-                    self.nullifier_set.clear();
-                    for block in &self.blocks {
-                        for tx in &block.transactions {
-                            for input in &tx.inputs {
-                                self.nullifier_set.insert(input.nullifier);
-                            }
-                        }
-                    }
-                    
-                    info!(" Adopted imported chain");
-                    info!("   New height: {}", self.height);
-                    info!("   Identities: {}", self.identity_registry.len());
-                    info!("   Validators: {}", self.validator_registry.len());
-                    info!("   UTXOs: {}", self.utxo_set.len());
-                    
-                    Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
-                }
-            },
-            lib_consensus::ChainDecision::Merge => {
-                info!(" Merging compatible chains");
-                info!("   Local: height={}, work={}, identities={}, contracts={}", 
-                      local_summary.height, local_summary.total_work, 
-                      local_summary.total_identities, local_summary.total_contracts);
-                info!("   Imported: height={}, work={}, identities={}, contracts={}", 
-                      imported_summary.height, imported_summary.total_work, 
-                      imported_summary.total_identities, imported_summary.total_contracts);
-                
-                match self.merge_chain_content(&import) {
-                    Ok(merged_items) => {
-                        info!(" Successfully merged chains: {}", merged_items);
-                        Ok(lib_consensus::ChainMergeResult::Merged)
-                    },
-                    Err(e) => {
-                        warn!("Failed to merge chains: {} - keeping local", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!("Merge error: {}", e)))
-                    }
-                }
-            },
-            lib_consensus::ChainDecision::AdoptLocal => {
-                info!("🏆 Local chain is stronger - using as merge base");
-                info!("   Local: height={}, validators={}, identities={}", 
-                      local_summary.height, local_summary.validator_count, local_summary.total_identities);
-                info!("   Imported: height={}, validators={}, identities={}", 
-                      imported_summary.height, imported_summary.validator_count, imported_summary.total_identities);
-                
-                // Local chain is the stronger network - use it as base
-                // Import unique content from remote chain into local
-                match self.merge_imported_into_local(&import) {
-                    Ok(merge_report) => {
-                        info!(" Successfully merged imported content into local chain");
-                        info!("{}", merge_report);
-                        Ok(lib_consensus::ChainMergeResult::LocalKept)
-                    }
-                    Err(e) => {
-                        warn!(" Failed to merge imported content: {} - keeping local only", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!("Import merge error: {}", e)))
-                    }
-                }
-            },
-            lib_consensus::ChainDecision::Reject => {
-                warn!("🚫 Networks are incompatible - merge rejected for safety");
-                warn!("   Local: height={}, validators={}, age={}d", 
-                      local_summary.height, local_summary.validator_count,
-                      (local_summary.latest_timestamp - local_summary.genesis_timestamp) / (24 * 3600));
-                warn!("   Imported: height={}, validators={}, age={}d", 
-                      imported_summary.height, imported_summary.validator_count,
-                      (imported_summary.latest_timestamp - imported_summary.genesis_timestamp) / (24 * 3600));
-                warn!("   Networks differ too much in size or age to merge safely");
-                
-                Ok(lib_consensus::ChainMergeResult::Failed(
-                    "Networks incompatible - safety threshold exceeded".to_string()
-                ))
-            },
-            lib_consensus::ChainDecision::Conflict => {
-                warn!(" Chain conflict detected - different genesis blocks");
-                warn!("   Local genesis: {}", 
-                      if !self.blocks.is_empty() { 
-                          hex::encode(self.blocks[0].header.block_hash.as_bytes()) 
-                      } else { 
-                          "none".to_string() 
-                      });
-                warn!("   Imported genesis: {}", 
-                      if !import.blocks.is_empty() { 
-                          hex::encode(import.blocks[0].header.block_hash.as_bytes()) 
-                      } else { 
-                          "none".to_string() 
-                      });
-                warn!("   These chains are from different networks and cannot be merged");
-                
-                Ok(lib_consensus::ChainMergeResult::Failed(
-                    "Genesis hash mismatch - chains from different networks".to_string()
-                ))
             }
+
+            info!("Adopted chain at committed BFT height {}", self.height);
+            info!("  Identities: {}", self.identity_registry.len());
+            info!("  Validators: {}", self.validator_registry.len());
+            info!("  UTXOs: {}", self.utxo_set.len());
+
+            Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
+        } else {
+            info!("Local chain is at highest committed BFT height ({} >= {}) - keeping local", local_height, imported_height);
+            Ok(lib_consensus::ChainMergeResult::LocalKept)
         }
     }
 
     /// Create chain summary for local blockchain
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    /// Retained for potential monitoring/diagnostics use.
+    #[allow(dead_code)]
     async fn create_local_chain_summary_async(&self) -> lib_consensus::ChainSummary {
         // Use merkle root as genesis hash - this reflects the actual transaction content
         // Different validators in genesis will have different merkle roots
@@ -6691,6 +6554,8 @@ impl Blockchain {
     }
 
     /// Merge content from compatible blockchain without replacing existing data
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    #[allow(dead_code)]
     fn merge_chain_content(&mut self, import: &BlockchainImport) -> Result<String> {
         let mut merged_items = Vec::new();
         
@@ -6817,6 +6682,8 @@ impl Blockchain {
     /// Intelligently merge two chains with different genesis blocks
     /// Adopts the imported chain as the base and consolidates unique data from local chain
     /// Includes economic reconciliation to prevent money supply inflation
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    #[allow(dead_code)]
     fn merge_with_genesis_mismatch(&mut self, import: &BlockchainImport) -> Result<String> {
         info!("🔀 Starting network merge with economic reconciliation");
         info!("   Local network: {} blocks, {} identities, {} validators", 
@@ -7004,6 +6871,8 @@ impl Blockchain {
     /// Merge imported chain content into local chain (local is stronger base)
     /// This is the reverse of merge_with_genesis_mismatch - local chain is kept as base
     /// All unique content from imported chain is preserved and added to local
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    #[allow(dead_code)]
     fn merge_imported_into_local(&mut self, import: &BlockchainImport) -> Result<String> {
         info!("🔀 Merging imported network into stronger local network");
         info!("   Local network (BASE): {} blocks, {} identities, {} validators", 
@@ -7135,6 +7004,8 @@ impl Blockchain {
     
     /// Merge unique content from shorter chain into longer chain
     /// This prevents data loss when local chain is longer but imported has unique identities/wallets/contracts
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    #[allow(dead_code)]
     fn merge_unique_content(&mut self, import: &BlockchainImport) -> Result<String> {
         let mut merged_items = Vec::new();
         
@@ -7236,8 +7107,11 @@ impl Blockchain {
     }
 
     /// Create chain summary for imported blockchain
-    fn create_imported_chain_summary(&self, 
-        blocks: &[Block], 
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    /// Retained for potential monitoring/diagnostics use.
+    #[allow(dead_code)]
+    fn create_imported_chain_summary(&self,
+        blocks: &[Block],
         identity_registry: &HashMap<String, IdentityTransactionData>,
         utxo_set: &HashMap<Hash, TransactionOutput>,
         token_contracts: &HashMap<[u8; 32], crate::contracts::TokenContract>,
