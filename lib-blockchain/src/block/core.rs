@@ -226,6 +226,7 @@ impl BlockHeader {
         hasher.update(&self.height.to_le_bytes());
         hasher.update(&self.transaction_count.to_le_bytes());
         hasher.update(&self.block_size.to_le_bytes());
+        hasher.update(&self.fee_model_version.to_le_bytes());
 
         Hash::from_slice(hasher.finalize().as_bytes())
     }
@@ -274,7 +275,8 @@ impl crate::types::hash::Hashable for BlockHeader {
 /// Genesis block creation
 pub fn create_genesis_block() -> Block {
     // FIXED genesis timestamp for network consistency
-    // November 1, 2025 00:00:00 UTC - ensures all nodes create identical genesis
+    // November 1, 2024 00:00:00 UTC - ensures all nodes create identical genesis
+    // (1730419200 = 2024-11-01T00:00:00Z)
     let genesis_timestamp = 1730419200;
 
     let header = BlockHeader::new(
