@@ -317,6 +317,8 @@ impl DaoHandler {
         }
     }
 
+    /// Converts a `DaoProposalType` enum value to its canonical string representation
+    /// used for storage in blockchain transactions.
     fn proposal_type_to_string(proposal_type: &DaoProposalType) -> String {
         match proposal_type {
             DaoProposalType::UbiDistribution => "ubi_distribution".to_string(),
