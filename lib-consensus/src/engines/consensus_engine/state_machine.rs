@@ -744,6 +744,12 @@ impl ConsensusEngine {
     ///
     /// This is the critical bridge between BFT consensus and blockchain storage.
     /// When BFT achieves 2/3+1 commit votes, this method commits the block.
+    ///
+    /// **Checkpoint Persistence (Issue #951)**:
+    /// - The block commit callback (ConsensusBlockCommitter) stores a consensus checkpoint
+    /// - Checkpoints include: height, block_hash, proposer, timestamp, previous_hash, validator_count
+    /// - These checkpoints are persisted in Blockchain.consensus_checkpoints (BTreeMap)
+    /// - Used for bootstrap validation and sync verification via BlockchainSyncManager
     async fn apply_block_to_state(&mut self, proposal: &ConsensusProposal) -> ConsensusResult<()> {
         // Call the block commit callback if configured
         // This is the bridge to the actual blockchain storage layer

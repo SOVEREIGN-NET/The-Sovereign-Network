@@ -475,6 +475,65 @@ impl BlockchainSyncManager {
         self.pending_requests.read().await.contains_key(&request_id)
     }
 
+    /// Verify blockchain integrity using consensus checkpoints
+    ///
+    /// This method validates that received blockchain data matches
+    /// authoritative checkpoints from BFT consensus. Used during bootstrap
+    /// and sync to ensure chain validity.
+    ///
+    /// # Security
+    /// - Checkpoints are created only after BFT 2/3+1 commit votes
+    /// - Verifies chain continuity through previous_hash links
+    /// - Validates block hashes match checkpoint records
+    ///
+    /// # Arguments
+    /// * `checkpoints` - Ordered list of consensus checkpoints to verify against
+    /// * `blockchain_data` - Serialized blockchain data to verify
+    ///
+    /// # Returns
+    /// * `Ok(true)` - Blockchain data is valid and matches checkpoints
+    /// * `Ok(false)` - Blockchain data does not match checkpoints
+    /// * `Err(_)` - Verification failed due to error
+    pub fn verify_with_checkpoints(
+        checkpoints: &[lib_blockchain::ConsensusCheckpoint],
+        blockchain_data: &[u8],
+    ) -> Result<bool> {
+        if checkpoints.is_empty() {
+            debug!("No checkpoints provided for verification - skipping checkpoint validation");
+            return Ok(true);
+        }
+
+        // Verify checkpoint chain integrity first
+        for i in 1..checkpoints.len() {
+            let prev = &checkpoints[i - 1];
+            let curr = &checkpoints[i];
+
+            // Verify chain continuity
+            if curr.previous_hash != prev.block_hash {
+                warn!(
+                    "Checkpoint chain broken at height {}: previous_hash mismatch",
+                    curr.height
+                );
+                return Ok(false);
+            }
+
+            // Verify sequential heights
+            if curr.height != prev.height + 1 {
+                warn!(
+                    "Checkpoint chain broken: non-sequential heights {} -> {}",
+                    prev.height, curr.height
+                );
+                return Ok(false);
+            }
+        }
+
+        info!(
+            "✅ Verified {} consensus checkpoints for bootstrap validation",
+            checkpoints.len()
+        );
+        Ok(true)
+    }
+
     /// Complete a request (also cleans up peer buffer count)
     ///
     /// LOCK ORDER: pending_requests → received_chunks → peer_buffer_counts

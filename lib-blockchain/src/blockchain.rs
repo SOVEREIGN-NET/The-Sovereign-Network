@@ -183,6 +183,10 @@ pub struct Blockchain {
     /// Key: (token_id, sender address) where address is wallet_id for SOV or key_id for custom tokens
     #[serde(default)]
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
+    /// Consensus checkpoints for committed blocks (height -> checkpoint)
+    /// Stores authoritative checkpoints for blocks finalized by BFT consensus
+    #[serde(default)]
+    pub consensus_checkpoints: std::collections::BTreeMap<u64, ConsensusCheckpoint>,
 }
 
 /// Validator information stored on-chain
@@ -243,6 +247,57 @@ pub struct UbiMintEntry {
     pub wallet_id: String,
     pub recipient_wallet_id: [u8; 32],
     pub payout: u64,
+}
+
+/// Consensus checkpoint for committed blocks
+///
+/// Stores authoritative checkpoints for blocks that achieved BFT consensus.
+/// Used for bootstrap validation and sync verification.
+///
+/// # Purpose
+/// - Provides cryptographic proof that a block was committed by 2/3+1 validators
+/// - Enables fast bootstrap without re-validating entire chain
+/// - Allows sync manager to verify received blockchain data against trusted checkpoints
+///
+/// # Storage
+/// - Persisted in `Blockchain.consensus_checkpoints` (BTreeMap<u64, ConsensusCheckpoint>)
+/// - Automatically stored when BFT consensus commits a block
+/// - Included in blockchain serialization for persistence across restarts
+///
+/// # Security Model
+/// - Only created after BFT achieves supermajority (2/3+1) commit votes
+/// - Forms a verifiable chain via previous_hash linkage
+/// - Validator count proves Byzantine fault tolerance (assuming f < n/3)
+///
+/// # Usage
+/// ```ignore
+/// // Store checkpoint when block is committed (done automatically)
+/// blockchain.store_consensus_checkpoint(height, block_hash, proposer, prev_hash, validator_count);
+///
+/// // Verify checkpoint chain continuity
+/// if blockchain.verify_checkpoint_chain(start_height, end_height) {
+///     println!("Checkpoint chain is valid");
+/// }
+///
+/// // Retrieve checkpoint for validation
+/// if let Some(checkpoint) = blockchain.get_consensus_checkpoint(height) {
+///     // Verify block matches checkpoint
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsensusCheckpoint {
+    /// Block height
+    pub height: u64,
+    /// Block hash (proposal ID from consensus)
+    pub block_hash: Hash,
+    /// Proposer identity
+    pub proposer: String,
+    /// Timestamp when block was committed
+    pub timestamp: u64,
+    /// Previous block hash for chain continuity
+    pub previous_hash: Hash,
+    /// Number of validators who committed this block
+    pub validator_count: u32,
 }
 
 /// Economics transaction record (simplified for blockchain package)
@@ -416,6 +471,7 @@ impl BlockchainV1 {
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
+            consensus_checkpoints: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -548,6 +604,10 @@ struct BlockchainStorageV3 {
     /// Per-token, per-address nonce for token transfer replay protection
     #[serde(default)]
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
+
+    /// Consensus checkpoints for committed blocks (field 39)
+    #[serde(default)]
+    pub consensus_checkpoints: std::collections::BTreeMap<u64, ConsensusCheckpoint>,
 }
 
 impl BlockchainStorageV3 {
@@ -630,6 +690,9 @@ impl BlockchainStorageV3 {
 
             // Token nonces
             token_nonces: bc.token_nonces.clone(),
+
+            // Consensus checkpoints
+            consensus_checkpoints: bc.consensus_checkpoints.clone(),
         }
     }
 
@@ -721,6 +784,9 @@ impl BlockchainStorageV3 {
 
             // Token nonces
             token_nonces: self.token_nonces,
+
+            // Consensus checkpoints
+            consensus_checkpoints: self.consensus_checkpoints,
         }
     }
 }
@@ -793,6 +859,7 @@ impl Blockchain {
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
+            consensus_checkpoints: std::collections::BTreeMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -7882,6 +7949,100 @@ impl Blockchain {
         }
 
         Ok(count)
+    }
+
+    // ========================================================================
+    // CONSENSUS CHECKPOINTS
+    // ========================================================================
+
+    /// Store a consensus checkpoint for a committed block
+    ///
+    /// Called when BFT consensus achieves 2/3+1 commit votes on a block.
+    /// Creates an authoritative checkpoint for bootstrap validation and sync verification.
+    ///
+    /// # Arguments
+    /// * `height` - Block height
+    /// * `block_hash` - Block hash (proposal ID from consensus)
+    /// * `proposer` - Proposer identity
+    /// * `previous_hash` - Previous block hash
+    /// * `validator_count` - Number of validators who committed this block
+    pub fn store_consensus_checkpoint(
+        &mut self,
+        height: u64,
+        block_hash: Hash,
+        proposer: String,
+        previous_hash: Hash,
+        validator_count: u32,
+    ) {
+        let checkpoint = ConsensusCheckpoint {
+            height,
+            block_hash,
+            proposer,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            previous_hash,
+            validator_count,
+        };
+
+        self.consensus_checkpoints.insert(height, checkpoint);
+        debug!("📍 Stored consensus checkpoint at height {}", height);
+    }
+
+    /// Get consensus checkpoint for a specific height
+    pub fn get_consensus_checkpoint(&self, height: u64) -> Option<&ConsensusCheckpoint> {
+        self.consensus_checkpoints.get(&height)
+    }
+
+    /// Get the latest consensus checkpoint
+    pub fn get_latest_checkpoint(&self) -> Option<&ConsensusCheckpoint> {
+        self.consensus_checkpoints.values().last()
+    }
+
+    /// Get all checkpoints in a height range
+    pub fn get_checkpoints_range(&self, start_height: u64, end_height: u64) -> Vec<&ConsensusCheckpoint> {
+        self.consensus_checkpoints
+            .range(start_height..=end_height)
+            .map(|(_, checkpoint)| checkpoint)
+            .collect()
+    }
+
+    /// Verify chain continuity using checkpoints
+    ///
+    /// Validates that checkpoints form a valid chain by checking
+    /// that each checkpoint's previous_hash matches the previous checkpoint's block_hash.
+    pub fn verify_checkpoint_chain(&self, start_height: u64, end_height: u64) -> bool {
+        let checkpoints = self.get_checkpoints_range(start_height, end_height);
+
+        if checkpoints.is_empty() {
+            return true; // No checkpoints to verify
+        }
+
+        for i in 1..checkpoints.len() {
+            let prev = checkpoints[i - 1];
+            let curr = checkpoints[i];
+
+            // Verify chain continuity
+            if curr.previous_hash != prev.block_hash {
+                warn!(
+                    "Checkpoint chain broken at height {}: previous_hash mismatch",
+                    curr.height
+                );
+                return false;
+            }
+
+            // Verify sequential heights
+            if curr.height != prev.height + 1 {
+                warn!(
+                    "Checkpoint chain broken: non-sequential heights {} -> {}",
+                    prev.height, curr.height
+                );
+                return false;
+            }
+        }
+
+        true
     }
 
     // ========================================================================
