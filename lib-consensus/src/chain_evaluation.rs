@@ -1,7 +1,7 @@
 //! Chain Evaluation and Selection Rules
 //!
-//! Implements consensus rules for deciding which blockchain chain to adopt
-//! when multiple chains are available (e.g., during mesh network synchronization)
+//! DEPRECATED: Nakamoto-style chain scoring logic removed (Issue #937)
+//! This module is kept for backward compatibility but all functionality is disabled.
 
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -71,7 +71,16 @@ pub struct ChainEvaluator;
 
 impl ChainEvaluator {
     /// Compare two chains and decide which should be adopted
-    pub fn evaluate_chains(local: &ChainSummary, imported: &ChainSummary) -> ChainDecision {
+    /// DEPRECATED: Always returns KeepLocal (Issue #937 - removed Nakamoto-style chain scoring)
+    #[deprecated(since = "2.0.0", note = "Chain evaluation removed - BFT consensus only")]
+    pub fn evaluate_chains(_local: &ChainSummary, _imported: &ChainSummary) -> ChainDecision {
+        // Always keep local chain - no longer using Nakamoto-style chain selection
+        ChainDecision::KeepLocal
+    }
+
+    /// Original implementation - disabled
+    #[allow(dead_code)]
+    fn evaluate_chains_original(local: &ChainSummary, imported: &ChainSummary) -> ChainDecision {
         // Rule 0: Special case - if local chain is genesis-only (height 0-1) with minimal activity,
         // adopt the imported chain regardless of genesis hash mismatch.
         // This handles the case where a node just started and created its own genesis,
@@ -172,8 +181,16 @@ impl ChainEvaluator {
     }
 
     /// Validate that chain summaries are compatible for merging
-    /// Requires sufficient validator overlap for secure merging
-    pub fn can_merge_chains(local: &ChainSummary, imported: &ChainSummary) -> bool {
+    /// DEPRECATED: Always returns false (Issue #937 - removed Nakamoto-style chain scoring)
+    #[deprecated(since = "2.0.0", note = "Chain merging removed - BFT consensus only")]
+    pub fn can_merge_chains(_local: &ChainSummary, _imported: &ChainSummary) -> bool {
+        // Never merge chains - BFT consensus doesn't use chain merging
+        false
+    }
+
+    /// Original implementation - disabled
+    #[allow(dead_code)]
+    fn can_merge_chains_original(local: &ChainSummary, imported: &ChainSummary) -> bool {
         // Must be same network
         if local.genesis_hash != imported.genesis_hash {
             return false;
