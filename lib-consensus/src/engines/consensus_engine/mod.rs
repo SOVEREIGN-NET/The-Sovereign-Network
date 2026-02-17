@@ -125,6 +125,41 @@
 //! - **Determinism**: Given the same inputs, consensus produces the same sequence of steps.
 //! - **Locality**: Vote validation depends only on local state, not network availability.
 //! - **Simplicity**: All validation is explicit and fully specified in code comments.
+//!
+//! ## Validator Rotation Rules and Maximum Churn
+//!
+//! Validator set changes are **epoch-gated**: all additions and removals take effect only at
+//! epoch boundaries (every [`ConsensusConfig::epoch_length_blocks`] blocks).  This prevents
+//! mid-epoch validator set instability and ensures every block within an epoch is signed by
+//! the same set of validators.
+//!
+//! ### Maximum churn per epoch
+//!
+//! To preserve liveness and BFT safety across epoch transitions the number of validators
+//! that may change in a single epoch is capped at **one-third of the current active set**:
+//!
+//! ```text
+//! max_churn = floor(active_validators / 3)   (minimum: 1 to allow bootstrapping)
+//! ```
+//!
+//! This is expressed as the constant [`MAX_CHURN_NUMERATOR`] / [`MAX_CHURN_DENOMINATOR`]
+//! (= 1/3).  The invariant is enforced by [`ConsensusEngine::apply_epoch_boundary_changes`]
+//! before any pending changes are applied.
+//!
+//! #### Rationale
+//!
+//! BFT consensus (PBFT/Tendermint) tolerates at most f = floor((n-1)/3) Byzantine validators.
+//! If we allowed more than 1/3 of the validator set to be replaced in a single epoch, an
+//! adversary could flood the pending queue with registrations and rotate out enough honest
+//! validators to break the 2/3 supermajority requirement.  Capping churn at 1/3 per epoch
+//! ensures that, even if all incoming validators are adversarial, the existing honest majority
+//! is preserved across the transition.
+//!
+//! #### Rotation priority
+//!
+//! When the pending change queue contains more changes than the churn budget allows, removals
+//! are processed **before** additions (to preserve network safety over growth), and remaining
+//! changes are deferred to the following epoch.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -144,6 +179,23 @@ use crate::types::*;
 use crate::validators::ValidatorManager;
 use crate::validators::validator_manager::ValidatorInfo as ValidatorInfoTrait;
 use crate::{ConsensusError, ConsensusResult};
+
+// ---------------------------------------------------------------------------
+// Validator rotation / churn constants
+// ---------------------------------------------------------------------------
+
+/// Numerator of the maximum-churn fraction per epoch.
+///
+/// At most `MAX_CHURN_NUMERATOR / MAX_CHURN_DENOMINATOR` of the current active
+/// validator set may change (additions + removals combined) in a single epoch
+/// transition.  Together with [`MAX_CHURN_DENOMINATOR`] this expresses the
+/// rule: **at most 1/3 of validators can change per epoch**.
+///
+/// See the module-level documentation for the full rationale.
+pub const MAX_CHURN_NUMERATOR: usize = 1;
+
+/// Denominator of the maximum-churn fraction per epoch (see [`MAX_CHURN_NUMERATOR`]).
+pub const MAX_CHURN_DENOMINATOR: usize = 3;
 
 mod liveness;
 mod network;
@@ -931,6 +983,28 @@ impl ConsensusEngine {
         Ok(())
     }
 
+    /// Apply all pending validator-set changes that are scheduled for this epoch boundary.
+    ///
+    /// # Validator rotation rules
+    ///
+    /// Changes are only applied at epoch boundaries (`height % epoch_length == 0`).
+    /// Within an epoch the validator set is frozen — no additions or removals occur.
+    ///
+    /// # Maximum churn enforcement (MAX_CHURN_NUMERATOR / MAX_CHURN_DENOMINATOR = 1/3)
+    ///
+    /// The total number of validator changes applied in a single epoch transition is
+    /// capped at `floor(active_count / MAX_CHURN_DENOMINATOR * MAX_CHURN_NUMERATOR)`
+    /// (minimum 1 to allow bootstrapping an empty set).
+    ///
+    /// **Priority**: removals are processed before additions so that safety is
+    /// preserved when the budget is tight.  Changes that exceed the budget are
+    /// deferred to the next epoch by keeping them in the pending queue.
+    ///
+    /// # Assertion
+    ///
+    /// After applying changes the function asserts that the number of applied changes
+    /// does not exceed the computed budget.  This is a safety-critical invariant: if
+    /// it fires, the pending-change queuing logic has a bug.
     fn apply_epoch_boundary_changes(&mut self, height: u64) -> ConsensusResult<()> {
         if !self.is_epoch_boundary(height) {
             return Ok(());
@@ -948,15 +1022,69 @@ impl ConsensusEngine {
             }
         }
 
-        let mut remaining = VecDeque::new();
+        // ---------------------------------------------------------------
+        // Compute the maximum churn budget for this epoch transition.
+        //
+        // Budget = floor(active_count * MAX_CHURN_NUMERATOR / MAX_CHURN_DENOMINATOR)
+        // with a floor of 1 so that a single-validator network can still grow.
+        // ---------------------------------------------------------------
+        let active_count = self.validator_manager.get_active_validators().len();
+        let churn_budget = ((active_count * MAX_CHURN_NUMERATOR) / MAX_CHURN_DENOMINATOR).max(1);
+
+        tracing::info!(
+            "Epoch boundary at height {}: active_validators={}, churn_budget={}",
+            height,
+            active_count,
+            churn_budget,
+        );
+
+        // Partition changes into those due at this height and those deferred.
+        let mut due: Vec<_> = Vec::new();
+        let mut deferred = VecDeque::new();
+        while let Some(entry) = self.pending_validator_changes.pop_front() {
+            if entry.effective_height == height {
+                due.push(entry);
+            } else {
+                deferred.push_back(entry);
+            }
+        }
+
+        // Apply removals first (safety over growth), then additions.
+        let mut removals: Vec<_> = due
+            .iter()
+            .filter(|e| matches!(e.change, ValidatorSetChange::Remove(_)))
+            .cloned()
+            .collect();
+        let mut additions: Vec<_> = due
+            .iter()
+            .filter(|e| matches!(e.change, ValidatorSetChange::Add(_)))
+            .cloned()
+            .collect();
+
+        // Enforce churn cap: defer changes that exceed the budget back to next epoch.
+        let removals_to_apply = removals.len().min(churn_budget);
+        let additions_to_apply = additions.len().min(churn_budget.saturating_sub(removals_to_apply));
+
+        // Changes beyond the budget are deferred to the next epoch.
+        let deferred_removals = removals.split_off(removals_to_apply);
+        let deferred_additions = additions.split_off(additions_to_apply);
+
+        let next_epoch = self.next_epoch_start(height);
+        for mut entry in deferred_removals.into_iter().chain(deferred_additions.into_iter()) {
+            tracing::info!(
+                "Churn budget exceeded at height {}: deferring validator change to epoch at height {}",
+                height,
+                next_epoch,
+            );
+            entry.effective_height = next_epoch;
+            deferred.push_back(entry);
+        }
+
+        self.pending_validator_changes = deferred;
+
         let mut applied_changes = 0usize;
 
-        while let Some(entry) = self.pending_validator_changes.pop_front() {
-            if entry.effective_height != height {
-                remaining.push_back(entry);
-                continue;
-            }
-
+        for entry in removals.into_iter().chain(additions.into_iter()) {
             match entry.change {
                 ValidatorSetChange::Add(add) => {
                     if self.validator_manager.get_validator(&add.identity).is_none() {
@@ -984,9 +1112,29 @@ impl ConsensusEngine {
             }
         }
 
-        self.pending_validator_changes = remaining;
+        // INVARIANT: the number of applied changes must never exceed the churn budget.
+        // If this assertion fires, the queuing logic has a bug.
+        assert!(
+            applied_changes <= churn_budget,
+            "MAX CHURN VIOLATED at height {}: applied {} changes but budget is {} \
+             (active_count={}, {}/{} rule).  This is a bug in apply_epoch_boundary_changes.",
+            height,
+            applied_changes,
+            churn_budget,
+            active_count,
+            MAX_CHURN_NUMERATOR,
+            MAX_CHURN_DENOMINATOR,
+        );
 
         if applied_changes > 0 {
+            tracing::info!(
+                "Applied {} validator set change(s) at epoch boundary height {} \
+                 (budget: {}, active after: {})",
+                applied_changes,
+                height,
+                churn_budget,
+                self.validator_manager.get_active_validators().len(),
+            );
             let active_validators: Vec<_> = self
                 .validator_manager
                 .get_active_validators()
