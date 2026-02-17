@@ -170,11 +170,6 @@ const _: () = assert!(
     "LIVE-INV-1: MAX_MISSED_BLOCKS must be less than LIVENESS_JAIL_THRESHOLD"
 );
 
-// Compile-time invariant: LIVE-INV-3 (same as LIVE-INV-1, explicit form)
-const _: () = assert!(
-    LIVENESS_JAIL_THRESHOLD > MAX_MISSED_BLOCKS,
-    "LIVE-INV-3: LIVENESS_JAIL_THRESHOLD must be greater than MAX_MISSED_BLOCKS"
-);
 
 // Compile-time invariant: LIVE-INV-2 — round timeout must be at least 20s
 const _: () = assert!(
@@ -688,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn test_round_timeout_constant_value() {
+    fn test_liveness_constants_known_values() {
         // Known value check — if this changes, the test flags it for review
         assert_eq!(MAX_MISSED_BLOCKS, 100);
         assert_eq!(ROUND_TIMEOUT_SECS, 30);
