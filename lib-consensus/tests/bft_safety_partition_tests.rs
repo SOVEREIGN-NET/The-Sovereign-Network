@@ -39,8 +39,8 @@ fn create_bft_test_config() -> ConsensusConfig {
         prevote_timeout: 50,
         precommit_timeout: 50,
         max_transactions_per_block: 1000,
-        max_difficulty: 0x00000000FFFFFFFF,
-        target_difficulty: 0x00000FFF,
+        max_difficulty: 0x00000000FFFFFFFF, // Permissive PoW difficulty target (unused in BFT; effectively trivial)
+        target_difficulty: 0x00000FFF, // Very permissive PoW target for testing (BFT ignores this field)
         byzantine_threshold: 1.0 / 3.0, // Standard BFT threshold
         slash_double_sign: 5,
         slash_liveness: 1,
@@ -846,7 +846,7 @@ async fn test_minimum_validators_for_bft() -> Result<()> {
 
     // With 4 validators, can tolerate 1 Byzantine (floor(4/3) = 1)
     let total_validators = validator_ids.len();
-    let max_byzantine = (total_validators - 1) / 3; // floor((4-1)/3) = 1
+    let max_byzantine = total_validators / 3; // floor(n/3)
 
     assert_eq!(max_byzantine, 1, "Should tolerate 1 Byzantine validator");
 
