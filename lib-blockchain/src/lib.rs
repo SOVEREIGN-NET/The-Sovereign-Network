@@ -31,6 +31,7 @@ pub mod sync;
 pub mod protocol;
 pub mod resources;
 pub mod snapshot;
+pub mod vm;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
@@ -312,4 +313,3 @@ pub struct BlockchainInfo {
 // Use zhtp::runtime::blockchain_provider::get_global_blockchain() instead.
 // This provides better control over blockchain initialization and lifecycle.
 
-pub mod vm;
