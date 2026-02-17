@@ -4881,17 +4881,11 @@ impl Blockchain {
     /// DEPRECATED: Difficulty governance removed (Issue #937)
     #[deprecated(since = "2.0.0", note = "Difficulty governance removed - BFT consensus only")]
     pub fn apply_difficulty_parameter_update(&mut self, proposal_id: Hash) -> Result<()> {
-        // No-op: Just mark as executed to maintain DAO state consistency
+        // Deprecated no-op: keep for API compatibility, but do not modify DAO state.
         tracing::warn!(
             "apply_difficulty_parameter_update called but disabled (Issue #937) for proposal {:?}",
             proposal_id
         );
-
-        // Mark as executed to prevent repeated attempts
-        if !self.executed_dao_proposals.contains(&proposal_id) {
-            self.executed_dao_proposals.insert(proposal_id);
-        }
-
         Ok(())
     }
 
