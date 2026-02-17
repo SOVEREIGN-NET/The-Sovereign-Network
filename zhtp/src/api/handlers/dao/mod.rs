@@ -402,7 +402,7 @@ impl DaoHandler {
 
         let proposal_data = DaoProposalData {
             proposal_id,
-            proposer: proposer_hex.clone(),
+            proposer: proposer_identity.did.clone(),
             title: request_data.title.clone(),
             description: request_data.description.clone(),
             proposal_type: Self::proposal_type_to_string(&proposal_type),
@@ -495,11 +495,10 @@ impl DaoHandler {
             &now.to_le_bytes(),
         ]);
         let metadata_bytes = serde_json::to_vec(&metadata)?;
-        let authenticated_hex = hex::encode(authenticated_identity_id.as_bytes());
 
         let execution_data = DaoExecutionData {
             proposal_id,
-            executor: authenticated_hex,
+            executor: identity.did.clone(),
             execution_type: execution_type.to_string(),
             recipient: Some(user_did.clone()),
             amount: None,
@@ -823,10 +822,10 @@ impl DaoHandler {
         let already_voted_confirmed = blockchain
             .get_dao_votes_for_proposal(&proposal_id)
             .iter()
-            .any(|v| v.voter == authenticated_hex);
+            .any(|v| v.voter == voter_identity.did);
         let already_voted_pending = blockchain.pending_transactions.iter().any(|tx| {
             tx.transaction_type == lib_blockchain::TransactionType::DaoVote
-                && tx.dao_vote_data.as_ref().map(|v| v.proposal_id == proposal_id && v.voter == authenticated_hex).unwrap_or(false)
+                && tx.dao_vote_data.as_ref().map(|v| v.proposal_id == proposal_id && v.voter == voter_identity.did).unwrap_or(false)
         });
         if already_voted_confirmed || already_voted_pending {
             return Ok(create_error_response(
@@ -845,7 +844,7 @@ impl DaoHandler {
         let vote_data = DaoVoteData {
             vote_id,
             proposal_id,
-            voter: authenticated_hex.clone(),
+            voter: voter_identity.did.clone(),
             vote_choice: vote_choice_str,
             voting_power: 1,
             justification: request_data.justification.clone(),
@@ -923,7 +922,7 @@ impl DaoHandler {
             "identity_id": identity_id_str,
             "voting_power": voting_power,
             "power_breakdown": {
-                "base_citizen_power": 1,
+                "base_citizen_power": voting_power,
                 "reputation_multiplier": 1.0,
                 "staked_tokens_power": 0,
                 "delegated_power": voting_power.saturating_sub(1)
