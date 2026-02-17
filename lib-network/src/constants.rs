@@ -150,7 +150,9 @@ pub const BLE_MESH_COORD_CHAR_UUID: &str = "6ba7b814-9dad-11d1-80b4-00c04fd430ca
 //
 // QUIC provides:
 //   - TLS 1.3 as a mandatory, non-negotiable transport layer
-//   - 0-RTT connection establishment with replay protection
+//   - 0-RTT connection establishment to reduce latency (0-RTT data is replayable;
+//     replay protection must be enforced at the application layer or limited to
+//     idempotent operations)
 //   - Built-in stream multiplexing (no head-of-line blocking)
 //   - Connection migration support for mobile nodes
 //   - Reduced handshake latency compared to TCP+TLS
@@ -174,13 +176,16 @@ pub const BLE_MESH_COORD_CHAR_UUID: &str = "6ba7b814-9dad-11d1-80b4-00c04fd430ca
 // Additional application-level encryption (ChaCha20Poly1305) is layered on
 // top of QUIC/TLS by `QuicApplicationEncryption` for defence-in-depth.
 
-/// The mandatory transport protocol for all ZHTP node-to-node connections.
+/// The mandatory transport protocol for consensus-critical ZHTP node-to-node connections.
 ///
 /// # Invariant
 ///
-/// Every consensus and mesh peer connection MUST use QUIC. TCP and UDP are
-/// blocked as downgrade paths by `TransportManager::send()`. Any attempt to
-/// negotiate TCP or UDP as a peer transport is rejected with an error.
+/// All consensus-relevant peer channels (consensus traffic, block propagation,
+/// authenticated control-plane peer links) MUST use QUIC. Mesh overlays MAY
+/// use additional bearer technologies for opportunistic or non-consensus links.
+/// TCP and UDP are blocked as downgrade paths by `TransportManager::send()`. Any
+/// attempt to negotiate TCP or UDP as a consensus peer transport is rejected with
+/// an error.
 pub const TRANSPORT_PROTOCOL: &str = "QUIC";
 
 /// Minimum acceptable TLS version for the QUIC transport layer.
