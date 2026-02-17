@@ -1,5 +1,78 @@
+//! Consensus validation logic for the BFT consensus engine.
+//!
+//! # Determinism guarantees
+//!
+//! All validation functions in this module are designed to be **deterministic**:
+//! given the same inputs, they always produce the same output on every node.
+//! This is a hard requirement for BFT consensus — if two honest validators
+//! disagree about whether a block is valid, liveness is broken.
+//!
+//! ## Determinism rules enforced here
+//!
+//! 1. **Validator set is snapshot-based**: [`ConsensusEngine::is_validator_member`]
+//!    looks up a *snapshot* of the validator set at the target height, not the
+//!    current live set.  This makes membership checks a pure function of height.
+//!
+//! 2. **Signature verification is stateless**: [`ConsensusEngine::verify_signature`]
+//!    and [`ConsensusEngine::verify_vote_signature`] depend only on the provided
+//!    data and the public key stored in the validator registry — no ambient state.
+//!
+//! 3. **Vote data is reconstructed deterministically**: The signed bytes fed into
+//!    [`ConsensusEngine::verify_vote_signature`] are derived solely from the vote
+//!    fields (id, voter, proposal_id, vote_type, height, round).
+//!
+//! 4. **State transitions are pure**: [`ConsensusEngine::validate_remote_vote`]
+//!    returns the same `bool` for the same `(vote, engine_state)` pair regardless
+//!    of wall-clock time or process identity.
+//!
+//! ## Assertion helper
+//!
+//! [`assert_deterministic_state_transition`] can be used in tests and integration
+//! paths to assert that a state transition function is pure: it executes the
+//! transition twice with the same inputs and asserts the outputs are identical.
+
 use super::*;
 use lib_crypto::PostQuantumSignature;
+
+/// Assert that a state transition is deterministic by executing it twice and
+/// comparing the results.
+///
+/// # Parameters
+///
+/// - `label`: Human-readable name of the transition (for error messages).
+/// - `prev_state_hash`: A hash of the initial state before the transition.
+/// - `block_hash`: The hash of the block being applied.
+/// - `result_state_hash_1`: State root produced by the first execution.
+/// - `result_state_hash_2`: State root produced by the second execution.
+///
+/// # Panics (debug) / Logs error (release)
+///
+/// Panics if the two result hashes differ, indicating that the transition is
+/// non-deterministic.
+pub fn assert_deterministic_state_transition(
+    label: &str,
+    prev_state_hash: &[u8; 32],
+    block_hash: &[u8; 32],
+    result_state_hash_1: &[u8; 32],
+    result_state_hash_2: &[u8; 32],
+) {
+    if result_state_hash_1 != result_state_hash_2 {
+        let msg = format!(
+            "NON-DETERMINISTIC state transition detected in '{}': \
+             prev_state={}, block={}, result1={}, result2={}. \
+             State transitions must be pure functions of (prev_state, block).",
+            label,
+            hex::encode(prev_state_hash),
+            hex::encode(block_hash),
+            hex::encode(result_state_hash_1),
+            hex::encode(result_state_hash_2),
+        );
+        #[cfg(debug_assertions)]
+        panic!("{}", msg);
+        #[cfg(not(debug_assertions))]
+        tracing::error!("{}", msg);
+    }
+}
 
 impl ConsensusEngine {
     /// Verify a signature
@@ -261,5 +334,33 @@ impl ConsensusEngine {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod determinism_tests {
+    use super::assert_deterministic_state_transition;
+
+    /// Verify that identical executions are accepted as deterministic.
+    #[test]
+    fn identical_state_transitions_pass() {
+        let prev = [0u8; 32];
+        let block = [1u8; 32];
+        let result = [2u8; 32];
+        // Should not panic: both results are the same.
+        assert_deterministic_state_transition("test_transition", &prev, &block, &result, &result);
+    }
+
+    /// Verify that differing executions are flagged as non-deterministic.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "NON-DETERMINISTIC state transition detected")]
+    fn differing_state_transitions_panic() {
+        let prev = [0u8; 32];
+        let block = [1u8; 32];
+        let result1 = [2u8; 32];
+        let mut result2 = [2u8; 32];
+        result2[0] = 0xff; // differs in first byte
+        assert_deterministic_state_transition("test_transition", &prev, &block, &result1, &result2);
     }
 }
