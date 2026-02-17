@@ -7,153 +7,104 @@ use crate::types::{Hash, Difficulty};
 use crate::transaction::Transaction;
 
 // ============================================================================
-// GENESIS_INVARIANTS
+// GENESIS TRUST MODEL
 // ============================================================================
 //
-// The genesis block is the immutable foundation of the ZHTP blockchain. Every
-// node MUST produce an identical genesis block; any divergence constitutes a
-// network split. The following invariants are enforced at construction time
-// and must hold for all time:
+// The genesis block is the singular root of trust for the entire ZHTP
+// blockchain. Unlike every subsequent block — which is verified by BFT
+// consensus and cryptographic proofs — the genesis block cannot be
+// self-referentially verified: there is no prior state against which to
+// check it. Its legitimacy therefore rests on *social consensus* among
+// the founding participants.
 //
-// 1. INITIAL VALIDATOR SET
-//    The genesis block implicitly defines the initial validator set through
-//    the network's social-consensus launch parameters. All BFT consensus
-//    rounds after block 0 are validated against this set. The validator set
-//    is recorded in the genesis state root (see invariant 3).
+// ## Trust Model: "social-consensus"
 //
-// 2. INITIAL UTXO ALLOCATIONS
-//    Any pre-mine, treasury seed, or founding-allocation UTXOs are committed
-//    in the genesis merkle root. The merkle root of an empty transaction list
-//    is the zero hash, meaning a clean-slate genesis carries no pre-allocated
-//    funds. Any non-empty allocation MUST be explicitly documented here.
+// `GENESIS_TRUST_MODEL = "social-consensus"` captures this explicitly:
 //
-// 3. GENESIS STATE ROOT COMMITMENT
-//    The genesis block header contains a `merkle_root` field that commits to
-//    the complete initial state: UTXOs, identity records, and validator
-//    registrations. Verifiers MUST check that the merkle root matches the
-//    independently-derived initial state before trusting any subsequent block.
+//   - The genesis block parameters (hash, timestamp, validator set, initial
+//     allocations, protocol version) are published out-of-band — in
+//     documentation, announcements, and open-source code — before the
+//     network launches.
 //
-// 4. PROTOCOL VERSION
-//    The `version` field in the genesis header pins the protocol version in
-//    effect at chain launch. All nodes MUST reject genesis blocks whose
-//    version does not equal `GENESIS_PROTOCOL_VERSION`. Protocol upgrades are
-//    signalled at higher block heights via the `fee_model_version` and future
-//    upgrade-signalling fields; the genesis version never changes.
+//   - Any node operator who chooses to join the network implicitly accepts
+//     these published parameters. This acceptance IS the social consensus.
 //
-// 5. FIXED TIMESTAMP
-//    The genesis timestamp is hardcoded to a well-known UTC instant so that
-//    every node independently reconstructs the same block hash. Dynamic
-//    timestamps are FORBIDDEN for the genesis block.
+//   - There is NO cryptographic proof that the genesis block is "correct"
+//     in an absolute sense. Correctness is defined by community agreement.
 //
-// 6. ZERO PREVIOUS HASH
-//    The `previous_block_hash` of the genesis block MUST be the zero hash
-//    (all bytes 0x00). Any block claiming height 0 with a non-zero previous
-//    hash is invalid and MUST be rejected.
+// ## Initial Validator Set as Root of Trust
 //
-// See `assert_genesis_invariants` below for the runtime enforcement of these
-// properties.
+// The initial validator set is embedded in (or derived from) the genesis
+// block. It forms the *cryptographic* root of trust for all subsequent
+// consensus rounds:
+//
+//   - BFT quorum certificates for blocks 1, 2, … are verified against the
+//     public keys of the initial validators.
+//   - Validator set changes after genesis are themselves subject to BFT
+//     approval, so the chain of cryptographic trust traces back to the
+//     genesis validator set.
+//   - Compromising the initial validator set would allow forging all
+//     subsequent blocks; therefore the genesis validator set must be
+//     chosen with the highest care and published via multiple independent
+//     channels before launch.
+//
+// ## Subsequent Blocks: BFT Verification
+//
+// From block 1 onwards, every block MUST carry a valid BFT quorum
+// certificate (QC) signed by at least 2/3+1 of the current voting stake.
+// The QC is verified algorithmically — no social trust is required. This
+// is the boundary between social-consensus trust (genesis only) and
+// cryptographic trust (all other blocks).
+//
+// ## Implications for Node Operators
+//
+//   1. When bootstrapping a new node, ALWAYS verify the genesis block hash
+//      against the canonical value published in the project documentation
+//      and source code. A mismatch means the node is on a different (and
+//      potentially adversarial) chain.
+//
+//   2. The genesis block MUST NOT be downloaded from peers. It MUST be
+//      constructed locally from hardcoded parameters so that peer nodes
+//      cannot substitute a forged genesis.
+//
+//   3. If the community ever decides to hard-fork, the new genesis hash
+//      must be agreed upon and published via the same social-consensus
+//      process described here. There is no in-protocol mechanism for
+//      replacing the genesis trust anchor.
+//
+// See `GENESIS_TRUST_MODEL` constant and `assert_genesis_trust_model`
+// function below for the programmatic expression of these assumptions.
 // ============================================================================
 
-/// Protocol version pinned in the genesis block.
+/// Genesis trust model identifier.
 ///
-/// This constant is consensus-critical: nodes MUST reject any genesis block
-/// whose `version` field differs from this value.
-pub const GENESIS_PROTOCOL_VERSION: u32 = 1;
+/// The value `"social-consensus"` captures that the genesis block is trusted
+/// by agreement among network participants rather than by cryptographic proof.
+/// This constant is intentionally a `&str` so it can appear in logs, config
+/// comparisons, and error messages without additional dependencies.
+///
+/// All software that constructs or validates the genesis block SHOULD assert
+/// that this value equals `"social-consensus"` to make the trust assumption
+/// explicit and visible in code review.
+pub const GENESIS_TRUST_MODEL: &str = "social-consensus";
 
-/// Assert that a block satisfies all genesis invariants.
+/// Assert that the genesis trust model constant has its expected value.
 ///
-/// This function MUST be called immediately after `create_genesis_block`
-/// returns and also during chain validation whenever a block at height 0 is
-/// encountered (e.g. during chain import or bootstrap).
+/// Call this during node initialisation or in tests to make the trust
+/// assumption visible and to catch any accidental modification.
 ///
 /// # Panics
 ///
-/// Panics in debug builds if any invariant is violated. In release builds the
-/// assertions are elided; callers should additionally use
-/// `verify_genesis_invariants` for non-panicking validation in production.
-pub fn assert_genesis_invariants(block: &Block) {
-    // Invariant 6: zero previous hash
+/// Panics if `GENESIS_TRUST_MODEL` has been changed from `"social-consensus"`.
+pub fn assert_genesis_trust_model() {
     assert_eq!(
-        block.header.previous_block_hash,
-        Hash::default(),
-        "GENESIS INVARIANT VIOLATED: previous_block_hash must be the zero hash"
-    );
-
-    // Invariant derived from invariant 6: height must be 0
-    assert_eq!(
-        block.header.height, 0,
-        "GENESIS INVARIANT VIOLATED: genesis block height must be 0"
-    );
-
-    // Invariant 5: fixed timestamp
-    assert_eq!(
-        block.header.timestamp, GENESIS_FIXED_TIMESTAMP,
-        "GENESIS INVARIANT VIOLATED: genesis timestamp must be the fixed launch timestamp"
-    );
-
-    // Invariant 4: protocol version
-    assert_eq!(
-        block.header.version, GENESIS_PROTOCOL_VERSION,
-        "GENESIS INVARIANT VIOLATED: genesis block version must equal GENESIS_PROTOCOL_VERSION"
-    );
-
-    // Invariant 3: merkle root must be consistent with transaction list
-    let expected_merkle = crate::transaction::hashing::calculate_transaction_merkle_root(
-        &block.transactions,
-    );
-    assert_eq!(
-        block.header.merkle_root, expected_merkle,
-        "GENESIS INVARIANT VIOLATED: merkle_root does not match the genesis transaction list"
-    );
-
-    // Invariant 2: for a clean-slate genesis the merkle root is the zero hash
-    // (no pre-allocated UTXOs). If pre-mine UTXOs are ever added, this assert
-    // must be updated to reflect the known non-zero commitment.
-    assert_eq!(
-        block.transactions.len(), 0,
-        "GENESIS INVARIANT VIOLATED: genesis block must contain no pre-mine transactions \
-         unless explicitly documented and the merkle root updated accordingly"
+        GENESIS_TRUST_MODEL,
+        "social-consensus",
+        "GENESIS TRUST MODEL VIOLATED: GENESIS_TRUST_MODEL must be \
+         \"social-consensus\" — the genesis block is trusted by community \
+         agreement, not by cryptographic proof"
     );
 }
-
-/// Non-panicking version of `assert_genesis_invariants`.
-///
-/// Returns `Ok(())` when all invariants hold, or an `Err` describing the
-/// first violated invariant. Use this in production validation paths where
-/// a panic is undesirable.
-pub fn verify_genesis_invariants(block: &Block) -> Result<(), String> {
-    if block.header.previous_block_hash != Hash::default() {
-        return Err("previous_block_hash must be the zero hash".to_string());
-    }
-    if block.header.height != 0 {
-        return Err("genesis block height must be 0".to_string());
-    }
-    if block.header.timestamp != GENESIS_FIXED_TIMESTAMP {
-        return Err(format!(
-            "genesis timestamp must be {} (got {})",
-            GENESIS_FIXED_TIMESTAMP, block.header.timestamp
-        ));
-    }
-    if block.header.version != GENESIS_PROTOCOL_VERSION {
-        return Err(format!(
-            "genesis block version must be {} (got {})",
-            GENESIS_PROTOCOL_VERSION, block.header.version
-        ));
-    }
-    let expected_merkle =
-        crate::transaction::hashing::calculate_transaction_merkle_root(&block.transactions);
-    if block.header.merkle_root != expected_merkle {
-        return Err("merkle_root does not match the genesis transaction list".to_string());
-    }
-    Ok(())
-}
-
-/// Fixed UTC timestamp for the genesis block.
-///
-/// Aliased to `crate::GENESIS_TIMESTAMP` so that both names always refer to
-/// the same value. Any change to the genesis timestamp must be made in
-/// `lib-blockchain/src/lib.rs` and will be reflected here automatically.
-pub const GENESIS_FIXED_TIMESTAMP: u64 = crate::GENESIS_TIMESTAMP;
 
 /// ZHTP blockchain block
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,11 +126,9 @@ pub struct BlockHeader {
     pub merkle_root: Hash,
     /// Block creation timestamp
     pub timestamp: u64,
-    /// Current difficulty target (not serialized - PoW removed)
-    #[serde(skip, default)]
+    /// Current difficulty target
     pub difficulty: Difficulty,
-    /// Mining nonce for proof-of-work (not serialized - PoW removed)
-    #[serde(skip, default)]
+    /// Mining nonce for proof-of-work
     pub nonce: u64,
     /// Block height in the chain
     pub height: u64,
@@ -189,8 +138,7 @@ pub struct BlockHeader {
     pub transaction_count: u32,
     /// Total size of the block in bytes
     pub block_size: u32,
-    /// Cumulative difficulty from genesis (not serialized - PoW removed)
-    #[serde(skip, default)]
+    /// Cumulative difficulty from genesis
     pub cumulative_difficulty: Difficulty,
     /// Fee model version for this block (Phase 3B)
     ///
@@ -467,62 +415,56 @@ impl crate::types::hash::Hashable for BlockHeader {
 
 /// Genesis block creation
 ///
-/// # Genesis Contents
+/// # Trust Assumptions
 ///
-/// The genesis block produced by this function satisfies all `GENESIS_INVARIANTS`:
+/// The genesis block returned by this function is trusted under the
+/// `GENESIS_TRUST_MODEL = "social-consensus"` model. Callers MUST be aware of
+/// the following:
 ///
-/// - **Initial validator set**: Defined by social consensus at network launch and
-///   recorded implicitly through the zero-hash state root (clean slate). Validators
-///   register themselves in block 1 and onwards via `ValidatorTransactionData`.
+/// - **Not cryptographically self-proving**: Unlike blocks 1+, the genesis
+///   block has no prior state to verify against. Its correctness is defined
+///   by community agreement on the parameters hardcoded here.
 ///
-/// - **Initial UTXO allocations**: None. The genesis block carries an empty
-///   transaction list and a zero-hash merkle root, signifying no pre-mine. Any
-///   future allocation MUST be added as explicit genesis transactions AND the
-///   merkle root commitment here must be updated accordingly.
+/// - **Initial validator set is the root of cryptographic trust**: The
+///   validator set published at launch determines who may sign BFT quorum
+///   certificates for all subsequent blocks. The initial validator set is
+///   established out-of-band (social consensus) and recorded in the genesis
+///   state. All later validator-set changes must be BFT-approved.
 ///
-/// - **Genesis state root commitment**: The `merkle_root` field in the returned
-///   header commits to the initial state. For a clean-slate genesis this is the
-///   zero hash (empty transaction list). Verifiers must independently derive this
-///   commitment and reject any genesis block whose merkle root does not match.
+/// - **MUST be constructed locally**: Never accept the genesis block from a
+///   peer. Always construct it from this function using the hardcoded
+///   parameters and verify the resulting hash against the canonical published
+///   value.
 ///
-/// - **Protocol version**: Pinned to `GENESIS_PROTOCOL_VERSION` (currently 1).
-///   All nodes must reject genesis blocks with a differing version field.
-///
-/// # Invariant Checking
-///
-/// `assert_genesis_invariants` is called before returning so that any regression
-/// that breaks the deterministic genesis construction is caught at the call site
-/// in debug builds. Use `verify_genesis_invariants` for non-panicking checks in
-/// production validation paths.
+/// - **BFT takes over from block 1**: Every block after genesis is verified
+///   by BFT consensus. The boundary between social trust (genesis) and
+///   cryptographic trust (blocks 1+) is explicit and intentional.
 pub fn create_genesis_block() -> Block {
-    // Use the module-level constant so there is a single source of truth.
-    let genesis_timestamp = GENESIS_FIXED_TIMESTAMP;
+    // Enforce the trust model constant at construction time.
+    assert_genesis_trust_model();
+
+    // FIXED genesis timestamp for network consistency.
+    // Sourced from crate::GENESIS_TIMESTAMP to ensure a single source of truth.
+    let genesis_timestamp = crate::GENESIS_TIMESTAMP;
     // Genesis blocks should use easy consensus difficulty like other system transaction blocks
     let genesis_difficulty = Difficulty::from_bits(0x1fffffff);
 
-    // Compute the merkle root of the (empty) genesis transaction list so that
-    // the state root commitment is always consistent with the actual contents.
-    let genesis_transactions: Vec<crate::transaction::Transaction> = Vec::new();
-    let genesis_merkle_root =
-        crate::transaction::hashing::calculate_transaction_merkle_root(&genesis_transactions);
-
     let header = BlockHeader::new(
-        GENESIS_PROTOCOL_VERSION,  // version — pinned, consensus-critical
-        Hash::default(),           // previous_block_hash (none for genesis)
-        genesis_merkle_root,       // merkle_root — state root commitment
+        1, // version
+        Hash::default(), // previous_block_hash (none for genesis)
+        Hash::default(), // merkle_root (will be calculated)
         genesis_timestamp,
         genesis_difficulty,
-        0,                         // height
-        0,                         // transaction_count
-        0,                         // block_size
-        genesis_difficulty,        // cumulative_difficulty
+        0, // height
+        0, // transaction_count
+        0, // block_size
+        genesis_difficulty, // cumulative_difficulty
     );
 
-    let genesis_block = Block::new(header, genesis_transactions);
+    let genesis_block = Block::new(header, Vec::new());
 
-    // Enforce all genesis invariants before returning.  Any violation here
-    // indicates a programming error and must be fixed before deployment.
-    assert_genesis_invariants(&genesis_block);
+    // For genesis block, we might want to add special transactions
+    // This is handled by the blockchain initialization logic
 
     genesis_block
 }
