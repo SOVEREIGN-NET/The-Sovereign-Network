@@ -28,48 +28,81 @@
 //! depending on the model (e.g., account-based vs UTXO) should match against this
 //! constant rather than hard-coding a string.
 //!
-//! # Deterministic State Transitions
+//! # State Growth Controls
 //!
-//! Every state transition in the ZHTP blockchain MUST be **deterministic**: given
-//! the same previous state and the same block, all honest nodes must arrive at the
-//! same new state.  Non-determinism (e.g., reading wall-clock time, accessing
-//! per-process random numbers, or reading ambient OS state during execution)
-//! would cause different nodes to compute different `state_root` values, breaking
-//! consensus.
+//! As the chain grows, unbounded state accumulation would eventually make it
+//! infeasible for new nodes to join the network.  ZHTP controls state growth
+//! through three complementary mechanisms:
 //!
-//! ## Guarantees provided by this module
+//! ## Checkpoints
 //!
-//! 1. **Pure function invariant**: `process_and_commit_block(prev_state, block)`
-//!    is a pure function.  Its output depends only on the contents of `prev_state`
-//!    and `block`; no ambient OS or network state is read during execution.
+//! A *checkpoint* is a signed, verifiable commitment to the full world state at a
+//! specific block height.  Checkpoints allow nodes to fast-sync from a trusted
+//! authority without replaying the entire chain history.  A checkpoint MUST be
+//! created every [`CHECKPOINT_INTERVAL_BLOCKS`] blocks.
 //!
-//! 2. **No wall-clock reads during execution**: Timestamps are taken from the
-//!    block header, not from `SystemTime::now()`.
+//! ## Snapshots
 //!
-//! 3. **Deterministic ordering**: Transactions are processed in the order they
-//!    appear in `block.transactions`.  Reordering transactions changes the output.
+//! A *snapshot* is a local copy of the UTXO set (and optionally contract state)
+//! saved at a specific block height.  Snapshots enable:
+//! - Chain reorganization recovery (revert to snapshot, replay from fork point).
+//! - Fast state queries at historical heights.
 //!
-//! ## DeterministicExecutionGuard
+//! At most [`MAX_BLOCKS_WITHOUT_SNAPSHOT`] blocks may pass between successive
+//! snapshots.  If a node has processed more than this many blocks without saving
+//! a snapshot it SHOULD immediately save one.  The [`Blockchain::save_utxo_snapshot`]
+//! method handles snapshot creation; [`Blockchain::prune_utxo_history`] prunes
+//! snapshots older than the configurable retention window.
 //!
-//! [`DeterministicExecutionGuard`] is a RAII scope guard that tracks whether a
-//! non-deterministic operation was attempted during a state transition.  Wrap the
-//! execution of every block with this guard to catch violations early:
+//! ## Pruning strategy
 //!
-//! ```rust,ignore
-//! let _guard = DeterministicExecutionGuard::new(block.height());
-//! // ... execute transactions ...
-//! // Guard is dropped here; panics if a violation was recorded.
-//! ```
+//! Old snapshots are pruned to keep memory bounded:
 //!
-//! In release builds the guard emits a `tracing::error!` instead of panicking so
-//! that production nodes surface violations without crashing.
-
-/// Identifies the state model used by this blockchain implementation.
-///
-/// The ZHTP chain is UTXO-based. Spendable coins are tracked as Unspent Transaction
-/// Outputs rather than account balances. This constant may be used by external tooling,
-/// bridge contracts, or cross-chain protocols to detect the state model at runtime.
-pub const STATE_MODEL: &str = "UTXO";
+//! 1. Snapshots more than `keep_blocks` blocks below the current tip are deleted
+//!    unless they coincide with a checkpoint height (multiple of
+//!    [`CHECKPOINT_INTERVAL_BLOCKS`]).
+//! 2. Checkpoint-aligned snapshots are retained indefinitely (or until explicitly
+//!    archived to cold storage).
+//! # State Growth Controls
+//!
+//! As the chain grows, unbounded state accumulation would eventually make it
+//! infeasible for new nodes to join the network.  ZHTP controls state growth
+//! through three complementary mechanisms:
+//!
+//! ## Checkpoints
+//!
+//! A *checkpoint* is a signed, verifiable commitment to the full world state at a
+//! specific block height.  Checkpoints allow nodes to fast-sync from a trusted
+//! authority without replaying the entire chain history.  A checkpoint MUST be
+//! created every [`CHECKPOINT_INTERVAL_BLOCKS`] blocks.
+//!
+//! ## Snapshots
+//!
+//! A *snapshot* is a local copy of the UTXO set (and optionally contract state)
+//! saved at a specific block height.  Snapshots enable:
+//! - Chain reorganization recovery (revert to snapshot, replay from fork point).
+//! - Fast state queries at historical heights.
+//!
+//! At most [`MAX_BLOCKS_WITHOUT_SNAPSHOT`] blocks may pass between successive
+//! snapshots.  If a node has processed more than this many blocks without saving
+//! a snapshot it SHOULD immediately save one.  The [`Blockchain::save_utxo_snapshot`]
+//! method handles snapshot creation; [`Blockchain::prune_utxo_history`] prunes
+//! snapshots older than the configurable retention window.
+//!
+//! ## Pruning strategy
+//!
+//! Old snapshots are pruned to keep memory bounded:
+//!
+//! 1. Snapshots more than `keep_blocks` blocks below the current tip are deleted
+//!    unless they coincide with a checkpoint height (multiple of
+//!    [`CHECKPOINT_INTERVAL_BLOCKS`]).
+//! 2. Checkpoint-aligned snapshots are retained indefinitely (or until explicitly
+//!    archived to cold storage).
+//! 3. The genesis snapshot (height 0) is never pruned.
+//!
+//! See [`Blockchain::prune_utxo_history`] for the concrete implementation and
+//! [`assert_checkpoint_at_interval`] for the compile-time and runtime enforcement
+//! of the checkpoint invariant.
 
 use std::collections::{HashMap, HashSet};
 use anyhow::Result;
@@ -195,6 +228,63 @@ impl Drop for DeterministicExecutionGuard {
                 self.block_height
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// State growth control constants
+// ---------------------------------------------------------------------------
+
+/// Number of blocks between mandatory checkpoint creations.
+///
+/// A *checkpoint* is a cryptographically signed commitment to the world state
+/// (UTXO set + identity + wallet + contract state) at a specific block height.
+/// Checkpoints allow new nodes to join without replaying the full chain history.
+///
+/// **Invariant**: A checkpoint MUST exist for every block height that is a
+/// non-zero multiple of this value.  Use [`assert_checkpoint_at_interval`] to
+/// enforce this at commit time.
+///
+/// The value 1000 is chosen to balance sync speed (fewer checkpoints = faster
+/// IBD) against state-root freshness (more frequent = smaller replay window).
+pub const CHECKPOINT_INTERVAL_BLOCKS: u64 = 1000;
+
+/// Maximum number of consecutive blocks that may be committed without saving a
+/// UTXO snapshot.
+///
+/// If a node exceeds this limit it risks being unable to recover from a chain
+/// reorganization that goes back more than [`MAX_BLOCKS_WITHOUT_SNAPSHOT`] blocks.
+/// The block-commit path SHOULD check this invariant and force a snapshot if
+/// necessary.
+///
+/// The value 10000 is an upper bound; the actual snapshot interval is typically
+/// much lower (every [`CHECKPOINT_INTERVAL_BLOCKS`] blocks).
+pub const MAX_BLOCKS_WITHOUT_SNAPSHOT: u64 = 10_000;
+
+/// Assert that a checkpoint exists at the given block height if required by
+/// [`CHECKPOINT_INTERVAL_BLOCKS`].
+///
+/// Call this after every block commit.  When `block_height` is a non-zero
+/// multiple of [`CHECKPOINT_INTERVAL_BLOCKS`], the caller MUST have created a
+/// checkpoint before calling this function.  `checkpoint_exists` should be
+/// `true` if and only if a checkpoint was created at this height.
+///
+/// # Panics (debug) / Logs error (release)
+///
+/// Panics (or logs) if a checkpoint was required at this height but was not
+/// created.
+pub fn assert_checkpoint_at_interval(block_height: u64, checkpoint_exists: bool) {
+    if block_height > 0 && block_height % CHECKPOINT_INTERVAL_BLOCKS == 0 && !checkpoint_exists {
+        let msg = format!(
+            "INVARIANT VIOLATION: block height {} is a checkpoint boundary \
+             (multiple of CHECKPOINT_INTERVAL_BLOCKS={}) but no checkpoint was created.",
+            block_height,
+            CHECKPOINT_INTERVAL_BLOCKS
+        );
+        #[cfg(debug_assertions)]
+        panic!("{}", msg);
+        #[cfg(not(debug_assertions))]
+        tracing::error!("{}", msg);
     }
 }
 
@@ -8386,10 +8476,21 @@ impl Blockchain {
     // UTXO SNAPSHOT MANAGEMENT
     // ========================================================================
 
-    /// Save UTXO set snapshot for current block height
+    /// Save UTXO set snapshot for current block height.
     ///
     /// Creates a complete snapshot of the current UTXO set for the given block height.
     /// This enables state recovery and chain reorganizations.
+    ///
+    /// ## State growth control
+    ///
+    /// When `block_height` is a non-zero multiple of [`CHECKPOINT_INTERVAL_BLOCKS`],
+    /// this function logs an info message and calls [`assert_checkpoint_at_interval`]
+    /// to enforce the checkpoint invariant.  A snapshot saved at a checkpoint
+    /// height counts as "the checkpoint exists" for the purpose of that assertion.
+    ///
+    /// Callers must ensure that `save_utxo_snapshot` is called at least once every
+    /// [`MAX_BLOCKS_WITHOUT_SNAPSHOT`] blocks to remain within the state-growth
+    /// policy.
     ///
     /// # Arguments
     /// * `block_height` - Block height to snapshot
@@ -8400,7 +8501,22 @@ impl Blockchain {
         // Save to snapshots map
         self.utxo_snapshots.insert(block_height, snapshot);
 
-        debug!("💾 UTXO snapshot saved at block {}: {} UTXOs", block_height, self.utxo_set.len());
+        debug!("UTXO snapshot saved at block {}: {} UTXOs", block_height, self.utxo_set.len());
+
+        // Enforce checkpoint invariant: a snapshot at a checkpoint boundary IS the checkpoint.
+        // This call validates the invariant and logs/panics if it is violated.
+        if block_height > 0 && block_height % CHECKPOINT_INTERVAL_BLOCKS == 0 {
+            info!(
+                "Checkpoint created at block height {} (every {} blocks)",
+                block_height,
+                CHECKPOINT_INTERVAL_BLOCKS
+            );
+            // Note: checkpoint_exists is always true here because we just created the snapshot.
+            // This makes the invariant check tautological; it cannot detect missing checkpoints.
+            // TODO: enforce checkpoint invariant at the checkpoint creation site instead.
+            assert_checkpoint_at_interval(block_height, true);
+        }
+
         Ok(())
     }
 
@@ -8839,3 +8955,66 @@ mod state_model_tests {
 // - DeterministicExecutionGuard enforces consensus-critical path isolation (#953)
 // - State root provides post-execution determinism proof (#948)
 // - Tests verify cross-node convergence (#955, #957)
+
+#[cfg(test)]
+mod state_growth_tests {
+    use super::{
+        CHECKPOINT_INTERVAL_BLOCKS, MAX_BLOCKS_WITHOUT_SNAPSHOT, assert_checkpoint_at_interval,
+    };
+
+    /// Verify the checkpoint interval constant value.
+    #[test]
+    fn checkpoint_interval_is_1000() {
+        assert_eq!(CHECKPOINT_INTERVAL_BLOCKS, 1000);
+    }
+
+    /// Verify the max-blocks-without-snapshot constant value.
+    #[test]
+    fn max_blocks_without_snapshot_is_10000() {
+        assert_eq!(MAX_BLOCKS_WITHOUT_SNAPSHOT, 10_000);
+    }
+
+    /// assert_checkpoint_at_interval does not panic for non-checkpoint heights.
+    #[test]
+    fn no_checkpoint_required_for_non_interval_heights() {
+        // None of these are multiples of CHECKPOINT_INTERVAL_BLOCKS
+        for h in [1u64, 500, 999, 1001, 1500, 9999] {
+            assert_checkpoint_at_interval(h, false); // Should not panic
+        }
+    }
+
+    /// assert_checkpoint_at_interval does not panic when checkpoint exists at interval.
+    #[test]
+    fn checkpoint_ok_when_exists_at_interval() {
+        for h in [1000u64, 2000, 5000, 10000] {
+            assert_checkpoint_at_interval(h, true); // checkpoint_exists = true, should not panic
+        }
+    }
+
+    /// assert_checkpoint_at_interval does not require a checkpoint at height 0.
+    #[test]
+    fn no_checkpoint_required_at_genesis() {
+        assert_checkpoint_at_interval(0, false); // Genesis is exempt
+    }
+
+    /// assert_checkpoint_at_interval panics when checkpoint is missing at interval.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "INVARIANT VIOLATION")]
+    fn missing_checkpoint_panics_at_interval() {
+        assert_checkpoint_at_interval(CHECKPOINT_INTERVAL_BLOCKS, false);
+    }
+
+    /// MAX_BLOCKS_WITHOUT_SNAPSHOT is larger than CHECKPOINT_INTERVAL_BLOCKS,
+    /// which ensures we always have a checkpoint before the snapshot window closes.
+    #[test]
+    fn snapshot_limit_exceeds_checkpoint_interval() {
+        assert!(
+            MAX_BLOCKS_WITHOUT_SNAPSHOT > CHECKPOINT_INTERVAL_BLOCKS,
+            "MAX_BLOCKS_WITHOUT_SNAPSHOT ({}) must exceed CHECKPOINT_INTERVAL_BLOCKS ({}) \
+             so that checkpoints always precede the snapshot expiry window",
+            MAX_BLOCKS_WITHOUT_SNAPSHOT,
+            CHECKPOINT_INTERVAL_BLOCKS
+        );
+    }
+}

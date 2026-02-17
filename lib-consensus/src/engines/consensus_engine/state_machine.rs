@@ -1,6 +1,56 @@
+//! Consensus state-machine implementation.
+//!
+//! # State Growth Controls
+//!
+//! The consensus engine is responsible for triggering checkpoint creation and
+//! enforcing snapshot policies as the chain grows.  The following constants
+//! define the growth-control boundaries and are mirrored here so that the
+//! consensus engine can enforce them independently of the blockchain layer.
+//!
+//! ## Checkpoints
+//!
+//! A checkpoint is created by the block-finalization path every
+//! [`CHECKPOINT_INTERVAL_BLOCKS`] blocks.  The consensus engine SHOULD verify
+//! that a checkpoint was produced at the expected height before advancing to the
+//! next epoch.
+//!
+//! ## Snapshots
+//!
+//! UTXO and contract-state snapshots MUST be taken at least once every
+//! [`MAX_BLOCKS_WITHOUT_SNAPSHOT`] blocks.  The consensus engine can enforce
+//! this by checking `(current_height % MAX_BLOCKS_WITHOUT_SNAPSHOT == 0)` after
+//! each committed block and demanding that the blockchain layer produce a snapshot
+//! before proceeding.
+
 use super::*;
 use lib_crypto::hash_blake3;
 use tracing::info;
+
+// ============================================================================
+// STATE GROWTH CONTROL CONSTANTS (mirrors lib-blockchain values)
+// ============================================================================
+
+/// Number of blocks between mandatory checkpoint creations.
+///
+/// A checkpoint is a cryptographically signed commitment to the full world
+/// state (UTXO + identity + wallet + contract) at a specific block height.
+/// The consensus engine enforces that a checkpoint is created at every block
+/// height that is a non-zero multiple of this value.
+///
+/// This constant mirrors [`lib_blockchain::blockchain::CHECKPOINT_INTERVAL_BLOCKS`]
+/// and is defined here so the consensus engine can enforce the invariant without
+/// depending on the blockchain crate at compile time.
+pub const CHECKPOINT_INTERVAL_BLOCKS: u64 = 1000;
+
+/// Maximum number of consecutive committed blocks without a UTXO snapshot.
+///
+/// If the blockchain layer has not saved a snapshot within this many blocks,
+/// the consensus engine SHOULD refuse to finalize the next block until a
+/// snapshot is produced.  This prevents unbounded memory growth and ensures
+/// that reorg recovery is always possible within a bounded replay window.
+///
+/// This constant mirrors [`lib_blockchain::blockchain::MAX_BLOCKS_WITHOUT_SNAPSHOT`].
+pub const MAX_BLOCKS_WITHOUT_SNAPSHOT: u64 = 10_000;
 
 // ============================================================================
 // AUDIT AND LOGGING CONSTANTS
@@ -1408,5 +1458,62 @@ impl ConsensusEngine {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod state_growth_constants_tests {
+    use super::{CHECKPOINT_INTERVAL_BLOCKS, MAX_BLOCKS_WITHOUT_SNAPSHOT};
+
+    /// Verify the consensus-layer checkpoint interval matches the expected value.
+    #[test]
+    fn checkpoint_interval_is_1000() {
+        assert_eq!(CHECKPOINT_INTERVAL_BLOCKS, 1000,
+            "CHECKPOINT_INTERVAL_BLOCKS must be 1000; changing this is a governance action");
+    }
+
+    /// Verify the max-blocks-without-snapshot constant matches the expected value.
+    #[test]
+    fn max_blocks_without_snapshot_is_10000() {
+        assert_eq!(MAX_BLOCKS_WITHOUT_SNAPSHOT, 10_000,
+            "MAX_BLOCKS_WITHOUT_SNAPSHOT must be 10000; changing this is a governance action");
+    }
+
+    /// Verify that the snapshot limit exceeds the checkpoint interval so that
+    /// checkpoints always precede snapshot expiry.
+    #[test]
+    fn snapshot_limit_exceeds_checkpoint_interval() {
+        assert!(
+            MAX_BLOCKS_WITHOUT_SNAPSHOT > CHECKPOINT_INTERVAL_BLOCKS,
+            "MAX_BLOCKS_WITHOUT_SNAPSHOT must be greater than CHECKPOINT_INTERVAL_BLOCKS"
+        );
+    }
+
+    /// Verify that checkpoint heights are correctly identified.
+    #[test]
+    fn checkpoint_heights_are_multiples_of_interval() {
+        let checkpoint_heights = [1000u64, 2000, 5000, 10_000, 100_000];
+        for &h in &checkpoint_heights {
+            assert_eq!(
+                h % CHECKPOINT_INTERVAL_BLOCKS,
+                0,
+                "height {} should be a checkpoint boundary",
+                h
+            );
+        }
+    }
+
+    /// Verify that non-checkpoint heights are correctly identified.
+    #[test]
+    fn non_checkpoint_heights_are_not_multiples() {
+        let non_checkpoint_heights = [1u64, 500, 999, 1001, 9999];
+        for &h in &non_checkpoint_heights {
+            assert_ne!(
+                h % CHECKPOINT_INTERVAL_BLOCKS,
+                0,
+                "height {} should NOT be a checkpoint boundary",
+                h
+            );
+        }
     }
 }
