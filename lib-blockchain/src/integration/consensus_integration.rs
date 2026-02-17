@@ -872,7 +872,7 @@ impl BlockchainConsensusCoordinator {
                 timestamp: current_timestamp(),
             },
             consensus_proof: ConsensusProof {
-                consensus_type: ConsensusType::Hybrid, // Default to hybrid consensus
+                consensus_type: ConsensusType::ByzantineFaultTolerance,
                 stake_proof: None,
                 storage_proof: None,
                 work_proof: None,
