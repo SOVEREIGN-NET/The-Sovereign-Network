@@ -6,6 +6,106 @@ use serde::{Serialize, Deserialize};
 use crate::types::{Hash, Difficulty};
 use crate::transaction::Transaction;
 
+// ============================================================================
+// GENESIS TRUST MODEL
+// ============================================================================
+//
+// The genesis block is the singular root of trust for the entire ZHTP
+// blockchain. Unlike every subsequent block — which is verified by BFT
+// consensus and cryptographic proofs — the genesis block cannot be
+// self-referentially verified: there is no prior state against which to
+// check it. Its legitimacy therefore rests on *social consensus* among
+// the founding participants.
+//
+// ## Trust Model: "social-consensus"
+//
+// `GENESIS_TRUST_MODEL = "social-consensus"` captures this explicitly:
+//
+//   - The genesis block parameters (hash, timestamp, validator set, initial
+//     allocations, protocol version) are published out-of-band — in
+//     documentation, announcements, and open-source code — before the
+//     network launches.
+//
+//   - Any node operator who chooses to join the network implicitly accepts
+//     these published parameters. This acceptance IS the social consensus.
+//
+//   - There is NO cryptographic proof that the genesis block is "correct"
+//     in an absolute sense. Correctness is defined by community agreement.
+//
+// ## Initial Validator Set as Root of Trust
+//
+// The initial validator set is embedded in (or derived from) the genesis
+// block. It forms the *cryptographic* root of trust for all subsequent
+// consensus rounds:
+//
+//   - BFT quorum certificates for blocks 1, 2, … are verified against the
+//     public keys of the initial validators.
+//   - Validator set changes after genesis are themselves subject to BFT
+//     approval, so the chain of cryptographic trust traces back to the
+//     genesis validator set.
+//   - Compromising the initial validator set would allow forging all
+//     subsequent blocks; therefore the genesis validator set must be
+//     chosen with the highest care and published via multiple independent
+//     channels before launch.
+//
+// ## Subsequent Blocks: BFT Verification
+//
+// From block 1 onwards, every block MUST carry a valid BFT quorum
+// certificate (QC) signed by at least 2/3+1 of the current voting stake.
+// The QC is verified algorithmically — no social trust is required. This
+// is the boundary between social-consensus trust (genesis only) and
+// cryptographic trust (all other blocks).
+//
+// ## Implications for Node Operators
+//
+//   1. When bootstrapping a new node, ALWAYS verify the genesis block hash
+//      against the canonical value published in the project documentation
+//      and source code. A mismatch means the node is on a different (and
+//      potentially adversarial) chain.
+//
+//   2. The genesis block MUST NOT be downloaded from peers. It MUST be
+//      constructed locally from hardcoded parameters so that peer nodes
+//      cannot substitute a forged genesis.
+//
+//   3. If the community ever decides to hard-fork, the new genesis hash
+//      must be agreed upon and published via the same social-consensus
+//      process described here. There is no in-protocol mechanism for
+//      replacing the genesis trust anchor.
+//
+// See `GENESIS_TRUST_MODEL` constant and `verify_genesis_trust_model`
+// function below for the programmatic expression of these assumptions.
+// ============================================================================
+
+/// Genesis trust model identifier.
+///
+/// The value `"social-consensus"` captures that the genesis block is trusted
+/// by agreement among network participants rather than by cryptographic proof.
+/// This constant is intentionally a `&str` so it can appear in logs, config
+/// comparisons, and error messages without additional dependencies.
+///
+/// All software that constructs or validates the genesis block SHOULD assert
+/// that this value equals `"social-consensus"` to make the trust assumption
+/// explicit and visible in code review.
+pub const GENESIS_TRUST_MODEL: &str = "social-consensus";
+
+/// Assert that the genesis trust model constant has its expected value.
+///
+/// Call this during node initialisation or in tests to make the trust
+/// assumption visible and to catch any accidental modification.
+///
+/// # Panics
+///
+/// Panics if `GENESIS_TRUST_MODEL` has been changed from `"social-consensus"`.
+pub fn assert_genesis_trust_model() {
+    assert_eq!(
+        GENESIS_TRUST_MODEL,
+        "social-consensus",
+        "GENESIS TRUST MODEL VIOLATED: GENESIS_TRUST_MODEL must be \
+         \"social-consensus\" — the genesis block is trusted by community \
+         agreement, not by cryptographic proof"
+    );
+}
+
 /// ZHTP blockchain block
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -314,13 +414,41 @@ impl crate::types::hash::Hashable for BlockHeader {
 }
 
 /// Genesis block creation
+///
+/// # Trust Assumptions
+///
+/// The genesis block returned by this function is trusted under the
+/// `GENESIS_TRUST_MODEL = "social-consensus"` model. Callers MUST be aware of
+/// the following:
+///
+/// - **Not cryptographically self-proving**: Unlike blocks 1+, the genesis
+///   block has no prior state to verify against. Its correctness is defined
+///   by community agreement on the parameters hardcoded here.
+///
+/// - **Initial validator set is the root of cryptographic trust**: The
+///   validator set published at launch determines who may sign BFT quorum
+///   certificates for all subsequent blocks. The initial validator set is
+///   established out-of-band (social consensus) and recorded in the genesis
+///   state. All later validator-set changes must be BFT-approved.
+///
+/// - **MUST be constructed locally**: Never accept the genesis block from a
+///   peer. Always construct it from this function using the hardcoded
+///   parameters and verify the resulting hash against the canonical published
+///   value.
+///
+/// - **BFT takes over from block 1**: Every block after genesis is verified
+///   by BFT consensus. The boundary between social trust (genesis) and
+///   cryptographic trust (blocks 1+) is explicit and intentional.
 pub fn create_genesis_block() -> Block {
+    // Enforce the trust model constant at construction time.
+    assert_genesis_trust_model();
+
     // FIXED genesis timestamp for network consistency
     // November 1, 2025 00:00:00 UTC - ensures all nodes create identical genesis
     let genesis_timestamp = 1730419200;
     // Genesis blocks should use easy consensus difficulty like other system transaction blocks
     let genesis_difficulty = Difficulty::from_bits(0x1fffffff);
-    
+
     let header = BlockHeader::new(
         1, // version
         Hash::default(), // previous_block_hash (none for genesis)
@@ -334,10 +462,10 @@ pub fn create_genesis_block() -> Block {
     );
 
     let genesis_block = Block::new(header, Vec::new());
-    
+
     // For genesis block, we might want to add special transactions
     // This is handled by the blockchain initialization logic
-    
+
     genesis_block
 }
 
