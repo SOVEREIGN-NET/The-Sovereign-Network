@@ -314,6 +314,9 @@ impl BlockHeader {
     pub fn set_state_root(&mut self, state_root: Hash) {
         assert_state_root_set(self.height, &state_root);
         self.state_root = state_root;
+        // Recompute the block hash after updating the state root so that
+        // block_hash always reflects the finalized header contents.
+        self.block_hash = self.calculate_hash();
     }
 
     /// Calculate the hash of this block header
