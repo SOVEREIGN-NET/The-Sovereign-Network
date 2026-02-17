@@ -26,9 +26,11 @@ pub struct BlockHeader {
     pub merkle_root: Hash,
     /// Block creation timestamp
     pub timestamp: u64,
-    /// Current difficulty target
+    /// Current difficulty target (not serialized - PoW removed)
+    #[serde(skip, default)]
     pub difficulty: Difficulty,
-    /// Mining nonce for proof-of-work
+    /// Mining nonce for proof-of-work (not serialized - PoW removed)
+    #[serde(skip, default)]
     pub nonce: u64,
     /// Block height in the chain
     pub height: u64,
@@ -38,7 +40,8 @@ pub struct BlockHeader {
     pub transaction_count: u32,
     /// Total size of the block in bytes
     pub block_size: u32,
-    /// Cumulative difficulty from genesis
+    /// Cumulative difficulty from genesis (not serialized - PoW removed)
+    #[serde(skip, default)]
     pub cumulative_difficulty: Difficulty,
     /// Fee model version for this block (Phase 3B)
     ///
