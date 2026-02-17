@@ -6291,9 +6291,34 @@ impl Blockchain {
 
     /// Evaluate and potentially merge a blockchain from another node
     /// Uses consensus rules to decide whether to adopt the imported chain
+    ///
+    /// POST-COMMIT SAFETY: Once any block has been committed to this chain,
+    /// chain replacement (AdoptImported) is permanently forbidden. Only
+    /// additive content merges (identities, wallets, contracts, UTXOs) are
+    /// permitted on a chain that already has committed blocks. This enforces
+    /// BFT finality: committed blocks are irreversible.
     pub async fn evaluate_and_merge_chain(&mut self, data: Vec<u8>) -> Result<lib_consensus::ChainMergeResult> {
         let import: BlockchainImport = bincode::deserialize(&data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain: {}", e))?;
+
+        // POST-COMMIT REORG GUARD: If this node has any committed (finalized)
+        // blocks, chain replacement is categorically forbidden. BFT consensus
+        // guarantees finality — no post-commit reorg path may replace the chain.
+        if !self.finalized_blocks.is_empty() {
+            let highest_finalized = self.finalized_blocks.iter().copied().max().unwrap_or(0);
+            warn!(
+                "Post-commit reorg attempt rejected: {} finalized blocks exist (highest: {}). \
+                 BFT finality forbids chain replacement after commit.",
+                self.finalized_blocks.len(),
+                highest_finalized
+            );
+            return Err(anyhow::anyhow!(
+                "Post-commit reorg forbidden: chain has {} finalized blocks (highest height {}). \
+                 BFT consensus does not permit chain replacement after blocks are committed.",
+                self.finalized_blocks.len(),
+                highest_finalized
+            ));
+        }
 
         // Fast path: if local chain is empty (fresh node bootstrap), directly adopt
         // the imported chain without verification against empty state.
@@ -6406,7 +6431,20 @@ impl Blockchain {
                     info!("🔀 Genesis mismatch detected - performing full consolidation merge");
                     info!("   Old genesis merkle: {}", hex::encode(self.blocks[0].header.merkle_root.as_bytes()));
                     info!("   New genesis merkle: {}", hex::encode(import.blocks[0].header.merkle_root.as_bytes()));
-                    
+
+                    // POST-COMMIT ASSERTION: Chain replacement is only reachable here if no
+                    // finalized blocks exist (enforced by the guard at function entry). Assert
+                    // this invariant so any future refactoring that removes the entry guard is
+                    // caught immediately at runtime rather than silently corrupting state.
+                    assert!(
+                        self.finalized_blocks.is_empty(),
+                        "Invariant violated: AdoptImported (genesis-mismatch) path reached with \
+                         {} finalized blocks. Post-commit chain replacement is forbidden by BFT \
+                         consensus. The entry guard in evaluate_and_merge_chain must have been \
+                         bypassed.",
+                        self.finalized_blocks.len()
+                    );
+
                     // Perform intelligent merge: adopt imported chain but preserve unique local data
                     match self.merge_with_genesis_mismatch(&import) {
                         Ok(merge_report) => {
@@ -6415,23 +6453,37 @@ impl Blockchain {
                             Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
                         }
                         Err(e) => {
-                            warn!(" Genesis merge failed: {} - adopting imported chain only", e);
-                            // Fallback: just adopt imported chain
-                            self.blocks = import.blocks;
-                            self.height = self.blocks.len() as u64 - 1;
-                            self.utxo_set = import.utxo_set;
-                            self.identity_registry = import.identity_registry;
-                            // Convert wallet references to full data (sensitive data will need DHT retrieval)
-                            self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
-                            self.validator_registry = import.validator_registry;
-                            self.token_contracts = import.token_contracts;
-                            self.web4_contracts = import.web4_contracts;
-                            self.contract_blocks = import.contract_blocks;
-                            Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
+                            // Do NOT fall back to a silent chain replacement. If the intelligent
+                            // merge fails, propagate the error rather than silently overwriting
+                            // committed state with an unverified imported chain.
+                            error!(
+                                "Genesis merge failed: {} - refusing to adopt imported chain to \
+                                 preserve post-commit safety. No chain replacement will occur.",
+                                e
+                            );
+                            Err(anyhow::anyhow!(
+                                "Post-commit safety: genesis merge failed ({}) and silent chain \
+                                 replacement fallback is forbidden.",
+                                e
+                            ))
                         }
                     }
                 } else {
                     info!(" Same genesis - adopting longer chain");
+
+                    // POST-COMMIT ASSERTION: Chain replacement is only reachable here if no
+                    // finalized blocks exist (enforced by the guard at function entry). Assert
+                    // this invariant so any future refactoring that removes the entry guard is
+                    // caught immediately at runtime rather than silently corrupting state.
+                    assert!(
+                        self.finalized_blocks.is_empty(),
+                        "Invariant violated: AdoptImported (same-genesis) path reached with \
+                         {} finalized blocks. Post-commit chain replacement is forbidden by BFT \
+                         consensus. The entry guard in evaluate_and_merge_chain must have been \
+                         bypassed.",
+                        self.finalized_blocks.len()
+                    );
+
                     // Simple case: same genesis, just adopt imported chain
                     self.blocks = import.blocks;
                     self.height = self.blocks.len() as u64 - 1;
@@ -6443,7 +6495,7 @@ impl Blockchain {
                     self.token_contracts = import.token_contracts;
                     self.web4_contracts = import.web4_contracts;
                     self.contract_blocks = import.contract_blocks;
-                    
+
                     // Clear nullifier set and rebuild from new chain
                     self.nullifier_set.clear();
                     for block in &self.blocks {
@@ -6453,13 +6505,13 @@ impl Blockchain {
                             }
                         }
                     }
-                    
+
                     info!(" Adopted imported chain");
                     info!("   New height: {}", self.height);
                     info!("   Identities: {}", self.identity_registry.len());
                     info!("   Validators: {}", self.validator_registry.len());
                     info!("   UTXOs: {}", self.utxo_set.len());
-                    
+
                     Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
                 }
             },
@@ -6718,30 +6770,24 @@ impl Blockchain {
             }
         }
         
-        // If chains have different heights, merge missing blocks
+        // POST-COMMIT SAFETY: Do not append blocks from an imported chain directly.
+        // Directly pushing imported blocks onto self.blocks bypasses process_and_commit_block,
+        // which means fee deduction, nullifier tracking, UTXO updates, receipt creation, and
+        // event publishing are all skipped. This is a hidden post-commit reorg path because it
+        // can silently replace committed block state at a given height.
+        //
+        // If the imported chain is longer, the height difference is logged only. New blocks from
+        // network peers must arrive through add_block_from_network() which runs full validation
+        // and commit logic through process_and_commit_block().
         if import.blocks.len() != self.blocks.len() {
             if import.blocks.len() > self.blocks.len() {
-                // Imported chain is longer - add missing blocks
-                let missing_blocks = &import.blocks[self.blocks.len()..];
-                let mut added_blocks = 0;
-                
-                for block in missing_blocks {
-                    // Verify block before adding
-                    let prev_block = self.blocks.last();
-                    if self.verify_block(block, prev_block)? {
-                        self.blocks.push(block.clone());
-                        self.height = block.height();
-                        added_blocks += 1;
-                        info!("  Added missing block at height {}", block.height());
-                    } else {
-                        warn!("  Failed to verify imported block at height {}, stopping block merge", block.height());
-                        break;
-                    }
-                }
-                
-                if added_blocks > 0 {
-                    merged_items.push(format!("{} blocks", added_blocks));
-                }
+                let block_diff = import.blocks.len() - self.blocks.len();
+                warn!(
+                    "merge_chain_content: imported chain is {} blocks longer than local chain. \
+                     Direct block insertion is forbidden to preserve post-commit integrity. \
+                     New blocks must arrive via add_block_from_network().",
+                    block_diff
+                );
             } else {
                 // Local chain is longer - just report the difference
                 let block_diff = self.blocks.len() - import.blocks.len();
@@ -6844,7 +6890,19 @@ impl Blockchain {
         info!("   {} token contracts", unique_token_contracts);
         info!("   {} web4 contracts", unique_web4_contracts);
         
-        // Step 6: Adopt imported chain as base
+        // Step 6: Adopt imported chain as base.
+        //
+        // POST-COMMIT ASSERTION: This is a full chain replacement. It must never be
+        // reached when finalized blocks exist. The guard in evaluate_and_merge_chain
+        // is the primary enforcement point; this assertion is defense-in-depth to
+        // catch any future call-site added without going through that guard.
+        assert!(
+            self.finalized_blocks.is_empty(),
+            "Invariant violated: merge_with_genesis_mismatch reached Step 6 (chain replacement) \
+             with {} finalized blocks. Post-commit chain replacement is permanently forbidden by \
+             BFT consensus. Caller must check evaluate_and_merge_chain entry guard.",
+            self.finalized_blocks.len()
+        );
         self.blocks = import.blocks.clone();
         self.height = self.blocks.len() as u64 - 1;
         self.identity_registry = import.identity_registry.clone();
