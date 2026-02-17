@@ -1,7 +1,43 @@
 //! Fork Detection and Recovery Mechanism
 //!
-//! Handles network fork detection, chain evaluation, and reorganization.
-//! Implements longest-chain rule with timestamp tiebreaker for canonical chain selection.
+//! # BFT Mode: Fork-Choice is Forbidden
+//!
+//! **INVARIANT**: In Byzantine Fault Tolerant (BFT) consensus, fork-choice logic is
+//! **completely forbidden and must never be invoked**.
+//!
+//! ## Why Forks Cannot Exist in BFT
+//!
+//! BFT consensus (specifically the Tendermint-style protocol used here) provides
+//! *immediate finality*: once 2/3+1 validators have committed a block at height H,
+//! that decision is irreversible. There is no scenario in which a competing block
+//! at the same height can ever be valid, regardless of its length, difficulty, or
+//! timestamp.
+//!
+//! This is fundamentally different from Nakamoto (Proof-of-Work) consensus:
+//! - **PoW**: Forks are possible; resolved by longest-chain / most-work rule.
+//! - **BFT**: Forks are impossible by construction (assuming < 1/3 Byzantine validators).
+//!   A fork in BFT implies a safety violation and is treated as evidence of Byzantine
+//!   behavior, not as a normal network condition to be resolved.
+//!
+//! ## What This Means for This Module
+//!
+//! - `ForkDetector::evaluate_chains` — **FORBIDDEN**. Calling this function is a
+//!   programming error and will panic with `unreachable!`. Fork-choice must never
+//!   be invoked in BFT mode.
+//! - `ForkDetector::detect_fork` — Retained for **diagnostic and evidence purposes only**.
+//!   If a fork is detected, it is logged as Byzantine evidence, not resolved via
+//!   chain selection. The detection result should be forwarded to the equivocation
+//!   evidence handler.
+//! - `Blockchain::reorg_to_fork` — **FORBIDDEN**. Chain reorganization cannot occur
+//!   in BFT mode. Calling this function is a programming error and will panic.
+//!
+//! ## Historical Note
+//!
+//! This module was originally written for a hybrid PoW/BFT consensus mode.
+//! The fork-choice logic (`evaluate_chains`) was gutted in issue #936 when the
+//! system transitioned to pure BFT mode. In issue #968, explicit `unreachable!`
+//! guards were added to all fork-choice entry points to make this constraint
+//! statically enforced at runtime.
 
 use serde::{Serialize, Deserialize};
 use crate::types::Hash;
@@ -72,107 +108,40 @@ impl ForkDetector {
         None
     }
 
-    /// Evaluate two chains and return which is canonical
+    /// Evaluate two chains and return which is canonical.
     ///
-    /// Uses longest-chain rule with difficulty and timestamp tiebreakers:
-    /// 1. Longer chain wins (more blocks)
-    /// 2. If equal length, higher cumulative difficulty wins
-    /// 3. If equal difficulty, newer timestamp wins
+    /// # FORBIDDEN IN BFT MODE
     ///
-    /// **Timestamp Tiebreaker Rationale:**
-    /// Newer timestamps are chosen to prefer recently-produced blocks when
-    /// cumulative work is equal. This is acceptable because:
-    /// - Block timestamps are validated against network time during consensus
-    /// - BFT consensus requires 2/3+ validator agreement, limiting manipulation
-    /// - Timestamp must be within acceptable drift bounds (enforced in block validation)
-    /// - This tiebreaker is rare (only when cumulative difficulty is exactly equal)
+    /// **This function must never be called in BFT consensus mode.**
+    ///
+    /// Fork-choice logic (selecting between competing chains) is fundamentally
+    /// incompatible with BFT consensus. In BFT, once a block is committed at
+    /// height H with 2/3+1 validator agreement, it is final and irreversible.
+    /// No competing chain can ever be canonical at that height.
+    ///
+    /// Invoking this function is a programming error. It will panic unconditionally
+    /// with `unreachable!` to surface the bug immediately at the call site.
+    ///
+    /// If you believe you need fork-choice logic, reconsider your design:
+    /// - If you received a competing block, it is Byzantine evidence — report it.
+    /// - If you are syncing a new node, use the canonical committed chain, not fork selection.
+    /// - If you are implementing PoW mode, this function was valid in the hybrid era (pre-#936).
+    ///   In BFT-only mode it is permanently disabled.
+    ///
+    /// See module-level documentation for full rationale.
+    #[allow(unused_variables)]
     pub fn evaluate_chains(
         our_chain: &[Block],
         candidate_chain: &[Block],
     ) -> ChainEvaluation {
-        // Step 1: Compare chain lengths (number of blocks)
-        let our_length = our_chain.len();
-        let candidate_length = candidate_chain.len();
-
-        if candidate_length > our_length {
-            // Candidate chain is longer
-            let our_difficulty = our_chain
-                .last()
-                .map(|b| b.header.cumulative_difficulty.bits())
-                .unwrap_or(0);
-            let candidate_difficulty = candidate_chain
-                .last()
-                .map(|b| b.header.cumulative_difficulty.bits())
-                .unwrap_or(0);
-
-            return ChainEvaluation::SwitchToCandidate {
-                our_work: our_difficulty as u128,
-                candidate_work: candidate_difficulty as u128,
-                reason: format!("candidate chain is longer ({} vs {} blocks)", candidate_length, our_length),
-            };
-        } else if our_length > candidate_length {
-            // Our chain is longer
-            let our_difficulty = our_chain
-                .last()
-                .map(|b| b.header.cumulative_difficulty.bits())
-                .unwrap_or(0);
-            let candidate_difficulty = candidate_chain
-                .last()
-                .map(|b| b.header.cumulative_difficulty.bits())
-                .unwrap_or(0);
-
-            return ChainEvaluation::KeepOurChain {
-                our_work: our_difficulty as u128,
-                candidate_work: candidate_difficulty as u128,
-                reason: format!("our chain is longer ({} vs {} blocks)", our_length, candidate_length),
-            };
-        }
-
-        // Step 2: Equal length - compare by cumulative difficulty
-        let our_difficulty = our_chain
-            .last()
-            .map(|b| b.header.cumulative_difficulty.bits())
-            .unwrap_or(0);
-        let candidate_difficulty = candidate_chain
-            .last()
-            .map(|b| b.header.cumulative_difficulty.bits())
-            .unwrap_or(0);
-
-        if candidate_difficulty > our_difficulty {
-            // Candidate has more work, it's canonical
-            ChainEvaluation::SwitchToCandidate {
-                our_work: our_difficulty as u128,
-                candidate_work: candidate_difficulty as u128,
-                reason: "equal length, candidate has more cumulative work".to_string(),
-            }
-        } else if candidate_difficulty == our_difficulty && !candidate_chain.is_empty() && !our_chain.is_empty() {
-            // Step 3: Equal work - use timestamp as tiebreaker
-            let our_timestamp = our_chain.last().map(|b| b.header.timestamp).unwrap_or(0);
-            let candidate_timestamp = candidate_chain
-                .last()
-                .map(|b| b.header.timestamp)
-                .unwrap_or(0);
-
-            if candidate_timestamp > our_timestamp {
-                ChainEvaluation::SwitchToCandidate {
-                    our_work: our_difficulty as u128,
-                    candidate_work: candidate_difficulty as u128,
-                    reason: "equal work and length, candidate has newer timestamp".to_string(),
-                }
-            } else {
-                ChainEvaluation::KeepOurChain {
-                    our_work: our_difficulty as u128,
-                    candidate_work: candidate_difficulty as u128,
-                    reason: "equal work and length, our chain preferred (older or equal timestamp)".to_string(),
-                }
-            }
-        } else {
-            ChainEvaluation::KeepOurChain {
-                our_work: our_difficulty as u128,
-                candidate_work: candidate_difficulty as u128,
-                reason: "equal length, our chain has more work".to_string(),
-            }
-        }
+        unreachable!(
+            "BFT INVARIANT VIOLATED: ForkDetector::evaluate_chains was called. \
+             Fork-choice is forbidden in BFT consensus mode. \
+             In BFT, committed blocks are final and irreversible — there is no competing \
+             chain to evaluate. If a fork was detected, it must be treated as Byzantine \
+             evidence, not resolved via chain selection. \
+             See lib-blockchain/src/fork_recovery.rs module documentation for details."
+        );
     }
 }
 
@@ -283,8 +252,14 @@ mod tests {
         assert!(fork.is_none());
     }
 
+    /// Verify that evaluate_chains panics unconditionally.
+    ///
+    /// In BFT mode, fork-choice is forbidden. Calling evaluate_chains is a
+    /// programming error. These tests confirm the function panics immediately,
+    /// which is the intended behavior after issue #968.
     #[test]
-    fn test_longer_chain_wins() {
+    #[should_panic(expected = "BFT INVARIANT VIOLATED")]
+    fn test_evaluate_chains_is_forbidden_longer_chain() {
         let chain_a = vec![
             create_test_block(1, Hash::default(), 1, 1),
             create_test_block(2, Hash::default(), 2, 2),
@@ -296,12 +271,13 @@ mod tests {
             create_test_block(2, Hash::default(), 2, 2),
         ];
 
-        let eval = ForkDetector::evaluate_chains(&chain_a, &chain_b);
-        assert!(matches!(eval, ChainEvaluation::KeepOurChain { .. }));
+        // This must panic — fork-choice is forbidden in BFT mode.
+        let _ = ForkDetector::evaluate_chains(&chain_a, &chain_b);
     }
 
     #[test]
-    fn test_chain_with_more_work_wins() {
+    #[should_panic(expected = "BFT INVARIANT VIOLATED")]
+    fn test_evaluate_chains_is_forbidden_more_work() {
         let chain_a = vec![
             create_test_block(1, Hash::default(), 100, 1),
             create_test_block(2, Hash::default(), 200, 2),
@@ -312,12 +288,13 @@ mod tests {
             create_test_block(2, Hash::default(), 2000, 2),
         ];
 
-        let eval = ForkDetector::evaluate_chains(&chain_a, &chain_b);
-        assert!(matches!(eval, ChainEvaluation::SwitchToCandidate { .. }));
+        // This must panic — fork-choice is forbidden in BFT mode.
+        let _ = ForkDetector::evaluate_chains(&chain_a, &chain_b);
     }
 
     #[test]
-    fn test_newer_timestamp_wins_at_equal_work() {
+    #[should_panic(expected = "BFT INVARIANT VIOLATED")]
+    fn test_evaluate_chains_is_forbidden_timestamp_tiebreak() {
         let mut chain_a = vec![
             create_test_block(1, Hash::default(), 100, 1),
             create_test_block(2, Hash::default(), 100, 2),
@@ -328,11 +305,10 @@ mod tests {
             create_test_block(2, Hash::default(), 100, 2),
         ];
 
-        // Set different timestamps for last block
         chain_a[1].header.timestamp = 1000;
         chain_b[1].header.timestamp = 2000;
 
-        let eval = ForkDetector::evaluate_chains(&chain_a, &chain_b);
-        assert!(matches!(eval, ChainEvaluation::SwitchToCandidate { .. }));
+        // This must panic — fork-choice is forbidden in BFT mode.
+        let _ = ForkDetector::evaluate_chains(&chain_a, &chain_b);
     }
 }
