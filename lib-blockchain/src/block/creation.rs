@@ -135,7 +135,7 @@ pub fn create_genesis_block_with_transactions(transactions: Vec<Transaction>) ->
 /// Blocks are now validated through BFT consensus, not PoW.
 #[deprecated(note = "PoW mining removed - blocks validated through BFT consensus")]
 pub fn mine_block(block: Block, _max_iterations: u64) -> Result<Block> {
-    tracing::warn!("mine_block called but PoW mining is disabled (BFT-A-935)");
+    tracing::trace!("mine_block called but PoW mining is disabled (BFT-A-935)");
     Ok(block)
 }
 
@@ -146,7 +146,7 @@ pub fn mine_block(block: Block, _max_iterations: u64) -> Result<Block> {
 /// Blocks are now validated through BFT consensus, not PoW.
 #[deprecated(note = "PoW mining removed - blocks validated through BFT consensus")]
 pub fn mine_block_with_config(block: Block, _config: &crate::types::MiningConfig) -> Result<Block> {
-    tracing::warn!("mine_block_with_config called but PoW mining is disabled (BFT-A-935)");
+    tracing::trace!("mine_block_with_config called but PoW mining is disabled (BFT-A-935)");
     Ok(block)
 }
 

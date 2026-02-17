@@ -168,8 +168,8 @@ impl Block {
     /// This method is deprecated. PoW validation no longer used with BFT consensus.
     #[deprecated(note = "PoW validation removed - using BFT consensus")]
     pub fn meets_difficulty_target(&self) -> bool {
-        // Always return true for backward compatibility
-        true
+        // BFT-A-935: PoW removed; always returns false so callers do not silently pass.
+        false
     }
 
     /// Get all transaction IDs in the block
@@ -275,7 +275,7 @@ impl BlockHeader {
     #[deprecated(note = "Nonce no longer used - BFT consensus instead of PoW")]
     pub fn set_nonce(&mut self, nonce: u64) {
         self.nonce = nonce;
-        self.block_hash = self.calculate_hash();
+        // BFT-A-935: Nonce must not affect consensus-critical fields such as block_hash.
     }
 
     /// Check if the block hash meets the difficulty target (deprecated)
@@ -284,8 +284,8 @@ impl BlockHeader {
     /// This method is deprecated. PoW validation no longer used with BFT consensus.
     #[deprecated(note = "PoW validation removed - using BFT consensus")]
     pub fn meets_difficulty_target(&self) -> bool {
-        // Always return true for backward compatibility
-        true
+        // BFT-A-935: PoW removed; always returns false so callers do not silently pass.
+        false
     }
 
     /// Check if this header represents a valid proof-of-work (deprecated)
@@ -294,8 +294,8 @@ impl BlockHeader {
     /// This method is deprecated. PoW validation no longer used with BFT consensus.
     #[deprecated(note = "PoW validation removed - using BFT consensus")]
     pub fn is_valid_proof_of_work(&self) -> bool {
-        // Always return true for backward compatibility
-        true
+        // BFT-A-935: PoW removed; always returns false so callers do not silently pass.
+        false
     }
 
     /// Get time since previous block (requires previous block timestamp)
