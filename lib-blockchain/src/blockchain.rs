@@ -64,6 +64,9 @@ use lib_storage::dht::storage::DhtStorage;
 /// `SystemTime::now()` for state purposes) should check this flag and either
 /// refuse to run or record a violation via
 /// [`DeterministicExecutionGuard::record_violation`].
+// Note: thread-local storage means this guard may not detect violations
+// if block processing migrates between threads (e.g., tokio task rescheduling).
+// The guard must not be used across await points.
 std::thread_local! {
     static DETERMINISTIC_EXECUTION_ACTIVE: std::cell::Cell<bool> = std::cell::Cell::new(false);
     static DETERMINISTIC_VIOLATION_RECORDED: std::cell::Cell<bool> = std::cell::Cell::new(false);
