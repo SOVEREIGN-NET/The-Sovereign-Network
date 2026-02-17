@@ -37,7 +37,10 @@ pub use network::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
 pub use proofs::*;
 pub use testing::NoOpBroadcaster;
 pub use types::*;
-pub use validators::{Validator, ValidatorManager};
+pub use validators::{
+    Validator, ValidatorManager,
+    MIN_VALIDATORS, MAX_VALIDATORS, MAX_VALIDATORS_HARD_CAP,
+};
 pub use evidence::{Evidence, EvidenceStore, EvidenceRecord, SlashingParams, IsolationAction, isolation_action};
 pub use slashing::{
     SlashableOffense, ALL_OFFENSES, SLASHABLE_OFFENSE_COUNT,

@@ -1,38 +1,4 @@
 //! Validator set management
-//!
-//! # Validator Admission Model
-//!
-//! ZHTP uses a **permissioned-by-stake** admission model with the following invariants:
-//!
-//! 1. **Stake threshold**: A candidate must lock at least [`MIN_VALIDATOR_STAKE`] SOV tokens.
-//!    This is the primary on-chain admission gate and is enforced unconditionally.
-//!
-//! 2. **Governance gating**: After the genesis bootstrap phase (block 0), every new validator
-//!    registration must originate from an approved on-chain governance proposal.  Direct
-//!    peer-to-peer registration (e.g., from a config file) is rejected for non-genesis
-//!    validators so that the validator set can only grow through the DAO governance process.
-//!    See [`ADMISSION_MODEL`] for the canonical declaration.
-//!
-//!    Note: the governance proof requirement described here is planned enforcement; the
-//!    current implementation enforces only stake and count constraints.
-//!
-//! 3. **Hybrid transition**: During genesis (block height == 0) a lightweight bootstrap path
-//!    is available so that the initial validator set can be seeded from a config file without
-//!    a prior on-chain vote.  Once the chain is live every subsequent admission follows the
-//!    full stake + governance path.
-//!
-//! The model is therefore best described as **hybrid**: stake-gated for all validators,
-//! governance-gated for post-genesis validators.
-//!
-//! # Constants
-//!
-//! | Constant | Value | Meaning |
-//! |---|---|---|
-//! | [`MIN_VALIDATOR_STAKE`] | 100_000 SOV | Minimum stake to be admitted |
-//! | [`GENESIS_MIN_VALIDATOR_STAKE`] | 1_000 SOV | Reduced minimum during genesis bootstrap |
-//! | [`MIN_VALIDATORS_BFT`] | 4 | Minimum validators for Byzantine Fault Tolerance |
-//! | [`MAX_VALIDATORS`] | 256 | Hard cap on the validator set size |
-//! | [`ADMISSION_MODEL`] | `"permissioned-by-stake+governance"` | Canonical admission model string |
 
 use crate::types::{SlashType, ValidatorStatus};
 use crate::validators::Validator;
@@ -40,53 +6,70 @@ use anyhow::Result;
 use lib_identity::IdentityId;
 use std::collections::HashMap;
 
-// ---------------------------------------------------------------------------
-// Admission model constants
-// ---------------------------------------------------------------------------
+// ============================================================================
+// Validator count bounds
+// ============================================================================
 
-/// Canonical string identifying the validator admission model.
+/// Minimum number of validators required for BFT consensus.
 ///
-/// The admission model is **hybrid**:
-/// - All validators (including genesis) must meet the minimum stake threshold.
-/// - Post-genesis validators must additionally be admitted via an approved on-chain
-///   governance proposal (DAO vote).
+/// BFT (Byzantine Fault Tolerant) protocols require at least `3f + 1` validators
+/// to tolerate `f` simultaneous Byzantine (malicious or faulty) nodes.  With
+/// `MIN_VALIDATORS = 4` we tolerate `f = 1` Byzantine failure:
 ///
-/// This constant is the single source of truth referenced by admission assertions.
-pub const ADMISSION_MODEL: &str = "permissioned-by-stake+governance";
+/// ```text
+/// 3f + 1 = 3(1) + 1 = 4
+/// ```
+///
+/// This is an absolute floor: the runtime MUST NOT allow the active validator set
+/// to drop below this value, regardless of governance votes or slashing events.
+///
+/// # Governance control
+///
+/// `MIN_VALIDATORS` is a protocol constant and is intentionally NOT adjustable
+/// through DAO governance.  Allowing governance to reduce the minimum below 4
+/// would allow a majority to destroy safety guarantees for the minority.
+///
+/// To raise the floor (e.g. to support `f = 2`, requiring 7 validators), a
+/// coordinated network upgrade with supermajority signalling is required.
+pub const MIN_VALIDATORS: usize = 4;
 
-// Compile-time assertion: ADMISSION_MODEL must be non-empty.
-// Any modification to ADMISSION_MODEL must be accompanied by a deliberate
-// review of all stake/governance checks throughout this module.
-const _: () = assert!(
-    !ADMISSION_MODEL.is_empty(),
-    "ADMISSION_MODEL must not be empty"
-);
-
-/// Minimum stake (in SOV tokens) required to register a validator in production.
+/// Maximum number of validators that may participate in active consensus.
 ///
-/// This value applies at every block height > 0.  The stake is locked for the
-/// duration of the validator's active tenure and is subject to slashing.
-pub const MIN_VALIDATOR_STAKE: u64 = 100_000;
-
-/// Reduced minimum stake allowed only during the genesis bootstrap (block height == 0).
+/// This default upper bound is enforced at runtime when adding validators.
+/// It is intentionally set high enough to allow meaningful decentralisation
+/// while preventing unbounded growth in consensus message complexity
+/// (BFT message complexity scales as O(n²) with validator count).
 ///
-/// This lower threshold allows the initial validator set to be seeded from a config
-/// file without requiring the full production stake commitment.  It MUST NOT be used
-/// for any post-genesis admission check.
-pub const GENESIS_MIN_VALIDATOR_STAKE: u64 = 1_000;
-
-/// Minimum number of active validators required for Byzantine Fault Tolerance.
+/// # Governance control
 ///
-/// BFT (PBFT/Tendermint) requires at least 3f + 1 participants to tolerate f faults.
-/// With [`MIN_VALIDATORS_BFT`] == 4, the network can tolerate exactly one Byzantine
-/// validator (f = 1).
-pub const MIN_VALIDATORS_BFT: usize = 4;
-
-/// Hard cap on the total number of validators that can be in the set at any time.
+/// `MAX_VALIDATORS` IS adjustable by governance via the DAO proposal type
+/// `DaoProposalType::ValidatorUpdate` with a
+/// `GovernanceParameterValue::MaxValidators(new_max)` payload.  The governance
+/// path is:
 ///
-/// Admission requests that would push the active set past this limit MUST be rejected,
-/// even if they satisfy the stake and governance requirements.
-pub const MAX_VALIDATORS: usize = 256;
+/// 1. Any token holder submits a `DaoProposal` of type `ValidatorUpdate`.
+/// 2. The proposal includes a `DaoExecutionAction::GovernanceParameterUpdate`
+///    containing `GovernanceParameterValue::MaxValidators(new_max)`.
+/// 3. After the voting period the proposal is executed via
+///    `DaoEngine::apply_governance_update()`, which writes the new value into
+///    `ConsensusConfig::max_validators`.
+/// 4. On the next epoch boundary the `ConsensusEngine` reads the updated config
+///    and passes the new limit to `ValidatorManager`.
+///
+/// The governance update is validated to ensure the new maximum is:
+/// - ≥ `MIN_VALIDATORS` (safety floor cannot be breached).
+/// - ≤ `MAX_VALIDATORS_HARD_CAP` (protocol ceiling).
+///
+/// See `DaoEngine::validate_governance_update()` and `ValidatorManager::register_validator()`.
+pub const MAX_VALIDATORS: u32 = 100;
+
+/// Hard cap on the maximum validators that governance may set.
+///
+/// Even a supermajority governance vote cannot raise `MAX_VALIDATORS` above this
+/// value without a protocol upgrade.  At 256 validators, O(n²) BFT messaging
+/// would produce ~65 000 messages per consensus round which is within acceptable
+/// bounds for high-bandwidth validators.
+pub const MAX_VALIDATORS_HARD_CAP: u32 = 256;
 
 /// Trait for validator info structures that can be synced from blockchain
 ///
@@ -105,12 +88,32 @@ pub trait ValidatorInfo {
     fn commission_rate(&self) -> u8;
 }
 
-/// Manages the set of validators in the consensus system
+/// Manages the set of validators in the consensus system.
+///
+/// # Validator Count Invariants
+///
+/// The manager enforces two hard bounds at all times:
+///
+/// - **Minimum** ([`MIN_VALIDATORS`]): The active set must never fall below 4.
+///   This guarantees BFT safety with up to 1 Byzantine fault (`3f+1`, `f=1`).
+///   Attempts to remove a validator when the active count is already at the
+///   minimum are rejected.
+///
+/// - **Maximum** ([`MAX_VALIDATORS`] / `max_validators` field): The active set
+///   must not exceed the configured limit.  The runtime default is
+///   [`MAX_VALIDATORS`]; governance may raise or lower it within
+///   `[MIN_VALIDATORS, MAX_VALIDATORS_HARD_CAP]`.
+///
+/// # Governance Control
+///
+/// The upper bound (`max_validators`) is adjustable through DAO governance via
+/// `GovernanceParameterValue::MaxValidators(n)`.  The lower bound
+/// ([`MIN_VALIDATORS`]) is a protocol constant and is not governance-adjustable.
 #[derive(Debug, Clone)]
 pub struct ValidatorManager {
     /// Active validators
     validators: HashMap<IdentityId, Validator>,
-    /// Maximum number of validators
+    /// Maximum number of validators (governance-adjustable, default: MAX_VALIDATORS)
     max_validators: u32,
     /// Minimum stake required to be a validator
     min_stake: u64,
@@ -121,8 +124,21 @@ pub struct ValidatorManager {
 }
 
 impl ValidatorManager {
-    /// Create a new validator manager
+    /// Create a new validator manager.
+    ///
+    /// # Parameters
+    ///
+    /// - `max_validators`: Upper bound on the active validator set.  Should be
+    ///   set to [`MAX_VALIDATORS`] (= 100) by default.  Must be ≥
+    ///   [`MIN_VALIDATORS`] (= 4) and ≤ [`MAX_VALIDATORS_HARD_CAP`] (= 256).
+    ///   Governance may later adjust this via
+    ///   `GovernanceParameterValue::MaxValidators`.
+    /// - `min_stake`: Minimum staked SOV to be eligible as a validator.
     pub fn new(max_validators: u32, min_stake: u64) -> Self {
+        // Clamp max_validators into the valid range at construction time.
+        let max_validators = max_validators
+            .max(MIN_VALIDATORS as u32)
+            .min(MAX_VALIDATORS_HARD_CAP);
         Self {
             validators: HashMap::new(),
             max_validators,
@@ -132,12 +148,19 @@ impl ValidatorManager {
         }
     }
 
-    /// Create a new validator manager with development mode
+    /// Create a new validator manager with development mode.
+    ///
+    /// In development mode the BFT minimum is relaxed to 1 validator so that
+    /// single-node test setups function correctly.  Warnings are emitted
+    /// whenever the active count is below [`MIN_VALIDATORS`].
     pub fn new_with_development_mode(
         max_validators: u32,
         min_stake: u64,
         development_mode: bool,
     ) -> Self {
+        let max_validators = max_validators
+            .max(MIN_VALIDATORS as u32)
+            .min(MAX_VALIDATORS_HARD_CAP);
         Self {
             validators: HashMap::new(),
             max_validators,
@@ -149,18 +172,17 @@ impl ValidatorManager {
 
     /// Register a new validator.
     ///
-    /// # Admission model invariant
+    /// # Max-Validator Enforcement
     ///
-    /// This function is the **consensus-layer** enforcement point for the
-    /// [`ADMISSION_MODEL`].  Every caller must have already verified that the
-    /// candidate satisfies whichever on-chain requirements apply (governance
-    /// proposal approval for post-genesis validators).  The consensus layer then
-    /// enforces the stake threshold as an unconditional final gate.
+    /// Registration is rejected when the current validator count already equals
+    /// or exceeds `self.max_validators` (governance-adjustable, default:
+    /// [`MAX_VALIDATORS`]).  This prevents unbounded growth in consensus message
+    /// complexity.
     ///
-    /// The assertion below acts as a compile-time + runtime canary: if someone
-    /// changes the admission model string without updating the associated logic
-    /// they will hit an immediate panic in any environment where the assertion
-    /// evaluates to `false`.
+    /// # Min-Validator Note
+    ///
+    /// Adding validators can never violate the minimum — only removals can.
+    /// The floor is enforced in [`remove_validator`].
     pub fn register_validator(
         &mut self,
         identity: IdentityId,
@@ -169,15 +191,10 @@ impl ValidatorManager {
         consensus_key: Vec<u8>,
         commission_rate: u8,
     ) -> Result<()> {
-        // INVARIANT: ADMISSION_MODEL is verified at compile time by the const assertion
-        // below this impl block. No runtime assert is needed here.
-
-        // ADMISSION GATE 1 (stake): Every validator must meet the minimum stake threshold.
-        // This is the primary on-chain admission gate enforced by the ADMISSION_MODEL.
+        // Check minimum requirements - ONLY stake is required for validators
         if stake < self.min_stake {
             return Err(anyhow::anyhow!(
-                "Admission denied (model: {}): insufficient stake {} < {} required",
-                ADMISSION_MODEL,
+                "Insufficient stake: {} < {} required",
                 stake,
                 self.min_stake
             ));
@@ -186,12 +203,20 @@ impl ValidatorManager {
         // Storage is OPTIONAL for validators - no minimum requirement
         // Validators can choose to provide storage for bonus rewards but it's not mandatory
 
-        // Check maximum validator limit (hard cap enforced regardless of stake/governance)
+        // MAX-VALIDATOR ENFORCEMENT
+        // Reject when the active set is already at or above the configured limit.
+        // The limit is governance-adjustable (see GovernanceParameterValue::MaxValidators)
+        // but is capped at MAX_VALIDATORS_HARD_CAP.
+        // Note: self.max_validators is already clamped to [MIN_VALIDATORS, MAX_VALIDATORS_HARD_CAP]
+        // in the constructors (new/with_development_mode), so no need to re-clamp here.
         if self.validators.len() >= self.max_validators as usize {
             return Err(anyhow::anyhow!(
-                "Maximum validator limit reached: {} (hard cap: {})",
+                "Maximum validator limit reached: {} (governance limit: {}, hard cap: {}). \
+                 A DAO governance proposal (DaoProposalType::ValidatorUpdate with \
+                 GovernanceParameterValue::MaxValidators) is required to raise the limit.",
                 self.max_validators,
-                MAX_VALIDATORS
+                self.max_validators,
+                MAX_VALIDATORS_HARD_CAP,
             ));
         }
 
@@ -223,8 +248,49 @@ impl ValidatorManager {
         Ok(())
     }
 
-    /// Remove a validator from the set
+    /// Remove a validator from the set.
+    ///
+    /// # Min-Validator Enforcement
+    ///
+    /// Removal is rejected when the active validator count is already at or below
+    /// [`MIN_VALIDATORS`] (= 4).  This protects BFT safety: with fewer than
+    /// `3f + 1 = 4` validators the consensus protocol cannot guarantee safety
+    /// against even a single Byzantine fault.
+    ///
+    /// **Exception — development mode**: In `development_mode` the minimum is
+    /// reduced to 1 so that single-node test setups can remove validators freely.
+    ///
+    /// # Governance control
+    ///
+    /// [`MIN_VALIDATORS`] is a protocol constant and cannot be lowered via
+    /// governance.  To remove a validator when the set is already at the minimum,
+    /// you must first add a replacement through the normal admission path
+    /// (`DaoProposalType::ValidatorUpdate`).
     pub fn remove_validator(&mut self, identity: &IdentityId) -> Result<()> {
+        // MIN-VALIDATOR ENFORCEMENT
+        // Count only active (non-jailed, non-slashed-out) validators for the floor check.
+        let active_count = self.get_active_validators().len();
+        let min_floor = if self.development_mode { 1 } else { MIN_VALIDATORS };
+
+        // Only block removal if the validator being removed is active and we're at minimum.
+        // Inactive (jailed/slashed) validators can always be removed since they do not
+        // contribute to BFT quorum and removing them cannot compromise safety.
+        let validator_is_active = self.validators
+            .get(identity)
+            .map(|v| v.can_participate())
+            .unwrap_or(false);
+
+        if validator_is_active && active_count <= min_floor {
+            return Err(anyhow::anyhow!(
+                "Cannot remove validator: active validator count ({}) is already at the \
+                 minimum required for BFT safety ({} = MIN_VALIDATORS, 3f+1 with f=1). \
+                 Add a replacement validator before removing this one. \
+                 Governance path: DaoProposalType::ValidatorUpdate.",
+                active_count,
+                min_floor,
+            ));
+        }
+
         if let Some(validator) = self.validators.remove(identity) {
             self.total_voting_power -= validator.voting_power;
 
@@ -371,28 +437,39 @@ impl ValidatorManager {
             .sum()
     }
 
-    /// Check if we have enough validators for consensus
+    /// Returns `true` if the active validator set meets the BFT quorum floor.
+    ///
+    /// In production mode the minimum is [`MIN_VALIDATORS`] (= 4, satisfying
+    /// `3f+1` with `f=1`).  In development mode the minimum is 1 to allow
+    /// single-node test environments, but a warning is emitted when the count
+    /// is below the production floor.
     pub fn has_sufficient_validators(&self) -> bool {
         let active_count = self.get_active_validators().len();
 
         if self.development_mode {
-            //  TESTING MODE: Allow single validator for development/testing
+            // TESTING MODE: Allow single validator for development/testing
             if active_count >= 1 {
-                if active_count < 4 {
-                    tracing::warn!(" TESTING MODE: {} validator(s) active (production requires minimum 4 for BFT)", active_count);
+                if active_count < MIN_VALIDATORS {
+                    tracing::warn!(
+                        " TESTING MODE: {} validator(s) active \
+                         (production requires minimum {} for BFT, 3f+1 with f=1)",
+                        active_count,
+                        MIN_VALIDATORS
+                    );
                 }
                 return true;
             }
             return false;
         }
 
-        // Production mode: Require minimum 4 validators for Byzantine Fault Tolerance
-        // BFT needs at least 3f+1 validators where f is the number of Byzantine failures
-        // With 4 validators, we can tolerate 1 Byzantine failure: f=1, 3(1)+1=4
-        if active_count < 4 {
+        // Production mode: require at least MIN_VALIDATORS active validators.
+        // BFT needs 3f+1 validators to tolerate f Byzantine faults.
+        // MIN_VALIDATORS = 4 ensures f=1 fault tolerance.
+        if active_count < MIN_VALIDATORS {
             tracing::warn!(
-                " INSUFFICIENT VALIDATORS: {} active (minimum 4 required for BFT)",
-                active_count
+                " INSUFFICIENT VALIDATORS: {} active (minimum {} required for BFT, 3f+1 with f=1)",
+                active_count,
+                MIN_VALIDATORS,
             );
             return false;
         }
