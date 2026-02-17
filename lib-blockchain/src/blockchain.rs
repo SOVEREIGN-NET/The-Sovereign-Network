@@ -8547,6 +8547,7 @@ impl Default for Blockchain {
     }
 }
 
+<<<<<<< HEAD
 #[cfg(test)]
 mod determinism_guard_tests {
     use super::DeterministicExecutionGuard;
@@ -8592,3 +8593,25 @@ mod determinism_guard_tests {
         DeterministicExecutionGuard::record_violation("outside scope");
     }
 }
+
+// ============================================================================
+// BFT-A Execution Determinism Invariants [BFT-A][R8] (closes #995)
+// ============================================================================
+//
+// INVARIANT: All state transitions must be deterministic.
+//
+// A state transition is deterministic if and only if:
+//   apply_block(state_n, block_n+1) == state_n+1
+// produces identical results on every honest validator node.
+//
+// Determinism requirements:
+// 1. No wall-clock time in execution paths (#952)
+// 2. No randomness in execution paths (#953)
+// 3. No floating-point arithmetic with undefined rounding
+// 4. No hash map iteration order dependencies (use BTreeMap for ordered state)
+// 5. No external I/O (filesystem, network) during block execution
+//
+// Enforcement:
+// - DeterministicExecutionGuard enforces consensus-critical path isolation (#953)
+// - State root provides post-execution determinism proof (#948)
+// - Tests verify cross-node convergence (#955, #957)
