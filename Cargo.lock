@@ -3207,6 +3207,7 @@ dependencies = [
  "lib-types",
  "proptest",
  "rand 0.8.5",
+ "scopeguard",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

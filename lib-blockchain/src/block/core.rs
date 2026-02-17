@@ -62,7 +62,6 @@ use serde::{Serialize, Deserialize};
 use crate::types::{Hash, Difficulty};
 use crate::transaction::Transaction;
 
-<<<<<<< HEAD
 // ============================================================================
 // GENESIS TRUST MODEL
 // ============================================================================
@@ -188,8 +187,6 @@ pub const BFT_REQUIRED_HEADER_FIELDS: &[&str] = &[
 /// This constant is checked at compile time (via a `const` expression in the test module)
 /// to ensure it stays in sync with [`BFT_REQUIRED_HEADER_FIELDS`].
 pub const BFT_REQUIRED_HEADER_FIELD_COUNT: usize = BFT_REQUIRED_HEADER_FIELDS.len();
-
-=======
 /// Assert that the `state_root` of a committed block is non-zero.
 ///
 /// Call this after executing every block that has been finalized by BFT consensus.
@@ -213,8 +210,6 @@ pub fn assert_state_root_set(height: u64, state_root: &Hash) {
         tracing::error!("{}", msg);
     }
 }
-
->>>>>>> pr-1187
 /// ZHTP blockchain block
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -698,7 +693,6 @@ pub const MAX_TRANSACTIONS_PER_BLOCK: usize = 10_000;
 pub const MIN_BLOCK_TIME: u64 = 1; // 1 second minimum between blocks
 pub const MAX_BLOCK_TIME: u64 = 7200; // 2 hours maximum future timestamp
 
-<<<<<<< HEAD
 // ---------------------------------------------------------------------------
 // Compile-time assertions: block header hash coverage
 // ---------------------------------------------------------------------------

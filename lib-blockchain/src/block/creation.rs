@@ -5,7 +5,7 @@
 use anyhow::Result;
 use crate::block::{Block, BlockHeader};
 use crate::transaction::Transaction;
-use crate::types::Hash;
+use crate::types::{Difficulty, Hash, MiningConfig};
 
 /// Block builder for constructing new blocks
 #[derive(Debug)]
@@ -13,6 +13,7 @@ pub struct BlockBuilder {
     version: u32,
     previous_block_hash: Hash,
     timestamp: u64,
+    difficulty: Difficulty,
     height: u64,
     transactions: Vec<Transaction>,
 }
@@ -22,11 +23,13 @@ impl BlockBuilder {
     pub fn new(
         previous_block_hash: Hash,
         height: u64,
+        difficulty: Difficulty,
     ) -> Self {
         Self {
             version: 1,
             previous_block_hash,
             timestamp: crate::utils::time::current_timestamp(),
+            difficulty,
             height,
             transactions: Vec::new(),
         }
@@ -77,9 +80,11 @@ impl BlockBuilder {
             self.previous_block_hash,
             merkle_root,
             self.timestamp,
+            self.difficulty,
             self.height,
             transaction_count,
             block_size,
+            self.difficulty,
         );
 
         Ok(Block::new(header, self.transactions))
@@ -101,18 +106,60 @@ pub fn create_block(
     transactions: Vec<Transaction>,
     previous_block_hash: Hash,
     height: u64,
+    difficulty: Difficulty,
 ) -> Result<Block> {
-    BlockBuilder::new(previous_block_hash, height)
+    BlockBuilder::new(previous_block_hash, height, difficulty)
         .transactions(transactions)
         .build()
 }
 
 /// Create genesis block
 pub fn create_genesis_block_with_transactions(transactions: Vec<Transaction>) -> Result<Block> {
-    BlockBuilder::new(Hash::default(), 0)
+    BlockBuilder::new(Hash::default(), 0, Difficulty::maximum())
         .timestamp(crate::GENESIS_TIMESTAMP)
         .transactions(transactions)
         .build()
+}
+
+/// Mine a block with a bounded number of nonce iterations.
+pub fn mine_block(block: Block, max_iterations: u64) -> Result<Block> {
+    let mut config = MiningConfig::testnet();
+    config.max_iterations = max_iterations;
+    config.difficulty = block.header.difficulty;
+    mine_block_with_config(block, &config)
+}
+
+/// Mine a block using a provided mining configuration.
+pub fn mine_block_with_config(mut block: Block, config: &MiningConfig) -> Result<Block> {
+    block.header.difficulty = config.difficulty;
+
+    if config.allow_instant_mining {
+        block.header.nonce = 0;
+        block.header.block_hash = block.header.calculate_hash();
+        return Ok(block);
+    }
+
+    for nonce in 0..config.max_iterations {
+        block.header.nonce = nonce;
+        let block_hash = block.header.calculate_hash();
+        if config.difficulty.check_hash(&block_hash) {
+            block.header.block_hash = block_hash;
+            return Ok(block);
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "failed to mine block within {} iterations",
+        config.max_iterations
+    ))
+}
+
+/// Estimate expected mining time in seconds at a given hash rate.
+pub fn estimate_block_time(difficulty: Difficulty, hash_rate_hps: f64) -> f64 {
+    if hash_rate_hps <= 0.0 {
+        return f64::INFINITY;
+    }
+    (difficulty.bits() as f64).max(1.0) / hash_rate_hps
 }
 
 

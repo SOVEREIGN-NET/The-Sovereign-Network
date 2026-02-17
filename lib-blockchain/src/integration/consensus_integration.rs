@@ -760,9 +760,11 @@ impl BlockchainConsensusCoordinator {
             previous_hash,
             merkle_root,
             timestamp,
+            Difficulty::maximum(),
             height,
             transactions.len() as u32,
             0, // block_size - will be calculated
+            Difficulty::maximum(),
         );
 
         let block = Block::new(header, transactions);
@@ -872,7 +874,7 @@ impl BlockchainConsensusCoordinator {
                 timestamp: current_timestamp(),
             },
             consensus_proof: ConsensusProof {
-                consensus_type: ConsensusType::Hybrid, // Default to hybrid consensus
+                consensus_type: ConsensusType::ByzantineFaultTolerance,
                 stake_proof: None,
                 storage_proof: None,
                 work_proof: None,
@@ -1142,9 +1144,11 @@ impl BlockchainConsensusCoordinator {
             previous_hash,
             merkle_root,
             timestamp,
+            Difficulty::maximum(),
             height,
             transactions.len() as u32,
             0, // block_size - will be calculated
+            Difficulty::maximum(),
         );
 
         let block = Block::new(header, transactions);

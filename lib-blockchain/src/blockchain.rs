@@ -19,6 +19,11 @@ use crate::integration::storage_integration::{BlockchainStorageManager, Blockcha
 use crate::storage::{BlockchainStore, IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus, did_to_hash};
 use lib_storage::dht::storage::DhtStorage;
 
+/// Validator was bootstrapped from off-chain genesis configuration at height 0.
+pub const ADMISSION_SOURCE_OFFCHAIN_GENESIS: &str = "offchain_genesis";
+/// Validator was admitted through an on-chain governance/registration transaction.
+pub const ADMISSION_SOURCE_ONCHAIN_GOVERNANCE: &str = "onchain_governance";
+
 /// Messages for real-time blockchain synchronization
 #[derive(Debug, Clone)]
 pub enum BlockchainBroadcastMessage {
@@ -26,6 +31,14 @@ pub enum BlockchainBroadcastMessage {
     NewBlock(Block),
     /// New transaction submitted locally and should be broadcast to peers
     NewTransaction(Transaction),
+}
+
+/// BFT checkpoint metadata used by sync verification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsensusCheckpoint {
+    pub height: u64,
+    pub previous_hash: Hash,
+    pub block_hash: Hash,
 }
 
 // Import lib-proofs for recursive proof aggregation
@@ -258,6 +271,12 @@ pub struct ValidatorInfo {
     pub blocks_validated: u64,
     /// Slash count
     pub slash_count: u32,
+    /// Source of validator admission path.
+    #[serde(default)]
+    pub admission_source: String,
+    /// Optional governance proposal ID authorizing this validator.
+    #[serde(default)]
+    pub governance_proposal_id: Option<String>,
 }
 
 /// UBI (Universal Basic Income) registry entry
@@ -1006,6 +1025,8 @@ impl Blockchain {
                                 last_activity: height,
                                 blocks_validated: 0,
                                 slash_count: 0,
+                                admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
+                                governance_proposal_id: None,
                             };
                             blockchain.validator_registry.insert(
                                 validator_data.identity_id.clone(),
@@ -4509,6 +4530,8 @@ impl Blockchain {
                 stake_amount,
                 storage_capacity,
                 consensus_keypair,
+                consensus_keypair,
+                consensus_keypair,
                 commission_rate,
             ).await?;
             info!("Registered as validator with consensus coordinator");
@@ -7830,6 +7853,20 @@ impl Blockchain {
     /// Check if auto-persist should trigger based on block count
     pub fn should_auto_persist(&self, interval: u64) -> bool {
         self.auto_persist_enabled && self.blocks_since_last_persist >= interval
+    }
+
+    /// Store a consensus checkpoint record.
+    ///
+    /// This is a compatibility hook used by runtime components; checkpoint
+    /// persistence is currently handled by finalized chain state.
+    pub fn store_consensus_checkpoint(
+        &mut self,
+        _height: u64,
+        _block_hash: Hash,
+        _proposer_id: String,
+        _previous_hash: Hash,
+        _commit_votes: u32,
+    ) {
     }
 
     // ========================================================================
