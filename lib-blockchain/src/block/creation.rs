@@ -5,7 +5,7 @@
 use anyhow::Result;
 use crate::block::{Block, BlockHeader};
 use crate::transaction::Transaction;
-use crate::types::{Hash, Difficulty};
+use crate::types::Hash;
 
 /// Block builder for constructing new blocks
 #[derive(Debug)]
@@ -13,7 +13,6 @@ pub struct BlockBuilder {
     version: u32,
     previous_block_hash: Hash,
     timestamp: u64,
-    difficulty: Difficulty,
     height: u64,
     transactions: Vec<Transaction>,
 }
@@ -23,13 +22,11 @@ impl BlockBuilder {
     pub fn new(
         previous_block_hash: Hash,
         height: u64,
-        difficulty: Difficulty,
     ) -> Self {
         Self {
             version: 1,
             previous_block_hash,
             timestamp: crate::utils::time::current_timestamp(),
-            difficulty,
             height,
             transactions: Vec::new(),
         }
@@ -69,25 +66,20 @@ impl BlockBuilder {
     pub fn build(self) -> Result<Block> {
         // Calculate merkle root
         let merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
-        
+
         // Calculate block size
         let transaction_count = self.transactions.len() as u32;
         let block_size = self.calculate_block_size();
-        
-        // Calculate cumulative difficulty (simplified)
-        let cumulative_difficulty = self.difficulty;
-        
+
         // Create header
         let header = BlockHeader::new(
             self.version,
             self.previous_block_hash,
             merkle_root,
             self.timestamp,
-            self.difficulty,
             self.height,
             transaction_count,
             block_size,
-            cumulative_difficulty,
         );
 
         Ok(Block::new(header, self.transactions))
@@ -109,87 +101,20 @@ pub fn create_block(
     transactions: Vec<Transaction>,
     previous_block_hash: Hash,
     height: u64,
-    difficulty: Difficulty,
 ) -> Result<Block> {
-    BlockBuilder::new(previous_block_hash, height, difficulty)
+    BlockBuilder::new(previous_block_hash, height)
         .transactions(transactions)
         .build()
 }
 
 /// Create genesis block
 pub fn create_genesis_block_with_transactions(transactions: Vec<Transaction>) -> Result<Block> {
-    BlockBuilder::new(Hash::default(), 0, Difficulty::minimum())
+    BlockBuilder::new(Hash::default(), 0)
         .timestamp(crate::GENESIS_TIMESTAMP)
         .transactions(transactions)
         .build()
 }
 
-/// Mine a block (find valid nonce)
-///
-/// # Arguments
-/// * `block` - Block to mine
-/// * `max_iterations` - Maximum iterations before giving up
-///
-/// # Deprecated
-/// Use `mine_block_with_config` instead for environment-aware mining
-pub fn mine_block(mut block: Block, max_iterations: u64) -> Result<Block> {
-    mine_block_internal(&mut block, max_iterations, false)
-}
-
-/// Mine a block using environment-aware configuration
-///
-/// # Arguments
-/// * `block` - Block to mine
-/// * `config` - Mining configuration from MiningProfile
-///
-/// This is the preferred method for mining as it uses profile-appropriate settings.
-pub fn mine_block_with_config(mut block: Block, config: &crate::types::MiningConfig) -> Result<Block> {
-    // If instant mining is allowed and we're in bootstrap mode, skip PoW entirely
-    if config.allow_instant_mining {
-        block.header.set_nonce(0);
-        // For bootstrap, we accept any hash - just set nonce and return
-        tracing::info!("⚡ Bootstrap mode: instant mining enabled, skipping PoW");
-        return Ok(block);
-    }
-
-    mine_block_internal(&mut block, config.max_iterations, config.max_iterations <= 100_000)
-}
-
-/// Internal mining implementation
-fn mine_block_internal(block: &mut Block, max_iterations: u64, low_iteration_mode: bool) -> Result<Block> {
-    let mut iterations = 0;
-    let log_interval = if low_iteration_mode { 10_000 } else { 1_000_000 };
-
-    while iterations < max_iterations {
-        // Update nonce and recalculate hash
-        block.header.set_nonce(iterations);
-
-        // Check if block meets difficulty target
-        if block.header.meets_difficulty_target() {
-            tracing::info!("✓ Block mined in {} iterations", iterations);
-            return Ok(block.clone());
-        }
-
-        iterations += 1;
-
-        // Log progress
-        if iterations % log_interval == 0 {
-            tracing::info!("Mining progress: {} iterations", iterations);
-        }
-    }
-
-    Err(anyhow::anyhow!("Failed to mine block within {} iterations", max_iterations))
-}
-
-/// Estimate block creation time
-pub fn estimate_block_time(transaction_count: usize, difficulty: Difficulty) -> u64 {
-    // Very rough estimation based on transaction count and difficulty
-    let base_time = 10; // 10 seconds base
-    let tx_time = transaction_count as u64 / 100; // 100 tx/second processing
-    let difficulty_factor = difficulty.bits() >> 24; // Rough difficulty scaling
-    
-    base_time + tx_time + difficulty_factor as u64
-}
 
 /// Select transactions for block creation
 pub fn select_transactions_for_block(

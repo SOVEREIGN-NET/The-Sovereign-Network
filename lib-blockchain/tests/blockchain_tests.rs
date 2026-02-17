@@ -82,21 +82,16 @@ fn create_mined_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -
         crate::transaction::hashing::calculate_transaction_merkle_root(&transactions)
     };
     
-    let mut header = BlockHeader::new(
+    let header = BlockHeader::new(
         1,
         blockchain.latest_block().unwrap().hash(),
         merkle_root,
         blockchain.latest_block().unwrap().timestamp() + 10,
-        mining_config.difficulty,
         blockchain.height + 1,
         transactions.len() as u32,
         transactions.iter().map(|tx| tx.size()).sum::<usize>() as u32,
-        mining_config.difficulty,
     );
-    
-    // Set nonce to 0 for easy difficulty
-    header.set_nonce(0);
-    
+
     Ok(Block::new(header, transactions))
 }
 
@@ -310,29 +305,25 @@ async fn test_block_verification() -> Result<()> {
         blockchain.latest_block().unwrap().hash(),
         Hash::default(),
         blockchain.latest_block().unwrap().timestamp() + 10,
-        mining_config.difficulty,
         1,
         0,
         0,
-        mining_config.difficulty,
     );
-    
+
     let valid_block = Block::new(valid_header, Vec::new());
-    
+
     // Should verify successfully
     assert!(blockchain.verify_block(&valid_block, blockchain.latest_block())?);
-    
+
     // Create an invalid block (wrong previous hash)
     let invalid_header = BlockHeader::new(
         1,
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?, // Wrong previous hash
         Hash::default(),
         blockchain.latest_block().unwrap().timestamp() + 10,
-        mining_config.difficulty,
         1,
         0,
         0,
-        mining_config.difficulty,
     );
     
     let invalid_block = Block::new(invalid_header, Vec::new());

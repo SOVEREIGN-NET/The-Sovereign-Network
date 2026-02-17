@@ -74,18 +74,16 @@ impl ForkDetector {
 
     /// Evaluate two chains and return which is canonical
     ///
-    /// Uses longest-chain rule with difficulty and timestamp tiebreakers:
+    /// Uses longest-chain rule with timestamp tiebreaker:
     /// 1. Longer chain wins (more blocks)
-    /// 2. If equal length, higher cumulative difficulty wins
-    /// 3. If equal difficulty, newer timestamp wins
+    /// 2. If equal length, newer timestamp wins
     ///
     /// **Timestamp Tiebreaker Rationale:**
     /// Newer timestamps are chosen to prefer recently-produced blocks when
-    /// cumulative work is equal. This is acceptable because:
+    /// chain lengths are equal. This is acceptable because:
     /// - Block timestamps are validated against network time during consensus
     /// - BFT consensus requires 2/3+ validator agreement, limiting manipulation
     /// - Timestamp must be within acceptable drift bounds (enforced in block validation)
-    /// - This tiebreaker is rare (only when cumulative difficulty is exactly equal)
     pub fn evaluate_chains(
         our_chain: &[Block],
         candidate_chain: &[Block],
@@ -96,57 +94,22 @@ impl ForkDetector {
 
         if candidate_length > our_length {
             // Candidate chain is longer
-            let our_difficulty = our_chain
-                .last()
-                .map(|b| b.header.cumulative_difficulty.bits())
-                .unwrap_or(0);
-            let candidate_difficulty = candidate_chain
-                .last()
-                .map(|b| b.header.cumulative_difficulty.bits())
-                .unwrap_or(0);
-
             return ChainEvaluation::SwitchToCandidate {
-                our_work: our_difficulty as u128,
-                candidate_work: candidate_difficulty as u128,
+                our_work: our_length as u128,
+                candidate_work: candidate_length as u128,
                 reason: format!("candidate chain is longer ({} vs {} blocks)", candidate_length, our_length),
             };
         } else if our_length > candidate_length {
             // Our chain is longer
-            let our_difficulty = our_chain
-                .last()
-                .map(|b| b.header.cumulative_difficulty.bits())
-                .unwrap_or(0);
-            let candidate_difficulty = candidate_chain
-                .last()
-                .map(|b| b.header.cumulative_difficulty.bits())
-                .unwrap_or(0);
-
             return ChainEvaluation::KeepOurChain {
-                our_work: our_difficulty as u128,
-                candidate_work: candidate_difficulty as u128,
+                our_work: our_length as u128,
+                candidate_work: candidate_length as u128,
                 reason: format!("our chain is longer ({} vs {} blocks)", our_length, candidate_length),
             };
         }
 
-        // Step 2: Equal length - compare by cumulative difficulty
-        let our_difficulty = our_chain
-            .last()
-            .map(|b| b.header.cumulative_difficulty.bits())
-            .unwrap_or(0);
-        let candidate_difficulty = candidate_chain
-            .last()
-            .map(|b| b.header.cumulative_difficulty.bits())
-            .unwrap_or(0);
-
-        if candidate_difficulty > our_difficulty {
-            // Candidate has more work, it's canonical
-            ChainEvaluation::SwitchToCandidate {
-                our_work: our_difficulty as u128,
-                candidate_work: candidate_difficulty as u128,
-                reason: "equal length, candidate has more cumulative work".to_string(),
-            }
-        } else if candidate_difficulty == our_difficulty && !candidate_chain.is_empty() && !our_chain.is_empty() {
-            // Step 3: Equal work - use timestamp as tiebreaker
+        // Step 2: Equal length - use timestamp as tiebreaker
+        if !candidate_chain.is_empty() && !our_chain.is_empty() {
             let our_timestamp = our_chain.last().map(|b| b.header.timestamp).unwrap_or(0);
             let candidate_timestamp = candidate_chain
                 .last()
@@ -155,22 +118,22 @@ impl ForkDetector {
 
             if candidate_timestamp > our_timestamp {
                 ChainEvaluation::SwitchToCandidate {
-                    our_work: our_difficulty as u128,
-                    candidate_work: candidate_difficulty as u128,
-                    reason: "equal work and length, candidate has newer timestamp".to_string(),
+                    our_work: our_length as u128,
+                    candidate_work: candidate_length as u128,
+                    reason: "equal length, candidate has newer timestamp".to_string(),
                 }
             } else {
                 ChainEvaluation::KeepOurChain {
-                    our_work: our_difficulty as u128,
-                    candidate_work: candidate_difficulty as u128,
-                    reason: "equal work and length, our chain preferred (older or equal timestamp)".to_string(),
+                    our_work: our_length as u128,
+                    candidate_work: candidate_length as u128,
+                    reason: "equal length, our chain preferred (older or equal timestamp)".to_string(),
                 }
             }
         } else {
             ChainEvaluation::KeepOurChain {
-                our_work: our_difficulty as u128,
-                candidate_work: candidate_difficulty as u128,
-                reason: "equal length, our chain has more work".to_string(),
+                our_work: our_length as u128,
+                candidate_work: candidate_length as u128,
+                reason: "equal length".to_string(),
             }
         }
     }
@@ -225,15 +188,6 @@ impl Default for ForkRecoveryConfig {
     }
 }
 
-// Helper function to calculate total work (from highest cumulative difficulty)
-#[allow(dead_code)]
-fn calculate_total_work(chain: &[Block]) -> u128 {
-    chain
-        .iter()
-        .last()
-        .map(|b| b.header.cumulative_difficulty.bits() as u128)
-        .unwrap_or(0)
-}
 
 #[cfg(test)]
 mod tests {
@@ -241,7 +195,7 @@ mod tests {
     use crate::block::BlockHeader;
     use crate::types::Difficulty;
 
-    fn create_test_block(height: u64, previous_hash: Hash, work_bits: u32, identifier: u64) -> Block {
+    fn create_test_block(height: u64, previous_hash: Hash, _work_bits: u32, identifier: u64) -> Block {
         let mut hash_bytes = [0u8; 32];
         hash_bytes[..8].copy_from_slice(&height.to_le_bytes());
         hash_bytes[8..16].copy_from_slice(&identifier.to_le_bytes());
@@ -252,13 +206,10 @@ mod tests {
                 previous_block_hash: previous_hash,
                 merkle_root: Hash::default(),
                 timestamp: height * 1000, // Deterministic timestamps
-                difficulty: Difficulty::from_bits(1),
-                nonce: identifier,
                 height,
                 block_hash: Hash::new(hash_bytes),
                 transaction_count: 0,
                 block_size: 0,
-                cumulative_difficulty: Difficulty::from_bits(work_bits),
                 fee_model_version: 2, // Phase 2+ uses v2
             },
             transactions: vec![],

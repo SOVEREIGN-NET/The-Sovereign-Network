@@ -47,13 +47,10 @@ fn create_genesis_block() -> Block {
         previous_block_hash: Hash::default(),
         merkle_root: Hash::default(),
         timestamp: 1000,
-        difficulty: Difficulty::default(),
-        nonce: 0,
         height: 0,
         block_hash,
         transaction_count: 0,
         block_size: 0,
-        cumulative_difficulty: Difficulty::default(),
         fee_model_version: 2, // Phase 2+ uses v2
     };
     Block::new(header, vec![])
@@ -69,13 +66,10 @@ fn create_block_at_height(height: u64, prev_hash: Hash) -> Block {
         previous_block_hash: prev_hash,
         merkle_root: Hash::default(),
         timestamp: 1000 + height * 600,
-        difficulty: Difficulty::default(),
-        nonce: 0,
         height,
         block_hash,
         transaction_count: 0,
         block_size: 0,
-        cumulative_difficulty: Difficulty::default(),
         fee_model_version: 2, // Phase 2+ uses v2
     };
     Block::new(header, vec![])
@@ -93,13 +87,10 @@ fn create_block_with_txs(height: u64, prev_hash: Hash, txs: Vec<Transaction>) ->
         previous_block_hash: prev_hash,
         merkle_root: Hash::default(),
         timestamp: 1000 + height * 600,
-        difficulty: Difficulty::default(),
-        nonce: 0,
         height,
         block_hash,
         transaction_count: txs.len() as u32,
         block_size: 0,
-        cumulative_difficulty: Difficulty::default(),
         fee_model_version: 2, // Phase 2+ uses v2
     };
     Block::new(header, txs)

@@ -732,19 +732,14 @@ impl BlockchainConsensusCoordinator {
             height, tx_count, total_fees
         );
 
-        // Set difficulty (in production this would be calculated based on network state)
-        let difficulty = Difficulty::from_bits(crate::INITIAL_DIFFICULTY);
-
         let header = BlockHeader::new(
             1, // version
             previous_hash,
             merkle_root,
             timestamp,
-            difficulty,
             height,
             transactions.len() as u32,
             0, // block_size - will be calculated
-            difficulty, // cumulative_difficulty
         );
 
         let block = Block::new(header, transactions);
@@ -1129,19 +1124,14 @@ impl BlockchainConsensusCoordinator {
         // Calculate merkle root
         let merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&transactions);
         
-        // Set difficulty (in production this would be calculated based on network state)
-        let difficulty = Difficulty::from_bits(crate::INITIAL_DIFFICULTY);
-
         let header = BlockHeader::new(
             1, // version
             previous_hash,
             merkle_root,
             timestamp,
-            difficulty,
             height,
             transactions.len() as u32,
             0, // block_size - will be calculated
-            difficulty, // cumulative_difficulty
         );
 
         let block = Block::new(header, transactions);

@@ -192,11 +192,6 @@ impl EdgeNodeState {
                     latest.timestamp
                 ));
             }
-            
-            // Check cumulative difficulty increases
-            if header.cumulative_difficulty.bits() <= latest.cumulative_difficulty.bits() {
-                warn!("⚠️  Cumulative difficulty did not increase (possible valid adjustment)");
-            }
         } else if header.height != 0 {
             // First header must either be genesis (height 0) or we must accept any height
             // for bootstrap sync. Log warning but accept.
@@ -695,13 +690,10 @@ mod tests {
             previous_block_hash: Hash::zero(),
             merkle_root: Hash::zero(),
             timestamp: 1700000000 + height * 10,
-            difficulty: crate::types::Difficulty::from_bits(1000),
-            nonce: 0,
             height,
             block_hash: Hash::zero(),
             transaction_count: 0,
             block_size: 0,
-            cumulative_difficulty: crate::types::Difficulty::from_bits((height * 1000) as u32),
             fee_model_version: 2, // Phase 2+ uses v2
         };
         // Calculate and set the correct block hash
