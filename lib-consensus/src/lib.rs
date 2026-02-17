@@ -43,7 +43,6 @@ pub use validators::{
 };
 pub use evidence::{Evidence, EvidenceStore, EvidenceRecord, SlashingParams, IsolationAction, isolation_action};
 pub use slashing::{
-    SlashableOffense, ALL_OFFENSES, SLASHABLE_OFFENSE_COUNT,
     DOUBLE_SIGN_SLASH_PERCENT,
     LIVENESS_SLASH_PERCENT,
     JAIL_DURATION_BLOCKS,

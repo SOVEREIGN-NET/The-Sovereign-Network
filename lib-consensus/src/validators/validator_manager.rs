@@ -6,6 +6,13 @@ use anyhow::Result;
 use lib_identity::IdentityId;
 use std::collections::HashMap;
 
+/// Minimum validator count required for BFT safety.
+pub const MIN_VALIDATORS: usize = crate::types::MIN_BFT_VALIDATORS;
+/// Default governance target for maximum active validators.
+pub const MAX_VALIDATORS: u32 = 100;
+/// Hard protocol cap for maximum active validators.
+pub const MAX_VALIDATORS_HARD_CAP: u32 = 256;
+
 /// Trait for validator info structures that can be synced from blockchain.
 ///
 /// This allows `ValidatorManager` to sync from different validator data sources
