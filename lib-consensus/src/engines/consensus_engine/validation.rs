@@ -1,13 +1,16 @@
-//! Consensus validation logic for the BFT consensus engine.
+//! Consensus Validation and Nondeterminism Detection
 //!
-//! # Determinism guarantees
+//! This module implements strict validation rules for BFT consensus and provides
+//! fail-fast detection of nondeterministic operations that could lead to chain splits.
+//!
+//! # Determinism Guarantees
 //!
 //! All validation functions in this module are designed to be **deterministic**:
 //! given the same inputs, they always produce the same output on every node.
 //! This is a hard requirement for BFT consensus — if two honest validators
 //! disagree about whether a block is valid, liveness is broken.
 //!
-//! ## Determinism rules enforced here
+//! ## Determinism Rules Enforced Here
 //!
 //! 1. **Validator set is snapshot-based**: [`ConsensusEngine::is_validator_member`]
 //!    looks up a *snapshot* of the validator set at the target height, not the
@@ -25,11 +28,40 @@
 //!    returns the same `bool` for the same `(vote, engine_state)` pair regardless
 //!    of wall-clock time or process identity.
 //!
-//! ## Assertion helper
+//! # Nondeterminism Detection
 //!
-//! [`assert_deterministic_state_transition`] can be used in tests and integration
-//! paths to assert that a state transition function is pure: it executes the
-//! transition twice with the same inputs and asserts the outputs are identical.
+//! Blockchain consensus requires deterministic execution across all validators.
+//! Nondeterministic inputs such as:
+//! - Wall-clock time (SystemTime::now(), chrono::Utc::now())
+//! - Random number generation (rand::random(), OsRng)
+//! - Network timing
+//! - Thread scheduling
+//!
+//! Can cause different validators to reach different conclusions about the same block,
+//! leading to chain splits and consensus failures.
+//!
+//! ## Fail-Fast Guards
+//!
+//! This module provides runtime guards that detect nondeterministic operations during
+//! consensus-critical sections:
+//!
+//! 1. **Consensus scope guards**: Mark critical sections where nondeterminism is forbidden
+//! 2. **Assertion helpers**: Panic immediately if nondeterministic ops are detected
+//! 3. **Integration points**: Hook into time/random utilities to enforce determinism
+//! ## Usage
+//!
+//! Consensus-critical code sections are wrapped with scope guards:
+//!
+//! ```rust,ignore
+//! determinism_guard::enter_consensus_scope();
+//! let _guard = scopeguard::guard((), |_| {
+//!     determinism_guard::exit_consensus_scope();
+//! });
+//! // ... consensus logic here ...
+//! ```
+//!
+//! Any attempt to access nondeterministic sources during this section will panic
+//! with a clear error message indicating the violation.
 
 use super::*;
 use lib_crypto::PostQuantumSignature;
@@ -71,6 +103,50 @@ pub fn assert_deterministic_state_transition(
         panic!("{}", msg);
         #[cfg(not(debug_assertions))]
         tracing::error!("{}", msg);
+    }
+}
+
+/// Nondeterminism detection guard
+///
+/// This module provides runtime checks to detect nondeterministic behavior
+/// during consensus execution. Nondeterministic operations like system time
+/// access or random number generation during consensus can lead to chain splits.
+pub(super) mod determinism_guard {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CONSENSUS_ACTIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    /// Mark consensus as active (during critical consensus operations)
+    pub fn enter_consensus_scope() {
+        CONSENSUS_ACTIVE_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Mark consensus as inactive
+    pub fn exit_consensus_scope() {
+        let prev = CONSENSUS_ACTIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
+        debug_assert!(prev > 0, "exit_consensus_scope called more times than enter_consensus_scope");
+    }
+
+    /// Check if we're currently in a consensus-critical section
+    pub fn is_consensus_active() -> bool {
+        CONSENSUS_ACTIVE_COUNT.load(Ordering::SeqCst) > 0
+    }
+
+    /// Assert that no nondeterministic operation is occurring during consensus
+    ///
+    /// # Panics
+    ///
+    /// Panics if called during active consensus with details about the violation
+    #[track_caller]
+    pub fn assert_no_nondeterminism(operation: &str) {
+        if is_consensus_active() {
+            panic!(
+                "CONSENSUS NONDETERMINISM DETECTED: {} called during active consensus. \
+                This operation can lead to chain splits. Location: {}",
+                operation,
+                std::panic::Location::caller()
+            );
+        }
     }
 }
 
