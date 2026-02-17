@@ -29,6 +29,11 @@ impl NetworkBlockchainProvider for ZhtpBlockchainProvider {
         Ok(height)
     }
 
+    async fn get_highest_committed_bft_height(&self) -> Result<u64> {
+        // For now, the highest committed BFT height matches the current chain tip height.
+        self.get_current_height().await
+    }
+
     async fn get_headers(&self, start_height: u64, count: u64) -> Result<Vec<BlockHeader>> {
         debug!("Network layer requesting {} headers starting from height {}", count, start_height);
         

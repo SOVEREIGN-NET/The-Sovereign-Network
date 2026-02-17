@@ -151,9 +151,18 @@ pub struct Blockchain {
     /// Contract state snapshots per block height for historical queries
     #[serde(default)]
     pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
-    /// UTXO set snapshots per block height for state recovery
+    /// UTXO set snapshots per block height for state recovery and reorg support
     #[serde(default)]
     pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
+    /// Fork history for audit trail (height -> ForkPoint)
+    #[serde(default)]
+    pub fork_points: HashMap<u64, crate::fork_recovery::ForkPoint>,
+    /// Count of reorganizations for monitoring
+    #[serde(default)]
+    pub reorg_count: u64,
+    /// Fork recovery configuration
+    #[serde(default)]
+    pub fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
     /// Event publisher for blockchain state changes (Issue #11).
     ///
     /// NOTE: This field is marked with `#[serde(skip)]` and is **not** serialized.
@@ -174,10 +183,6 @@ pub struct Blockchain {
     /// Key: (token_id, sender address) where address is wallet_id for SOV or key_id for custom tokens
     #[serde(default)]
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
-    /// Consensus checkpoints for committed blocks (height -> checkpoint)
-    /// Stores authoritative checkpoints for blocks finalized by BFT consensus
-    #[serde(default)]
-    pub consensus_checkpoints: std::collections::BTreeMap<u64, ConsensusCheckpoint>,
 }
 
 /// Validator information stored on-chain
@@ -238,57 +243,6 @@ pub struct UbiMintEntry {
     pub wallet_id: String,
     pub recipient_wallet_id: [u8; 32],
     pub payout: u64,
-}
-
-/// Consensus checkpoint for committed blocks
-///
-/// Stores authoritative checkpoints for blocks that achieved BFT consensus.
-/// Used for bootstrap validation and sync verification.
-///
-/// # Purpose
-/// - Provides cryptographic proof that a block was committed by 2/3+1 validators
-/// - Enables fast bootstrap without re-validating entire chain
-/// - Allows sync manager to verify received blockchain data against trusted checkpoints
-///
-/// # Storage
-/// - Persisted in `Blockchain.consensus_checkpoints` (BTreeMap<u64, ConsensusCheckpoint>)
-/// - Automatically stored when BFT consensus commits a block
-/// - Included in blockchain serialization for persistence across restarts
-///
-/// # Security Model
-/// - Only created after BFT achieves supermajority (2/3+1) commit votes
-/// - Forms a verifiable chain via previous_hash linkage
-/// - Validator count proves Byzantine fault tolerance (assuming f < n/3)
-///
-/// # Usage
-/// ```ignore
-/// // Store checkpoint when block is committed (done automatically)
-/// blockchain.store_consensus_checkpoint(height, block_hash, proposer, prev_hash, validator_count);
-///
-/// // Verify checkpoint chain continuity
-/// if blockchain.verify_checkpoint_chain(start_height, end_height) {
-///     println!("Checkpoint chain is valid");
-/// }
-///
-/// // Retrieve checkpoint for validation
-/// if let Some(checkpoint) = blockchain.get_consensus_checkpoint(height) {
-///     // Verify block matches checkpoint
-/// }
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConsensusCheckpoint {
-    /// Block height
-    pub height: u64,
-    /// Hash of the committed block stored as a consensus checkpoint
-    pub block_hash: Hash,
-    /// Proposer identity
-    pub proposer: String,
-    /// Timestamp when block was committed
-    pub timestamp: u64,
-    /// Previous block hash for chain continuity
-    pub previous_hash: Hash,
-    /// Number of validators who committed this block
-    pub validator_count: u32,
 }
 
 /// Economics transaction record (simplified for blockchain package)
@@ -455,11 +409,13 @@ impl BlockchainV1 {
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
             utxo_snapshots: std::collections::BTreeMap::new(),
+            fork_points: HashMap::new(),
+            reorg_count: 0,
+            fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
-            consensus_checkpoints: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -569,11 +525,17 @@ struct BlockchainStorageV3 {
     #[serde(default)]
     pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
 
-    // === UTXO snapshots (field 33) ===
+    // === UTXO snapshots and fork recovery (fields 33-36) ===
     #[serde(default)]
     pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
+    #[serde(default)]
+    pub fork_points: HashMap<u64, crate::fork_recovery::ForkPoint>,
+    #[serde(default)]
+    pub reorg_count: u64,
+    #[serde(default)]
+    pub fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
 
-    // === UBI registry (fields 34-35) ===
+    // === UBI registry (fields 37-38) ===
     #[serde(default)]
     pub ubi_registry: HashMap<String, UbiRegistryEntry>,
     #[serde(default)]
@@ -586,10 +548,6 @@ struct BlockchainStorageV3 {
     /// Per-token, per-address nonce for token transfer replay protection
     #[serde(default)]
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
-
-    /// Consensus checkpoints for committed blocks (field 39)
-    #[serde(default)]
-    pub consensus_checkpoints: std::collections::BTreeMap<u64, ConsensusCheckpoint>,
 }
 
 impl BlockchainStorageV3 {
@@ -660,8 +618,11 @@ impl BlockchainStorageV3 {
             contract_states: bc.contract_states.clone(),
             contract_state_history: bc.contract_state_history.clone(),
 
-            // UTXO snapshots
+            // Fork recovery
             utxo_snapshots: bc.utxo_snapshots.clone(),
+            fork_points: bc.fork_points.clone(),
+            reorg_count: bc.reorg_count,
+            fork_recovery_config: bc.fork_recovery_config.clone(),
 
             // UBI
             ubi_registry: bc.ubi_registry.clone(),
@@ -669,9 +630,6 @@ impl BlockchainStorageV3 {
 
             // Token nonces
             token_nonces: bc.token_nonces.clone(),
-
-            // Consensus checkpoints
-            consensus_checkpoints: bc.consensus_checkpoints.clone(),
         }
     }
 
@@ -751,8 +709,11 @@ impl BlockchainStorageV3 {
             contract_states: self.contract_states,
             contract_state_history: self.contract_state_history,
 
-            // UTXO snapshots
+            // Fork recovery
             utxo_snapshots: self.utxo_snapshots,
+            fork_points: self.fork_points,
+            reorg_count: self.reorg_count,
+            fork_recovery_config: self.fork_recovery_config,
 
             // UBI
             ubi_registry: self.ubi_registry,
@@ -760,9 +721,6 @@ impl BlockchainStorageV3 {
 
             // Token nonces
             token_nonces: self.token_nonces,
-
-            // Consensus checkpoints
-            consensus_checkpoints: self.consensus_checkpoints,
         }
     }
 }
@@ -828,11 +786,13 @@ impl Blockchain {
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
             utxo_snapshots: std::collections::BTreeMap::new(),
+            fork_points: HashMap::new(),
+            reorg_count: 0,
+            fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
-            consensus_checkpoints: std::collections::BTreeMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -1494,7 +1454,7 @@ impl Blockchain {
 
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
-    async fn process_and_commit_block(&mut self, mut block: Block) -> Result<()> {
+    async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
         // Verify the block
         let previous_block = self.blocks.last();
         if !self.verify_block(&block, previous_block)? {
@@ -1523,21 +1483,6 @@ impl Blockchain {
         self.update_utxo_set(&block)?;
         self.save_utxo_snapshot(self.height)?;
         self.adjust_difficulty()?;
-
-        // Compute and set state root after state updates (for locally mined blocks)
-        // For blocks received from network, state_root should already be set and verified
-        if block.header.state_root == Hash::default() {
-            let state_root = self.calculate_state_root();
-            // Update the block in the blockchain with the computed state root
-            if let Some(last_block) = self.blocks.last_mut() {
-                last_block.header.set_state_root(state_root);
-                tracing::info!(
-                    "Computed state root for block {}: {}",
-                    last_block.height(),
-                    hex::encode(state_root.as_bytes())
-                );
-            }
-        }
 
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
@@ -1776,75 +1721,10 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Calculate canonical state root for the current blockchain state
-    ///
-    /// This computes a deterministic hash commitment over all consensus-critical state:
-    /// - UTXO set (sorted by commitment hash)
-    /// - Identity registry (sorted by identity ID)
-    /// - Wallet registry (sorted by wallet ID)
-    /// - Contract state (sorted by contract ID)
-    /// - Governance state (executed proposals, sorted by proposal ID)
-    ///
-    /// The state root enables:
-    /// - Deterministic state verification across all nodes
-    /// - Fork detection at the state level (not just chain structure)
-    /// - Light client state proofs
-    /// - State synchronization checkpoints
-    pub fn calculate_state_root(&self) -> Hash {
-        let mut hasher = blake3::Hasher::new();
-
-        // 1. Hash UTXO set (deterministically sorted)
-        let mut utxo_entries: Vec<_> = self.utxo_set.iter().collect();
-        utxo_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
-        for (key, utxo) in utxo_entries {
-            hasher.update(key.as_bytes());
-            hasher.update(utxo.commitment.as_bytes());
-            hasher.update(utxo.note.as_bytes());
-            hasher.update(&utxo.amount.to_le_bytes());
-        }
-
-        // 2. Hash identity registry (deterministically sorted)
-        let mut identity_entries: Vec<_> = self.identity_registry.iter().collect();
-        identity_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
-        for (key, identity) in identity_entries {
-            hasher.update(key.as_bytes());
-            hasher.update(&identity.did_hash);
-            hasher.update(&identity.owner);
-            hasher.update(&identity.public_key_hash);
-        }
-
-        // 3. Hash wallet registry (deterministically sorted)
-        let mut wallet_entries: Vec<_> = self.wallet_registry.iter().collect();
-        wallet_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
-        for (key, wallet) in wallet_entries {
-            hasher.update(key.as_bytes());
-            hasher.update(wallet.wallet_id.as_bytes());
-            hasher.update(&wallet.public_key);
-            hasher.update(wallet.owner_identity_id.as_bytes());
-        }
-
-        // 4. Hash contract states (deterministically sorted)
-        let mut contract_entries: Vec<_> = self.contract_states.iter().collect();
-        contract_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
-        for (key, state) in contract_entries {
-            hasher.update(key.as_bytes());
-            hasher.update(state);
-        }
-
-        // 5. Hash executed proposals (deterministically sorted)
-        let mut proposal_ids: Vec<_> = self.executed_dao_proposals.iter().collect();
-        proposal_ids.sort();
-        for proposal_id in proposal_ids {
-            hasher.update(proposal_id.as_bytes());
-        }
-
-        Hash::from_slice(hasher.finalize().as_bytes())
-    }
-
     /// Verify a block against the current chain state
     pub fn verify_block(&self, block: &Block, previous_block: Option<&Block>) -> Result<bool> {
         info!("Starting block verification for height {}", block.height());
-
+        
         // Verify block header
         if let Some(prev) = previous_block {
             if block.previous_hash() != prev.hash() {
@@ -1857,7 +1737,27 @@ impl Blockchain {
             }
         }
 
-        // PoW verification removed - using BFT consensus instead
+        // Verify proof of work using mining profile from environment
+        // This ensures validation uses the same difficulty as mining
+        let mining_config = crate::types::mining::get_mining_config_from_env();
+        let expected_difficulty = mining_config.difficulty.bits();
+
+        // Check if block uses production difficulty (requires full PoW verification)
+        // or development/testnet difficulty (simplified validation)
+        if block.difficulty().bits() < 0x20000000 {
+            // Production difficulty - verify full PoW
+            if !block.header.meets_difficulty_target() {
+                warn!("Block does not meet difficulty target");
+                return Ok(false);
+            }
+        } else {
+            // Development/testnet difficulty - verify it matches the expected profile difficulty
+            if block.difficulty().bits() != expected_difficulty {
+                warn!("Difficulty mismatch: block has 0x{:x}, expected 0x{:x} from mining profile",
+                      block.difficulty().bits(), expected_difficulty);
+                return Ok(false);
+            }
+        }
 
         // Verify all transactions
         for (i, tx) in block.transactions.iter().enumerate() {
@@ -1871,16 +1771,6 @@ impl Blockchain {
         if !block.verify_merkle_root() {
             warn!("Merkle root verification failed");
             return Ok(false);
-        }
-
-        // Verify state root (if not genesis block and state root is set)
-        // Note: Genesis blocks and legacy blocks may have default/zero state roots
-        if block.height() > 0 && block.header.state_root != Hash::default() {
-            // To verify state root, we need to apply the block's transactions to current state
-            // and check if resulting state matches the block's state_root
-            // For now, we log a warning if state root verification is needed
-            // Full state root verification will be implemented in a follow-up
-            tracing::info!("State root present in block {}: {:?}", block.height(), block.header.state_root);
         }
 
         info!("Block verification successful for height {}", block.height());
@@ -2106,7 +1996,18 @@ impl Blockchain {
     ///   - If calculation fails: falls back to `calculate_difficulty_with_config()` using coordinator's config
     ///   - If getting config fails: returns error without fallback (this indicates a consensus layer problem)
     /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters directly
+    /// DEPRECATED: Difficulty adjustment removed (Issue #937)
+    /// BFT consensus does not use Nakamoto-style difficulty adjustment
+    #[allow(dead_code)]
     fn adjust_difficulty(&mut self) -> Result<()> {
+        // No-op: Difficulty adjustment disabled for BFT consensus
+        tracing::debug!("adjust_difficulty called but disabled (Issue #937)");
+        Ok(())
+    }
+
+    /// Original implementation - disabled
+    #[allow(dead_code)]
+    fn adjust_difficulty_original(&mut self) -> Result<()> {
         // Get adjustment parameters and calculate difficulty in a single lock acquisition
         // to avoid race conditions between reading config and calculating adjustment
         if let Some(coordinator) = &self.consensus_coordinator {
@@ -4976,7 +4877,27 @@ impl Blockchain {
     /// - `InvalidProposal`: Proposal has not passed voting
     /// - `InvalidProposal`: Wrong proposal type
     /// - `ParameterValidationError`: New parameters fail validation
+    ///
+    /// DEPRECATED: Difficulty governance removed (Issue #937)
+    #[deprecated(since = "2.0.0", note = "Difficulty governance removed - BFT consensus only")]
     pub fn apply_difficulty_parameter_update(&mut self, proposal_id: Hash) -> Result<()> {
+        // No-op: Just mark as executed to maintain DAO state consistency
+        tracing::warn!(
+            "apply_difficulty_parameter_update called but disabled (Issue #937) for proposal {:?}",
+            proposal_id
+        );
+
+        // Mark as executed to prevent repeated attempts
+        if !self.executed_dao_proposals.contains(&proposal_id) {
+            self.executed_dao_proposals.insert(proposal_id);
+        }
+
+        Ok(())
+    }
+
+    /// Original implementation - disabled
+    #[allow(dead_code)]
+    fn apply_difficulty_parameter_update_original(&mut self, proposal_id: Hash) -> Result<()> {
         // 0. Check if already executed (prevent double-execution)
         if self.executed_dao_proposals.contains(&proposal_id) {
             debug!(
@@ -6428,34 +6349,9 @@ impl Blockchain {
 
     /// Evaluate and potentially merge a blockchain from another node
     /// Uses consensus rules to decide whether to adopt the imported chain
-    ///
-    /// POST-COMMIT SAFETY: Once any block has been committed to this chain,
-    /// chain replacement (AdoptImported) is permanently forbidden. Only
-    /// additive content merges (identities, wallets, contracts, UTXOs) are
-    /// permitted on a chain that already has committed blocks. This enforces
-    /// BFT finality: committed blocks are irreversible.
     pub async fn evaluate_and_merge_chain(&mut self, data: Vec<u8>) -> Result<lib_consensus::ChainMergeResult> {
         let import: BlockchainImport = bincode::deserialize(&data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain: {}", e))?;
-
-        // POST-COMMIT REORG GUARD: If this node has any committed (finalized)
-        // blocks, chain replacement is categorically forbidden. BFT consensus
-        // guarantees finality — no post-commit reorg path may replace the chain.
-        if !self.finalized_blocks.is_empty() {
-            let highest_finalized = self.finalized_blocks.iter().copied().max().unwrap_or(0);
-            warn!(
-                "Post-commit reorg attempt rejected: {} finalized blocks exist (highest: {}). \
-                 BFT finality forbids chain replacement after commit.",
-                self.finalized_blocks.len(),
-                highest_finalized
-            );
-            return Err(anyhow::anyhow!(
-                "Post-commit reorg forbidden: chain has {} finalized blocks (highest height {}). \
-                 BFT consensus does not permit chain replacement after blocks are committed.",
-                self.finalized_blocks.len(),
-                highest_finalized
-            ));
-        }
 
         // Fast path: if local chain is empty (fresh node bootstrap), directly adopt
         // the imported chain without verification against empty state.
@@ -6501,236 +6397,72 @@ impl Blockchain {
             }
         }
 
-        // Create chain summaries for consensus evaluation
-        let local_summary = self.create_local_chain_summary_async().await;
-        let imported_summary = self.create_imported_chain_summary(
-            &import.blocks,
-            &import.identity_registry,
-            &import.utxo_set,
-            &import.token_contracts,
-            &import.web4_contracts
-        );
+        // Determine sync target using highest committed BFT height (Issue #950).
+        //
+        // BFT consensus provides finality: once 2/3+ validators have committed a
+        // block at height H, that block is irreversible. We therefore use the
+        // highest committed BFT height as the authoritative sync target instead of
+        // any Nakamoto-style longest-chain or total-work scoring.
+        //
+        // Decision rule:
+        //   - If the imported chain's tip height > our local tip height, the peer
+        //     is ahead in committed BFT height; adopt its chain.
+        //   - Otherwise keep the local chain (we are at least as far ahead).
+        //
+        // Note: block verification has already passed above, so both chains are
+        // structurally valid. Finality is determined by BFT commitment, not work.
 
-        // DEBUG: Log genesis hashes being compared
-        info!(" Comparing blockchains for merge:");
-        info!("   Local genesis hash:    {}", local_summary.genesis_hash);
-        info!("   Imported genesis hash: {}", imported_summary.genesis_hash);
-        info!("   Hashes equal: {}", local_summary.genesis_hash == imported_summary.genesis_hash);
+        let local_height = self.get_height();
+        let imported_height = if import.blocks.is_empty() {
+            0
+        } else {
+            import.blocks.len() as u64 - 1
+        };
 
-        // Use consensus rules to decide which chain to adopt
-        let decision = lib_consensus::ChainEvaluator::evaluate_chains(&local_summary, &imported_summary);
+        info!("BFT sync evaluation (Issue #950 - highest committed height):");
+        info!("  Local committed height:    {}", local_height);
+        info!("  Imported committed height: {}", imported_height);
 
-        match decision {
-            lib_consensus::ChainDecision::KeepLocal => {
-                info!(" Local chain is better - keeping current state");
-                info!("   Local: height={}, work={}, identities={}", 
-                      local_summary.height, local_summary.total_work, local_summary.total_identities);
-                info!("   Imported: height={}, work={}, identities={}", 
-                      imported_summary.height, imported_summary.total_work, imported_summary.total_identities);
-                Ok(lib_consensus::ChainMergeResult::LocalKept)
-            },
-            lib_consensus::ChainDecision::MergeContentOnly => {
-                info!(" Local chain is longer - merging unique content from shorter chain");
-                info!("   Local: height={}, work={}, identities={}", 
-                      local_summary.height, local_summary.total_work, local_summary.total_identities);
-                info!("   Imported: height={}, work={}, identities={}", 
-                      imported_summary.height, imported_summary.total_work, imported_summary.total_identities);
-                
-                // Extract unique content from imported chain (shorter) into local (longer)
-                match self.merge_unique_content(&import) {
-                    Ok(merged_items) => {
-                        info!(" Successfully merged unique content: {}", merged_items);
-                        Ok(lib_consensus::ChainMergeResult::ContentMerged)
-                    },
-                    Err(e) => {
-                        warn!("Failed to merge content: {} - keeping local only", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!("Content merge error: {}", e)))
+        if imported_height > local_height {
+            info!("Imported chain has higher committed BFT height ({} > {}) - adopting", imported_height, local_height);
+
+            self.blocks = import.blocks;
+            self.height = imported_height;
+            self.utxo_set = import.utxo_set;
+            self.identity_registry = import.identity_registry;
+            // Convert wallet references to full data (sensitive data will need DHT retrieval)
+            self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
+            self.validator_registry = import.validator_registry;
+            self.token_contracts = import.token_contracts;
+            self.web4_contracts = import.web4_contracts;
+            self.contract_blocks = import.contract_blocks;
+
+            // Rebuild nullifier set from the newly adopted chain
+            self.nullifier_set.clear();
+            for block in &self.blocks {
+                for tx in &block.transactions {
+                    for input in &tx.inputs {
+                        self.nullifier_set.insert(input.nullifier);
                     }
                 }
-            },
-            lib_consensus::ChainDecision::AdoptImported => {
-                info!(" Imported chain is better - performing intelligent merge");
-                info!("   Local: height={}, work={}, identities={}", 
-                      local_summary.height, local_summary.total_work, local_summary.total_identities);
-                info!("   Imported: height={}, work={}, identities={}", 
-                      imported_summary.height, imported_summary.total_work, imported_summary.total_identities);
-                
-                // Check if this is a genesis replacement (different genesis blocks)
-                // IMPORTANT: Use merkle_root comparison to match ChainEvaluator logic
-                // Different validators in genesis = different merkle roots = different networks
-                let is_genesis_replacement = if !self.blocks.is_empty() && !import.blocks.is_empty() {
-                    self.blocks[0].header.merkle_root != import.blocks[0].header.merkle_root
-                } else {
-                    false
-                };
-                
-                if is_genesis_replacement {
-                    info!("🔀 Genesis mismatch detected - performing full consolidation merge");
-                    info!("   Old genesis merkle: {}", hex::encode(self.blocks[0].header.merkle_root.as_bytes()));
-                    info!("   New genesis merkle: {}", hex::encode(import.blocks[0].header.merkle_root.as_bytes()));
-
-                    // POST-COMMIT ASSERTION: Chain replacement is only reachable here if no
-                    // finalized blocks exist (enforced by the guard at function entry). Assert
-                    // this invariant so any future refactoring that removes the entry guard is
-                    // caught immediately at runtime rather than silently corrupting state.
-                    assert!(
-                        self.finalized_blocks.is_empty(),
-                        "Invariant violated: AdoptImported (genesis-mismatch) path reached with \
-                         {} finalized blocks. Post-commit chain replacement is forbidden by BFT \
-                         consensus. The entry guard in evaluate_and_merge_chain must have been \
-                         bypassed.",
-                        self.finalized_blocks.len()
-                    );
-
-                    // Perform intelligent merge: adopt imported chain but preserve unique local data
-                    match self.merge_with_genesis_mismatch(&import) {
-                        Ok(merge_report) => {
-                            info!(" Successfully merged chains with genesis consolidation");
-                            info!("{}", merge_report);
-                            Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
-                        }
-                        Err(e) => {
-                            // Do NOT fall back to a silent chain replacement. If the intelligent
-                            // merge fails, propagate the error rather than silently overwriting
-                            // committed state with an unverified imported chain.
-                            error!(
-                                "Genesis merge failed: {} - refusing to adopt imported chain to \
-                                 preserve post-commit safety. No chain replacement will occur.",
-                                e
-                            );
-                            Err(anyhow::anyhow!(
-                                "Post-commit safety: genesis merge failed ({}) and silent chain \
-                                 replacement fallback is forbidden.",
-                                e
-                            ))
-                        }
-                    }
-                } else {
-                    info!(" Same genesis - adopting longer chain");
-
-                    // POST-COMMIT ASSERTION: Chain replacement is only reachable here if no
-                    // finalized blocks exist (enforced by the guard at function entry). Assert
-                    // this invariant so any future refactoring that removes the entry guard is
-                    // caught immediately at runtime rather than silently corrupting state.
-                    assert!(
-                        self.finalized_blocks.is_empty(),
-                        "Invariant violated: AdoptImported (same-genesis) path reached with \
-                         {} finalized blocks. Post-commit chain replacement is forbidden by BFT \
-                         consensus. The entry guard in evaluate_and_merge_chain must have been \
-                         bypassed.",
-                        self.finalized_blocks.len()
-                    );
-
-                    // Simple case: same genesis, just adopt imported chain
-                    self.blocks = import.blocks;
-                    self.height = self.blocks.len() as u64 - 1;
-                    self.utxo_set = import.utxo_set;
-                    self.identity_registry = import.identity_registry;
-                    // Convert wallet references to full data (sensitive data will need DHT retrieval)
-                    self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
-                    self.validator_registry = import.validator_registry;
-                    self.token_contracts = import.token_contracts;
-                    self.web4_contracts = import.web4_contracts;
-                    self.contract_blocks = import.contract_blocks;
-
-                    // Clear nullifier set and rebuild from new chain
-                    self.nullifier_set.clear();
-                    for block in &self.blocks {
-                        for tx in &block.transactions {
-                            for input in &tx.inputs {
-                                self.nullifier_set.insert(input.nullifier);
-                            }
-                        }
-                    }
-
-                    info!(" Adopted imported chain");
-                    info!("   New height: {}", self.height);
-                    info!("   Identities: {}", self.identity_registry.len());
-                    info!("   Validators: {}", self.validator_registry.len());
-                    info!("   UTXOs: {}", self.utxo_set.len());
-
-                    Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
-                }
-            },
-            lib_consensus::ChainDecision::Merge => {
-                info!(" Merging compatible chains");
-                info!("   Local: height={}, work={}, identities={}, contracts={}", 
-                      local_summary.height, local_summary.total_work, 
-                      local_summary.total_identities, local_summary.total_contracts);
-                info!("   Imported: height={}, work={}, identities={}, contracts={}", 
-                      imported_summary.height, imported_summary.total_work, 
-                      imported_summary.total_identities, imported_summary.total_contracts);
-                
-                match self.merge_chain_content(&import) {
-                    Ok(merged_items) => {
-                        info!(" Successfully merged chains: {}", merged_items);
-                        Ok(lib_consensus::ChainMergeResult::Merged)
-                    },
-                    Err(e) => {
-                        warn!("Failed to merge chains: {} - keeping local", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!("Merge error: {}", e)))
-                    }
-                }
-            },
-            lib_consensus::ChainDecision::AdoptLocal => {
-                info!("🏆 Local chain is stronger - using as merge base");
-                info!("   Local: height={}, validators={}, identities={}", 
-                      local_summary.height, local_summary.validator_count, local_summary.total_identities);
-                info!("   Imported: height={}, validators={}, identities={}", 
-                      imported_summary.height, imported_summary.validator_count, imported_summary.total_identities);
-                
-                // Local chain is the stronger network - use it as base
-                // Import unique content from remote chain into local
-                match self.merge_imported_into_local(&import) {
-                    Ok(merge_report) => {
-                        info!(" Successfully merged imported content into local chain");
-                        info!("{}", merge_report);
-                        Ok(lib_consensus::ChainMergeResult::LocalKept)
-                    }
-                    Err(e) => {
-                        warn!(" Failed to merge imported content: {} - keeping local only", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!("Import merge error: {}", e)))
-                    }
-                }
-            },
-            lib_consensus::ChainDecision::Reject => {
-                warn!("🚫 Networks are incompatible - merge rejected for safety");
-                warn!("   Local: height={}, validators={}, age={}d", 
-                      local_summary.height, local_summary.validator_count,
-                      (local_summary.latest_timestamp - local_summary.genesis_timestamp) / (24 * 3600));
-                warn!("   Imported: height={}, validators={}, age={}d", 
-                      imported_summary.height, imported_summary.validator_count,
-                      (imported_summary.latest_timestamp - imported_summary.genesis_timestamp) / (24 * 3600));
-                warn!("   Networks differ too much in size or age to merge safely");
-                
-                Ok(lib_consensus::ChainMergeResult::Failed(
-                    "Networks incompatible - safety threshold exceeded".to_string()
-                ))
-            },
-            lib_consensus::ChainDecision::Conflict => {
-                warn!(" Chain conflict detected - different genesis blocks");
-                warn!("   Local genesis: {}", 
-                      if !self.blocks.is_empty() { 
-                          hex::encode(self.blocks[0].header.block_hash.as_bytes()) 
-                      } else { 
-                          "none".to_string() 
-                      });
-                warn!("   Imported genesis: {}", 
-                      if !import.blocks.is_empty() { 
-                          hex::encode(import.blocks[0].header.block_hash.as_bytes()) 
-                      } else { 
-                          "none".to_string() 
-                      });
-                warn!("   These chains are from different networks and cannot be merged");
-                
-                Ok(lib_consensus::ChainMergeResult::Failed(
-                    "Genesis hash mismatch - chains from different networks".to_string()
-                ))
             }
+
+            info!("Adopted chain at committed BFT height {}", self.height);
+            info!("  Identities: {}", self.identity_registry.len());
+            info!("  Validators: {}", self.validator_registry.len());
+            info!("  UTXOs: {}", self.utxo_set.len());
+
+            Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
+        } else {
+            info!("Local chain is at highest committed BFT height ({} >= {}) - keeping local", local_height, imported_height);
+            Ok(lib_consensus::ChainMergeResult::LocalKept)
         }
     }
 
     /// Create chain summary for local blockchain
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    /// Retained for potential monitoring/diagnostics use.
+    #[allow(dead_code)]
     async fn create_local_chain_summary_async(&self) -> lib_consensus::ChainSummary {
         // Use merkle root as genesis hash - this reflects the actual transaction content
         // Different validators in genesis will have different merkle roots
@@ -6822,6 +6554,8 @@ impl Blockchain {
     }
 
     /// Merge content from compatible blockchain without replacing existing data
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    #[allow(dead_code)]
     fn merge_chain_content(&mut self, import: &BlockchainImport) -> Result<String> {
         let mut merged_items = Vec::new();
         
@@ -6907,24 +6641,30 @@ impl Blockchain {
             }
         }
         
-        // POST-COMMIT SAFETY: Do not append blocks from an imported chain directly.
-        // Directly pushing imported blocks onto self.blocks bypasses process_and_commit_block,
-        // which means fee deduction, nullifier tracking, UTXO updates, receipt creation, and
-        // event publishing are all skipped. This is a hidden post-commit reorg path because it
-        // can silently replace committed block state at a given height.
-        //
-        // If the imported chain is longer, the height difference is logged only. New blocks from
-        // network peers must arrive through add_block_from_network() which runs full validation
-        // and commit logic through process_and_commit_block().
+        // If chains have different heights, merge missing blocks
         if import.blocks.len() != self.blocks.len() {
             if import.blocks.len() > self.blocks.len() {
-                let block_diff = import.blocks.len() - self.blocks.len();
-                warn!(
-                    "merge_chain_content: imported chain is {} blocks longer than local chain. \
-                     Direct block insertion is forbidden to preserve post-commit integrity. \
-                     New blocks must arrive via add_block_from_network().",
-                    block_diff
-                );
+                // Imported chain is longer - add missing blocks
+                let missing_blocks = &import.blocks[self.blocks.len()..];
+                let mut added_blocks = 0;
+                
+                for block in missing_blocks {
+                    // Verify block before adding
+                    let prev_block = self.blocks.last();
+                    if self.verify_block(block, prev_block)? {
+                        self.blocks.push(block.clone());
+                        self.height = block.height();
+                        added_blocks += 1;
+                        info!("  Added missing block at height {}", block.height());
+                    } else {
+                        warn!("  Failed to verify imported block at height {}, stopping block merge", block.height());
+                        break;
+                    }
+                }
+                
+                if added_blocks > 0 {
+                    merged_items.push(format!("{} blocks", added_blocks));
+                }
             } else {
                 // Local chain is longer - just report the difference
                 let block_diff = self.blocks.len() - import.blocks.len();
@@ -6942,6 +6682,8 @@ impl Blockchain {
     /// Intelligently merge two chains with different genesis blocks
     /// Adopts the imported chain as the base and consolidates unique data from local chain
     /// Includes economic reconciliation to prevent money supply inflation
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    #[allow(dead_code)]
     fn merge_with_genesis_mismatch(&mut self, import: &BlockchainImport) -> Result<String> {
         info!("🔀 Starting network merge with economic reconciliation");
         info!("   Local network: {} blocks, {} identities, {} validators", 
@@ -7027,19 +6769,7 @@ impl Blockchain {
         info!("   {} token contracts", unique_token_contracts);
         info!("   {} web4 contracts", unique_web4_contracts);
         
-        // Step 6: Adopt imported chain as base.
-        //
-        // POST-COMMIT ASSERTION: This is a full chain replacement. It must never be
-        // reached when finalized blocks exist. The guard in evaluate_and_merge_chain
-        // is the primary enforcement point; this assertion is defense-in-depth to
-        // catch any future call-site added without going through that guard.
-        assert!(
-            self.finalized_blocks.is_empty(),
-            "Invariant violated: merge_with_genesis_mismatch reached Step 6 (chain replacement) \
-             with {} finalized blocks. Post-commit chain replacement is permanently forbidden by \
-             BFT consensus. Caller must check evaluate_and_merge_chain entry guard.",
-            self.finalized_blocks.len()
-        );
+        // Step 6: Adopt imported chain as base
         self.blocks = import.blocks.clone();
         self.height = self.blocks.len() as u64 - 1;
         self.identity_registry = import.identity_registry.clone();
@@ -7141,6 +6871,8 @@ impl Blockchain {
     /// Merge imported chain content into local chain (local is stronger base)
     /// This is the reverse of merge_with_genesis_mismatch - local chain is kept as base
     /// All unique content from imported chain is preserved and added to local
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    #[allow(dead_code)]
     fn merge_imported_into_local(&mut self, import: &BlockchainImport) -> Result<String> {
         info!("🔀 Merging imported network into stronger local network");
         info!("   Local network (BASE): {} blocks, {} identities, {} validators", 
@@ -7272,6 +7004,8 @@ impl Blockchain {
     
     /// Merge unique content from shorter chain into longer chain
     /// This prevents data loss when local chain is longer but imported has unique identities/wallets/contracts
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    #[allow(dead_code)]
     fn merge_unique_content(&mut self, import: &BlockchainImport) -> Result<String> {
         let mut merged_items = Vec::new();
         
@@ -7373,8 +7107,11 @@ impl Blockchain {
     }
 
     /// Create chain summary for imported blockchain
-    fn create_imported_chain_summary(&self, 
-        blocks: &[Block], 
+    /// DEPRECATED (Issue #950): No longer called from evaluate_and_merge_chain.
+    /// Retained for potential monitoring/diagnostics use.
+    #[allow(dead_code)]
+    fn create_imported_chain_summary(&self,
+        blocks: &[Block],
         identity_registry: &HashMap<String, IdentityTransactionData>,
         utxo_set: &HashMap<Hash, TransactionOutput>,
         token_contracts: &HashMap<[u8; 32], crate::contracts::TokenContract>,
@@ -8053,105 +7790,171 @@ impl Blockchain {
     }
 
     // ========================================================================
-<<<<<<< HEAD
-    // CONSENSUS CHECKPOINTS
+    // FORK RECOVERY AND REORGANIZATION
     // ========================================================================
 
-    /// Store a consensus checkpoint for a committed block
-    ///
-    /// Called when BFT consensus achieves 2/3+1 commit votes on a block.
-    /// Creates an authoritative checkpoint for bootstrap validation and sync verification.
-    ///
-    /// # Arguments
-    /// * `height` - Block height
-    /// * `block_hash` - Block hash (proposal ID from consensus)
-    /// * `proposer` - Proposer identity
-    /// * `previous_hash` - Previous block hash
-    /// * `validator_count` - Number of validators who committed this block
-    pub fn store_consensus_checkpoint(
+    /// Detect if a new block creates a fork
+    pub fn detect_fork_at_height(&self, height: u64, new_block_hash: Hash) -> Option<crate::fork_recovery::ForkDetection> {
+        // Find existing block at this height
+        let existing_block = self.blocks.iter().find(|b| b.header.height == height)?;
+
+        // If hashes differ, we have a fork
+        if existing_block.header.block_hash != new_block_hash {
+            return Some(crate::fork_recovery::ForkDetection {
+                height,
+                existing_hash: existing_block.header.block_hash,
+                new_hash: new_block_hash,
+            });
+        }
+        None
+    }
+
+    /// Record a fork point in history for audit trail
+    fn record_fork_point(
         &mut self,
         height: u64,
-        block_hash: Hash,
-        proposer: String,
-        previous_hash: Hash,
-        validator_count: u32,
+        original_hash: Hash,
+        forked_hash: Hash,
+        resolution: crate::fork_recovery::ForkResolution,
     ) {
-        let checkpoint = ConsensusCheckpoint {
+        let fork_point = crate::fork_recovery::ForkPoint::new(
             height,
-            block_hash,
-            proposer,
-            timestamp: std::time::SystemTime::now()
+            std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            previous_hash,
-            validator_count,
-        };
+            original_hash,
+            forked_hash,
+            resolution,
+        );
 
-        self.consensus_checkpoints.insert(height, checkpoint);
-        debug!("📍 Stored consensus checkpoint at height {}", height);
+        self.fork_points.insert(height, fork_point);
+        info!("🍴 Fork recorded at height {}: {:?} -> {:?}", height, original_hash, forked_hash);
     }
 
-    /// Get consensus checkpoint for a specific height
-    pub fn get_consensus_checkpoint(&self, height: u64) -> Option<&ConsensusCheckpoint> {
-        self.consensus_checkpoints.get(&height)
+    /// Prevent reorg below finalized blocks
+    pub fn can_reorg_to_height(&self, target_height: u64) -> Result<(), String> {
+        // Find the highest finalized block
+        if let Some(&max_finalized) = self.finalized_blocks.iter().max() {
+            if target_height <= max_finalized {
+                return Err(format!(
+                    "Cannot reorg below finality threshold. Finalized height: {}, Target: {}",
+                    max_finalized, target_height
+                ));
+            }
+        }
+
+        // Check max reorg depth configured
+        let max_reorg_depth = self.fork_recovery_config.max_reorg_depth;
+        if self.height.saturating_sub(target_height) > max_reorg_depth {
+            return Err(format!(
+                "Reorg depth ({}) exceeds maximum configured ({})",
+                self.height.saturating_sub(target_height),
+                max_reorg_depth
+            ));
+        }
+
+        Ok(())
     }
 
-    /// Get the latest consensus checkpoint
-    pub fn get_latest_checkpoint(&self) -> Option<&ConsensusCheckpoint> {
-        self.consensus_checkpoints.values().last()
+    /// Check if can reorg to height, with anyhow::Result error type
+    fn can_reorg_to_height_anyhow(&self, target_height: u64) -> Result<()> {
+        self.can_reorg_to_height(target_height)
+            .map_err(|e| anyhow::anyhow!(e))
     }
 
-    /// Get all checkpoints in a height range
-    pub fn get_checkpoints_range(&self, start_height: u64, end_height: u64) -> Vec<&ConsensusCheckpoint> {
-        self.consensus_checkpoints
-            .range(start_height..=end_height)
-            .map(|(_, checkpoint)| checkpoint)
-            .collect()
-    }
-
-    /// Verify chain continuity using checkpoints
+    /// Reorganize to a fork (replace blocks from target_height onwards)
     ///
-    /// Validates that checkpoints form a valid chain by checking
-    /// that each checkpoint's previous_hash matches the previous checkpoint's block_hash.
-    pub fn verify_checkpoint_chain(&self, start_height: u64, end_height: u64) -> bool {
-        let checkpoints = self.get_checkpoints_range(start_height, end_height);
+    /// # Arguments
+    /// * `target_height` - Block height where reorg should start
+    /// * `new_blocks` - New blocks to replace the old ones
+    ///
+    /// # Returns
+    /// Number of blocks removed and replaced
+    pub async fn reorg_to_fork(&mut self, target_height: u64, new_blocks: Vec<Block>) -> Result<u64> {
+        // Safety checks
+        self.can_reorg_to_height_anyhow(target_height)?;
 
-        if checkpoints.is_empty() {
-            return true; // No checkpoints to verify
+        if new_blocks.is_empty() {
+            return Err(anyhow::anyhow!("Cannot reorg with empty block list"));
         }
 
-        for i in 1..checkpoints.len() {
-            let prev = checkpoints[i - 1];
-            let curr = checkpoints[i];
+        // Verify new blocks form a valid chain
+        if new_blocks[0].header.height != target_height {
+            return Err(anyhow::anyhow!(
+                "First block height {} doesn't match target height {}",
+                new_blocks[0].header.height,
+                target_height
+            ));
+        }
 
-            // Verify chain continuity
-            if curr.previous_hash != prev.block_hash {
-                warn!(
-                    "Checkpoint chain broken at height {}: previous_hash mismatch",
-                    curr.height
-                );
-                return false;
+        // Verify chain continuity
+        for i in 1..new_blocks.len() {
+            if new_blocks[i].header.height != new_blocks[i - 1].header.height + 1 {
+                return Err(anyhow::anyhow!("Block height gap in new chain at position {}", i));
             }
-
-            // Verify sequential heights
-            if curr.height != prev.height + 1 {
-                warn!(
-                    "Checkpoint chain broken: non-sequential heights {} -> {}",
-                    prev.height, curr.height
-                );
-                return false;
+            if new_blocks[i].header.previous_block_hash != new_blocks[i - 1].header.block_hash {
+                return Err(anyhow::anyhow!("Block chain linkage broken at position {}", i));
             }
         }
 
-        true
+        info!(
+            "🔄 Reorganizing chain from height {} with {} blocks",
+            target_height,
+            new_blocks.len()
+        );
+
+        // Capture old block hash before removing blocks for audit trail
+        let old_block_hash = self.blocks
+            .iter()
+            .find(|b| b.header.height == target_height)
+            .map(|b| b.header.block_hash);
+
+        // Remove old blocks from target_height onwards
+        let old_count = self.blocks.len();
+        self.blocks.retain(|b| b.header.height < target_height);
+        let removed_count = old_count - self.blocks.len();
+
+        // Add new blocks
+        for block in new_blocks {
+            // Record fork for audit trail (only for first block of reorg)
+            if block.header.height == target_height {
+                if let Some(old_hash) = old_block_hash {
+                    self.record_fork_point(
+                        target_height,
+                        old_hash,
+                        block.header.block_hash,
+                        crate::fork_recovery::ForkResolution::SwitchedToFork,
+                    );
+                }
+            }
+
+            // Add block and update state
+            self.add_block(block).await?;
+        }
+
+        // Increment reorg counter for monitoring
+        self.reorg_count += 1;
+
+        info!(
+            "✅ Reorganization complete: {} blocks removed, chain height now {}",
+            removed_count, self.height
+        );
+
+        Ok(removed_count as u64)
     }
 
-    // ========================================================================
-    // FORK RECOVERY AND REORGANIZATION - REMOVED
-    // ========================================================================
-    // BFT consensus does not require fork detection or chain reorganization logic.
-    // This section has been removed as part of Issue #936.
+    /// Get fork history for audit purposes
+    pub fn get_fork_history(&self) -> Vec<crate::fork_recovery::ForkPoint> {
+        let mut forks: Vec<_> = self.fork_points.values().cloned().collect();
+        forks.sort_by_key(|f| f.height);
+        forks
+    }
+
+    /// Get reorg count (for monitoring)
+    pub fn get_reorg_count(&self) -> u64 {
+        self.reorg_count
+    }
 
     // ========================================================================
     // CONTRACT STATE MANAGEMENT
@@ -8242,7 +8045,7 @@ impl Blockchain {
     /// Save UTXO set snapshot for current block height
     ///
     /// Creates a complete snapshot of the current UTXO set for the given block height.
-    /// This enables state recovery and historical queries.
+    /// This enables state recovery and chain reorganizations.
     ///
     /// # Arguments
     /// * `block_height` - Block height to snapshot
@@ -8274,7 +8077,7 @@ impl Blockchain {
     /// Prune old UTXO snapshots to save memory
     ///
     /// Keeps snapshots for recent blocks and removes older ones.
-    /// Maintains finalized blocks for historical queries.
+    /// Maintains finalized blocks to prevent reorg below finality depth.
     ///
     /// # Arguments
     /// * `keep_blocks` - Number of recent blocks to keep in history
@@ -8299,7 +8102,7 @@ impl Blockchain {
 
     /// Restore UTXO set from a snapshot at specific height
     ///
-    /// Used for state recovery and historical queries.
+    /// Used during chain reorganizations to rollback to previous state.
     ///
     /// # Arguments
     /// * `height` - Block height to restore from
