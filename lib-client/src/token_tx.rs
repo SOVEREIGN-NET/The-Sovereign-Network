@@ -651,17 +651,23 @@ const DOMAIN_REGISTRATION_FEE: u64 = 10;
 /// * `content_mappings` - Optional content mappings (path -> content)
 ///
 /// # Returns
-/// JSON string ready to POST to /api/v1/web4/domains/register
+/// Returns an error unless a canonical `fee_payment_tx` is provided.
+///
+/// Use `build_domain_register_request_with_fee_payment` for valid requests.
+#[deprecated(
+    since = "0.3.0",
+    note = "Domain registration requires fee_payment_tx; use build_domain_register_request_with_fee_payment"
+)]
 pub fn build_domain_register_request(
     identity: &Identity,
     domain: &str,
     content_mappings: Option<std::collections::HashMap<String, ContentMapping>>,
 ) -> Result<String, String> {
-    build_domain_register_request_with_fee_payment(
-        identity,
-        domain,
-        content_mappings,
-        None,
+    let _ = (identity, domain, content_mappings);
+    Err(
+        "build_domain_register_request is deprecated: fee_payment_tx is required. \
+         Use build_domain_register_request_with_fee_payment(...) with a signed canonical fee transaction."
+            .to_string(),
     )
 }
 
@@ -675,6 +681,14 @@ pub fn build_domain_register_request_with_fee_payment(
     content_mappings: Option<std::collections::HashMap<String, ContentMapping>>,
     fee_payment_tx: Option<String>,
 ) -> Result<String, String> {
+    if fee_payment_tx.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        return Err(
+            "fee_payment_tx is required for domain registration. \
+             Provide a hex-encoded signed canonical TokenTransfer paying the DAO treasury."
+                .to_string(),
+        );
+    }
+
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| format!("Failed to get timestamp: {}", e))?
@@ -781,7 +795,12 @@ pub fn build_domain_register_tx(
     _content_cid: Option<&str>,
     _chain_id: u8,
 ) -> Result<String, String> {
-    build_domain_register_request(identity, domain, None)
+    let _ = (identity, domain);
+    Err(
+        "build_domain_register_tx is deprecated: fee_payment_tx is required. \
+         Use build_domain_register_request_with_fee_payment(...) instead."
+            .to_string(),
+    )
 }
 
 #[deprecated(since = "0.2.0", note = "Use build_domain_update_request instead")]
