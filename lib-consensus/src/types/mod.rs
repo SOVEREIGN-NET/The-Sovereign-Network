@@ -225,7 +225,22 @@ impl ComputeResult {
     }
 }
 
-/// Consensus configuration
+/// Consensus configuration.
+///
+/// # Validator count bounds
+///
+/// `max_validators` is the governance-adjustable upper bound on the active
+/// validator set.  Its valid range at runtime is:
+///
+/// - **Minimum**: `MIN_VALIDATORS` (= 4) — the BFT safety floor.
+///   Governance MUST NOT lower `max_validators` below this value.
+/// - **Maximum**: `MAX_VALIDATORS_HARD_CAP` (= 256) — the protocol ceiling.
+///   Governance MUST NOT raise `max_validators` above this value without a
+///   network upgrade.
+///
+/// Both bounds are enforced by `DaoEngine::validate_governance_update()` and
+/// clamped in `ValidatorManager::new()`.  The default value is `MAX_VALIDATORS`
+/// (= 100).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsensusConfig {
     /// Type of consensus mechanism
@@ -234,7 +249,9 @@ pub struct ConsensusConfig {
     pub min_stake: u64,
     /// Minimum storage required to be a validator (in bytes)
     pub min_storage: u64,
-    /// Maximum number of validators
+    /// Governance-adjustable upper bound on the active validator set.
+    /// Valid range: `[MIN_VALIDATORS, MAX_VALIDATORS_HARD_CAP]` = `[4, 256]`.
+    /// Default: `MAX_VALIDATORS` = 100.
     pub max_validators: u32,
     /// Target block time in seconds
     pub block_time: u64,
