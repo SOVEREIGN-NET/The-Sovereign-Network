@@ -264,6 +264,10 @@ impl ValidatorHandler {
             last_activity: chrono::Utc::now().timestamp() as u64, // Update activity time
             blocks_validated: existing_validator.blocks_validated,
             slash_count: existing_validator.slash_count,
+            // Preserve the original admission source and governance proposal reference
+            // on update — the admission path cannot be changed after registration.
+            admission_source: existing_validator.admission_source.clone(),
+            governance_proposal_id: existing_validator.governance_proposal_id.clone(),
         };
 
         // Update validator through blockchain

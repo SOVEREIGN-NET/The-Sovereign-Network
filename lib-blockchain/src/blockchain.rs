@@ -185,7 +185,62 @@ pub struct Blockchain {
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
 }
 
-/// Validator information stored on-chain
+// ---------------------------------------------------------------------------
+// On-chain vs off-chain admission boundary constants
+// ---------------------------------------------------------------------------
+
+/// Sentinel value stored in [`ValidatorInfo::admission_source`] for validators
+/// that were bootstrapped from an off-chain configuration file at genesis.
+///
+/// # Security invariant
+///
+/// An `"off-chain:genesis"` source is only valid when the block height at
+/// registration time is exactly 0 (the genesis block).  Any attempt to use
+/// this source tag after genesis is rejected by [`Blockchain::register_validator`]
+/// as a governance-bypass attack.
+pub const ADMISSION_SOURCE_OFFCHAIN_GENESIS: &str = "off-chain:genesis";
+
+/// Sentinel value stored in [`ValidatorInfo::admission_source`] for validators
+/// admitted through an approved on-chain governance proposal.
+///
+/// This is the **only** valid admission source for post-genesis (height > 0)
+/// validators.  The proposal ID must be stored in [`ValidatorInfo::governance_proposal_id`]
+/// so that the admission path is fully auditable on-chain.
+pub const ADMISSION_SOURCE_ONCHAIN_GOVERNANCE: &str = "on-chain:governance";
+
+/// Validator information stored on-chain.
+///
+/// # On-chain vs off-chain admission boundary
+///
+/// Validators can be admitted through two distinct paths:
+///
+/// ## Off-chain path (genesis bootstrap only)
+///
+/// During chain initialization (block height == 0), the initial validator set
+/// may be seeded from a static configuration file (e.g. `genesis.toml`).
+/// These validators bypass the DAO governance vote because there is no chain
+/// yet to vote on.
+///
+/// - [`admission_source`][ValidatorInfo::admission_source] MUST equal
+///   [`ADMISSION_SOURCE_OFFCHAIN_GENESIS`].
+/// - [`governance_proposal_id`][ValidatorInfo::governance_proposal_id] is `None`.
+/// - This path is ONLY available at block height 0.  Any validator registered
+///   with this source tag at height > 0 is **rejected** to prevent governance bypass.
+///
+/// ## On-chain path (governance proposal, post-genesis)
+///
+/// After the chain is live every new validator MUST be admitted through an
+/// approved on-chain governance proposal (DAO vote).
+///
+/// - [`admission_source`][ValidatorInfo::admission_source] MUST equal
+///   [`ADMISSION_SOURCE_ONCHAIN_GOVERNANCE`].
+/// - [`governance_proposal_id`][ValidatorInfo::governance_proposal_id] MUST be
+///   `Some(proposal_id)` pointing to the approved proposal.
+/// - Direct registration from a config file at height > 0 is explicitly rejected.
+///
+/// The [`Blockchain::register_validator`] function enforces this boundary and
+/// panics (in debug builds) / returns an error (in release builds) if an
+/// off-chain source is presented at post-genesis heights.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorInfo {
     /// Validator identity ID
@@ -210,6 +265,30 @@ pub struct ValidatorInfo {
     pub blocks_validated: u64,
     /// Slash count
     pub slash_count: u32,
+    /// Admission source tag — identifies whether this validator was admitted
+    /// through the off-chain genesis path or the on-chain governance path.
+    ///
+    /// Valid values: [`ADMISSION_SOURCE_OFFCHAIN_GENESIS`] or
+    /// [`ADMISSION_SOURCE_ONCHAIN_GOVERNANCE`].
+    ///
+    /// Defaults to [`ADMISSION_SOURCE_OFFCHAIN_GENESIS`] for backwards
+    /// compatibility with records created before this field existed.
+    #[serde(default = "ValidatorInfo::default_admission_source")]
+    pub admission_source: String,
+    /// On-chain governance proposal ID that approved this validator's admission.
+    ///
+    /// - `None` for genesis validators (off-chain bootstrap).
+    /// - `Some(proposal_id)` for all post-genesis validators — this links the
+    ///   validator entry back to the DAO vote that authorised it.
+    #[serde(default)]
+    pub governance_proposal_id: Option<String>,
+}
+
+impl ValidatorInfo {
+    /// Default admission source for serde backwards compatibility.
+    fn default_admission_source() -> String {
+        ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string()
+    }
 }
 
 /// UBI (Universal Basic Income) registry entry
@@ -956,6 +1035,14 @@ impl Blockchain {
                                 last_activity: height,
                                 blocks_validated: 0,
                                 slash_count: 0,
+                                // Validators replayed from on-chain transactions are on-chain admissions.
+                                // Genesis validators (height == 0) may have been bootstrapped from config.
+                                admission_source: if height == 0 {
+                                    ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string()
+                                } else {
+                                    ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string()
+                                },
+                                governance_proposal_id: None,
                             };
                             blockchain.validator_registry.insert(
                                 validator_data.identity_id.clone(),
@@ -3261,7 +3348,23 @@ impl Blockchain {
     // Validator registration and management
     // ========================================================================
 
-    /// Register a new validator on the blockchain
+    /// Register a new validator on the blockchain.
+    ///
+    /// # On-chain vs off-chain admission boundary
+    ///
+    /// This function is the **single enforcement point** for the admission boundary
+    /// between off-chain (config-file / genesis bootstrap) and on-chain (governance
+    /// proposal) validator admission.  The rules are:
+    ///
+    /// | Height | Allowed admission source | `governance_proposal_id` |
+    /// |--------|--------------------------|--------------------------|
+    /// | 0 (genesis) | [`ADMISSION_SOURCE_OFFCHAIN_GENESIS`] | `None` |
+    /// | > 0 (live chain) | [`ADMISSION_SOURCE_ONCHAIN_GOVERNANCE`] | `Some(id)` required |
+    ///
+    /// Presenting an `"off-chain:genesis"` source at any height > 0 is treated as
+    /// a **governance-bypass attempt** and is rejected with an explicit error.
+    /// This ensures that no operator can silently add a validator by editing a
+    /// config file once the chain is running.
     pub fn register_validator(&mut self, validator_info: ValidatorInfo) -> Result<Hash> {
         // Check if validator already exists
         if self.validator_registry.contains_key(&validator_info.identity_id) {
@@ -3272,7 +3375,54 @@ impl Blockchain {
         if !self.identity_registry.contains_key(&validator_info.identity_id) {
             return Err(anyhow::anyhow!("Identity {} must be registered before becoming a validator", validator_info.identity_id));
         }
-        
+
+        // ------------------------------------------------------------------
+        // ADMISSION BOUNDARY CHECK: On-chain vs off-chain path enforcement.
+        //
+        // Off-chain (config / genesis) admission is ONLY permitted at height 0.
+        // Any attempt to register a post-genesis validator via the off-chain path
+        // is rejected here to prevent governance bypass.
+        // ------------------------------------------------------------------
+        if self.height > 0 && validator_info.admission_source == ADMISSION_SOURCE_OFFCHAIN_GENESIS {
+            return Err(anyhow::anyhow!(
+                "Governance bypass rejected: validator '{}' attempted off-chain (config-file) \
+                 admission at block height {} (source='{}').  Post-genesis validators MUST be \
+                 admitted through an approved on-chain governance proposal \
+                 (source='{}').",
+                validator_info.identity_id,
+                self.height,
+                ADMISSION_SOURCE_OFFCHAIN_GENESIS,
+                ADMISSION_SOURCE_ONCHAIN_GOVERNANCE,
+            ));
+        }
+
+        // Post-genesis on-chain validators must provide a governance proposal reference.
+        if self.height > 0
+            && validator_info.admission_source == ADMISSION_SOURCE_ONCHAIN_GOVERNANCE
+            && validator_info.governance_proposal_id.is_none()
+        {
+            return Err(anyhow::anyhow!(
+                "On-chain admission requires a governance_proposal_id for validator '{}' \
+                 at block height {}.",
+                validator_info.identity_id,
+                self.height,
+            ));
+        }
+
+        // Validate that the admission source tag is one of the recognised values.
+        if validator_info.admission_source != ADMISSION_SOURCE_OFFCHAIN_GENESIS
+            && validator_info.admission_source != ADMISSION_SOURCE_ONCHAIN_GOVERNANCE
+        {
+            return Err(anyhow::anyhow!(
+                "Unknown admission source '{}' for validator '{}'. \
+                 Expected '{}' or '{}'.",
+                validator_info.admission_source,
+                validator_info.identity_id,
+                ADMISSION_SOURCE_OFFCHAIN_GENESIS,
+                ADMISSION_SOURCE_ONCHAIN_GOVERNANCE,
+            ));
+        }
+
         // SECURITY: Validate minimum requirements for validator eligibility
         // Edge nodes (minimal storage, no consensus capability) cannot become validators
         // Genesis bootstrap: Allow 1,000 SOV minimum for initial validator setup
@@ -3284,7 +3434,7 @@ impl Blockchain {
                 validator_info.stake, min_stake
             ));
         }
-        
+
         // Storage requirement: Only enforce for production validators after genesis
         // Genesis validators (height 0) can register with any storage amount for testing
         if self.height > 0 && validator_info.storage_provided < 10_737_418_240 {  // 10 GB in bytes

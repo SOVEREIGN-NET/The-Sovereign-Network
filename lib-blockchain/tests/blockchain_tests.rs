@@ -54,6 +54,10 @@ fn create_test_validator(id: &str, stake: u64) -> ValidatorInfo {
         last_activity: 1000u64,
         blocks_validated: 0u64,
         slash_count: 0u32,
+        // Test validators use the genesis off-chain source by convention since they are
+        // registered at height 0 in the test harness.
+        admission_source: lib_blockchain::blockchain::ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string(),
+        governance_proposal_id: None,
     }
 }
 
