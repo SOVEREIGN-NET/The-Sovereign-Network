@@ -27,6 +27,7 @@ pub enum ConsensusType {
     /// Proof of Useful Work consensus
     ProofOfUsefulWork,
     /// Byzantine Fault Tolerance
+    #[serde(alias = "Hybrid")]
     ByzantineFaultTolerance,
 }
 

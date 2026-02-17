@@ -42,8 +42,8 @@ impl ConsensusEngine {
                 }
             }
             ConsensusType::ByzantineFaultTolerance => {
-                // For BFT, we rely on vote thresholds rather than individual proofs
-                Ok(true)
+                // For BFT, we rely on vote thresholds rather than individual proofs. This generic proof validator is not applicable to BFT proofs.
+                Ok(false)
             }
         }
     }
