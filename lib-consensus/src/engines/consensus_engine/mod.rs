@@ -93,6 +93,9 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod nondeterminism_tests;
+
 /// Token binding a timer to a specific consensus state
 ///
 /// Prevents stale timeout fires from affecting a different (height, round, step).

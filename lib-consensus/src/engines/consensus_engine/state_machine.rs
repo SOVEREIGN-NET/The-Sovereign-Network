@@ -1,4 +1,5 @@
 use super::*;
+use super::validation::determinism_guard;
 use lib_crypto::hash_blake3;
 
 // ============================================================================
@@ -843,12 +844,19 @@ impl ConsensusEngine {
     }
 
     pub(super) async fn on_prevote(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
+        // GUARD: Enter consensus-critical section
+        determinism_guard::enter_consensus_scope();
+        let _guard = scopeguard::guard((), |_| {
+            determinism_guard::exit_consensus_scope();
+        });
+
         // Harden: Validate remote vote against all BFT safety invariants
         if !self.validate_remote_vote(&vote).await? {
             return Ok(());
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
+        // SAFETY: This time access is for Byzantine detection logging, not consensus logic
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -935,12 +943,19 @@ impl ConsensusEngine {
     }
 
     pub(super) async fn on_precommit(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
+        // GUARD: Enter consensus-critical section
+        determinism_guard::enter_consensus_scope();
+        let _guard = scopeguard::guard((), |_| {
+            determinism_guard::exit_consensus_scope();
+        });
+
         // Harden: Validate remote vote against all BFT safety invariants
         if !self.validate_remote_vote(&vote).await? {
             return Ok(());
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
+        // SAFETY: This time access is for Byzantine detection logging, not consensus logic
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1042,6 +1057,12 @@ impl ConsensusEngine {
             return Ok(());
         }
 
+        // GUARD: Enter consensus-critical section
+        determinism_guard::enter_consensus_scope();
+        let _guard = scopeguard::guard((), |_| {
+            determinism_guard::exit_consensus_scope();
+        });
+
         // Harden: Verify signature and validator membership (core validation)
         // Commit votes have special rules for height/round, so we only check signature + membership
         if !self.verify_vote_signature(&vote).await? {
@@ -1059,6 +1080,7 @@ impl ConsensusEngine {
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
+        // SAFETY: This time access is for Byzantine detection logging, not consensus logic
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

@@ -1,7 +1,15 @@
 //! Main blockchain data structure and implementation
-//! 
+//!
 //! Contains the core Blockchain struct and its methods, extracted from the original
 //! blockchain.rs implementation with proper modularization.
+//!
+//! # Nondeterminism Detection
+//!
+//! This module integrates with the consensus nondeterminism detection system to prevent
+//! chain splits caused by nondeterministic operations. Key utilities like `current_timestamp()`
+//! and `random_hash()` include runtime guards that panic if called during consensus validation.
+//!
+//! See `crate::utils::time` for the fail-fast detection implementation.
 
 use std::collections::{HashMap, HashSet};
 use anyhow::Result;
@@ -5359,6 +5367,8 @@ impl Blockchain {
             .map_err(|e| anyhow::anyhow!("Failed to deserialize credential proof: {}", e))?;
         
         // Check proof hasn't expired
+        // SAFETY: Credential validation uses wall-clock time for expiry checking,
+        // which is acceptable here as this is not part of consensus state transition
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();

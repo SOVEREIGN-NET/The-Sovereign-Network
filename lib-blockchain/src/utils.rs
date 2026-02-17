@@ -8,8 +8,48 @@ use crate::block::Block;
 
 /// Time utilities
 pub mod time {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Flag indicating if consensus validation is active
+    /// When true, nondeterministic operations will panic
+    static CONSENSUS_VALIDATION_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+    /// Mark that consensus validation is active
+    /// This should be called when entering consensus-critical paths
+    #[inline]
+    pub fn enter_consensus_validation() {
+        CONSENSUS_VALIDATION_ACTIVE.store(true, Ordering::SeqCst);
+    }
+
+    /// Mark that consensus validation is inactive
+    #[inline]
+    pub fn exit_consensus_validation() {
+        CONSENSUS_VALIDATION_ACTIVE.store(false, Ordering::SeqCst);
+    }
+
+    /// Check if consensus validation is currently active
+    #[inline]
+    pub fn is_consensus_validation_active() -> bool {
+        CONSENSUS_VALIDATION_ACTIVE.load(Ordering::SeqCst)
+    }
+
     /// Get current UNIX timestamp
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if called during consensus validation,
+    /// as using wall-clock time during consensus can lead to chain splits
+    /// and nondeterministic behavior.
+    #[track_caller]
     pub fn current_timestamp() -> u64 {
+        if is_consensus_validation_active() {
+            panic!(
+                "FATAL: current_timestamp() called during consensus validation at {}. \
+                This is a nondeterministic operation that can cause chain splits. \
+                Use block timestamps or deterministic time sources instead.",
+                std::panic::Location::caller()
+            );
+        }
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -60,12 +100,12 @@ pub mod size {
 /// Hash utilities
 pub mod hash {
     use super::*;
-    
+
     /// Convert hash to hex string
     pub fn hash_to_hex(hash: &Hash) -> String {
         hex::encode(hash.as_bytes())
     }
-    
+
     /// Parse hex string to hash
     pub fn hex_to_hash(hex: &str) -> Result<Hash, String> {
         let bytes = hex::decode(hex).map_err(|e| e.to_string())?;
@@ -74,9 +114,25 @@ pub mod hash {
         }
         Ok(Hash::from_slice(&bytes))
     }
-    
+
     /// Generate random hash (for testing)
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if called during consensus validation,
+    /// as using random number generation during consensus can lead to
+    /// nondeterministic behavior and chain splits.
+    #[track_caller]
     pub fn random_hash() -> Hash {
+        use super::time;
+        if time::is_consensus_validation_active() {
+            panic!(
+                "FATAL: random_hash() called during consensus validation at {}. \
+                This is a nondeterministic operation that can cause chain splits. \
+                Use deterministic hash generation instead.",
+                std::panic::Location::caller()
+            );
+        }
         use rand::RngCore;
         let mut rng = rand::rngs::OsRng;
         let mut bytes = [0u8; 32];
@@ -268,3 +324,6 @@ pub mod testing {
         }
     }
 }
+
+#[cfg(test)]
+mod nondeterminism_tests;
