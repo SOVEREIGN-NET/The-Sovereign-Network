@@ -305,6 +305,7 @@ impl DaoHandler {
         create_json_response(response)
     }
 
+    /// Returns the minimum percentage of voting power required for the given proposal type to pass.
     fn proposal_quorum_required(proposal_type: &DaoProposalType) -> u8 {
         match proposal_type {
             DaoProposalType::TreasuryAllocation => 25,
