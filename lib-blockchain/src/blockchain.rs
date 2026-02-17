@@ -1984,20 +1984,20 @@ impl Blockchain {
         crate::types::hash::blake3_hash(&data)
     }
 
-    /// Adjust blockchain difficulty based on block time targets.
+    /// **DEPRECATED:** No-op function for backward compatibility only.
     ///
-    /// This method delegates to the consensus coordinator's DifficultyManager when available,
-    /// falling back to `self.difficulty_config` for backward compatibility.
-    /// The consensus engine owns the difficulty policy per architectural design.
+    /// Difficulty adjustment has been removed as part of the transition to pure BFT consensus
+    /// with deterministic finality (Issue #937). BFT consensus (Tendermint-like) does not use
+    /// Nakamoto-style difficulty adjustment or probabilistic finality.
     ///
-    /// # Fallback Behavior
-    /// - If consensus coordinator is available:
-    ///   - Uses coordinator's `calculate_difficulty_adjustment()` for the calculation
-    ///   - If calculation fails: falls back to `calculate_difficulty_with_config()` using coordinator's config
-    ///   - If getting config fails: returns error without fallback (this indicates a consensus layer problem)
-    /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters directly
-    /// DEPRECATED: Difficulty adjustment removed (Issue #937)
-    /// BFT consensus does not use Nakamoto-style difficulty adjustment
+    /// # Replacement Path
+    /// Block production and finality are now handled exclusively by the BFT consensus engine
+    /// via `self.consensus_coordinator` (see `BlockchainConsensusCoordinator` in
+    /// `lib-blockchain/src/integration/consensus_integration.rs`). The consensus coordinator
+    /// manages validator participation, block proposals, and 2/3+ commit voting for
+    /// irreversible finality.
+    ///
+    /// See the BFT-A epic for architectural details on deterministic finality enforcement.
     #[allow(dead_code)]
     fn adjust_difficulty(&mut self) -> Result<()> {
         // No-op: Difficulty adjustment disabled for BFT consensus
