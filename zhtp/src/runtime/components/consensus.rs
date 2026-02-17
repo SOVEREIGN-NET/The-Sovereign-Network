@@ -378,7 +378,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                         return Err(anyhow::anyhow!(
                             "failed to convert previous_hash to 32-byte array: length {}",
                             actual_len
-                        ));
+                        ).into());
                     }
                 };
                 let prev_hash = lib_blockchain::types::Hash::new(prev_hash_bytes);
