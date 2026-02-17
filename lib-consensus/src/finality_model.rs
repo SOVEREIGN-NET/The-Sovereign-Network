@@ -32,7 +32,7 @@ pub const FINALITY_QUORUM_DENOMINATOR: u64 = 3;
 ///
 /// For n validators: threshold = floor(2n/3) + 1
 pub const fn finality_threshold(n: u64) -> u64 {
-    (2 * n / 3) + 1
+    (n * FINALITY_QUORUM_NUMERATOR + FINALITY_QUORUM_DENOMINATOR - 1) / FINALITY_QUORUM_DENOMINATOR
 }
 
 /// Returns true if `votes` is sufficient for finality given `n` total validators.
@@ -53,6 +53,11 @@ pub fn assert_finality_invariants(votes: u64, n: u64) {
         threshold, 2 * n / 3);
     assert!(threshold <= n,
         "BFT invariant: finality threshold {} must not exceed n={}", threshold, n);
+    assert!(
+        votes >= threshold,
+        "Finality invariant violated: votes {} < threshold {}",
+        votes, threshold
+    );
 }
 
 #[cfg(test)]
