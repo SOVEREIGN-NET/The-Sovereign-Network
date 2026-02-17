@@ -230,10 +230,7 @@ impl ConsensusEngine {
         self.current_round.height += 1;
         self.current_round.round = 0;
         self.current_round.step = ConsensusStep::Propose;
-        self.current_round.start_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        self.current_round.start_time = (self.current_round.height << 32) | (self.current_round.round as u64);
         self.current_round.proposer = None;
         self.current_round.proposals.clear();
         self.current_round.votes.clear();

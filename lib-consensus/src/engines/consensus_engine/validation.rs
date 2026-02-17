@@ -48,23 +48,24 @@ use lib_crypto::PostQuantumSignature;
 /// during consensus execution. Nondeterministic operations like system time
 /// access or random number generation during consensus can lead to chain splits.
 pub(super) mod determinism_guard {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static CONSENSUS_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static CONSENSUS_ACTIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
     /// Mark consensus as active (during critical consensus operations)
     pub fn enter_consensus_scope() {
-        CONSENSUS_ACTIVE.store(true, Ordering::SeqCst);
+        CONSENSUS_ACTIVE_COUNT.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Mark consensus as inactive
     pub fn exit_consensus_scope() {
-        CONSENSUS_ACTIVE.store(false, Ordering::SeqCst);
+        let prev = CONSENSUS_ACTIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
+        debug_assert!(prev > 0, "exit_consensus_scope called more times than enter_consensus_scope");
     }
 
     /// Check if we're currently in a consensus-critical section
     pub fn is_consensus_active() -> bool {
-        CONSENSUS_ACTIVE.load(Ordering::SeqCst)
+        CONSENSUS_ACTIVE_COUNT.load(Ordering::SeqCst) > 0
     }
 
     /// Assert that no nondeterministic operation is occurring during consensus

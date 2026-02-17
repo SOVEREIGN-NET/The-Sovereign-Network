@@ -8,29 +8,30 @@ use crate::block::Block;
 
 /// Time utilities
 pub mod time {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Flag indicating if consensus validation is active
-    /// When true, nondeterministic operations will panic
-    static CONSENSUS_VALIDATION_ACTIVE: AtomicBool = AtomicBool::new(false);
+    /// Counter tracking active consensus validation scopes.
+    /// When non-zero, nondeterministic operations will panic.
+    static CONSENSUS_VALIDATION_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
     /// Mark that consensus validation is active
     /// This should be called when entering consensus-critical paths
     #[inline]
     pub fn enter_consensus_validation() {
-        CONSENSUS_VALIDATION_ACTIVE.store(true, Ordering::SeqCst);
+        CONSENSUS_VALIDATION_ACTIVE.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Mark that consensus validation is inactive
     #[inline]
     pub fn exit_consensus_validation() {
-        CONSENSUS_VALIDATION_ACTIVE.store(false, Ordering::SeqCst);
+        let prev = CONSENSUS_VALIDATION_ACTIVE.fetch_sub(1, Ordering::SeqCst);
+        debug_assert!(prev > 0, "exit_consensus_validation called more times than enter_consensus_validation");
     }
 
     /// Check if consensus validation is currently active
     #[inline]
     pub fn is_consensus_validation_active() -> bool {
-        CONSENSUS_VALIDATION_ACTIVE.load(Ordering::SeqCst)
+        CONSENSUS_VALIDATION_ACTIVE.load(Ordering::SeqCst) > 0
     }
 
     /// Get current UNIX timestamp
