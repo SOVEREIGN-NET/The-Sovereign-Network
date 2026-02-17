@@ -894,12 +894,12 @@ impl ConsensusEngine {
             .collect();
 
         // Enforce churn cap: defer changes that exceed the budget back to next epoch.
-        let removal_slots = removals.len().min(churn_budget);
-        let addition_slots = additions.len().min(churn_budget.saturating_sub(removal_slots));
+        let removals_to_apply = removals.len().min(churn_budget);
+        let additions_to_apply = additions.len().min(churn_budget.saturating_sub(removals_to_apply));
 
         // Changes beyond the budget are deferred to the next epoch.
-        let deferred_removals = removals.split_off(removal_slots);
-        let deferred_additions = additions.split_off(addition_slots);
+        let deferred_removals = removals.split_off(removals_to_apply);
+        let deferred_additions = additions.split_off(additions_to_apply);
 
         let next_epoch = self.next_epoch_start(height);
         for mut entry in deferred_removals.into_iter().chain(deferred_additions.into_iter()) {
