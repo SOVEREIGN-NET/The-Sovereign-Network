@@ -6,6 +6,72 @@
 //! due to validator liveness failures. It monitors validator heartbeat timeouts and
 //! emits `ConsensusStalled` events when quorum becomes impossible.
 //!
+//! # BFT Liveness Model
+//!
+//! ## Liveness vs Safety in BFT Systems
+//!
+//! Byzantine Fault Tolerant consensus provides two fundamental guarantees:
+//!
+//! 1. **Safety** (Always): No two honest validators decide different values for the
+//!    same height. Safety must NEVER be violated, even if liveness is lost.
+//!
+//! 2. **Liveness** (Eventually): If enough validators are responsive and the network
+//!    stabilizes, consensus will eventually make progress. Liveness may be temporarily
+//!    lost but should be recoverable.
+//!
+//! This monitor focuses exclusively on liveness detection. It does NOT and MUST NOT
+//! compromise safety to restore liveness.
+//!
+//! ## The f < n/3 Theorem
+//!
+//! **Theorem**: In a BFT system with n validators, consensus can tolerate at most
+//! f = floor((n-1)/3) Byzantine (arbitrary) faults while maintaining both safety
+//! and liveness.
+//!
+//! **Implication for Quorum**: To guarantee that any two quorums overlap in at least
+//! one honest validator (required for safety), we need quorum size Q >= 2n/3 + 1.
+//!
+//! **Proof Sketch**:
+//! - Total validators: n
+//! - Byzantine validators: f <= floor((n-1)/3)
+//! - Honest validators: n - f >= n - floor((n-1)/3) = ceil(2n/3 + 1/3) >= 2n/3 + 1
+//! - Quorum size: Q = floor(2n/3) + 1
+//! - Any two quorums Q1, Q2: |Q1 ∩ Q2| >= Q1 + Q2 - n >= 2Q - n = 2(2n/3+1) - n = n/3 + 2
+//! - Since f <= floor((n-1)/3) < n/3 + 1, the intersection must contain at least one honest validator
+//!
+//! ## Liveness Failure Conditions
+//!
+//! Liveness is lost when we cannot achieve quorum of 2n/3 + 1:
+//!
+//! - **Condition 1**: More than n/3 validators are unresponsive (crashed or network-partitioned)
+//! - **Condition 2**: Network is asynchronous (message delays exceed timeout bounds)
+//! - **Condition 3**: All proposers in rotation are Byzantine or unresponsive
+//!
+//! This monitor detects **Condition 1** by tracking validator heartbeat liveness.
+//!
+//! ## Stall Threshold Calculation
+//!
+//! Given n validators:
+//! - Quorum requirement: Q = floor(2n/3) + 1
+//! - Maximum tolerable unresponsive: floor(n/3)
+//! - Stall threshold (when quorum becomes impossible): floor(n/3) + 1
+//!
+//! Examples:
+//! - n=4: Q=3, stall when 2+ unresponsive (can't reach 3 with only 2 responsive)
+//! - n=7: Q=5, stall when 3+ unresponsive (can't reach 5 with only 4 responsive)
+//! - n=10: Q=7, stall when 4+ unresponsive (can't reach 7 with only 6 responsive)
+//!
+//! ## Recovery Assumptions
+//!
+//! Liveness can be restored when:
+//! 1. Unresponsive validators recover and resume sending heartbeats
+//! 2. Network partitions heal and message delivery resumes
+//! 3. The number of responsive validators returns to >= 2n/3 + 1
+//!
+//! **No Safety Compromise**: Recovery must NEVER skip consensus steps, ignore vote
+//! requirements, or bypass signature validation to "unstuck" the system. Better to
+//! remain stalled than violate safety.
+//!
 //! # Core Invariants
 //!
 //! ## Invariant 1: Timeouts are Observable Facts
@@ -135,6 +201,12 @@ impl LivenessMonitor {
     /// - New validators default to Responsive state (innocent until proven timed out)
     /// - Removed validators are deleted from state map
     /// - Stall threshold is recalculated: floor(n/3) + 1
+    ///
+    /// # BFT Safety Requirements
+    ///
+    /// For meaningful BFT properties with f >= 1 Byzantine faults, we need n >= 4
+    /// validators (since n = 3f + 1). Smaller validator sets may still operate but
+    /// have reduced fault tolerance.
     pub fn update_validator_set(&mut self, active_validators: &[IdentityId]) {
         let new_set: HashSet<_> = active_validators.iter().cloned().collect();
 
@@ -152,10 +224,35 @@ impl LivenessMonitor {
         self.total_validators = active_validators.len();
         self.stall_threshold = (self.total_validators / 3) + 1;
 
+        // Safety assertion: Verify threshold never exceeds total validators
+        // This would be a logic error that could cause incorrect stall detection
+        debug_assert!(
+            self.stall_threshold <= self.total_validators,
+            "BFT Liveness: stall_threshold {} > total_validators {} (logic error)",
+            self.stall_threshold,
+            self.total_validators
+        );
+
+        // Safety assertion: Verify quorum is achievable with threshold
+        // For BFT: quorum = floor(2n/3) + 1, stall when unable to reach quorum
+        // This means: responsive_needed = quorum, stall_threshold = n - quorum + 1 = n - floor(2n/3)
+        if self.total_validators > 0 {
+            let quorum = (self.total_validators * 2 / 3) + 1;
+            let max_responsive_when_stalled = self.total_validators - self.stall_threshold;
+            debug_assert!(
+                max_responsive_when_stalled < quorum,
+                "BFT Liveness: When stalled, max_responsive {} should be < quorum {} for n={}",
+                max_responsive_when_stalled,
+                quorum,
+                self.total_validators
+            );
+        }
+
         tracing::debug!(
-            "LivenessMonitor: Updated validator set (total: {}, stall_threshold: {})",
+            "LivenessMonitor: Updated validator set (total: {}, stall_threshold: {}, quorum: {})",
             self.total_validators,
-            self.stall_threshold
+            self.stall_threshold,
+            if self.total_validators > 0 { (self.total_validators * 2 / 3) + 1 } else { 0 }
         );
     }
 
@@ -303,11 +400,40 @@ impl LivenessMonitor {
     /// - Timed out: t >= floor(n/3) + 1
     /// - Maximum responsive: n - t <= n - (floor(n/3) + 1) = floor(2n/3) < 2n/3 + 1
     /// - Cannot reach quorum
+    ///
+    /// # BFT Safety Assertion
+    ///
+    /// This function enforces the liveness threshold calculation. The assertion
+    /// verifies that the threshold is correctly set according to BFT requirements.
     pub fn is_stalled(&self) -> bool {
         let timed_out_count = self.validator_states
             .values()
             .filter(|state| **state == TimeoutState::TimedOut)
             .count();
+
+        // Safety assertion: Verify threshold calculation is correct
+        // stall_threshold should be floor(n/3) + 1 for n > 0
+        if self.total_validators > 0 {
+            let expected_threshold = (self.total_validators / 3) + 1;
+            debug_assert_eq!(
+                self.stall_threshold,
+                expected_threshold,
+                "BFT Liveness: stall_threshold {} != expected {} for n={}",
+                self.stall_threshold,
+                expected_threshold,
+                self.total_validators
+            );
+        }
+
+        // Safety assertion: Ensure we never report stall with sentinel threshold
+        if self.stall_threshold == usize::MAX {
+            debug_assert!(
+                self.total_validators == 0,
+                "BFT Liveness: stall_threshold is sentinel (usize::MAX) but total_validators={} (should be 0)",
+                self.total_validators
+            );
+            return false; // Can't be stalled with uninitialized monitor
+        }
 
         timed_out_count >= self.stall_threshold
     }

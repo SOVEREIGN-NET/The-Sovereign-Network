@@ -146,7 +146,20 @@ impl ConsensusEngine {
     ///
     /// **Design**: This enforces locally deterministic validation independent of network state.
     /// Signature verification assumes CONSENSUS-NET-4.2 (network delivers authenticated sender + canonical vote envelope).
+    ///
+    /// **BFT Safety Guarantee**: This function enforces the "Agreement" property by ensuring
+    /// that only votes from valid validators at the correct height/round/step can contribute
+    /// to quorum. Combined with signature verification, this prevents Byzantine validators
+    /// from forging votes or creating false quorums.
     pub(super) async fn validate_remote_vote(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
+        // Safety assertion: Votes must be for future or current height (never past)
+        // Accepting votes for past heights could allow replay attacks
+        debug_assert!(
+            vote.height >= self.current_round.height,
+            "BFT Safety: vote height {} < current height {} (potential replay attack)",
+            vote.height,
+            self.current_round.height
+        );
         // 1. Verify signature
         if !self.verify_vote_signature(vote).await? {
             return Ok(false);
