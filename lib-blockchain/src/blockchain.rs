@@ -1939,19 +1939,30 @@ impl Blockchain {
         crate::types::hash::blake3_hash(&data)
     }
 
-    /// Adjust blockchain difficulty based on block time targets.
+    /// **DEPRECATED:** No-op function for backward compatibility only.
     ///
-    /// This method delegates to the consensus coordinator's DifficultyManager when available,
-    /// falling back to `self.difficulty_config` for backward compatibility.
-    /// The consensus engine owns the difficulty policy per architectural design.
+    /// Difficulty adjustment has been removed as part of the transition to pure BFT consensus
+    /// with deterministic finality (Issue #937). BFT consensus (Tendermint-like) does not use
+    /// Nakamoto-style difficulty adjustment or probabilistic finality.
     ///
-    /// # Fallback Behavior
-    /// - If consensus coordinator is available:
-    ///   - Uses coordinator's `calculate_difficulty_adjustment()` for the calculation
-    ///   - If calculation fails: falls back to `calculate_difficulty_with_config()` using coordinator's config
-    ///   - If getting config fails: returns error without fallback (this indicates a consensus layer problem)
-    /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters directly
+    /// # Replacement Path
+    /// Block production and finality are now handled exclusively by the BFT consensus engine
+    /// via `self.consensus_coordinator` (see `BlockchainConsensusCoordinator` in
+    /// `lib-blockchain/src/integration/consensus_integration.rs`). The consensus coordinator
+    /// manages validator participation, block proposals, and 2/3+ commit voting for
+    /// irreversible finality.
+    ///
+    /// See the BFT-A epic for architectural details on deterministic finality enforcement.
+    #[allow(dead_code)]
     fn adjust_difficulty(&mut self) -> Result<()> {
+        // No-op: Difficulty adjustment disabled for BFT consensus
+        tracing::debug!("adjust_difficulty called but disabled (Issue #937)");
+        Ok(())
+    }
+
+    /// Original implementation - disabled
+    #[allow(dead_code)]
+    fn adjust_difficulty_original(&mut self) -> Result<()> {
         // Get adjustment parameters and calculate difficulty in a single lock acquisition
         // to avoid race conditions between reading config and calculating adjustment
         if let Some(coordinator) = &self.consensus_coordinator {
@@ -4759,27 +4770,27 @@ impl Blockchain {
     // GOVERNANCE PARAMETER UPDATE METHODS
     // ============================================================================
 
-    /// Apply a difficulty parameter update from a passed DAO proposal.
+    /// **DEPRECATED:** No-op method retained for API compatibility only.
     ///
-    /// This method implements the governance flow for updating difficulty parameters:
-    /// 1. Verifies the proposal exists and has passed voting (30% quorum)
-    /// 2. Checks the proposal hasn't already been executed (idempotency guard)
-    /// 3. Extracts and validates the new difficulty parameters
-    /// 4. Updates the blockchain's `difficulty_config`
-    /// 5. Synchronizes changes with the consensus coordinator
-    /// 6. Logs all changes at info level
+    /// This method was previously used to apply difficulty parameter updates from
+    /// DAO proposals. With the removal of difficulty governance in Issue #937
+    /// (transition to pure BFT consensus), this method now does nothing.
     ///
-    /// The method is idempotent - calling it multiple times with the same
-    /// proposal_id will succeed but only apply changes once.
+    /// # Behavior
+    ///
+    /// - Always returns `Ok(())`
+    /// - Does not validate the proposal
+    /// - Does not check voting results or proposal type
+    /// - Does not modify blockchain state (including `executed_dao_proposals`)
+    /// - Only logs a warning message for diagnostic purposes
     ///
     /// # Arguments
     ///
-    /// * `proposal_id` - The hash ID of the passed difficulty parameter update proposal
+    /// * `proposal_id` - Ignored. Provided for API compatibility only.
     ///
     /// # Returns
     ///
-    /// * `Ok(())` on successful update (or if already executed)
-    /// * `Err` if proposal doesn't exist, hasn't passed, or parameters are invalid
+    /// Always returns `Ok(())`. This method cannot fail.
     ///
     /// # Example
     ///
@@ -4787,41 +4798,31 @@ impl Blockchain {
     /// use lib_blockchain::{Blockchain, Hash};
     ///
     /// let mut blockchain = Blockchain::new(genesis_block, coordinator)?;
+    /// let proposal_id: Hash = /* any hash */;
     ///
-    /// // After a DifficultyParameterUpdate proposal has passed voting...
-    /// let proposal_id: Hash = /* passed proposal hash */;
-    ///
-    /// // Apply the governance update
-    /// match blockchain.apply_difficulty_parameter_update(proposal_id) {
-    ///     Ok(()) => {
-    ///         println!("Difficulty parameters updated successfully");
-    ///         let config = blockchain.get_difficulty_config();
-    ///         println!("New target timespan: {}", config.target_timespan);
-    ///     }
-    ///     Err(e) => {
-    ///         eprintln!("Failed to apply update: {}", e);
-    ///     }
-    /// }
-    ///
-    /// // Idempotent: calling again is safe
-    /// blockchain.apply_difficulty_parameter_update(proposal_id)?; // No-op, already applied
+    /// // This call does nothing but log a warning
+    /// blockchain.apply_difficulty_parameter_update(proposal_id)?;
+    /// // Always succeeds with Ok(())
     /// ```
     ///
-    /// # Governance Flow
+    /// # Migration Note
     ///
-    /// This method is typically called after:
-    /// 1. A `DaoProposalType::DifficultyParameterUpdate` proposal is created
-    /// 2. The 7-day voting period completes
-    /// 3. The proposal achieves 30% quorum with majority approval
-    /// 4. The timelock period expires (if any)
-    ///
-    /// # Errors
-    ///
-    /// - `InvalidProposal`: Proposal not found
-    /// - `InvalidProposal`: Proposal has not passed voting
-    /// - `InvalidProposal`: Wrong proposal type
-    /// - `ParameterValidationError`: New parameters fail validation
+    /// Difficulty governance has been removed. Consensus is now purely BFT-based.
+    /// This method exists only to maintain API compatibility with legacy code.
+    /// Consider removing calls to this method from your application.
+    #[deprecated(since = "2.0.0", note = "Difficulty governance removed - BFT consensus only")]
     pub fn apply_difficulty_parameter_update(&mut self, proposal_id: Hash) -> Result<()> {
+        // Deprecated no-op: keep for API compatibility, but do not modify DAO state.
+        tracing::warn!(
+            "apply_difficulty_parameter_update called but disabled (Issue #937) for proposal {:?}",
+            proposal_id
+        );
+        Ok(())
+    }
+
+    /// Original implementation - disabled
+    #[allow(dead_code)]
+    fn apply_difficulty_parameter_update_original(&mut self, proposal_id: Hash) -> Result<()> {
         // 0. Check if already executed (prevent double-execution)
         if self.executed_dao_proposals.contains(&proposal_id) {
             debug!(
