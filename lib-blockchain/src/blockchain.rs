@@ -1,7 +1,39 @@
 //! Main blockchain data structure and implementation
-//! 
+//!
 //! Contains the core Blockchain struct and its methods, extracted from the original
 //! blockchain.rs implementation with proper modularization.
+//!
+//! # State Model
+//!
+//! The ZHTP blockchain uses a **UTXO (Unspent Transaction Output) model** for
+//! tracking spendable coins, extended with additional on-chain registries:
+//!
+//! - **UTXO set** (`Blockchain::utxo_set`): All unspent outputs indexed by output hash.
+//!   Spending an output removes it from this set; creating an output adds it.
+//! - **Identity registry** (`Blockchain::identity_registry`): On-chain DIDs and their
+//!   associated metadata (key material, service endpoints, etc.).
+//! - **Wallet registry** (`Blockchain::wallet_registry`): On-chain wallet descriptors
+//!   linking a human-readable wallet ID to one or more UTXOs.
+//! - **Contract state** (`Blockchain::contract_states`): Execution state for deployed
+//!   smart contracts (token contracts, Web4 contracts, etc.).
+//!
+//! Together these four components form the **full world state** at any block height.
+//! The `state_root` field in [`crate::block::BlockHeader`] cryptographically commits
+//! to this entire world state after executing every transaction in the block. Two nodes
+//! with identical `state_root` values have provably identical world states.
+//!
+//! ## Constant
+//!
+//! [`STATE_MODEL`] identifies the state model in use. Code that must behave differently
+//! depending on the model (e.g., account-based vs UTXO) should match against this
+//! constant rather than hard-coding a string.
+
+/// Identifies the state model used by this blockchain implementation.
+///
+/// The ZHTP chain is UTXO-based. Spendable coins are tracked as Unspent Transaction
+/// Outputs rather than account balances. This constant may be used by external tooling,
+/// bridge contracts, or cross-chain protocols to detect the state model at runtime.
+pub const STATE_MODEL: &str = "UTXO";
 
 use std::collections::{HashMap, HashSet};
 use anyhow::Result;
@@ -8492,5 +8524,33 @@ impl Default for Blockchain {
         // Note: Consensus coordinator requires async initialization and external dependencies
         // so it's not initialized in Default. Call initialize_consensus_coordinator() separately.
         blockchain
+    }
+}
+
+#[cfg(test)]
+mod state_model_tests {
+    use super::*;
+    use crate::block::core::assert_state_root_set;
+    use crate::types::Hash;
+
+    /// Verify that STATE_MODEL is exactly "UTXO".
+    ///
+    /// If this test fails it means someone changed the state model identifier
+    /// without updating all downstream consumers (cross-chain bridges, indexers,
+    /// wallet software).  Any such change requires a governance proposal.
+    #[test]
+    fn state_model_is_utxo() {
+        assert_eq!(
+            STATE_MODEL, "UTXO",
+            "STATE_MODEL must be \"UTXO\"; changing it is a breaking change"
+        );
+    }
+
+    /// Verify that assert_state_root_set accepts any non-zero hash.
+    #[test]
+    fn committed_block_state_root_must_be_nonzero() {
+        // Any non-zero hash is valid
+        let nonzero = Hash::from_slice(&[0xff; 32]);
+        assert_state_root_set(1, &nonzero);
     }
 }

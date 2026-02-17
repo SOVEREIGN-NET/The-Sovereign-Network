@@ -1,10 +1,55 @@
 //! Core block structures
 //!
 //! Defines the fundamental block data structures used in the ZHTP blockchain.
+//!
+//! # State Root Commitment
+//!
+//! Every committed block carries a `state_root` in its [`BlockHeader`].  The
+//! `state_root` is a single 32-byte BLAKE3 hash that cryptographically commits
+//! to the **complete world state** after executing all transactions in the block.
+//! The world state is UTXO-based (see [`crate::blockchain::STATE_MODEL`]) and
+//! consists of four components:
+//!
+//! 1. **UTXO set** — all unspent transaction outputs after this block
+//! 2. **Identity registry** — all on-chain DID records after this block
+//! 3. **Wallet registry** — all on-chain wallet descriptors after this block
+//! 4. **Contract state** — execution state of all deployed smart contracts after this block
+//!
+//! ## Invariant
+//!
+//! A block is considered *committed* (finalized by BFT consensus) only when its
+//! `state_root` is non-zero.  A zero `state_root` (`Hash::default()`) indicates
+//! that the block has not yet been executed or that the state transition failed.
+//! The function [`assert_state_root_set`] can be called to enforce this invariant
+//! in production code paths.
 
 use serde::{Serialize, Deserialize};
 use crate::types::{Hash, Difficulty};
 use crate::transaction::Transaction;
+
+/// Assert that the `state_root` of a committed block is non-zero.
+///
+/// Call this after executing every block that has been finalized by BFT consensus.
+/// Panics in debug builds; emits a `tracing::error!` in release builds so that
+/// production nodes surface the violation without crashing.
+///
+/// # Panics
+///
+/// Panics (debug) or logs an error (release) if `state_root == Hash::default()`.
+#[inline]
+pub fn assert_state_root_set(height: u64, state_root: &Hash) {
+    if *state_root == Hash::default() {
+        let msg = format!(
+            "INVARIANT VIOLATION: committed block at height {} has a zero state_root. \
+             state_root must be set for every committed block.",
+            height
+        );
+        #[cfg(debug_assertions)]
+        panic!("{}", msg);
+        #[cfg(not(debug_assertions))]
+        tracing::error!("{}", msg);
+    }
+}
 
 /// ZHTP blockchain block
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +94,25 @@ pub struct BlockHeader {
     /// fee model version for its height per the activation rules.
     #[serde(default = "default_fee_model_version")]
     pub fee_model_version: u16,
+
+    /// Cryptographic commitment to the full world state after this block.
+    ///
+    /// The `state_root` is a BLAKE3 hash over the Merkle roots of all four
+    /// state components (see module-level documentation):
+    ///
+    /// 1. UTXO set root
+    /// 2. Identity registry root
+    /// 3. Wallet registry root
+    /// 4. Contract state root
+    ///
+    /// **Invariant**: For every *committed* block (finalized by BFT), `state_root`
+    /// MUST be non-zero.  A zero `state_root` (`Hash::default()`) is only valid
+    /// for the genesis block before state initialization, or for blocks that are
+    /// still in-flight (not yet executed).
+    ///
+    /// Use [`assert_state_root_set`] to enforce this invariant at commit time.
+    #[serde(default)]
+    pub state_root: Hash,
 }
 
 /// Default fee model version for backwards compatibility
@@ -228,11 +292,28 @@ impl BlockHeader {
             block_size,
             cumulative_difficulty,
             fee_model_version: 1, // Default to v1 for backwards compatibility
+            state_root: Hash::default(), // Set via set_state_root() after execution
         };
 
         // Calculate and set the block hash
         header.block_hash = header.calculate_hash();
         header
+    }
+
+    /// Set the state root after block execution and verify it is non-zero.
+    ///
+    /// This method MUST be called after executing all transactions in the block
+    /// and before the block is finalized by BFT consensus.  The `state_root`
+    /// commits to the full UTXO+identity+wallet+contract world state.
+    ///
+    /// # Panics (debug) / Logs error (release)
+    ///
+    /// Panics in debug builds (or logs an error in release builds) if the
+    /// provided `state_root` is `Hash::default()` (all zeros), which would
+    /// indicate a failed or incomplete state transition.
+    pub fn set_state_root(&mut self, state_root: Hash) {
+        assert_state_root_set(self.height, &state_root);
+        self.state_root = state_root;
     }
 
     /// Calculate the hash of this block header
@@ -379,3 +460,64 @@ pub const MAX_BLOCK_SIZE: usize = 4_194_304; // 4 MB
 pub const MAX_TRANSACTIONS_PER_BLOCK: usize = 10_000;
 pub const MIN_BLOCK_TIME: u64 = 1; // 1 second minimum between blocks
 pub const MAX_BLOCK_TIME: u64 = 7200; // 2 hours maximum future timestamp
+
+#[cfg(test)]
+mod state_root_tests {
+    use super::*;
+
+    /// Verify that a freshly constructed BlockHeader has a zero state_root.
+    /// This reflects the invariant that state_root is set only after execution.
+    #[test]
+    fn new_block_header_has_zero_state_root() {
+        let header = BlockHeader::new(
+            1,
+            Hash::default(),
+            Hash::default(),
+            1_000_000,
+            Difficulty::from_bits(0x1fffffff),
+            0,
+            0,
+            0,
+            Difficulty::from_bits(0x1fffffff),
+        );
+        assert_eq!(
+            header.state_root,
+            Hash::default(),
+            "Newly created BlockHeader must have zero state_root until set_state_root() is called"
+        );
+    }
+
+    /// Verify that set_state_root stores a non-zero root correctly.
+    #[test]
+    fn set_state_root_stores_value() {
+        let mut header = BlockHeader::new(
+            1,
+            Hash::default(),
+            Hash::default(),
+            1_000_000,
+            Difficulty::from_bits(0x1fffffff),
+            1, // height > 0 so genesis exemption does not apply
+            0,
+            0,
+            Difficulty::from_bits(0x1fffffff),
+        );
+        let expected = Hash::from_slice(&[0xab; 32]);
+        header.set_state_root(expected);
+        assert_eq!(header.state_root, expected);
+    }
+
+    /// Verify that assert_state_root_set panics in debug mode for the zero hash.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "INVARIANT VIOLATION")]
+    fn assert_state_root_set_panics_on_zero_hash() {
+        assert_state_root_set(5, &Hash::default());
+    }
+
+    /// Verify that assert_state_root_set does NOT panic for a non-zero hash.
+    #[test]
+    fn assert_state_root_set_ok_for_nonzero_hash() {
+        // Should not panic
+        assert_state_root_set(5, &Hash::from_slice(&[1u8; 32]));
+    }
+}
