@@ -359,9 +359,20 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                 let block_hash = lib_blockchain::types::Hash::new(mined_block.hash().as_array());
                 let proposer_id = proposal.proposer.to_string();
                 // Convert lib_crypto::Hash to lib_blockchain::Hash
-                let prev_hash_bytes: [u8; 32] = proposal.previous_hash.as_bytes()
-                    .try_into()
-                    .expect("lib_crypto::Hash should be 32 bytes");
+                let prev_hash_bytes: [u8; 32] = match proposal.previous_hash.as_bytes().try_into() {
+                    Ok(bytes) => bytes,
+                    Err(_) => {
+                        let actual_len = proposal.previous_hash.as_bytes().len();
+                        tracing::error!(
+                            "Unexpected previous_hash length: expected 32 bytes, got {}",
+                            actual_len
+                        );
+                        return Err(anyhow::anyhow!(
+                            "failed to convert previous_hash to 32-byte array: length {}",
+                            actual_len
+                        ));
+                    }
+                };
                 let prev_hash = lib_blockchain::types::Hash::new(prev_hash_bytes);
 
                 blockchain.store_consensus_checkpoint(
@@ -369,7 +380,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                     block_hash,
                     proposer_id,
                     prev_hash,
-                    1, // Will be updated to actual validator count from consensus
+                    0, // 0 = unknown; replace with actual count from consensus when available
                 );
                 info!("📍 Stored consensus checkpoint for height {}", proposal.height);
 

@@ -288,7 +288,7 @@ pub struct UbiMintEntry {
 pub struct ConsensusCheckpoint {
     /// Block height
     pub height: u64,
-    /// Block hash (proposal ID from consensus)
+    /// Hash of the committed block stored as a consensus checkpoint
     pub block_hash: Hash,
     /// Proposer identity
     pub proposer: String,

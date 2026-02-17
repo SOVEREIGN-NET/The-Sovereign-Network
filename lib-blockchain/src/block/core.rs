@@ -26,6 +26,9 @@ pub struct BlockHeader {
     pub merkle_root: Hash,
     /// Block creation timestamp
     pub timestamp: u64,
+    // Retained for API backward compatibility but not used in BFT consensus.
+    // These PoW fields are ignored in BFT consensus (Issue #935, #947).
+    // When full PoW removal is complete (Issue #947), these will be removed.
     /// Current difficulty target
     pub difficulty: Difficulty,
     /// Mining nonce for proof-of-work

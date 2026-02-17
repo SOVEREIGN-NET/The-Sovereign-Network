@@ -496,7 +496,7 @@ impl BlockchainSyncManager {
     /// * `Err(_)` - Verification failed due to error
     pub fn verify_with_checkpoints(
         checkpoints: &[lib_blockchain::ConsensusCheckpoint],
-        blockchain_data: &[u8],
+        _blockchain_data: &[u8], // Accepted for API compatibility; block-level verification is not yet implemented here
     ) -> Result<bool> {
         if checkpoints.is_empty() {
             debug!("No checkpoints provided for verification - skipping checkpoint validation");
