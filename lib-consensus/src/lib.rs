@@ -20,6 +20,7 @@ pub mod mining;
 pub mod network;
 pub mod proofs;
 pub mod rewards;
+pub mod slashing;
 pub mod testing;
 pub mod types;
 pub mod validators;
@@ -38,6 +39,7 @@ pub use testing::NoOpBroadcaster;
 pub use types::*;
 pub use validators::{Validator, ValidatorManager};
 pub use evidence::{Evidence, EvidenceStore, EvidenceRecord, SlashingParams, IsolationAction, isolation_action};
+pub use slashing::{SlashableOffense, ALL_OFFENSES, SLASHABLE_OFFENSE_COUNT};
 
 #[cfg(feature = "dao")]
 pub use dao::*;
