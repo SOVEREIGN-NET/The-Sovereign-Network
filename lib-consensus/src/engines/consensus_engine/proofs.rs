@@ -222,18 +222,6 @@ impl ConsensusEngine {
                     timestamp,
                 })
             }
-            ConsensusType::Hybrid => {
-                let stake_proof = self.create_stake_proof().await?;
-                let storage_proof = self.create_storage_proof().await?;
-                Ok(ConsensusProof {
-                    consensus_type,
-                    stake_proof: Some(stake_proof),
-                    storage_proof: Some(storage_proof),
-                    work_proof: None,
-                    zk_did_proof: None,
-                    timestamp,
-                })
-            }
             ConsensusType::ByzantineFaultTolerance => {
                 // BFT uses all proof types
                 let stake_proof = self.create_stake_proof().await?;
