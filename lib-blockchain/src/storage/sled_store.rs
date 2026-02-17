@@ -12,7 +12,8 @@ use sled::{Db, Tree, Batch};
 use crate::block::Block;
 use super::{
     keys, AccountState, Address, Amount, BlockchainStore, BlockHash, BlockHeight,
-    IdentityConsensus, IdentityMetadata, OutPoint, StorageError, StorageResult, TokenId, Utxo,
+    IdentityConsensus, IdentityMetadata, OutPoint, StorageError, StorageResult, TokenId,
+    TokenStateSnapshot, Utxo,
 };
 use crate::contracts::TokenContract;
 
@@ -452,6 +453,30 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
+    fn get_token_state_snapshot(&self) -> StorageResult<Option<TokenStateSnapshot>> {
+        match self.meta.get(keys::meta::TOKEN_STATE_SNAPSHOT) {
+            Ok(Some(bytes)) => {
+                let snapshot: TokenStateSnapshot = Self::deserialize(&bytes)?;
+                Ok(Some(snapshot))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_token_state_snapshot(&self, snapshot: &TokenStateSnapshot) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let value = Self::serialize(snapshot)?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.meta
+                .insert(keys::meta::TOKEN_STATE_SNAPSHOT, value);
+        }
+
+        Ok(())
+    }
+
     // =========================================================================
     // Account Operations
     // =========================================================================
@@ -754,6 +779,10 @@ impl BlockchainStore for SledStore {
 
         self.identity_by_owner
             .apply_batch(batch.identity_by_owner)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.meta
+            .apply_batch(batch.meta)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
         // Update latest height

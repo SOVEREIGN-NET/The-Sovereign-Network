@@ -305,6 +305,7 @@ impl DaoHandler {
         create_json_response(response)
     }
 
+    /// Returns the minimum percentage of voting power required for the given proposal type to pass.
     fn proposal_quorum_required(proposal_type: &DaoProposalType) -> u8 {
         match proposal_type {
             DaoProposalType::TreasuryAllocation => 25,
@@ -316,6 +317,8 @@ impl DaoHandler {
         }
     }
 
+    /// Converts a `DaoProposalType` enum value to its canonical string representation
+    /// used for storage in blockchain transactions.
     fn proposal_type_to_string(proposal_type: &DaoProposalType) -> String {
         match proposal_type {
             DaoProposalType::UbiDistribution => "ubi_distribution".to_string(),
@@ -334,6 +337,10 @@ impl DaoHandler {
         }
     }
 
+    /// Deterministically generates a proposal ID by concatenating and hashing the provided byte slices.
+    ///
+    /// All slices in `parts` are appended in order into a single byte buffer, which is then
+    /// hashed using BLAKE3 to produce a stable `BcHash` identifier for the proposal.
     fn proposal_id_from_parts(parts: &[&[u8]]) -> BcHash {
         let mut bytes = Vec::new();
         for p in parts {

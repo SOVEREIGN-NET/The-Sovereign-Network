@@ -40,6 +40,7 @@
 pub mod keys;
 pub mod sled_store;
 
+use std::collections::HashMap;
 use std::fmt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -264,6 +265,18 @@ pub struct Utxo {
     pub created_at_height: u64,
     /// Optional lock script or conditions
     pub script: Option<Vec<u8>>,
+}
+
+/// Consensus snapshot for token subsystem state.
+///
+/// This is persisted atomically within the block transaction boundary and loaded
+/// on restart to guarantee deterministic token state reconstruction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TokenStateSnapshot {
+    /// Full token contract state map (metadata + balances + supply).
+    pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
+    /// Replay-protection nonces keyed by (token_id, sender_address).
+    pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
 }
 
 impl Utxo {
@@ -926,6 +939,15 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// # Requirements
     /// - MUST be called within begin_block/commit_block
     fn put_token_contract(&self, c: &crate::contracts::TokenContract) -> StorageResult<()>;
+
+    /// Get the latest persisted token subsystem snapshot.
+    fn get_token_state_snapshot(&self) -> StorageResult<Option<TokenStateSnapshot>>;
+
+    /// Persist the full token subsystem snapshot.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_token_state_snapshot(&self, snapshot: &TokenStateSnapshot) -> StorageResult<()>;
 
     // =========================================================================
     // Token Balances (Hot Path)
