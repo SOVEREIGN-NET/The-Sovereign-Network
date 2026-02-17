@@ -239,8 +239,7 @@ pub const ADMISSION_SOURCE_ONCHAIN_GOVERNANCE: &str = "on-chain:governance";
 /// - Direct registration from a config file at height > 0 is explicitly rejected.
 ///
 /// The [`Blockchain::register_validator`] function enforces this boundary and
-/// panics (in debug builds) / returns an error (in release builds) if an
-/// off-chain source is presented at post-genesis heights.
+/// returns an error if an off-chain source is presented at post-genesis heights.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorInfo {
     /// Validator identity ID
@@ -1035,12 +1034,14 @@ impl Blockchain {
                                 last_activity: height,
                                 blocks_validated: 0,
                                 slash_count: 0,
-                                // Validators replayed from on-chain transactions are on-chain admissions.
-                                // Genesis validators (height == 0) may have been bootstrapped from config.
+                                // Validators replayed from store are tagged by their original admission source.
+                                // Genesis validators (height == 0) were bootstrapped from config (off-chain).
+                                // Validators replayed at height > 0 without a governance_proposal_id are
+                                // treated as migrated off-chain entries rather than on-chain governance admissions.
                                 admission_source: if height == 0 {
                                     ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string()
                                 } else {
-                                    ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string()
+                                    "off-chain:migrated".to_string()
                                 },
                                 governance_proposal_id: None,
                             };
