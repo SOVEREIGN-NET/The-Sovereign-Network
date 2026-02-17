@@ -23,6 +23,7 @@ pub mod rewards;
 pub mod testing;
 pub mod types;
 pub mod validators;
+pub mod fault_model;
 
 // Re-export commonly used types
 pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
