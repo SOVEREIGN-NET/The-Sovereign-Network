@@ -78,13 +78,8 @@ impl SyncStrategy for FullNodeStrategy {
         let sync_from = match from_height {
             Some(h) => h,
             None => {
-                if committed > local {
-                    // We are behind the network's committed tip – sync from our local tip.
-                    local
-                } else {
-                    // Already at or ahead of committed tip; use local tip (no-op or small delta).
-                    local
-                }
+                // Request blocks after our local tip; committed height is used only in should_sync()
+                local
             }
         };
 
@@ -119,10 +114,11 @@ impl SyncStrategy for FullNodeStrategy {
     }
 
     async fn should_sync(&self) -> bool {
-        // Sync whenever the peer's committed BFT height is ahead of our local tip.
+        // Sync whenever the peer's committed BFT height is ahead of our local tip,
+        // or on bootstrap when both are 0.
         let committed = *self.highest_committed_bft_height.read().await;
         let local = *self.current_height.read().await;
-        committed > local
+        committed > local || (committed == 0 && local == 0)
     }
 
     async fn estimate_sync_size(&self) -> usize {
