@@ -363,6 +363,11 @@ impl GenesisFundingService {
                 last_activity: now,
                 blocks_validated: 0,
                 slash_count: 0,
+                // Genesis validators are bootstrapped from a config file (off-chain path).
+                // This is the ONLY place where ADMISSION_SOURCE_OFFCHAIN_GENESIS is valid;
+                // the blockchain will enforce that this source is only accepted at height 0.
+                admission_source: lib_blockchain::blockchain::ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string(),
+                governance_proposal_id: None,
             };
             
             match blockchain.register_validator(validator_info) {
