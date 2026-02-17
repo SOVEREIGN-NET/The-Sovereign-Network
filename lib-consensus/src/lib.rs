@@ -39,9 +39,16 @@ pub use types::*;
 pub use validators::{Validator, ValidatorManager};
 pub use evidence::{Evidence, EvidenceStore, EvidenceRecord, SlashingParams, IsolationAction, isolation_action};
 pub use slashing::{
-    DOUBLE_SIGN_SLASH_PERCENT, LIVENESS_SLASH_PERCENT, JAIL_DURATION_BLOCKS,
-    SAFETY_OFFENSE_ALWAYS_PERMANENT, REMOVAL_SLASH_COUNT,
-    SlashSeverity, SlashPolicyError, check_unjail_eligibility, calculate_slash_amount, jail_end_block,
+    DOUBLE_SIGN_SLASH_PERCENT,
+    LIVENESS_SLASH_PERCENT,
+    JAIL_DURATION_BLOCKS,
+    SAFETY_OFFENSE_ALWAYS_PERMANENT,
+    REMOVAL_SLASH_COUNT,
+    SlashSeverity,
+    SlashPolicyError,
+    check_unjail_eligibility,
+    calculate_slash_amount,
+    jail_end_block,
 };
 
 #[cfg(feature = "dao")]

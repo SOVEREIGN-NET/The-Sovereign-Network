@@ -187,12 +187,12 @@ impl SlashSeverity {
 
     /// Return the jail duration in blocks for this severity.
     ///
-    /// Safety violations result in permanent ban (represented as `u64::MAX`).
+    /// Safety violations result in permanent ban (`None` means never released).
     /// Liveness violations use `JAIL_DURATION_BLOCKS`.
-    pub const fn jail_duration_blocks(self) -> u64 {
+    pub const fn jail_duration_blocks(self) -> Option<u64> {
         match self {
-            Self::Safety => u64::MAX, // Permanent: never released
-            Self::Liveness => JAIL_DURATION_BLOCKS,
+            Self::Safety => None, // Permanent: never released
+            Self::Liveness => Some(JAIL_DURATION_BLOCKS),
         }
     }
 
@@ -319,13 +319,11 @@ pub fn check_unjail_eligibility(
 /// # Returns
 ///
 /// The amount to slash (always <= stake).
-pub fn calculate_slash_amount(stake: u64, slash_percent: u8) -> u64 {
-    assert!(
-        slash_percent >= 1 && slash_percent <= 100,
-        "slash_percent must be in range 1..=100, got {}",
-        slash_percent
-    );
-    stake.saturating_mul(slash_percent as u64) / 100
+pub fn calculate_slash_amount(stake: u64, slash_percent: u8) -> Result<u64, SlashPolicyError> {
+    if slash_percent < 1 || slash_percent > 100 {
+        return Err(SlashPolicyError::InvalidSlashPercent { got: slash_percent });
+    }
+    Ok(stake.saturating_mul(slash_percent as u64) / 100)
 }
 
 /// Calculate the block height at which a jailed validator becomes eligible to unjail.
@@ -337,12 +335,12 @@ pub fn calculate_slash_amount(stake: u64, slash_percent: u8) -> u64 {
 ///
 /// # Returns
 ///
-/// For liveness violations: `jailed_at_block + JAIL_DURATION_BLOCKS`
-/// For safety violations: `u64::MAX` (never eligible)
-pub fn jail_end_block(jailed_at_block: u64, severity: SlashSeverity) -> u64 {
+/// For liveness violations: `Some(jailed_at_block + JAIL_DURATION_BLOCKS)`
+/// For safety violations: `None` (permanent ban, never eligible)
+pub fn jail_end_block(jailed_at_block: u64, severity: SlashSeverity) -> Option<u64> {
     match severity {
-        SlashSeverity::Liveness => jailed_at_block.saturating_add(JAIL_DURATION_BLOCKS),
-        SlashSeverity::Safety => u64::MAX, // Permanent ban: never eligible
+        SlashSeverity::Liveness => Some(jailed_at_block.saturating_add(JAIL_DURATION_BLOCKS)),
+        SlashSeverity::Safety => None, // Permanent ban: never eligible
     }
 }
 
@@ -368,7 +366,7 @@ mod tests {
     fn test_safety_severity_is_permanent_ban() {
         let s = SlashSeverity::Safety;
         assert_eq!(s.slash_percent(), 100);
-        assert_eq!(s.jail_duration_blocks(), u64::MAX);
+        assert_eq!(s.jail_duration_blocks(), None);
         assert!(s.is_permanent_ban());
         assert!(!s.can_unjail());
     }
@@ -377,7 +375,7 @@ mod tests {
     fn test_liveness_severity_is_temporary() {
         let s = SlashSeverity::Liveness;
         assert_eq!(s.slash_percent(), LIVENESS_SLASH_PERCENT);
-        assert_eq!(s.jail_duration_blocks(), JAIL_DURATION_BLOCKS);
+        assert_eq!(s.jail_duration_blocks(), Some(JAIL_DURATION_BLOCKS));
         assert!(!s.is_permanent_ban());
         assert!(s.can_unjail());
     }
@@ -414,33 +412,33 @@ mod tests {
     #[test]
     fn test_calculate_slash_amount_full() {
         // Full slash: 100% of 1000 = 1000
-        assert_eq!(calculate_slash_amount(1000, 100), 1000);
+        assert_eq!(calculate_slash_amount(1000, 100), Ok(1000));
     }
 
     #[test]
     fn test_calculate_slash_amount_one_percent() {
         // 1% of 10000 = 100
-        assert_eq!(calculate_slash_amount(10_000, 1), 100);
+        assert_eq!(calculate_slash_amount(10_000, 1), Ok(100));
     }
 
     #[test]
     fn test_calculate_slash_amount_zero_stake() {
         // 0 stake, nothing to slash
-        assert_eq!(calculate_slash_amount(0, 100), 0);
+        assert_eq!(calculate_slash_amount(0, 100), Ok(0));
     }
 
     #[test]
     fn test_jail_end_block_liveness() {
         let jailed_at = 500u64;
         let end = jail_end_block(jailed_at, SlashSeverity::Liveness);
-        assert_eq!(end, jailed_at + JAIL_DURATION_BLOCKS);
+        assert_eq!(end, Some(jailed_at + JAIL_DURATION_BLOCKS));
     }
 
     #[test]
-    fn test_jail_end_block_safety_is_max() {
+    fn test_jail_end_block_safety_is_permanent() {
         let jailed_at = 500u64;
         let end = jail_end_block(jailed_at, SlashSeverity::Safety);
-        assert_eq!(end, u64::MAX);
+        assert_eq!(end, None);
     }
 
     #[test]
