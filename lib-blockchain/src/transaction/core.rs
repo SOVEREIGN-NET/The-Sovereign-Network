@@ -613,9 +613,11 @@ pub struct ValidatorTransactionData {
     pub consensus_key: Vec<u8>,
     /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT
     /// node ID derivation, peer authentication).
+    #[serde(default)]
     pub networking_key: Vec<u8>,
     /// Public key of the rewards wallet that receives block rewards and fee
     /// distributions.
+    #[serde(default)]
     pub rewards_key: Vec<u8>,
     /// Network address for validator communication (host:port)
     pub network_address: String,
