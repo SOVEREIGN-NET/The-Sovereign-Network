@@ -57,7 +57,7 @@
 //!   transaction gossip messages per round per peer would overwhelm the mempool
 //!   and give an attacker a cheap way to consume CPU and network bandwidth.
 //!
-//! - `MAX_GOSSIP_FANOUT = 3`:
+//! - `GOSSIP_FANOUT = 3`:
 //!   Theoretical minimum to achieve rapid epidemic propagation while keeping the
 //!   per-message amplification factor at 3× (manageable even at large network
 //!   sizes).  Increasing this value increases resilience but also bandwidth cost.
@@ -110,7 +110,7 @@ pub const MAX_BLOCK_SIZE_BYTES: usize = 1024 * 1024; // 1 MiB
 /// # Invariant
 ///
 /// A "round" is delimited by consecutive `NewBlock` messages (or by a fixed
-/// wall-clock window of `GOSSIP_ROUND_INTERVAL_MS * GOSSIP_ROUNDS_PER_EPOCH`
+/// wall-clock window based on `GOSSIP_ROUND_INTERVAL_MS`
 /// when no blocks arrive).  Any peer that sends more than
 /// `MAX_TX_GOSSIP_PER_ROUND` `NewTransaction` messages in a single round MUST
 /// have the excess messages dropped and its reputation penalized.
@@ -191,9 +191,11 @@ pub fn assert_gossip_rate_limit(
     peer_id_prefix: &[u8],
 ) -> Result<(), String> {
     if count > MAX_MESSAGES_PER_PEER_PER_SEC {
+        let display_len = peer_id_prefix.len().min(8);
+        let display_prefix = &peer_id_prefix[..display_len];
         return Err(format!(
             "RATE LIMIT EXCEEDED: peer {} sent {} messages/s (max {})",
-            hex::encode(peer_id_prefix),
+            hex::encode(display_prefix),
             count,
             MAX_MESSAGES_PER_PEER_PER_SEC,
         ));
