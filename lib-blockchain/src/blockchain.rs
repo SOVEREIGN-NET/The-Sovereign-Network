@@ -1588,6 +1588,10 @@ impl Blockchain {
     }
 
     /// Persist full token subsystem snapshot within the active block transaction.
+    ///
+    /// This must be called only within a `begin_block`/`commit_block` transaction
+    /// boundary so that the token state snapshot is persisted atomically with the
+    /// rest of the block's state changes.
     fn persist_token_state_snapshot(&self) -> Result<()> {
         if let Some(ref store) = self.store {
             let snapshot = crate::storage::TokenStateSnapshot {
