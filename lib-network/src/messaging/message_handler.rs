@@ -889,9 +889,13 @@ impl MeshMessageHandler {
         height: u64,
         timestamp: u64,
     ) -> Result<()> {
-        info!("📥 New block proposal from network: height {} from {:?} ({} bytes)",
-              height, hex::encode(&sender.key_id[0..4]), block.len());
-        info!("   Block will be submitted as proposal to BFT consensus (Issue #938: proposal-only)");
+        info!(
+            block_height = height,
+            peer_id_prefix = %hex::encode(&sender.key_id[0..4]),
+            bytes = block.len(),
+            proposal_only = true,
+            "New block proposal received from network"
+        );
         self.blockchain_event_receiver
             .on_block_received(block, height, timestamp, sender.key_id.to_vec())
             .await

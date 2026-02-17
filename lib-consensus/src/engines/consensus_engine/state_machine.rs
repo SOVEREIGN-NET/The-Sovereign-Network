@@ -1,5 +1,6 @@
 use super::*;
 use lib_crypto::hash_blake3;
+use tracing::info;
 
 // ============================================================================
 // AUDIT AND LOGGING CONSTANTS
@@ -770,14 +771,12 @@ impl ConsensusEngine {
         if let Some(ref callback) = self.block_commit_callback {
             match callback.commit_finalized_block(proposal).await {
                 Ok(()) => {
-                    tracing::info!(
-                        "✅ BFT finalized block committed to blockchain (height: {}, proposal: {:?})",
-                        proposal.height,
-                        proposal.id
+                    info!(
+                        block_height = proposal.height,
+                        proposal_id = ?proposal.id,
+                        "BFT finalized block committed to blockchain"
                     );
-                    tracing::info!(
-                        "   Issue #938: Block persisted ONLY after 2/3+1 commit votes"
-                    );
+                    info!("Issue #938: Block persisted ONLY after 2/3+1 commit votes");
                 }
                 Err(e) => {
                     // Log but don't fail consensus - block commit is best-effort
