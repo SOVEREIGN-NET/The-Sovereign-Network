@@ -1,5 +1,6 @@
 use super::*;
 use lib_crypto::hash_blake3;
+use tracing::info;
 
 // ============================================================================
 // AUDIT AND LOGGING CONSTANTS
@@ -494,7 +495,19 @@ impl ConsensusEngine {
         tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms)).await;
     }
 
-    /// Process committed block
+    /// Process committed block (Issue #938: This is the ONLY safe path to persistence)
+    ///
+    /// **CRITICAL**: This method is called AFTER achieving 2/3+1 commit votes.
+    /// It is the ONLY safe way for network-received blocks to reach persistence.
+    ///
+    /// Flow:
+    /// 1. Network block arrives → submitted as proposal (proposal-only)
+    /// 2. BFT consensus validates and votes
+    /// 3. 2/3+1 commit votes achieved
+    /// 4. THIS method is called
+    /// 5. BlockCommitCallback persists the block
+    ///
+    /// This ensures Byzantine fault tolerance - no single node can inject blocks.
     #[allow(deprecated)]
     async fn process_committed_block(&mut self, proposal_id: &Hash) -> ConsensusResult<()> {
         // Find and process the committed proposal
@@ -510,7 +523,7 @@ impl ConsensusEngine {
             // Validate the block one more time before applying
             self.validate_committed_block(&proposal).await?;
 
-            // Apply block to state
+            // Apply block to state (Issue #938: This triggers BlockCommitCallback → persistence)
             self.apply_block_to_state(&proposal).await?;
 
             // Update validator activities and reputation
@@ -740,21 +753,30 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    /// Apply block to blockchain state
+    /// Apply block to blockchain state (Issue #938: This is the persistence gateway)
     ///
-    /// This is the critical bridge between BFT consensus and blockchain storage.
-    /// When BFT achieves 2/3+1 commit votes, this method commits the block.
+    /// **CRITICAL**: This is the ONLY legitimate path for network blocks to reach persistence.
+    /// This method is called AFTER BFT achieves 2/3+1 commit votes, ensuring Byzantine fault tolerance.
+    ///
+    /// # Safety Guarantee (Issue #938)
+    /// Network-received blocks MUST flow through:
+    /// 1. Network → proposal submission (proposal-only, no persistence)
+    /// 2. BFT validation (2/3+1 validators agree)
+    /// 3. THIS method (BlockCommitCallback → persistence)
+    ///
+    /// Any path that bypasses this flow violates consensus safety.
     async fn apply_block_to_state(&mut self, proposal: &ConsensusProposal) -> ConsensusResult<()> {
         // Call the block commit callback if configured
         // This is the bridge to the actual blockchain storage layer
         if let Some(ref callback) = self.block_commit_callback {
             match callback.commit_finalized_block(proposal).await {
                 Ok(()) => {
-                    tracing::info!(
-                        "✅ BFT finalized block committed to blockchain (height: {}, proposal: {:?})",
-                        proposal.height,
-                        proposal.id
+                    info!(
+                        block_height = proposal.height,
+                        proposal_id = ?proposal.id,
+                        "BFT finalized block committed to blockchain"
                     );
+                    info!("Issue #938: Block persisted ONLY after 2/3+1 commit votes");
                 }
                 Err(e) => {
                     // Log but don't fail consensus - block commit is best-effort

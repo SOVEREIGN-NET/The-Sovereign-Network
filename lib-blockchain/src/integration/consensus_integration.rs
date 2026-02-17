@@ -1,7 +1,41 @@
 //! Consensus integration for ZHTP blockchain
-//! 
+//!
 //! Provides full integration with lib-consensus package including validator management,
 //! block production, consensus events, DAO governance, and reward distribution.
+//!
+//! # Block Flow Architecture (Issue #938)
+//!
+//! **CRITICAL**: Blocks can reach the blockchain through TWO paths, but only ONE is safe:
+//!
+//! ## Path 1: Network-Received Blocks (PROPOSAL-ONLY - Issue #938)
+//! ```text
+//! Network → handle_new_block → BlockchainEventReceiver → [PROPOSAL ONLY]
+//!                                                            ↓
+//!                                              Submit to BFT Consensus
+//!                                                            ↓
+//!                                              2/3+1 commit votes?
+//!                                                            ↓
+//!                                              BlockCommitCallback
+//!                                                            ↓
+//!                                                   PERSISTENCE ✓
+//! ```
+//! Network blocks MUST go through BFT consensus before persistence.
+//! They are submitted as proposals, validated by 2/3+1 validators,
+//! and ONLY persisted after BFT commit via BlockCommitCallback.
+//!
+//! ## Path 2: Locally-Generated Blocks (Direct persistence)
+//! ```text
+//! Local miner/producer → add_block() → PERSISTENCE ✓
+//! ```
+//! Locally-generated blocks (from mining/staking) bypass consensus
+//! as they originate from this node's authority.
+//!
+//! ## Safety Invariant
+//! **Network blocks CANNOT reach persistence before BFT commit.**
+//! This prevents:
+//! - Byzantine nodes from injecting invalid blocks
+//! - Race conditions during network partitions
+//! - Consensus bypass attacks
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
