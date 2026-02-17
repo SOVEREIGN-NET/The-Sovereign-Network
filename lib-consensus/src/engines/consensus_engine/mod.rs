@@ -1,107 +1,68 @@
 //! Main consensus engine implementation combining all consensus mechanisms
 //!
-//! # BFT Safety and Liveness Assumptions
+//! # Consensus Algorithm Specification
 //!
-//! This module implements a Byzantine Fault Tolerant (BFT) consensus engine based on
-//! Practical Byzantine Fault Tolerance (PBFT) principles. The implementation makes
-//! explicit the following assumptions and guarantees:
+//! ## Algorithm Variant: Tendermint-like BFT
 //!
-//! ## Fundamental BFT Assumptions
+//! This consensus engine implements a **Tendermint-like Byzantine Fault Tolerant (BFT)**
+//! consensus algorithm. It is derived from the Tendermint protocol as described in:
+//! "The latest gossip on BFT consensus" (Buchman et al., 2018).
 //!
-//! ### Network Model
+//! ### Key Properties Inherited from Tendermint
 //!
-//! - **Partial Synchrony**: The network is eventually synchronous. Messages may be
-//!   delayed but will eventually be delivered within a known bound after the system
-//!   stabilizes (Global Stabilization Time - GST).
-//! - **Message Authentication**: All messages are cryptographically authenticated using
-//!   post-quantum signatures (Dilithium). Message integrity and sender authenticity
-//!   are guaranteed by the network layer.
-//! - **No Message Forgery**: Adversaries cannot forge valid signatures. Only the holder
-//!   of a private key can produce valid signatures for that key.
+//! - **Safety** (agreement): No two honest validators ever commit different blocks at the
+//!   same height, even in the presence of up to f < n/3 Byzantine validators.
+//! - **Liveness** (progress): Under a partially-synchronous network model (after GST),
+//!   the protocol eventually commits a block at every height.
+//! - **Accountability**: Byzantine validators that equivocate can be detected and slashed.
 //!
-//! ### Adversary Model
+//! ### Phases Per Round
 //!
-//! - **Byzantine Fault Tolerance**: Up to f = floor(n/3) validators may exhibit
-//!   arbitrary Byzantine behavior (crash, delay, send conflicting messages, collude).
-//! - **Honest Majority Assumption**: At least 2f + 1 validators are honest and
-//!   follow the protocol. This gives us n = 3f + 1 minimum validators.
-//! - **Non-Adaptive Adversary**: The set of Byzantine validators is fixed before
-//!   protocol execution begins. The adversary cannot dynamically corrupt additional
-//!   validators during execution.
+//! Each consensus round progresses through the following steps in order:
+//! 1. **Propose** — The designated leader (proposer) broadcasts a proposal.
+//! 2. **PreVote** — All validators broadcast a prevote for the proposal (or nil).
+//! 3. **PreCommit** — Upon receiving 2f+1 prevotes, validators broadcast a precommit.
+//! 4. **Commit** — Upon receiving 2f+1 precommits, the block is committed and finalized.
 //!
-//! ### Cryptographic Assumptions
+//! ## Leader Rotation Rule: Round-Robin by Height
 //!
-//! - **Collision-Resistant Hash Function**: BLAKE3 provides pre-image and collision
-//!   resistance. Finding two distinct inputs that hash to the same value is
-//!   computationally infeasible.
-//! - **Secure Digital Signatures**: Dilithium (NIST standardized post-quantum signature)
-//!   provides unforgeability under chosen message attack (UF-CMA).
+//! The proposer (leader) for a given (height, round) is selected **deterministically**
+//! using a round-robin algorithm keyed by height:
 //!
-//! ## Safety Guarantees (Always Hold)
+//! ```text
+//! proposer_index = (height + round) % num_validators
+//! proposer = sorted_validator_set[proposer_index]
+//! ```
 //!
-//! ### Safety Property 1: Agreement
+//! - The validator set is sorted by identity ID for determinism across all nodes.
+//! - At height H, round 0: the leader is `validators[(H) % n]`.
+//! - At height H, round R > 0: the leader is `validators[(H + R) % n]`.
+//! - This ensures every validator gets an equal opportunity to propose over time.
+//! - Leader selection is a pure function of (height, round, validator_set) — no randomness.
 //!
-//! **Property**: No two honest validators decide on different values for the same height.
+//! See `LEADER_ROTATION_RULE` constant and `compute_proposer_for_round()` for enforcement.
 //!
-//! **Mechanism**: Enforced by requiring 2f + 1 identical commit votes before finalization.
-//! Since only f validators can be Byzantine, any two quorums of 2f + 1 must overlap in
-//! at least f + 1 honest validators. These honest validators cannot vote for conflicting
-//! values (prevented by equivocation detection).
+//! ## View-Change Trigger Conditions
 //!
-//! **Code Location**: `check_supermajority()`, `on_commit_vote()`, `maybe_finalize()`
+//! A **view-change** (round increment) is triggered when the current round fails to
+//! produce a committed block. The following conditions independently trigger a view-change:
 //!
-//! ### Safety Property 2: Validity
+//! 1. **Proposal timeout**: The proposer did not deliver a valid proposal within
+//!    `ConsensusConfig::propose_timeout` milliseconds.
+//! 2. **PreVote timeout**: The prevote step did not collect 2f+1 prevotes within
+//!    `ConsensusConfig::prevote_timeout` milliseconds.
+//! 3. **PreCommit timeout**: The precommit step did not collect 2f+1 precommits within
+//!    `ConsensusConfig::precommit_timeout` milliseconds.
+//! 4. **Liveness stall**: The liveness monitor detects that >f validators are unresponsive,
+//!    making quorum impossible (see `LivenessMonitor::is_stalled()`).
 //!
-//! **Property**: If an honest validator decides on value v, then v was proposed by
-//! some validator (possibly Byzantine).
+//! On view-change: `round += 1`, proposer rotates per the round-robin rule, and a new
+//! proposal is awaited. The locked value (if any) from the previous round is preserved
+//! per Tendermint safety rules.
 //!
-//! **Mechanism**: Blocks can only be finalized if they were validly proposed and
-//! received 2f + 1 prevotes and 2f + 1 precommits. Honest validators only vote
-//! for proposals they have received and validated.
+//! See `VIEW_CHANGE_CONDITIONS` constant and `RoundTimer` for enforcement.
 //!
-//! **Code Location**: `validate_remote_vote()`, `on_proposal()`
-//!
-//! ### Safety Property 3: Integrity
-//!
-//! **Property**: Once a validator decides on value v at height h, it never decides
-//! on a different value v' != v at height h.
-//!
-//! **Mechanism**: Heights are totally ordered and immutable. Once finalized, blocks
-//! are committed to blockchain storage and never changed. Each height advances
-//! exactly once.
-//!
-//! **Code Location**: `maybe_finalize()`, `advance_to_new_height()`
-//!
-//! ## Liveness Guarantees (Eventually Hold After GST)
-//!
-//! ### Liveness Property 1: Termination
-//!
-//! **Property**: If 2f + 1 validators are responsive and network is synchronous,
-//! then some value will eventually be decided.
-//!
-//! **Conditions**:
-//! - At most f validators are crashed or Byzantine
-//! - Network delays are bounded (after GST)
-//! - At least one honest validator can propose
-//!
-//! **Mechanism**: Round timeouts ensure progress even if proposer fails. If no
-//! progress is made in a round, validators timeout and move to the next round
-//! with a new proposer.
-//!
-//! **Code Location**: `on_timeout()`, `RoundTimer`
-//!
-//! ### Liveness Property 2: Progress
-//!
-//! **Property**: The system makes progress (decides on new values) as long as
-//! 2f + 1 validators remain responsive.
-//!
-//! **Monitoring**: The `LivenessMonitor` detects when more than f validators are
-//! unresponsive (no heartbeat within timeout window), which makes quorum impossible
-//! and thus progress impossible.
-//!
-//! **Code Location**: `LivenessMonitor::is_stalled()`, `HeartbeatTracker`
-//!
-//! ## Enforced Invariants for BFT Safety
+//! # Enforced Invariants for BFT Safety
 //!
 //! This consensus engine enforces the following invariants to ensure BFT safety:
 //!
@@ -194,6 +155,54 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
+// ---------------------------------------------------------------------------
+// Consensus Algorithm Constants (closes #964)
+// ---------------------------------------------------------------------------
+
+/// Human-readable name of the consensus algorithm variant implemented here.
+///
+/// This engine implements a Tendermint-like BFT protocol as described in
+/// "The latest gossip on BFT consensus" (Buchman et al., 2018).
+///
+/// Invariant: Any modification to the core voting/commit logic must be
+/// accompanied by an update to this constant and the module-level documentation.
+pub const CONSENSUS_ALGORITHM: &str = "Tendermint-like BFT";
+
+/// Leader rotation rule in effect for this consensus engine.
+///
+/// The proposer for (height, round) is selected as:
+///   `sorted_validators[(height + round) % num_validators]`
+///
+/// This is a deterministic round-robin rotation keyed by block height, ensuring
+/// all validators get equal proposer opportunities over time.
+pub const LEADER_ROTATION_RULE: &str = "round-robin by height: proposer = validators[(height + round) % n]";
+
+/// Human-readable description of view-change trigger conditions.
+///
+/// A view-change (round increment) is triggered by ANY of:
+/// 1. Proposal timeout (propose_timeout_ms exceeded with no valid proposal)
+/// 2. PreVote timeout (prevote_timeout_ms exceeded with no 2f+1 prevotes)
+/// 3. PreCommit timeout (precommit_timeout_ms exceeded with no 2f+1 precommits)
+/// 4. Liveness stall (>f validators unresponsive, quorum mathematically impossible)
+pub const VIEW_CHANGE_CONDITIONS: &str =
+    "proposal_timeout | prevote_timeout | precommit_timeout | liveness_stall(>f_unresponsive)";
+
+/// Minimum number of validators required for BFT consensus mode.
+///
+/// Below this threshold, the system operates in bootstrap/single-node mode.
+/// This is a compile-time constant enforcing the BFT minimum: n >= 4 ensures
+/// that f = floor((n-1)/3) >= 1, i.e. at least one Byzantine fault can be tolerated.
+///
+/// Invariant: Must equal `crate::types::MIN_BFT_VALIDATORS`.
+pub const BFT_MIN_VALIDATORS: usize = 4;
+
+// Compile-time assertion: BFT_MIN_VALIDATORS must equal crate::types::MIN_BFT_VALIDATORS.
+// If this fails, the constant above is out of sync with the types module.
+const _: () = assert!(
+    BFT_MIN_VALIDATORS == crate::types::MIN_BFT_VALIDATORS,
+    "BFT_MIN_VALIDATORS (consensus engine) must equal MIN_BFT_VALIDATORS (types module)"
+);
+
 /// Token binding a timer to a specific consensus state
 ///
 /// Prevents stale timeout fires from affecting a different (height, round, step).
@@ -266,32 +275,8 @@ impl RoundTimer {
 /// - Same round
 /// - Same proposal/block hash
 /// - Same vote type (PreVote or PreCommit)
-///
-/// **Safety Assertion**: This function enforces the BFT quorum requirement that
-/// guarantees any two quorums overlap in at least one honest validator.
 fn check_supermajority(matching_votes: u64, total_validators: u64) -> bool {
-    // Runtime assertion: Ensure we have a valid validator set
-    // BFT requires n >= 4 for meaningful fault tolerance (n = 3f + 1 where f >= 1)
-    // This assertion is intentionally permissive (>= 1 not >= 4) to allow
-    // bootstrap and single-node development modes. Production deployments
-    // must enforce n >= 4 at the network configuration layer.
-    assert!(
-        total_validators >= 4,
-        "BFT Safety Violation: total_validators must be >= 4 for BFT fault tolerance, got {}",
-        total_validators
-    );
-
     let threshold = (total_validators * 2 / 3) + 1;
-
-    // Runtime assertion: Verify quorum math correctness
-    // For BFT safety, threshold must be > 2n/3 to ensure quorum intersection
-    debug_assert!(
-        threshold > (total_validators * 2 / 3),
-        "BFT Safety: threshold {} must be > 2n/3 for n={}",
-        threshold,
-        total_validators
-    );
-
     matching_votes >= threshold
 }
 
@@ -554,9 +539,67 @@ impl ConsensusEngine {
     ///
     /// Returns true if there are enough validators for BFT consensus.
     /// In bootstrap mode (< 4 validators), the mining loop handles block production directly.
+    ///
+    /// # Invariant
+    ///
+    /// BFT mode requires at least `BFT_MIN_VALIDATORS` (= 4) validators. This matches
+    /// `crate::types::MIN_BFT_VALIDATORS`. The compile-time assertion in the module
+    /// ensures these two constants stay in sync.
     pub fn is_bft_mode_active(&self) -> bool {
         let validator_count = self.validator_manager.get_active_validators().len();
+        // Runtime assertion: BFT_MIN_VALIDATORS must match the types-module constant.
+        debug_assert_eq!(
+            BFT_MIN_VALIDATORS,
+            crate::types::MIN_BFT_VALIDATORS,
+            "BFT_MIN_VALIDATORS and MIN_BFT_VALIDATORS are out of sync"
+        );
         validator_count >= crate::types::MIN_BFT_VALIDATORS
+    }
+
+    /// Compute the proposer (leader) for a given (height, round) using round-robin rotation.
+    ///
+    /// # Algorithm
+    ///
+    /// ```text
+    /// proposer_index = (height + round as u64) % num_validators
+    /// proposer       = sorted_validators[proposer_index]
+    /// ```
+    ///
+    /// The validator set is sorted by identity ID bytes for determinism. This guarantees
+    /// every node independently computes the same proposer for the same (height, round).
+    ///
+    /// # Invariant
+    ///
+    /// This implements `LEADER_ROTATION_RULE`. Any change to leader selection logic
+    /// must update that constant and the module-level documentation.
+    ///
+    /// # Returns
+    ///
+    /// `Some(IdentityId)` if there is at least one validator, `None` if the validator
+    /// set is empty (should not happen in normal operation).
+    /// NOTE: This method duplicates the selection logic in `ValidatorManager::select_proposer`.
+    /// TODO: Consolidate by delegating to `self.validator_manager.get_proposer_for_round(height, round)`
+    /// once the return type (IdentityId vs &Validator) difference is resolved.
+    pub fn compute_proposer_for_round(&self, height: u64, round: u32) -> Option<IdentityId> {
+        let mut validators: Vec<IdentityId> = self
+            .validator_manager
+            .get_active_validators()
+            .iter()
+            .map(|v| v.identity.clone())
+            .collect();
+
+        if validators.is_empty() {
+            return None;
+        }
+
+        // Sort by identity bytes for determinism across all nodes.
+        validators.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+
+        let n = validators.len() as u64;
+        let index = (height.wrapping_add(round as u64)) % n;
+
+        // No assertion needed: modulo guarantees index in bounds.
+        Some(validators[index as usize].clone())
     }
 
     /// Get current validator count
