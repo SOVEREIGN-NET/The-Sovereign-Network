@@ -20,7 +20,7 @@ pub mod utils;
 pub mod edge_node_state;
 pub mod dht_index;
 pub mod receipts;
-pub mod fork_recovery;
+mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
 pub mod events;
 pub mod byzantine_evidence;
 pub mod storage;

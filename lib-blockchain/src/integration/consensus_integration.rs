@@ -574,10 +574,8 @@ impl BlockchainConsensusCoordinator {
             if let Some(existing_block) = blockchain.get_block(block.header.height) {
                 if existing_block.header.block_hash != block.header.block_hash {
                     return Err(anyhow::anyhow!(
-                        "Block already exists at height {} with different hash (existing: {}, proposed: {})",
-                        block.header.height,
-                        existing_block.header.block_hash,
-                        block.header.block_hash,
+                        "Block already exists at height {} with different hash",
+                        block.header.height
                     ));
                 }
             }
