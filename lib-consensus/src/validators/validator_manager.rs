@@ -207,13 +207,14 @@ impl ValidatorManager {
         // Reject when the active set is already at or above the configured limit.
         // The limit is governance-adjustable (see GovernanceParameterValue::MaxValidators)
         // but is capped at MAX_VALIDATORS_HARD_CAP.
-        let effective_max = self.max_validators.max(MIN_VALIDATORS as u32);
-        if self.validators.len() >= effective_max as usize {
+        // Note: self.max_validators is already clamped to [MIN_VALIDATORS, MAX_VALIDATORS_HARD_CAP]
+        // in the constructors (new/with_development_mode), so no need to re-clamp here.
+        if self.validators.len() >= self.max_validators as usize {
             return Err(anyhow::anyhow!(
                 "Maximum validator limit reached: {} (governance limit: {}, hard cap: {}). \
                  A DAO governance proposal (DaoProposalType::ValidatorUpdate with \
                  GovernanceParameterValue::MaxValidators) is required to raise the limit.",
-                effective_max,
+                self.max_validators,
                 self.max_validators,
                 MAX_VALIDATORS_HARD_CAP,
             ));
@@ -271,7 +272,15 @@ impl ValidatorManager {
         let active_count = self.get_active_validators().len();
         let min_floor = if self.development_mode { 1 } else { MIN_VALIDATORS };
 
-        if active_count <= min_floor {
+        // Only block removal if the validator being removed is active and we're at minimum.
+        // Inactive (jailed/slashed) validators can always be removed since they do not
+        // contribute to BFT quorum and removing them cannot compromise safety.
+        let validator_is_active = self.validators
+            .get(identity)
+            .map(|v| v.can_participate())
+            .unwrap_or(false);
+
+        if validator_is_active && active_count <= min_floor {
             return Err(anyhow::anyhow!(
                 "Cannot remove validator: active validator count ({}) is already at the \
                  minimum required for BFT safety ({} = MIN_VALIDATORS, 3f+1 with f=1). \
