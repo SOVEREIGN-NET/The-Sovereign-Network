@@ -327,9 +327,9 @@ impl ConsensusEngine {
         // Check if we received enough prevotes
         if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
             let prevote_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreVote);
-            let total_validators = self.validator_manager.get_active_validators().len() as u64;
+            let active_validator_count = self.validator_manager.get_active_validators().len() as u64;
 
-            if check_supermajority(prevote_count, total_validators) {
+            if check_supermajority(prevote_count, active_validator_count) {
                 let vote = self.cast_vote(proposal_id.clone(), VoteType::PreCommit)
                     .await?;
                 self.current_round.valid_proposal = Some(proposal_id);
@@ -370,9 +370,9 @@ impl ConsensusEngine {
         // Check if we received enough precommits
         if let Some(proposal_id) = self.current_round.valid_proposal.as_ref().cloned() {
             let precommit_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreCommit);
-            let total_validators = self.validator_manager.get_active_validators().len() as u64;
+            let active_validator_count = self.validator_manager.get_active_validators().len() as u64;
 
-            if check_supermajority(precommit_count, total_validators) {
+            if check_supermajority(precommit_count, active_validator_count) {
                 let vote = self.cast_vote(proposal_id.clone(), VoteType::Commit)
                     .await?;
 
