@@ -41,23 +41,6 @@ impl ConsensusEngine {
                     Ok(false)
                 }
             }
-            ConsensusType::Hybrid => {
-                let stake_valid = proof
-                    .stake_proof
-                    .as_ref()
-                    .map(|p| p.verify(self.current_round.height))
-                    .transpose()?
-                    .unwrap_or(false);
-
-                let storage_valid = proof
-                    .storage_proof
-                    .as_ref()
-                    .map(|p| p.verify())
-                    .transpose()?
-                    .unwrap_or(false);
-
-                Ok(stake_valid && storage_valid)
-            }
             ConsensusType::ByzantineFaultTolerance => {
                 // For BFT, we rely on vote thresholds rather than individual proofs
                 Ok(true)

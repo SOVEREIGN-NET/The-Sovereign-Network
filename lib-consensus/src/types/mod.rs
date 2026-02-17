@@ -24,10 +24,8 @@ pub enum ConsensusType {
     ProofOfStake,
     /// Proof of Storage consensus
     ProofOfStorage,
-    /// Proof of Useful Work consensus  
+    /// Proof of Useful Work consensus
     ProofOfUsefulWork,
-    /// Hybrid PoS + PoStorage
-    Hybrid,
     /// Byzantine Fault Tolerance
     ByzantineFaultTolerance,
 }
@@ -265,7 +263,7 @@ pub struct ConsensusConfig {
 impl Default for ConsensusConfig {
     fn default() -> Self {
         Self {
-            consensus_type: ConsensusType::Hybrid,
+            consensus_type: ConsensusType::ByzantineFaultTolerance,
             min_stake: 1000 * 1_000_000,           // 1000 SOV tokens
             min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
             max_validators: 100,
