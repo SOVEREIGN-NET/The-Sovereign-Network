@@ -426,6 +426,10 @@ impl TransactionValidator {
     fn validate_contract_transaction(&self, transaction: &Transaction) -> ValidationResult {
         tracing::debug!("[BREADCRUMB] validate_contract_transaction ENTER");
 
+        if is_forbidden_token_contract_mutation(transaction) {
+            return Err(ValidationError::InvalidTransactionType);
+        }
+
         // Allow system contract deployments (empty inputs) for Web4 and system contracts
         let is_system_contract = transaction.inputs.is_empty();
 
@@ -1002,13 +1006,25 @@ impl TransactionValidator {
     }
 }
 
+fn parse_contract_call(transaction: &Transaction) -> Option<ContractCall> {
+    if transaction.transaction_type != TransactionType::ContractExecution {
+        return None;
+    }
+    if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
+        return None;
+    }
+    let call_data = &transaction.memo[4..];
+    let (call, _sig): (ContractCall, Signature) = bincode::deserialize(call_data).ok()?;
+    Some(call)
+}
+
 /// Check if a transaction is a token contract execution
 ///
 /// Returns true if the transaction:
 /// 1. Has type ContractExecution
 /// 2. Has memo starting with "ZHTP"
 /// 3. Contains a valid ContractCall with contract_type Token
-/// 4. Has a valid token method (create_custom_token, mint, transfer, burn)
+/// 4. Has a valid token method (create_custom_token)
 pub fn is_token_contract_execution(transaction: &Transaction) -> bool {
     if transaction.transaction_type != TransactionType::ContractExecution {
         tracing::debug!("is_token_contract_execution: not ContractExecution type");
@@ -1026,13 +1042,9 @@ pub fn is_token_contract_execution(transaction: &Transaction) -> bool {
         return false;
     }
 
-    let call_data = &transaction.memo[4..];
-    let (call, _sig): (ContractCall, Signature) = match bincode::deserialize(call_data) {
-        Ok(parsed) => parsed,
-        Err(e) => {
-            tracing::warn!("is_token_contract_execution: bincode deserialize failed: {}", e);
-            return false;
-        }
+    let Some(call) = parse_contract_call(transaction) else {
+        tracing::warn!("is_token_contract_execution: failed to parse contract call from memo");
+        return false;
     };
 
     if call.contract_type != ContractType::Token {
@@ -1040,10 +1052,7 @@ pub fn is_token_contract_execution(transaction: &Transaction) -> bool {
         return false;
     }
 
-    let is_token_method = matches!(
-        call.method.as_str(),
-        "create_custom_token" | "mint" | "transfer" | "burn"
-    );
+    let is_token_method = matches!(call.method.as_str(), "create_custom_token");
 
     if !is_token_method {
         tracing::warn!("is_token_contract_execution: method '{}' is not a token method", call.method);
@@ -1052,6 +1061,19 @@ pub fn is_token_contract_execution(transaction: &Transaction) -> bool {
     }
 
     is_token_method
+}
+
+/// Returns true when a ContractExecution attempts deprecated token balance
+/// mutations that must be rejected in consensus validation.
+fn is_forbidden_token_contract_mutation(transaction: &Transaction) -> bool {
+    if transaction.transaction_type != TransactionType::ContractExecution {
+        return false;
+    }
+    let Some(call) = parse_contract_call(transaction) else {
+        return false;
+    };
+    call.contract_type == ContractType::Token
+        && matches!(call.method.as_str(), "mint" | "transfer" | "burn")
 }
 
 impl Default for TransactionValidator {
@@ -1582,10 +1604,9 @@ mod tests {
         }
     }
 
-    /// Helper: create a mock token transfer transaction
-    fn create_token_transfer_transaction(sender_key: &PublicKey) -> Transaction {
-        // Build a token transfer ContractCall
-        let call = ContractCall::token_call("transfer".to_string(), vec![1, 2, 3, 4]);
+    /// Helper: create a mock token create transaction.
+    fn create_token_contract_transaction(sender_key: &PublicKey) -> Transaction {
+        let call = ContractCall::token_call("create_custom_token".to_string(), vec![1, 2, 3, 4]);
         let sig = test_signature(sender_key);
 
         // Serialize: "ZHTP" prefix + bincode(call, sig)
@@ -1621,15 +1642,15 @@ mod tests {
         }
     }
 
-    /// Test A: Token transfer succeeds with no identity record
+    /// Test A: Token contract creation call is detected without identity record
     ///
     /// The canonical sender is derived from tx.signature.public_key.
     /// Token operations do not require the sender to have a registered identity.
     #[test]
-    fn test_token_transfer_succeeds_without_identity() {
+    fn test_token_contract_call_succeeds_without_identity() {
         // Create a sender with NO registered identity
         let unregistered_sender = test_public_key(42);
-        let tx = create_token_transfer_transaction(&unregistered_sender);
+        let tx = create_token_contract_transaction(&unregistered_sender);
 
         // Verify this is detected as a token contract execution
         assert!(
@@ -1648,19 +1669,14 @@ mod tests {
         );
     }
 
-    /// Test B: Token receive works with no identity
-    ///
-    /// Receiving tokens does not require identity registration.
-    /// Balances are keyed by PublicKey, not by identity DID.
+    /// Test B: ContractExecution token mutation methods are no longer
+    /// recognized as canonical token contract execution path.
     #[test]
-    fn test_token_receive_works_without_identity() {
-        // Create a token transfer to an unregistered recipient
+    fn test_token_mutation_not_detected_as_token_contract_execution() {
         let sender = test_public_key(1);
-        let tx = create_token_transfer_transaction(&sender);
+        let tx = create_token_contract_transaction(&sender);
+        assert!(is_token_contract_execution(&tx));
 
-        // The recipient (in params) doesn't need an identity either
-        // This test verifies the is_token_contract_execution detection works
-        // for all token methods that could involve receiving
         let mint_call = ContractCall::token_call("mint".to_string(), vec![1, 2, 3]);
         let sig = test_signature(&sender);
         let call_data = bincode::serialize(&(&mint_call, &sig)).unwrap();
@@ -1689,10 +1705,7 @@ mod tests {
                         governance_config_data: None,
         };
 
-        assert!(
-            is_token_contract_execution(&mint_tx),
-            "Mint transaction should be detected as token contract execution"
-        );
+        assert!(!is_token_contract_execution(&mint_tx));
     }
 
     /// Test C: Invalid signature still fails for token transactions
@@ -1702,7 +1715,7 @@ mod tests {
     #[test]
     fn test_invalid_signature_fails_for_tokens() {
         let sender = test_public_key(1);
-        let tx = create_token_transfer_transaction(&sender);
+        let tx = create_token_contract_transaction(&sender);
 
         // Signature validation is handled by stateless validator
         let validator = TransactionValidator::new();
@@ -1725,7 +1738,7 @@ mod tests {
     #[test]
     fn test_nullifier_replay_protection_without_identity() {
         let sender = test_public_key(1);
-        let tx = create_token_transfer_transaction(&sender);
+        let tx = create_token_contract_transaction(&sender);
 
         // Verify the transaction has a non-default nullifier (replay protection)
         assert!(
@@ -1755,8 +1768,8 @@ mod tests {
     fn test_is_token_contract_execution_detection() {
         let sender = test_public_key(1);
 
-        // Test all token methods
-        for method in &["create_custom_token", "mint", "transfer", "burn"] {
+        // Only create_custom_token is considered a canonical token contract call.
+        for method in &["create_custom_token"] {
             let call = ContractCall::token_call(method.to_string(), vec![]);
             let sig = test_signature(&sender);
             let call_data = bincode::serialize(&(&call, &sig)).unwrap();
@@ -1788,6 +1801,42 @@ mod tests {
             assert!(
                 is_token_contract_execution(&tx),
                 "Method '{}' should be detected as token contract execution",
+                method
+            );
+        }
+
+        for method in &["mint", "transfer", "burn"] {
+            let call = ContractCall::token_call(method.to_string(), vec![]);
+            let sig = test_signature(&sender);
+            let call_data = bincode::serialize(&(&call, &sig)).unwrap();
+            let mut memo = b"ZHTP".to_vec();
+            memo.extend(call_data);
+
+            let tx = Transaction {
+                version: 1,
+                chain_id: 0x03,
+                transaction_type: TransactionType::ContractExecution,
+                inputs: vec![],
+                outputs: vec![],
+                fee: 1000,
+                signature: test_signature(&sender),
+                memo,
+                identity_data: None,
+                wallet_data: None,
+                validator_data: None,
+                dao_proposal_data: None,
+                dao_vote_data: None,
+                dao_execution_data: None,
+                ubi_claim_data: None,
+                profit_declaration_data: None,
+                token_transfer_data: None,
+            token_mint_data: None,
+                            governance_config_data: None,
+            };
+
+            assert!(
+                !is_token_contract_execution(&tx),
+                "Method '{}' must not be considered canonical token contract execution",
                 method
             );
         }
@@ -1825,5 +1874,41 @@ mod tests {
             !is_token_contract_execution(&non_token_tx),
             "Messaging contract should NOT be detected as token contract execution"
         );
+    }
+
+    #[test]
+    fn test_contract_execution_token_mutation_rejected() {
+        let sender = test_public_key(1);
+        let call = ContractCall::token_call("transfer".to_string(), vec![1, 2, 3]);
+        let sig = test_signature(&sender);
+        let call_data = bincode::serialize(&(&call, &sig)).unwrap();
+        let mut memo = b"ZHTP".to_vec();
+        memo.extend(call_data);
+
+        let tx = Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: TransactionType::ContractExecution,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 1000,
+            signature: test_signature(&sender),
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        };
+
+        let validator = TransactionValidator::new();
+        let result = validator.validate_contract_transaction(&tx);
+        assert!(matches!(result, Err(ValidationError::InvalidTransactionType)));
     }
 }
