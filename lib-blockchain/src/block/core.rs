@@ -72,7 +72,7 @@ use crate::transaction::Transaction;
 //      process described here. There is no in-protocol mechanism for
 //      replacing the genesis trust anchor.
 //
-// See `GENESIS_TRUST_MODEL` constant and `verify_genesis_trust_model`
+// See `GENESIS_TRUST_MODEL` constant and `assert_genesis_trust_model`
 // function below for the programmatic expression of these assumptions.
 // ============================================================================
 
@@ -443,9 +443,9 @@ pub fn create_genesis_block() -> Block {
     // Enforce the trust model constant at construction time.
     assert_genesis_trust_model();
 
-    // FIXED genesis timestamp for network consistency
-    // November 1, 2025 00:00:00 UTC - ensures all nodes create identical genesis
-    let genesis_timestamp = 1730419200;
+    // FIXED genesis timestamp for network consistency.
+    // Sourced from crate::GENESIS_TIMESTAMP to ensure a single source of truth.
+    let genesis_timestamp = crate::GENESIS_TIMESTAMP;
     // Genesis blocks should use easy consensus difficulty like other system transaction blocks
     let genesis_difficulty = Difficulty::from_bits(0x1fffffff);
 
