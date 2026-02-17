@@ -904,10 +904,10 @@ impl DaoHandler {
             "identity_id": identity_id_str,
             "voting_power": voting_power,
             "power_breakdown": {
-                "base_citizen_power": voting_power,
+                "base_citizen_power": 1,
                 "reputation_multiplier": 1.0,
                 "staked_tokens_power": 0,
-                "delegated_power": 0
+                "delegated_power": voting_power.saturating_sub(1)
             }
         });
 

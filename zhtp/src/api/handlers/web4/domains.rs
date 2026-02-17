@@ -663,10 +663,14 @@ impl Web4Handler {
                 "fee_payment_tx must use TransactionType::TokenTransfer"
             ));
         }
+        if fee_payment_tx.chain_id != 0x03 {
+            return Err(anyhow!(
+                "fee_payment_tx must use chain_id 0x03, got {}",
+                fee_payment_tx.chain_id
+            ));
+        }
 
-        let is_sov = fee_transfer.token_id == lib_blockchain::contracts::utils::generate_lib_token_id()
-            || fee_transfer.token_id == [0u8; 32];
-        if !is_sov {
+        if fee_transfer.token_id != lib_blockchain::contracts::utils::generate_lib_token_id() {
             return Err(anyhow!("fee_payment_tx must transfer SOV token"));
         }
         if fee_transfer.amount != registration_fee_sov as u128 {
@@ -1733,30 +1737,39 @@ mod tests {
         hex::encode(sig.signature)
     }
 
+    fn simple_registration_request(
+        owner_identity: &lib_identity::ZhtpIdentity,
+        domain: &str,
+        html_content: &str,
+        fee_payment_tx: &Transaction,
+    ) -> anyhow::Result<serde_json::Value> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        Ok(json!({
+            "domain": domain,
+            "owner": owner_identity.did,
+            "content_mappings": {
+                "/": {
+                    "content": base64::engine::general_purpose::STANDARD.encode(html_content),
+                    "content_type": "text/html"
+                }
+            },
+            "signature": sign_simple_registration(owner_identity, domain, timestamp, 10),
+            "timestamp": timestamp,
+            "fee": 10,
+            "fee_payment_tx": hex::encode(bincode::serialize(fee_payment_tx)?)
+        }))
+    }
+
     #[tokio::test]
     async fn register_domain_accepts_valid_fee_payment_tx() -> anyhow::Result<()> {
         let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) = setup_handler().await?;
         let fee_signer = BcPublicKey::new(owner_identity.public_key.dilithium_pk.clone());
         let tx = fee_payment_tx(fee_signer, owner_private, owner_wallet_id, treasury_wallet_id, 10, 0);
         let tx_hash_hex = hex::encode(tx.hash().as_bytes());
-
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
-        let request = json!({
-            "domain": "valid-fee.zhtp",
-            "owner": owner_identity.did,
-            "content_mappings": {
-                "/": {
-                    "content": base64::engine::general_purpose::STANDARD.encode("<html>ok</html>"),
-                    "content_type": "text/html"
-                }
-            },
-            "signature": sign_simple_registration(&owner_identity, "valid-fee.zhtp", timestamp, 10),
-            "timestamp": timestamp,
-            "fee": 10,
-            "fee_payment_tx": hex::encode(bincode::serialize(&tx)?)
-        });
+        let request =
+            simple_registration_request(&owner_identity, "valid-fee.zhtp", "<html>ok</html>", &tx)?;
 
         let response = handler.register_domain_simple(serde_json::to_vec(&request)?).await?;
         assert_eq!(response.status, ZhtpStatus::Ok);
@@ -1779,24 +1792,12 @@ mod tests {
         let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) = setup_handler().await?;
         let fee_signer = BcPublicKey::new(owner_identity.public_key.dilithium_pk.clone());
         let tx = fee_payment_tx(fee_signer, owner_private, owner_wallet_id, treasury_wallet_id, 9, 0);
-
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
-        let request = json!({
-            "domain": "invalid-fee.zhtp",
-            "owner": owner_identity.did,
-            "content_mappings": {
-                "/": {
-                    "content": base64::engine::general_purpose::STANDARD.encode("<html>bad</html>"),
-                    "content_type": "text/html"
-                }
-            },
-            "signature": sign_simple_registration(&owner_identity, "invalid-fee.zhtp", timestamp, 10),
-            "timestamp": timestamp,
-            "fee": 10,
-            "fee_payment_tx": hex::encode(bincode::serialize(&tx)?)
-        });
+        let request = simple_registration_request(
+            &owner_identity,
+            "invalid-fee.zhtp",
+            "<html>bad</html>",
+            &tx,
+        )?;
 
         let result = handler.register_domain_simple(serde_json::to_vec(&request)?).await;
         assert!(result.is_err(), "invalid fee tx amount should be rejected");
