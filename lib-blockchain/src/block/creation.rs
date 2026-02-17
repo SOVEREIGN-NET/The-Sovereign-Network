@@ -124,61 +124,30 @@ pub fn create_genesis_block_with_transactions(transactions: Vec<Transaction>) ->
         .build()
 }
 
-/// Mine a block (find valid nonce)
-///
-/// # Arguments
-/// * `block` - Block to mine
-/// * `max_iterations` - Maximum iterations before giving up
+// PoW mining functions removed as part of BFT-A-935
+// Stub implementations provided for backward compatibility
+// These functions now just return the block without PoW mining
+
+/// Legacy mine_block stub - no longer performs PoW mining
 ///
 /// # Deprecated
-/// Use `mine_block_with_config` instead for environment-aware mining
-pub fn mine_block(mut block: Block, max_iterations: u64) -> Result<Block> {
-    mine_block_internal(&mut block, max_iterations, false)
+/// This function is deprecated and will be removed in a future version.
+/// Blocks are now validated through BFT consensus, not PoW.
+#[deprecated(note = "PoW mining removed - blocks validated through BFT consensus")]
+pub fn mine_block(block: Block, _max_iterations: u64) -> Result<Block> {
+    tracing::debug!("mine_block called but PoW mining is disabled (BFT-A-935)");
+    Ok(block)
 }
 
-/// Mine a block using environment-aware configuration
+/// Legacy mine_block_with_config stub - no longer performs PoW mining
 ///
-/// # Arguments
-/// * `block` - Block to mine
-/// * `config` - Mining configuration from MiningProfile
-///
-/// This is the preferred method for mining as it uses profile-appropriate settings.
-pub fn mine_block_with_config(mut block: Block, config: &crate::types::MiningConfig) -> Result<Block> {
-    // If instant mining is allowed and we're in bootstrap mode, skip PoW entirely
-    if config.allow_instant_mining {
-        block.header.set_nonce(0);
-        // For bootstrap, we accept any hash - just set nonce and return
-        tracing::info!("⚡ Bootstrap mode: instant mining enabled, skipping PoW");
-        return Ok(block);
-    }
-
-    mine_block_internal(&mut block, config.max_iterations, config.max_iterations <= 100_000)
-}
-
-/// Internal mining implementation
-fn mine_block_internal(block: &mut Block, max_iterations: u64, low_iteration_mode: bool) -> Result<Block> {
-    let mut iterations = 0;
-    let log_interval = if low_iteration_mode { 10_000 } else { 1_000_000 };
-
-    while iterations < max_iterations {
-        // Update nonce and recalculate hash
-        block.header.set_nonce(iterations);
-
-        // Check if block meets difficulty target
-        if block.header.meets_difficulty_target() {
-            tracing::info!("✓ Block mined in {} iterations", iterations);
-            return Ok(block.clone());
-        }
-
-        iterations += 1;
-
-        // Log progress
-        if iterations % log_interval == 0 {
-            tracing::info!("Mining progress: {} iterations", iterations);
-        }
-    }
-
-    Err(anyhow::anyhow!("Failed to mine block within {} iterations", max_iterations))
+/// # Deprecated
+/// This function is deprecated and will be removed in a future version.
+/// Blocks are now validated through BFT consensus, not PoW.
+#[deprecated(note = "PoW mining removed - blocks validated through BFT consensus")]
+pub fn mine_block_with_config(block: Block, _config: &crate::types::MiningConfig) -> Result<Block> {
+    tracing::debug!("mine_block_with_config called but PoW mining is disabled (BFT-A-935)");
+    Ok(block)
 }
 
 /// Estimate block creation time

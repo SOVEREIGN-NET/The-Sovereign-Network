@@ -1,7 +1,41 @@
 //! Consensus integration for ZHTP blockchain
-//! 
+//!
 //! Provides full integration with lib-consensus package including validator management,
 //! block production, consensus events, DAO governance, and reward distribution.
+//!
+//! # Block Flow Architecture (Issue #938)
+//!
+//! **CRITICAL**: Blocks can reach the blockchain through TWO paths, but only ONE is safe:
+//!
+//! ## Path 1: Network-Received Blocks (PROPOSAL-ONLY - Issue #938)
+//! ```text
+//! Network → handle_new_block → BlockchainEventReceiver → [PROPOSAL ONLY]
+//!                                                            ↓
+//!                                              Submit to BFT Consensus
+//!                                                            ↓
+//!                                              2/3+1 commit votes?
+//!                                                            ↓
+//!                                              BlockCommitCallback
+//!                                                            ↓
+//!                                                   PERSISTENCE ✓
+//! ```
+//! Network blocks MUST go through BFT consensus before persistence.
+//! They are submitted as proposals, validated by 2/3+1 validators,
+//! and ONLY persisted after BFT commit via BlockCommitCallback.
+//!
+//! ## Path 2: Locally-Generated Blocks (Direct persistence)
+//! ```text
+//! Local miner/producer → add_block() → PERSISTENCE ✓
+//! ```
+//! Locally-generated blocks (from mining/staking) bypass consensus
+//! as they originate from this node's authority.
+//!
+//! ## Safety Invariant
+//! **Network blocks CANNOT reach persistence before BFT commit.**
+//! This prevents:
+//! - Byzantine nodes from injecting invalid blocks
+//! - Race conditions during network partitions
+//! - Consensus bypass attacks
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -12,7 +46,7 @@ use tracing::{info, warn, error, debug};
 
 use lib_consensus::{
     ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorStatus,
-    DaoEngine, DaoProposalType, DaoVoteChoice,
+    DaoProposalType, DaoVoteChoice,
     RewardCalculator, RewardRound,
     ConsensusProposal, ConsensusVote, VoteType, ConsensusStep,
     ConsensusType, ConsensusProof, NoOpBroadcaster,
@@ -27,7 +61,6 @@ use crate::{
     mempool::Mempool,
     utils::time::current_timestamp,
     transaction::IdentityTransactionData,
-    fork_recovery::{ForkDetector, ChainEvaluation},
 };
 
 /// Validator keypair for cryptographic operations
@@ -536,31 +569,16 @@ impl BlockchainConsensusCoordinator {
                 return Err(anyhow::anyhow!("Block verification failed for proposal"));
             }
 
-            // Check for fork - if block at same height exists with different hash
+            // BFT consensus prevents forks through validator agreement
+            // If a block exists at this height with a different hash, reject the proposal
             if let Some(existing_block) = blockchain.get_block(block.header.height) {
-                if let Some(fork) = ForkDetector::detect_fork(existing_block, &block) {
-                    // Fork detected - evaluate chains to determine canonical block
-                    info!("Fork detected at height {}: existing={}, new={}",
-                          fork.height, fork.existing_hash, fork.new_hash);
-
-                    // Build chains for evaluation - use just the last blocks for comparison
-                    // since we're comparing fork point blocks
-                    let our_chain = vec![existing_block.clone()];
-                    let candidate_chain = vec![block.clone()];
-
-                    let evaluation = ForkDetector::evaluate_chains(&our_chain, &candidate_chain);
-                    match evaluation {
-                        ChainEvaluation::KeepOurChain { our_work, candidate_work, reason } => {
-                            info!("Fork resolution: keeping our chain (our_work={}, candidate_work={}, reason={})",
-                                  our_work, candidate_work, reason);
-                            return Err(anyhow::anyhow!("Fork detected: keeping our chain - {}", reason));
-                        }
-                        ChainEvaluation::SwitchToCandidate { our_work, candidate_work, reason } => {
-                            info!("Fork resolution: candidate block is better (our_work={}, candidate_work={}, reason={})",
-                                  our_work, candidate_work, reason);
-                            // Continue to vote on proposal - consensus will handle reorganization if needed
-                        }
-                    }
+                if existing_block.header.block_hash != block.header.block_hash {
+                    return Err(anyhow::anyhow!(
+                        "Block already exists at height {} with different hash (existing: {}, proposed: {})",
+                        block.header.height,
+                        existing_block.header.block_hash,
+                        block.header.block_hash,
+                    ));
                 }
             }
         }
@@ -885,21 +903,11 @@ impl BlockchainConsensusCoordinator {
 
     /// Process DAO governance operations
     async fn process_dao_governance(&self) -> Result<()> {
-        let mut consensus_engine = self.consensus_engine.write().await;
-        let dao_engine = consensus_engine.dao_engine_mut();
-
-        // Process expired proposals
-        dao_engine.process_expired_proposals().await?;
-
-        // Check for new governance transactions in mempool
-        let mempool = self.mempool.read().await;
-        let pending_transactions = mempool.get_all_transactions();
-
-        for transaction in pending_transactions {
-            if self.is_dao_transaction(transaction) {
-                self.process_dao_transaction(transaction, dao_engine).await?;
-            }
-        }
+        // Canonical DAO execution path: process approved governance proposals
+        // directly from committed blockchain state. This avoids dual execution
+        // engines and restart divergence between DaoEngine and Blockchain state.
+        let mut blockchain = self.blockchain.write().await;
+        blockchain.process_approved_governance_proposals()?;
 
         Ok(())
     }
@@ -1361,254 +1369,6 @@ impl BlockchainConsensusCoordinator {
         Ok(transaction)
     }
 
-    /// Check if transaction is DAO-related
-    fn is_dao_transaction(&self, transaction: &Transaction) -> bool {
-        // Check transaction type and content for DAO operations
-        transaction.transaction_type == TransactionType::IdentityRegistration ||
-        transaction.transaction_type == TransactionType::IdentityUpdate ||
-        String::from_utf8_lossy(&transaction.memo).contains("dao:")
-    }
-
-    /// Process DAO transaction - uses proper transaction types instead of memo parsing
-    async fn process_dao_transaction(
-        &self,
-        transaction: &Transaction,
-        dao_engine: &mut DaoEngine,
-    ) -> Result<()> {
-        match transaction.transaction_type {
-            TransactionType::DaoProposal => {
-                self.process_dao_proposal_transaction(transaction, dao_engine).await?;
-            },
-            TransactionType::DaoVote => {
-                self.process_dao_vote_transaction(transaction, dao_engine).await?;
-            },
-            TransactionType::DaoExecution => {
-                self.process_dao_execution_transaction(transaction, dao_engine).await?;
-            },
-            _ => {
-                // Not a DAO transaction, skip
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Process a DAO proposal transaction
-    async fn process_dao_proposal_transaction(
-        &self,
-        transaction: &Transaction,
-        dao_engine: &mut DaoEngine,
-    ) -> Result<()> {
-        if let Some(ref proposal_data) = transaction.dao_proposal_data {
-            info!("📋 Processing DAO proposal: {} (ID: {:?})", 
-                  proposal_data.title, proposal_data.proposal_id);
-            
-            // Convert blockchain proposal data to consensus DaoProposalType
-            let proposal_type = self.parse_proposal_type(&proposal_data.proposal_type)?;
-            
-            // Parse proposer ID from hex string
-            let proposer_id = lib_crypto::Hash::from_hex(&proposal_data.proposer)
-                .unwrap_or_else(|_| lib_crypto::Hash::from_bytes(proposal_data.proposer.as_bytes()));
-            
-            // Proposal validation happens in DaoEngine
-            let proposal_id = dao_engine.create_dao_proposal(
-                proposer_id,
-                proposal_data.title.clone(),
-                proposal_data.description.clone(),
-                proposal_type,
-                (proposal_data.voting_period_blocks / 14400) as u32, // blocks to days (assuming 6s blocks)
-            ).await?;
-
-            info!("✅ DAO proposal created: {:?}", proposal_id);
-        } else {
-            warn!("⚠️  DaoProposal transaction missing proposal_data");
-        }
-
-        Ok(())
-    }
-
-    /// Process a DAO vote transaction
-    async fn process_dao_vote_transaction(
-        &self,
-        transaction: &Transaction,
-        dao_engine: &mut DaoEngine,
-    ) -> Result<()> {
-        if let Some(ref vote_data) = transaction.dao_vote_data {
-            info!("🗳️  Processing DAO vote on proposal {:?} by {}", 
-                  vote_data.proposal_id, vote_data.voter);
-            
-            // Convert vote choice string to enum
-            let vote_choice = self.parse_vote_choice(&vote_data.vote_choice)?;
-            
-            // Parse voter ID from hex string
-            let voter_id = lib_crypto::Hash::from_hex(&vote_data.voter)
-                .unwrap_or_else(|_| lib_crypto::Hash::from_bytes(vote_data.voter.as_bytes()));
-            
-            // Convert blockchain Hash to lib_crypto Hash for proposal_id
-            let proposal_id = lib_crypto::Hash::from_bytes(vote_data.proposal_id.as_bytes());
-            
-            // Cast vote through DaoEngine
-            let vote_id = dao_engine.cast_dao_vote(
-                voter_id,
-                proposal_id,
-                vote_choice,
-                vote_data.justification.clone(),
-            ).await?;
-
-            info!("✅ DAO vote cast: {:?}", vote_id);
-        } else {
-            warn!("⚠️  DaoVote transaction missing vote_data");
-        }
-
-        Ok(())
-    }
-
-    /// Process a DAO execution transaction
-    async fn process_dao_execution_transaction(
-        &self,
-        transaction: &Transaction,
-        _dao_engine: &mut DaoEngine,
-    ) -> Result<()> {
-        if let Some(ref execution_data) = transaction.dao_execution_data {
-            info!("⚡ Processing DAO execution for proposal {:?}", execution_data.proposal_id);
-            info!("   Executor: {}", execution_data.executor);
-            if let Some(ref recipient) = execution_data.recipient {
-                info!("   Recipient: {}", recipient);
-            }
-            if let Some(amount) = execution_data.amount {
-                info!("   Amount: {} SOV", amount);
-            }
-            info!("✅ DAO execution processed");
-        } else {
-            warn!("⚠️  DaoExecution transaction missing execution_data");
-        }
-
-        Ok(())
-    }
-
-    /// Parse proposal type string to enum
-    fn parse_proposal_type(&self, type_str: &str) -> Result<DaoProposalType> {
-        match type_str {
-            "UbiDistribution" => Ok(DaoProposalType::UbiDistribution),
-            "WelfareAllocation" => Ok(DaoProposalType::WelfareAllocation),
-            "ProtocolUpgrade" => Ok(DaoProposalType::ProtocolUpgrade),
-            "TreasuryAllocation" => Ok(DaoProposalType::TreasuryAllocation),
-            "ValidatorUpdate" => Ok(DaoProposalType::ValidatorUpdate),
-            "EconomicParams" => Ok(DaoProposalType::EconomicParams),
-            "GovernanceRules" => Ok(DaoProposalType::GovernanceRules),
-            "FeeStructure" => Ok(DaoProposalType::FeeStructure),
-            "Emergency" => Ok(DaoProposalType::Emergency),
-            "CommunityFunding" => Ok(DaoProposalType::CommunityFunding),
-            "ResearchGrants" => Ok(DaoProposalType::ResearchGrants),
-            _ => Err(anyhow::anyhow!("Unknown proposal type: {}", type_str)),
-        }
-    }
-
-    /// Parse vote choice string to enum
-    fn parse_vote_choice(&self, choice_str: &str) -> Result<DaoVoteChoice> {
-        match choice_str {
-            "Yes" => Ok(DaoVoteChoice::Yes),
-            "No" => Ok(DaoVoteChoice::No),
-            "Abstain" => Ok(DaoVoteChoice::Abstain),
-            s if s.starts_with("Delegate:") => {
-                let delegate_id = s.strip_prefix("Delegate:").unwrap_or("");
-                let delegate_hash = lib_crypto::Hash::from_hex(delegate_id)
-                    .unwrap_or_else(|_| lib_crypto::Hash::from_bytes(delegate_id.as_bytes()));
-                Ok(DaoVoteChoice::Delegate(delegate_hash))
-            },
-            _ => Err(anyhow::anyhow!("Unknown vote choice: {}", choice_str)),
-        }
-    }
-
-    /// Create DAO proposal from transaction memo (DEPRECATED - use DaoProposal transaction type)
-    #[deprecated(note = "Use process_dao_proposal_transaction instead - memo parsing is deprecated")]
-    async fn create_dao_proposal_from_transaction(
-        &self,
-        transaction: &Transaction,
-        dao_engine: &mut DaoEngine,
-    ) -> Result<()> {
-        let memo = String::from_utf8_lossy(&transaction.memo);
-        
-        // Parse proposal details from memo (simplified parsing)
-        if let Some(title_start) = memo.find("title:") {
-            let title_section = &memo[title_start + 6..];
-            let title = if let Some(title_end) = title_section.find("|") {
-                title_section[..title_end].trim().to_string()
-            } else {
-                title_section.trim().to_string()
-            };
-
-            let proposer = IdentityId::from_bytes(&transaction.signature.public_key.as_bytes());
-            
-            let proposal_id = dao_engine.create_dao_proposal(
-                proposer,
-                title,
-                "DAO proposal from blockchain transaction".to_string(),
-                DaoProposalType::TreasuryAllocation,
-                7, // 7 days voting period
-            ).await?;
-
-            info!("Created DAO proposal from transaction: {:?}", proposal_id);
-        }
-
-        Ok(())
-    }
-
-    /// Process DAO vote from transaction memo (DEPRECATED - use DaoVote transaction type)
-    #[deprecated(note = "Use process_dao_vote_transaction instead - memo parsing is deprecated")]
-    async fn process_dao_vote_from_transaction(
-        &self,
-        transaction: &Transaction,
-        dao_engine: &mut DaoEngine,
-    ) -> Result<()> {
-        let memo = String::from_utf8_lossy(&transaction.memo);
-        
-        // Parse vote details from memo (simplified parsing)
-        if let (Some(proposal_start), Some(vote_start)) = (memo.find("proposal:"), memo.find("vote:")) {
-            let proposal_section = &memo[proposal_start + 9..];
-            let proposal_hash_str = if let Some(end) = proposal_section.find("|") {
-                &proposal_section[..end]
-            } else {
-                proposal_section
-            }.trim();
-
-            let vote_section = &memo[vote_start + 5..];
-            let vote_str = if let Some(end) = vote_section.find("|") {
-                &vote_section[..end]
-            } else {
-                vote_section
-            }.trim();
-
-            if let Ok(proposal_hash_bytes) = hex::decode(proposal_hash_str) {
-                let mut hash_array = [0u8; 32];
-                if proposal_hash_bytes.len() >= 32 {
-                    hash_array.copy_from_slice(&proposal_hash_bytes[..32]);
-                    let proposal_id = Hash::from_bytes(&hash_array);
-
-                    let vote_choice = match vote_str.to_lowercase().as_str() {
-                        "yes" => DaoVoteChoice::Yes,
-                        "no" => DaoVoteChoice::No,
-                        "abstain" => DaoVoteChoice::Abstain,
-                        _ => DaoVoteChoice::Abstain,
-                    };
-
-                    let voter = IdentityId::from_bytes(&transaction.signature.public_key.as_bytes());
-                    
-                    let vote_id = dao_engine.cast_dao_vote(
-                        voter,
-                        proposal_id,
-                        vote_choice,
-                        Some("Vote cast via blockchain transaction".to_string()),
-                    ).await?;
-
-                    info!(" Processed DAO vote from transaction: {:?}", vote_id);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Create reward transactions for validators
     async fn create_reward_transactions(&self, reward_round: &RewardRound) -> Result<Vec<Transaction>> {
         let mut reward_transactions = Vec::new();
@@ -1671,20 +1431,31 @@ impl BlockchainConsensusCoordinator {
 
     /// Get consensus engine status
     pub async fn get_consensus_status(&self) -> Result<ConsensusStatus> {
-        let consensus_engine = self.consensus_engine.read().await;
-        let current_round = consensus_engine.current_round();
-        let validator_manager = consensus_engine.validator_manager();
-        let dao_engine = consensus_engine.dao_engine();
+        let (current_height, current_round_num, current_step, validator_count, active_validators) = {
+            let consensus_engine = self.consensus_engine.read().await;
+            let current_round = consensus_engine.current_round();
+            let validator_manager = consensus_engine.validator_manager();
+            (
+                current_round.height,
+                current_round.round,
+                current_round.step.clone(),
+                validator_manager.get_total_validators(),
+                validator_manager.get_active_validators().len(),
+            )
+        };
+        let blockchain = self.blockchain.read().await;
+        let dao_proposals = blockchain.get_dao_proposals().len();
+        let treasury_balance = blockchain.get_dao_treasury_balance().unwrap_or(0);
 
         Ok(ConsensusStatus {
-            current_height: current_round.height,
-            current_round: current_round.round,
-            current_step: current_round.step.clone(),
+            current_height,
+            current_round: current_round_num,
+            current_step,
             is_validator: self.local_validator_id.is_some(),
-            validator_count: validator_manager.get_total_validators(),
-            active_validators: validator_manager.get_active_validators().len(),
-            dao_proposals: dao_engine.get_dao_proposals().len(),
-            treasury_balance: dao_engine.get_dao_treasury().total_balance,
+            validator_count,
+            active_validators,
+            dao_proposals,
+            treasury_balance,
             is_producing_blocks: self.is_producing_blocks,
         })
     }

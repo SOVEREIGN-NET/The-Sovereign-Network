@@ -1,5 +1,6 @@
 use super::*;
 use lib_crypto::hash_blake3;
+use tracing::info;
 
 // ============================================================================
 // AUDIT AND LOGGING CONSTANTS
@@ -327,9 +328,9 @@ impl ConsensusEngine {
         // Check if we received enough prevotes
         if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
             let prevote_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreVote);
-            let threshold = self.validator_manager.get_byzantine_threshold();
+            let active_validator_count = self.validator_manager.get_active_validators().len() as u64;
 
-            if prevote_count >= threshold {
+            if check_supermajority(prevote_count, active_validator_count) {
                 let vote = self.cast_vote(proposal_id.clone(), VoteType::PreCommit)
                     .await?;
                 self.current_round.valid_proposal = Some(proposal_id);
@@ -370,9 +371,9 @@ impl ConsensusEngine {
         // Check if we received enough precommits
         if let Some(proposal_id) = self.current_round.valid_proposal.as_ref().cloned() {
             let precommit_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreCommit);
-            let threshold = self.validator_manager.get_byzantine_threshold();
+            let active_validator_count = self.validator_manager.get_active_validators().len() as u64;
 
-            if precommit_count >= threshold {
+            if check_supermajority(precommit_count, active_validator_count) {
                 let vote = self.cast_vote(proposal_id.clone(), VoteType::Commit)
                     .await?;
 
@@ -494,9 +495,53 @@ impl ConsensusEngine {
         tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms)).await;
     }
 
-    /// Process committed block
+    /// Process committed block (Issue #938: This is the ONLY safe path to persistence)
+    ///
+    /// **CRITICAL**: This method is called AFTER achieving 2/3+1 commit votes.
+    /// It is the ONLY safe way for network-received blocks to reach persistence.
+    ///
+    /// **INVARIANT BFT-A-939**: This method MUST only be called after achieving
+    /// commit consensus (2/3+ commit votes). Non-committed blocks are rejected
+    /// before reaching persistence or state update paths.
+    ///
+    /// Flow:
+    /// 1. Network block arrives → submitted as proposal (proposal-only)
+    /// 2. BFT consensus validates and votes
+    /// 3. 2/3+1 commit votes achieved
+    /// 4. THIS method is called
+    /// 5. BlockCommitCallback persists the block
+    ///
+    /// This ensures Byzantine fault tolerance - no single node can inject blocks.
     #[allow(deprecated)]
     async fn process_committed_block(&mut self, proposal_id: &Hash) -> ConsensusResult<()> {
+        // SAFETY: Verify commit quorum before processing (Issue #939)
+        // This is a defense-in-depth check - callers must already verify commit votes
+        let commit_count = self.count_commits_for(
+            self.current_round.height,
+            self.current_round.round,
+            proposal_id
+        );
+        let total_validators = self.validator_manager.get_active_validators().len() as u64;
+
+        if !super::check_supermajority(commit_count, total_validators) {
+            return Err(ConsensusError::ValidatorError(
+                format!(
+                    "INVARIANT VIOLATION (BFT-A-939): Attempted to process block without commit quorum. \
+                    Commits: {}/{}, Proposal: {:?}",
+                    commit_count,
+                    total_validators,
+                    proposal_id
+                )
+            ));
+        }
+
+        tracing::debug!(
+            "✓ Commit quorum verified: {}/{} commits for proposal {:?}",
+            commit_count,
+            total_validators,
+            proposal_id
+        );
+
         // Find and process the committed proposal
         if let Some(proposal_index) = self
             .pending_proposals
@@ -510,7 +555,7 @@ impl ConsensusEngine {
             // Validate the block one more time before applying
             self.validate_committed_block(&proposal).await?;
 
-            // Apply block to state
+            // Apply block to state (Issue #938: This triggers BlockCommitCallback → persistence)
             self.apply_block_to_state(&proposal).await?;
 
             // Update validator activities and reputation
@@ -740,21 +785,35 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    /// Apply block to blockchain state
+    /// Apply block to blockchain state (Issue #938: This is the persistence gateway)
     ///
-    /// This is the critical bridge between BFT consensus and blockchain storage.
-    /// When BFT achieves 2/3+1 commit votes, this method commits the block.
+    /// **CRITICAL**: This is the ONLY legitimate path for network blocks to reach persistence.
+    /// This method is called AFTER BFT achieves 2/3+1 commit votes, ensuring Byzantine fault tolerance.
+    ///
+    /// **INVARIANT BFT-A-939**: This method MUST only be called for blocks that have
+    /// achieved commit consensus. The caller (process_committed_block) verifies commit
+    /// quorum before invoking this method. Non-committed blocks are rejected before
+    /// reaching persistence.
+    ///
+    /// # Safety Guarantee (Issue #938)
+    /// Network-received blocks MUST flow through:
+    /// 1. Network → proposal submission (proposal-only, no persistence)
+    /// 2. BFT validation (2/3+1 validators agree)
+    /// 3. THIS method (BlockCommitCallback → persistence)
+    ///
+    /// Any path that bypasses this flow violates consensus safety.
     async fn apply_block_to_state(&mut self, proposal: &ConsensusProposal) -> ConsensusResult<()> {
         // Call the block commit callback if configured
         // This is the bridge to the actual blockchain storage layer
         if let Some(ref callback) = self.block_commit_callback {
             match callback.commit_finalized_block(proposal).await {
                 Ok(()) => {
-                    tracing::info!(
-                        "✅ BFT finalized block committed to blockchain (height: {}, proposal: {:?})",
-                        proposal.height,
-                        proposal.id
+                    info!(
+                        block_height = proposal.height,
+                        proposal_id = ?proposal.id,
+                        "BFT finalized block committed to blockchain"
                     );
+                    info!("Issue #938: Block persisted ONLY after 2/3+1 commit votes");
                 }
                 Err(e) => {
                     // Log but don't fail consensus - block commit is best-effort

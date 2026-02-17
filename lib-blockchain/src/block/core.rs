@@ -162,10 +162,13 @@ impl Block {
         matches
     }
 
-    /// Verify the block meets the difficulty target
+    /// Verify the block meets the difficulty target (deprecated)
+    ///
+    /// # Deprecated
+    /// This method is deprecated. PoW validation no longer used with BFT consensus.
+    #[deprecated(note = "PoW validation removed - using BFT consensus")]
     pub fn meets_difficulty_target(&self) -> bool {
-        let block_hash = self.hash();
-        self.header.difficulty.meets_target(&block_hash)
+        panic!("Block::meets_difficulty_target() is deprecated and must not be used: PoW difficulty validation has been removed in favor of BFT consensus (BFT-A-935)");
     }
 
     /// Get all transaction IDs in the block
@@ -257,25 +260,40 @@ impl BlockHeader {
         self.block_hash
     }
 
-    /// Set the nonce and recalculate hash
-    pub fn set_nonce(&mut self, nonce: u64) {
-        self.nonce = nonce;
-        self.block_hash = self.calculate_hash();
-    }
-
-    /// Check if the block hash meets the difficulty target
-    pub fn meets_difficulty_target(&self) -> bool {
-        self.difficulty.check_hash(&self.block_hash)
-    }
-
     /// Get the target value for this difficulty
     pub fn target(&self) -> [u8; 32] {
         self.difficulty.target()
     }
 
-    /// Check if this header represents a valid proof-of-work
+    // BFT-A-935: PoW methods deprecated - stubs provided for backward compatibility
+
+    /// Set the nonce (deprecated - no longer used for PoW)
+    ///
+    /// # Deprecated
+    /// This method is deprecated. Nonce is no longer used with BFT consensus.
+    #[deprecated(note = "Nonce no longer used - BFT consensus instead of PoW")]
+    pub fn set_nonce(&mut self, nonce: u64) {
+        // BFT-A-935: Nonce must not affect consensus-critical fields such as block_hash.
+        // Preserve block_hash to avoid changing block identity after construction.
+        self.nonce = nonce;
+    }
+
+    /// Check if the block hash meets the difficulty target (deprecated)
+    ///
+    /// # Deprecated
+    /// This method is deprecated. PoW validation no longer used with BFT consensus.
+    #[deprecated(note = "PoW validation removed - using BFT consensus")]
+    pub fn meets_difficulty_target(&self) -> bool {
+        panic!("BlockHeader::meets_difficulty_target() is deprecated and must not be used: PoW difficulty validation has been removed in favor of BFT consensus (BFT-A-935)");
+    }
+
+    /// Check if this header represents a valid proof-of-work (deprecated)
+    ///
+    /// # Deprecated
+    /// This method is deprecated. PoW validation no longer used with BFT consensus.
+    #[deprecated(note = "PoW validation removed - using BFT consensus")]
     pub fn is_valid_proof_of_work(&self) -> bool {
-        self.meets_difficulty_target()
+        panic!("BlockHeader::is_valid_proof_of_work() is deprecated and must not be used: PoW validation has been removed in favor of BFT consensus (BFT-A-935)");
     }
 
     /// Get time since previous block (requires previous block timestamp)

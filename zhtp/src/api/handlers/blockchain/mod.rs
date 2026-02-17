@@ -24,15 +24,12 @@ use lib_blockchain::Blockchain;
 /// to ensure it always sees the latest state (including transactions
 /// added via mesh protocol).
 pub struct BlockchainHandler {
-    contract_states: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 }
 
 impl BlockchainHandler {
     pub fn new(_blockchain: Arc<RwLock<Blockchain>>) -> Self {
         // We ignore the passed blockchain reference and always fetch from global provider
-        Self {
-            contract_states: Arc::new(RwLock::new(HashMap::new())),
-        }
+        Self {}
     }
 
     /// Get the current shared blockchain instance
@@ -1822,331 +1819,45 @@ impl BlockchainHandler {
 impl BlockchainHandler {
     /// Deploy a new smart contract
     async fn handle_deploy_contract(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        use lib_blockchain::contracts::{ContractType, SmartContract};
-        use lib_blockchain::integration::crypto_integration::PublicKey;
-
-        #[derive(Deserialize)]
-        struct DeployContractRequest {
-            name: String,
-            contract_type: String,
-            bytecode: Option<String>, // hex-encoded bytecode
-            code: Option<String>,     // source code (for simple contracts)
-            initial_state: serde_json::Value,
-        }
-
-        #[derive(Serialize)]
-        struct DeployContractResponse {
-            status: String,
-            contract_address: String,
-            transaction_hash: String,
-            gas_used: u64,
-            block_height: u64,
-        }
-
-        let req_data: DeployContractRequest = serde_json::from_slice(&request.body)?;
-
-        // Generate contract ID
-        let contract_id_bytes = format!("{}:{}", req_data.name, req_data.contract_type);
-        let hash_result = blake3::hash(contract_id_bytes.as_bytes());
-        let contract_id: [u8; 32] = *hash_result.as_bytes();
-
-        // Determine contract type
-        let contract_type = match req_data.contract_type.as_str() {
-            "token" => ContractType::Token,
-            "messaging" => ContractType::WhisperMessaging,
-            "contact" => ContractType::ContactRegistry,
-            "group" => ContractType::GroupChat,
-            "file" => ContractType::FileSharing,
-            "governance" => ContractType::Governance,
-            "web4" => ContractType::Web4Website,
-            _ => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::BadRequest,
-                    format!("Unknown contract type: {}", req_data.contract_type),
-                ));
-            }
-        };
-
-        // Get or generate bytecode
-        let bytecode = if let Some(hex_code) = req_data.bytecode {
-            hex::decode(&hex_code).map_err(|e| anyhow::anyhow!("Invalid bytecode hex: {}", e))?
-        } else if let Some(code) = req_data.code {
-            // Simple "compilation" - just store the code as bytecode
-            // In production, this would compile to WASM or native bytecode
-            let contract_data = serde_json::json!({
-                "name": req_data.name,
-                "code": code,
-                "initial_state": req_data.initial_state,
-            });
-            serde_json::to_vec(&contract_data)?
-        } else {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                "Either 'bytecode' or 'code' must be provided".to_string(),
-            ));
-        };
-
-        // Create creator public key (in production, use authenticated user's key)
-        let creator = PublicKey::new(vec![0u8; 32]); // Placeholder
-
-        let blockchain_arc = self.get_blockchain().await?;
-        let blockchain = blockchain_arc.read().await;
-        let current_height = blockchain.get_height();
-        drop(blockchain);
-
-        // Create the smart contract
-        let contract = SmartContract::new(
-            contract_id,
-            bytecode.clone(),
-            creator,
-            current_height + 1,
-            contract_type,
-            lib_blockchain::types::ContractPermissions::new(),
-        );
-
-        // Store contract in blockchain (simplified - in production, include in block)
-        let blockchain_arc = self
-            .get_blockchain()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
-        let blockchain = blockchain_arc.write().await;
-
-        // Create a transaction for the contract deployment
-        let tx_data = format!(
-            "CONTRACT_DEPLOY:{}:{}",
-            req_data.name,
-            hex::encode(&contract_id)
-        );
-        let tx_hash_result = blake3::hash(tx_data.as_bytes());
-        let tx_hash: [u8; 32] = *tx_hash_result.as_bytes();
-
-        // In a implementation, we would:
-        // 1. Create a proper transaction with the contract bytecode
-        // 2. Add it to mempool
-        // 3. Include it in the next block
-        // For now, we'll simulate this by storing metadata
-
-        let gas_used = contract.gas_cost();
-        let block_height = current_height + 1;
-
-        drop(blockchain);
-
-        tracing::info!(
-            "📜 Deployed contract: {} at block {}",
-            req_data.name,
-            block_height
-        );
-
-        // Initialize contract state
-        let contract_addr = hex::encode(&contract_id);
-        let mut states = self.contract_states.write().await;
-        states.insert(contract_addr.clone(), req_data.initial_state.clone());
-        drop(states);
-
-        let response_data = DeployContractResponse {
-            status: "deployed".to_string(),
-            contract_address: contract_addr,
-            transaction_hash: hex::encode(&tx_hash),
-            gas_used,
-            block_height,
-        };
-
-        let json_response = serde_json::to_vec(&response_data)?;
-        Ok(ZhtpResponse::success_with_content_type(
-            json_response,
-            "application/json".to_string(),
-            None,
+        let _ = request;
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "Direct /contracts/deploy is disabled. Submit canonical on-chain ContractDeployment transactions via /api/v1/blockchain/transaction/broadcast.".to_string(),
         ))
     }
 
     /// Call a smart contract function
     async fn handle_call_contract(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        #[derive(Deserialize)]
-        struct CallContractRequest {
-            function: String,
-            args: Vec<serde_json::Value>,
-        }
-
-        #[derive(Serialize)]
-        struct CallContractResponse {
-            status: String,
-            result: serde_json::Value,
-            gas_used: u64,
-            logs: Vec<String>,
-        }
-
-        // Extract contract address from path
-        let path_parts: Vec<&str> = request.uri.split('/').collect();
-        let contract_address = path_parts
-            .get(5)
-            .ok_or_else(|| anyhow::anyhow!("Contract address not provided in path"))?;
-
-        let req_data: CallContractRequest = serde_json::from_slice(&request.body)?;
-
-        tracing::info!(
-            "📞 Calling contract {} function: {}",
-            contract_address,
-            req_data.function
-        );
-
-        // Get or create contract state
-        let mut states = self.contract_states.write().await;
-        let state = states
-            .entry(contract_address.to_string())
-            .or_insert_with(|| serde_json::json!({ "count": 0 }));
-
-        // Execute contract function and update state
-        let result = match req_data.function.as_str() {
-            "increment" => {
-                // Get current count, increment it, and save
-                let current_count = state.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-                let new_count = current_count + 1;
-                state["count"] = serde_json::json!(new_count);
-
-                serde_json::json!({
-                    "success": true,
-                    "new_value": new_count,
-                    "message": format!("Count incremented to {}", new_count)
-                })
-            }
-            "get_count" => {
-                let current_count = state.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-
-                serde_json::json!({
-                    "count": current_count
-                })
-            }
-            _ => {
-                serde_json::json!({
-                    "error": format!("Unknown function: {}", req_data.function)
-                })
-            }
-        };
-
-        drop(states);
-
-        let response_data = CallContractResponse {
-            status: "executed".to_string(),
-            result,
-            gas_used: 2000,
-            logs: vec![
-                format!("Called {}()", req_data.function),
-                "Execution completed successfully".to_string(),
-            ],
-        };
-
-        let json_response = serde_json::to_vec(&response_data)?;
-        Ok(ZhtpResponse::success_with_content_type(
-            json_response,
-            "application/json".to_string(),
-            None,
+        let _ = request;
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "Direct /contracts/{id}/call is disabled. Submit canonical on-chain ContractExecution transactions via /api/v1/blockchain/transaction/broadcast.".to_string(),
         ))
     }
 
     /// List all deployed contracts
     async fn handle_list_contracts(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        #[derive(Serialize)]
-        struct ContractInfo {
-            address: String,
-            name: String,
-            contract_type: String,
-            deployed_at: u64,
-        }
-
-        #[derive(Serialize)]
-        struct ListContractsResponse {
-            status: String,
-            contracts: Vec<ContractInfo>,
-            total: usize,
-        }
-
-        // In production, query blockchain for all deployed contracts
-        // For now, return empty list
-        let response_data = ListContractsResponse {
-            status: "success".to_string(),
-            contracts: vec![],
-            total: 0,
-        };
-
-        let json_response = serde_json::to_vec(&response_data)?;
-        Ok(ZhtpResponse::success_with_content_type(
-            json_response,
-            "application/json".to_string(),
-            None,
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "Contract index endpoint is disabled until fully backed by canonical chain state.".to_string(),
         ))
     }
 
     /// Get contract state
     async fn handle_get_contract_state(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let path_parts: Vec<&str> = request.uri.split('/').collect();
-        let contract_address = path_parts
-            .get(5)
-            .ok_or_else(|| anyhow::anyhow!("Contract address not provided in path"))?;
-
-        #[derive(Serialize)]
-        struct ContractStateResponse {
-            status: String,
-            address: String,
-            state: serde_json::Value,
-        }
-
-        // Get actual contract state
-        let states = self.contract_states.read().await;
-        let state = states.get(*contract_address).cloned().unwrap_or_else(|| {
-            serde_json::json!({
-                "count": 0,
-                "note": "Contract not found or not initialized"
-            })
-        });
-        drop(states);
-
-        let response_data = ContractStateResponse {
-            status: "success".to_string(),
-            address: contract_address.to_string(),
-            state,
-        };
-
-        let json_response = serde_json::to_vec(&response_data)?;
-        Ok(ZhtpResponse::success_with_content_type(
-            json_response,
-            "application/json".to_string(),
-            None,
+        let _ = request;
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "Contract state endpoint is disabled until fully backed by canonical chain state.".to_string(),
         ))
     }
 
     /// Get contract information
     async fn handle_get_contract_info(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let path_parts: Vec<&str> = request.uri.split('/').collect();
-        let contract_address = path_parts
-            .get(5)
-            .ok_or_else(|| anyhow::anyhow!("Contract address not provided in path"))?;
-
-        #[derive(Serialize)]
-        struct ContractInfoResponse {
-            status: String,
-            address: String,
-            name: String,
-            contract_type: String,
-            creator: String,
-            deployed_at: u64,
-            bytecode_size: usize,
-        }
-
-        let response_data = ContractInfoResponse {
-            status: "success".to_string(),
-            address: contract_address.to_string(),
-            name: "Unknown Contract".to_string(),
-            contract_type: "generic".to_string(),
-            creator: "0x0000000000000000000000000000000000000000".to_string(),
-            deployed_at: 0,
-            bytecode_size: 0,
-        };
-
-        let json_response = serde_json::to_vec(&response_data)?;
-        Ok(ZhtpResponse::success_with_content_type(
-            json_response,
-            "application/json".to_string(),
-            None,
+        let _ = request;
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "Contract metadata endpoint is disabled until fully backed by canonical chain state.".to_string(),
         ))
     }
 
