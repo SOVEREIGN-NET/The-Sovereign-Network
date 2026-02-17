@@ -1323,6 +1323,8 @@
         let mut validators = Vec::new();
         for i in 1..=4 {
             let validator_id = test_validator_id(i);
+            // Note: validator_id is index-derived; signing keys are randomly generated and
+            // do not derive from the validator_id. This is a test limitation.
             let keypair = create_test_keypair();
 
             register_validator_with_keypair(&mut engine_a, validator_id.clone(), &keypair, i == 1).await;
@@ -1463,6 +1465,8 @@
         let mut validators = Vec::new();
         for i in 1..=4 {
             let validator_id = test_validator_id(i);
+            // Note: validator_id is index-derived; signing keys are randomly generated and
+            // do not derive from the validator_id. This is a test limitation.
             let keypair = create_test_keypair();
 
             register_validator_with_keypair(&mut engine_a, validator_id.clone(), &keypair, i == 1).await;
@@ -1594,6 +1598,8 @@
         let mut validators = Vec::new();
         for i in 1..=7 {
             let validator_id = test_validator_id(i);
+            // Note: validator_id is index-derived; signing keys are randomly generated and
+            // do not derive from the validator_id. This is a test limitation.
             let keypair = create_test_keypair();
 
             register_validator_with_keypair(&mut engine_a, validator_id.clone(), &keypair, i == 1).await;
@@ -1697,6 +1703,8 @@
         let mut validators = Vec::new();
         for i in 1..=4 {
             let validator_id = test_validator_id(i);
+            // Note: validator_id is index-derived; signing keys are randomly generated and
+            // do not derive from the validator_id. This is a test limitation.
             let keypair = create_test_keypair();
 
             register_validator_with_keypair(&mut engine_a, validator_id.clone(), &keypair, i == 1).await;
