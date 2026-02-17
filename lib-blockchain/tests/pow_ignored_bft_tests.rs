@@ -8,7 +8,7 @@
 //!   2. Restored to their `Default` value on every deserialization.
 //!
 //! Consequently, two blocks that are identical in every non-PoW field are
-//! indistinguishable after a serialization round-trip, which is the behaviour
+//! indistinguishable after a serialization round-trip, which is the behavior
 //! required for a PoW-free BFT chain.
 
 use lib_blockchain::block::{Block, BlockHeader};
@@ -24,7 +24,7 @@ use lib_blockchain::types::{Difficulty, Hash};
 /// `nonce` via `calculate_hash`).
 ///
 /// `block_hash` is set to `Hash::default()` on purpose: the tests focus on
-/// serialization behaviour of the PoW fields, not on hash correctness.
+/// serialization behavior of the PoW fields, not on hash correctness.
 fn make_header(
     nonce: u64,
     difficulty_bits: u32,
