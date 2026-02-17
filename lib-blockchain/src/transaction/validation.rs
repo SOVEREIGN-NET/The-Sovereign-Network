@@ -535,7 +535,7 @@ impl TransactionValidator {
         
         // Verify signature algorithm is supported
         match transaction.signature.algorithm {
-            SignatureAlgorithm::Dilithium2 | 
+            SignatureAlgorithm::Dilithium2 |
             SignatureAlgorithm::Dilithium5 => {
                 // Supported algorithms
             },
@@ -543,26 +543,10 @@ impl TransactionValidator {
                 return Err(ValidationError::InvalidSignature);
             }
         }
-        
-        // Verify signature timestamp is reasonable (not too old or in future)
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-            
-        let signature_time = transaction.signature.timestamp;
-        
-        // Allow signatures up to 1 hour old and 5 minutes in future
-        const MAX_SIGNATURE_AGE: u64 = 3600; // 1 hour
-        const MAX_FUTURE_TIME: u64 = 300;    // 5 minutes
-        
-        if signature_time + MAX_SIGNATURE_AGE < current_time {
-            return Err(ValidationError::InvalidSignature);
-        }
-        
-        if signature_time > current_time + MAX_FUTURE_TIME {
-            return Err(ValidationError::InvalidSignature);
-        }
+
+        // REMOVED: Wall-clock timestamp validation (nondeterministic)
+        // Transaction replay protection is handled by nullifier checks in UTXO validation
+        // Signature timestamps are metadata only, not consensus-critical
 
         Ok(())
     }

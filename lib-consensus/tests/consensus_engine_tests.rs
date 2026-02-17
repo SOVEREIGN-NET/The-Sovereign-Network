@@ -347,12 +347,16 @@ async fn test_consensus_round_initialization() -> Result<()> {
 #[tokio::test]
 async fn test_maximum_validator_limit() -> Result<()> {
     let mut config = create_test_config();
-    config.max_validators = 2; // Set low limit for testing
+    // MIN_VALIDATORS = 4 is the lowest value max_validators can be set to
+    // (the ValidatorManager constructor clamps max_validators to at least MIN_VALIDATORS).
+    // Set exactly at the minimum to test the upper-bound enforcement with the
+    // smallest possible active set.
+    config.max_validators = 4;
 
     let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
-    // Register up to the limit
-    for i in 1..=2 {
+    // Register up to the limit (4 validators = MIN_VALIDATORS)
+    for i in 1..=4 {
         let identity = create_test_identity(&format!("validator_{}", i));
         let result = consensus_engine
             .register_validator(
@@ -364,10 +368,10 @@ async fn test_maximum_validator_limit() -> Result<()> {
                 i == 1,
             )
             .await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Expected validator {} registration to succeed: {:?}", i, result);
     }
 
-    // Try to register one more (should fail)
+    // Try to register one more (should fail — max limit reached)
     let identity = create_test_identity("extra_validator");
     let result = consensus_engine
         .register_validator(

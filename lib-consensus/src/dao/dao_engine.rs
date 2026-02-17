@@ -8,6 +8,7 @@ use crate::dao::{
     DaoTreasury, DaoVote, DaoVoteChoice, DaoVoteTally, GovernanceParameterUpdate,
     GovernanceParameterValue, PrivacyLevel,
 };
+use crate::validators::validator_manager::{MAX_VALIDATORS_HARD_CAP, MIN_VALIDATORS};
 use anyhow::Result;
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
@@ -411,7 +412,13 @@ impl DaoEngine {
             match param {
                 GovernanceParameterValue::MinStake(value) => config.min_stake = *value,
                 GovernanceParameterValue::MinStorage(value) => config.min_storage = *value,
-                GovernanceParameterValue::MaxValidators(value) => config.max_validators = *value,
+                GovernanceParameterValue::MaxValidators(value) => {
+                    // Defense-in-depth: clamp the value into the valid range even after
+                    // validate_governance_update() has already checked the proposal.
+                    let clamped = (*value as usize).max(MIN_VALIDATORS) as u32;
+                    let clamped = clamped.min(MAX_VALIDATORS_HARD_CAP);
+                    config.max_validators = clamped;
+                }
                 GovernanceParameterValue::BlockTime(value) => config.block_time = *value,
                 GovernanceParameterValue::EpochLengthBlocks(value) => {
                     config.epoch_length_blocks = *value;
@@ -478,8 +485,31 @@ impl DaoEngine {
                     }
                 }
                 GovernanceParameterValue::MaxValidators(value) => {
-                    if *value == 0 {
-                        return Err(anyhow::anyhow!("Max validators must be greater than zero"));
+                    // Governance may adjust max_validators only within the range
+                    // [MIN_VALIDATORS, MAX_VALIDATORS_HARD_CAP].
+                    //
+                    // - The lower bound (MIN_VALIDATORS = 4) protects BFT safety:
+                    //   setting max below the minimum required by the protocol is
+                    //   nonsensical and would prevent the network from operating.
+                    // - The upper bound (MAX_VALIDATORS_HARD_CAP = 256) prevents
+                    //   governance from enabling O(n²) consensus message floods.
+                    if (*value as usize) < MIN_VALIDATORS {
+                        return Err(anyhow::anyhow!(
+                            "MaxValidators governance update rejected: proposed value {} is below \
+                             MIN_VALIDATORS ({}).  Setting max_validators below the BFT safety \
+                             floor is not permitted.",
+                            value,
+                            MIN_VALIDATORS,
+                        ));
+                    }
+                    if *value > MAX_VALIDATORS_HARD_CAP {
+                        return Err(anyhow::anyhow!(
+                            "MaxValidators governance update rejected: proposed value {} exceeds \
+                             MAX_VALIDATORS_HARD_CAP ({}).  A protocol upgrade is required to \
+                             raise the hard cap.",
+                            value,
+                            MAX_VALIDATORS_HARD_CAP,
+                        ));
                     }
                 }
                 GovernanceParameterValue::BlockTime(value) => {

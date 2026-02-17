@@ -300,11 +300,9 @@ fn test_network_serialization_integration() -> Result<()> {
         Hash::default(),
         Hash::default(),
         12345,
-        Difficulty::maximum(),
         1,
         0,
         0,
-        Difficulty::maximum(),
     );
     let block = Block::new(header, Vec::new());
     

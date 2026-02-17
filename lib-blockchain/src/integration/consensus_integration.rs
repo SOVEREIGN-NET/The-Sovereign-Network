@@ -261,16 +261,23 @@ impl BlockchainConsensusCoordinator {
         stake_amount: u64,
         storage_capacity: u64,
         consensus_keypair: &KeyPair,
+        networking_keypair: &KeyPair,
+        rewards_keypair: &KeyPair,
         commission_rate: u8,
     ) -> Result<()> {
         let mut consensus_engine = self.consensus_engine.write().await;
-        
-        // Register with the consensus engine
+
+        // Register with the consensus engine — three-key separation is required:
+        //   consensus_key : BFT vote-signing (Dilithium2, hot)
+        //   networking_key: P2P transport identity (Ed25519/X25519, hot)
+        //   rewards_key   : Reward wallet public key (cold-capable)
         consensus_engine.register_validator(
             identity.clone(),
             stake_amount,
             storage_capacity,
             consensus_keypair.public_key.dilithium_pk.clone(),
+            networking_keypair.public_key.dilithium_pk.clone(),
+            rewards_keypair.public_key.dilithium_pk.clone(),
             commission_rate,
             false, // Not genesis validator
         ).await.map_err(|e| anyhow::anyhow!("Consensus registration failed: {}", e))?;
@@ -574,10 +581,8 @@ impl BlockchainConsensusCoordinator {
             if let Some(existing_block) = blockchain.get_block(block.header.height) {
                 if existing_block.header.block_hash != block.header.block_hash {
                     return Err(anyhow::anyhow!(
-                        "Block already exists at height {} with different hash (existing: {}, proposed: {})",
-                        block.header.height,
-                        existing_block.header.block_hash,
-                        block.header.block_hash,
+                        "Block already exists at height {} with different hash",
+                        block.header.height
                     ));
                 }
             }
@@ -750,19 +755,16 @@ impl BlockchainConsensusCoordinator {
             height, tx_count, total_fees
         );
 
-        // Set difficulty (in production this would be calculated based on network state)
-        let difficulty = Difficulty::from_bits(crate::INITIAL_DIFFICULTY);
-
         let header = BlockHeader::new(
             1, // version
             previous_hash,
             merkle_root,
             timestamp,
-            difficulty,
+            Difficulty::maximum(),
             height,
             transactions.len() as u32,
             0, // block_size - will be calculated
-            difficulty, // cumulative_difficulty
+            Difficulty::maximum(),
         );
 
         let block = Block::new(header, transactions);
@@ -872,7 +874,7 @@ impl BlockchainConsensusCoordinator {
                 timestamp: current_timestamp(),
             },
             consensus_proof: ConsensusProof {
-                consensus_type: ConsensusType::Hybrid, // Default to hybrid consensus
+                consensus_type: ConsensusType::ByzantineFaultTolerance,
                 stake_proof: None,
                 storage_proof: None,
                 work_proof: None,
@@ -1137,19 +1139,16 @@ impl BlockchainConsensusCoordinator {
         // Calculate merkle root
         let merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&transactions);
         
-        // Set difficulty (in production this would be calculated based on network state)
-        let difficulty = Difficulty::from_bits(crate::INITIAL_DIFFICULTY);
-
         let header = BlockHeader::new(
             1, // version
             previous_hash,
             merkle_root,
             timestamp,
-            difficulty,
+            Difficulty::maximum(),
             height,
             transactions.len() as u32,
             0, // block_size - will be calculated
-            difficulty, // cumulative_difficulty
+            Difficulty::maximum(),
         );
 
         let block = Block::new(header, transactions);
