@@ -168,8 +168,7 @@ impl Block {
     /// This method is deprecated. PoW validation no longer used with BFT consensus.
     #[deprecated(note = "PoW validation removed - using BFT consensus")]
     pub fn meets_difficulty_target(&self) -> bool {
-        // Always return true for backward compatibility
-        true
+        panic!("Block::meets_difficulty_target() is deprecated and must not be used: PoW difficulty validation has been removed in favor of BFT consensus (BFT-A-935)");
     }
 
     /// Get all transaction IDs in the block
@@ -274,8 +273,9 @@ impl BlockHeader {
     /// This method is deprecated. Nonce is no longer used with BFT consensus.
     #[deprecated(note = "Nonce no longer used - BFT consensus instead of PoW")]
     pub fn set_nonce(&mut self, nonce: u64) {
+        // BFT-A-935: Nonce must not affect consensus-critical fields such as block_hash.
+        // Preserve block_hash to avoid changing block identity after construction.
         self.nonce = nonce;
-        self.block_hash = self.calculate_hash();
     }
 
     /// Check if the block hash meets the difficulty target (deprecated)
@@ -284,8 +284,7 @@ impl BlockHeader {
     /// This method is deprecated. PoW validation no longer used with BFT consensus.
     #[deprecated(note = "PoW validation removed - using BFT consensus")]
     pub fn meets_difficulty_target(&self) -> bool {
-        // Always return true for backward compatibility
-        true
+        panic!("BlockHeader::meets_difficulty_target() is deprecated and must not be used: PoW difficulty validation has been removed in favor of BFT consensus (BFT-A-935)");
     }
 
     /// Check if this header represents a valid proof-of-work (deprecated)
@@ -294,8 +293,7 @@ impl BlockHeader {
     /// This method is deprecated. PoW validation no longer used with BFT consensus.
     #[deprecated(note = "PoW validation removed - using BFT consensus")]
     pub fn is_valid_proof_of_work(&self) -> bool {
-        // Always return true for backward compatibility
-        true
+        panic!("BlockHeader::is_valid_proof_of_work() is deprecated and must not be used: PoW validation has been removed in favor of BFT consensus (BFT-A-935)");
     }
 
     /// Get time since previous block (requires previous block timestamp)
