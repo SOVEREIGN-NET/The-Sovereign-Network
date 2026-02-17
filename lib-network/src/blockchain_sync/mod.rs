@@ -41,6 +41,7 @@ pub use sync_coordinator::{SyncCoordinator, PeerSyncState, SyncStats, SyncType};
 pub use sync_manager::BlockchainSyncManager;
 pub use full_node_strategy::FullNodeStrategy;
 pub use edge_node_strategy::EdgeNodeStrategy;
+// assert_bootstrap_constants is defined in this module and is pub; no re-export needed.
 
 use anyhow::Result;
 use lib_crypto::PublicKey;
@@ -80,6 +81,105 @@ pub const MAX_CHUNKS_PER_REQUEST: u32 = 1000;
 /// Maximum pending requests per peer (rate limiting)
 pub const MAX_REQUESTS_PER_PEER: usize = 10;
 
+// ============================================================================
+// BFT BOOTSTRAP STRATEGY
+// ============================================================================
+//
+// When a new or restarting BFT node joins the network it must reconstruct a
+// trustworthy view of the chain state before participating in consensus. The
+// strategy defined here balances security (full cryptographic verification)
+// with practical startup time (checkpoint-assisted fast sync).
+//
+// ## Overview: "checkpoint-then-sync"
+//
+// The default bootstrap mode is "checkpoint-then-sync":
+//
+//   1. VERIFY GENESIS
+//      The node independently constructs the genesis block using the
+//      hardcoded parameters in `lib-blockchain` and verifies that its hash
+//      matches the well-known genesis hash published via social consensus.
+//      This step has zero network dependency — any mismatch is a fatal
+//      configuration error and the node MUST abort.
+//
+//   2. FIND HIGHEST COMMITTED CHECKPOINT
+//      The node queries its peers for the highest BFT-committed checkpoint
+//      (a block height for which a quorum certificate / commit proof exists).
+//      Peers MUST supply the full quorum certificate so the node can verify
+//      it without trusting any single peer.
+//      - A checkpoint is only accepted if its age (in blocks from the chain
+//        tip) is at least `MIN_CHECKPOINT_AGE_BLOCKS`. Setting this to 0
+//        permits using the very latest committed checkpoint.
+//      - If no valid checkpoint is found the node falls back to full replay
+//        from genesis (see step 3).
+//
+//   3. SYNC FORWARD (FULL REPLAY OR INCREMENTAL)
+//      Starting from the accepted checkpoint height the node downloads and
+//      fully validates every subsequent block up to the chain tip.
+//      - If the distance from the checkpoint to the tip exceeds
+//        `FULL_REPLAY_MAX_BLOCKS`, the node SHOULD request a newer
+//        checkpoint rather than replaying an unbounded number of blocks.
+//      - Block validation includes BFT quorum certificate checks, merkle
+//        root verification, transaction signature verification, and UTXO
+//        consistency checks.
+//
+// ## Security Properties
+//
+// - The genesis block is NEVER downloaded from peers. It is always constructed
+//   locally from hardcoded parameters (social consensus trust root).
+// - Checkpoints are only trusted after verifying the embedded quorum
+//   certificate against the known validator set.
+// - No block is accepted without full cryptographic validation.
+//
+// ## Assertions
+//
+// `assert_bootstrap_constants` (below) checks that the constants defined here
+// are internally consistent and should be called during node startup.
+// ============================================================================
+
+/// Bootstrap mode identifier.
+///
+/// The only supported value is `"checkpoint-then-sync"`. This constant is
+/// intentionally a `&str` rather than an enum so it can be logged and
+/// compared to configuration files without additional dependencies.
+pub const BOOTSTRAP_MODE: &str = "checkpoint-then-sync";
+
+/// Minimum checkpoint age in blocks before it may be used for bootstrap.
+///
+/// A value of 0 permits using the most recently committed checkpoint (i.e. the
+/// checkpoint at the very tip of the committed chain). Raise this value if the
+/// deployment requires extra finality depth before trusting a checkpoint.
+pub const MIN_CHECKPOINT_AGE_BLOCKS: u64 = 0;
+
+/// Maximum number of blocks to replay forward from a checkpoint before
+/// requiring a newer checkpoint.
+///
+/// If the gap between the accepted checkpoint height and the network tip
+/// exceeds this limit, the bootstrapping node SHOULD request a more recent
+/// checkpoint rather than performing an unbounded forward replay. This
+/// prevents slow startup on heavily-loaded networks.
+pub const FULL_REPLAY_MAX_BLOCKS: u64 = 1_000;
+
+/// Assert that the bootstrap strategy constants are internally consistent.
+///
+/// Call this once during node initialisation (e.g. in the network subsystem
+/// `new()` constructor) so that configuration regressions are caught early.
+///
+/// # Panics
+///
+/// Panics if any constant violates a well-formedness condition.
+pub fn assert_bootstrap_constants() {
+    assert_eq!(
+        BOOTSTRAP_MODE, "checkpoint-then-sync",
+        "BOOTSTRAP INVARIANT VIOLATED: BOOTSTRAP_MODE must be \"checkpoint-then-sync\""
+    );
+    // MIN_CHECKPOINT_AGE_BLOCKS is always valid as a u64; document that 0 is
+    // intentional (use the most recent committed checkpoint).
+    assert!(
+        FULL_REPLAY_MAX_BLOCKS > 0,
+        "BOOTSTRAP INVARIANT VIOLATED: FULL_REPLAY_MAX_BLOCKS must be greater than zero"
+    );
+}
+
 /// Get optimal chunk size for protocol
 pub fn get_chunk_size_for_protocol(protocol: &NetworkProtocol) -> usize {
     match protocol {
@@ -109,4 +209,32 @@ pub trait SyncStrategy: Send + Sync {
     
     /// Get current blockchain height
     async fn get_current_height(&self) -> u64;
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_assert_bootstrap_constants_passes() {
+        // Should not panic under valid configuration.
+        assert_bootstrap_constants();
+    }
+
+    #[test]
+    fn test_bootstrap_mode_is_correct() {
+        assert_eq!(
+            BOOTSTRAP_MODE, "checkpoint-then-sync",
+            "BOOTSTRAP_MODE must be "checkpoint-then-sync""
+        );
+    }
+
+    #[test]
+    fn test_full_replay_max_blocks_is_positive() {
+        assert!(
+            FULL_REPLAY_MAX_BLOCKS > 0,
+            "FULL_REPLAY_MAX_BLOCKS must be greater than zero"
+        );
+    }
 }
