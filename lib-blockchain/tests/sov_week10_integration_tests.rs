@@ -103,13 +103,10 @@ mod sov_week10_integration_tests {
             previous_block_hash: Hash::default(),
             merkle_root: Hash::default(),
             timestamp: 1000 + (height as u64),
-            difficulty: Difficulty::from_bits(0x1fffffff),
-            nonce: 0,
             height,
             block_hash: Hash::default(),
             transaction_count: transactions.len() as u32,
             block_size: 1024,
-            cumulative_difficulty: Difficulty::from_bits(0x1fffffff),
             fee_model_version: 2, // Phase 2+ uses v2
         };
 

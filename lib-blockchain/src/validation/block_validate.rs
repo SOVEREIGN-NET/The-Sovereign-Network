@@ -344,9 +344,6 @@ mod tests {
                 previous_block_hash: Hash::default(),
                 merkle_root: Hash::default(),
                 block_hash: Hash::default(),
-                nonce: 0,
-                difficulty: Difficulty::from_bits(1),
-                cumulative_difficulty: Difficulty::from_bits(1),
                 transaction_count: txs.len() as u32,
                 block_size: 0,
                 fee_model_version: 2, // Phase 2+ uses v2

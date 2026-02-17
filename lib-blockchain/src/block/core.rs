@@ -3,7 +3,7 @@
 //! Defines the fundamental block data structures used in the ZHTP blockchain.
 
 use serde::{Serialize, Deserialize};
-use crate::types::{Hash, Difficulty};
+use crate::types::Hash;
 use crate::transaction::Transaction;
 
 /// ZHTP blockchain block
@@ -26,10 +26,6 @@ pub struct BlockHeader {
     pub merkle_root: Hash,
     /// Block creation timestamp
     pub timestamp: u64,
-    /// Current difficulty target
-    pub difficulty: Difficulty,
-    /// Mining nonce for proof-of-work
-    pub nonce: u64,
     /// Block height in the chain
     pub height: u64,
     /// Hash of the block (calculated)
@@ -38,8 +34,6 @@ pub struct BlockHeader {
     pub transaction_count: u32,
     /// Total size of the block in bytes
     pub block_size: u32,
-    /// Cumulative difficulty from genesis
-    pub cumulative_difficulty: Difficulty,
     /// Fee model version for this block (Phase 3B)
     ///
     /// - Version 1: Legacy fee model (before activation height)
@@ -90,10 +84,6 @@ impl Block {
         self.header.timestamp
     }
 
-    /// Get the difficulty
-    pub fn difficulty(&self) -> Difficulty {
-        self.header.difficulty
-    }
 
     /// Get the number of transactions
     pub fn transaction_count(&self) -> usize {
@@ -162,14 +152,6 @@ impl Block {
         matches
     }
 
-    /// Verify the block meets the difficulty target (deprecated)
-    ///
-    /// # Deprecated
-    /// This method is deprecated. PoW validation no longer used with BFT consensus.
-    #[deprecated(note = "PoW validation removed - using BFT consensus")]
-    pub fn meets_difficulty_target(&self) -> bool {
-        panic!("Block::meets_difficulty_target() is deprecated and must not be used: PoW difficulty validation has been removed in favor of BFT consensus (BFT-A-935)");
-    }
 
     /// Get all transaction IDs in the block
     pub fn transaction_ids(&self) -> Vec<Hash> {
@@ -212,24 +194,19 @@ impl BlockHeader {
         previous_block_hash: Hash,
         merkle_root: Hash,
         timestamp: u64,
-        difficulty: Difficulty,
         height: u64,
         transaction_count: u32,
         block_size: u32,
-        cumulative_difficulty: Difficulty,
     ) -> Self {
         let mut header = Self {
             version,
             previous_block_hash,
             merkle_root,
             timestamp,
-            difficulty,
-            nonce: 0,
             height,
             block_hash: Hash::default(),
             transaction_count,
             block_size,
-            cumulative_difficulty,
             fee_model_version: 1, // Default to v1 for backwards compatibility
         };
 
@@ -241,17 +218,16 @@ impl BlockHeader {
     /// Calculate the hash of this block header
     pub fn calculate_hash(&self) -> Hash {
         let mut hasher = blake3::Hasher::new();
-        
+
         hasher.update(&self.version.to_le_bytes());
         hasher.update(self.previous_block_hash.as_bytes());
         hasher.update(self.merkle_root.as_bytes());
         hasher.update(&self.timestamp.to_le_bytes());
-        hasher.update(&self.difficulty.bits().to_le_bytes());
-        hasher.update(&self.nonce.to_le_bytes());
         hasher.update(&self.height.to_le_bytes());
         hasher.update(&self.transaction_count.to_le_bytes());
         hasher.update(&self.block_size.to_le_bytes());
-        
+        hasher.update(&self.fee_model_version.to_le_bytes());
+
         Hash::from_slice(hasher.finalize().as_bytes())
     }
 
@@ -260,41 +236,6 @@ impl BlockHeader {
         self.block_hash
     }
 
-    /// Get the target value for this difficulty
-    pub fn target(&self) -> [u8; 32] {
-        self.difficulty.target()
-    }
-
-    // BFT-A-935: PoW methods deprecated - stubs provided for backward compatibility
-
-    /// Set the nonce (deprecated - no longer used for PoW)
-    ///
-    /// # Deprecated
-    /// This method is deprecated. Nonce is no longer used with BFT consensus.
-    #[deprecated(note = "Nonce no longer used - BFT consensus instead of PoW")]
-    pub fn set_nonce(&mut self, nonce: u64) {
-        // BFT-A-935: Nonce must not affect consensus-critical fields such as block_hash.
-        // Preserve block_hash to avoid changing block identity after construction.
-        self.nonce = nonce;
-    }
-
-    /// Check if the block hash meets the difficulty target (deprecated)
-    ///
-    /// # Deprecated
-    /// This method is deprecated. PoW validation no longer used with BFT consensus.
-    #[deprecated(note = "PoW validation removed - using BFT consensus")]
-    pub fn meets_difficulty_target(&self) -> bool {
-        panic!("BlockHeader::meets_difficulty_target() is deprecated and must not be used: PoW difficulty validation has been removed in favor of BFT consensus (BFT-A-935)");
-    }
-
-    /// Check if this header represents a valid proof-of-work (deprecated)
-    ///
-    /// # Deprecated
-    /// This method is deprecated. PoW validation no longer used with BFT consensus.
-    #[deprecated(note = "PoW validation removed - using BFT consensus")]
-    pub fn is_valid_proof_of_work(&self) -> bool {
-        panic!("BlockHeader::is_valid_proof_of_work() is deprecated and must not be used: PoW validation has been removed in favor of BFT consensus (BFT-A-935)");
-    }
 
     /// Get time since previous block (requires previous block timestamp)
     pub fn time_since_previous(&self, previous_timestamp: u64) -> u64 {
@@ -334,28 +275,25 @@ impl crate::types::hash::Hashable for BlockHeader {
 /// Genesis block creation
 pub fn create_genesis_block() -> Block {
     // FIXED genesis timestamp for network consistency
-    // November 1, 2025 00:00:00 UTC - ensures all nodes create identical genesis
+    // November 1, 2024 00:00:00 UTC - ensures all nodes create identical genesis
+    // (1730419200 = 2024-11-01T00:00:00Z)
     let genesis_timestamp = 1730419200;
-    // Genesis blocks should use easy consensus difficulty like other system transaction blocks
-    let genesis_difficulty = Difficulty::from_bits(0x1fffffff);
-    
+
     let header = BlockHeader::new(
         1, // version
         Hash::default(), // previous_block_hash (none for genesis)
         Hash::default(), // merkle_root (will be calculated)
         genesis_timestamp,
-        genesis_difficulty,
         0, // height
         0, // transaction_count
         0, // block_size
-        genesis_difficulty, // cumulative_difficulty
     );
 
     let genesis_block = Block::new(header, Vec::new());
-    
+
     // For genesis block, we might want to add special transactions
     // This is handled by the blockchain initialization logic
-    
+
     genesis_block
 }
 

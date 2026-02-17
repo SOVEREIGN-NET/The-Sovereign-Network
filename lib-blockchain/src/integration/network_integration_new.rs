@@ -152,11 +152,9 @@ mod tests {
             Hash::default(),            // previous_block_hash
             Hash::default(),            // merkle_root
             1000,                       // timestamp
-            Difficulty::minimum(),      // difficulty
             0,                          // height
             0,                          // transaction_count
             0,                          // block_size
-            Difficulty::minimum(),      // cumulative_difficulty
         );
 
         let block = Block::new(header, Vec::new());
@@ -215,11 +213,9 @@ mod tests {
             Hash::default(),            // previous_block_hash
             Hash::default(),            // merkle_root
             1000,                       // timestamp
-            Difficulty::minimum(),      // difficulty
             1,                          // height
             0,                          // transaction_count
             0,                          // block_size
-            Difficulty::minimum(),      // cumulative_difficulty
         );
 
         let block = Block::new(header, Vec::new());

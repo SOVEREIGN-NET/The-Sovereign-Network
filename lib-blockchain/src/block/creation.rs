@@ -5,7 +5,7 @@
 use anyhow::Result;
 use crate::block::{Block, BlockHeader};
 use crate::transaction::Transaction;
-use crate::types::{Hash, Difficulty};
+use crate::types::Hash;
 
 /// Block builder for constructing new blocks
 #[derive(Debug)]
@@ -13,7 +13,6 @@ pub struct BlockBuilder {
     version: u32,
     previous_block_hash: Hash,
     timestamp: u64,
-    difficulty: Difficulty,
     height: u64,
     transactions: Vec<Transaction>,
 }
@@ -23,13 +22,11 @@ impl BlockBuilder {
     pub fn new(
         previous_block_hash: Hash,
         height: u64,
-        difficulty: Difficulty,
     ) -> Self {
         Self {
             version: 1,
             previous_block_hash,
             timestamp: crate::utils::time::current_timestamp(),
-            difficulty,
             height,
             transactions: Vec::new(),
         }
@@ -69,25 +66,20 @@ impl BlockBuilder {
     pub fn build(self) -> Result<Block> {
         // Calculate merkle root
         let merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
-        
+
         // Calculate block size
         let transaction_count = self.transactions.len() as u32;
         let block_size = self.calculate_block_size();
-        
-        // Calculate cumulative difficulty (simplified)
-        let cumulative_difficulty = self.difficulty;
-        
+
         // Create header
         let header = BlockHeader::new(
             self.version,
             self.previous_block_hash,
             merkle_root,
             self.timestamp,
-            self.difficulty,
             self.height,
             transaction_count,
             block_size,
-            cumulative_difficulty,
         );
 
         Ok(Block::new(header, self.transactions))
@@ -109,56 +101,20 @@ pub fn create_block(
     transactions: Vec<Transaction>,
     previous_block_hash: Hash,
     height: u64,
-    difficulty: Difficulty,
 ) -> Result<Block> {
-    BlockBuilder::new(previous_block_hash, height, difficulty)
+    BlockBuilder::new(previous_block_hash, height)
         .transactions(transactions)
         .build()
 }
 
 /// Create genesis block
 pub fn create_genesis_block_with_transactions(transactions: Vec<Transaction>) -> Result<Block> {
-    BlockBuilder::new(Hash::default(), 0, Difficulty::minimum())
+    BlockBuilder::new(Hash::default(), 0)
         .timestamp(crate::GENESIS_TIMESTAMP)
         .transactions(transactions)
         .build()
 }
 
-// PoW mining functions removed as part of BFT-A-935
-// Stub implementations provided for backward compatibility
-// These functions now just return the block without PoW mining
-
-/// Legacy mine_block stub - no longer performs PoW mining
-///
-/// # Deprecated
-/// This function is deprecated and will be removed in a future version.
-/// Blocks are now validated through BFT consensus, not PoW.
-#[deprecated(note = "PoW mining removed - blocks validated through BFT consensus")]
-pub fn mine_block(block: Block, _max_iterations: u64) -> Result<Block> {
-    tracing::debug!("mine_block called but PoW mining is disabled (BFT-A-935)");
-    Ok(block)
-}
-
-/// Legacy mine_block_with_config stub - no longer performs PoW mining
-///
-/// # Deprecated
-/// This function is deprecated and will be removed in a future version.
-/// Blocks are now validated through BFT consensus, not PoW.
-#[deprecated(note = "PoW mining removed - blocks validated through BFT consensus")]
-pub fn mine_block_with_config(block: Block, _config: &crate::types::MiningConfig) -> Result<Block> {
-    tracing::debug!("mine_block_with_config called but PoW mining is disabled (BFT-A-935)");
-    Ok(block)
-}
-
-/// Estimate block creation time
-pub fn estimate_block_time(transaction_count: usize, difficulty: Difficulty) -> u64 {
-    // Very rough estimation based on transaction count and difficulty
-    let base_time = 10; // 10 seconds base
-    let tx_time = transaction_count as u64 / 100; // 100 tx/second processing
-    let difficulty_factor = difficulty.bits() >> 24; // Rough difficulty scaling
-    
-    base_time + tx_time + difficulty_factor as u64
-}
 
 /// Select transactions for block creation
 pub fn select_transactions_for_block(
