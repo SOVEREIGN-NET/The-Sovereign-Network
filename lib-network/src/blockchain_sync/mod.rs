@@ -41,6 +41,7 @@ pub use sync_coordinator::{SyncCoordinator, PeerSyncState, SyncStats, SyncType};
 pub use sync_manager::BlockchainSyncManager;
 pub use full_node_strategy::FullNodeStrategy;
 pub use edge_node_strategy::EdgeNodeStrategy;
+// assert_bootstrap_constants is defined in this module and is pub; no re-export needed.
 
 use anyhow::Result;
 use lib_crypto::PublicKey;
@@ -208,4 +209,32 @@ pub trait SyncStrategy: Send + Sync {
     
     /// Get current blockchain height
     async fn get_current_height(&self) -> u64;
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_assert_bootstrap_constants_passes() {
+        // Should not panic under valid configuration.
+        assert_bootstrap_constants();
+    }
+
+    #[test]
+    fn test_bootstrap_mode_is_correct() {
+        assert_eq!(
+            BOOTSTRAP_MODE, "checkpoint-then-sync",
+            "BOOTSTRAP_MODE must be "checkpoint-then-sync""
+        );
+    }
+
+    #[test]
+    fn test_full_replay_max_blocks_is_positive() {
+        assert!(
+            FULL_REPLAY_MAX_BLOCKS > 0,
+            "FULL_REPLAY_MAX_BLOCKS must be greater than zero"
+        );
+    }
 }
