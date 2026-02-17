@@ -7791,14 +7791,36 @@ impl Blockchain {
 
     // ========================================================================
     // FORK RECOVERY AND REORGANIZATION
+    //
+    // BFT NOTE: Fork-choice and chain reorganization are forbidden in BFT mode.
+    //
+    // In Byzantine Fault Tolerant consensus, once a block is committed at height H
+    // with a 2/3+1 supermajority, that block is final and irreversible. There is no
+    // valid scenario in which the chain can be reorganized to replace a committed block.
+    //
+    // - `detect_fork_at_height` is retained for DIAGNOSTIC PURPOSES ONLY (evidence
+    //   collection, Byzantine fault reporting). It does NOT trigger any fork resolution.
+    // - `reorg_to_fork` is FORBIDDEN. It will panic unconditionally if called.
+    //   Any code path that reaches this function is a bug.
+    //
+    // See lib-blockchain/src/fork_recovery.rs module documentation for full rationale.
     // ========================================================================
 
-    /// Detect if a new block creates a fork
+    /// Detect if a new block creates a fork at a specific height.
+    ///
+    /// **DIAGNOSTIC USE ONLY** — This function is retained to support Byzantine
+    /// fault evidence collection. If a fork is detected, the result should be
+    /// forwarded to the equivocation evidence handler for validator accountability,
+    /// NOT used to trigger chain reorganization.
+    ///
+    /// In BFT consensus, a fork at a committed height is evidence of Byzantine
+    /// behavior (a validator signed conflicting blocks). It is never a normal
+    /// network condition to be resolved by fork-choice.
     pub fn detect_fork_at_height(&self, height: u64, new_block_hash: Hash) -> Option<crate::fork_recovery::ForkDetection> {
         // Find existing block at this height
         let existing_block = self.blocks.iter().find(|b| b.header.height == height)?;
 
-        // If hashes differ, we have a fork
+        // If hashes differ, we have a fork — this is Byzantine evidence, not a condition to resolve.
         if existing_block.header.block_hash != new_block_hash {
             return Some(crate::fork_recovery::ForkDetection {
                 height,
@@ -7865,83 +7887,38 @@ impl Blockchain {
 
     /// Reorganize to a fork (replace blocks from target_height onwards)
     ///
-    /// # Arguments
-    /// * `target_height` - Block height where reorg should start
-    /// * `new_blocks` - New blocks to replace the old ones
+    /// # FORBIDDEN IN BFT MODE
     ///
-    /// # Returns
-    /// Number of blocks removed and replaced
+    /// **This function must never be called in BFT consensus mode.**
+    ///
+    /// Chain reorganization is fundamentally incompatible with BFT consensus.
+    /// In BFT, once a block is committed at height H with 2/3+1 validator agreement,
+    /// that block is final and irreversible. No reorganization can replace it.
+    ///
+    /// Invoking this function is a programming error. It will panic unconditionally
+    /// with `unreachable!` to surface the bug at the call site.
+    ///
+    /// If you believe you need a reorg:
+    /// - If you received a competing chain from the network, it is Byzantine evidence.
+    ///   Report it via the equivocation evidence handler; do not reorg.
+    /// - If you are syncing a fresh node, use the canonical committed chain directly.
+    /// - If you are debugging a test scenario, do not use production code paths.
+    ///
+    /// See lib-blockchain/src/fork_recovery.rs module documentation for full rationale.
+    ///
+    /// # Arguments
+    /// * `target_height` - (unused in BFT mode)
+    /// * `new_blocks` - (unused in BFT mode)
+    #[allow(unused_variables)]
     pub async fn reorg_to_fork(&mut self, target_height: u64, new_blocks: Vec<Block>) -> Result<u64> {
-        // Safety checks
-        self.can_reorg_to_height_anyhow(target_height)?;
-
-        if new_blocks.is_empty() {
-            return Err(anyhow::anyhow!("Cannot reorg with empty block list"));
-        }
-
-        // Verify new blocks form a valid chain
-        if new_blocks[0].header.height != target_height {
-            return Err(anyhow::anyhow!(
-                "First block height {} doesn't match target height {}",
-                new_blocks[0].header.height,
-                target_height
-            ));
-        }
-
-        // Verify chain continuity
-        for i in 1..new_blocks.len() {
-            if new_blocks[i].header.height != new_blocks[i - 1].header.height + 1 {
-                return Err(anyhow::anyhow!("Block height gap in new chain at position {}", i));
-            }
-            if new_blocks[i].header.previous_block_hash != new_blocks[i - 1].header.block_hash {
-                return Err(anyhow::anyhow!("Block chain linkage broken at position {}", i));
-            }
-        }
-
-        info!(
-            "🔄 Reorganizing chain from height {} with {} blocks",
-            target_height,
-            new_blocks.len()
+        unreachable!(
+            "BFT INVARIANT VIOLATED: Blockchain::reorg_to_fork was called. \
+             Chain reorganization is forbidden in BFT consensus mode. \
+             In BFT, committed blocks are final and irreversible — the chain cannot \
+             be reorganized. If a competing chain was received, treat it as Byzantine \
+             evidence and report it. Do not attempt to reorganize. \
+             See lib-blockchain/src/fork_recovery.rs module documentation for details."
         );
-
-        // Capture old block hash before removing blocks for audit trail
-        let old_block_hash = self.blocks
-            .iter()
-            .find(|b| b.header.height == target_height)
-            .map(|b| b.header.block_hash);
-
-        // Remove old blocks from target_height onwards
-        let old_count = self.blocks.len();
-        self.blocks.retain(|b| b.header.height < target_height);
-        let removed_count = old_count - self.blocks.len();
-
-        // Add new blocks
-        for block in new_blocks {
-            // Record fork for audit trail (only for first block of reorg)
-            if block.header.height == target_height {
-                if let Some(old_hash) = old_block_hash {
-                    self.record_fork_point(
-                        target_height,
-                        old_hash,
-                        block.header.block_hash,
-                        crate::fork_recovery::ForkResolution::SwitchedToFork,
-                    );
-                }
-            }
-
-            // Add block and update state
-            self.add_block(block).await?;
-        }
-
-        // Increment reorg counter for monitoring
-        self.reorg_count += 1;
-
-        info!(
-            "✅ Reorganization complete: {} blocks removed, chain height now {}",
-            removed_count, self.height
-        );
-
-        Ok(removed_count as u64)
     }
 
     /// Get fork history for audit purposes
