@@ -174,13 +174,11 @@ impl Web4Handler {
         // Domain registration fee: fixed 10 SOV
         const DOMAIN_REGISTRATION_FEE_SOV: u64 = 10;
 
-        // Get the fee the user provided (should be 10 SOV)
+        // Fee is fixed; if the client provides it explicitly, it must match.
         let user_provided_fee = simple_request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV);
-
-        // Validate user's fee matches required amount
-        if user_provided_fee < DOMAIN_REGISTRATION_FEE_SOV {
+        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV {
             return Err(anyhow!(
-                "Insufficient fee: provided {} SOV, required {} SOV for domain registration",
+                "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
                 user_provided_fee, DOMAIN_REGISTRATION_FEE_SOV
             ));
         }
@@ -557,9 +555,9 @@ impl Web4Handler {
 
         const DOMAIN_REGISTRATION_FEE_SOV: u64 = 10;
         let user_provided_fee = request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV);
-        if user_provided_fee < DOMAIN_REGISTRATION_FEE_SOV {
+        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV {
             return Err(anyhow!(
-                "Insufficient fee: provided {} SOV, required {} SOV for domain registration",
+                "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
                 user_provided_fee, DOMAIN_REGISTRATION_FEE_SOV
             ));
         }
