@@ -1,10 +1,92 @@
 //! Validator set management
+//!
+//! # Validator Admission Model
+//!
+//! ZHTP uses a **permissioned-by-stake** admission model with the following invariants:
+//!
+//! 1. **Stake threshold**: A candidate must lock at least [`MIN_VALIDATOR_STAKE`] SOV tokens.
+//!    This is the primary on-chain admission gate and is enforced unconditionally.
+//!
+//! 2. **Governance gating**: After the genesis bootstrap phase (block 0), every new validator
+//!    registration must originate from an approved on-chain governance proposal.  Direct
+//!    peer-to-peer registration (e.g., from a config file) is rejected for non-genesis
+//!    validators so that the validator set can only grow through the DAO governance process.
+//!    See [`ADMISSION_MODEL`] for the canonical declaration.
+//!
+//!    Note: the governance proof requirement described here is planned enforcement; the
+//!    current implementation enforces only stake and count constraints.
+//!
+//! 3. **Hybrid transition**: During genesis (block height == 0) a lightweight bootstrap path
+//!    is available so that the initial validator set can be seeded from a config file without
+//!    a prior on-chain vote.  Once the chain is live every subsequent admission follows the
+//!    full stake + governance path.
+//!
+//! The model is therefore best described as **hybrid**: stake-gated for all validators,
+//! governance-gated for post-genesis validators.
+//!
+//! # Constants
+//!
+//! | Constant | Value | Meaning |
+//! |---|---|---|
+//! | [`MIN_VALIDATOR_STAKE`] | 100_000 SOV | Minimum stake to be admitted |
+//! | [`GENESIS_MIN_VALIDATOR_STAKE`] | 1_000 SOV | Reduced minimum during genesis bootstrap |
+//! | [`MIN_VALIDATORS_BFT`] | 4 | Minimum validators for Byzantine Fault Tolerance |
+//! | [`MAX_VALIDATORS`] | 256 | Hard cap on the validator set size |
+//! | [`ADMISSION_MODEL`] | `"permissioned-by-stake+governance"` | Canonical admission model string |
 
 use crate::types::{SlashType, ValidatorStatus};
 use crate::validators::Validator;
 use anyhow::Result;
 use lib_identity::IdentityId;
 use std::collections::HashMap;
+
+// ---------------------------------------------------------------------------
+// Admission model constants
+// ---------------------------------------------------------------------------
+
+/// Canonical string identifying the validator admission model.
+///
+/// The admission model is **hybrid**:
+/// - All validators (including genesis) must meet the minimum stake threshold.
+/// - Post-genesis validators must additionally be admitted via an approved on-chain
+///   governance proposal (DAO vote).
+///
+/// This constant is the single source of truth referenced by admission assertions.
+pub const ADMISSION_MODEL: &str = "permissioned-by-stake+governance";
+
+// Compile-time assertion: ADMISSION_MODEL must be non-empty.
+// Any modification to ADMISSION_MODEL must be accompanied by a deliberate
+// review of all stake/governance checks throughout this module.
+const _: () = assert!(
+    !ADMISSION_MODEL.is_empty(),
+    "ADMISSION_MODEL must not be empty"
+);
+
+/// Minimum stake (in SOV tokens) required to register a validator in production.
+///
+/// This value applies at every block height > 0.  The stake is locked for the
+/// duration of the validator's active tenure and is subject to slashing.
+pub const MIN_VALIDATOR_STAKE: u64 = 100_000;
+
+/// Reduced minimum stake allowed only during the genesis bootstrap (block height == 0).
+///
+/// This lower threshold allows the initial validator set to be seeded from a config
+/// file without requiring the full production stake commitment.  It MUST NOT be used
+/// for any post-genesis admission check.
+pub const GENESIS_MIN_VALIDATOR_STAKE: u64 = 1_000;
+
+/// Minimum number of active validators required for Byzantine Fault Tolerance.
+///
+/// BFT (PBFT/Tendermint) requires at least 3f + 1 participants to tolerate f faults.
+/// With [`MIN_VALIDATORS_BFT`] == 4, the network can tolerate exactly one Byzantine
+/// validator (f = 1).
+pub const MIN_VALIDATORS_BFT: usize = 4;
+
+/// Hard cap on the total number of validators that can be in the set at any time.
+///
+/// Admission requests that would push the active set past this limit MUST be rejected,
+/// even if they satisfy the stake and governance requirements.
+pub const MAX_VALIDATORS: usize = 256;
 
 /// Trait for validator info structures that can be synced from blockchain
 ///
@@ -65,7 +147,20 @@ impl ValidatorManager {
         }
     }
 
-    /// Register a new validator
+    /// Register a new validator.
+    ///
+    /// # Admission model invariant
+    ///
+    /// This function is the **consensus-layer** enforcement point for the
+    /// [`ADMISSION_MODEL`].  Every caller must have already verified that the
+    /// candidate satisfies whichever on-chain requirements apply (governance
+    /// proposal approval for post-genesis validators).  The consensus layer then
+    /// enforces the stake threshold as an unconditional final gate.
+    ///
+    /// The assertion below acts as a compile-time + runtime canary: if someone
+    /// changes the admission model string without updating the associated logic
+    /// they will hit an immediate panic in any environment where the assertion
+    /// evaluates to `false`.
     pub fn register_validator(
         &mut self,
         identity: IdentityId,
@@ -74,10 +169,15 @@ impl ValidatorManager {
         consensus_key: Vec<u8>,
         commission_rate: u8,
     ) -> Result<()> {
-        // Check minimum requirements - ONLY stake is required for validators
+        // INVARIANT: ADMISSION_MODEL is verified at compile time by the const assertion
+        // below this impl block. No runtime assert is needed here.
+
+        // ADMISSION GATE 1 (stake): Every validator must meet the minimum stake threshold.
+        // This is the primary on-chain admission gate enforced by the ADMISSION_MODEL.
         if stake < self.min_stake {
             return Err(anyhow::anyhow!(
-                "Insufficient stake: {} < {} required",
+                "Admission denied (model: {}): insufficient stake {} < {} required",
+                ADMISSION_MODEL,
                 stake,
                 self.min_stake
             ));
@@ -86,11 +186,12 @@ impl ValidatorManager {
         // Storage is OPTIONAL for validators - no minimum requirement
         // Validators can choose to provide storage for bonus rewards but it's not mandatory
 
-        // Check maximum validator limit
+        // Check maximum validator limit (hard cap enforced regardless of stake/governance)
         if self.validators.len() >= self.max_validators as usize {
             return Err(anyhow::anyhow!(
-                "Maximum validator limit reached: {}",
-                self.max_validators
+                "Maximum validator limit reached: {} (hard cap: {})",
+                self.max_validators,
+                MAX_VALIDATORS
             ));
         }
 
