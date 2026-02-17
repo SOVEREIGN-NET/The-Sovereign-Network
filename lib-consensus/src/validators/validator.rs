@@ -1,5 +1,6 @@
 //! Validator implementation
 
+use crate::slashing::{JailStatus, BanReason, check_unjail_eligibility, liveness_jail_status, safety_ban_status};
 use crate::types::{SlashType, ValidatorStatus};
 use lib_identity::IdentityId;
 use serde::{Deserialize, Serialize};
@@ -27,8 +28,11 @@ pub struct Validator {
     pub last_activity: u64,
     /// Slash count
     pub slash_count: u32,
-    /// Jail release time (if jailed)
+    /// Jail release time (if jailed) - DEPRECATED: use jail_status instead
+    #[deprecated(note = "Use jail_status field for recovery policy enforcement")]
     pub jail_until: Option<u64>,
+    /// Jail status tracking for recovery policy enforcement
+    pub jail_status: JailStatus,
 }
 
 impl Validator {
@@ -56,7 +60,9 @@ impl Validator {
                 .unwrap()
                 .as_secs(),
             slash_count: 0,
+            #[allow(deprecated)]
             jail_until: None,
+            jail_status: JailStatus::Active,
         }
     }
 
@@ -86,23 +92,20 @@ impl Validator {
     pub fn can_participate(&self) -> bool {
         match self.status {
             ValidatorStatus::Active => {
-                // Check if jailed
-                if let Some(jail_until) = self.jail_until {
-                    let current_time = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    current_time >= jail_until
-                } else {
-                    true
-                }
+                // Use recovery policy API to check jail status
+                self.jail_status.is_active()
             }
             _ => false,
         }
     }
 
     /// Slash validator for misbehavior
-    pub fn slash(&mut self, slash_type: SlashType, slash_percentage: u8) -> anyhow::Result<u64> {
+    ///
+    /// # Arguments
+    /// * `slash_type` - Type of misbehavior
+    /// * `slash_percentage` - Percentage of stake to slash
+    /// * `current_block` - Current block height for jail tracking
+    pub fn slash(&mut self, slash_type: SlashType, slash_percentage: u8, current_block: u64) -> anyhow::Result<u64> {
         let slash_amount = (self.stake * slash_percentage as u64) / 100;
 
         // Apply slashing
@@ -119,9 +122,65 @@ impl Validator {
 
         self.reputation = self.reputation.saturating_sub(reputation_penalty);
 
-        // Jail validator if severely slashed
-        if slash_percentage >= 10 || self.slash_count >= 3 {
-            self.jail(24 * 3600); // Jail for 24 hours
+        // Apply recovery policy: determine jail status based on slash type
+        match slash_type {
+            // Safety violations result in permanent ban
+            SlashType::DoubleSign => {
+                self.status = ValidatorStatus::Slashed;
+                self.jail_status = safety_ban_status(current_block, BanReason::DoubleSign);
+                #[allow(deprecated)]
+                {
+                    self.jail_until = None; // Permanent ban, no release time
+                }
+                tracing::error!(
+                    "🚫 Validator {:?} PERMANENTLY BANNED for double-sign at block {}",
+                    self.identity,
+                    current_block
+                );
+            }
+            SlashType::InvalidProposal => {
+                self.status = ValidatorStatus::Slashed;
+                self.jail_status = safety_ban_status(current_block, BanReason::InvalidBlock);
+                #[allow(deprecated)]
+                {
+                    self.jail_until = None; // Permanent ban, no release time
+                }
+                tracing::error!(
+                    "🚫 Validator {:?} PERMANENTLY BANNED for invalid proposal at block {}",
+                    self.identity,
+                    current_block
+                );
+            }
+            SlashType::InvalidVote => {
+                self.status = ValidatorStatus::Slashed;
+                self.jail_status = safety_ban_status(current_block, BanReason::ConflictingVote);
+                #[allow(deprecated)]
+                {
+                    self.jail_until = None; // Permanent ban, no release time
+                }
+                tracing::error!(
+                    "🚫 Validator {:?} PERMANENTLY BANNED for conflicting vote at block {}",
+                    self.identity,
+                    current_block
+                );
+            }
+            // Liveness violations result in temporary jail
+            SlashType::Liveness => {
+                self.status = ValidatorStatus::Jailed;
+                self.jail_status = liveness_jail_status(current_block);
+                let eligible_block = self.jail_status.eligible_at_block().unwrap_or(0);
+                #[allow(deprecated)]
+                {
+                    // Keep jail_until for backward compatibility, but it's deprecated
+                    self.jail_until = Some(eligible_block);
+                }
+                tracing::warn!(
+                    "⚠️  Validator {:?} jailed for liveness violation at block {} (eligible to unjail at block {})",
+                    self.identity,
+                    current_block,
+                    eligible_block
+                );
+            }
         }
 
         // Update voting power after slashing
@@ -139,6 +198,11 @@ impl Validator {
     }
 
     /// Jail validator for a specified duration
+    ///
+    /// DEPRECATED: This method is deprecated in favor of using the slash() method
+    /// with appropriate SlashType, which will automatically apply the correct
+    /// jail status based on the recovery policy.
+    #[deprecated(note = "Use slash() method instead, which applies recovery policy")]
     pub fn jail(&mut self, duration_seconds: u64) {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -146,7 +210,10 @@ impl Validator {
             .as_secs();
 
         self.status = ValidatorStatus::Jailed;
-        self.jail_until = Some(current_time + duration_seconds);
+        #[allow(deprecated)]
+        {
+            self.jail_until = Some(current_time + duration_seconds);
+        }
 
         tracing::warn!(
             " Validator {:?} jailed until timestamp {}",
@@ -156,7 +223,14 @@ impl Validator {
     }
 
     /// Release validator from jail if jail period has expired
+    ///
+    /// DEPRECATED: This method implements automatic time-based jail release,
+    /// which violates the recovery policy requirement that validators must
+    /// explicitly submit an unjail transaction. Use the unjail() method instead,
+    /// which enforces all recovery invariants.
+    #[deprecated(note = "Use unjail() method instead, which enforces recovery policy")]
     pub fn try_release_from_jail(&mut self) -> bool {
+        #[allow(deprecated)]
         if let Some(jail_until) = self.jail_until {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -165,7 +239,10 @@ impl Validator {
 
             if current_time >= jail_until {
                 self.status = ValidatorStatus::Active;
-                self.jail_until = None;
+                #[allow(deprecated)]
+                {
+                    self.jail_until = None;
+                }
 
                 tracing::info!("🔓 Validator {:?} released from jail", self.identity);
 
@@ -173,6 +250,42 @@ impl Validator {
             }
         }
         false
+    }
+
+    /// Attempt to unjail a validator by enforcing recovery policy invariants
+    ///
+    /// This method enforces all recovery invariants defined in the slashing module:
+    /// - REC-INV-1: Safety-slashed validators CANNOT unjail (permanent ban)
+    /// - REC-INV-2: Liveness-slashed validators MUST wait JAIL_EXIT_WAIT_BLOCKS
+    /// - REC-INV-3: Unjail is only permitted if remaining stake >= MIN_STAKE_TO_UNJAIL
+    /// - REC-INV-4: Slashed stake is NOT restored on unjail
+    ///
+    /// # Arguments
+    /// * `current_block` - Current finalized block height
+    ///
+    /// # Returns
+    /// * `Ok(())` - Validator successfully unjailed
+    /// * `Err(_)` - Unjail request rejected with reason
+    pub fn unjail(&mut self, current_block: u64) -> Result<(), crate::slashing::RecoveryError> {
+        // Enforce recovery policy invariants
+        check_unjail_eligibility(&self.jail_status, self.stake, current_block)?;
+
+        // All checks passed - restore validator to active status
+        self.status = ValidatorStatus::Active;
+        self.jail_status = JailStatus::Active;
+        #[allow(deprecated)]
+        {
+            self.jail_until = None;
+        }
+
+        tracing::info!(
+            "🔓 Validator {:?} successfully unjailed at block {} (stake: {} SOV)",
+            self.identity,
+            current_block,
+            self.stake
+        );
+
+        Ok(())
     }
 
     /// Update validator's last activity timestamp

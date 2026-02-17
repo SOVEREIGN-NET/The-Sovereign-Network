@@ -102,7 +102,7 @@ const _: () = assert!(
 // =============================================================================
 
 /// The jail status of a validator, capturing both the reason and policy implications.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum JailStatus {
     /// Validator is not jailed and can participate in consensus.
     Active,
@@ -133,7 +133,7 @@ pub enum JailStatus {
 }
 
 /// Reason for permanent ban.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BanReason {
     /// Validator double-signed a block.
     DoubleSign,
@@ -193,7 +193,7 @@ impl JailStatus {
 // =============================================================================
 
 /// Errors returned when a recovery (unjail/stake restoration) request is rejected.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RecoveryError {
     /// Attempted to unjail a permanently banned validator.
     ///

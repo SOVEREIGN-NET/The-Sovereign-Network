@@ -178,15 +178,22 @@ impl ValidatorManager {
     }
 
     /// Slash a validator for misbehavior
+    ///
+    /// # Arguments
+    /// * `identity` - Validator identity to slash
+    /// * `slash_type` - Type of misbehavior
+    /// * `slash_percentage` - Percentage of stake to slash
+    /// * `current_block` - Current block height for jail tracking
     pub fn slash_validator(
         &mut self,
         identity: &IdentityId,
         slash_type: SlashType,
         slash_percentage: u8,
+        current_block: u64,
     ) -> Result<u64> {
         if let Some(validator) = self.validators.get_mut(identity) {
             let old_voting_power = validator.voting_power;
-            let slashed_amount = validator.slash(slash_type, slash_percentage)?;
+            let slashed_amount = validator.slash(slash_type, slash_percentage, current_block)?;
 
             // Update total voting power
             self.total_voting_power = self
@@ -232,9 +239,19 @@ impl ValidatorManager {
     }
 
     /// Process inactive validators
+    ///
+    /// # Arguments
+    /// * `max_inactive_seconds` - Maximum inactivity period before slashing
+    /// * `current_block` - Current block height for jail tracking
+    ///
+    /// # Note
+    /// This method NO LONGER automatically releases validators from jail.
+    /// Validators must explicitly call unjail() via an unjail transaction
+    /// to exit jail, which will enforce all recovery policy invariants.
     pub fn process_inactive_validators(
         &mut self,
         max_inactive_seconds: u64,
+        current_block: u64,
     ) -> Result<Vec<IdentityId>> {
         let mut inactive_validators = Vec::new();
 
@@ -244,7 +261,7 @@ impl ValidatorManager {
             {
                 // Slash for liveness violation
                 let old_voting_power = validator.voting_power;
-                let _ = validator.slash(SlashType::Liveness, 1)?; // 1% slash for inactivity
+                let _ = validator.slash(SlashType::Liveness, 1, current_block)?; // 1% slash for inactivity
 
                 // Update total voting power
                 self.total_voting_power = self
@@ -255,11 +272,50 @@ impl ValidatorManager {
                 inactive_validators.push(identity.clone());
             }
 
-            // Try to release validators from jail
-            validator.try_release_from_jail();
+            // NOTE: No longer auto-releasing from jail
+            // Validators must explicitly submit an unjail transaction
+            // which will call validator.unjail() and enforce recovery invariants
         }
 
         Ok(inactive_validators)
+    }
+
+    /// Attempt to unjail a validator
+    ///
+    /// Enforces all recovery policy invariants defined in the slashing module.
+    /// This method should be called when processing an unjail transaction.
+    ///
+    /// # Arguments
+    /// * `identity` - Validator identity to unjail
+    /// * `current_block` - Current finalized block height
+    ///
+    /// # Returns
+    /// * `Ok(())` - Validator successfully unjailed
+    /// * `Err(_)` - Unjail request rejected with reason
+    ///
+    /// # Invariants Enforced
+    /// - REC-INV-1: Safety-slashed validators CANNOT unjail (permanent ban)
+    /// - REC-INV-2: Liveness-slashed validators MUST wait JAIL_EXIT_WAIT_BLOCKS
+    /// - REC-INV-3: Unjail is only permitted if remaining stake >= MIN_STAKE_TO_UNJAIL
+    /// - REC-INV-4: Slashed stake is NOT restored on unjail
+    pub fn unjail_validator(&mut self, identity: &IdentityId, current_block: u64) -> Result<()> {
+        if let Some(validator) = self.validators.get_mut(identity) {
+            // Attempt to unjail - this enforces all recovery policy invariants
+            validator.unjail(current_block)
+                .map_err(|e| anyhow::anyhow!("Failed to unjail validator: {}", e))?;
+
+            // Recalculate total voting power after unjail
+            self.total_voting_power = self
+                .validators
+                .values()
+                .filter(|v| v.can_participate())
+                .map(|v| v.voting_power)
+                .sum();
+
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Validator not found for unjail"))
+        }
     }
 
     /// Get total voting power of all active validators
