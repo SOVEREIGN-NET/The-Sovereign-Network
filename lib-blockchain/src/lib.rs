@@ -83,7 +83,6 @@ pub use dht_index::{IndexedBlockHeader, IndexedTransactionSummary};
 
 // Receipts module
 pub use receipts::{TransactionReceipt, TransactionStatus};
-pub use fork_recovery::{ForkPoint, ForkDetector, ForkDetection, ChainEvaluation, ForkRecoveryConfig, ForkResolution};
 
 // Sync module (Phase 3A)
 pub use sync::{ChainSync, SyncError, SyncResult, ImportResult};
