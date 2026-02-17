@@ -1754,49 +1754,41 @@ impl Blockchain {
         let mut hasher = blake3::Hasher::new();
 
         // 1. Hash UTXO set (deterministically sorted)
-        let mut utxo_keys: Vec<_> = self.utxo_set.keys().collect();
-        utxo_keys.sort();
-        for key in utxo_keys {
+        let mut utxo_entries: Vec<_> = self.utxo_set.iter().collect();
+        utxo_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+        for (key, utxo) in utxo_entries {
             hasher.update(key.as_bytes());
-            if let Some(utxo) = self.utxo_set.get(key) {
-                hasher.update(utxo.commitment.as_bytes());
-                hasher.update(utxo.note.as_bytes());
-                hasher.update(&utxo.amount.to_le_bytes());
-            }
+            hasher.update(utxo.commitment.as_bytes());
+            hasher.update(utxo.note.as_bytes());
+            hasher.update(&utxo.amount.to_le_bytes());
         }
 
         // 2. Hash identity registry (deterministically sorted)
-        let mut identity_keys: Vec<_> = self.identity_registry.keys().collect();
-        identity_keys.sort();
-        for key in identity_keys {
+        let mut identity_entries: Vec<_> = self.identity_registry.iter().collect();
+        identity_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+        for (key, identity) in identity_entries {
             hasher.update(key.as_bytes());
-            if let Some(identity) = self.identity_registry.get(key) {
-                hasher.update(&identity.did_hash);
-                hasher.update(&identity.owner);
-                hasher.update(&identity.public_key_hash);
-            }
+            hasher.update(&identity.did_hash);
+            hasher.update(&identity.owner);
+            hasher.update(&identity.public_key_hash);
         }
 
         // 3. Hash wallet registry (deterministically sorted)
-        let mut wallet_keys: Vec<_> = self.wallet_registry.keys().collect();
-        wallet_keys.sort();
-        for key in wallet_keys {
+        let mut wallet_entries: Vec<_> = self.wallet_registry.iter().collect();
+        wallet_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+        for (key, wallet) in wallet_entries {
             hasher.update(key.as_bytes());
-            if let Some(wallet) = self.wallet_registry.get(key) {
-                hasher.update(wallet.wallet_id.as_bytes());
-                hasher.update(&wallet.public_key);
-                hasher.update(wallet.owner_identity_id.as_bytes());
-            }
+            hasher.update(wallet.wallet_id.as_bytes());
+            hasher.update(&wallet.public_key);
+            hasher.update(wallet.owner_identity_id.as_bytes());
         }
 
         // 4. Hash contract states (deterministically sorted)
-        let mut contract_keys: Vec<_> = self.contract_states.keys().collect();
-        contract_keys.sort();
-        for key in contract_keys {
+        let mut contract_entries: Vec<_> = self.contract_states.iter().collect();
+        contract_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+        for (key, state) in contract_entries {
             hasher.update(key.as_bytes());
-            if let Some(state) = self.contract_states.get(key) {
-                hasher.update(state);
-            }
+            hasher.update(state);
         }
 
         // 5. Hash executed proposals (deterministically sorted)
