@@ -14,7 +14,7 @@
 //! - Rollback via re-pointing to old manifest CID
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::{ZhtpIdentity, IdentityId};
 
@@ -146,7 +146,10 @@ pub struct Web4Manifest {
     /// BLAKE3 hash of the entire build output
     pub build_hash: String,
     /// File mappings (path -> content CID)
-    pub files: HashMap<String, ManifestFile>,
+    /// IMPORTANT: Using BTreeMap for deterministic iteration order.
+    /// HashMap serialization order is non-deterministic, which would cause
+    /// compute_cid() to produce different results for identical manifests.
+    pub files: BTreeMap<String, ManifestFile>,
     /// Creation timestamp
     pub created_at: u64,
     /// Creator identity (DID)

@@ -177,7 +177,7 @@ impl Web4Handler {
                 version: 1,
                 previous_manifest: None,
                 build_hash: hex::encode(lib_crypto::hash_blake3(&content)),
-                files: HashMap::new(),
+                files: std::collections::BTreeMap::new(),
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -389,7 +389,7 @@ impl Web4Handler {
                 version: 1,
                 previous_manifest: None,
                 build_hash: hex::encode(lib_crypto::hash_blake3(&content)),
-                files: HashMap::new(),
+                files: std::collections::BTreeMap::new(),
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
