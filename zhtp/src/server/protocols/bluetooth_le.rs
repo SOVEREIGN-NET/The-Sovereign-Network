@@ -63,7 +63,8 @@ impl BluetoothRouter {
         info!("📱 Initializing Bluetooth mesh protocol for phone connectivity...");
         
         // Create Bluetooth mesh protocol instance
-        let mut bluetooth_protocol = BluetoothMeshProtocol::new(self.node_id, our_public_key)?;
+        let public_key_for_bt = our_public_key.clone();
+        let mut bluetooth_protocol = BluetoothMeshProtocol::new(self.node_id, public_key_for_bt)?;
         
         // ========================================================================
         // Phase 6: Enable BLE edge node sync if blockchain provider is available
@@ -100,6 +101,7 @@ impl BluetoothRouter {
         let mesh_router_for_gatt = mesh_router.clone();
         let bluetooth_protocol_for_gatt = protocol_arc.clone(); // Clone protocol for GATT handler
         let local_public_key_for_gatt = our_public_key.clone(); // Capture local key for response sender field
+        let our_public_key = our_public_key;
         tokio::spawn(async move {
             while let Some(gatt_message) = gatt_rx.recv().await {
                 use lib_network::protocols::bluetooth::gatt::GattMessage;

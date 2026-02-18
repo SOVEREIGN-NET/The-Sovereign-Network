@@ -17,7 +17,7 @@ use crate::pouw::{
 };
 
 pub struct PouwHandler {
-    challenge_generator: Arc<RwLock<ChallengeGenerator>>,
+    challenge_generator: Arc<ChallengeGenerator>,
     receipt_validator: Arc<RwLock<ReceiptValidator>>,
     reward_calculator: Arc<RwLock<RewardCalculator>>,
     metrics: Arc<PouwMetrics>,
@@ -31,7 +31,7 @@ impl PouwHandler {
         reward_calculator: RewardCalculator,
     ) -> Self {
         Self {
-            challenge_generator: Arc::new(RwLock::new(challenge_generator)),
+            challenge_generator,
             receipt_validator: Arc::new(RwLock::new(receipt_validator)),
             reward_calculator: Arc::new(RwLock::new(reward_calculator)),
             metrics: Arc::new(PouwMetrics::new()),
@@ -55,8 +55,7 @@ impl PouwHandler {
     async fn handle_get_challenge(&self, _request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         debug!("Handling PoUW challenge request");
         
-        let generator = self.challenge_generator.read().await;
-        let challenge = generator.generate_challenge(Some("hash"), None, None, None)
+        let challenge = self.challenge_generator.generate_challenge(Some("hash"), None, None, None)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
 
