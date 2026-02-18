@@ -3,6 +3,7 @@
 //! Provides comprehensive validation for ZHTP blockchain transactions.
 
 use crate::transaction::core::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData};
+use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::types::{Hash, transaction_type::TransactionType, ContractCall, ContractType};
 use crate::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
 use crate::integration::zk_integration::is_valid_proof_structure;
@@ -428,6 +429,11 @@ impl TransactionValidator {
 
         if is_forbidden_token_contract_mutation(transaction) {
             return Err(ValidationError::InvalidTransactionType);
+        }
+
+        if transaction.transaction_type == TransactionType::ContractDeployment {
+            ContractDeploymentPayloadV1::decode_memo(&transaction.memo)
+                .map_err(|_| ValidationError::InvalidMemo)?;
         }
 
         // Allow system contract deployments (empty inputs) for Web4 and system contracts
@@ -1564,7 +1570,8 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ContractCall, ContractType};
+    use crate::transaction::{ContractDeploymentPayloadV1, CONTRACT_DEPLOYMENT_MEMO_PREFIX};
+    use crate::types::ContractCall;
     use crate::integration::zk_integration::ZkTransactionProof;
 
     /// Helper: create a test PublicKey with deterministic content
@@ -1623,6 +1630,38 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
                         governance_config_data: None,
+        }
+    }
+
+    fn create_contract_deployment_transaction_with_payload(
+        sender_key: &PublicKey,
+        payload: ContractDeploymentPayloadV1,
+    ) -> Transaction {
+        let memo = payload.encode_memo().unwrap();
+        Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: TransactionType::ContractDeployment,
+            inputs: vec![],
+            outputs: vec![TransactionOutput {
+                commitment: Hash::from([7u8; 32]),
+                note: Hash::from([8u8; 32]),
+                recipient: sender_key.clone(),
+            }],
+            fee: 0,
+            signature: test_signature(sender_key),
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -1894,5 +1933,76 @@ mod tests {
         let validator = TransactionValidator::new();
         let result = validator.validate_contract_transaction(&tx);
         assert!(matches!(result, Err(ValidationError::InvalidTransactionType)));
+    }
+
+    #[test]
+    fn test_contract_deployment_schema_accepts_valid_payload() {
+        let sender = test_public_key(9);
+        let payload = ContractDeploymentPayloadV1 {
+            contract_type: "wasm".to_string(),
+            code: vec![1, 2, 3],
+            abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+            init_args: vec![0xaa, 0xbb],
+            gas_limit: 100_000,
+            memory_limit_bytes: 65_536,
+        };
+        let tx = create_contract_deployment_transaction_with_payload(&sender, payload);
+
+        let validator = TransactionValidator::new();
+        let result = validator.validate_contract_transaction(&tx);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_contract_deployment_schema_rejects_missing_prefix() {
+        let sender = test_public_key(10);
+        let mut tx = create_contract_deployment_transaction_with_payload(
+            &sender,
+            ContractDeploymentPayloadV1 {
+                contract_type: "wasm".to_string(),
+                code: vec![1],
+                abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+                init_args: vec![],
+                gas_limit: 10_000,
+                memory_limit_bytes: 65_536,
+            },
+        );
+        tx.memo = b"legacy-deploy-payload".to_vec();
+
+        let validator = TransactionValidator::new();
+        let result = validator.validate_contract_transaction(&tx);
+        assert!(matches!(result, Err(ValidationError::InvalidMemo)));
+    }
+
+    #[test]
+    fn test_contract_deployment_schema_rejects_invalid_bounds() {
+        let sender = test_public_key(11);
+        let mut tx = create_contract_deployment_transaction_with_payload(
+            &sender,
+            ContractDeploymentPayloadV1 {
+                contract_type: "wasm".to_string(),
+                code: vec![1, 2, 3],
+                abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+                init_args: vec![],
+                gas_limit: 10_000,
+                memory_limit_bytes: 65_536,
+            },
+        );
+
+        let invalid_payload = ContractDeploymentPayloadV1 {
+            contract_type: "wasm".to_string(),
+            code: vec![1, 2, 3],
+            abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+            init_args: vec![],
+            gas_limit: 0,
+            memory_limit_bytes: 65_536,
+        };
+        let mut memo = CONTRACT_DEPLOYMENT_MEMO_PREFIX.to_vec();
+        memo.extend_from_slice(&bincode::serialize(&invalid_payload).unwrap());
+        tx.memo = memo;
+
+        let validator = TransactionValidator::new();
+        let result = validator.validate_contract_transaction(&tx);
+        assert!(matches!(result, Err(ValidationError::InvalidMemo)));
     }
 }

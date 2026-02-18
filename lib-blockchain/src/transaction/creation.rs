@@ -3,6 +3,7 @@
 //! Provides functionality for creating new transactions in the ZHTP blockchain.
 
 use crate::transaction::core::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData, WalletTransactionData};
+use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::types::transaction_type::TransactionType;
 use crate::integration::crypto_integration::{Signature, PublicKey, PrivateKey, SignatureAlgorithm};
 use tracing::debug;
@@ -13,6 +14,7 @@ pub enum TransactionCreateError {
     InsufficientFunds,
     InvalidInputs,
     InvalidOutputs,
+    InvalidContractDeploymentPayload(String),
     SigningError,
     ZkProofError,
     IdentityError,
@@ -24,6 +26,9 @@ impl std::fmt::Display for TransactionCreateError {
             TransactionCreateError::InsufficientFunds => write!(f, "Insufficient funds"),
             TransactionCreateError::InvalidInputs => write!(f, "Invalid transaction inputs"),
             TransactionCreateError::InvalidOutputs => write!(f, "Invalid transaction outputs"),
+            TransactionCreateError::InvalidContractDeploymentPayload(msg) => {
+                write!(f, "Invalid contract deployment payload: {}", msg)
+            }
             TransactionCreateError::SigningError => write!(f, "Transaction signing failed"),
             TransactionCreateError::ZkProofError => write!(f, "Zero-knowledge proof generation failed"),
             TransactionCreateError::IdentityError => write!(f, "Identity transaction creation failed"),
@@ -364,6 +369,9 @@ pub fn create_wallet_transaction(
 }
 
 /// Create a contract deployment transaction
+#[deprecated(
+    note = "use create_contract_deployment_transaction() so ContractDeployment memo schema is enforced"
+)]
 pub fn create_contract_transaction(
     inputs: Vec<TransactionInput>,
     outputs: Vec<TransactionOutput>,
@@ -374,6 +382,27 @@ pub fn create_contract_transaction(
         .transaction_type(TransactionType::ContractDeployment)
         .add_inputs(inputs)
         .add_outputs(outputs)
+        .fee(fee)
+        .build(private_key)
+}
+
+/// Create a canonical contract deployment transaction with schema-validated payload.
+pub fn create_contract_deployment_transaction(
+    inputs: Vec<TransactionInput>,
+    outputs: Vec<TransactionOutput>,
+    payload: ContractDeploymentPayloadV1,
+    fee: u64,
+    private_key: &PrivateKey,
+) -> Result<Transaction, TransactionCreateError> {
+    let memo = payload
+        .encode_memo()
+        .map_err(TransactionCreateError::InvalidContractDeploymentPayload)?;
+
+    TransactionBuilder::new()
+        .transaction_type(TransactionType::ContractDeployment)
+        .add_inputs(inputs)
+        .add_outputs(outputs)
+        .memo(memo)
         .fee(fee)
         .build(private_key)
 }
