@@ -52,11 +52,14 @@ If you have existing code using the old `[u8; 32]` NodeId type:
 
 ```rust
 // OLD
-let node_id: [u8; 32] = hash_blake3(b"some-input");
+let legacy_node_id: [u8; 32] = hash_blake3(b"some-input");
 
-// NEW
+// NEW (wrap existing bytes without changing the underlying value)
 use lib_identity::types::NodeId;
-let node_id = NodeId::from_did_device("did:zhtp:...", "device-name");
+let node_id = NodeId::from_bytes(legacy_node_id);
+
+// For NEW code deriving from DID + device (recommended going forward):
+let node_id_from_did = NodeId::from_did_device("did:zhtp:...", "device-name");
 ```
 
 ### For Node Operators
