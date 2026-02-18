@@ -1,0 +1,2391 @@
+warning: output filename collision at H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\zhtp.pdb
+  |
+  = note: the bin target `zhtp` in package `zhtp v0.1.0 (H:\team--reem -1.5\The-Sovereign-Network\zhtp)` has the same output filename as the lib target `zhtp` in package `zhtp v0.1.0 (H:\team--reem -1.5\The-Sovereign-Network\zhtp)`
+  = note: this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = help: consider changing their names to be unique or compiling them separately
+warning: output filename collision at H:\team--reem -1.5\The-Sovereign-Network\target\release\zhtp.pdb
+  |
+  = note: the bin target `zhtp` in package `zhtp v0.1.0 (H:\team--reem -1.5\The-Sovereign-Network\zhtp)` has the same output filename as the lib target `zhtp` in package `zhtp v0.1.0 (H:\team--reem -1.5\The-Sovereign-Network\zhtp)`
+  = note: this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = help: consider changing their names to be unique or compiling them separately
+warning: unused import: `std::env`
+ --> zhtp\build.rs:1:5
+  |
+1 | use std::env;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::fs`
+ --> zhtp\build.rs:2:5
+  |
+2 | use std::fs;
+  |     ^^^^^^^
+
+warning: unused import: `std::path::PathBuf`
+ --> zhtp\build.rs:3:5
+  |
+3 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: `zhtp` (build script) generated 3 warnings
+warning: unused import: `std::sync::Arc`
+ --> lib-blockchain\src\execution\state_view.rs:8:5
+  |
+8 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `fee_model`
+  --> lib-blockchain\src\execution\executor.rs:47:39
+   |
+47 | use crate::protocol::{ProtocolParams, fee_model};
+   |                                       ^^^^^^^^^
+
+warning: unused import: `crate::transaction::Transaction`
+   --> lib-blockchain\src\execution\executor.rs:825:13
+    |
+825 |         use crate::transaction::Transaction;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `SigScheme`
+  --> lib-blockchain\src\validation\block_validate.rs:13:54
+   |
+13 | use crate::fees::{classify_transaction, FeeParamsV2, SigScheme};
+   |                                                      ^^^^^^^^^
+
+warning: unused imports: `Address` and `TokenId`
+  --> lib-blockchain\src\validation\tx_validate.rs:32:57
+   |
+32 | use crate::storage::{BlockchainStore, OutPoint, TxHash, Address, TokenId};
+   |                                                         ^^^^^^^  ^^^^^^^
+
+warning: unused imports: `Address`, `BlockHash`, `OutPoint`, `TokenId`, `TxHash`, and `Utxo`
+  --> lib-blockchain\src\snapshot.rs:25:5
+   |
+25 |     Address, BlockchainStore, BlockHash, OutPoint, SledStore, StorageEr...
+   |     ^^^^^^^                   ^^^^^^^^^  ^^^^^^^^
+26 |     TokenId, TxHash, Utxo,
+   |     ^^^^^^^  ^^^^^^  ^^^^
+
+warning: unused import: `crate::types::Hash`
+  --> lib-blockchain\src\snapshot.rs:29:5
+   |
+29 | use crate::types::Hash;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `DelegateTarget`
+  --> lib-blockchain\src\contracts\root_registry\dao_prefix_router.rs:39:32
+   |
+39 |     hash_name, normalize_name, DelegateTarget, GovernanceDelegation, Go...
+   |                                ^^^^^^^^^^^^^^
+
+warning: unused import: `AssignmentError`
+  --> lib-blockchain\src\contracts\treasury_kernel\role_registry.rs:25:17
+   |
+25 |     Assignment, AssignmentError, AssignmentId, AssignmentStatus, Identi...
+   |                 ^^^^^^^^^^^^^^^
+
+warning: unused import: `BTreeSet`
+  --> lib-blockchain\src\contracts\treasury_kernel\metric_book.rs:21:34
+   |
+21 | use std::collections::{BTreeMap, BTreeSet};
+   |                                  ^^^^^^^^
+
+warning: unused import: `EXECUTION_GRACE_EPOCHS`
+  --> lib-blockchain\src\contracts\treasury_kernel\governance_executor.rs:23:58
+   |
+23 | ...ter, TreasuryProposal, EXECUTION_GRACE_EPOCHS,
+   |                           ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `RoleId`
+  --> lib-blockchain\src\contracts\treasury_kernel\governance_executor.rs:25:37
+   |
+25 | use super::role_types::{IdentityId, RoleId};
+   |                                     ^^^^^^
+
+warning: unused import: `CalleeErrorCode`
+  --> lib-blockchain\src\contracts\calls\executor.rs:10:21
+   |
+10 | use super::errors::{CalleeErrorCode, ContractId, CrossContractError};
+   |                     ^^^^^^^^^^^^^^^
+
+warning: unused import: `CalleeErrorCode`
+ --> lib-blockchain\src\contracts\calls\stack.rs:6:21
+  |
+6 | use super::errors::{CalleeErrorCode, CrossContractError, ContractId};
+  |                     ^^^^^^^^^^^^^^^
+
+warning: use of deprecated function `contracts::tokens::functions::mint_tokens`: Use mint_tokens_via_kernel() or TreasuryKernel::execute_authorized_mint() for governance-gated minting
+    --> lib-blockchain\src\blockchain.rs:3356:54
+     |
+3356 | ...   crate::contracts::tokens::functions::mint_tokens(token, &to, am...
+     |                                            ^^^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `contracts::tokens::functions::burn_tokens`: Use burn_tokens_via_kernel() or TreasuryKernel::execute_authorized_burn() for governance-gated burning
+    --> lib-blockchain\src\blockchain.rs:3419:54
+     |
+3419 | ...   crate::contracts::tokens::functions::burn_tokens(token, caller,...
+     |                                            ^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::process_expired_proposals`: Use blockchain.has_proposal_passed() and blockchain.execute_dao_proposal() instead
+   --> lib-blockchain\src\integration\consensus_integration.rs:892:20
+    |
+892 |         dao_engine.process_expired_proposals().await?;
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_proposals`: Use blockchain.get_dao_proposals() instead - proposals are stored on blockchain
+    --> lib-blockchain\src\integration\consensus_integration.rs:1685:39
+     |
+1685 |             dao_proposals: dao_engine.get_dao_proposals().len(),
+     |                                       ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_treasury`: Use blockchain treasury methods instead
+    --> lib-blockchain\src\integration\consensus_integration.rs:1686:42
+     |
+1686 | ...   treasury_balance: dao_engine.get_dao_treasury().total_balance,
+     |                                    ^^^^^^^^^^^^^^^^
+
+warning: unreachable expression
+    --> lib-blockchain\src\transaction\validation.rs:1312:9
+     |
+1283 | /         match owner_did {
+1284 | |             Some(did) => {
+1285 | |                 if let Some(identity_data) = blockchain.get_all_ide...
+1286 | |                     .find(|(id, _)| **id == did)
+...    |
+1310 | |         }
+     | |_________- any code following this `match` expression is unreachable, as all arms diverge
+1311 |
+1312 |           Ok(())
+     |           ^^^^^^ unreachable expression
+     |
+     = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated associated function `blockchain::Blockchain::load_from_file`: Use Phase 2 incremental storage with SledStore instead
+    --> lib-blockchain\src\blockchain.rs:6835:25
+     |
+6835 |             match Self::load_from_file(path) {
+     |                         ^^^^^^^^^^^^^^
+
+warning: use of deprecated method `chrono::DateTime::<Tz>::timestamp_nanos`: use `timestamp_nanos_opt()` instead
+  --> lib-blockchain\src\contracts\web4\functions.rs:71:24
+   |
+71 |     chrono::Utc::now().timestamp_nanos().hash(&mut hasher);
+   |                        ^^^^^^^^^^^^^^^
+
+warning: unused import: `ContractRuntime`
+  --> lib-blockchain\src\contracts\executor\mod.rs:16:80
+   |
+16 | ...meConfig, RuntimeContext, ContractRuntime};
+   |                              ^^^^^^^^^^^^^^^
+
+warning: unused variable: `claimant_identity`
+    --> lib-blockchain\src\transaction\core.rs:1207:29
+     |
+1207 | ...n compute_claim_id(claimant_identity: &str, month_index: u64) -> H...
+     |                       ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_claimant_identity`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `month_index`
+    --> lib-blockchain\src\transaction\core.rs:1207:54
+     |
+1207 | ...mant_identity: &str, month_index: u64) -> Hash {
+     |                         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_month_index`
+
+warning: unused variable: `identity_data`
+    --> lib-blockchain\src\transaction\validation.rs:1251:31
+     |
+1251 | ...           for (did, identity_data) in blockchain.get_all_identiti...
+     |                         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_identity_data`
+
+warning: unused variable: `proposal`
+    --> lib-blockchain\src\blockchain.rs:4044:13
+     |
+4044 |         let proposal = self.get_dao_proposal(&proposal_id)
+     |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_proposal`
+
+warning: value assigned to `score` is never read
+    --> lib-blockchain\src\blockchain.rs:4804:25
+     |
+4804 |         let mut score = service.reputation_score as f64;
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable `new_contract_blocks` is assigned to, but never used
+    --> lib-blockchain\src\blockchain.rs:5990:13
+     |
+5990 |         let mut new_contract_blocks = 0;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: consider using `_new_contract_blocks` instead
+
+warning: value assigned to `new_contract_blocks` is never read
+    --> lib-blockchain\src\blockchain.rs:5994:17
+     |
+5994 |                 new_contract_blocks += 1;
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: variable `new_contract_blocks` is assigned to, but never used
+    --> lib-blockchain\src\blockchain.rs:6441:13
+     |
+6441 |         let mut new_contract_blocks = 0;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: consider using `_new_contract_blocks` instead
+
+warning: value assigned to `new_contract_blocks` is never read
+    --> lib-blockchain\src\blockchain.rs:6445:17
+     |
+6445 |                 new_contract_blocks += 1;
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: variable `fee_sink_output_amount` is assigned to, but never used
+   --> lib-blockchain\src\execution\tx_apply.rs:543:9
+    |
+543 |     let mut fee_sink_output_amount: u64 = 0;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_fee_sink_output_amount` instead
+
+warning: unused variable: `index`
+   --> lib-blockchain\src\execution\tx_apply.rs:546:10
+    |
+546 |     for (index, output) in tx.outputs.iter().enumerate() {
+    |          ^^^^^ help: if this is intentional, prefix it with an underscore: `_index`
+
+warning: value assigned to `fee_sink_output_amount` is never read
+   --> lib-blockchain\src\execution\tx_apply.rs:559:13
+    |
+559 |             fee_sink_output_amount = fees_collected;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `tx`
+   --> lib-blockchain\src\validation\tx_validate.rs:221:5
+    |
+221 |     tx: &Transaction,
+    |     ^^ help: if this is intentional, prefix it with an underscore: `_tx`
+
+warning: unused variable: `timeout_duration`
+   --> lib-blockchain\src\contracts\runtime\wasm_engine.rs:192:17
+    |
+192 |             let timeout_duration = config.max_execution_time;
+    |                 ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_timeout_duration`
+
+warning: unused variable: `host_stats`
+   --> lib-blockchain\src\contracts\runtime\wasm_engine.rs:218:21
+    |
+218 |                 let host_stats = store.data().get_stats();
+    |                     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_host_stats`
+
+warning: unused variable: `caller`
+   --> lib-blockchain\src\contracts\tokens\spec_v2.rs:717:9
+    |
+717 |         caller: &Address,
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_caller`
+
+warning: variable does not need to be mutable
+  --> lib-blockchain\src\contracts\treasuries\core.rs:81:9
+   |
+81 |         mut sector_treasury_map: HashMap<String, PublicKey>,
+   |         ----^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `sector`
+  --> lib-blockchain\src\contracts\root_registry\namespace_policy.rs:48:21
+   |
+48 |         if let Some(sector) = welfare_sector_from_root(&normalized) {
+   |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_sector`
+
+warning: unused variable: `from`
+   --> lib-blockchain\src\contracts\governance\entity_registry.rs:381:9
+    |
+381 |         from: &PublicKey,
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_from`
+
+warning: type `ResourceUsage` is more private than the item `PlatformIsolationManager::get_resource_usage`
+   --> lib-blockchain\src\contracts\executor\platform_isolation.rs:239:5
+    |
+239 |     pub fn get_resource_usage(&self, contract_id: &str) -> Option<&ResourceUsage> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method `PlatformIsolationManager::get_resource_usage` is reachable at visibility `pub`
+    |
+note: but type `ResourceUsage` is only usable at visibility `pub(self)`
+   --> lib-blockchain\src\contracts\executor\platform_isolation.rs:52:1
+    |
+ 52 | struct ResourceUsage {
+    | ^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: field `zk_system` is never read
+   --> lib-blockchain\src\integration\enhanced_zk_crypto.rs:490:5
+    |
+489 | pub struct EnhancedConsensusValidator {
+    |            -------------------------- field in this struct
+490 |     zk_system: ZkProofSystem,
+    |     ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_access_pattern_for_data_type` is never used
+   --> lib-blockchain\src\integration\storage_integration.rs:961:8
+    |
+164 | impl BlockchainStorageManager {
+    | ----------------------------- method in this implementation
+...
+961 |     fn get_access_pattern_for_data_type(&self, data_type: &str) -> Acc...
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `create_dao_proposal_from_transaction` and `process_dao_vote_from_transaction` are never used
+    --> lib-blockchain\src\integration\consensus_integration.rs:1525:14
+     |
+ 162 | impl BlockchainConsensusCoordinator {
+     | ----------------------------------- methods in this implementation
+...
+1525 |     async fn create_dao_proposal_from_transaction(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1559 |     async fn process_dao_vote_from_transaction(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `system_time_to_consensus_timestamp` is never used
+    --> lib-blockchain\src\integration\consensus_integration.rs:2133:4
+     |
+2133 | fn system_time_to_consensus_timestamp(time: SystemTime) -> Result<u64> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `hash_data` is never used
+   --> lib-blockchain\src\edge_node_state.rs:297:8
+    |
+ 57 | impl EdgeNodeState {
+    | ------------------ method in this implementation
+...
+297 |     fn hash_data(&self, data: &[u8]) -> Hash {
+    |        ^^^^^^^^^
+
+warning: fields `blocks_by_height`, `blocks_by_hash`, and `meta` are never read
+  --> lib-blockchain\src\storage\sled_store.rs:60:5
+   |
+59 | struct PendingBatch {
+   |        ------------ fields in this struct
+60 |     blocks_by_height: Batch,
+   |     ^^^^^^^^^^^^^^^^
+61 |     blocks_by_hash: Batch,
+   |     ^^^^^^^^^^^^^^
+...
+69 |     meta: Batch,
+   |     ^^^^
+
+warning: field `0` is never read
+    --> lib-blockchain\src\execution\executor.rs:1058:14
+     |
+1058 |     Coinbase(CoinbaseOutcome),
+     |     -------- ^^^^^^^^^^^^^^^
+     |     |
+     |     field in this variant
+     |
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+     |
+1058 -     Coinbase(CoinbaseOutcome),
+1058 +     Coinbase(()),
+     |
+
+warning: constant `ED25519_SIG_SIZE` is never used
+  --> lib-blockchain\src\fees\classifiers.rs:35:15
+   |
+35 |     pub const ED25519_SIG_SIZE: u32 = 64;
+   |               ^^^^^^^^^^^^^^^^
+
+warning: constant `HYBRID_SIG_SIZE` is never used
+  --> lib-blockchain\src\fees\classifiers.rs:37:15
+   |
+37 |     pub const HYBRID_SIG_SIZE: u32 = ED25519_SIG_SIZE + DILITHIUM5_SIG_...
+   |               ^^^^^^^^^^^^^^^
+
+warning: constant `ED25519_PUBKEY_SIZE` is never used
+  --> lib-blockchain\src\fees\classifiers.rs:40:15
+   |
+40 |     pub const ED25519_PUBKEY_SIZE: u32 = 32;
+   |               ^^^^^^^^^^^^^^^^^^^
+
+warning: field `config` is never read
+  --> lib-blockchain\src\contracts\runtime\wasm_engine.rs:83:5
+   |
+81 | pub struct WasmEngine {
+   |            ---------- field in this struct
+82 |     engine: Engine,
+83 |     config: RuntimeConfig,
+   |     ^^^^^^
+
+warning: method `get_epoch_mut` is never used
+   --> lib-blockchain\src\contracts\treasury_kernel\metric_book.rs:368:8
+    |
+335 | impl EpochClock {
+    | --------------- method in this implementation
+...
+368 |     fn get_epoch_mut(&mut self, epoch: u64) -> Option<&mut EpochState> {
+    |        ^^^^^^^^^^^^^
+
+warning: methods `get_state` and `set_state` are never used
+   --> lib-blockchain\src\contracts\web4\core.rs:850:8
+    |
+601 | impl Web4Contract {
+    | ----------------- methods in this implementation
+...
+850 |     fn get_state(&self) -> Vec<u8> {
+    |        ^^^^^^^^^
+...
+854 |     fn set_state(&mut self, state: Vec<u8>) -> Result<(), String> {
+    |        ^^^^^^^^^
+
+   Compiling zhtp v0.1.0 (H:\team--reem -1.5\The-Sovereign-Network\zhtp)
+warning: unused import: `Ordering`
+  --> lib-network\src\handshake\nonce_cache.rs:54:36
+   |
+54 | use std::sync::atomic::{AtomicU64, Ordering};
+   |                                    ^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `anyhow`
+  --> lib-network\src\handshake\core.rs:34:22
+   |
+34 | use anyhow::{Result, anyhow};
+   |                      ^^^^^^
+
+warning: unused imports: `AsyncReadExt` and `AsyncWriteExt`
+  --> lib-network\src\handshake\core.rs:37:40
+   |
+37 | use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+   |                                        ^^^^^^^^^^^^  ^^^^^^^^^^^^^
+
+warning: unused import: `warn`
+   --> lib-network\src\consensus_encryption.rs:172:22
+    |
+172 | use tracing::{debug, warn};
+    |                      ^^^^
+
+warning: unused imports: `IpAddr`, `Ipv4Addr`, and `SocketAddr`
+  --> lib-network\src\protocols\mod.rs:24:16
+   |
+24 | use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+   |                ^^^^^^^^^^  ^^^^^^  ^^^^^^^^
+
+warning: unused import: `parse_mac_address`
+  --> lib-network\src\protocols\bluetooth\classic.rs:26:5
+   |
+26 |     parse_mac_address, get_system_bluetooth_mac,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `windows::Storage::Streams::DataReader`
+   --> lib-network\src\protocols\bluetooth\classic.rs:292:13
+    |
+292 |         use windows::Storage::Streams::DataReader;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `windows::Storage::Streams::DataWriter`
+   --> lib-network\src\protocols\bluetooth\classic.rs:336:13
+    |
+336 |         use windows::Storage::Streams::DataWriter;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Foundation::TypedEventHandler` and `Storage::Streams::*`
+   --> lib-network\src\protocols\bluetooth\classic.rs:648:13
+    |
+648 |             Foundation::TypedEventHandler,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+649 |             Storage::Streams::*,
+    |             ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `DeviceInformationCollection`
+    --> lib-network\src\protocols\bluetooth\classic.rs:1374:59
+     |
+1374 | ...DeviceInformation, DeviceInformationCollection},
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Rfcomm::RfcommDeviceService`
+    --> lib-network\src\protocols\bluetooth\classic.rs:1468:55
+     |
+1468 | ...:{BluetoothDevice, Rfcomm::RfcommDeviceService},
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Rfcomm::RfcommDeviceService`
+    --> lib-network\src\protocols\bluetooth\classic.rs:1545:55
+     |
+1545 | ...:{BluetoothDevice, Rfcomm::RfcommDeviceService},
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `error`
+ --> lib-network\src\protocols\bluetooth\windows_gatt.rs:7:27
+  |
+7 | use tracing::{info, warn, error};
+  |                           ^^^^^
+
+warning: unused imports: `Deserialize` and `Serialize`
+  --> lib-network\src\protocols\bluetooth\windows_gatt.rs:15:13
+   |
+15 | use serde::{Serialize, Deserialize};
+   |             ^^^^^^^^^  ^^^^^^^^^^^
+
+warning: unused import: `Foundation::Collections::*`
+  --> lib-network\src\protocols\bluetooth\windows_gatt.rs:21:5
+   |
+21 |     Foundation::Collections::*,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `BleDevice`, `BluetoothDeviceInfo`, and `CharacteristicInfo`
+  --> lib-network\src\protocols\bluetooth\windows_gatt.rs:30:43
+   |
+30 | ...device::{BleDevice, CharacteristicInfo, BluetoothDeviceInfo};
+   |             ^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `format_mac_address` and `parse_uuid_to_guid`
+  --> lib-network\src\protocols\bluetooth\windows_gatt.rs:32:43
+   |
+32 | ...ooth::common::{parse_uuid_to_guid, format_mac_address};
+   |                   ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `GattMessage`, `GattOperation`, `parse_characteristic_properties`, and `supports_operation`
+  --> lib-network\src\protocols\bluetooth\windows_gatt.rs:35:41
+   |
+35 | ...::{GattMessage, GattOperation, supports_operation, parse_characteristic_properties};
+   |       ^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> lib-network\src\protocols\bluetooth\discovery.rs:6:5
+  |
+6 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::RwLock`
+ --> lib-network\src\protocols\bluetooth\discovery.rs:7:5
+  |
+7 | use tokio::sync::RwLock;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> lib-network\src\protocols\bluetooth\connectivity.rs:3:14
+  |
+3 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused imports: `Devices::Bluetooth::Advertisement::*`, `PropertyValue`, and `core::GUID`
+   --> lib-network\src\protocols\bluetooth\gatt_io.rs:387:13
+    |
+387 |             core::GUID,
+    |             ^^^^^^^^^^
+388 |             Devices::Bluetooth::Advertisement::*,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+391 |             Foundation::{PropertyValue, TypedEventHandler},
+    |                          ^^^^^^^^^^^^^
+
+warning: unused import: `Foundation::Collections::*`
+   --> lib-network\src\protocols\bluetooth\gatt_io.rs:986:17
+    |
+986 |                 Foundation::Collections::*,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Foundation::Collections::*`
+    --> lib-network\src\protocols\bluetooth\gatt_io.rs:1124:17
+     |
+1124 |                 Foundation::Collections::*,
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `windows::Foundation::Collections::*`
+    --> lib-network\src\protocols\bluetooth\gatt_io.rs:1259:17
+     |
+1259 |             use windows::Foundation::Collections::*;
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `windows::Foundation::Collections::*`
+    --> lib-network\src\protocols\bluetooth\gatt_io.rs:1332:17
+     |
+1332 |             use windows::Foundation::Collections::*;
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> lib-network\src\protocols\bluetooth\handshake_io.rs:4:14
+  |
+4 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `warn`
+ --> lib-network\src\protocols\bluetooth\device_discovery.rs:6:21
+  |
+6 | use tracing::{info, warn};
+  |                     ^^^^
+
+warning: unused import: `anyhow::Result`
+ --> lib-network\src\protocols\bluetooth\core_bluetooth_init.rs:3:5
+  |
+3 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `tracing::info`
+ --> lib-network\src\protocols\bluetooth\core_bluetooth_init.rs:4:5
+  |
+4 | use tracing::info;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> lib-network\src\protocols\bluetooth\core_bluetooth_init.rs:6:5
+  |
+6 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> lib-network\src\protocols\wifi_direct.rs:5:14
+  |
+5 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `Foundation::*`
+   --> lib-network\src\protocols\wifi_direct.rs:510:17
+    |
+510 |                 Foundation::*,
+    |                 ^^^^^^^^^^^^^
+
+warning: unused import: `Foundation::*`
+    --> lib-network\src\protocols\wifi_direct.rs:1149:17
+     |
+1149 |                 Foundation::*,
+     |                 ^^^^^^^^^^^^^
+
+warning: unused import: `Foundation::*`
+    --> lib-network\src\protocols\wifi_direct.rs:2379:17
+     |
+2379 |                 Foundation::*,
+     |                 ^^^^^^^^^^^^^
+
+warning: unused imports: `HandshakeResult` and `HandshakeSessionInfo`
+  --> lib-network\src\protocols\quic_handshake.rs:19:46
+   |
+19 |     HandshakeContext, HandshakeCapabilities, HandshakeSessionInfo,
+   |                                              ^^^^^^^^^^^^^^^^^^^^
+20 |     HandshakeResult, VerifiedPeer, PqcCapability,
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE`
+  --> lib-network\src\bootstrap\handshake.rs:76:5
+   |
+76 | use crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ZhtpResponseWire`
+  --> lib-network\src\client\zhtp_client.rs:16:22
+   |
+16 |     ZhtpRequestWire, ZhtpResponseWire,
+   |                      ^^^^^^^^^^^^^^^^
+
+warning: unused import: `ZhtpMethod`
+  --> lib-network\src\client\zhtp_client.rs:19:55
+   |
+19 | use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod};
+   |                                                       ^^^^^^^^^^
+
+warning: unused import: `ValidatorStatus`
+  --> lib-network\src\validator_discovery_transport.rs:34:83
+   |
+34 | ...idatorDiscoveryTransport, ValidatorStatus,
+   |                              ^^^^^^^^^^^^^^^
+
+warning: use of deprecated function `discovery::lorawan::discover_lorawan_gateways`: Use discover_lorawan_gateways_with_capabilities() to avoid redundant hardware detection
+  --> lib-network\src\discovery\lorawan.rs:76:5
+   |
+76 |     discover_lorawan_gateways().await
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `discovery::satellite::discover_satellite_uplinks`: Use discover_satellite_uplinks_with_capabilities() to avoid redundant hardware detection
+  --> lib-network\src\discovery\satellite.rs:76:5
+   |
+76 |     discover_satellite_uplinks().await
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `identity::unified_peer::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> lib-network\src\messaging\message_handler.rs:331:43
+    |
+331 | ...   let unified_peer = UnifiedPeerId::from_public_key_legacy(peer.cl...
+    |                                         ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `identity::unified_peer::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> lib-network\src\routing\long_range.rs:683:59
+    |
+683 | ...   let unified_peer = UnifiedPeerId::from_public_key_legacy(relay_p...
+    |                                         ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `identity::unified_peer::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> lib-network\src\routing\multi_hop.rs:715:51
+    |
+715 | ...   let unified_peer = UnifiedPeerId::from_public_key_legacy(to.clon...
+    |                                         ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `identity::unified_peer::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> lib-network\src\routing\message_routing.rs:398:43
+    |
+398 | ...   let dest_unified = UnifiedPeerId::from_public_key_legacy(destina...
+    |                                         ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `identity::unified_peer::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> lib-network\src\routing\message_routing.rs:399:45
+    |
+399 | ...   let sender_unified = UnifiedPeerId::from_public_key_legacy(sende...
+    |                                           ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `identity::unified_peer::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+    --> lib-network\src\routing\message_routing.rs:1039:43
+     |
+1039 | ...   let dest_unified = UnifiedPeerId::from_public_key_legacy(destin...
+     |                                         ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> lib-network\src\protocols\bluetooth\messaging.rs:198:17
+    |
+198 |             let mut writer = DataWriter::new()?;
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated method `handshake::nonce_cache::NonceCache::check_and_store`: Use `mark_nonce_seen` with `compute_nonce_fingerprint` instead
+   --> lib-network\src\handshake\core.rs:131:14
+    |
+131 |             .check_and_store(nonce, timestamp)
+    |              ^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `handshake::nonce_cache::NonceCache::check_and_store`: Use `mark_nonce_seen` with `compute_nonce_fingerprint` instead
+    --> lib-network\src\handshake\mod.rs:1012:41
+     |
+1012 | ...   if let Err(e) = ctx.nonce_cache.check_and_store(&self.challenge...
+     |                                       ^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `handshake::nonce_cache::NonceCache::check_and_store`: Use `mark_nonce_seen` with `compute_nonce_fingerprint` instead
+    --> lib-network\src\handshake\mod.rs:1312:25
+     |
+1312 | ...   ctx.nonce_cache.check_and_store(&self.response_nonce, self.time...
+     |                       ^^^^^^^^^^^^^^^
+
+warning: unused variable: `entry`
+   --> lib-network\src\peer_registry\sync.rs:147:53
+    |
+147 |             PeerRegistryEvent::PeerAdded { peer_id, entry } => {
+    |                                                     ^^^^^ help: try ignoring the field: `entry: _`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `new_entry`
+   --> lib-network\src\peer_registry\sync.rs:157:69
+    |
+157 | ...y: _, new_entry } => {
+    |          ^^^^^^^^^ help: try ignoring the field: `new_entry: _`
+
+warning: unused variable: `new_entry`
+   --> lib-network\src\peer_registry\sync.rs:228:69
+    |
+228 | ...y: _, new_entry } => {
+    |          ^^^^^^^^^ help: try ignoring the field: `new_entry: _`
+
+warning: unused variable: `entry`
+   --> lib-network\src\peer_registry\sync.rs:286:53
+    |
+286 |             PeerRegistryEvent::PeerAdded { peer_id, entry } => {
+    |                                                     ^^^^^ help: try ignoring the field: `entry: _`
+
+warning: unused variable: `new_entry`
+   --> lib-network\src\peer_registry\sync.rs:297:69
+    |
+297 | ...y: _, new_entry } => {
+    |          ^^^^^^^^^ help: try ignoring the field: `new_entry: _`
+
+warning: unused variable: `connected_peers`
+   --> lib-network\src\mesh\server.rs:910:21
+    |
+910 |                 let connected_peers = protocol.read().await.get_connec...
+    |                     ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connected_peers`
+
+warning: unused variable: `peer_registry`
+   --> lib-network\src\mesh\server.rs:904:13
+    |
+904 |         let peer_registry = self.peer_registry.clone();
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_peer_registry`
+
+warning: unused variable: `connected_devices`
+    --> lib-network\src\protocols\wifi_direct.rs:2600:17
+     |
+2600 |             let connected_devices = self.connected_devices.clone();
+     |                 ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connected_devices`
+
+warning: unused variable: `is_group_owner`
+    --> lib-network\src\protocols\wifi_direct.rs:2601:17
+     |
+2601 |             let is_group_owner = self.group_owner;
+     |                 ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_group_owner`
+
+warning: unused variable: `protocol`
+   --> lib-network\src\mesh\server.rs:921:50
+    |
+921 | ...rect_monitoring(&self, protocol: Arc<RwLock<crate::protocols::wifi_...
+    |                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_protocol`
+
+warning: unused variable: `peer_registry`
+   --> lib-network\src\mesh\server.rs:922:13
+    |
+922 |         let peer_registry = self.peer_registry.clone();
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_peer_registry`
+
+warning: unused variable: `ubi_participants`
+   --> lib-network\src\mesh\server.rs:975:13
+    |
+975 |         let ubi_participants = Arc::new(RwLock::new(HashMap::<String, ...
+    |             ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_ubi_participants`
+
+warning: unused variable: `router_guard`
+    --> lib-network\src\mesh\server.rs:1284:17
+     |
+1284 |             let router_guard = message_router.write().await;
+     |                 ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_router_guard`
+
+warning: unused variable: `network_stats`
+   --> lib-network\src\monitoring\health_monitoring.rs:295:21
+    |
+295 |                 let network_stats = stats.write().await;
+    |                     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_network_stats`
+
+warning: unused variable: `headers`
+    --> lib-network\src\mesh\server.rs:1358:9
+     |
+1358 |         headers: HashMap<String, String>,
+     |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_headers`
+
+warning: unused variable: `body`
+    --> lib-network\src\mesh\server.rs:1359:9
+     |
+1359 |         body: Vec<u8>,
+     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_body`
+
+warning: unused variable: `server_id`
+    --> lib-network\src\mesh\server.rs:1897:13
+     |
+1897 |         let server_id = self.server_id;
+     |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_server_id`
+
+warning: unused variable: `zk_proof`
+   --> lib-network\src\messaging\message_handler.rs:501:16
+    |
+501 |             Ok(zk_proof) => {
+    |                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_zk_proof`
+
+warning: unused variable: `relay`
+   --> lib-network\src\routing\message_routing.rs:638:32
+    |
+638 |         if let Some((relay_id, relay)) = best_relay {
+    |                                ^^^^^ help: if this is intentional, prefix it with an underscore: `_relay`
+
+warning: unused variable: `frame_counter`
+   --> lib-network\src\protocols\lorawan.rs:535:53
+    |
+535 | ...elf, payload: &[u8], frame_counter: u16) -> Result<Vec<u8>> {
+    |                         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_frame_counter`
+
+warning: unused variable: `request_id`
+   --> lib-network\src\messaging\message_handler.rs:952:9
+    |
+952 |         request_id: u64,
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request_id`
+
+warning: unused variable: `proof_data`
+   --> lib-network\src\messaging\message_handler.rs:953:9
+    |
+953 |         proof_data: Vec<u8>,
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_proof_data`
+
+warning: unused variable: `message`
+   --> lib-network\src\routing\message_routing.rs:782:9
+    |
+782 |         message: &ZhtpMeshMessage,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_message`
+
+warning: unused variable: `hop`
+   --> lib-network\src\routing\message_routing.rs:783:9
+    |
+783 |         hop: &RouteHop,
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_hop`
+
+warning: unused variable: `message`
+   --> lib-network\src\routing\message_routing.rs:807:9
+    |
+807 |         message: &ZhtpMeshMessage,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_message`
+
+warning: unused variable: `request_id`
+    --> lib-network\src\messaging\message_handler.rs:1035:9
+     |
+1035 |         request_id: u64,
+     |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request_id`
+
+warning: unused variable: `request_id`
+    --> lib-network\src\messaging\message_handler.rs:1053:60
+     |
+1053 | ... requester: PublicKey, request_id: u64, key: Vec<u8>, value: Vec<u...
+     |                           ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request_id`
+
+warning: unused variable: `request_id`
+    --> lib-network\src\messaging\message_handler.rs:1074:65
+     |
+1074 | ... requester: PublicKey, request_id: u64, key: Vec<u8>, max_hops: u8...
+     |                           ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request_id`
+
+warning: unused variable: `request_id`
+    --> lib-network\src\messaging\message_handler.rs:1094:64
+     |
+1094 | ... requester: PublicKey, request_id: u64, target_id: Vec<u8>, max_ho...
+     |                           ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request_id`
+
+warning: unused variable: `device_path`
+   --> lib-network\src\discovery\lorawan_hardware.rs:650:17
+    |
+650 |     if let Some(device_path) = &hardware.device_path {
+    |                 ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_device_path`
+
+warning: variable `total_relays` is assigned to, but never used
+   --> lib-network\src\routing\global_coverage.rs:178:13
+    |
+178 |         let mut total_relays = 0u32;
+    |             ^^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_total_relays` instead
+
+warning: value assigned to `total_relays` is never read
+   --> lib-network\src\routing\global_coverage.rs:184:13
+    |
+184 |             total_relays += coverage.active_relays;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `id_string`
+    --> lib-network\src\protocols\bluetooth\classic.rs:1395:29
+     |
+1395 |                         let id_string = id.to_string_lossy();
+     |                             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_id_string`
+
+warning: unused variable: `args`
+   --> lib-network\src\protocols\bluetooth\windows_gatt.rs:768:37
+    |
+768 |                         if let Some(args) = args {
+    |                                     ^^^^ help: if this is intentional, prefix it with an underscore: `_args`
+
+warning: unused variable: `nonce`
+   --> lib-network\src\protocols\bluetooth_encryption.rs:150:13
+    |
+150 |         let nonce = derive_nonce(session_id, sequence, 0x00)?; // dire...
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_nonce`
+
+warning: unused variable: `nonce`
+   --> lib-network\src\protocols\bluetooth_encryption.rs:164:13
+    |
+164 |         let nonce = derive_nonce(session_id, sequence, 0x01)?; // dire...
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_nonce`
+
+warning: unused variable: `enc`
+   --> lib-network\src\protocols\wifi_direct_encryption.rs:247:57
+    |
+247 |                 WiFiDirectEncryptionState::EndToEndAead(enc) => {
+    |                                                         ^^^ help: if this is intentional, prefix it with an underscore: `_enc`
+
+warning: unused variable: `connect_async`
+    --> lib-network\src\protocols\wifi_direct.rs:1707:17
+     |
+1707 |             let connect_async = WiFiDirectDevice::FromIdAsync(&device...
+     |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connect_async`
+
+warning: unused variable: `connect_async`
+    --> lib-network\src\protocols\wifi_direct.rs:1784:17
+     |
+1784 |             let connect_async = WiFiDirectDevice::FromIdAsync(&device...
+     |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connect_async`
+
+warning: unused variable: `connect_async`
+    --> lib-network\src\protocols\wifi_direct.rs:1863:17
+     |
+1863 |             let connect_async = WiFiDirectDevice::FromIdAsync(&device...
+     |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connect_async`
+
+warning: unused variable: `connect_async`
+    --> lib-network\src\protocols\wifi_direct.rs:2272:17
+     |
+2272 |             let connect_async = WiFiDirectDevice::FromIdAsync(&device...
+     |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connect_async`
+
+warning: unused variable: `connect_async`
+    --> lib-network\src\protocols\wifi_direct.rs:2357:17
+     |
+2357 |             let connect_async = WiFiDirectDevice::FromIdAsync(&device...
+     |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connect_async`
+
+warning: unused variable: `nwk_s_key`
+   --> lib-network\src\protocols\lorawan.rs:317:13
+    |
+317 |         let nwk_s_key = hasher.finalize();
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_nwk_s_key`
+
+warning: unused variable: `app_s_key`
+   --> lib-network\src\protocols\lorawan.rs:322:13
+    |
+322 |         let app_s_key = hasher.finalize();
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_s_key`
+
+warning: unused variable: `node_id`
+   --> lib-network\src\protocols\lorawan.rs:377:13
+    |
+377 |         let node_id = self.node_id;
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_id`
+
+warning: unused variable: `node_id`
+   --> lib-network\src\protocols\satellite.rs:181:13
+    |
+181 |         let node_id = self.node_id;
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_id`
+
+warning: unused variable: `transport`
+   --> lib-network\src\client\zhtp_client.rs:114:13
+    |
+114 |         let transport = Arc::new(transport);
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_transport`
+
+warning: unused variable: `identity_manager`
+  --> lib-network\src\zk_integration\ubi_proofs.rs:22:9
+   |
+22 |     let identity_manager = IdentityManager::new();
+   |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_identity_manager`
+
+warning: unused variable: `path`
+   --> lib-network\src\web4\trust.rs:151:29
+    |
+151 |     fn validate_permissions(path: &Path) -> Result<()> {
+    |                             ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: unused variable: `from_owner`
+   --> lib-network\src\web4\domain_registry.rs:882:9
+    |
+882 |         from_owner: &ZhtpIdentity,
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_from_owner`
+
+warning: unused variable: `to_owner`
+   --> lib-network\src\web4\domain_registry.rs:883:9
+    |
+883 |         to_owner: &ZhtpIdentity,
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_to_owner`
+
+warning: unused variable: `owner_did`
+    --> lib-network\src\web4\domain_registry.rs:1300:76
+     |
+1300 | ..., target_version: u64, owner_did: &str) -> Result<DomainUpdateResp...
+     |                           ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_owner_did`
+
+warning: unused variable: `domain_record`
+   --> lib-network\src\web4\content_publisher.rs:283:9
+    |
+283 |         domain_record: &DomainRecord,
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_domain_record`
+
+warning: unused variable: `msg_seq`
+   --> lib-network\src\fragmentation_v2.rs:599:30
+    |
+599 |         self.pending.retain(|msg_seq, msg| {
+    |                              ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_msg_seq`
+
+warning: type `ZdnsResolver` is more private than the item `Web4ContentService::with_zdns`
+   --> lib-network\src\web4\content_service.rs:228:5
+    |
+228 | /     pub fn with_zdns(
+229 | |         registry: Arc<DomainRegistry>,
+230 | |         _zdns_resolver: Arc<ZdnsResolver>,
+231 | |     ) -> Self {
+    | |_____________^ associated function `Web4ContentService::with_zdns` is reachable at visibility `pub`
+    |
+note: but type `ZdnsResolver` is only usable at visibility `pub(self)`
+   --> lib-network\src\web4\content_service.rs:35:1
+    |
+ 35 | struct ZdnsResolver;
+    | ^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `ZdnsResolver` is more private than the item `Web4ContentService::with_zdns_and_defaults`
+   --> lib-network\src\web4\content_service.rs:237:5
+    |
+237 | /     pub fn with_zdns_and_defaults(
+238 | |         registry: Arc<DomainRegistry>,
+239 | |         _zdns_resolver: Arc<ZdnsResolver>,
+240 | |         defaults: Web4ContentDefaults,
+241 | |     ) -> Self {
+    | |_____________^ associated function `Web4ContentService::with_zdns_and_defaults` is reachable at visibility `pub`
+    |
+note: but type `ZdnsResolver` is only usable at visibility `pub(self)`
+   --> lib-network\src\web4\content_service.rs:35:1
+    |
+ 35 | struct ZdnsResolver;
+    | ^^^^^^^^^^^^^^^^^^^
+
+warning: type `ZdnsResolver` is more private than the item `Web4ContentService::zdns_resolver`
+   --> lib-network\src\web4\content_service.rs:246:5
+    |
+246 |     pub fn zdns_resolver(&self) -> Option<&Arc<ZdnsResolver>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method `Web4ContentService::zdns_resolver` is reachable at visibility `pub`
+    |
+note: but type `ZdnsResolver` is only usable at visibility `pub(self)`
+   --> lib-network\src\web4\content_service.rs:35:1
+    |
+ 35 | struct ZdnsResolver;
+    | ^^^^^^^^^^^^^^^^^^^
+
+warning: field `event_counts` is never read
+  --> lib-network\src\peer_reputation.rs:58:5
+   |
+52 | pub struct PeerReputation {
+   |            -------------- field in this struct
+...
+58 |     event_counts: HashMap<String, u32>,
+   |     ^^^^^^^^^^^^
+   |
+   = note: `PeerReputation` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `message_timestamp` is never read
+   --> lib-network\src\handshake\nonce_cache.rs:394:5
+    |
+390 | struct MemoryNonceEntry {
+    |        ---------------- field in this struct
+...
+394 |     message_timestamp: u64,
+    |     ^^^^^^^^^^^^^^^^^
+    |
+    = note: `MemoryNonceEntry` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `nonce_prefix_recv` and `direction` are never read
+   --> lib-network\src\consensus_encryption.rs:240:5
+    |
+228 | pub struct ConsensusAead {
+    |            ------------- fields in this struct
+...
+240 |     nonce_prefix_recv: [u8; 4],
+    |     ^^^^^^^^^^^^^^^^^
+...
+249 |     direction: RoleDirection,
+    |     ^^^^^^^^^
+
+warning: methods `get_protocol_for_peer` and `chunk_blockchain_data` are never used
+   --> lib-network\src\messaging\message_handler.rs:788:14
+    |
+ 70 | impl MeshMessageHandler {
+    | ----------------------- methods in this implementation
+...
+788 |     async fn get_protocol_for_peer(&self, peer_id: &PublicKey) -> Resu...
+    |              ^^^^^^^^^^^^^^^^^^^^^
+...
+800 |     fn chunk_blockchain_data(
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `estimate_bandwidth_from_signal` is never used
+ --> lib-network\src\discovery\wifi.rs:8:4
+  |
+8 | fn estimate_bandwidth_from_signal(signal_dbm: i32) -> u32 {
+  |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `estimate_channel_from_signal` is never used
+  --> lib-network\src\discovery\wifi.rs:34:4
+   |
+34 | fn estimate_channel_from_signal(signal_dbm: i32) -> u8 {
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `detect_windows_lorawan` is never used
+   --> lib-network\src\discovery\lorawan_hardware.rs:478:10
+    |
+478 | async fn detect_windows_lorawan() -> Result<LoRaWANHardware> {
+    |          ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `test_windows_com_lorawan` is never used
+   --> lib-network\src\discovery\lorawan_hardware.rs:524:10
+    |
+524 | async fn test_windows_com_lorawan(port_name: &str) -> Result<LoRaWANHa...
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `DISCOVERY_CHANNEL_CAPACITY` is never used
+  --> lib-network\src\discovery\unified.rs:65:7
+   |
+65 | const DISCOVERY_CHANNEL_CAPACITY: usize = 100;
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `network_stability` is never read
+   --> lib-network\src\routing\multi_hop.rs:919:9
+    |
+915 | struct NetworkConditions {
+    |        ----------------- field in this struct
+...
+919 |     pub network_stability: f64,
+    |         ^^^^^^^^^^^^^^^^^
+    |
+    = note: `NetworkConditions` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `session_keys` and `session_keys_mut` are never used
+   --> lib-network\src\protocols\types\session.rs:599:19
+    |
+491 | impl ProtocolSession {
+    | -------------------- methods in this implementation
+...
+599 |     pub(crate) fn session_keys(&self) -> &SessionKeys {
+    |                   ^^^^^^^^^^^^
+...
+604 |     pub(crate) fn session_keys_mut(&mut self) -> &mut SessionKeys {
+    |                   ^^^^^^^^^^^^^^^^
+
+warning: fields `device` and `address` are never read
+   --> lib-network\src\protocols\bluetooth\classic.rs:100:5
+    |
+ 99 | pub struct WindowsBluetoothDevice {
+    |            ---------------------- fields in this struct
+100 |     device: windows::Devices::Bluetooth::BluetoothDevice,
+    |     ^^^^^^
+101 |     address: String,
+    |     ^^^^^^^
+
+warning: field `stream_socket` is never read
+   --> lib-network\src\protocols\bluetooth\classic.rs:131:5
+    |
+130 | struct WindowsRfcommSocket {
+    |        ------------------- field in this struct
+131 |     stream_socket: Arc<RwLock<windows::Networking::Sockets::StreamSock...
+    |     ^^^^^^^^^^^^^
+
+warning: fields `services_cache`, `characteristics_cache`, `notification_handlers`, and `local_services` are never read
+  --> lib-network\src\protocols\bluetooth\windows_gatt.rs:54:5
+   |
+39 | pub struct WindowsGattManager {
+   |            ------------------ fields in this struct
+...
+54 |     services_cache: Arc<RwLock<HashMap<String, Vec<GattDeviceService>>>>,
+   |     ^^^^^^^^^^^^^^
+...
+60 |     characteristics_cache: Arc<RwLock<HashMap<String, Vec<GattCharacter...
+   |     ^^^^^^^^^^^^^^^^^^^^^
+...
+65 |     notification_handlers: Arc<RwLock<HashMap<String, Box<dyn Fn(Vec<u8...
+   |     ^^^^^^^^^^^^^^^^^^^^^
+...
+75 |     local_services: Arc<RwLock<HashMap<String, GattLocalService>>>,
+   |     ^^^^^^^^^^^^^^
+
+warning: method `find_characteristic_by_uuid` is never used
+   --> lib-network\src\protocols\bluetooth\windows_gatt.rs:898:14
+    |
+143 | impl WindowsGattManager {
+    | ----------------------- method in this implementation
+...
+898 |     async fn find_characteristic_by_uuid(&self, address: &str, char_uu...
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `create_mesh_advertisement_data` is never used
+   --> lib-network\src\protocols\bluetooth\discovery.rs:268:14
+    |
+ 22 | impl BluetoothMeshProtocol {
+    | -------------------------- method in this implementation
+...
+268 |     async fn create_mesh_advertisement_data(&self) -> Result<Vec<u8>> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `extract_macos_services` is never used
+   --> lib-network\src\protocols\bluetooth\parsing.rs:215:19
+    |
+ 10 | impl BluetoothMeshProtocol {
+    | -------------------------- method in this implementation
+...
+215 |     pub(crate) fn extract_macos_services(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `broadcast_mesh_advertisement` and `windows_broadcast_bypass_adv` are never used
+  --> lib-network\src\protocols\bluetooth\advertising.rs:27:25
+   |
+10 | impl BluetoothMeshProtocol {
+   | -------------------------- methods in this implementation
+...
+27 |     pub(crate) async fn broadcast_mesh_advertisement(&self, adv_data: &...
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+67 |     async fn windows_broadcast_bypass_adv(&self, adv_data: &[u8]) -> Re...
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `encrypt_core` is never used
+   --> lib-network\src\protocols\bluetooth_encryption.rs:144:12
+    |
+144 |     pub fn encrypt_core(
+    |            ^^^^^^^^^^^^
+
+warning: function `decrypt_core` is never used
+   --> lib-network\src\protocols\bluetooth_encryption.rs:158:12
+    |
+158 |     pub fn decrypt_core(
+    |            ^^^^^^^^^^^^
+
+warning: multiple associated items are never used
+    --> lib-network\src\protocols\wifi_direct.rs:557:14
+     |
+ 230 | impl WiFiDirectMeshProtocol {
+     | --------------------------- associated items in this implementation
+...
+ 557 |     async fn start_p2p_discovery(&self) -> Result<()> {
+     |              ^^^^^^^^^^^^^^^^^^^
+...
+ 734 |     async fn scan_for_wifi_direct_devices() -> Result<Vec<WiFiDirectC...
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 828 |     async fn windows_scan_p2p_devices() -> Result<Vec<WiFiDirectConne...
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 924 |     async fn perform_go_negotiation(&mut self, peer_address: &str, pe...
+     |              ^^^^^^^^^^^^^^^^^^^^^^
+...
+ 958 |     async fn get_device_mac_address(&self) -> Result<String> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^
+...
+1004 |     async fn get_windows_mac_address(&self) -> Result<String> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^
+...
+1051 |     async fn should_become_group_owner(&self) -> Result<bool> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1071 |     async fn calculate_device_capabilities_score(&self) -> Result<f64> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1090 |     async fn is_ac_powered(&self) -> Result<bool> {
+     |              ^^^^^^^^^^^^^
+...
+1096 |     async fn has_internet_connectivity(&self) -> Result<bool> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1102 |     async fn get_device_type_score(&self) -> Result<f64> {
+     |              ^^^^^^^^^^^^^^^^^^^^^
+...
+1109 |     async fn create_group(&mut self) -> Result<()> {
+     |              ^^^^^^^^^^^^
+...
+1142 |     async fn windows_create_p2p_group(&mut self) -> Result<()> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1216 |     async fn get_windows_hosted_network_ip(&self) -> Result<String> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1251 |     async fn join_existing_groups(&self) -> Result<()> {
+     |              ^^^^^^^^^^^^^^^^^^^^
+...
+1277 |     async fn scan_for_groups(&self) -> Result<Vec<String>> {
+     |              ^^^^^^^^^^^^^^^
+...
+1313 |     async fn join_group(&self, ssid: &str, _passphrase: &str) -> Resu...
+     |              ^^^^^^^^^^
+...
+1414 |     async fn get_p2p_interface_ip(&self) -> Result<String> {
+     |              ^^^^^^^^^^^^^^^^^^^^
+...
+1464 |     async fn perform_wps_handshake(&self, peer_address: &str, wps_met...
+     |              ^^^^^^^^^^^^^^^^^^^^^
+...
+1476 |     async fn perform_wps_pbc(&self, peer_address: &str) -> Result<Str...
+     |              ^^^^^^^^^^^^^^^
+...
+1499 |     async fn perform_wps_pin_display(&self, peer_address: &str, pin: ...
+     |              ^^^^^^^^^^^^^^^^^^^^^^^
+...
+1522 |     async fn perform_wps_pin_keypad(&self, peer_address: &str, pin: &...
+     |              ^^^^^^^^^^^^^^^^^^^^^^
+...
+1545 |     async fn perform_wps_nfc(&self, peer_address: &str) -> Result<Str...
+     |              ^^^^^^^^^^^^^^^
+...
+1647 |     async fn windows_wps_pbc(&self, peer_address: &str) -> Result<Str...
+     |              ^^^^^^^^^^^^^^^
+...
+1725 |     async fn windows_wps_pin_display(&self, peer_address: &str, pin: ...
+     |              ^^^^^^^^^^^^^^^^^^^^^^^
+...
+1805 |     async fn windows_wps_pin_keypad(&self, peer_address: &str, pin: &...
+     |              ^^^^^^^^^^^^^^^^^^^^^^
+...
+1954 |     async fn send_p2p_invitation(&self, peer_address: &str, invitatio...
+     |              ^^^^^^^^^^^^^^^^^^^
+...
+1992 |     async fn accept_p2p_invitation(&self, peer_address: &str) -> Resu...
+     |              ^^^^^^^^^^^^^^^^^^^^^
+...
+2024 |     async fn decline_p2p_invitation(&self, peer_address: &str, reason...
+     |              ^^^^^^^^^^^^^^^^^^^^^^
+...
+2041 |     async fn handle_received_invitation(&self, invitation: P2PInvitat...
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2069 |     async fn join_active_group(&self, invitation: &P2PInvitationReque...
+     |              ^^^^^^^^^^^^^^^^^
+...
+2092 |     async fn reinvoke_persistent_group(&self, invitation: &P2PInvitat...
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2209 |     async fn windows_send_p2p_invitation(&self, invitation: &P2PInvit...
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2298 |     async fn windows_join_active_group(&self, invitation: &P2PInvitat...
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2372 |     async fn windows_reinvoke_persistent_group(&self, group: &Persist...
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2455 |     fn generate_group_id(&self) -> String {
+     |        ^^^^^^^^^^^^^^^^^
+...
+2748 |     async fn process_discovered_service(&self, service_name: &str, se...
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2795 |     async fn update_mdns_service(&self) -> Result<()> {
+     |              ^^^^^^^^^^^^^^^^^^^
+...
+2808 |     async fn unregister_mdns_service(&self) -> Result<()> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^
+...
+2874 |     async fn enhanced_service_discovery(&mut self) -> Result<()> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3363 |     async fn derive_p2p_bssid(&self, network_name: &str) -> Result<St...
+     |              ^^^^^^^^^^^^^^^^
+...
+3455 |     fn create_default_go_negotiation(&self) -> P2PGoNegotiation {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `send_message` is never used
+   --> lib-network\src\protocols\wifi_direct_handshake.rs:445:10
+    |
+445 | async fn send_message<T: serde::Serialize>(stream: &mut TcpStream, mes...
+    |          ^^^^^^^^^^^^
+
+warning: function `receive_message` is never used
+   --> lib-network\src\protocols\wifi_direct_handshake.rs:522:10
+    |
+522 | async fn receive_message<T: serde::de::DeserializeOwned>(stream: &mut ...
+    |          ^^^^^^^^^^^^^^^
+
+warning: method `configure_eu868_parameters` is never used
+   --> lib-network\src\protocols\lorawan.rs:194:14
+    |
+ 31 | impl LoRaWANMeshProtocol {
+    | ------------------------ method in this implementation
+...
+194 |     async fn configure_eu868_parameters(&self) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `node_blockchain_pubkey` is never read
+  --> lib-network\src\protocols\zhtp_auth.rs:77:5
+   |
+73 | pub struct ZhtpAuthManager {
+   |            --------------- field in this struct
+...
+77 |     node_blockchain_pubkey: PublicKey,
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `ZhtpAuthManager` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `peer_did` is never read
+  --> lib-network\src\protocols\quic_api_dispatcher.rs:96:5
+   |
+91 | struct ActiveConnection {
+   |        ---------------- field in this struct
+...
+96 |     peer_did: String,
+   |     ^^^^^^^^
+
+warning: associated function `current_timestamp` is never used
+   --> lib-network\src\message_broadcaster.rs:204:8
+    |
+168 | impl MeshMessageBroadcaster {
+    | --------------------------- associated function in this implementation
+...
+204 |     fn current_timestamp() -> u64 {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: associated function `parse_dht_key` is never used
+   --> lib-network\src\validator_discovery_transport.rs:111:8
+    |
+ 75 | impl MeshValidatorDiscoveryTransport {
+    | ------------------------------------ associated function in this implementation
+...
+111 |     fn parse_dht_key(key: &[u8]) -> Option<Hash> {
+    |        ^^^^^^^^^^^^^
+
+warning: methods `generate_constraints` and `get_public_inputs` are never used
+  --> lib-network\src\zk_integration\identity_proofs.rs:54:8
+   |
+43 | impl IdentityCircuit {
+   | -------------------- methods in this implementation
+...
+54 |     fn generate_constraints(&self) -> Result<Vec<u8>> {
+   |        ^^^^^^^^^^^^^^^^^^^^
+...
+64 |     fn get_public_inputs(&self) -> IdentityPublicInputs {
+   |        ^^^^^^^^^^^^^^^^^
+
+warning: field `pending_requests` is never read
+   --> lib-network\src\dht\protocol.rs:392:5
+    |
+386 | pub struct DhtProtocolHandler {
+    |            ------------------ field in this struct
+...
+392 |     pending_requests: std::collections::HashMap<[u8; 16], tokio::sync:...
+    |     ^^^^^^^^^^^^^^^^
+    |
+    = note: `DhtProtocolHandler` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `storage` is never read
+  --> lib-network\src\web4\content_publisher.rs:25:5
+   |
+19 | pub struct ContentPublisher {
+   |            ---------------- field in this struct
+...
+25 |     storage: Arc<dyn UnifiedStorage>,
+   |     ^^^^^^^
+
+warning: associated function `is_navigation_route` is never used
+   --> lib-network\src\web4\content_service.rs:539:8
+    |
+168 | impl Web4ContentService {
+    | ----------------------- associated function in this implementation
+...
+539 |     fn is_navigation_route(path: &str) -> bool {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: field `config` is never read
+  --> lib-network\src\web4\client.rs:99:5
+   |
+79 | pub struct Web4Client {
+   |            ---------- field in this struct
+...
+99 |     config: Web4ClientConfig,
+   |     ^^^^^^
+
+warning: field `session_key` is never read
+   --> lib-network\src\web4\client.rs:108:5
+    |
+103 | struct AuthenticatedConnection {
+    |        ----------------------- field in this struct
+...
+108 |     session_key: [u8; 32],
+    |     ^^^^^^^^^^^
+
+warning: unused `std::result::Result` that must be used
+   --> lib-network\src\peer_registry\mod.rs:603:9
+    |
+603 |         self.observers.register(observer).await;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+603 |         let _ = self.observers.register(observer).await;
+    |         +++++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> lib-network\src\peer_registry\sync.rs:600:23
+    |
+600 |     pub fn operations(&self) -> BatchOperations {
+    |                       ^^^^^     ^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                       |
+    |                       the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+    = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+    |
+600 |     pub fn operations(&self) -> BatchOperations<'_> {
+    |                                                ++++
+
+warning: unused `std::result::Result` that must be used
+    --> lib-network\src\mesh\server.rs:1965:9
+     |
+1965 |         self.dht.write().await.clear_cache().await;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+1965 |         let _ = self.dht.write().await.clear_cache().await;
+     |         +++++++
+
+warning: unused implementer of `futures::Future` that must be used
+   --> lib-network\src\monitoring\health_monitoring.rs:207:21
+    |
+207 |                     registry_write.remove(&peer_id);
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: `lib-blockchain` (lib) generated 56 warnings (run `cargo fix --lib -p lib-blockchain` to apply 26 suggestions)
+warning: `lib-network` (lib) generated 147 warnings (run `cargo fix --lib -p lib-network` to apply 94 suggestions)
+warning: unused import: `lib_consensus::types::HeartbeatMessage`
+   --> zhtp\src\runtime\components\consensus.rs:133:9
+    |
+133 |     use lib_consensus::types::HeartbeatMessage;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::runtime::components::create_default_storage_config`
+  --> zhtp\src\monitoring\metrics.rs:13:5
+   |
+13 | use crate::runtime::components::create_default_storage_config;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `warn`
+  --> zhtp\src\monitoring\health_check.rs:11:21
+   |
+11 | use tracing::{info, warn, error, debug};
+   |                     ^^^^
+
+warning: unused import: `crate::runtime::components::create_default_storage_config`
+  --> zhtp\src\monitoring\health_check.rs:14:5
+   |
+14 | use crate::runtime::components::create_default_storage_config;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `warn`
+  --> zhtp\src\monitoring\alerting.rs:11:21
+   |
+11 | use tracing::{info, warn, error, debug};
+   |                     ^^^^
+
+warning: unused import: `Context`
+  --> zhtp\src\pouw\rewards.rs:10:14
+   |
+10 | use anyhow::{Context, Result};
+   |              ^^^^^^^
+
+warning: unused imports: `debug` and `warn`
+  --> zhtp\src\pouw\rewards.rs:15:15
+   |
+15 | use tracing::{debug, info, warn};
+   |               ^^^^^        ^^^^
+
+warning: unused import: `ChallengeToken`
+  --> zhtp\src\pouw\validation.rs:19:21
+   |
+19 |     ChallengeIssue, ChallengeToken, Policy, ProofType, Receipt, ReceiptBatch, SignedReceipt,
+   |                     ^^^^^^^^^^^^^^
+
+warning: unused import: `base64::Engine as _`
+  --> zhtp\src\api\handlers\identity\mod.rs:15:5
+   |
+15 | use base64::Engine as _;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unnecessary parentheses around closure body
+   --> zhtp\src\api\handlers\validator\mod.rs:260:29
+    |
+260 |                 .map(|rate| (rate.min(100) as u8))
+    |                             ^                   ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+260 -                 .map(|rate| (rate.min(100) as u8))
+260 +                 .map(|rate| rate.min(100) as u8 )
+    |
+
+warning: unused import: `NonceCache`
+  --> zhtp\src\server\quic_handler.rs:53:48
+   |
+53 | use lib_network::handshake::{HandshakeContext, NonceCache, ClientHello};
+   |                                                ^^^^^^^^^^
+
+warning: unused import: `warn`
+  --> zhtp\src\server\zhtp\serialization.rs:14:22
+   |
+14 | use tracing::{debug, warn};
+   |                      ^^^^
+
+warning: unexpected `cfg` condition value: `unsafe-bootstrap`
+   --> zhtp\src\unified_server.rs:623:15
+    |
+623 |         #[cfg(feature = "unsafe-bootstrap")]
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `basic-blockchain`, `default`, `development`, `edge`, `full-blockchain`, `hybrid`, `lib-blockchain`, `linux-bluetooth`, `macos-bluetooth`, `minimal-blockchain`, `platform-bluetooth`, `production`, `pure-mesh`, `relay`, `rpi`, `validator`, `windows-bluetooth`, and `yaml`
+    = help: consider adding `unsafe-bootstrap` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+    = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: use of deprecated unit variant `config::mesh_modes::MeshMode::Hybrid`: QUIC is the only transport - hybrid TCP/IP mode is not supported
+   --> zhtp\src\config\aggregation.rs:589:34
+    |
+589 |             mesh_mode: MeshMode::Hybrid,
+    |                                  ^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated unit variant `config::mesh_modes::MeshMode::Hybrid`: QUIC is the only transport - hybrid TCP/IP mode is not supported
+   --> zhtp\src\config\aggregation.rs:734:84
+    |
+734 |         self.mesh_mode = if args.pure_mesh { MeshMode::PureMesh } else { MeshMode::Hybrid };
+    |                                                                                    ^^^^^^
+
+warning: use of deprecated unit variant `config::mesh_modes::MeshMode::Hybrid`: QUIC is the only transport - hybrid TCP/IP mode is not supported
+   --> zhtp\src\config\mesh_modes.rs:204:23
+    |
+204 |             MeshMode::Hybrid => {
+    |                       ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> zhtp\src\api\handlers\zkp.rs:437:31
+    |
+437 |     let proof_bytes = base64::decode(&req.proof.proof_data)
+    |                               ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> zhtp\src\api\handlers\storage\mod.rs:195:31
+    |
+195 |         let content = base64::decode(&req_data.data)
+    |                               ^^^^^^
+
+warning: use of deprecated method `lib_blockchain::Blockchain::save_to_file`: Use Phase 2 incremental storage with SledStore instead
+   --> zhtp\src\runtime\components\identity.rs:485:53
+    |
+485 | ...                   if let Err(e2) = bc.save_to_file(std::path::Path::new("./data/testnet/blockchain.dat")) {
+    |                                           ^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_blockchain::Blockchain::save_to_file`: Use Phase 2 incremental storage with SledStore instead
+   --> zhtp\src\runtime\components\identity.rs:496:49
+    |
+496 | ...                   if let Err(e2) = bc.save_to_file(std::path::Path::new("./data/testnet/blockchain.dat")) {
+    |                                           ^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_blockchain::Blockchain::save_to_file`: Use Phase 2 incremental storage with SledStore instead
+   --> zhtp\src\runtime\components\blockchain.rs:462:64
+    |
+462 | ...                   match blockchain_guard.save_to_file(persist_path) {
+    |                                              ^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_blockchain::Blockchain::save_to_file`: Use Phase 2 incremental storage with SledStore instead
+    --> zhtp\src\runtime\mod.rs:1386:52
+     |
+1386 |                     if let Err(e) = blockchain_ref.save_to_file(persist_path) {
+     |                                                    ^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_blockchain::Blockchain::save_to_file`: Use Phase 2 incremental storage with SledStore instead
+    --> zhtp\src\runtime\mod.rs:1614:56
+     |
+1614 |                         if let Err(e) = blockchain_ref.save_to_file(persist_path) {
+     |                                                        ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> zhtp\src\api\handlers\wallet\mod.rs:373:45
+    |
+373 |                 let (mut available_balance, mut staked_balance, mut pending_rewards, created_at) =
+    |                                             ----^^^^^^^^^^^^^^
+    |                                             |
+    |                                             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> zhtp\src\api\handlers\wallet\mod.rs:373:65
+    |
+373 |                 let (mut available_balance, mut staked_balance, mut pending_rewards, created_at) =
+    |                                                                 ----^^^^^^^^^^^^^^^
+    |                                                                 |
+    |                                                                 help: remove this `mut`
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_treasury`: Use blockchain treasury methods instead
+   --> zhtp\src\api\handlers\dao\mod.rs:262:35
+    |
+262 |         let treasury = dao_engine.get_dao_treasury();
+    |                                   ^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_treasury`: Use blockchain treasury methods instead
+   --> zhtp\src\api\handlers\dao\mod.rs:282:35
+    |
+282 |         let treasury = dao_engine.get_dao_treasury();
+    |                                   ^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_proposals`: Use blockchain.get_dao_proposals() instead - proposals are stored on blockchain
+   --> zhtp\src\api\handlers\dao\mod.rs:367:40
+    |
+367 |         let all_proposals = dao_engine.get_dao_proposals();
+    |                                        ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_proposal_by_id`: Use blockchain.get_dao_proposal() instead
+   --> zhtp\src\api\handlers\dao\mod.rs:449:26
+    |
+449 |         match dao_engine.get_dao_proposal_by_id(&proposal_id) {
+    |                          ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_proposal_by_id`: Use blockchain.get_dao_proposal() instead
+   --> zhtp\src\api\handlers\dao\mod.rs:595:23
+    |
+595 |         if dao_engine.get_dao_proposal_by_id(&proposal_id).is_none() {
+    |                       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_proposal_by_id`: Use blockchain.get_dao_proposal() instead
+   --> zhtp\src\api\handlers\dao\mod.rs:604:35
+    |
+604 |         let proposal = dao_engine.get_dao_proposal_by_id(&proposal_id).unwrap();
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::process_expired_proposals`: Use blockchain.has_proposal_passed() and blockchain.execute_dao_proposal() instead
+   --> zhtp\src\api\handlers\dao\mod.rs:627:26
+    |
+627 |         match dao_engine.process_expired_proposals().await {
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_proposals`: Use blockchain.get_dao_proposals() instead - proposals are stored on blockchain
+   --> zhtp\src\api\handlers\dao\mod.rs:666:36
+    |
+666 |         let proposals = dao_engine.get_dao_proposals();
+    |                                    ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_treasury`: Use blockchain treasury methods instead
+   --> zhtp\src\api\handlers\dao\mod.rs:667:35
+    |
+667 |         let treasury = dao_engine.get_dao_treasury();
+    |                                   ^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_proposals`: Use blockchain.get_dao_proposals() instead - proposals are stored on blockchain
+   --> zhtp\src\api\handlers\dao\mod.rs:927:36
+    |
+927 |         let proposals = dao_engine.get_dao_proposals();
+    |                                    ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_consensus::DaoEngine::get_dao_treasury`: Use blockchain treasury methods instead
+   --> zhtp\src\api\handlers\dao\mod.rs:928:35
+    |
+928 |         let treasury = dao_engine.get_dao_treasury();
+    |                                   ^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `lib_network::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> zhtp\src\server\mesh\helpers.rs:128:84
+    |
+128 |             let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
+    |                                                                                    ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `lib_network::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> zhtp\src\server\mesh\blockchain_sync.rs:349:80
+    |
+349 |         let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
+    |                                                                                ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `lib_network::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> zhtp\src\server\protocols\bluetooth_le.rs:137:100
+    |
+137 | ...                   let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
+    |                                                                                              ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unreachable pattern
+   --> zhtp\src\server\protocols\bluetooth_le.rs:402:21
+    |
+402 |                     _ => {
+    |                     ^ no value can reach this
+    |
+note: multiple earlier patterns match some of the same values
+   --> zhtp\src\server\protocols\bluetooth_le.rs:402:21
+    |
+115 |                     GattMessage::MeshHandshake { data, peripheral_id } => {
+    |                     -------------------------------------------------- matches some of the same values
+...
+349 |                     GattMessage::DhtBridge(text) => {
+    |                     ---------------------------- matches some of the same values
+...
+353 |                     GattMessage::RawData(uuid, data) => {
+    |                     -------------------------------- matches some of the same values
+...
+357 |                     GattMessage::RelayQuery(data) => {
+    |                     ----------------------------- matches some of the same values
+...
+402 |                     _ => {
+    |                     ^ ...and 5 other patterns collectively make this unreachable
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated associated function `lib_network::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> zhtp\src\server\protocols\bluetooth_le.rs:451:88
+    |
+451 |                 let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
+    |                                                                                        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `server::mesh::authentication_wrapper::<impl server::mesh::core::MeshRouter>::authenticate_and_register_peer`: Use handle_tcp_mesh() which avoids the race condition. This method assumes peer is already in connections.
+   --> zhtp\src\server\protocols\bluetooth_le.rs:536:37
+    |
+536 |                 let _ = mesh_router.authenticate_and_register_peer(&peer_pubkey, &handshake, &addr, &mut stream).await;
+    |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `lib_network::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> zhtp\src\server\protocols\bluetooth_classic.rs:142:88
+    |
+142 |                 let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
+    |                                                                                        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated method `server::mesh::authentication_wrapper::<impl server::mesh::core::MeshRouter>::authenticate_and_register_peer`: Use handle_tcp_mesh() which avoids the race condition. This method assumes peer is already in connections.
+   --> zhtp\src\server\protocols\bluetooth_classic.rs:227:37
+    |
+227 |                 let _ = mesh_router.authenticate_and_register_peer(&peer_pubkey, &handshake, &addr, &mut stream).await;
+    |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `lib_network::UnifiedPeerId::from_public_key_legacy`: Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers.
+   --> zhtp\src\server\protocols\bluetooth_classic.rs:318:100
+    |
+318 | ...                   let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
+    |                                                                                              ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> zhtp\src\unified_server.rs:469:13
+    |
+469 |         let mut quic_handler = QuicHandler::new(
+    |             ----^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: use of deprecated method `lib_blockchain::Blockchain::save_to_file`: Use Phase 2 incremental storage with SledStore instead
+   --> zhtp\src\runtime\components\blockchain.rs:622:36
+    |
+622 |             match blockchain_guard.save_to_file(persist_path) {
+    |                                    ^^^^^^^^^^^^
+
+warning: use of deprecated method `lib_blockchain::Blockchain::save_to_file`: Use Phase 2 incremental storage with SledStore instead
+   --> zhtp\src\runtime\components\consensus.rs:362:34
+    |
+362 |                 match blockchain.save_to_file(persist_path) {
+    |                                  ^^^^^^^^^^^^
+
+warning: unused import: `AsyncWriteExt`
+  --> zhtp\src\server\protocols\wifi.rs:16:31
+   |
+16 | use tokio::io::{AsyncReadExt, AsyncWriteExt};
+   |                               ^^^^^^^^^^^^^
+
+warning: unused import: `AsyncReadExt`
+  --> zhtp\src\server\protocols\wifi.rs:16:17
+   |
+16 | use tokio::io::{AsyncReadExt, AsyncWriteExt};
+   |                 ^^^^^^^^^^^^
+
+warning: unused variable: `genesis_private`
+  --> zhtp\src\runtime\components\identity.rs:87:13
+   |
+87 |         let genesis_private = self.genesis_private_data.read().await.clone();
+   |             ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_genesis_private`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `peer_discovered_callback`
+   --> zhtp\src\unified_server.rs:969:13
+    |
+969 |         let peer_discovered_callback = Arc::new(move |peer_addr: String, _peer_pubkey: lib_crypto::PublicKey| {
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_peer_discovered_callback`
+
+warning: unused variable: `password`
+    --> zhtp\src\runtime\did_startup.rs:1477:57
+     |
+1477 |     async fn set_wallet_password(_wallet_id: &WalletId, password: &str) -> Result<()> {
+     |                                                         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_password`
+
+warning: unused variable: `discovery_identity`
+    --> zhtp\src\runtime\did_startup.rs:1120:13
+     |
+1120 |         let discovery_identity = Self::create_discovery_identity().await?;
+     |             ^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_discovery_identity`
+
+warning: unused variable: `e`
+  --> zhtp\src\runtime\node_runtime_orchestrator.rs:58:17
+   |
+58 |             Err(e) => {
+   |                 ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: unused variable: `identity_id`
+    --> zhtp\src\runtime\mod.rs:2496:9
+     |
+2496 |         identity_id: &lib_identity::IdentityId,
+     |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_identity_id`
+
+warning: unused variable: `recipient_pubkey`
+    --> zhtp\src\runtime\mod.rs:2498:9
+     |
+2498 |         recipient_pubkey: &[u8],
+     |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_recipient_pubkey`
+
+warning: unused variable: `e`
+  --> zhtp\src\server\protocols\wifi.rs:67:17
+   |
+67 |             Err(e) => {
+   |                 ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: field `storage_system` is never read
+  --> zhtp\src\runtime\components\storage.rs:15:5
+   |
+12 | pub struct StorageComponent {
+   |            ---------------- field in this struct
+...
+15 |     storage_system: Arc<RwLock<Option<lib_storage::PersistentStorageSystem>>>,
+   |     ^^^^^^^^^^^^^^
+   |
+   = note: `StorageComponent` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `bootstrap_validators` is never read
+  --> zhtp\src\runtime\components\blockchain.rs:28:5
+   |
+20 | pub struct BlockchainComponent {
+   |            ------------------- field in this struct
+...
+28 |     bootstrap_validators: Arc<RwLock<Vec<BootstrapValidator>>>,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `BlockchainComponent` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `zdns_server` and `lib_integration` are never read
+  --> zhtp\src\runtime\components\protocols.rs:22:5
+   |
+18 | pub struct ProtocolsComponent {
+   |            ------------------ fields in this struct
+...
+22 |     zdns_server: Arc<RwLock<Option<ZdnsServer>>>,
+   |     ^^^^^^^^^^^
+...
+25 |     lib_integration: Arc<RwLock<Option<ZhtpIntegration>>>,
+   |     ^^^^^^^^^^^^^^^
+
+warning: field `blockchain_arc` is never read
+  --> zhtp\src\runtime\routing_rewards.rs:58:5
+   |
+56 | pub struct RoutingRewardProcessor {
+   |            ---------------------- field in this struct
+57 |     network_component: Arc<NetworkComponent>,
+58 |     blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+   |     ^^^^^^^^^^^^^^
+
+warning: field `blockchain_arc` is never read
+  --> zhtp\src\runtime\storage_rewards.rs:58:5
+   |
+56 | pub struct StorageRewardProcessor {
+   |            ---------------------- field in this struct
+57 |     network_component: Arc<NetworkComponent>,
+58 |     blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+   |     ^^^^^^^^^^^^^^
+
+warning: fields `network_component`, `blockchain_arc`, and `environment` are never read
+   --> zhtp\src\runtime\reward_orchestrator.rs:210:5
+    |
+209 | pub struct RewardOrchestrator {
+    |            ------------------ fields in this struct
+210 |     network_component: Arc<NetworkComponent>,
+    |     ^^^^^^^^^^^^^^^^^
+211 |     blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+    |     ^^^^^^^^^^^^^^
+212 |     environment: crate::config::Environment,
+    |     ^^^^^^^^^^^
+
+warning: field `max_queue_size` is never read
+  --> zhtp\src\runtime\node_runtime_orchestrator.rs:25:5
+   |
+21 | pub struct ActionQueue {
+   |            ----------- field in this struct
+...
+25 |     max_queue_size: usize,
+   |     ^^^^^^^^^^^^^^
+
+warning: field `dashboard_server` is never read
+  --> zhtp\src\monitoring\mod.rs:92:5
+   |
+88 | pub struct MonitoringSystem {
+   |            ---------------- field in this struct
+...
+92 |     dashboard_server: Option<Arc<DashboardServer>>,
+   |     ^^^^^^^^^^^^^^^^
+   |
+   = note: `MonitoringSystem` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: field `display_name` is never read
+   --> zhtp\src\api\handlers\identity\mod.rs:938:13
+    |
+936 |         struct RestoreSeedRequest {
+    |                ------------------ field in this struct
+937 |             seed_phrase: String,  // Space-separated 20 or 24 words (BIP39)
+938 |             display_name: Option<String>,
+    |             ^^^^^^^^^^^^
+
+warning: field `signature` is never read
+    --> zhtp\src\api\handlers\identity\mod.rs:1300:13
+     |
+1297 |         struct SigninWithIdentityRequest {
+     |                ------------------------- field in this struct
+...
+1300 |             signature: Option<String>,  // Optional signature proof
+     |             ^^^^^^^^^
+
+warning: field `identity_exists` is never read
+   --> zhtp\src\api\handlers\identity\login_handlers.rs:156:5
+    |
+152 | struct AuthAuditLog {
+    |        ------------ field in this struct
+...
+156 |     identity_exists: bool,
+    |     ^^^^^^^^^^^^^^^
+
+warning: field `args` is never read
+    --> zhtp\src\api\handlers\blockchain\mod.rs:1329:13
+     |
+1327 |         struct CallContractRequest {
+     |                ------------------- field in this struct
+1328 |             function: String,
+1329 |             args: Vec<serde_json::Value>,
+     |             ^^^^
+
+warning: constant `API_VERSION` is never used
+  --> zhtp\src\api\handlers\network\mod.rs:21:7
+   |
+21 | const API_VERSION: &str = "1.0";
+   |       ^^^^^^^^^^^
+
+warning: method `json_error` is never used
+   --> zhtp\src\api\handlers\network\mod.rs:259:8
+    |
+253 | impl NetworkHandler {
+    | ------------------- method in this implementation
+...
+259 |     fn json_error(&self, status: ZhtpStatus, message: impl Into<String>) -> ZhtpResult<ZhtpResponse> {
+    |        ^^^^^^^^^^
+
+warning: methods `generate_wallet_id` and `convert_permissions` are never used
+    --> zhtp\src\api\handlers\wallet\mod.rs:1039:8
+     |
+ 210 | impl WalletHandler {
+     | ------------------ methods in this implementation
+...
+1039 |     fn generate_wallet_id(&self, wallet_type: &lib_identity::wallets::WalletType, identity_id: &str) -> String {
+     |        ^^^^^^^^^^^^^^^^^^
+...
+1053 |     fn convert_permissions(&self, permissions: &lib_economy::wallets::multi_wallet::WalletPermissions) -> WalletPermissionsInfo {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: methods `json_error`, `send_contract_packet`, `deploy_smart_contract_to_blockchain`, and `store_contract_in_dht` are never used
+    --> zhtp\src\api\handlers\dht\mod.rs:234:8
+     |
+ 214 | impl DhtHandler {
+     | --------------- methods in this implementation
+...
+ 234 |     fn json_error(&self, status: ZhtpStatus, message: impl Into<String>) -> ZhtpResult<ZhtpResponse> {
+     |        ^^^^^^^^^^
+...
+ 777 |     async fn send_contract_packet(&self, _request_body: Vec<u8>) -> ZhtpResult<ZhtpResponse> {
+     |              ^^^^^^^^^^^^^^^^^^^^
+...
+1033 |     async fn deploy_smart_contract_to_blockchain(&self, _contract_id: String, _operation: &str) -> Result<String, anyhow::Error> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1042 |     async fn store_contract_in_dht(&self, contract_id: &str, blockchain_tx_hash: &str) -> Result<(), anyhow::Error> {
+     |              ^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `content_publisher` is never read
+  --> zhtp\src\api\handlers\web4\mod.rs:54:5
+   |
+48 | pub struct Web4Handler {
+   |            ----------- field in this struct
+...
+54 |     content_publisher: Arc<ContentPublisher>,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: field `signature` is never read
+    --> zhtp\src\api\handlers\web4\domains.rs:1391:13
+     |
+1389 |         struct RollbackRequest {
+     |                --------------- field in this struct
+1390 |             to_version: u64,
+1391 |             signature: Option<String>,
+     |             ^^^^^^^^^
+
+warning: field `domain` is never read
+  --> zhtp\src\api\handlers\dns\mod.rs:62:5
+   |
+61 | struct DomainRecord {
+   |        ------------ field in this struct
+62 |     domain: String,
+   |     ^^^^^^
+   |
+   = note: `DomainRecord` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `runtime` is never read
+   --> zhtp\src\api\handlers\mesh\mod.rs:121:5
+    |
+120 | pub struct MeshHandler {
+    |            ----------- field in this struct
+121 |     runtime: Arc<RuntimeOrchestrator>,
+    |     ^^^^^^^
+
+warning: constant `PEER_IDLE_TIMEOUT` is never used
+  --> zhtp\src\server\quic_handler.rs:65:7
+   |
+65 | const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+   |       ^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_PQC_CONNECTIONS` is never used
+  --> zhtp\src\server\quic_handler.rs:74:7
+   |
+74 | const MAX_PQC_CONNECTIONS: usize = 10_000;
+   |       ^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_CONNECTION_AGE` is never used
+  --> zhtp\src\server\quic_handler.rs:77:7
+   |
+77 | const MAX_CONNECTION_AGE: Duration = Duration::from_secs(3600); // 1 hour
+   |       ^^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_HANDSHAKE_SIZE` is never used
+  --> zhtp\src\server\quic_handler.rs:80:7
+   |
+80 | const MAX_HANDSHAKE_SIZE: u64 = 16 * 1024;
+   |       ^^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_MESSAGE_SIZE` is never used
+  --> zhtp\src\server\quic_handler.rs:83:7
+   |
+83 | const MAX_MESSAGE_SIZE: u64 = 1024 * 1024;
+   |       ^^^^^^^^^^^^^^^^
+
+warning: field `0` is never read
+   --> zhtp\src\server\quic_handler.rs:133:18
+    |
+133 |     PqcHandshake(Vec<u8>),
+    |     ------------ ^^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `ProtocolType` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+133 -     PqcHandshake(Vec<u8>),
+133 +     PqcHandshake(()),
+    |
+
+warning: field `0` is never read
+   --> zhtp\src\server\quic_handler.rs:137:17
+    |
+137 |     MeshMessage(Vec<u8>),
+    |     ----------- ^^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `ProtocolType` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+137 -     MeshMessage(Vec<u8>),
+137 +     MeshMessage(()),
+    |
+
+warning: field `0` is never read
+   --> zhtp\src\server\quic_handler.rs:139:13
+    |
+139 |     Unknown(Vec<u8>),
+    |     ------- ^^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `ProtocolType` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+139 -     Unknown(Vec<u8>),
+139 +     Unknown(()),
+    |
+
+warning: method `read` is never used
+   --> zhtp\src\server\quic_handler.rs:160:14
+    |
+149 | impl BufferedStream {
+    | ------------------- method in this implementation
+...
+160 |     async fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
+    |              ^^^^
+
+warning: methods `handle_first_stream`, `accept_additional_streams`, `handle_subsequent_stream`, `handle_pqc_handshake_stream`, and `handle_mesh_message_stream` are never used
+    --> zhtp\src\server\quic_handler.rs:1002:14
+     |
+ 215 | impl QuicHandler {
+     | ---------------- methods in this implementation
+...
+1002 |     async fn handle_first_stream(
+     |              ^^^^^^^^^^^^^^^^^^^
+...
+1043 |     fn accept_additional_streams(&self, connection: Connection, peer_node_id: Option<[u8; 32]>) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1088 |     async fn handle_subsequent_stream(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1129 |     async fn handle_pqc_handshake_stream(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1197 |     async fn handle_mesh_message_stream(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `session_manager` is never read
+   --> zhtp\src\unified_server.rs:113:5
+    |
+ 95 | pub struct ZhtpUnifiedServer {
+    |            ----------------- field in this struct
+...
+113 |     session_manager: Arc<SessionManager>,
+    |     ^^^^^^^^^^^^^^^
+    |
+    = note: `ZhtpUnifiedServer` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: associated function `is_self_connection` is never used
+   --> zhtp\src\unified_server.rs:147:8
+    |
+144 | impl ZhtpUnifiedServer {
+    | ---------------------- associated function in this implementation
+...
+147 |     fn is_self_connection(addr: &std::net::SocketAddr) -> bool {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: field `registry` is never read
+   --> zhtp\src\web4_stub.rs:701:5
+    |
+700 | pub struct Web4ContentService {
+    |            ------------------ field in this struct
+701 |     registry: Arc<DomainRegistry>,
+    |     ^^^^^^^^
+    |
+    = note: `Web4ContentService` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: field `trust` is never read
+   --> zhtp\src\web4_stub.rs:749:5
+    |
+748 | pub struct Web4Client {
+    |            ---------- field in this struct
+749 |     trust: TrustConfig,
+    |     ^^^^^
+    |
+    = note: `Web4Client` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `zhtp` (lib) generated 92 warnings (run `cargo fix --lib -p zhtp` to apply 23 suggestions)
+error: could not compile `zhtp` (lib); 92 warnings emitted
+
+Caused by:
+  process didn't exit successfully: `C:\Users\scasi\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name zhtp --edition=2021 'zhtp\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type rlib --crate-type cdylib --crate-type staticlib --emit=dep-info,link -C opt-level=3 -C codegen-units=1 --cfg 'feature="default"' --cfg 'feature="full-blockchain"' --cfg 'feature="lib-blockchain"' --cfg 'feature="production"' --cfg 'feature="windows-bluetooth"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("basic-blockchain", "default", "development", "edge", "full-blockchain", "hybrid", "lib-blockchain", "linux-bluetooth", "macos-bluetooth", "minimal-blockchain", "platform-bluetooth", "production", "pure-mesh", "relay", "rpi", "validator", "windows-bluetooth", "yaml"))' -C metadata=81a3fc3593a82a91 --out-dir 'H:\team--reem -1.5\The-Sovereign-Network\target\release\deps' -C strip=debuginfo -L 'dependency=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps' --extern 'anyhow=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libanyhow-304e5c411d037ad2.rlib' --extern 'argon2=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libargon2-2d048053e4c50cca.rlib' --extern 'async_trait=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\async_trait-eeef0e2d16284dbf.dll' --extern 'atty=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libatty-a89bb3c9bd91cb03.rlib' --extern 'axum=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libaxum-30aaef388ea595f7.rlib' --extern 'axum_server=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libaxum_server-8955dc866984d134.rlib' --extern 'base64=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libbase64-2d0adeaa2aa64bf4.rlib' --extern 'bincode=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libbincode-bbfa3e9adadd196d.rlib' --extern 'blake3=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libblake3-e4a1acca79bd3d3d.rlib' --extern 'chrono=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libchrono-84c2789d88b94f13.rlib' --extern 'ciborium=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libciborium-ffb97367b20153c6.rlib' --extern 'config=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libconfig-c6b0d374142e56d6.rlib' --extern 'crystals_dilithium=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libcrystals_dilithium-37c6315913206373.rlib' --extern 'dirs=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libdirs-7404058c1d77387d.rlib' --extern 'futures=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libfutures-4f187e63bd0b9f24.rlib' --extern 'hex=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libhex-84dbd1839da69a6d.rlib' --extern 'keyring=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libkeyring-87250671566aa323.rlib' --extern 'lib_blockchain=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_blockchain-2ac70e66d2fd27a3.rlib' --extern 'lib_consensus=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_consensus-ef525a88515d4888.rlib' --extern 'lib_crypto=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_crypto-53c3232a2de35576.rlib' --extern 'lib_economy=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_economy.rlib' --extern 'lib_identity=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_identity-3271918fd1f9d5e4.rlib' --extern 'lib_identity_core=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_identity_core-f9fa33705df330e4.rlib' --extern 'lib_network=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_network-69012377abcef998.rlib' --extern 'lib_proofs=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_proofs-87f685779234950b.rlib' --extern 'lib_protocols=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_protocols-841b125d72323c78.rlib' --extern 'lib_storage=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_storage-f1159c4d4c87b733.rlib' --extern 'lib_types=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblib_types-cc944311403aa191.rlib' --extern 'local_ip_address=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblocal_ip_address-bb84b75dfe51c7cf.rlib' --extern 'lru=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblru-058a0dbc1b2ac2fb.rlib' --extern 'lz4_flex=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liblz4_flex-3873337eab9c8a30.rlib' --extern 'md5=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libmd5-381b82a96cc675d7.rlib' --extern 'once_cell=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libonce_cell-1547683914516dc0.rlib' --extern 'parking_lot=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libparking_lot-a8d61d0d169aa82e.rlib' --extern 'quinn=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libquinn-4634c16925938324.rlib' --extern 'rand=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\librand-1a8e8230d6223561.rlib' --extern 'rcgen=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\librcgen-02c5686a05a0a980.rlib' --extern 'reqwest=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libreqwest-3f2c05ca16f9265c.rlib' --extern 'rpassword=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\librpassword-3bd94d5a8c4e48f0.rlib' --extern 'rustls=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\librustls-a621d12e607ab7c0.rlib' --extern 'rustls_pemfile=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\librustls_pemfile-8a16d55003f5c6bc.rlib' --extern 'serde=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libserde-1171a1b81e405d27.rlib' --extern 'serde_json=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libserde_json-e1dec1714125bdc4.rlib' --extern 'sha2=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libsha2-3afebcb75d73aabc.rlib' --extern 'socket2=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libsocket2-dcf50e70b263683e.rlib' --extern 'sysinfo=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libsysinfo-cbfd49613150b45c.rlib' --extern 'thiserror=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libthiserror-2ffbd9cc9061e44c.rlib' --extern 'tokio=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libtokio-adef2412d3d4cf06.rlib' --extern 'tokio_rustls=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libtokio_rustls-d3cf7ec617b37e49.rlib' --extern 'toml=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libtoml-7c8887dca3e24ce5.rlib' --extern 'tower=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libtower-fd80ee4d8542d29c.rlib' --extern 'tower_http=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libtower_http-e4eca1c3fc3f24e8.rlib' --extern 'tracing=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libtracing-ee5e3569bdccd051.rlib' --extern 'tracing_subscriber=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libtracing_subscriber-7a24b96a03ac0ddf.rlib' --extern 'urlencoding=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\liburlencoding-f88c3c24b4da4f8c.rlib' --extern 'uuid=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libuuid-e5610a31800c5c78.rlib' --extern 'warp=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libwarp-c48125d169e05ad3.rlib' --extern 'windows=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libwindows-54bd6ba777152783.rlib' --extern 'zeroize=H:\team--reem -1.5\The-Sovereign-Network\target\release\deps\libzeroize-1d96aedbc0b920fe.rlib' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\aws-lc-sys-5b309a37f77e8b2b\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\ring-a67412b15ce2be5b\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\blake3-cebaa45e19de5e17\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\blake3-cebaa45e19de5e17\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\pqcrypto-dilithium-caba451cf2111dc2\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\pqcrypto-dilithium-caba451cf2111dc2\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\pqcrypto-dilithium-caba451cf2111dc2\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\pqcrypto-internals-993a290bcb3f73fc\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\pqcrypto-internals-993a290bcb3f73fc\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\wasmtime-cfc9737af016e727\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\ittapi-sys-c978b44fe02d2fbd\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\zstd-sys-e1211d293d392cef\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\wasmtime-internal-fiber-c924096e8a45aecc\out' -L 'native=H:\team--reem -1.5\The-Sovereign-Network\target\release\build\wasmtime-internal-jit-debug-f1468ce3046a5ad5\out' -L 'native=C:\Users\scasi\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows_x86_64_msvc-0.53.1\lib' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Users\scasi\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows_x86_64_msvc-0.48.5\lib' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64' -L 'native=C:\Users\scasi\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows_x86_64_msvc-0.52.6\lib'` (exit code: 143)
