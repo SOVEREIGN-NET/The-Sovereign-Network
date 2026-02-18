@@ -1577,6 +1577,35 @@ impl Blockchain {
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
+        // If BlockExecutor is configured, use it as single source of truth
+        if let Some(ref executor) = self.executor {
+            // Use BlockExecutor for state mutations
+            let store = executor.store();
+            store.begin_block(block.header.height)?;
+            
+            match executor.apply_block(&block) {
+                Ok(_outcome) => {
+                    // Block applied successfully through executor
+                    // Update blockchain metadata
+                    self.blocks.push(block.clone());
+                    self.height += 1;
+                    self.adjust_difficulty()?;
+                    
+                    debug!("Block {} applied via BlockExecutor (single source of truth)", block.height());
+                    
+                    // Continue with post-processing (events, persistence)
+                    self.finish_block_processing(block).await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    // Rollback on error
+                    let _ = store.rollback_block();
+                    return Err(anyhow::anyhow!("BlockExecutor failed to apply block: {}", e));
+                }
+            }
+        }
+
+        // Legacy path: direct state mutations (when no executor configured)
         // Verify the block
         let previous_block = self.blocks.last();
         if !self.verify_block(&block, previous_block)? {
@@ -1709,6 +1738,84 @@ impl Blockchain {
         if let Err(e) = self.event_publisher.publish(event).await {
             warn!("Failed to publish BlockAdded event: {}", e);
             // Don't fail block processing for event publishing errors
+        }
+
+        Ok(())
+    }
+
+    /// Finish block processing after state mutations are complete.
+    /// This handles post-processing steps that happen regardless of which path was used.
+    async fn finish_block_processing(&mut self, block: Block) -> Result<()> {
+        // Remove processed transactions from pending pool
+        self.remove_pending_transactions(&block.transactions);
+
+        // Begin sled transaction for remaining processing
+        if let Some(ref store) = self.store {
+            store.begin_block(block.header.height)
+                .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
+        }
+
+        // Process identity transactions
+        self.process_identity_transactions(&block)?;
+        self.process_wallet_transactions(&block)?;
+        self.process_contract_transactions(&block)?;
+        self.process_token_transactions(&block)?;
+
+        // Process approved governance proposals
+        if let Err(e) = self.process_approved_governance_proposals() {
+            warn!("Error processing governance proposals at height {}: {}", self.height, e);
+        }
+
+        // Process economic features
+        if let Err(e) = self.process_ubi_claim_transactions(&block) {
+            warn!("Error processing UBI claims at height {}: {}", self.height, e);
+        }
+
+        if let Err(e) = self.process_profit_declarations(&block) {
+            warn!("Error processing profit declarations at height {}: {}", self.height, e);
+        }
+
+        // Create transaction receipts
+        let block_hash = block.hash();
+        for (tx_index, tx) in block.transactions.iter().enumerate() {
+            if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
+                warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
+            }
+        }
+
+        // Persist block to SledStore
+        if let Some(ref store) = self.store {
+            if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
+                error!("Failed to persist block {} to SledStore: {}", block.height(), e);
+            } else {
+                debug!("Block {} persisted to SledStore", block.height());
+            }
+        }
+
+        self.blocks_since_last_persist += 1;
+
+        // Emit BlockAdded event
+        let block_hash_bytes = block.hash();
+        let block_hash_array: [u8; 32] = match block_hash_bytes.as_bytes().try_into() {
+            Ok(arr) => arr,
+            Err(e) => {
+                error!(
+                    "Invariant violation: block hash for height {} is not 32 bytes (len = {}, error = {:?})",
+                    block.header.height,
+                    block_hash_bytes.as_bytes().len(),
+                    e
+                );
+                [0u8; 32]
+            }
+        };
+        let event = crate::events::BlockchainEvent::BlockAdded {
+            height: block.header.height,
+            block_hash: block_hash_array,
+            timestamp: block.header.timestamp,
+            transaction_count: block.transactions.len() as u64,
+        };
+        if let Err(e) = self.event_publisher.publish(event).await {
+            warn!("Failed to publish BlockAdded event: {}", e);
         }
 
         Ok(())
