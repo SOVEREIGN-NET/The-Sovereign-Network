@@ -422,7 +422,7 @@ impl BluetoothRouter {
                     handshake.version, handshake.mesh_port, handshake.protocols);
                 
                 // Create peer identity
-                let peer_pubkey = lib_crypto::PublicKey::new(handshake.node_id.as_bytes().to_vec());
+                let peer_pubkey = handshake.public_key.clone();
                 
                 // Bluetooth connections use BluetoothLE protocol
                 let protocol = lib_network::protocols::NetworkProtocol::BluetoothLE;

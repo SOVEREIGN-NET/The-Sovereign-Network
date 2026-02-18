@@ -304,7 +304,6 @@ mod tests {
 
     #[test]
     fn test_format_audit_entry_without_did() {
-        use zhtp::web4_stub::TrustAuditEntry;
         let entry = TrustAuditEntry {
             timestamp: 1735689600u64,
             node_addr: "localhost:9003".to_string(),
