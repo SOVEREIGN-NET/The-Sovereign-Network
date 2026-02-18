@@ -4109,12 +4109,16 @@ impl Blockchain {
                     name: String,
                     symbol: String,
                     initial_supply: u64,
-                    #[allow(dead_code)]
                     decimals: u8,
                 }
                 let params: CreateTokenParams = bincode::deserialize(&call.params)
                     .map_err(|e| anyhow::anyhow!("Invalid create_custom_token params: {}", e))?;
-                let CreateTokenParams { name, symbol, initial_supply, .. } = params;
+                let CreateTokenParams {
+                    name,
+                    symbol,
+                    initial_supply,
+                    decimals,
+                } = params;
 
                 // CRITICAL: Check for duplicate symbol across ALL existing tokens
                 // This prevents confusion where multiple tokens share the same symbol
@@ -4129,12 +4133,15 @@ impl Blockchain {
                     }
                 }
 
-                let token = crate::contracts::TokenContract::new_custom(
+                let mut token = crate::contracts::TokenContract::new_custom(
                     name.clone(),
                     symbol.clone(),
                     initial_supply,
                     caller.clone(),
                 );
+                // Preserve legacy create_custom_token replay semantics.
+                token.decimals = if decimals == 0 { 8 } else { decimals };
+                token.max_supply = initial_supply;
 
                 let token_id = token.token_id;
                 if self.token_contracts.contains_key(&token_id) {
@@ -4144,6 +4151,7 @@ impl Blockchain {
                 info!("Creating token contract: {} ({}) with supply {} at block {}",
                     name, symbol, initial_supply, block_height);
                 self.token_contracts.insert(token_id, token);
+                self.contract_blocks.insert(token_id, block_height);
                 info!("Token contract created: {} ({}), token_id: {}",
                     name, symbol, hex::encode(token_id));
             }
@@ -8869,7 +8877,7 @@ mod replay_contract_execution_tests {
     }
 
     #[test]
-    fn replayed_contract_execution_matches_direct_execution() {
+    fn contract_execution_is_deterministic() {
         #[derive(serde::Serialize)]
         struct CreateTokenParams {
             name: String,
