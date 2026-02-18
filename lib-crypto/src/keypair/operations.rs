@@ -59,7 +59,7 @@ pub const CONSENSUS_SIGNATURE_SCHEME: &str = "Dilithium2";
 pub fn validate_consensus_signature_scheme(scheme: &str) -> anyhow::Result<()> {
     if scheme != CONSENSUS_SIGNATURE_SCHEME {
         return Err(anyhow::anyhow!(
-            "consensus signature scheme violation: only Dilithium2 is permitted \n             for consensus votes and commits; received {}",
+            "consensus signature scheme violation: only Dilithium2 is permitted for consensus votes and commits; received {}",
             scheme
         ));
     }
