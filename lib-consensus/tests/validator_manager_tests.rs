@@ -1,7 +1,6 @@
 //! Tests for validator management functionality
 
 use anyhow::Result;
-use lib_consensus::validators::ValidatorStats;
 use lib_consensus::{SlashType, ValidatorManager, ValidatorStatus};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
@@ -9,6 +8,14 @@ use lib_identity::IdentityId;
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {
     Hash::from_bytes(&hash_blake3(name.as_bytes()))
+}
+
+fn validator_keys(seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    (
+        vec![seed; 32],
+        vec![seed.wrapping_add(64); 32],
+        vec![seed.wrapping_add(128); 32],
+    )
 }
 
 #[test]
@@ -30,7 +37,7 @@ fn test_validator_registration_success() -> Result<()> {
     let identity = create_test_identity("alice");
     let stake = 2000 * 1_000_000;
     let storage = 200 * 1024 * 1024 * 1024;
-    let consensus_key = vec![1u8; 32];
+    let (consensus_key, networking_key, rewards_key) = validator_keys(1);
     let commission_rate = 5;
 
     let result = manager.register_validator(
@@ -38,6 +45,8 @@ fn test_validator_registration_success() -> Result<()> {
         stake,
         storage,
         consensus_key,
+        networking_key,
+        rewards_key,
         commission_rate,
     );
 
@@ -64,7 +73,7 @@ fn test_validator_registration_insufficient_stake() {
     let identity = create_test_identity("bob");
     let insufficient_stake = 500 * 1_000_000; // Below minimum
     let storage = 200 * 1024 * 1024 * 1024;
-    let consensus_key = vec![2u8; 32];
+    let (consensus_key, networking_key, rewards_key) = validator_keys(2);
     let commission_rate = 5;
 
     let result = manager.register_validator(
@@ -72,6 +81,8 @@ fn test_validator_registration_insufficient_stake() {
         insufficient_stake,
         storage,
         consensus_key,
+        networking_key,
+        rewards_key,
         commission_rate,
     );
 
@@ -89,7 +100,7 @@ fn test_validator_registration_low_storage_allowed() {
     let identity = create_test_identity("charlie");
     let stake = 2000 * 1_000_000;
     let low_storage = 50 * 1024 * 1024 * 1024; // Below consensus min, allowed in manager
-    let consensus_key = vec![3u8; 32];
+    let (consensus_key, networking_key, rewards_key) = validator_keys(3);
     let commission_rate = 5;
 
     let result = manager.register_validator(
@@ -97,6 +108,8 @@ fn test_validator_registration_low_storage_allowed() {
         stake,
         low_storage,
         consensus_key,
+        networking_key,
+        rewards_key,
         commission_rate,
     );
 
@@ -110,7 +123,7 @@ fn test_duplicate_validator_registration() -> Result<()> {
     let identity = create_test_identity("alice");
     let stake = 2000 * 1_000_000;
     let storage = 200 * 1024 * 1024 * 1024;
-    let consensus_key = vec![1u8; 32];
+    let (consensus_key, networking_key, rewards_key) = validator_keys(1);
     let commission_rate = 5;
 
     // First registration should succeed
@@ -119,13 +132,22 @@ fn test_duplicate_validator_registration() -> Result<()> {
         stake,
         storage,
         consensus_key.clone(),
+        networking_key.clone(),
+        rewards_key.clone(),
         commission_rate,
     );
     assert!(result1.is_ok());
 
     // Second registration with same identity should fail
-    let result2 =
-        manager.register_validator(identity, stake, storage, consensus_key, commission_rate);
+    let result2 = manager.register_validator(
+        identity,
+        stake,
+        storage,
+        consensus_key,
+        networking_key,
+        rewards_key,
+        commission_rate,
+    );
     assert!(result2.is_err());
     assert!(result2
         .unwrap_err()
@@ -142,11 +164,14 @@ fn test_maximum_validator_limit() -> Result<()> {
     // Register up to the limit
     for i in 1..=2 {
         let identity = create_test_identity(&format!("validator_{}", i));
+        let (consensus_key, networking_key, rewards_key) = validator_keys(i as u8);
         let result = manager.register_validator(
             identity,
             1000 * 1_000_000,
             100 * 1024 * 1024 * 1024,
-            vec![i as u8; 32],
+            consensus_key,
+            networking_key,
+            rewards_key,
             5,
         );
         assert!(result.is_ok());
@@ -154,11 +179,14 @@ fn test_maximum_validator_limit() -> Result<()> {
 
     // Try to register one more (should fail)
     let identity = create_test_identity("extra_validator");
+    let (consensus_key, networking_key, rewards_key) = validator_keys(99);
     let result = manager.register_validator(
         identity,
         1000 * 1_000_000,
         100 * 1024 * 1024 * 1024,
-        vec![99u8; 32],
+        consensus_key,
+        networking_key,
+        rewards_key,
         5,
     );
 
@@ -178,9 +206,18 @@ fn test_validator_removal() -> Result<()> {
     let identity = create_test_identity("alice");
     let stake = 2000 * 1_000_000;
     let storage = 200 * 1024 * 1024 * 1024;
+    let (consensus_key, networking_key, rewards_key) = validator_keys(1);
 
     // Register validator
-    manager.register_validator(identity.clone(), stake, storage, vec![1u8; 32], 5)?;
+    manager.register_validator(
+        identity.clone(),
+        stake,
+        storage,
+        consensus_key,
+        networking_key,
+        rewards_key,
+        5,
+    )?;
 
     assert_eq!(manager.get_validator_stats().total_validators, 1);
 
@@ -216,11 +253,14 @@ fn test_proposer_selection() -> Result<()> {
     let validators = vec!["alice", "bob", "charlie"];
     for (i, name) in validators.iter().enumerate() {
         let identity = create_test_identity(name);
+        let (consensus_key, networking_key, rewards_key) = validator_keys((i + 1) as u8);
         manager.register_validator(
             identity,
             1000 * 1_000_000,
             100 * 1024 * 1024 * 1024,
-            vec![(i + 1) as u8; 32],
+            consensus_key,
+            networking_key,
+            rewards_key,
             5,
         )?;
     }
@@ -258,12 +298,15 @@ fn test_slashing_double_sign() -> Result<()> {
 
     let identity = create_test_identity("alice");
     let initial_stake = 2000 * 1_000_000;
+    let (consensus_key, networking_key, rewards_key) = validator_keys(1);
 
     manager.register_validator(
         identity.clone(),
         initial_stake,
         200 * 1024 * 1024 * 1024,
-        vec![1u8; 32],
+        consensus_key,
+        networking_key,
+        rewards_key,
         5,
     )?;
 
@@ -289,12 +332,15 @@ fn test_slashing_liveness() -> Result<()> {
 
     let identity = create_test_identity("bob");
     let initial_stake = 3000 * 1_000_000;
+    let (consensus_key, networking_key, rewards_key) = validator_keys(2);
 
     manager.register_validator(
         identity.clone(),
         initial_stake,
         300 * 1024 * 1024 * 1024,
-        vec![2u8; 32],
+        consensus_key,
+        networking_key,
+        rewards_key,
         5,
     )?;
 
@@ -330,11 +376,14 @@ fn test_byzantine_threshold_calculation() -> Result<()> {
     let validators = vec!["alice", "bob", "charlie"];
     for (i, name) in validators.iter().enumerate() {
         let identity = create_test_identity(name);
+        let (consensus_key, networking_key, rewards_key) = validator_keys((i + 1) as u8);
         manager.register_validator(
             identity,
             1000 * 1_000_000,
             100 * 1024 * 1024 * 1024,
-            vec![(i + 1) as u8; 32],
+            consensus_key,
+            networking_key,
+            rewards_key,
             5,
         )?;
     }
@@ -363,11 +412,14 @@ fn test_sufficient_validators_check() -> Result<()> {
     // Add validators one by one
     for i in 1..=4 {
         let identity = create_test_identity(&format!("validator_{}", i));
+        let (consensus_key, networking_key, rewards_key) = validator_keys(i as u8);
         manager.register_validator(
             identity,
             1000 * 1_000_000,
             100 * 1024 * 1024 * 1024,
-            vec![i as u8; 32],
+            consensus_key,
+            networking_key,
+            rewards_key,
             5,
         )?;
 
@@ -386,11 +438,14 @@ fn test_validator_activity_update() -> Result<()> {
     let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
 
     let identity = create_test_identity("alice");
+    let (consensus_key, networking_key, rewards_key) = validator_keys(1);
     manager.register_validator(
         identity.clone(),
         1000 * 1_000_000,
         100 * 1024 * 1024 * 1024,
-        vec![1u8; 32],
+        consensus_key,
+        networking_key,
+        rewards_key,
         5,
     )?;
 
@@ -420,7 +475,16 @@ fn test_validator_stats_calculation() -> Result<()> {
 
     for (i, (name, stake, storage)) in validators.iter().enumerate() {
         let identity = create_test_identity(name);
-        manager.register_validator(identity, *stake, *storage, vec![(i + 1) as u8; 32], 5)?;
+        let (consensus_key, networking_key, rewards_key) = validator_keys((i + 1) as u8);
+        manager.register_validator(
+            identity,
+            *stake,
+            *storage,
+            consensus_key,
+            networking_key,
+            rewards_key,
+            5,
+        )?;
         total_stake += stake;
         total_storage += storage;
     }

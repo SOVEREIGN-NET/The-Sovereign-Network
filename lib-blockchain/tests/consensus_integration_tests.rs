@@ -22,7 +22,7 @@ async fn test_consensus_integration_initialization() {
     let coordinator = initialize_consensus_integration(
         blockchain,
         mempool,
-        ConsensusType::Hybrid,
+        ConsensusType::ByzantineFaultTolerance,
     ).await;
 
     assert!(coordinator.is_ok(), "Consensus integration should initialize successfully");
@@ -40,6 +40,8 @@ async fn test_validator_registration() {
     ).await.unwrap();
 
     let validator_keypair = KeyPair::generate().unwrap();
+    let networking_keypair = KeyPair::generate().unwrap();
+    let rewards_keypair = KeyPair::generate().unwrap();
     let validator_identity = IdentityId::from_bytes(&validator_keypair.public_key.dilithium_pk);
 
     let result = coordinator.register_as_validator(
@@ -47,6 +49,8 @@ async fn test_validator_registration() {
         1000_000_000, // 1000 SOV
         100 * 1024 * 1024 * 1024, // 100 GB
         &validator_keypair,
+        &networking_keypair,
+        &rewards_keypair,
         5, // 5% commission
     ).await;
 
@@ -127,7 +131,7 @@ async fn test_consensus_integration_with_blockchain() {
     // Initialize consensus coordinator
     blockchain.initialize_consensus_coordinator(
         mempool.clone(),
-        ConsensusType::Hybrid,
+        ConsensusType::ByzantineFaultTolerance,
     ).await.unwrap();
 
     // Check that consensus coordinator was initialized
@@ -147,7 +151,7 @@ async fn test_multiple_validators() {
     let mut coordinator = initialize_consensus_integration(
         blockchain,
         mempool,
-        ConsensusType::Hybrid,
+        ConsensusType::ByzantineFaultTolerance,
     ).await.unwrap();
 
     // Register multiple validators
@@ -158,15 +162,19 @@ async fn test_multiple_validators() {
     ];
 
     for (name, stake, storage_gb) in validators {
-        let keypair = KeyPair::generate().unwrap();
-        let identity = IdentityId::from_bytes(&keypair.public_key.dilithium_pk);
+        let consensus_keypair = KeyPair::generate().unwrap();
+        let networking_keypair = KeyPair::generate().unwrap();
+        let rewards_keypair = KeyPair::generate().unwrap();
+        let identity = IdentityId::from_bytes(&consensus_keypair.public_key.dilithium_pk);
         let storage_bytes = storage_gb * 1024 * 1024 * 1024;
 
         let result = coordinator.register_as_validator(
             identity,
             stake,
             storage_bytes,
-            &keypair,
+            &consensus_keypair,
+            &networking_keypair,
+            &rewards_keypair,
             5,
         ).await;
 

@@ -298,9 +298,11 @@ pub mod testing {
             hash::random_hash(), // previous_block_hash
             hash::random_hash(), // merkle_root
             time::current_timestamp(),
+            Difficulty::minimum(),
             height,
             0, // transaction_count
             0, // block_size
+            Difficulty::minimum(),
         );
 
         Block::new(header, vec![])
