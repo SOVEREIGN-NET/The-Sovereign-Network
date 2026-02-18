@@ -45,6 +45,9 @@ pub struct BlockchainState {
     pub height: u64,
     pub difficulty: crate::types::Difficulty,
     pub nullifier_set: HashSet<Hash>,
+    pub total_work: u128,
+    pub finality_depth: u64,
+    pub finalized_blocks: HashSet<u64>,
 }
 
 /// Persistent storage manager for blockchain data
@@ -911,14 +914,60 @@ impl BlockchainStorageManager {
 
     /// Retrieve the latest blockchain state from storage
     pub async fn retrieve_latest_blockchain_state(&self) -> Result<Option<BlockchainState>> {
-        // Try to retrieve the latest blockchain state using a well-known content hash
-        // In a implementation, this would be tracked separately
         info!("Attempting to retrieve latest blockchain state");
-        
-        // For now, return None since we don't have a reliable way to retrieve without a content hash
-        // This would need to be implemented with a metadata system in lib-storage
-        warn!("Error: Latest state retrieval not implemented - requires metadata system");
-        Ok(None)
+
+        let query = SearchQuery {
+            terms: vec![
+                "blockchain".to_string(),
+                "state".to_string(),
+                "latest".to_string(),
+            ],
+            mime_type_filter: Some("application/octet-stream".to_string()),
+            owner_filter: None,
+            size_range: None,
+            date_range: None,
+            tag_filter: Some(vec![
+                "blockchain".to_string(),
+                "state".to_string(),
+                "latest".to_string(),
+            ]),
+        };
+
+        let system_identity = self.create_system_identity().await?;
+
+        let results = self
+            .storage_system
+            .write()
+            .await
+            .search_content(query, system_identity)
+            .await?;
+
+        if results.is_empty() {
+            return Ok(None);
+        }
+
+        let latest = results
+            .into_iter()
+            .max_by_key(|meta| meta.created_at)
+            .unwrap();
+
+        let download_request = DownloadRequest {
+            content_hash: latest.hash,
+            requester: self.create_system_identity().await?,
+            version: None,
+        };
+
+        let serialized_state = self
+            .storage_system
+            .write()
+            .await
+            .download_content(download_request)
+            .await?;
+
+        let state: BlockchainState = bincode::deserialize(&serialized_state)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain state: {}", e))?;
+
+        Ok(Some(state))
     }
 
     /// Retrieve the latest UTXO set from storage

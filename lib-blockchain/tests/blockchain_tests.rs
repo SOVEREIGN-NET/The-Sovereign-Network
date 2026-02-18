@@ -6,6 +6,7 @@
 use lib_blockchain::*;
 use lib_blockchain::integration::*;
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
+use lib_blockchain::integration::storage_integration::BlockchainStorageConfig;
 use lib_blockchain::types::mining::get_mining_config_from_env;
 use lib_blockchain::blockchain::ValidatorInfo;
 use anyhow::Result;
@@ -343,8 +344,25 @@ async fn test_block_verification() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_economics_transactions() -> Result<()> {
+async fn test_add_block_with_persistence_updates_state() -> Result<()> {
+    let config = BlockchainStorageConfig::default();
+    let mut blockchain = Blockchain::new_with_storage(config).await?;
+
+    let initial_height = blockchain.height;
+    let initial_blocks_len = blockchain.blocks.len();
+
+    let block = create_mined_block(&blockchain, Vec::new())?;
+
+    blockchain.add_block_with_persistence(block).await?;
+
+    assert_eq!(blockchain.height, initial_height + 1);
+    assert_eq!(blockchain.blocks.len(), initial_blocks_len + 1);
+
+    Ok(())
+}
+
+#[test]
+fn test_economics_transactions() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Create economics transaction with a specific address
