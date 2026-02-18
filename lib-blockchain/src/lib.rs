@@ -177,8 +177,73 @@ pub use contracts::{
     GAS_BASE, GAS_TOKEN, GAS_MESSAGING, GAS_CONTACT, GAS_GROUP,
 };
 
-/// ZHTP blockchain protocol version
+/// ZHTP blockchain protocol version.
+///
+/// # Protocol Upgrade Policy (BFT-H)
+///
+/// Protocol upgrades are consensus-critical and must follow this policy:
+/// - Upgrades are gated by block height; incompatible peers and blocks are
+///   rejected **deterministically** at both the handshake layer and block
+///   acceptance layer.
+/// - A new version MUST be accompanied by a hard-fork block height constant.
+/// - Validators running an incompatible version are automatically rejected
+///   and cannot participate in consensus.
 pub const BLOCKCHAIN_VERSION: u32 = 1;
+
+/// Minimum compatible protocol version.
+///
+/// Peers advertising a version below this value are rejected immediately.
+/// Update this constant when a breaking protocol change is introduced.
+pub const MIN_COMPATIBLE_PROTOCOL_VERSION: u32 = 1;
+
+/// Enforces the protocol version gate for a connecting peer.
+///
+/// Returns `Ok(())` if the peer version is within the accepted range,
+/// otherwise returns an `Err` describing the mismatch.  This check MUST be
+/// performed before accepting any block or vote from a peer.
+///
+/// # Errors
+/// Returns an error if `peer_version < MIN_COMPATIBLE_PROTOCOL_VERSION` or
+/// `peer_version > BLOCKCHAIN_VERSION`.
+pub fn enforce_protocol_version_gate(peer_version: u32) -> std::result::Result<(), String> {
+    if peer_version < MIN_COMPATIBLE_PROTOCOL_VERSION {
+        return Err(format!(
+            "peer protocol version {peer_version} is below minimum compatible version \
+             {MIN_COMPATIBLE_PROTOCOL_VERSION}; upgrade required"
+        ));
+    }
+    if peer_version > BLOCKCHAIN_VERSION {
+        return Err(format!(
+            "peer protocol version {peer_version} is ahead of local version \
+             {BLOCKCHAIN_VERSION}; local node must be upgraded"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod protocol_version_tests {
+    use super::*;
+
+    #[test]
+    fn test_enforce_protocol_version_gate_accepts_current() {
+        assert!(enforce_protocol_version_gate(BLOCKCHAIN_VERSION).is_ok());
+    }
+
+    #[test]
+    fn test_enforce_protocol_version_gate_rejects_old() {
+        // If MIN_COMPATIBLE_PROTOCOL_VERSION is 1 this test is skipped (nothing below)
+        if MIN_COMPATIBLE_PROTOCOL_VERSION > 0 {
+            let too_old = MIN_COMPATIBLE_PROTOCOL_VERSION - 1;
+            assert!(enforce_protocol_version_gate(too_old).is_err());
+        }
+    }
+
+    #[test]
+    fn test_enforce_protocol_version_gate_rejects_future() {
+        assert!(enforce_protocol_version_gate(BLOCKCHAIN_VERSION + 1).is_err());
+    }
+}
 
 /// Maximum block size in bytes (1MB)
 pub const MAX_BLOCK_SIZE: usize = 1_048_576;
