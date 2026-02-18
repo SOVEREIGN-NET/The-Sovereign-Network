@@ -32,6 +32,9 @@ pub mod economics;
 pub mod integration;
 pub mod verification;
 
+// Compatibility adapters for interoperability with other ZHTP crates
+pub mod compat;
+
 // ============================================================================
 // PUBLIC API EXPORTS
 // ============================================================================
@@ -43,8 +46,7 @@ pub mod verification;
 // Core Modules (accessible as lib_identity::module_name::Type)
 // ----------------------------------------------------------------------------
 
-// Note: No 'compat' module exists in this codebase. 
-// The system uses direct types without compatibility adapters.
+// Note: compat module provides adapters for gradual migration scenarios.
 
 // ----------------------------------------------------------------------------
 // Type Re-exports (accessible as lib_identity::Type)
