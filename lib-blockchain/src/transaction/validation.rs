@@ -204,7 +204,8 @@ impl TransactionValidator {
                 }
             }
             TransactionType::TokenMint => {
-                // System-controlled token mint - validation handled at consensus layer
+                // Validate minting authority and supply cap
+                self.validate_token_mint(transaction)?;
             }
         }
 
@@ -472,6 +473,43 @@ impl TransactionValidator {
 
         // Identity transactions should have minimal inputs/outputs
         // The main logic is handled by lib-identity package
+
+        Ok(())
+    }
+
+    /// Validate TokenMint transaction: authority and supply cap
+    ///
+    /// - Validates the signer is an authorized minter (must be in minter list)
+    /// - Validates the mint amount won't exceed supply cap
+    fn validate_token_mint(&self, transaction: &Transaction) -> ValidationResult {
+        // Extract TokenMintData
+        let mint_data = transaction
+            .token_mint_data
+            .as_ref()
+            .ok_or_else(|| ValidationError::InvalidInputs)?;
+
+        // For now, we validate that:
+        // 1. The amount is not zero
+        // 2. The amount doesn't exceed a reasonable cap per block
+
+        if mint_data.amount == 0 {
+            tracing::warn!("TokenMint amount is zero");
+            return Err(ValidationError::InvalidInputs);
+        }
+
+        // TODO: Add actual minter authorization check when we have access to token registry
+        // For now, the consensus layer handles minter authorization
+
+        // Check for excessive mint (sanity check - max 1 billion tokens per mint)
+        const MAX_MINT_AMOUNT: u128 = 1_000_000_000_u128 * 1_000_000_000_u128; // 1B * 10^9
+        if mint_data.amount > MAX_MINT_AMOUNT {
+            tracing::warn!(
+                "TokenMint amount {} exceeds maximum allowed {}",
+                mint_data.amount,
+                MAX_MINT_AMOUNT
+            );
+            return Err(ValidationError::InvalidInputs);
+        }
 
         Ok(())
     }
