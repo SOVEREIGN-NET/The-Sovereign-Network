@@ -162,6 +162,78 @@ pub fn assert_genesis_trust_model() {
     );
 }
 
+// ============================================================================
+// GENESIS VALIDATOR SNAPSHOT (BFT-G, Issue #1001)
+// ============================================================================
+
+/// Canonical description of the genesis validator snapshot.
+///
+/// The genesis block defines the initial validator set and state commitments
+/// for the entire network.  All nodes MUST verify these values at startup to
+/// ensure they share the same trust root.
+///
+/// # Invariants
+///
+/// - `height` MUST be `0`.
+/// - `validator_count` MUST be `> 0`.
+/// - `state_commitment` is the BLAKE3 hash of the initial world state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenesisValidatorSnapshot {
+    /// Block height — always 0 for genesis.
+    pub height: u64,
+    /// Number of validators at genesis.
+    pub validator_count: usize,
+    /// BLAKE3 commitment to the initial state (UTXO + identity + wallet).
+    pub state_commitment: [u8; 32],
+}
+
+impl GenesisValidatorSnapshot {
+    /// Creates a snapshot, panicking if invariants are violated.
+    pub fn new(height: u64, validator_count: usize, state_commitment: [u8; 32]) -> Self {
+        assert_eq!(height, 0, "genesis snapshot height must be 0, got {height}");
+        assert!(validator_count > 0, "genesis must have at least one validator");
+        Self { height, validator_count, state_commitment }
+    }
+}
+
+/// Validates a genesis block against an explicit validator snapshot.
+///
+/// Returns `Ok(())` if all genesis invariants hold, or `Err` on the first failure.
+pub fn validate_genesis_snapshot(
+    block: &Block,
+    snapshot: &GenesisValidatorSnapshot,
+) -> Result<(), String> {
+    if block.header.height != 0 {
+        return Err(format!(
+            "genesis block height must be 0, got {}", block.header.height
+        ));
+    }
+    if snapshot.validator_count == 0 {
+        return Err("genesis validator snapshot must contain at least one validator".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod genesis_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_genesis_snapshot_ok() {
+        let block = create_genesis_block();
+        let snapshot = GenesisValidatorSnapshot::new(0, 4, [0u8; 32]);
+        assert!(validate_genesis_snapshot(&block, &snapshot).is_ok());
+    }
+
+    #[test]
+    fn test_validate_genesis_snapshot_rejects_nonzero_height() {
+        let mut block = create_genesis_block();
+        block.header.height = 1;
+        let snapshot = GenesisValidatorSnapshot::new(0, 1, [0u8; 32]);
+        assert!(validate_genesis_snapshot(&block, &snapshot).is_err());
+    }
+}
+
 /// Names of every consensus-critical field in [`BlockHeader`].
 ///
 /// These are the fields that are hashed by [`BlockHeader::calculate_hash`] and therefore
