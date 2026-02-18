@@ -641,6 +641,18 @@ impl BlockchainHandler {
         Ok(contract_id)
     }
 
+    fn extract_contract_id_from_request_uri(uri: &str) -> Result<(&str, [u8; 32])> {
+        let path = uri.split('?').next().unwrap_or(uri);
+        let path_parts: Vec<&str> = path.split('/').collect();
+        let contract_id_hex = path_parts
+            .get(5)
+            .copied()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Contract ID is required"))?;
+        let contract_id = Self::parse_contract_id_hex(contract_id_hex)?;
+        Ok((contract_id_hex, contract_id))
+    }
+
     /// Handle blockchain status request
     async fn handle_blockchain_status(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         let blockchain_arc = self.get_blockchain().await?;
@@ -1979,6 +1991,12 @@ impl BlockchainHandler {
             .get("type")
             .map(|v| v.to_ascii_lowercase())
             .unwrap_or_else(|| "all".to_string());
+        if !matches!(contract_filter.as_str(), "all" | "token" | "web4") {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Invalid contract type. Must be 'all', 'token', or 'web4'.".to_string(),
+            ));
+        }
 
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
@@ -2037,20 +2055,9 @@ impl BlockchainHandler {
 
     /// Get contract state
     async fn handle_get_contract_state(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let path = request.uri.split('?').next().unwrap_or(&request.uri);
-        let path_parts: Vec<&str> = path.split('/').collect();
-        let contract_id_hex = match path_parts.get(5) {
-            Some(v) if !v.is_empty() => *v,
-            _ => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::BadRequest,
-                    "Contract ID is required in /api/v1/blockchain/contracts/{id}/state".to_string(),
-                ))
-            }
-        };
-
-        let contract_id = match Self::parse_contract_id_hex(contract_id_hex) {
-            Ok(id) => id,
+        let (contract_id_hex, contract_id) = match Self::extract_contract_id_from_request_uri(&request.uri)
+        {
+            Ok(parts) => parts,
             Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
         };
 
@@ -2116,20 +2123,9 @@ impl BlockchainHandler {
 
     /// Get contract information
     async fn handle_get_contract_info(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let path = request.uri.split('?').next().unwrap_or(&request.uri);
-        let path_parts: Vec<&str> = path.split('/').collect();
-        let contract_id_hex = match path_parts.get(5) {
-            Some(v) if !v.is_empty() => *v,
-            _ => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::BadRequest,
-                    "Contract ID is required in /api/v1/blockchain/contracts/{id}".to_string(),
-                ))
-            }
-        };
-
-        let contract_id = match Self::parse_contract_id_hex(contract_id_hex) {
-            Ok(id) => id,
+        let (contract_id_hex, contract_id) = match Self::extract_contract_id_from_request_uri(&request.uri)
+        {
+            Ok(parts) => parts,
             Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
         };
 
