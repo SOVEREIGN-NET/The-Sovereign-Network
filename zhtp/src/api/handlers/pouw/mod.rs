@@ -2,10 +2,11 @@
 
 use std::sync::Arc;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
-use tracing::debug;
+use tracing::{debug, warn};
 use async_trait::async_trait;
 
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
@@ -52,8 +53,80 @@ impl PouwHandler {
         params
     }
 
+    /// Extract client IP from request headers
+    fn extract_client_ip(request: &ZhtpRequest) -> IpAddr {
+        // Try X-Real-IP first (from reverse proxy)
+        if let Some(ip_str) = request.headers.get("X-Real-IP") {
+            if let Ok(ip) = ip_str.parse() {
+                return ip;
+            }
+        }
+
+        // Try X-Forwarded-For (may contain multiple IPs, take first)
+        if let Some(forwarded) = request.headers.get("X-Forwarded-For") {
+            if let Some(first_ip) = forwarded.split(',').next() {
+                if let Ok(ip) = first_ip.trim().parse() {
+                    return ip;
+                }
+            }
+        }
+
+        // Default to localhost if no IP headers are present
+        "127.0.0.1".parse().unwrap()
+    }
+
+    /// Extract client DID from request
+    fn extract_client_did(request: &ZhtpRequest) -> String {
+        // Try to get DID from requester identity first
+        if let Some(ref identity) = request.requester {
+            // Convert IdentityId to string representation
+            return format!("did:zhtp:{}", hex::encode(identity.as_bytes()));
+        }
+
+        // Fallback to header if present
+        if let Some(did) = request.headers.get("X-Client-DID") {
+            return did;
+        }
+
+        // Default DID for anonymous requests
+        "did:zhtp:anonymous".to_string()
+    }
+
     async fn handle_get_challenge(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         debug!("Handling PoUW challenge request");
+
+        // Extract client information for rate limiting
+        let client_ip = Self::extract_client_ip(request);
+        let client_did = Self::extract_client_did(request);
+
+        // Check rate limits
+        let rate_check = self.rate_limiter.check_request(client_ip, &client_did).await;
+        if let crate::pouw::rate_limiter::RateLimitResult::Denied { reason, retry_after } = rate_check {
+            warn!(
+                ip = %client_ip,
+                did = %client_did,
+                reason = %reason,
+                "Rate limit exceeded for challenge request"
+            );
+            
+            let body = serde_json::json!({
+                "error": "Rate limit exceeded",
+                "reason": reason.to_string(),
+                "retry_after_seconds": retry_after.as_secs(),
+            });
+
+            return Ok(ZhtpResponse {
+                status: ZhtpStatus::TooManyRequests,
+                headers: [
+                    ("Content-Type".to_string(), "application/json".to_string()),
+                    ("Retry-After".to_string(), retry_after.as_secs().to_string()),
+                ]
+                .iter()
+                .cloned()
+                .collect(),
+                body: serde_json::to_vec(&body).unwrap_or_default(),
+            });
+        }
 
         // Parse query parameters from the request URI to configure the challenge.
         let params = Self::parse_query_params(&request.uri);
@@ -92,8 +165,70 @@ impl PouwHandler {
     async fn handle_submit_receipt(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         debug!("Handling PoUW receipt submission");
 
+        // Extract client information for rate limiting
+        let client_ip = Self::extract_client_ip(request);
+        let client_did = Self::extract_client_did(request);
+
+        // Check rate limits
+        let rate_check = self.rate_limiter.check_request(client_ip, &client_did).await;
+        if let crate::pouw::rate_limiter::RateLimitResult::Denied { reason, retry_after } = rate_check {
+            warn!(
+                ip = %client_ip,
+                did = %client_did,
+                reason = %reason,
+                "Rate limit exceeded for receipt submission"
+            );
+            
+            let body = serde_json::json!({
+                "error": "Rate limit exceeded",
+                "reason": reason.to_string(),
+                "retry_after_seconds": retry_after.as_secs(),
+            });
+
+            return Ok(ZhtpResponse {
+                status: ZhtpStatus::TooManyRequests,
+                headers: [
+                    ("Content-Type".to_string(), "application/json".to_string()),
+                    ("Retry-After".to_string(), retry_after.as_secs().to_string()),
+                ]
+                .iter()
+                .cloned()
+                .collect(),
+                body: serde_json::to_vec(&body).unwrap_or_default(),
+            });
+        }
+
         let batch: ReceiptBatch = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        // Check batch size limit
+        let batch_size = batch.receipts.len();
+        let batch_check = self.rate_limiter.check_batch_size(batch_size);
+        if let crate::pouw::rate_limiter::RateLimitResult::Denied { reason, .. } = batch_check {
+            warn!(
+                ip = %client_ip,
+                did = %client_did,
+                batch_size = batch_size,
+                reason = %reason,
+                "Batch size limit exceeded for receipt submission"
+            );
+            
+            let body = serde_json::json!({
+                "error": "Batch size limit exceeded",
+                "reason": reason.to_string(),
+                "batch_size": batch_size,
+                "max_batch_size": 100, // From default config
+            });
+
+            return Ok(ZhtpResponse {
+                status: ZhtpStatus::BadRequest,
+                headers: [("Content-Type".to_string(), "application/json".to_string())]
+                    .iter()
+                    .cloned()
+                    .collect(),
+                body: serde_json::to_vec(&body).unwrap_or_default(),
+            });
+        }
 
         let validator = self.receipt_validator.read().await;
         let result = validator.validate_batch(&batch)
