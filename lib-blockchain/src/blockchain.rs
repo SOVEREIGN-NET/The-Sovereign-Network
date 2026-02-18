@@ -1580,9 +1580,7 @@ impl Blockchain {
         // If BlockExecutor is configured, use it as single source of truth
         if let Some(ref executor) = self.executor {
             // Use BlockExecutor for state mutations
-            let store = executor.store();
-            store.begin_block(block.header.height)?;
-            
+            // Note: executor.apply_block() handles begin_block/commit_block internally
             match executor.apply_block(&block) {
                 Ok(_outcome) => {
                     // Block applied successfully through executor
@@ -1598,8 +1596,6 @@ impl Blockchain {
                     return Ok(());
                 }
                 Err(e) => {
-                    // Rollback on error
-                    let _ = store.rollback_block();
                     return Err(anyhow::anyhow!("BlockExecutor failed to apply block: {}", e));
                 }
             }
