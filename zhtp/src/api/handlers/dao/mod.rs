@@ -106,18 +106,19 @@ fn validate_spending_proposal(title: &str, description: &str, recipient: &str, a
 /// Request types for DAO operations
 #[derive(Debug, Deserialize)]
 struct CreateProposalRequest {
-    proposer_identity_id: String,
+    proposer_identity_id: Option<String>,
     title: String,
     description: String,
-    proposal_type: String,
-    voting_period_days: u32,
+    proposal_type: Option<String>,
+    voting_period_days: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CastVoteRequest {
-    voter_identity_id: String,
+    voter_identity_id: Option<String>,
     proposal_id: String,
-    vote_choice: String,
+    vote_choice: Option<String>,
+    choice: Option<String>,
     justification: Option<String>,
 }
 
@@ -355,19 +356,25 @@ impl DaoHandler {
         request_data: CreateProposalRequest,
     ) -> Result<ZhtpResponse> {
         let proposer_hex = hex::encode(authenticated_identity_id.as_bytes());
-        if request_data.proposer_identity_id.to_lowercase() != proposer_hex {
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "proposer_identity_id must match authenticated identity".to_string(),
-            ));
+        if let Some(ref proposer_id) = request_data.proposer_identity_id {
+            if proposer_id.to_lowercase() != proposer_hex {
+                return Ok(create_error_response(
+                    ZhtpStatus::Forbidden,
+                    "proposer_identity_id must match authenticated identity".to_string(),
+                ));
+            }
         }
 
-        let proposal_type = match Self::parse_proposal_type(&request_data.proposal_type) {
+        let proposal_type_raw = request_data
+            .proposal_type
+            .as_deref()
+            .unwrap_or("community_funding");
+        let proposal_type = match Self::parse_proposal_type(proposal_type_raw) {
             Ok(pt) => pt,
             Err(_) => {
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Invalid proposal type: {}", request_data.proposal_type),
+                    format!("Invalid proposal type: {}", proposal_type_raw),
                 ))
             }
         };
@@ -406,7 +413,7 @@ impl DaoHandler {
             title: request_data.title.clone(),
             description: request_data.description.clone(),
             proposal_type: Self::proposal_type_to_string(&proposal_type),
-            voting_period_blocks: (request_data.voting_period_days as u64).saturating_mul(14_400),
+            voting_period_blocks: (request_data.voting_period_days.unwrap_or(7) as u64).saturating_mul(14_400),
             quorum_required: Self::proposal_quorum_required(&proposal_type),
             execution_params: None,
             created_at: now,
@@ -759,11 +766,13 @@ impl DaoHandler {
 
         let request_data: CastVoteRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-        if request_data.voter_identity_id.to_lowercase() != authenticated_hex {
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "voter_identity_id must match authenticated identity".to_string(),
-            ));
+        if let Some(ref voter_identity_id) = request_data.voter_identity_id {
+            if voter_identity_id.to_lowercase() != authenticated_hex {
+                return Ok(create_error_response(
+                    ZhtpStatus::Forbidden,
+                    "voter_identity_id must match authenticated identity".to_string(),
+                ));
+            }
         }
 
         let proposal_id = match Self::string_to_bc_hash(&request_data.proposal_id) {
@@ -776,12 +785,18 @@ impl DaoHandler {
             }
         };
 
-        let vote_choice = match Self::parse_vote_choice(&request_data.vote_choice) {
+        let vote_choice_raw = request_data
+            .vote_choice
+            .as_deref()
+            .or(request_data.choice.as_deref())
+            .map(str::trim)
+            .ok_or_else(|| anyhow::anyhow!("Missing vote_choice (or legacy choice) field"))?;
+        let vote_choice = match Self::parse_vote_choice(vote_choice_raw) {
             Ok(choice) => choice,
             Err(_) => {
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Invalid vote choice: {}", request_data.vote_choice),
+                    format!("Invalid vote choice: {}", vote_choice_raw),
                 ))
             }
         };
@@ -887,8 +902,8 @@ impl DaoHandler {
             "status": "success",
             "vote_id": Self::hash_to_string(&vote_id),
             "proposal_id": request_data.proposal_id,
-            "vote_choice": request_data.vote_choice,
-            "voter_id": request_data.voter_identity_id,
+            "vote_choice": vote_choice_raw,
+            "voter_id": request_data.voter_identity_id.unwrap_or(authenticated_hex),
             "message": "Vote submitted to mempool"
         });
         create_json_response(response)
@@ -1244,7 +1259,7 @@ impl DaoHandler {
 
         // Create treasury allocation proposal
         let create_request = CreateProposalRequest {
-            proposer_identity_id: proposer_id.to_string(),
+            proposer_identity_id: Some(proposer_id.to_string()),
             title: request_data.title.clone(),
             description: format!(
                 "{}\n\nAmount: {}\nRecipient: {}",
@@ -1252,8 +1267,8 @@ impl DaoHandler {
                 request_data.amount,
                 request_data.recipient
             ),
-            proposal_type: "treasury_allocation".to_string(),
-            voting_period_days: 7,
+            proposal_type: Some("treasury_allocation".to_string()),
+            voting_period_days: Some(7),
         };
 
         self.handle_create_proposal_from_identity(authenticated_identity_id, create_request).await
@@ -1401,5 +1416,62 @@ impl ZhtpRequestHandler for DaoHandler {
     
     fn priority(&self) -> u32 {
         100
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CastVoteRequest, CreateProposalRequest};
+
+    #[test]
+    fn create_proposal_accepts_legacy_cli_shape() {
+        let body = r#"{
+            "title":"Legacy title",
+            "description":"Legacy description",
+            "orchestrated":true
+        }"#;
+
+        let parsed: CreateProposalRequest = serde_json::from_str(body).expect("legacy propose payload should parse");
+        assert_eq!(parsed.title, "Legacy title");
+        assert!(parsed.proposer_identity_id.is_none());
+        assert!(parsed.proposal_type.is_none());
+        assert!(parsed.voting_period_days.is_none());
+    }
+
+    #[test]
+    fn create_proposal_accepts_canonical_shape() {
+        let body = r#"{
+            "proposer_identity_id":"abc",
+            "title":"Canonical title",
+            "description":"Canonical description",
+            "proposal_type":"treasury_allocation",
+            "voting_period_days":7
+        }"#;
+
+        let parsed: CreateProposalRequest = serde_json::from_str(body).expect("canonical propose payload should parse");
+        assert_eq!(parsed.proposal_type.as_deref(), Some("treasury_allocation"));
+        assert_eq!(parsed.voting_period_days, Some(7));
+    }
+
+    #[test]
+    fn cast_vote_accepts_legacy_and_canonical_fields() {
+        let legacy_body = r#"{
+            "proposal_id":"deadbeef",
+            "choice":" yes ",
+            "orchestrated":true
+        }"#;
+        let canonical_body = r#"{
+            "voter_identity_id":"abc",
+            "proposal_id":"deadbeef",
+            "vote_choice":"no"
+        }"#;
+
+        let legacy: CastVoteRequest = serde_json::from_str(legacy_body).expect("legacy vote payload should parse");
+        let canonical: CastVoteRequest = serde_json::from_str(canonical_body).expect("canonical vote payload should parse");
+
+        assert_eq!(legacy.choice.as_deref(), Some(" yes "));
+        assert_eq!(legacy.vote_choice, None);
+        assert_eq!(canonical.vote_choice.as_deref(), Some("no"));
+        assert_eq!(canonical.choice, None);
     }
 }
