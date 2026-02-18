@@ -6,9 +6,10 @@
 // IMPLEMENTATIONS from original identity.rs
 
 use crate::identity::ZhtpIdentity;
-// Removed unused recovery imports after cleanup
+use lib_crypto::keypair::KeyPair;
+use lib_crypto::types::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
-// Removed unused anyhow import after cleanup
+use crate::did::storage;
 
 // Note: base64 encoding removed after cleanup - no longer needed
 
@@ -35,6 +36,48 @@ pub struct DidDocument {
     pub updated: String,
     #[serde(rename = "versionId")]
     pub version_id: u32,
+    /// Registry of authorized device keys (Phase 1)
+    #[serde(default, rename = "deviceRegistry")]
+    pub device_registry: Vec<DeviceEntry>,
+}
+
+/// Device status for registry entries
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DeviceStatus {
+    Active,
+    Removed,
+}
+
+/// Device entry in DID document registry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceEntry {
+    pub device_id: String,
+    /// Multibase-encoded signing public key
+    pub signing_key_multibase: String,
+    /// Multibase-encoded encryption public key
+    pub encryption_key_multibase: String,
+    pub status: DeviceStatus,
+    pub added_at: u64,
+    pub removed_at: Option<u64>,
+}
+
+/// DID document device registry diff for updates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceRegistryDiff {
+    pub adds: Vec<DeviceEntry>,
+    pub removes: Vec<String>,
+}
+
+/// DID document update (signed by DID root key)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DidDocumentUpdate {
+    pub did: String,
+    pub prev_hash: [u8; 32],
+    pub new_hash: [u8; 32],
+    pub version: u64,
+    pub timestamp: u64,
+    pub diff: DeviceRegistryDiff,
+    pub signature: Signature,
 }
 
 impl DidDocument {
@@ -135,6 +178,7 @@ pub fn generate_did_document(
         created: timestamp.clone(),
         updated: timestamp,
         version_id: 1,
+        device_registry: Vec::new(),
     })
 }
 
@@ -311,11 +355,9 @@ pub fn update_did_document(
     Ok(document)
 }
 
-/// Resolve DID to DID Document
+/// Resolve DID to DID Document (in-memory registry)
 pub fn resolve_did(did: &str) -> Result<DidDocument, String> {
-    // In a implementation, this would query the DID registry
-    // For now, return an error indicating resolution is not implemented
-    Err(format!("DID resolution not implemented for: {}", did))
+    storage::resolve_did_document(did)
 }
 
 
@@ -360,6 +402,446 @@ pub fn validate_did_document(document: &DidDocument) -> Result<bool, String> {
             return Err("Invalid service endpoint".to_string());
         }
     }
+
+    // Validate device registry entries
+    let mut seen_device_ids = std::collections::HashSet::new();
+    for device in &document.device_registry {
+        if device.device_id.is_empty() {
+            return Err("Device entry missing device_id".to_string());
+        }
+        if device.signing_key_multibase.is_empty() || device.encryption_key_multibase.is_empty() {
+            return Err("Device entry missing keys".to_string());
+        }
+        if !seen_device_ids.insert(device.device_id.clone()) {
+            return Err(format!("Duplicate device_id in registry: {}", device.device_id));
+        }
+    }
     
     Ok(true)
+}
+
+/// Store DID document in in-memory registry (Phase 1 baseline)
+pub fn store_did_document(document: DidDocument) -> Result<(), String> {
+    validate_did_document(&document)?;
+    storage::store_did_document(document)
+}
+
+/// Create a DID-signed update to add a device to the registry
+pub fn create_device_add_update(
+    identity: &ZhtpIdentity,
+    document: &DidDocument,
+    device_id: &str,
+    signing_pk: &[u8],
+    encryption_pk: &[u8],
+) -> Result<DidDocumentUpdate, String> {
+    if device_id.is_empty() {
+        return Err("Device id cannot be empty".to_string());
+    }
+    let now = current_unix_timestamp()?;
+    let entry = DeviceEntry {
+        device_id: device_id.to_string(),
+        signing_key_multibase: encode_public_key_multibase(signing_pk)?,
+        encryption_key_multibase: encode_public_key_multibase(encryption_pk)?,
+        status: DeviceStatus::Active,
+        added_at: now,
+        removed_at: None,
+    };
+    let diff = DeviceRegistryDiff {
+        adds: vec![entry],
+        removes: Vec::new(),
+    };
+    create_signed_update(identity, document, diff)
+}
+
+/// Create a DID-signed update to remove a device from the registry
+pub fn create_device_remove_update(
+    identity: &ZhtpIdentity,
+    document: &DidDocument,
+    device_id: &str,
+) -> Result<DidDocumentUpdate, String> {
+    if device_id.is_empty() {
+        return Err("Device id cannot be empty".to_string());
+    }
+    let diff = DeviceRegistryDiff {
+        adds: Vec::new(),
+        removes: vec![device_id.to_string()],
+    };
+    create_signed_update(identity, document, diff)
+}
+
+/// List active devices from DID document
+pub fn list_active_devices(document: &DidDocument) -> Vec<DeviceEntry> {
+    document
+        .device_registry
+        .iter()
+        .filter(|d| d.status == DeviceStatus::Active)
+        .cloned()
+        .collect()
+}
+
+/// Get device entry by device_id
+pub fn get_device_entry(document: &DidDocument, device_id: &str) -> Option<DeviceEntry> {
+    document
+        .device_registry
+        .iter()
+        .find(|d| d.device_id == device_id)
+        .cloned()
+}
+
+/// Get decoded device keys (signing, encryption) by device_id
+pub fn get_device_keys(document: &DidDocument, device_id: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let entry = get_device_entry(document, device_id)
+        .ok_or_else(|| format!("Device not found: {}", device_id))?;
+    let signing = decode_public_key_multibase(&entry.signing_key_multibase)?;
+    let encryption = decode_public_key_multibase(&entry.encryption_key_multibase)?;
+    Ok((signing, encryption))
+}
+
+/// Validate and apply DID document update
+pub fn apply_did_update(
+    document: DidDocument,
+    update: &DidDocumentUpdate,
+) -> Result<DidDocument, String> {
+    if !validate_did_update(&document, update)? {
+        return Err("Invalid DID update".to_string());
+    }
+
+    apply_did_update_unchecked(document, update)
+}
+
+/// Apply DID update and persist document in configured store
+pub fn apply_did_update_and_store(
+    document: DidDocument,
+    update: &DidDocumentUpdate,
+) -> Result<DidDocument, String> {
+    let updated = apply_did_update(document, update)?;
+    store_did_document(updated.clone())?;
+    Ok(updated)
+}
+
+/// Validate DID document update
+pub fn validate_did_update(
+    document: &DidDocument,
+    update: &DidDocumentUpdate,
+) -> Result<bool, String> {
+    if update.did != document.id {
+        return Err("Update DID mismatch".to_string());
+    }
+
+    // Verify prev hash
+    let current_hash = document.to_hash()?.0;
+    if update.prev_hash != current_hash {
+        return Err("Update prev_hash mismatch".to_string());
+    }
+
+    // Verify version monotonicity
+    let expected_version = document.version_id as u64 + 1;
+    if update.version != expected_version {
+        return Err("Update version not monotonic".to_string());
+    }
+
+    // Verify signature against DID root key
+    let root_pk_bytes = did_root_public_key_bytes(document)?;
+    let root_pk = PublicKey::new(root_pk_bytes);
+    if update.signature.public_key.dilithium_pk != root_pk.dilithium_pk {
+        return Err("Update signature public key does not match DID root".to_string());
+    }
+
+    let signing_bytes = did_update_signing_bytes(update)?;
+    let is_valid = root_pk
+        .verify(&signing_bytes, &update.signature)
+        .map_err(|e| format!("Signature verification failed: {}", e))?;
+
+    if !is_valid {
+        return Err("Invalid update signature".to_string());
+    }
+
+    // Verify new_hash matches expected document state
+    let expected_doc = apply_did_update_unchecked(document.clone(), update)?;
+    let expected_hash = expected_doc.to_hash()?.0;
+    if update.new_hash != expected_hash {
+        return Err("Update new_hash mismatch".to_string());
+    }
+
+    Ok(true)
+}
+
+fn create_signed_update(
+    identity: &ZhtpIdentity,
+    document: &DidDocument,
+    diff: DeviceRegistryDiff,
+) -> Result<DidDocumentUpdate, String> {
+    let now = current_unix_timestamp()?;
+    let prev_hash = document.to_hash()?.0;
+    let version = document.version_id as u64 + 1;
+
+    let mut update = DidDocumentUpdate {
+        did: document.id.clone(),
+        prev_hash,
+        new_hash: [0u8; 32],
+        version,
+        timestamp: now,
+        diff,
+        signature: Signature::default(),
+    };
+
+    // Compute new hash by applying update
+    let updated_doc = apply_did_update_unchecked(document.clone(), &update)?;
+    update.new_hash = updated_doc.to_hash()?.0;
+
+    // Sign update
+    let signing_bytes = did_update_signing_bytes(&update)?;
+    let private_key = identity
+        .private_key
+        .clone()
+        .ok_or_else(|| "Identity missing private key for signing".to_string())?;
+    let keypair = KeyPair {
+        public_key: identity.public_key.clone(),
+        private_key,
+    };
+    update.signature = keypair
+        .sign(&signing_bytes)
+        .map_err(|e| format!("Failed to sign DID update: {}", e))?;
+
+    Ok(update)
+}
+
+fn apply_did_update_unchecked(
+    mut document: DidDocument,
+    update: &DidDocumentUpdate,
+) -> Result<DidDocument, String> {
+    // Apply additions
+    for entry in &update.diff.adds {
+        if document.device_registry.iter().any(|d| d.device_id == entry.device_id && d.status == DeviceStatus::Active) {
+            return Err(format!("Device already active: {}", entry.device_id));
+        }
+        document.device_registry.push(entry.clone());
+    }
+
+    // Apply removals
+    for device_id in &update.diff.removes {
+        if let Some(existing) = document.device_registry.iter_mut().find(|d| d.device_id == *device_id && d.status == DeviceStatus::Active) {
+            existing.status = DeviceStatus::Removed;
+            existing.removed_at = Some(update.timestamp);
+        } else {
+            return Err(format!("Active device not found: {}", device_id));
+        }
+    }
+
+    // Update metadata
+    document.updated = format_timestamp(update.timestamp);
+    if update.version > u32::MAX as u64 {
+        return Err("Update version exceeds document version capacity".to_string());
+    }
+    document.version_id = update.version as u32;
+
+    Ok(document)
+}
+
+fn did_update_signing_bytes(update: &DidDocumentUpdate) -> Result<Vec<u8>, String> {
+    #[derive(Serialize)]
+    struct UpdateForSigning<'a> {
+        did: &'a String,
+        prev_hash: &'a [u8; 32],
+        new_hash: &'a [u8; 32],
+        version: u64,
+        timestamp: u64,
+        diff: &'a DeviceRegistryDiff,
+    }
+
+    let payload = UpdateForSigning {
+        did: &update.did,
+        prev_hash: &update.prev_hash,
+        new_hash: &update.new_hash,
+        version: update.version,
+        timestamp: update.timestamp,
+        diff: &update.diff,
+    };
+
+    bincode::serialize(&payload).map_err(|e| format!("Failed to serialize update: {}", e))
+}
+
+fn current_unix_timestamp() -> Result<u64, String> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|_| "System time before Unix epoch".to_string())
+}
+
+fn did_root_public_key_bytes(document: &DidDocument) -> Result<Vec<u8>, String> {
+    let root_method = document
+        .verification_method
+        .iter()
+        .find(|vm| vm.id.ends_with("#primary"))
+        .ok_or_else(|| "DID document missing primary verification method".to_string())?;
+
+    decode_public_key_multibase(&root_method.public_key_multibase)
+}
+
+pub fn decode_public_key_multibase(encoded: &str) -> Result<Vec<u8>, String> {
+    let encoded = encoded
+        .strip_prefix('z')
+        .ok_or_else(|| "Unsupported multibase prefix".to_string())?;
+
+    let hex_part = encoded
+        .strip_prefix("base58_")
+        .ok_or_else(|| "Unsupported multibase encoding".to_string())?;
+
+    hex::decode(hex_part).map_err(|e| format!("Invalid multibase hex: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::IdentityType;
+
+    #[test]
+    fn test_device_add_update_flow() -> Result<(), String> {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        ).map_err(|e| e.to_string())?;
+
+        let doc = generate_did_document(&identity, None)?;
+        let update = create_device_add_update(
+            &identity,
+            &doc,
+            "phone-1",
+            &identity.public_key.dilithium_pk,
+            &identity.public_key.kyber_pk,
+        )?;
+
+        let updated = apply_did_update(doc, &update)?;
+        let entry = updated.device_registry.iter().find(|d| d.device_id == "phone-1");
+        assert!(entry.is_some(), "Device should be added");
+        assert_eq!(entry.unwrap().status, DeviceStatus::Active);
+        Ok(())
+    }
+
+    #[test]
+    fn test_device_remove_update_flow() -> Result<(), String> {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        ).map_err(|e| e.to_string())?;
+
+        let doc = generate_did_document(&identity, None)?;
+        let add_update = create_device_add_update(
+            &identity,
+            &doc,
+            "tablet-1",
+            &identity.public_key.dilithium_pk,
+            &identity.public_key.kyber_pk,
+        )?;
+        let doc_with_device = apply_did_update(doc, &add_update)?;
+
+        let remove_update = create_device_remove_update(&identity, &doc_with_device, "tablet-1")?;
+        let updated = apply_did_update(doc_with_device, &remove_update)?;
+        let entry = updated.device_registry.iter().find(|d| d.device_id == "tablet-1");
+        assert!(entry.is_some(), "Device should exist");
+        assert_eq!(entry.unwrap().status, DeviceStatus::Removed);
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_active_devices() -> Result<(), String> {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        ).map_err(|e| e.to_string())?;
+
+        let doc = generate_did_document(&identity, None)?;
+        let add_update = create_device_add_update(
+            &identity,
+            &doc,
+            "device-a",
+            &identity.public_key.dilithium_pk,
+            &identity.public_key.kyber_pk,
+        )?;
+        let updated = apply_did_update(doc, &add_update)?;
+        let active = list_active_devices(&updated);
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].device_id, "device-a");
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_device_keys() -> Result<(), String> {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        ).map_err(|e| e.to_string())?;
+
+        let doc = generate_did_document(&identity, None)?;
+        let add_update = create_device_add_update(
+            &identity,
+            &doc,
+            "device-b",
+            &identity.public_key.dilithium_pk,
+            &identity.public_key.kyber_pk,
+        )?;
+        let updated = apply_did_update(doc, &add_update)?;
+
+        let (signing, encryption) = get_device_keys(&updated, "device-b")?;
+        assert_eq!(signing, identity.public_key.dilithium_pk);
+        assert_eq!(encryption, identity.public_key.kyber_pk);
+        Ok(())
+    }
+
+    #[test]
+    fn test_update_invalid_signature_rejected() -> Result<(), String> {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        ).map_err(|e| e.to_string())?;
+
+        let doc = generate_did_document(&identity, None)?;
+        let mut update = create_device_add_update(
+            &identity,
+            &doc,
+            "device-c",
+            &identity.public_key.dilithium_pk,
+            &identity.public_key.kyber_pk,
+        )?;
+        // Corrupt signature bytes
+        if !update.signature.signature.is_empty() {
+            update.signature.signature[0] ^= 0xFF;
+        }
+        let result = validate_did_update(&doc, &update);
+        assert!(result.is_err(), "Invalid signature should be rejected");
+        Ok(())
+    }
+
+    #[test]
+    fn test_store_and_resolve_did_document() -> Result<(), String> {
+        crate::set_did_store_memory().map_err(|e| e)?;
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        ).map_err(|e| e.to_string())?;
+
+        let doc = generate_did_document(&identity, None)?;
+        store_did_document(doc.clone())?;
+        let resolved = resolve_did(&doc.id)?;
+        assert_eq!(resolved.id, doc.id);
+        Ok(())
+    }
 }

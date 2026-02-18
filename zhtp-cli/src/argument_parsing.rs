@@ -7,8 +7,7 @@
 use crate::commands;
 
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand, CommandFactory, FromArgMatches};
-use clap::parser::ValueSource;
+use clap::{Args, Parser, Subcommand};
 use serde_json::Value;
 
 /// ZHTP Orchestrator CLI
@@ -19,10 +18,6 @@ pub struct ZhtpCli {
     /// QUIC server address (connects to running node via QUIC on port 9334)
     #[arg(short, long, default_value = "127.0.0.1:9334", env = "ZHTP_SERVER")]
     pub server: String,
-
-    /// Named server profile from CLI config (overrides --server)
-    #[arg(long, env = "ZHTP_PROFILE")]
-    pub profile: Option<String>,
 
     /// Enable verbose output
     #[arg(short, long, env = "ZHTP_VERBOSE")]
@@ -86,12 +81,6 @@ pub enum ZhtpCommand {
 
     /// Configuration management
     Config(ConfigArgs),
-
-    /// Authentication and onboarding
-    Auth(AuthArgs),
-
-    /// Profile management
-    Profile(ProfileArgs),
 
     /// System diagnostics
     Diagnostics(DiagnosticsArgs),
@@ -338,66 +327,33 @@ pub enum IdentityAction {
     },
     /// List identities
     List,
-
-    /// Register a new client-generated identity on the node (creates wallets)
-    ///
-    /// Calls `POST /api/v1/identity/register` over QUIC.
-    ///
-    /// This is useful for staging/testing the migration flow end-to-end, because
-    /// registration assigns a `display_name` and creates wallets/balances that the
-    /// migration can transfer exactly once.
-    Register {
-        /// Display name (username) to register on the node
+    /// Simulate identity message flow (local, no network)
+    SimulateMessage {
+        /// Number of devices to register
+        #[arg(short, long, default_value = "2")]
+        devices: u32,
+        /// Retain until TTL after delivery
         #[arg(long)]
-        display_name: String,
-
-        /// Device identifier for the identity being registered
-        #[arg(long)]
-        device_id: String,
-
-        /// Identity type (human, device, organization)
-        #[arg(long, default_value = "human")]
-        identity_type: String,
-
-        /// Path to keystore directory used for the QUIC client identity
-        #[arg(short, long)]
-        keystore: Option<String>,
-
-        #[command(flatten)]
-        trust: TrustFlags,
+        retain_until_ttl: bool,
     },
-
-    /// Migrate an identity to a new DID (seed-only, controlled re-registration)
-    ///
-    /// This calls `POST /api/v1/identity/migrate` over QUIC.
-    ///
-    /// The request is signed using the **new** seed-derived root signing key (Dilithium5),
-    /// proving control of the recovery phrase for the migrated identity.
-    Migrate {
-        /// Existing identity display name to migrate (must exist on the node)
-        #[arg(long)]
-        display_name: String,
-
-        /// Device identifier to bind to the new identity (copied into the new identity record)
-        #[arg(long)]
+    /// Fetch pending identity envelopes from node
+    Pending {
+        /// Recipient DID
+        recipient_did: String,
+        /// Device ID
         device_id: String,
-
-        /// 24-word recovery phrase for the NEW identity (quote it)
-        ///
-        /// If omitted, a new phrase is generated and printed.
+    },
+    /// Acknowledge delivery of an identity envelope
+    Ack {
+        /// Recipient DID
+        recipient_did: String,
+        /// Device ID
+        device_id: String,
+        /// Message ID
+        message_id: u64,
+        /// Retain until TTL after delivery
         #[arg(long)]
-        phrase: Option<String>,
-
-        /// Read the 24-word recovery phrase from a file
-        #[arg(long)]
-        phrase_file: Option<String>,
-
-        /// Path to keystore directory used for the QUIC client identity
-        #[arg(short, long)]
-        keystore: Option<String>,
-
-        #[command(flatten)]
-        trust: TrustFlags,
+        retain_until_ttl: bool,
     },
 }
 
@@ -587,134 +543,6 @@ pub enum ConfigAction {
     },
 }
 
-/// Authentication commands
-#[derive(Args, Debug, Clone)]
-pub struct AuthArgs {
-    #[command(subcommand)]
-    pub action: AuthAction,
-}
-
-#[derive(Subcommand, Debug, Clone)]
-pub enum AuthAction {
-    /// Login and create a profile (interactive by default)
-    Login {
-        /// Profile name
-        #[arg(long)]
-        profile: Option<String>,
-
-        /// Server address (host:port)
-        #[arg(long)]
-        server: Option<String>,
-
-        /// Path to identity keystore directory
-        #[arg(long)]
-        keystore: Option<String>,
-
-        /// Identity DID to use
-        #[arg(long)]
-        identity: Option<String>,
-
-        /// API key for authentication
-        #[arg(long)]
-        api_key: Option<String>,
-
-        /// User ID for authentication
-        #[arg(long)]
-        user_id: Option<String>,
-
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode - accept any certificate (INSECURE)
-        #[arg(long)]
-        trust_node: bool,
-
-        /// Set this profile as default
-        #[arg(long)]
-        set_default: bool,
-
-        /// Do not prompt, require all inputs
-        #[arg(long)]
-        non_interactive: bool,
-    },
-}
-
-/// Profile management commands
-#[derive(Args, Debug, Clone)]
-pub struct ProfileArgs {
-    #[command(subcommand)]
-    pub action: ProfileAction,
-}
-
-#[derive(Subcommand, Debug, Clone)]
-pub enum ProfileAction {
-    /// List profiles
-    List,
-
-    /// Show a profile
-    Show {
-        /// Profile name
-        name: String,
-    },
-
-    /// Set default profile
-    Use {
-        /// Profile name
-        name: String,
-    },
-
-    /// Create or update a profile
-    Set {
-        /// Profile name
-        name: String,
-
-        /// Server address (host:port)
-        #[arg(long)]
-        server: Option<String>,
-
-        /// Path to identity keystore directory
-        #[arg(long)]
-        keystore: Option<String>,
-
-        /// Identity DID to use
-        #[arg(long)]
-        identity: Option<String>,
-
-        /// API key for authentication
-        #[arg(long)]
-        api_key: Option<String>,
-
-        /// User ID for authentication
-        #[arg(long)]
-        user_id: Option<String>,
-
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode - accept any certificate (INSECURE)
-        #[arg(long)]
-        trust_node: bool,
-    },
-}
-
 /// Component management commands
 #[derive(Args, Debug, Clone)]
 pub struct ComponentArgs {
@@ -860,11 +688,11 @@ pub enum DeployAction {
         #[arg(short, long, default_value = "spa")]
         mode: Option<String>,
 
-        /// Path to identity keystore directory
+        /// Path to identity keystore directory (REQUIRED for production deploys)
         #[arg(short, long)]
-        keystore: Option<String>,
+        keystore: String,
 
-        /// Fee to pay for deployment (in SOV tokens)
+        /// Fee to pay for deployment (in ZHTP tokens)
         #[arg(short, long)]
         fee: Option<u64>,
 
@@ -925,9 +753,9 @@ pub enum DeployAction {
         #[arg(short, long)]
         to_version: u64,
 
-        /// Path to identity keystore directory
+        /// Path to identity keystore directory (REQUIRED)
         #[arg(short, long)]
-        keystore: Option<String>,
+        keystore: String,
 
         /// Force rollback without confirmation
         #[arg(short, long)]
@@ -951,11 +779,11 @@ pub enum DeployAction {
         #[arg(short, long, default_value = "spa")]
         mode: Option<String>,
 
-        /// Path to identity keystore directory
+        /// Path to identity keystore directory (REQUIRED)
         #[arg(short, long)]
-        keystore: Option<String>,
+        keystore: String,
 
-        /// Fee for update (in SOV tokens)
+        /// Fee for update (in ZHTP tokens)
         #[arg(short, long)]
         fee: Option<u64>,
 
@@ -973,27 +801,13 @@ pub enum DeployAction {
         #[arg(short, long)]
         domain: String,
 
-        /// Path to identity keystore directory
+        /// Path to identity keystore directory (REQUIRED)
         #[arg(short, long)]
-        keystore: Option<String>,
+        keystore: String,
 
         /// Force delete without confirmation
         #[arg(short, long)]
         force: bool,
-
-        #[command(flatten)]
-        trust: TrustFlags,
-    },
-
-    /// Fetch and print a Web4 manifest by CID (debug utility)
-    FetchManifest {
-        /// Manifest CID to fetch (bafk...)
-        #[arg(long)]
-        cid: String,
-
-        /// Path to identity keystore directory (used to establish a QUIC client session)
-        #[arg(short, long)]
-        keystore: Option<String>,
 
         #[command(flatten)]
         trust: TrustFlags,
@@ -1081,19 +895,6 @@ pub enum DomainAction {
         trust: TrustFlags,
     },
 
-    /// Shortcut: domain status (alias for info)
-    Status {
-        /// Domain name
-        domain: String,
-
-        /// Path to identity keystore directory
-        #[arg(short, long)]
-        keystore: Option<String>,
-
-        #[command(flatten)]
-        trust: TrustFlags,
-    },
-
     /// Transfer domain to new owner
     Transfer {
         /// Domain name to transfer
@@ -1104,9 +905,9 @@ pub enum DomainAction {
         #[arg(short, long)]
         new_owner: String,
 
-        /// Path to identity keystore directory
+        /// Path to identity keystore directory (REQUIRED)
         #[arg(short, long)]
-        keystore: Option<String>,
+        keystore: String,
 
         #[command(flatten)]
         trust: TrustFlags,
@@ -1118,9 +919,9 @@ pub enum DomainAction {
         #[arg(short, long)]
         domain: String,
 
-        /// Path to identity keystore directory
+        /// Path to identity keystore directory (REQUIRED)
         #[arg(short, long)]
-        keystore: Option<String>,
+        keystore: String,
 
         /// Force release without confirmation
         #[arg(short, long)]
@@ -1132,9 +933,9 @@ pub enum DomainAction {
 
     /// Admin: migrate legacy domain records to the latest format
     Migrate {
-        /// Path to identity keystore directory
+        /// Path to identity keystore directory (REQUIRED)
         #[arg(short, long)]
-        keystore: Option<String>,
+        keystore: String,
 
         #[command(flatten)]
         trust: TrustFlags,
@@ -1266,9 +1067,6 @@ pub enum TokenAction {
         /// Initial supply
         #[arg(long)]
         supply: u64,
-        /// Decimal places (default: 8)
-        #[arg(short, long, default_value = "8")]
-        decimals: u8,
         // NOTE: creator removed - now derived from authenticated session
     },
     /// Mint additional tokens (creator only)
@@ -1333,58 +1131,13 @@ pub async fn run_cli() -> Result<()> {
         lib_identity::constants::TESTNET_GENESIS_HASH
     );
 
-    let mut cmd = ZhtpCli::command();
-    let matches = cmd.get_matches();
-    let mut cli = ZhtpCli::from_arg_matches(&matches)?;
+    let cli = ZhtpCli::parse();
 
     if cli.verbose {
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
             .init();
     }
-
-    let config = crate::cli_config::load_config(cli.config.as_deref())?;
-    let server_source = matches.value_source("server").unwrap_or(ValueSource::DefaultValue);
-    let profile_name = cli.profile.clone().or(config.default_profile.clone());
-
-    let mut runtime_defaults = crate::cli_config::RuntimeDefaults::default();
-    if let Some(defaults) = &config.defaults {
-        runtime_defaults = crate::cli_config::merge_defaults(runtime_defaults, defaults);
-    }
-
-    if let Some(profile_name) = profile_name {
-        if server_source == ValueSource::CommandLine {
-            return Err(anyhow::anyhow!(
-                "Cannot use --profile with --server. Use only one."
-            ));
-        }
-        let profile = crate::cli_config::resolve_profile(&config, &profile_name)
-            .ok_or_else(|| anyhow::anyhow!("Unknown profile '{}'", profile_name))?;
-        if let Some(server) = &profile.server {
-            cli.server = server.clone();
-        }
-        runtime_defaults = crate::cli_config::merge_profile_config(runtime_defaults, profile);
-    } else if let Some(spec) = crate::cli_config::resolve_server_alias(&config, &cli.server) {
-        cli.server = spec.address().to_string();
-        if let Some(profile_defaults) = spec.profile() {
-            runtime_defaults = crate::cli_config::merge_profile_defaults(runtime_defaults, profile_defaults);
-        }
-    } else if server_source == ValueSource::DefaultValue {
-        if let Some(defaults) = &config.defaults {
-            if let Some(server) = &defaults.server {
-                cli.server = server.clone();
-            }
-        }
-    }
-
-    if cli.api_key.is_none() {
-        cli.api_key = runtime_defaults.api_key.clone();
-    }
-    if cli.user_id.is_none() {
-        cli.user_id = runtime_defaults.user_id.clone();
-    }
-
-    crate::cli_config::set_runtime_defaults(runtime_defaults);
 
     match &cli.command {
         ZhtpCommand::Node(args) => commands::node::handle_node_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
@@ -1399,8 +1152,6 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Version(args) => commands::version::handle_version_command(args.clone()).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Completion(args) => commands::completion::handle_completion_command(args.clone()).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Config(args) => commands::config::handle_config_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Auth(args) => commands::auth::handle_auth_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Profile(args) => commands::profile::handle_profile_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Diagnostics(args) => commands::diagnostics::handle_diagnostics_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Backup(args) => commands::backup::handle_backup_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Component(args) => commands::component::handle_component_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
