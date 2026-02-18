@@ -33,7 +33,10 @@ pub use engines::enhanced_bft_engine::{ConsensusStatus, EnhancedBftEngine};
 pub use engines::ConsensusEngine;
 pub use mempool::{Mempool, MempoolTransaction, MempoolStats};
 pub use mining::{should_mine_block, IdentityData};
-pub use network::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
+pub use network::{
+    check_consensus_health, BincodeConsensusCodec, CodecError, ConsensusMessageCodec,
+    ConsensusMetrics,
+};
 pub use proofs::*;
 pub use testing::NoOpBroadcaster;
 pub use types::*;
