@@ -117,6 +117,37 @@ pub fn token_balances_prefix(token: &TokenId) -> [u8; 32] {
 }
 
 // =============================================================================
+// Token Transfer Nonce Keys
+// =============================================================================
+// Key: (token_id, sender_address) -> nonce
+// Used for replay protection on token transfers
+
+/// Generate a storage key for token transfer nonce
+///
+/// Key format: 0x01 || token_id (32 bytes) || sender (32 bytes) = 65 bytes
+#[inline]
+pub fn token_nonce_key(token: &TokenId, sender: &Address) -> [u8; 65] {
+    let mut key = [0u8; 65];
+    key[0] = 0x01; // Prefix to distinguish from balance keys
+    key[1..33].copy_from_slice(token.as_bytes());
+    key[33..65].copy_from_slice(sender.as_bytes());
+    key
+}
+
+/// Parse token ID and sender from a nonce key
+#[inline]
+pub fn parse_token_nonce_key(key: &[u8]) -> Option<(TokenId, Address)> {
+    if key.len() != 65 || key[0] != 0x01 {
+        return None;
+    }
+    let mut token_bytes = [0u8; 32];
+    let mut addr_bytes = [0u8; 32];
+    token_bytes.copy_from_slice(&key[1..33]);
+    addr_bytes.copy_from_slice(&key[33..65]);
+    Some((TokenId(token_bytes), Address(addr_bytes)))
+}
+
+// =============================================================================
 // TOKEN CONTRACT KEYS
 // =============================================================================
 
@@ -173,7 +204,9 @@ pub fn parse_identity_by_height_key(key: &[u8]) -> Option<(u64, [u8; 32])> {
     if key.len() != 40 {
         return None;
     }
-    let height = u64::from_be_bytes([key[0], key[1], key[2], key[3], key[4], key[5], key[6], key[7]]);
+    let height = u64::from_be_bytes([
+        key[0], key[1], key[2], key[3], key[4], key[5], key[6], key[7],
+    ]);
     let mut did_hash = [0u8; 32];
     did_hash.copy_from_slice(&key[8..40]);
     Some((height, did_hash))
