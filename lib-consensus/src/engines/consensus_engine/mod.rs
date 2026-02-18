@@ -568,6 +568,23 @@ impl ConsensusEngine {
                     // Consensus proposes for next block, so height = blockchain_height + 1
                     // But if blockchain is at 0 (no blocks), we start at height 1
                     self.current_round.height = if blockchain_height == 0 { 1 } else { blockchain_height + 1 };
+                    
+                    // TODO(BFT-J-1015): Add consensus invariant check on height transition
+                    // Validate monotonic height progression and no fork at new height
+                    // Example:
+                    // ```
+                    // use crate::invariants::{ConsensusState, enforce_consensus_invariants};
+                    // let state = ConsensusState {
+                    //     current_height: self.current_round.height,
+                    //     previous_height: Some(old_height),
+                    //     votes_received: 0, // Not applicable during height sync
+                    //     total_validators: self.validator_manager.active_validator_count(),
+                    //     fork_detected: false, // Check consensus state for fork detection
+                    //     reorg_detected: false, // Check if blockchain was reorged
+                    // };
+                    // enforce_consensus_invariants(&state);
+                    // ```
+                    
                     tracing::info!(
                         "📊 Consensus height synced: {} → {} (blockchain at {})",
                         old_height,

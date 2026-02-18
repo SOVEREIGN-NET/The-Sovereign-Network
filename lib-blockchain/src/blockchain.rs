@@ -1557,6 +1557,27 @@ impl Blockchain {
         self.save_utxo_snapshot(self.height)?;
         self.adjust_difficulty()?;
 
+        // TODO(BFT-J-1015): Add consensus invariant enforcement here
+        // Once consensus coordinator is fully integrated, validate:
+        // - No fork detected at this height
+        // - Height progression is monotonic
+        // - Block has sufficient validator quorum (if applicable)
+        // - No reorg of finalized blocks
+        //
+        // Example integration (currently disabled pending full consensus integration):
+        // ```
+        // use lib_consensus::invariants::{ConsensusState, enforce_consensus_invariants};
+        // let state = ConsensusState {
+        //     current_height: self.height,
+        //     previous_height: if self.height > 0 { Some(self.height - 1) } else { None },
+        //     votes_received: validator_votes_count, // From consensus coordinator
+        //     total_validators: total_validator_count, // From consensus coordinator
+        //     fork_detected: false, // Check for conflicting blocks at this height
+        //     reorg_detected: false, // Check if any finalized blocks were reverted
+        // };
+        // enforce_consensus_invariants(&state);
+        // ```
+
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
 
