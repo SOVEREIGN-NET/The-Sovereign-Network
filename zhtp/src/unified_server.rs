@@ -843,6 +843,21 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/v1/mesh".to_string(), mesh_handler);
 
+        // PoUW (Proof-of-Useful-Work) handler
+        // TODO: Use real node keys from identity in production
+        let pouw_node_key = [0u8; 32]; // Placeholder - use real node key
+        let pouw_node_id = [0u8; 32];  // Placeholder - use real node ID
+        let pouw_generator = crate::pouw::ChallengeGenerator::new(pouw_node_key, pouw_node_id);
+        let pouw_generator_arc = std::sync::Arc::new(pouw_generator.clone());
+        let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc);
+        let pouw_calculator = crate::pouw::RewardCalculator::new(0); // genesis block
+        let pouw_handler = crate::api::handlers::pouw::PouwHandler::new(
+            pouw_generator,
+            pouw_validator,
+            pouw_calculator,
+        );
+        zhtp_router.register_handler("/pouw".to_string(), Arc::new(pouw_handler));
+
         info!("✅ All API handlers registered successfully on ZHTP router");
         Ok(())
     }
