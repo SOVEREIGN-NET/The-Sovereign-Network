@@ -85,6 +85,15 @@ fn validate_block_header(block: &Block) -> BlockValidateResult<()> {
         return Err(BlockValidateError::InvalidVersion(header.version));
     }
 
+    // Protocol version check - ensure block uses correct version for its height
+    // This enforces coordinated hard forks at specific block heights
+    crate::enforce_block_protocol_version(header.version, header.height)
+        .map_err(|e| BlockValidateError::InvalidProtocolVersion {
+            version: header.version,
+            height: header.height,
+            reason: e.to_string(),
+        })?;
+
     // Transaction count must match
     if header.transaction_count as usize != block.transactions.len() {
         return Err(BlockValidateError::TransactionCountMismatch {

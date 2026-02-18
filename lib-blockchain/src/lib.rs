@@ -179,6 +179,18 @@ pub use contracts::{
 
 /// ZHTP blockchain protocol version.
 ///
+/// # Version Dimensions
+///
+/// The Sovereign Network uses multiple version dimensions:
+/// - **BLOCKCHAIN_VERSION** (u32, this constant): Core blockchain protocol and consensus rules
+/// - **UHP_VERSION** (u8, in lib-network): Network handshake protocol version
+/// - **CONSENSUS_CODEC_VERSION** (u8, in lib-consensus): Message encoding format version
+///
+/// These dimensions evolve independently but must remain compatible. A node validates:
+/// 1. Network peers use compatible UHP_VERSION during handshake
+/// 2. Blocks and votes use correct BLOCKCHAIN_VERSION for their height
+/// 3. Consensus messages use expected CONSENSUS_CODEC_VERSION
+///
 /// # Protocol Upgrade Policy (BFT-H)
 ///
 /// Protocol upgrades are consensus-critical and must follow this policy:
