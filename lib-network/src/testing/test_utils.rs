@@ -1,13 +1,15 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use lib_crypto::hash_blake3;
+use lib_identity::types::NodeId;
 use crate::protocols::NetworkProtocol;
 use crate::mesh::server::ZhtpMeshServer;
 use crate::storage_stub::{UnifiedStorageConfig, UnifiedStorageSystem};
 
 /// Create a test mesh server for development with implementations
 pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {
-    let node_id = hash_blake3(b"test-mesh-server");
+    let node_id_bytes = hash_blake3(b"test-mesh-server");
+    let node_id = NodeId::from_bytes(node_id_bytes);
     let storage_config = UnifiedStorageConfig::default();
     let storage = UnifiedStorageSystem::new(storage_config).await?;
     
@@ -18,7 +20,7 @@ pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {
     ];
     
     // Create dummy owner key for testing
-    let owner_key = lib_crypto::PublicKey::new(node_id.to_vec());
+    let owner_key = lib_crypto::PublicKey::new(node_id_bytes.to_vec());
     ZhtpMeshServer::new(node_id, owner_key, storage, protocols, vec![]).await
 }
 
