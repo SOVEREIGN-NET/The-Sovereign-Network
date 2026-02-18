@@ -1,0 +1,85 @@
+# Relay Node Configuration
+# Routing-only node with NO blockchain state
+#
+# Relay nodes forward messages and route traffic but do not:
+# - Store blockchain state
+# - Validate blocks
+# - Mine/produce blocks
+# - Maintain transaction history
+#
+# Use case: Network routing, NAT traversal, mesh connectivity
+
+# IMPORTANT: node_type MUST be explicitly set to "relay"
+# Relay nodes cannot be auto-derived from other config flags
+node_type = "relay"
+
+mesh_mode = "Hybrid"
+security_level = "High"
+environment = "Testnet"
+data_directory = "./data/relay-node"
+
+[crypto_config]
+post_quantum_enabled = true
+dilithium_level = 3
+kyber_level = 768
+hybrid_mode = true
+memory_security = true
+
+[zk_config]
+plonky2_enabled = false  # Relay nodes don't validate proofs
+proof_cache_size = 0
+circuit_cache_enabled = false
+parallel_proving = false
+verification_threads = 0
+
+[identity_config]
+auto_citizenship = false  # Relay nodes don't need citizenship
+ubi_registration = false
+dao_auto_join = false
+recovery_modes = []
+reputation_enabled = false
+
+[storage_config]
+dht_port = 9001
+storage_capacity_gb = 0  # No storage needed
+replication_factor = 0
+erasure_coding = false
+pricing_tier = "hot"
+
+[network_config]
+mesh_port = 9336  # Different port from other test nodes
+max_peers = 100  # Relays can handle more connections
+protocols = ["tcp", "quic"]  # Core protocols only
+bootstrap_peers = ["127.0.0.1:9334", "127.0.0.1:9335"]
+long_range_relays = true  # This IS a relay
+
+[blockchain_config]
+network_id = "zhtp-local-test"
+chain_id = 99
+block_time_seconds = 3
+max_block_size = 0  # No blocks
+zk_transactions = false
+smart_contracts = false
+edge_mode = false  # Not an edge node
+edge_max_headers = 0
+mempool_max_size = 0
+
+[consensus_config]
+validator_enabled = false  # Relay nodes don't validate
+consensus_type = "none"
+dao_enabled = false
+min_stake = 0
+sync_enabled = false
+
+[economics_config]
+base_fee = 0
+gas_price_multiplier = 1.0
+
+[protocols_config]
+http_enabled = false  # Relay nodes don't serve HTTP API
+websocket_enabled = false
+graphql_enabled = false
+
+[rewards_config]
+mining_enabled = false
+staking_enabled = false
