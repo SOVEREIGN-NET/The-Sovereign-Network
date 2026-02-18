@@ -1601,6 +1601,10 @@ impl Blockchain {
             }
         }
 
+        // DEPRECATED: Legacy path without BlockExecutor
+        // This path will be removed in a future version
+        warn!("DEPRECATED: Using legacy block processing path without BlockExecutor. Please use Blockchain::new_with_executor() or set_executor().");
+
         // Legacy path: direct state mutations (when no executor configured)
         // Verify the block
         let previous_block = self.blocks.last();
@@ -1618,7 +1622,6 @@ impl Blockchain {
         }
 
         // Issue #1016: Deduct transaction fees from sender balances BEFORE updating UTXO set
-        // This ensures fees are collected at the consensus layer, not just declared
         let block_fees = self.deduct_transaction_fees(&block)?;
         if block_fees > 0 {
             debug!("Collected {} in fees from block {}", block_fees, block.height());
@@ -1631,32 +1634,10 @@ impl Blockchain {
         self.save_utxo_snapshot(self.height)?;
         self.adjust_difficulty()?;
 
-        // TODO(BFT-J-1015): Add consensus invariant enforcement here
-        // Once consensus coordinator is fully integrated, validate:
-        // - No fork detected at this height
-        // - Height progression is monotonic
-        // - Block has sufficient validator quorum (if applicable)
-        // - No reorg of finalized blocks
-        //
-        // Example integration (currently disabled pending full consensus integration):
-        // ```
-        // use lib_consensus::invariants::{ConsensusState, enforce_consensus_invariants};
-        // let state = ConsensusState {
-        //     current_height: self.height,
-        //     previous_height: if self.height > 0 { Some(self.height - 1) } else { None },
-        //     votes_received: validator_votes_count, // From consensus coordinator
-        //     total_validators: total_validator_count, // From consensus coordinator
-        //     fork_detected: false, // Check for conflicting blocks at this height
-        //     reorg_detected: false, // Check if any finalized blocks were reverted
-        // };
-        // enforce_consensus_invariants(&state);
-        // ```
-
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
 
-        // Begin sled transaction BEFORE processing identity/wallet transactions
-        // This ensures any sled writes during processing have an active transaction
+        // Begin sled transaction for remaining processing
         if let Some(ref store) = self.store {
             store.begin_block(block.header.height)
                 .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
@@ -1668,50 +1649,40 @@ impl Blockchain {
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
 
-        // Process approved governance proposals (e.g., difficulty parameter updates)
-        // This executes any proposals that have passed voting since the last block
+        // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
-            // Don't fail block processing, governance is non-critical
         }
 
-        // Process economic features (UBI claims and profit declarations)
+        // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
             warn!("Error processing UBI claims at height {}: {}", self.height, e);
-            // Don't fail block processing for UBI errors
         }
-
-        // Automatic UBI distribution is now minted via TokenMint transactions
-        // constructed during block creation (block-authoritative path).
 
         if let Err(e) = self.process_profit_declarations(&block) {
             warn!("Error processing profit declarations at height {}: {}", self.height, e);
-            // Don't fail block processing for profit declaration errors
         }
 
-        // Create transaction receipts for all transactions in block
+        // Create transaction receipts
         let block_hash = block.hash();
         for (tx_index, tx) in block.transactions.iter().enumerate() {
             if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
                 warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
-                // Continue processing even if receipt creation fails
             }
         }
 
-        // Persist block to SledStore (Phase 3 incremental storage)
+        // Persist block to SledStore
         if let Some(ref store) = self.store {
             if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
                 error!("Failed to persist block {} to SledStore: {}", block.height(), e);
-                // Don't fail block processing - log error but continue
             } else {
                 debug!("Block {} persisted to SledStore", block.height());
             }
         }
 
-        // Update persistence counter
         self.blocks_since_last_persist += 1;
 
-        // Emit BlockAdded event (Issue #11)
+        // Emit BlockAdded event
         let block_hash_bytes = block.hash();
         let block_hash_array: [u8; 32] = match block_hash_bytes.as_bytes().try_into() {
             Ok(arr) => arr,
@@ -1733,7 +1704,6 @@ impl Blockchain {
         };
         if let Err(e) = self.event_publisher.publish(event).await {
             warn!("Failed to publish BlockAdded event: {}", e);
-            // Don't fail block processing for event publishing errors
         }
 
         Ok(())
