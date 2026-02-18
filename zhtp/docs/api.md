@@ -2,16 +2,13 @@
 
 ## Overview
 
-The ZHTP API provides REST endpoints for interacting with the Zero-Knowledge Hypertext Transfer Protocol network. All endpoints use HTTP/1.1 for compatibility while implementing ZHTP protocol features.
+The ZHTP API provides endpoints for interacting with the Zero-Knowledge Hypertext Transfer Protocol network. All communication is handled over QUIC.
 
-**Base URL**: `http://127.0.0.1:9333/api/v1`
+**Base URL**: `zhtp://127.0.0.1:9334/api/v1`
 
 ## Authentication
 
-Most endpoints require API authentication. Include these headers:
-- `Content-Type: application/json`
-- `Accept: application/json`
-- `Authorization: Bearer <api_key>` (when required)
+Authentication is handled at the transport layer via a QUIC handshake using the UHP (Unified Handshake Protocol).
 
 ## Identity Management
 
@@ -202,7 +199,7 @@ All endpoints may return these error responses:
 ```json
 {
   "error": "unauthorized",
-  "message": "Invalid API key or authentication required"
+  "message": "Authentication required"
 }
 ```
 
@@ -221,7 +218,7 @@ All endpoints may return these error responses:
 ## Rate Limiting
 
 - **Default**: 100 requests per minute per IP
-- **Authenticated**: 1000 requests per minute per API key
+- **Authenticated**: 1000 requests per minute
 - **Identity Operations**: 10 creates per hour per IP
 
 ## Economic Model
@@ -239,52 +236,3 @@ All API operations include economic incentives:
 - **Identity Verification**: Blockchain-backed identity confirmation
 - **Economic Security**: Anti-spam through economic incentives
 
-## Integration Examples
-
-### cURL Example
-
-```bash
-# Create a new DID identity
-curl -X POST http://127.0.0.1:9333/api/v1/identity/create \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{
-    "identity_type": "human",
-    "display_name": "Alice",
-    "recovery_options": ["recovery_phrase_alice", "backup_phrase_12345"],
-    "initial_wallet_type": "citizen_wallet"
-  }'
-```
-
-### JavaScript Example
-
-```javascript
-// Create identity using fetch API
-const response = await fetch('http://127.0.0.1:9333/api/v1/identity/create', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json'
-  },
-  body: JSON.stringify({
-    identity_type: 'human',
-    display_name: 'Bob',
-    recovery_options: ['recovery_phrase_bob', 'backup_phrase_67890'],
-    initial_wallet_type: 'citizen_wallet'
-  })
-});
-
-const result = await response.json();
-console.log('DID Created:', result.did);
-```
-
-## Development & Testing
-
-The ZHTP API server runs on `http://127.0.0.1:9333` by default and includes:
-
-- **Live Monitoring**: Real-time system health and metrics
-- **Development Logging**: Comprehensive request/response logging
-- **Test Mode**: Simplified operations for development testing
-- **Simulation Mode**: Network operations without hardware requirements
-
-For production deployment, configure appropriate security headers, rate limiting, and authentication mechanisms.

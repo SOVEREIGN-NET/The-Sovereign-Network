@@ -6,10 +6,13 @@ The ZHTP API provides a comprehensive interface for interacting with the ZHTP no
 
 ## Base Configuration
 
-- **Protocol**: ZHTP/1.0
-- **Default Port**: 9333
+- **Protocol**: ZHTP/1.0 over QUIC
+- **Default QUIC endpoint**: 127.0.0.1:9334
 - **Content-Type**: application/json
-- **Authentication**: API key and user ID based
+
+## Authentication
+
+Authentication is handled at the transport layer via a QUIC handshake using the UHP (Unified Handshake Protocol).
 
 ## API Endpoints
 
@@ -18,7 +21,7 @@ The ZHTP API provides a comprehensive interface for interacting with the ZHTP no
 #### Get Network Peers
 Retrieve a list of connected network peers.
 
-```http
+```
 GET /api/v1/blockchain/network/peers
 ```
 
@@ -47,7 +50,7 @@ GET /api/v1/blockchain/network/peers
 #### Get Network Statistics
 Retrieve comprehensive network statistics and health metrics.
 
-```http
+```
 GET /api/v1/blockchain/network/stats
 ```
 
@@ -82,14 +85,14 @@ GET /api/v1/blockchain/network/stats
 #### Add Network Peer
 Add a new peer to the network.
 
-```http
+```
 POST /api/v1/blockchain/network/peer/add
 ```
 
 **Request Body:**
 ```json
 {
-  "peer_address": "192.168.1.100:33444",
+  "peer_address": "192.168.1.100:9334",
   "peer_type": "local"
 }
 ```
@@ -99,7 +102,7 @@ POST /api/v1/blockchain/network/peer/add
 {
   "status": "success",
   "peer_id": "peer_12345",
-  "message": "Successfully initiated connection to peer 192.168.1.100:33444",
+  "message": "Successfully initiated connection to peer 192.168.1.100:9334",
   "connected": true
 }
 ```
@@ -107,7 +110,7 @@ POST /api/v1/blockchain/network/peer/add
 #### Remove Network Peer
 Remove a peer from the network.
 
-```http
+```
 DELETE /api/v1/blockchain/network/peer/{peer_id}
 ```
 
@@ -126,7 +129,7 @@ DELETE /api/v1/blockchain/network/peer/{peer_id}
 #### Create Identity
 Create a new zero-knowledge DID identity.
 
-```http
+```
 POST /api/v1/identity/create
 ```
 
@@ -152,7 +155,7 @@ POST /api/v1/identity/create
 #### Verify Identity
 Verify an existing identity.
 
-```http
+```
 POST /api/v1/identity/verify
 ```
 
@@ -177,7 +180,7 @@ POST /api/v1/identity/verify
 #### List Identities
 Get a list of all identities.
 
-```http
+```
 GET /api/v1/identity/list
 ```
 
@@ -202,7 +205,7 @@ GET /api/v1/identity/list
 #### Get Blockchain Status
 Get the current blockchain status and statistics.
 
-```http
+```
 GET /api/v1/blockchain/status
 ```
 
@@ -222,7 +225,7 @@ GET /api/v1/blockchain/status
 #### Get Transaction
 Retrieve information about a specific transaction.
 
-```http
+```
 GET /api/v1/blockchain/transaction/{tx_hash}
 ```
 
@@ -247,7 +250,7 @@ GET /api/v1/blockchain/transaction/{tx_hash}
 #### Submit Transaction
 Submit a new transaction to the blockchain.
 
-```http
+```
 POST /api/v1/blockchain/transaction/submit
 ```
 
@@ -276,7 +279,7 @@ POST /api/v1/blockchain/transaction/submit
 #### Create Wallet
 Create a new wallet.
 
-```http
+```
 POST /api/v1/wallet/create
 ```
 
@@ -301,7 +304,7 @@ POST /api/v1/wallet/create
 #### Get Wallet Balance
 Get the balance for a specific wallet.
 
-```http
+```
 GET /api/v1/wallet/balance/{address}
 ```
 
@@ -322,7 +325,7 @@ GET /api/v1/wallet/balance/{address}
 #### Transfer Funds
 Transfer funds between wallets.
 
-```http
+```
 POST /api/v1/wallet/transfer
 ```
 
@@ -351,7 +354,7 @@ POST /api/v1/wallet/transfer
 #### Store Content
 Store content in the distributed storage system.
 
-```http
+```
 POST /api/v1/storage/store
 ```
 
@@ -378,7 +381,7 @@ POST /api/v1/storage/store
 #### Retrieve Content
 Retrieve content from distributed storage.
 
-```http
+```
 GET /api/v1/storage/retrieve/{content_hash}
 ```
 
@@ -398,7 +401,7 @@ GET /api/v1/storage/retrieve/{content_hash}
 #### Get DAO Information
 Get information about the DAO governance system.
 
-```http
+```
 GET /api/v1/dao/info
 ```
 
@@ -419,7 +422,7 @@ GET /api/v1/dao/info
 #### Create Proposal
 Create a new DAO proposal.
 
-```http
+```
 POST /api/v1/dao/propose
 ```
 
@@ -446,7 +449,7 @@ POST /api/v1/dao/propose
 #### Vote on Proposal
 Cast a vote on a DAO proposal.
 
-```http
+```
 POST /api/v1/dao/vote
 ```
 
@@ -476,7 +479,7 @@ POST /api/v1/dao/vote
 #### Claim UBI
 Claim Universal Basic Income.
 
-```http
+```
 POST /api/v1/dao/claim-ubi
 ```
 
@@ -495,7 +498,7 @@ POST /api/v1/dao/claim-ubi
 #### Health Check
 Get overall system health status.
 
-```http
+```
 GET /api/v1/health
 ```
 
@@ -513,7 +516,7 @@ GET /api/v1/health
 #### Get System Statistics
 Get comprehensive system statistics.
 
-```http
+```
 GET /api/v1/stats
 ```
 
@@ -545,15 +548,8 @@ GET /api/v1/stats
 
 ## Request/Response Format
 
-### Request Headers
-```http
-Content-Type: application/json
-X-API-Key: your-api-key
-X-User-ID: your-user-id
-```
-
 ### Response Headers
-```http
+```
 Content-Type: application/json
 X-Handler: HandlerName
 X-Protocol: ZHTP/1.0
@@ -578,23 +574,9 @@ X-Response-Time: 45ms
 - `RATE_LIMITED` - Too many requests
 - `INTERNAL_ERROR` - Server error
 
-## Authentication
-
-### API Key Authentication
-Include your API key in the request headers:
-```http
-X-API-Key: your-api-key-here
-```
-
-### User ID
-Include your user ID for user-specific operations:
-```http
-X-User-ID: did:zhtp:your-identity-here
-```
-
 ## Rate Limiting
 
-- Default: 100 requests per minute per API key
+- Default: 100 requests per minute
 - Burst: Up to 20 requests in 10 seconds
 - Headers included in response:
   - `X-RateLimit-Limit`: Rate limit
@@ -607,53 +589,5 @@ Some operations require SOV token payments:
 - Storage operations: Based on size and redundancy
 - High-priority transactions: Network fee
 - Premium API access: Subscription model
-
-## WebSocket Support
-
-Real-time updates available via WebSocket connections:
-```javascript
-ws://localhost:9333/api/v1/ws
-```
-
-### Subscription Topics
-- `network.peers` - Peer connection updates
-- `blockchain.transactions` - New transactions
-- `blockchain.blocks` - New blocks
-- `dao.proposals` - Proposal updates
-- `system.health` - Health status changes
-
-### WebSocket Message Format
-```json
-{
-  "type": "update",
-  "topic": "network.peers",
-  "data": {
-    "peer_id": "peer_123",
-    "event": "connected",
-    "timestamp": 1697834400
-  }
-}
-```
-
-## SDK Libraries
-
-Official SDKs available for:
-- Rust (native)
-- JavaScript/TypeScript
-- Python
-- Go
-
-Example usage (JavaScript):
-```javascript
-import { ZhtpClient } from '@zhtp/sdk';
-
-const client = new ZhtpClient({
-  endpoint: 'http://localhost:9333',
-  apiKey: 'your-api-key'
-});
-
-const peers = await client.network.getPeers();
-console.log(`Connected peers: ${peers.peer_count}`);
-```
 
 This API reference provides comprehensive access to all ZHTP node orchestrator functionality, enabling developers to build applications on the ZHTP network with zero-knowledge privacy, economic incentives, and decentralized governance.
