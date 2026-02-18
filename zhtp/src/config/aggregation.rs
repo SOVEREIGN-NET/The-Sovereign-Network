@@ -794,11 +794,19 @@ impl NodeConfig {
             );
             NodeRole::FullValidator
         } else {
-            // Validator is not enabled - determine if this is an edge node based on storage config
-            if self.storage_config.hosted_storage_gb == 0 {
-                // Edge node: no hosting storage, minimal blockchain storage
+            // Use the same edge criteria as derive_node_type() so NodeRole never diverges from
+            // NodeType when edge_mode is explicitly set in config.
+            let is_edge = Self::is_edge_node_config(
+                self.consensus_config.validator_enabled,
+                self.blockchain_config.edge_mode,
+                self.blockchain_config.smart_contracts,
+                self.storage_config.hosted_storage_gb,
+            );
+            if is_edge {
                 tracing::info!(
-                    "✓ Deriving NodeRole: validator_enabled=false, hosted_storage_gb=0 → LightNode (headers only)"
+                    "✓ Deriving NodeRole: edge detection (edge_mode={}, hosted_storage_gb={}) → LightNode (headers only)",
+                    self.blockchain_config.edge_mode,
+                    self.storage_config.hosted_storage_gb
                 );
                 NodeRole::LightNode
             } else {
