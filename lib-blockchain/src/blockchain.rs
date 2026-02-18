@@ -1275,9 +1275,10 @@ impl Blockchain {
         // Add genesis transaction to genesis block
         genesis_block.transactions.push(genesis_tx.clone());
         
-        // Recalculate merkle root
+        // Recalculate merkle root and sync transaction_count header field
         let updated_merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&genesis_block.transactions);
         genesis_block.header.merkle_root = updated_merkle_root;
+        genesis_block.header.transaction_count = genesis_block.transactions.len() as u32;
         
         // Create UTXOs from genesis outputs
         let genesis_tx_id = crate::types::hash::blake3_hash(b"genesis_funding_transaction");
@@ -1914,19 +1915,16 @@ impl Blockchain {
         tracing::info!("Verifying transaction with identity verification enabled");
         tracing::info!("System transaction: {}", is_system_transaction);
         tracing::info!("Transaction type: {:?}", transaction.transaction_type);
-        tracing::warn!(
+        tracing::debug!(
             "[FLOW] verify_transaction: tx_hash={}, size={}, memo_len={}, fee={}",
             hex::encode(transaction.hash().as_bytes()),
             transaction.size(),
             transaction.memo.len(),
             transaction.fee
         );
-        tracing::warn!("SIMPLE_TRACE_A");
-        tracing::warn!("SIMPLE_TRACE_B");
-        tracing::warn!("SIMPLE_TRACE_C");
 
         let result = validator.validate_transaction_with_state(transaction);
-        tracing::warn!("[FLOW] verify_transaction: validate_transaction_with_state done");
+        tracing::debug!("[FLOW] verify_transaction: validate_transaction_with_state done");
         
         if let Err(ref error) = result {
             tracing::warn!("Transaction validation failed: {:?}", error);
@@ -2402,7 +2400,7 @@ impl Blockchain {
 
     /// Add a transaction to the pending pool
     pub fn add_pending_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        tracing::warn!(
+        tracing::debug!(
             "[FLOW] add_pending_transaction: tx_hash={}, size={}, fee={}",
             hex::encode(transaction.hash().as_bytes()),
             transaction.size(),
@@ -2431,7 +2429,7 @@ impl Blockchain {
     /// Core transaction processing: verify and add to pending pool.
     /// Does NOT broadcast — callers decide whether to broadcast.
     fn verify_and_enqueue_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        tracing::warn!(
+        tracing::debug!(
             "[FLOW] verify_and_enqueue_transaction: tx_hash={}, type={:?}, inputs={}, outputs={}",
             hex::encode(transaction.hash().as_bytes()),
             transaction.transaction_type,
@@ -2443,7 +2441,7 @@ impl Blockchain {
         }
 
         self.pending_transactions.push(transaction);
-        tracing::warn!("[FLOW] verify_and_enqueue_transaction: enqueued");
+        tracing::debug!("[FLOW] verify_and_enqueue_transaction: enqueued");
         Ok(())
     }
 
