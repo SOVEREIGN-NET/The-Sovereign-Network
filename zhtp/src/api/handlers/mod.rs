@@ -6,6 +6,7 @@ pub mod constants;
 pub mod identity;
 pub mod guardian;
 pub mod zkp;
+pub mod pouw;
 pub mod blockchain;
 pub mod storage;
 pub mod protocol;
