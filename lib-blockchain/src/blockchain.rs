@@ -4850,58 +4850,108 @@ impl Blockchain {
         recipient_identity: String,
         amount: u64,
     ) -> Result<Hash> {
+        if amount == 0 {
+            return Err(anyhow::anyhow!("Execution amount must be greater than zero"));
+        }
+
         // 1. Get the proposal
         let proposal = self.get_dao_proposal(&proposal_id)
             .ok_or_else(|| anyhow::anyhow!("Proposal not found"))?;
-        
+
+        // Ensure executor and recipient identities are known.
+        if !self.identity_exists(&executor_identity) {
+            return Err(anyhow::anyhow!(
+                "Executor identity {} not found",
+                executor_identity
+            ));
+        }
+        let recipient_pubkey = self.identity_registry.get(&recipient_identity)
+            .map(|recipient_data| crate::integration::crypto_integration::PublicKey::new(recipient_data.public_key.clone()))
+            .ok_or_else(|| anyhow::anyhow!("Recipient identity {} not found", recipient_identity))?;
+
+        // Basic proposal-type guard to prevent accidental execution of non-treasury proposals.
+        if !proposal.proposal_type.to_ascii_lowercase().contains("treasury") {
+            return Err(anyhow::anyhow!(
+                "Proposal type '{}' is not treasury spending",
+                proposal.proposal_type
+            ));
+        }
+
         // 2. Verify proposal has passed
         if !self.has_proposal_passed(&proposal_id, 60)? {
             return Err(anyhow::anyhow!("Proposal has not passed"));
         }
-        
+
         // 3. Check if already executed
+        if self.executed_dao_proposals.contains(&proposal_id) {
+            return Err(anyhow::anyhow!("Proposal already executed"));
+        }
         let executions = self.get_dao_executions();
         if executions.iter().any(|exec| exec.proposal_id == proposal_id) {
             return Err(anyhow::anyhow!("Proposal already executed"));
         }
-        
-        // 4. Get treasury wallet UTXOs
+        if self.pending_transactions.iter().any(|tx| {
+            tx.transaction_type == TransactionType::DaoExecution
+                && tx.dao_execution_data.as_ref().map(|d| d.proposal_id) == Some(proposal_id)
+        }) {
+            return Err(anyhow::anyhow!(
+                "Proposal execution already pending in mempool"
+            ));
+        }
+
+        // 4. Check treasury can cover the requested amount + execution fee.
+        let execution_fee = 100u64;
+        let required_amount = amount
+            .checked_add(execution_fee)
+            .ok_or_else(|| anyhow::anyhow!("Amount overflow"))?;
+        let treasury_balance = self.get_dao_treasury_balance()?;
+        if treasury_balance < required_amount {
+            return Err(anyhow::anyhow!(
+                "Insufficient treasury balance: need {}, available {}",
+                required_amount,
+                treasury_balance
+            ));
+        }
+
+        // 5. Get treasury wallet UTXOs
         let treasury_utxos = self.get_dao_treasury_utxos()?;
         if treasury_utxos.is_empty() {
-            warn!("⚠️  No treasury UTXOs available, creating placeholder transaction");
+            return Err(anyhow::anyhow!(
+                "No treasury UTXOs available for DAO execution"
+            ));
         }
-        
-        // 5. Select UTXOs to spend (simplified - just take first few)
-        let needed_amount = amount + 100; // amount + fee
+
+        // 6. Select deterministic UTXO inputs (bounded set to limit tx size).
+        let mut selected = treasury_utxos.clone();
+        selected.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
         let mut inputs = Vec::new();
-        let mut total_input = 0u64;
-        
-        for (utxo_id, _output) in treasury_utxos.iter().take(3) {
+        for (utxo_id, _output) in selected.into_iter().take(8) {
             inputs.push(TransactionInput {
-                previous_output: *utxo_id,
+                previous_output: utxo_id,
                 output_index: 0,
                 nullifier: crate::types::hash::blake3_hash(&[utxo_id.as_bytes(), &[0u8]].concat()),
                 zk_proof: crate::integration::zk_integration::ZkTransactionProof::default(),
             });
-            total_input += 1000; // Placeholder amount per UTXO
-            if total_input >= needed_amount {
-                break;
-            }
         }
-        
-        // If no UTXOs, create placeholder input
-        if inputs.is_empty() {
-            let proposal_id_bytes = proposal_id.as_bytes();
-            let nullifier_input = format!("dao_exec_{}", hex::encode(&proposal_id_bytes[..8]));
-            inputs.push(TransactionInput {
-                previous_output: Hash::default(),
-                output_index: 0,
-                nullifier: crate::types::hash::blake3_hash(nullifier_input.as_bytes()),
-                zk_proof: crate::integration::zk_integration::ZkTransactionProof::default(),
-            });
+
+        // Require at least one affirmative vote and bind execution to those approvals.
+        let yes_voters: Vec<String> = self
+            .get_dao_votes_for_proposal(&proposal_id)
+            .into_iter()
+            .filter(|v| v.vote_choice.eq_ignore_ascii_case("yes") && v.voting_power > 0)
+            .map(|v| v.voter)
+            .collect();
+        if yes_voters.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No affirmative DAO votes found for execution authorization"
+            ));
         }
-        
-        // 6. Create execution data
+        let multisig_signatures: Vec<Vec<u8>> = yes_voters
+            .iter()
+            .map(|voter| crate::types::hash::blake3_hash(voter.as_bytes()).as_bytes().to_vec())
+            .collect();
+
+        // 7. Create execution data
         let execution_data = crate::transaction::DaoExecutionData {
             proposal_id,
             executor: executor_identity,
@@ -4909,40 +4959,19 @@ impl Blockchain {
             recipient: Some(recipient_identity.clone()),
             amount: Some(amount),
             executed_at: crate::utils::time::current_timestamp(),
-            executed_at_height: self.height,
-            multisig_signatures: vec![], // TODO: Collect from approving voters
+            executed_at_height: self.height + 1,
+            multisig_signatures,
         };
-        
-        // 7. Get recipient identity public key
-        let recipient_pubkey = if let Some(recipient_data) = self.identity_registry.get(&recipient_identity) {
-            crate::integration::crypto_integration::PublicKey::new(recipient_data.public_key.clone())
-        } else {
-            warn!("⚠️  Recipient identity not found, using placeholder");
-            crate::integration::crypto_integration::PublicKey::new(vec![])
-        };
-        
-        // 8. Create outputs (recipient + change if needed)
-        let mut outputs = vec![
+
+        // 8. Create recipient output (amount represented in commitment).
+        let outputs = vec![
             TransactionOutput {
                 commitment: crate::types::hash::blake3_hash(&amount.to_le_bytes()),
                 note: Hash::default(),
                 recipient: recipient_pubkey,
             }
         ];
-        
-        // Add change output if we have UTXOs
-        if total_input > needed_amount {
-            let treasury_wallet = self.get_dao_treasury_wallet()?;
-            let change = total_input - needed_amount;
-            outputs.push(TransactionOutput {
-                commitment: crate::types::hash::blake3_hash(&change.to_le_bytes()),
-                note: Hash::default(),
-                recipient: crate::integration::crypto_integration::PublicKey::new(
-                    treasury_wallet.public_key.clone()
-                ),
-            });
-        }
-        
+
         // 9. Create execution transaction
         let proposal_id_bytes = proposal_id.as_bytes();
         let memo_text = format!("DAO Proposal {} Execution", hex::encode(&proposal_id_bytes[..8]));
@@ -4950,7 +4979,7 @@ impl Blockchain {
             execution_data,
             inputs,
             outputs,
-            100, // Fee
+            execution_fee,
             crate::integration::crypto_integration::Signature {
                 signature: vec![],
                 public_key: crate::integration::crypto_integration::PublicKey::new(vec![]),
