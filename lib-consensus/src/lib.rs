@@ -15,6 +15,8 @@ pub mod dao;
 pub mod difficulty;
 pub mod engines;
 pub mod evidence;
+pub mod fault_model;
+pub mod invariants;
 pub mod mempool;
 pub mod mining;
 pub mod network;
@@ -24,13 +26,13 @@ pub mod slashing;
 pub mod testing;
 pub mod types;
 pub mod validators;
-pub mod fault_model;
 
 // Re-export commonly used types
 pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
 pub use difficulty::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
 pub use engines::enhanced_bft_engine::{ConsensusStatus, EnhancedBftEngine};
 pub use engines::ConsensusEngine;
+pub use invariants::{ConsensusInvariant, ConsensusState, check_invariant, enforce_consensus_invariants};
 pub use mempool::{Mempool, MempoolTransaction, MempoolStats};
 pub use mining::{should_mine_block, IdentityData};
 pub use network::{

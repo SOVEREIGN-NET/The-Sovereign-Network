@@ -92,6 +92,29 @@ use std::collections::{HashMap, HashSet};
 use lib_identity::IdentityId;
 
 // =============================================================================
+// NOTE: CONSENSUS SAFETY INVARIANTS ARE ENFORCED BY THE CONSENSUS ENGINE
+// =============================================================================
+//
+// This liveness monitor is intentionally restricted to *observing* validator
+// heartbeat activity and *emitting* high-level events (e.g. `ConsensusStalled`)
+// when it detects that progress is unlikely, as documented in the module
+// overview above.
+//
+// Core BFT safety invariants (e.g. no forks, monotonic height, quorum
+// requirements, and finality) MUST be enforced in the consensus engine or
+// blockchain state machine where state transitions are applied, not here.
+//
+// For consensus safety invariant checking, see:
+//   - `lib-consensus/src/invariants.rs` - Invariant definitions and enforcement
+//   - `lib-consensus/src/engines/consensus_engine/mod.rs` - Integration points
+//   - `lib-blockchain/src/blockchain.rs` - Block commit validation
+//
+// The liveness monitor may *observe* or *report* on the effects of such
+// invariants (for example, via events), but it does not define or enforce
+// them directly.
+// =============================================================================
+
+// =============================================================================
 // LIVENESS THRESHOLD CONSTANTS
 // =============================================================================
 
