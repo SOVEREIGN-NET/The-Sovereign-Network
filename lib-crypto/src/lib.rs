@@ -26,7 +26,7 @@ pub use types::{
     keys::{PublicKey, PrivateKey},
     signatures::{Signature, SignatureAlgorithm, PostQuantumSignature}
 };
-pub use verification::verify_signature;
+pub use verification::{verify_signature, validate_consensus_vote_signature_scheme, verify_consensus_vote_signature};
 
 // Re-export security traits for zeroization enforcement
 pub use traits::{ZeroizingKey, SecureKey};
@@ -41,7 +41,11 @@ pub use random::{SecureRng, generate_nonce};
 pub use seed::generate_identity_seed;
 
 // Re-export keypair functionality
-pub use keypair::generation::KeyPair;
+pub use keypair::{
+    generation::KeyPair,
+    CONSENSUS_SIGNATURE_SCHEME,
+    validate_consensus_signature_scheme,
+};
 
 // Re-export symmetric encryption
 pub use symmetric::{
