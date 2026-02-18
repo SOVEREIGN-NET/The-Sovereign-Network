@@ -14,6 +14,7 @@ pub enum TransactionCreateError {
     InsufficientFunds,
     InvalidInputs,
     InvalidOutputs,
+    InvalidContractDeploymentPayload(String),
     SigningError,
     ZkProofError,
     IdentityError,
@@ -25,6 +26,9 @@ impl std::fmt::Display for TransactionCreateError {
             TransactionCreateError::InsufficientFunds => write!(f, "Insufficient funds"),
             TransactionCreateError::InvalidInputs => write!(f, "Invalid transaction inputs"),
             TransactionCreateError::InvalidOutputs => write!(f, "Invalid transaction outputs"),
+            TransactionCreateError::InvalidContractDeploymentPayload(msg) => {
+                write!(f, "Invalid contract deployment payload: {}", msg)
+            }
             TransactionCreateError::SigningError => write!(f, "Transaction signing failed"),
             TransactionCreateError::ZkProofError => write!(f, "Zero-knowledge proof generation failed"),
             TransactionCreateError::IdentityError => write!(f, "Identity transaction creation failed"),
@@ -365,6 +369,9 @@ pub fn create_wallet_transaction(
 }
 
 /// Create a contract deployment transaction
+#[deprecated(
+    note = "use create_contract_deployment_transaction() so ContractDeployment memo schema is enforced"
+)]
 pub fn create_contract_transaction(
     inputs: Vec<TransactionInput>,
     outputs: Vec<TransactionOutput>,
@@ -389,7 +396,7 @@ pub fn create_contract_deployment_transaction(
 ) -> Result<Transaction, TransactionCreateError> {
     let memo = payload
         .encode_memo()
-        .map_err(|_| TransactionCreateError::InvalidInputs)?;
+        .map_err(TransactionCreateError::InvalidContractDeploymentPayload)?;
 
     TransactionBuilder::new()
         .transaction_type(TransactionType::ContractDeployment)
