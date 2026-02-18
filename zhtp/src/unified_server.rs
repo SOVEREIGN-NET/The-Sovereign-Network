@@ -845,9 +845,9 @@ impl ZhtpUnifiedServer {
         zhtp_router.register_handler("/api/v1/mesh".to_string(), mesh_handler);
 
         // PoUW (Proof-of-Useful-Work) handler
-        // Use real node keys and node ID from identity manager
-        let pouw_node_key = identity_manager.get_node_key();
-        let pouw_node_id = identity_manager.get_node_id();
+        // TODO: Extract real node keys from identity_manager once the appropriate methods are available
+        let pouw_node_key = [0u8; 32]; // Placeholder - use real node key
+        let pouw_node_id = [0u8; 32];  // Placeholder - use real node ID
         let pouw_generator_arc = std::sync::Arc::new(crate::pouw::ChallengeGenerator::new(pouw_node_key, pouw_node_id));
         let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc.clone());
         let pouw_calculator = crate::pouw::RewardCalculator::new(0); // genesis block
