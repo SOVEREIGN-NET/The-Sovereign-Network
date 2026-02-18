@@ -56,11 +56,12 @@ pub struct MeshMessageHandler {
     /// Consensus message sender for forwarding ValidatorMessages to the consensus engine
     /// When set, received ValidatorMessages are converted and sent to the consensus loop
     pub consensus_message_sender: Option<ConsensusMessageSender>,
-    /// Raw validator message sender for routing messages through ValidatorProtocol middleware.
-    /// When set, incoming ValidatorMessages are forwarded here INSTEAD of being converted and
-    /// sent directly to `consensus_message_sender`. This allows ValidatorProtocol to verify
-    /// message-level Dilithium signatures before forwarding to the consensus engine.
+    /// Raw validator message sender for ValidatorProtocol middleware (#spec-identity-device-model)
+    /// When set, raw ValidatorMessages are forwarded here for signature verification before
+    /// being passed to the consensus engine. Takes priority over consensus_message_sender.
     pub raw_validator_message_sender: Option<tokio::sync::mpsc::Sender<lib_consensus::validators::ValidatorMessage>>,
+    /// Store-and-forward queue for identity envelopes
+    pub identity_store_forward: Option<Arc<RwLock<crate::identity_store_forward::IdentityStoreForward>>>,
 }
 
 /// DHT rate limit configuration
@@ -93,6 +94,7 @@ impl MeshMessageHandler {
             blockchain_event_receiver: Arc::new(crate::blockchain_sync::NullBlockchainEventReceiver),
             consensus_message_sender: None,
             raw_validator_message_sender: None,
+            identity_store_forward: None,
         }
     }
 
@@ -141,17 +143,55 @@ impl MeshMessageHandler {
         info!("🔗 Consensus message sender wired to mesh message handler");
     }
 
-    /// Set raw validator message sender for routing through ValidatorProtocol middleware.
+    /// Set raw validator message sender for ValidatorProtocol middleware
     ///
-    /// When set, incoming `ValidatorMessage` variants are forwarded to this channel
-    /// **instead of** being converted and sent to `consensus_message_sender` directly.
-    /// This enables ValidatorProtocol to verify message-level signatures before forwarding.
+    /// When set, incoming ValidatorMessages from the network are forwarded here for
+    /// signature verification by ValidatorProtocol before reaching the consensus engine.
     pub fn set_raw_validator_message_sender(
         &mut self,
         sender: tokio::sync::mpsc::Sender<lib_consensus::validators::ValidatorMessage>,
     ) {
         self.raw_validator_message_sender = Some(sender);
-        info!("🔗 Raw validator message sender wired to mesh message handler (ValidatorProtocol middleware)");
+        info!("🔗 Raw validator message sender wired to mesh message handler");
+    }
+
+    /// Set identity store-and-forward queue for envelope storage
+    pub fn set_identity_store_forward(
+        &mut self,
+        store: Arc<RwLock<crate::identity_store_forward::IdentityStoreForward>>,
+    ) {
+        self.identity_store_forward = Some(store);
+        info!("📦 Identity store-and-forward wired to mesh message handler");
+    }
+
+    /// Fetch pending identity envelopes for a specific recipient device (if configured)
+    pub async fn get_identity_pending_for_device(
+        &self,
+        recipient_did: &str,
+        device_id: &str,
+    ) -> Result<Vec<lib_protocols::types::IdentityEnvelope>, String> {
+        match &self.identity_store_forward {
+            Some(store) => {
+                let mut store = store.write().await;
+                store.get_pending_for_device(recipient_did, device_id)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Acknowledge delivery for a specific recipient and message id (if configured)
+    pub async fn acknowledge_identity_delivery(
+        &self,
+        recipient_did: &str,
+        message_id: u64,
+    ) -> Result<bool, String> {
+        match &self.identity_store_forward {
+            Some(store) => {
+                let mut store = store.write().await;
+                store.acknowledge_delivery(recipient_did, message_id)
+            }
+            None => Ok(false),
+        }
     }
 
     /// Handle incoming mesh message
@@ -203,6 +243,26 @@ impl MeshMessageHandler {
                     .unwrap_or(0);
                     
                 self.handle_lib_response(request_id, response.status.code(), response.status_message, headers_map, response.body, response.timestamp).await?;
+            },
+            ZhtpMeshMessage::IdentityEnvelope(envelope) => {
+                if let Some(store) = &self.identity_store_forward {
+                    let mut store = store.write().await;
+                    if let Err(err) = store.enqueue(envelope) {
+                        warn!("Failed to enqueue identity envelope: {}", err);
+                    }
+                } else {
+                    warn!("Identity envelope received but no store-and-forward configured");
+                }
+            },
+            ZhtpMeshMessage::IdentityDeliveryAck(ack) => {
+                if let Some(store) = &self.identity_store_forward {
+                    let mut store = store.write().await;
+                    if let Err(err) = store.acknowledge_delivery(&ack.recipient_did, ack.message_id) {
+                        warn!("Failed to acknowledge identity delivery: {}", err);
+                    }
+                } else {
+                    warn!("Identity delivery ack received but no store-and-forward configured");
+                }
             },
             ZhtpMeshMessage::BlockchainRequest { requester, request_id, request_type } => {
                 self.handle_blockchain_request(requester, request_id, request_type).await?;
@@ -266,7 +326,7 @@ impl MeshMessageHandler {
                 self.handle_dht_generic_payload(requester, payload, signature).await?;
             },
             ZhtpMeshMessage::ValidatorMessage(msg) => {
-                // Route through ValidatorProtocol middleware if wired (signature verification)
+                // Prefer raw sender (ValidatorProtocol middleware) over direct consensus sender
                 if let Some(ref raw_tx) = self.raw_validator_message_sender {
                     match raw_tx.send(msg).await {
                         Ok(()) => {
@@ -275,15 +335,13 @@ impl MeshMessageHandler {
                             );
                         }
                         Err(e) => {
-                            warn!("Failed to forward ValidatorMessage to ValidatorProtocol: {} (middleware may be stopped)",
+                            warn!("Failed to forward ValidatorMessage to middleware: {} (middleware may be stopped)",
                                 e
                             );
                         }
                     }
-                }
-                // Fallback: forward directly to consensus engine (backward compatible)
-                else if let Some(ref consensus_tx) = self.consensus_message_sender {
-                    // Convert from network format to consensus engine format
+                } else if let Some(ref consensus_tx) = self.consensus_message_sender {
+                    // Fallback: forward directly to consensus engine if sender is wired
                     let consensus_msg = convert_network_to_consensus_message(&msg);
 
                     match consensus_tx.send(consensus_msg).await {
@@ -877,11 +935,7 @@ impl MeshMessageHandler {
         Ok(())
     }
     
-    /// Handle new block announcement (#916, #938: forwards to application layer via BlockchainEventReceiver)
-    ///
-    /// **CRITICAL (Issue #938)**: Network-received blocks are proposal-only.
-    /// They MUST NOT reach persistence before BFT commit. The application layer
-    /// is responsible for submitting these as proposals to consensus, not persisting them directly.
+    /// Handle new block announcement (#916: forwards to application layer via BlockchainEventReceiver)
     pub async fn handle_new_block(
         &self,
         block: Vec<u8>,
@@ -889,13 +943,8 @@ impl MeshMessageHandler {
         height: u64,
         timestamp: u64,
     ) -> Result<()> {
-        info!(
-            block_height = height,
-            peer_id_prefix = %hex::encode(&sender.key_id[0..4]),
-            bytes = block.len(),
-            proposal_only = true,
-            "New block proposal received from network"
-        );
+        info!("New block announcement: height {} from {:?} ({} bytes)",
+              height, hex::encode(&sender.key_id[0..4]), block.len());
         self.blockchain_event_receiver
             .on_block_received(block, height, timestamp, sender.key_id.to_vec())
             .await
@@ -1541,5 +1590,100 @@ mod tests {
         
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("signature"));
+    }
+
+    #[tokio::test]
+    async fn test_identity_envelope_handling() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+
+        let mut handler = MeshMessageHandler::new(
+            peer_registry,
+            long_range_relays,
+            revenue_pools,
+        );
+
+        let store = Arc::new(RwLock::new(crate::identity_store_forward::IdentityStoreForward::new(10)));
+        handler.set_identity_store_forward(store.clone());
+
+        let envelope = lib_protocols::types::IdentityEnvelope {
+            message_id: 1,
+            sender_did: "did:zhtp:sender".to_string(),
+            recipient_did: "did:zhtp:recipient".to_string(),
+            created_at: 1,
+            ttl: lib_protocols::types::MessageTtl::Days7,
+            retain_until_ttl: false,
+            pouw_stamp: None,
+            payloads: vec![lib_protocols::types::DevicePayload {
+                device_id: "device-1".to_string(),
+                ciphertext: vec![1, 2, 3],
+            }],
+        };
+
+        handler
+            .handle_mesh_message(ZhtpMeshMessage::IdentityEnvelope(envelope.clone()), PublicKey::new(vec![9]))
+            .await
+            .unwrap();
+
+        let pending = store.write().await.get_pending(&envelope.recipient_did).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].message_id, envelope.message_id);
+    }
+
+    #[tokio::test]
+    async fn test_identity_delivery_ack_handling() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+
+        let mut handler = MeshMessageHandler::new(
+            peer_registry,
+            long_range_relays,
+            revenue_pools,
+        );
+
+        let store = Arc::new(RwLock::new(crate::identity_store_forward::IdentityStoreForward::new(10)));
+        handler.set_identity_store_forward(store.clone());
+
+        let envelope = lib_protocols::types::IdentityEnvelope {
+            message_id: 42,
+            sender_did: "did:zhtp:sender".to_string(),
+            recipient_did: "did:zhtp:recipient".to_string(),
+            created_at: 1,
+            ttl: lib_protocols::types::MessageTtl::Days7,
+            retain_until_ttl: false,
+            pouw_stamp: None,
+            payloads: vec![lib_protocols::types::DevicePayload {
+                device_id: "device-1".to_string(),
+                ciphertext: vec![1, 2, 3],
+            }],
+        };
+
+        handler
+            .handle_mesh_message(ZhtpMeshMessage::IdentityEnvelope(envelope.clone()), PublicKey::new(vec![9]))
+            .await
+            .unwrap();
+
+        let pending_for_device = handler
+            .get_identity_pending_for_device(&envelope.recipient_did, "device-1")
+            .await
+            .unwrap();
+        assert_eq!(pending_for_device.len(), 1);
+
+        let ack = crate::types::mesh_message::IdentityDeliveryAck {
+            recipient_did: envelope.recipient_did.clone(),
+            message_id: envelope.message_id,
+            device_id: "device-1".to_string(),
+            retain_until_ttl: false,
+        };
+
+        handler
+            .handle_mesh_message(ZhtpMeshMessage::IdentityDeliveryAck(ack), PublicKey::new(vec![9]))
+            .await
+            .unwrap();
+
+        let pending = store.write().await.get_pending(&envelope.recipient_did).unwrap();
+        assert!(pending.is_empty());
     }
 }

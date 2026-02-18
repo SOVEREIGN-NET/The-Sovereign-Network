@@ -97,6 +97,7 @@ pub mod zdns;
 pub mod identity;
 pub mod crypto;
 pub mod economics;
+pub mod identity_messaging;
 #[cfg(feature = "storage")]
 pub mod storage;
 #[cfg(not(feature = "storage"))]
@@ -120,6 +121,9 @@ pub use types::{
     AccessPolicy, ContentMetadata, ServerContent,
     CachedContent, ContentSearchResult, StorageSearchQuery,
     StorageRequirements, StorageQuality,
+    IdentityEnvelope, DevicePayload, MessageTtl, IdentityMessageKind, ControlMessageType,
+    ReceiptType, DeliveryReceipt, ReadReceipt, SealedSenderEnvelope, IdentityPayload, PoUwStamp,
+    GroupId, GroupMember, GroupChange, GroupStateUpdate, GroupMessage, GroupEpochKey, DEFAULT_GROUP_CAP, MAX_GROUP_CAP,
 };
 
 pub use zhtp::{ZhtpServer, ServerConfig};
@@ -151,6 +155,32 @@ pub use identity::{ProtocolIdentityService, IdentityServiceConfig, IdentitySessi
 pub use integration::{ZhtpIntegration, IntegrationConfig, IntegrationStats};
 pub use wire::{ZhtpRequestWire, ZhtpResponseWire, read_request, write_request, read_response, write_response, WIRE_VERSION};
 use crate::types::ZHTP_VERSION;
+
+// Identity messaging helpers (Phase 2+)
+pub use identity_messaging::{
+    build_identity_envelope,
+    build_identity_envelope_with_payload,
+    build_identity_envelope_with_pouw,
+    build_identity_envelope_with_retention,
+    build_delivery_receipt_envelope,
+    build_read_receipt_envelope,
+    create_delivery_receipt,
+    create_read_receipt,
+    verify_delivery_receipt,
+    verify_read_receipt,
+    create_pouw_stamp,
+    verify_pouw_stamp,
+    verify_pouw_stamp_with_sender_did,
+    seal_sender_envelope,
+    extract_device_ciphertext,
+    validate_group_size,
+    create_group_state_update,
+    verify_group_state_update,
+    control_payload_from_device_update,
+    derive_group_epoch_key,
+    next_group_epoch,
+    build_layered_envelopes,
+};
 
 // Re-export ZDNS functions
 pub use zdns::{

@@ -14,6 +14,7 @@ use crate::types::geographic::GeographicLocation;
 use crate::types::mesh_capability::{MeshCapability, SharedResources};
 use crate::types::connection_details::ConnectionDetails;
 use lib_protocols::types::{ZhtpRequest as ProtocolZhtpRequest, ZhtpResponse as ProtocolZhtpResponse};
+use lib_protocols::types::IdentityEnvelope;
 use lib_protocols::types::{ZhtpMethod, ZhtpStatus};
 
 /// Default TTL for mesh messages (32 hops)
@@ -60,6 +61,10 @@ pub enum MessageType {
     /// Opaque consensus message (Proposal, Vote, Commit, RoundChange, or Heartbeat)
     /// lib-network treats this as opaque bytes and never interprets message kind
     ConsensusMessage = 29,
+    /// Identity envelope (per-device fan-out)
+    IdentityEnvelope = 30,
+    /// Identity delivery acknowledgement (store-and-forward)
+    IdentityDeliveryAck = 31,
 }
 
 /// Message envelope for multi-hop routing
@@ -643,6 +648,21 @@ pub enum ZhtpMeshMessage {
     /// Consensus validator message (Proposal, Vote, Commit, etc.)
     /// Fully signed and validated by consensus layer before transmission
     ValidatorMessage(lib_consensus::validators::ValidatorMessage),
+
+    /// Identity envelope (per-device fan-out)
+    IdentityEnvelope(IdentityEnvelope),
+
+    /// Acknowledgement for store-and-forward delivery
+    IdentityDeliveryAck(IdentityDeliveryAck),
+}
+
+/// Acknowledgement for store-and-forward message delivery
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityDeliveryAck {
+    pub recipient_did: String,
+    pub message_id: u64,
+    pub device_id: String,
+    pub retain_until_ttl: bool,
 }
 
 impl ZhtpMeshMessage {
@@ -745,6 +765,12 @@ impl ZhtpMeshMessage {
                 // lib-network never branches on message kind (Propose, Vote, etc.)
                 // That's a consensus-layer concern, not networking's
                 (MessageType::ConsensusMessage, bincode::serialize(&msg)?)
+            },
+            Self::IdentityEnvelope(envelope) => {
+                (MessageType::IdentityEnvelope, bincode::serialize(envelope)?)
+            },
+            Self::IdentityDeliveryAck(ack) => {
+                (MessageType::IdentityDeliveryAck, bincode::serialize(ack)?)
             },
         };
         Ok((msg_type, payload))
@@ -896,6 +922,14 @@ impl ZhtpMeshMessage {
                 let msg = bincode::deserialize(payload)?;
                 Self::ValidatorMessage(msg)
             },
+            MessageType::IdentityEnvelope => {
+                let envelope: IdentityEnvelope = bincode::deserialize(payload)?;
+                Self::IdentityEnvelope(envelope)
+            },
+            MessageType::IdentityDeliveryAck => {
+                let ack: IdentityDeliveryAck = bincode::deserialize(payload)?;
+                Self::IdentityDeliveryAck(ack)
+            },
         };
         Ok(message)
     }
@@ -938,6 +972,7 @@ pub enum BlockchainRequestType {
 mod tests {
     use super::*;
     use lib_protocols::types::{ZhtpHeaders, ZhtpRequest, ZhtpMethod};
+    use lib_protocols::types::{IdentityEnvelope, DevicePayload, MessageTtl};
 
     #[test]
     fn test_envelope_creation() {
@@ -1221,5 +1256,69 @@ mod tests {
         assert_eq!(envelope.zhtp_uri, Some("/api/upload".to_string()));
         
         println!("✅ Production test: Single-pass serialization verified - payload preserves authentication through mesh routing");
+    }
+
+    #[test]
+    fn test_identity_envelope_serialization() {
+        let origin = PublicKey::new(vec![1, 2, 3]);
+        let dest = PublicKey::new(vec![4, 5, 6]);
+
+        let identity_envelope = IdentityEnvelope {
+            message_id: 1,
+            sender_did: "did:zhtp:sender".to_string(),
+            recipient_did: "did:zhtp:recipient".to_string(),
+            created_at: 123,
+            ttl: MessageTtl::Days7,
+            retain_until_ttl: false,
+            pouw_stamp: None,
+            payloads: vec![DevicePayload { device_id: "device-1".to_string(), ciphertext: vec![1, 2, 3] }],
+        };
+
+        let msg = ZhtpMeshMessage::IdentityEnvelope(identity_envelope.clone());
+        let envelope = MeshMessageEnvelope::from_message(999, origin, dest, msg)
+            .expect("Failed to create envelope");
+        assert_eq!(envelope.message_type, MessageType::IdentityEnvelope);
+
+        let bytes = envelope.to_bytes().unwrap();
+        let deserialized = MeshMessageEnvelope::from_bytes(&bytes).unwrap();
+        let reconstructed = deserialized.deserialize_message().unwrap();
+        match reconstructed {
+            ZhtpMeshMessage::IdentityEnvelope(inner) => {
+                assert_eq!(inner.sender_did, identity_envelope.sender_did);
+                assert_eq!(inner.payloads.len(), 1);
+            }
+            _ => panic!("Wrong message type after deserialization"),
+        }
+    }
+
+    #[test]
+    fn test_identity_delivery_ack_serialization() {
+        let origin = PublicKey::new(vec![7, 8, 9]);
+        let dest = PublicKey::new(vec![10, 11, 12]);
+
+        let ack = IdentityDeliveryAck {
+            recipient_did: "did:zhtp:recipient".to_string(),
+            message_id: 123,
+            device_id: "device-abc".to_string(),
+            retain_until_ttl: true,
+        };
+
+        let msg = ZhtpMeshMessage::IdentityDeliveryAck(ack.clone());
+        let envelope = MeshMessageEnvelope::from_message(1001, origin, dest, msg)
+            .expect("Failed to create envelope");
+        assert_eq!(envelope.message_type, MessageType::IdentityDeliveryAck);
+
+        let bytes = envelope.to_bytes().unwrap();
+        let deserialized = MeshMessageEnvelope::from_bytes(&bytes).unwrap();
+        let reconstructed = deserialized.deserialize_message().unwrap();
+        match reconstructed {
+            ZhtpMeshMessage::IdentityDeliveryAck(inner) => {
+                assert_eq!(inner.recipient_did, ack.recipient_did);
+                assert_eq!(inner.message_id, ack.message_id);
+                assert_eq!(inner.device_id, ack.device_id);
+                assert!(inner.retain_until_ttl);
+            }
+            _ => panic!("Wrong message type after deserialization"),
+        }
     }
 }

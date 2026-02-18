@@ -20,6 +20,8 @@ members = [
     "lib-network",
     "lib-proofs",
     "lib-protocols",
+    "tools",
+    "tools/zhtp-dilithium-signer",
     "lib-storage",
     "zhtp",
     "zhtp-cli",
