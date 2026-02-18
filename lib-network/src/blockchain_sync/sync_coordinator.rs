@@ -16,6 +16,60 @@ use lib_crypto::PublicKey;
 use crate::protocols::NetworkProtocol;
 use tracing::{info, debug, warn};
 
+// ============================================================================
+// COMMITTED-HEIGHT BOOTSTRAP POLICY (BFT-G, Issue #1002)
+// ============================================================================
+
+/// Bootstrap policy: always select the peer with the highest committed BFT height.
+///
+/// Non-committed tips are non-canonical and MUST NOT alter local state during bootstrap.
+pub const BOOTSTRAP_POLICY: &str = "highest-committed-bft-height";
+
+/// A peer's highest BFT-committed block height for bootstrap target selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommittedHeightSyncTarget {
+    /// The highest block height that has received BFT commit (2/3+1 pre-commits).
+    pub committed_height: u64,
+    /// Identifier of the peer advertising this height.
+    pub peer_id: Vec<u8>,
+}
+
+impl CommittedHeightSyncTarget {
+    /// Creates a new sync target.
+    pub fn new(committed_height: u64, peer_id: Vec<u8>) -> Self {
+        Self { committed_height, peer_id }
+    }
+}
+
+/// Selects the best sync target by highest committed height.
+///
+/// Only committed heights are considered; uncommitted tips are ignored.
+/// Returns `None` if `peers` is empty.
+pub fn select_bootstrap_target(peers: &[CommittedHeightSyncTarget]) -> Option<&CommittedHeightSyncTarget> {
+    peers.iter().max_by_key(|p| p.committed_height)
+}
+
+#[cfg(test)]
+mod bootstrap_policy_tests {
+    use super::*;
+
+    #[test]
+    fn test_select_bootstrap_target_picks_highest() {
+        let peers = vec![
+            CommittedHeightSyncTarget::new(100, vec![1]),
+            CommittedHeightSyncTarget::new(200, vec![2]),
+            CommittedHeightSyncTarget::new(150, vec![3]),
+        ];
+        assert_eq!(select_bootstrap_target(&peers).unwrap().committed_height, 200);
+    }
+
+    #[test]
+    fn test_select_bootstrap_target_empty() {
+        let peers: Vec<CommittedHeightSyncTarget> = vec![];
+        assert!(select_bootstrap_target(&peers).is_none());
+    }
+}
+
 /// Type of sync being performed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SyncType {
