@@ -40,6 +40,7 @@ use thiserror::Error;
 use crate::block::Block;
 use crate::execution::{BlockExecutor, ExecutorConfig, BlockApplyError};
 use crate::storage::{BlockchainStore, StorageError};
+use crate::types::TransactionType;
 
 /// Errors that can occur during sync operations
 #[derive(Debug, Error)]
@@ -70,6 +71,10 @@ pub enum SyncError {
     /// Import height mismatch
     #[error("Import height mismatch: expected {expected}, got {actual}")]
     HeightMismatch { expected: u64, actual: u64 },
+
+    /// Runtime import path failed
+    #[error("Runtime import failed: {0}")]
+    RuntimeImportFailed(String),
 }
 
 pub type SyncResult<T> = Result<T, SyncError>;
@@ -198,6 +203,13 @@ impl ChainSync {
             });
         }
 
+        if Self::requires_canonical_runtime_import(&blocks) {
+            return self.import_blocks_via_canonical_runtime(
+                blocks,
+                Option::<&mut fn(u64, usize)>::None,
+            );
+        }
+
         let executor = BlockExecutor::from_config(Arc::clone(&self.store), self.executor_config.clone());
 
         // Determine expected starting height
@@ -258,6 +270,10 @@ impl ChainSync {
             });
         }
 
+        if Self::requires_canonical_runtime_import(&blocks) {
+            return self.import_blocks_via_canonical_runtime(blocks, Some(&mut on_progress));
+        }
+
         let executor = BlockExecutor::from_config(Arc::clone(&self.store), self.executor_config.clone());
 
         // Determine expected starting height
@@ -295,6 +311,91 @@ impl ChainSync {
         Ok(ImportResult {
             blocks_imported: imported_count,
             final_height: last_height,
+        })
+    }
+
+    /// Contract/DAO variants currently execute through canonical `Blockchain` flow,
+    /// not `BlockExecutor`'s phase-2 transaction applicator.
+    fn requires_canonical_runtime_import(blocks: &[Block]) -> bool {
+        blocks.iter().any(|block| {
+            block.transactions.iter().any(|tx| {
+                matches!(
+                    tx.transaction_type,
+                    TransactionType::ContractDeployment
+                        | TransactionType::ContractExecution
+                        | TransactionType::DaoProposal
+                        | TransactionType::DaoVote
+                        | TransactionType::DaoExecution
+                )
+            })
+        })
+    }
+
+    fn import_blocks_via_canonical_runtime<F>(
+        &self,
+        blocks: Vec<Block>,
+        mut on_progress: Option<&mut F>,
+    ) -> SyncResult<ImportResult>
+    where
+        F: FnMut(u64, usize),
+    {
+        let expected_start = match self.store.latest_height() {
+            Ok(h) => h + 1,
+            Err(StorageError::NotInitialized) => 0,
+            Err(e) => return Err(SyncError::Storage(e)),
+        };
+
+        let first_block_height = blocks[0].header.height;
+        if first_block_height != expected_start {
+            return Err(SyncError::HeightMismatch {
+                expected: expected_start,
+                actual: first_block_height,
+            });
+        }
+
+        // Keep this sync API deterministic by running canonical async replay
+        // in a dedicated runtime.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| SyncError::RuntimeImportFailed(format!("failed to create runtime: {}", e)))?;
+
+        rt.block_on(async {
+            let mut blockchain = crate::blockchain::Blockchain::load_from_store(Arc::clone(&self.store))
+                .map_err(|e| SyncError::RuntimeImportFailed(format!("failed to load chain from store: {}", e)))?
+                .ok_or_else(|| {
+                    SyncError::RuntimeImportFailed(
+                        "canonical runtime import requires initialized chain state".to_string(),
+                    )
+                })?;
+
+            let mut imported_count = 0usize;
+            let mut last_height = None;
+
+            for block in blocks {
+                let height = block.header.height;
+                blockchain
+                    .add_block_from_network(block)
+                    .await
+                    .map_err(|e| SyncError::BlockApplyFailed {
+                        height,
+                        error: BlockApplyError::ValidationFailed(format!(
+                            "canonical runtime import failed: {}",
+                            e
+                        )),
+                    })?;
+
+                imported_count += 1;
+                last_height = Some(height);
+                if let Some(progress) = on_progress.as_mut() {
+                    progress(height, imported_count);
+                }
+            }
+
+            Ok(ImportResult {
+                blocks_imported: imported_count,
+                final_height: last_height,
+            })
         })
     }
 }
