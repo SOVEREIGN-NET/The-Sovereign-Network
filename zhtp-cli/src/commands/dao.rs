@@ -149,10 +149,13 @@ pub fn build_request_body(
         DaoOperation::Propose => json!({
             "title": title,
             "description": description,
+            "proposal_type": "community_funding",
+            "voting_period_days": 7,
             "orchestrated": true
         }),
         DaoOperation::Vote => json!({
             "proposal_id": proposal_id,
+            "vote_choice": choice,
             "choice": choice,
             "orchestrated": true
         }),
