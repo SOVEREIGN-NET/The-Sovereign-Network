@@ -99,6 +99,7 @@ impl BluetoothRouter {
         let sync_coordinator_for_gatt = sync_coordinator.clone();
         let mesh_router_for_gatt = mesh_router.clone();
         let bluetooth_protocol_for_gatt = protocol_arc.clone(); // Clone protocol for GATT handler
+        let local_public_key_for_gatt = our_public_key.clone(); // Capture local key for response sender field
         tokio::spawn(async move {
             while let Some(gatt_message) = gatt_rx.recv().await {
                 use lib_network::protocols::bluetooth::gatt::GattMessage;
@@ -279,10 +280,12 @@ impl BluetoothRouter {
                                                 
                                                 // ✅ TICKET 2.6 FIX: Route through MeshRouter instead of direct send
                                                 // This ensures all messages are logged and follow standard routing path
+                                                // destination = requester (the peer who asked)
+                                                // sender = local node (this node is the one responding)
                                                 if let Err(e) = mesh_router_for_gatt.send_with_routing(
                                                     response,
-                                                    requester,
-                                                    requester, // Use requester as sender for reply routing
+                                                    requester,                 // destination: original requester
+                                                    &local_public_key_for_gatt, // sender: this node's public key
                                                 ).await {
                                                     warn!("Failed to route HeadersResponse via MeshRouter: {}", e);
                                                 } else {
