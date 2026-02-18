@@ -446,7 +446,7 @@ impl TransactionValidator {
 
         // Token contract executions don't require outputs
         let is_token = is_token_contract_execution(transaction);
-        tracing::warn!("[BREADCRUMB] validate_contract_transaction: outputs.is_empty={}, is_token={}",
+        tracing::debug!("[BREADCRUMB] validate_contract_transaction: outputs.is_empty={}, is_token={}",
             transaction.outputs.is_empty(), is_token);
 
         if transaction.outputs.is_empty() && !is_token {
@@ -731,7 +731,7 @@ impl TransactionValidator {
 
     /// Validate economic aspects (fees, amounts) with system transaction support
     fn validate_economics_with_system_check(&self, transaction: &Transaction, is_system_transaction: bool) -> ValidationResult {
-        tracing::warn!(
+        tracing::debug!(
             "[BREADCRUMB] validate_economics_with_system_check ENTER: system={}, fee={}, size={}",
             is_system_transaction,
             transaction.fee,

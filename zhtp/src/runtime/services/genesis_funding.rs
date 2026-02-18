@@ -225,6 +225,7 @@ impl GenesisFundingService {
         // Recalculate and update the genesis block's merkle root after adding the transactions
         let updated_merkle_root = lib_blockchain::transaction::hashing::calculate_transaction_merkle_root(&genesis_block.transactions);
         genesis_block.header.merkle_root = updated_merkle_root;
+        genesis_block.header.transaction_count = genesis_block.transactions.len() as u32;
         info!("Genesis block merkle root updated: {}", hex::encode(updated_merkle_root.as_bytes()));
 
         // Create UTXOs from genesis transaction outputs and add to UTXO set
