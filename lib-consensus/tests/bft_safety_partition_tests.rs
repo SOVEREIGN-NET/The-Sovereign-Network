@@ -26,6 +26,14 @@ fn create_test_identity(name: &str) -> IdentityId {
     Hash::from_bytes(&hash_blake3(name.as_bytes()))
 }
 
+fn validator_keys(seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    (
+        vec![seed; 32],
+        vec![seed.wrapping_add(64); 32],
+        vec![seed.wrapping_add(128); 32],
+    )
+}
+
 /// Create test consensus configuration optimized for BFT testing
 fn create_bft_test_config() -> ConsensusConfig {
     ConsensusConfig {
@@ -71,7 +79,7 @@ fn create_test_signature(timestamp: u64) -> PostQuantumSignature {
 fn create_test_proposal(
     proposer: &IdentityId,
     height: u64,
-    previous_hash: Hash,
+    previous_hash: &Hash,
     block_data: Vec<u8>,
     timestamp: u64,
 ) -> ConsensusProposal {
@@ -83,17 +91,24 @@ fn create_test_proposal(
         id: proposal_id,
         proposer: proposer.clone(),
         height,
-        previous_hash,
+        previous_hash: previous_hash.clone(),
         block_data,
         timestamp,
         signature: create_test_signature(timestamp),
         consensus_proof: ConsensusProof {
             consensus_type: ConsensusType::ByzantineFaultTolerance,
-            stake_proof: Some(StakeProof {
-                staker: proposer.clone(),
-                amount: 2000 * 1_000_000,
-                timestamp,
-            }),
+            stake_proof: Some(
+                StakeProof::new(
+                    proposer.clone(),
+                    2000 * 1_000_000,
+                    Hash::from_bytes(&hash_blake3(
+                        format!("stake-{}-{}", proposer, timestamp).as_bytes(),
+                    )),
+                    height.saturating_sub(1),
+                    10_000,
+                )
+                .expect("valid stake proof"),
+            ),
             storage_proof: None,
             work_proof: None,
             zk_did_proof: None,
@@ -105,7 +120,7 @@ fn create_test_proposal(
 /// Create test vote
 fn create_test_vote(
     voter: &IdentityId,
-    proposal_id: Hash,
+    proposal_id: &Hash,
     vote_type: VoteType,
     height: u64,
     round: u32,
@@ -118,7 +133,7 @@ fn create_test_vote(
     ConsensusVote {
         id: vote_id,
         voter: voter.clone(),
-        proposal_id,
+        proposal_id: proposal_id.clone(),
         vote_type,
         height,
         round,
@@ -138,7 +153,7 @@ async fn setup_validators(
         let identity = create_test_identity(name);
         let stake = 2000 * 1_000_000;
         let storage = 200 * 1024 * 1024 * 1024;
-        let consensus_key = vec![(i + 1) as u8; 32];
+        let (consensus_key, networking_key, rewards_key) = validator_keys((i + 1) as u8);
         let commission_rate = 5;
 
         engine
@@ -147,6 +162,8 @@ async fn setup_validators(
                 stake,
                 storage,
                 consensus_key,
+                networking_key,
+                rewards_key,
                 commission_rate,
                 i == 0, // First is genesis validator
             )
@@ -195,13 +212,13 @@ async fn test_double_sign_detection_with_4_validators() -> Result<()> {
 
     // Proposal A
     let proposal_a =
-        create_test_proposal(malicious_validator, height, previous_hash, vec![1, 2, 3], timestamp);
+        create_test_proposal(malicious_validator, height, &previous_hash, vec![1, 2, 3], timestamp);
 
     // Proposal B - CONFLICTING (different block data)
     let proposal_b = create_test_proposal(
         malicious_validator,
         height,
-        previous_hash,
+        &previous_hash,
         vec![4, 5, 6],
         timestamp + 1,
     );
@@ -209,7 +226,7 @@ async fn test_double_sign_detection_with_4_validators() -> Result<()> {
     // Create votes for both proposals from same validator (DOUBLE-SIGN)
     let vote_a = create_test_vote(
         malicious_validator,
-        proposal_a.id,
+        &proposal_a.id,
         VoteType::PreVote,
         height,
         round,
@@ -218,7 +235,7 @@ async fn test_double_sign_detection_with_4_validators() -> Result<()> {
 
     let vote_b = create_test_vote(
         malicious_validator,
-        proposal_b.id,
+        &proposal_b.id,
         VoteType::PreVote,
         height,
         round,
@@ -274,14 +291,14 @@ async fn test_double_sign_precommit_detection() -> Result<()> {
     let timestamp = 2000;
 
     let proposal_a =
-        create_test_proposal(malicious_validator, height, previous_hash, vec![10], timestamp);
+        create_test_proposal(malicious_validator, height, &previous_hash, vec![10], timestamp);
     let proposal_b =
-        create_test_proposal(malicious_validator, height, previous_hash, vec![20], timestamp + 1);
+        create_test_proposal(malicious_validator, height, &previous_hash, vec![20], timestamp + 1);
 
     // Double PreCommit votes (CRITICAL - commits are final!)
     let vote_a = create_test_vote(
         malicious_validator,
-        proposal_a.id,
+        &proposal_a.id,
         VoteType::PreCommit,
         height,
         round,
@@ -290,7 +307,7 @@ async fn test_double_sign_precommit_detection() -> Result<()> {
 
     let vote_b = create_test_vote(
         malicious_validator,
-        proposal_b.id,
+        &proposal_b.id,
         VoteType::PreCommit,
         height,
         round,
@@ -339,21 +356,21 @@ async fn test_multiple_byzantine_validators() -> Result<()> {
         let proposal_a = create_test_proposal(
             malicious_validator,
             height,
-            previous_hash,
+            &previous_hash,
             vec![i as u8],
             timestamp,
         );
         let proposal_b = create_test_proposal(
             malicious_validator,
             height,
-            previous_hash,
+            &previous_hash,
             vec![i as u8 + 100],
             timestamp + 1,
         );
 
         let vote_a = create_test_vote(
             malicious_validator,
-            proposal_a.id,
+            &proposal_a.id,
             VoteType::PreVote,
             height,
             round,
@@ -362,7 +379,7 @@ async fn test_multiple_byzantine_validators() -> Result<()> {
 
         let vote_b = create_test_vote(
             malicious_validator,
-            proposal_b.id,
+            &proposal_b.id,
             VoteType::PreVote,
             height,
             round,
@@ -416,14 +433,14 @@ async fn test_conflicting_proposals_same_height() -> Result<()> {
     let proposer_b = &validator_ids[1];
 
     let proposal_a =
-        create_test_proposal(proposer_a, height, previous_hash, vec![1, 2, 3], timestamp);
+        create_test_proposal(proposer_a, height, &previous_hash, vec![1, 2, 3], timestamp);
 
     let proposal_b =
-        create_test_proposal(proposer_b, height, previous_hash, vec![4, 5, 6], timestamp);
+        create_test_proposal(proposer_b, height, &previous_hash, vec![4, 5, 6], timestamp);
 
     // Both proposals are different (conflicting)
     assert_ne!(
-        proposal_a.id, proposal_b.id,
+        &proposal_a.id, &proposal_b.id,
         "Proposals should have different IDs"
     );
     assert_ne!(
@@ -470,10 +487,10 @@ async fn test_no_conflicting_commits_allowed() {
     let proposer_b = &validator_ids[1];
 
     let proposal_a =
-        create_test_proposal(proposer_a, height, previous_hash, vec![100], timestamp);
+        create_test_proposal(proposer_a, height, &previous_hash, vec![100], timestamp);
 
     let proposal_b =
-        create_test_proposal(proposer_b, height, previous_hash, vec![200], timestamp);
+        create_test_proposal(proposer_b, height, &previous_hash, vec![200], timestamp);
 
     // Simulate byzantine scenario: trying to commit BOTH proposals
     let mut committed_proposals = Vec::new();
@@ -661,13 +678,13 @@ async fn test_safety_under_combined_faults() -> Result<()> {
     let timestamp = 6000;
 
     let proposal_a =
-        create_test_proposal(byzantine_validator, height, previous_hash, vec![1], timestamp);
+        create_test_proposal(byzantine_validator, height, &previous_hash, vec![1], timestamp);
     let proposal_b =
-        create_test_proposal(byzantine_validator, height, previous_hash, vec![2], timestamp + 1);
+        create_test_proposal(byzantine_validator, height, &previous_hash, vec![2], timestamp + 1);
 
     let vote_a = create_test_vote(
         byzantine_validator,
-        proposal_a.id,
+        &proposal_a.id,
         VoteType::PreCommit,
         height,
         round,
@@ -676,7 +693,7 @@ async fn test_safety_under_combined_faults() -> Result<()> {
 
     let vote_b = create_test_vote(
         byzantine_validator,
-        proposal_b.id,
+        &proposal_b.id,
         VoteType::PreCommit,
         height,
         round,
@@ -746,13 +763,13 @@ async fn test_byzantine_fault_detection_for_slashing() -> Result<()> {
     let timestamp = 7000;
 
     let proposal_a =
-        create_test_proposal(byzantine_validator, height, previous_hash, vec![10], timestamp);
+        create_test_proposal(byzantine_validator, height, &previous_hash, vec![10], timestamp);
     let proposal_b =
-        create_test_proposal(byzantine_validator, height, previous_hash, vec![20], timestamp + 1);
+        create_test_proposal(byzantine_validator, height, &previous_hash, vec![20], timestamp + 1);
 
     let vote_a = create_test_vote(
         byzantine_validator,
-        proposal_a.id,
+        &proposal_a.id,
         VoteType::PreCommit,
         height,
         round,
@@ -761,7 +778,7 @@ async fn test_byzantine_fault_detection_for_slashing() -> Result<()> {
 
     let vote_b = create_test_vote(
         byzantine_validator,
-        proposal_b.id,
+        &proposal_b.id,
         VoteType::PreCommit,
         height,
         round,
@@ -871,13 +888,13 @@ async fn test_byzantine_validator_evidence_collection() -> Result<()> {
     let timestamp = 8000;
 
     let proposal_a =
-        create_test_proposal(byzantine_validator, height, previous_hash, vec![1], timestamp);
+        create_test_proposal(byzantine_validator, height, &previous_hash, vec![1], timestamp);
     let proposal_b =
-        create_test_proposal(byzantine_validator, height, previous_hash, vec![2], timestamp + 1);
+        create_test_proposal(byzantine_validator, height, &previous_hash, vec![2], timestamp + 1);
 
     let vote_a = create_test_vote(
         byzantine_validator,
-        proposal_a.id,
+        &proposal_a.id,
         VoteType::PreCommit,
         height,
         round,
@@ -886,7 +903,7 @@ async fn test_byzantine_validator_evidence_collection() -> Result<()> {
 
     let vote_b = create_test_vote(
         byzantine_validator,
-        proposal_b.id,
+        &proposal_b.id,
         VoteType::PreCommit,
         height,
         round,

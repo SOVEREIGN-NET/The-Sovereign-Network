@@ -97,9 +97,11 @@ fn create_mined_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -
         blockchain.latest_block().unwrap().hash(),
         merkle_root,
         blockchain.latest_block().unwrap().timestamp() + 10,
+        mining_config.difficulty,
         blockchain.height + 1,
         transactions.len() as u32,
         transactions.iter().map(|tx| tx.size()).sum::<usize>() as u32,
+        mining_config.difficulty,
     );
 
     Ok(Block::new(header, transactions))
@@ -315,9 +317,11 @@ async fn test_block_verification() -> Result<()> {
         blockchain.latest_block().unwrap().hash(),
         Hash::default(),
         blockchain.latest_block().unwrap().timestamp() + 10,
+        mining_config.difficulty,
         1,
         0,
         0,
+        mining_config.difficulty,
     );
 
     let valid_block = Block::new(valid_header, Vec::new());
@@ -331,9 +335,11 @@ async fn test_block_verification() -> Result<()> {
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?, // Wrong previous hash
         Hash::default(),
         blockchain.latest_block().unwrap().timestamp() + 10,
+        mining_config.difficulty,
         1,
         0,
         0,
+        mining_config.difficulty,
     );
     
     let invalid_block = Block::new(invalid_header, Vec::new());
