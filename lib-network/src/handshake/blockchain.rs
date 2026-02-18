@@ -69,6 +69,54 @@ use subtle::ConstantTimeEq;
 // Re-export ChainSummary from lib-consensus for blockchain state verification
 pub use lib_consensus::ChainSummary;
 
+// ============================================================================
+// GENESIS TRUST POLICY (BFT-G, Issue #1003)
+// ============================================================================
+
+/// Genesis hash mismatch policy: reject peers with a different genesis hash.
+///
+/// Any peer advertising a different genesis hash is rejected unconditionally.
+/// No checkpoint override is supported in the current protocol version.
+pub const GENESIS_TRUST_POLICY: &str = "reject_mismatch";
+
+/// Validates that a peer's genesis hash matches the local genesis hash.
+///
+/// Uses constant-time comparison to prevent timing side-channels.
+/// Returns `Err` if the hashes differ; callers MUST reject the peer.
+pub fn validate_genesis_hash_strict(
+    local_genesis_hash: &str,
+    peer_genesis_hash: &str,
+) -> Result<(), String> {
+    let local_bytes = local_genesis_hash.as_bytes();
+    let peer_bytes = peer_genesis_hash.as_bytes();
+    let length_ok = local_bytes.len() == peer_bytes.len();
+    let content_ok = length_ok && local_bytes.ct_eq(peer_bytes).unwrap_u8() == 1;
+    if !content_ok {
+        return Err(format!(
+            "genesis hash mismatch (policy={GENESIS_TRUST_POLICY}): \
+             local={local_genesis_hash}, peer={peer_genesis_hash}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod genesis_trust_tests {
+    use super::*;
+
+    #[test]
+    fn test_matching_genesis_hashes_accepted() {
+        assert!(validate_genesis_hash_strict("abc123", "abc123").is_ok());
+    }
+
+    #[test]
+    fn test_mismatched_genesis_hashes_rejected() {
+        let err = validate_genesis_hash_strict("abc123", "xyz789");
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("genesis hash mismatch"));
+    }
+}
+
 /// Blockchain context included in handshake messages
 ///
 /// This structure contains the blockchain state information that peers
