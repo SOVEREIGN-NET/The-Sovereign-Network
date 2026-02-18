@@ -445,34 +445,31 @@ impl RuntimeOrchestrator {
         
         // Store shutdown monitor handle for cleanup
         let _shutdown_handle = shutdown_monitor;
-        // Detect node type from config
-        // Edge nodes are constrained devices that:
-        // 1. Don't validate blocks (validator_enabled = false)
-        // 2. Don't run smart contracts (resource constrained)
-        // 3. Don't host storage for others (hosted_storage_gb = 0 or very small)
-        //
-        // Note: blockchain_storage_gb is NOT counted - it grows dynamically
-        // Note: personal_storage_gb is NOT counted - user's own data
-        //
-        // hosted_storage_gb=0 is a valid value meaning "no hosted storage" (edge node)
-        // Only use storage_capacity_gb fallback if hosted_storage_gb was NOT explicitly configured
-        // The default hosted_storage_gb is 100, so if it equals default AND storage_capacity_gb differs,
-        // use storage_capacity_gb for backward compatibility
-        let hosted_storage = config.storage_config.hosted_storage_gb;
         
-        let is_edge_node = !config.consensus_config.validator_enabled 
-            && !config.blockchain_config.smart_contracts
-            && hosted_storage < 100;  // Less than 100 GB hosted storage = edge node
+        // ========================================================================
+        // Issue #454 / PR #1120 feedback: Use canonical NodeType (already validated)
+        // ========================================================================
+        // config.node_type has been validated by the start_* method and represents
+        // the SINGLE SOURCE OF TRUTH for node type. Use it to derive NodeRole
+        // instead of re-detecting edge mode with different criteria, which could
+        // cause divergence between dispatch and runtime behavior.
+        // ========================================================================
+        
+        let node_type = config.node_type.expect(
+            "NodeType must be set before RuntimeOrchestrator::new. \
+             This should have been validated by the start_* method."
+        );
+        
+        // Derive is_edge_node from the canonical NodeType
+        let is_edge_node = node_type == crate::config::NodeType::EdgeNode;
         
         // Debug output for node role derivation
-        tracing::debug!("   validator_enabled (config): {}", config.consensus_config.validator_enabled);
-        tracing::debug!("   smart_contracts (config): {}", config.blockchain_config.smart_contracts);
-        tracing::debug!("   hosted_storage: {} GB", hosted_storage);
+        tracing::debug!("   canonical node_type: {:?}", node_type);
         tracing::debug!("   is_edge_node: {}", is_edge_node);
         
-        // Derive NodeRole from configuration
+        // Derive NodeRole from canonical NodeType
         // This determines what services (mining, validation) the node can run
-        let node_role = Self::derive_node_role_from_config(&config, is_edge_node);
+        let node_role = Self::derive_node_role_from_node_type(node_type);
         info!("🎭 Node role determined: {:?}", node_role);
         info!("   can_mine: {}, can_validate: {}, can_verify_blocks: {}", 
               node_role.can_mine(), node_role.can_validate(), node_role.can_verify_blocks());
@@ -568,27 +565,35 @@ impl RuntimeOrchestrator {
     /// - Observer: stores full blockchain but validator_enabled=false
     /// - LightNode: edge node with header-only sync
     /// - MobileNode: edge node optimized for BLE
-    fn derive_node_role_from_config(config: &NodeConfig, is_edge_node: bool) -> node_runtime::NodeRole {
+    /// Derive NodeRole from the canonical NodeType
+    /// 
+    /// This ensures NodeRole is always consistent with the dispatched NodeType,
+    /// preventing divergence between config.node_type and runtime behavior.
+    fn derive_node_role_from_node_type(node_type: crate::config::NodeType) -> node_runtime::NodeRole {
         use node_runtime::NodeRole;
         
-        // Edge nodes are either LightNode or MobileNode
-        if is_edge_node {
-            // Check if this is a mobile/BLE-optimized node
-            // For now, we determine this by checking if BLE is the primary transport
-            // TODO: Add explicit mobile_mode config flag
-            return NodeRole::LightNode;
+        match node_type {
+            crate::config::NodeType::Validator => {
+                // Validator nodes participate in consensus and can mine blocks
+                NodeRole::FullValidator
+            }
+            crate::config::NodeType::EdgeNode => {
+                // Edge nodes are resource-constrained, only store headers
+                // For now, treat all edge nodes as LightNode
+                // TODO: Add mobile_mode detection for MobileNode role
+                NodeRole::LightNode
+            }
+            crate::config::NodeType::FullNode => {
+                // Full nodes store complete blockchain but don't mine
+                NodeRole::Observer
+            }
+            crate::config::NodeType::Relay => {
+                // Relay nodes only route messages, don't maintain blockchain state
+                // They should not need a traditional NodeRole, but for now
+                // treat them as Observer to avoid breaking existing code
+                NodeRole::Observer
+            }
         }
-        
-        // Full nodes: check if they're validators
-        if config.consensus_config.validator_enabled {
-            // This node participates in consensus and can mine blocks
-            return NodeRole::FullValidator;
-        }
-        
-        // Non-validator full nodes are Observers
-        // They store the full blockchain and verify blocks for themselves
-        // but don't participate in consensus voting
-        NodeRole::Observer
     }
     
     /// Get the current node role
