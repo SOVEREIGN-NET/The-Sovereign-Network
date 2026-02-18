@@ -41,7 +41,7 @@ Your identity keystore encoded as base64 gzipped tarball:
 ```bash
 # Create keystore tarball and encode
 cd ~/.zhtp
-tar -czf - keystore | base64 -w 0 > keystore-secret.b64
+tar -czf - keystore | base64 | tr -d '\n' > keystore-secret.b64
 
 # Copy contents to GitHub secret
 cat keystore-secret.b64
@@ -350,7 +350,7 @@ Error: gzip: stdin: not in gzip format
 **Solution:** Re-encode keystore correctly:
 ```bash
 cd ~/.zhtp
-tar -czf - keystore | base64 -w 0 > keystore-secret.b64
+tar -czf - keystore | base64 | tr -d '\n' > keystore-secret.b64
 ```
 
 Ensure no line breaks in the GitHub secret.
