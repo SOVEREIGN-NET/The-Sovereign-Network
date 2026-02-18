@@ -151,8 +151,8 @@ pub const MIN_SUPPORTED_VERSION: u8 = 2;
 /// # BFT-H Policy (Issue #1006)
 ///
 /// The deterministic backward compatibility rules are:
-/// - **Accept**: peer version is within `[MIN_SUPPORTED_VERSION, UHP_VERSION]`
-/// - **Reject**: peer version is below `MIN_SUPPORTED_VERSION` or above local version
+/// - **Accept**: peer version is within `[MIN_SUPPORTED_VERSION, MAX_SUPPORTED_VERSION]`
+/// - **Reject**: peer version is below `MIN_SUPPORTED_VERSION` or above `MAX_SUPPORTED_VERSION`
 ///
 /// There is no quarantine state — mixed-version validators produce divergent
 /// views and MUST be rejected immediately to preserve deterministic finality.
@@ -164,15 +164,25 @@ pub enum BackwardCompatibilityPolicy {
     Reject,
 }
 
-/// Evaluates the backward compatibility policy for a peer's protocol version.
-///
-/// This MUST be called before accepting any block, vote, or validator
-/// registration from a peer.
-pub fn check_backward_compatibility(peer_version: u8, local_version: u8) -> BackwardCompatibilityPolicy {
-    if peer_version >= MIN_SUPPORTED_VERSION && peer_version <= local_version {
-        BackwardCompatibilityPolicy::Accept
-    } else {
-        BackwardCompatibilityPolicy::Reject
+impl BackwardCompatibilityPolicy {
+    /// Evaluates the backward compatibility policy for a peer's protocol version.
+    ///
+    /// Callers should invoke this helper before accepting any block, vote, or
+    /// validator registration from a peer, and enforce the returned policy in
+    /// their respective acceptance logic.
+    ///
+    /// # Arguments
+    /// * `peer_version` - The protocol version reported by the peer
+    ///
+    /// # Returns
+    /// * `Accept` if peer version is within `[MIN_SUPPORTED_VERSION, MAX_SUPPORTED_VERSION]`
+    /// * `Reject` otherwise
+    pub fn check(peer_version: u8) -> Self {
+        if peer_version >= MIN_SUPPORTED_VERSION && peer_version <= MAX_SUPPORTED_VERSION {
+            BackwardCompatibilityPolicy::Accept
+        } else {
+            BackwardCompatibilityPolicy::Reject
+        }
     }
 }
 
@@ -183,26 +193,37 @@ mod backward_compat_tests {
     #[test]
     fn test_accept_current_version() {
         assert_eq!(
-            check_backward_compatibility(UHP_VERSION, UHP_VERSION),
+            BackwardCompatibilityPolicy::check(UHP_VERSION),
+            BackwardCompatibilityPolicy::Accept
+        );
+    }
+
+    #[test]
+    fn test_accept_minimum_version() {
+        assert_eq!(
+            BackwardCompatibilityPolicy::check(MIN_SUPPORTED_VERSION),
             BackwardCompatibilityPolicy::Accept
         );
     }
 
     #[test]
     fn test_reject_below_minimum() {
-        let old = MIN_SUPPORTED_VERSION.saturating_sub(1);
-        if old < MIN_SUPPORTED_VERSION {
-            assert_eq!(
-                check_backward_compatibility(old, UHP_VERSION),
-                BackwardCompatibilityPolicy::Reject
-            );
+        // If the minimum supported version is 0, there is no lower version to test.
+        if MIN_SUPPORTED_VERSION == 0 {
+            return;
         }
+
+        let old = MIN_SUPPORTED_VERSION - 1;
+        assert_eq!(
+            BackwardCompatibilityPolicy::check(old),
+            BackwardCompatibilityPolicy::Reject
+        );
     }
 
     #[test]
     fn test_reject_future_version() {
         assert_eq!(
-            check_backward_compatibility(UHP_VERSION + 1, UHP_VERSION),
+            BackwardCompatibilityPolicy::check(MAX_SUPPORTED_VERSION + 1),
             BackwardCompatibilityPolicy::Reject
         );
     }
@@ -250,19 +271,22 @@ impl Default for HandshakeDomain {
 ///
 /// **VULN-004 FIX:** Prevents protocol downgrade attacks
 ///
+/// This function enforces the backward compatibility policy defined in
+/// `BackwardCompatibilityPolicy` for BFT-H consensus safety (Issue #1006).
+///
 /// # Returns
 /// - `Ok(())` if version is valid
 /// - `Err(...)` if version is outside supported range
 fn validate_protocol_version(version: u8) -> Result<()> {
-    if version < MIN_SUPPORTED_VERSION || version > MAX_SUPPORTED_VERSION {
-        return Err(anyhow!(
+    match BackwardCompatibilityPolicy::check(version) {
+        BackwardCompatibilityPolicy::Accept => Ok(()),
+        BackwardCompatibilityPolicy::Reject => Err(anyhow!(
             "Unsupported protocol version: {} (supported: {}-{})",
             version,
             MIN_SUPPORTED_VERSION,
             MAX_SUPPORTED_VERSION
-        ));
+        )),
     }
-    Ok(())
 }
 
 fn append_len_prefixed(buf: &mut Vec<u8>, bytes: &[u8]) {
