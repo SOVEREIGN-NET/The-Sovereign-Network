@@ -1,11 +1,56 @@
 //! Hashing module for ZHTP cryptography
 //!
-//! Provides Blake3 and SHA3-256 hashing functionality used throughout the system
+//! Provides Blake3 and SHA3-256 hashing functionality used throughout the system.
+//!
+//! # Canonical Consensus Hash (BFT-I, Issue #1010)
+//!
+//! **BLAKE3 is the canonical hash function for all consensus-critical data.**
+//!
+//! This includes block headers, state roots, vote IDs, and proposal IDs.
+//! SHA-3 is available for non-consensus purposes but MUST NOT be used for
+//! consensus commitments.  Using an alternate hash for consensus-critical
+//! objects causes mismatched commitments and breaks BFT finality.
+//!
+//! See [`CONSENSUS_HASH_FUNCTION`] and [`canonical_consensus_hash`].
 
 use blake3;
 pub mod sha3;
 
 pub use sha3::hash_sha3_256;
+
+// ============================================================================
+// CANONICAL CONSENSUS HASH (BFT-I, Issue #1010)
+// ============================================================================
+
+/// The canonical hash function for all consensus-critical data.
+///
+/// All block headers, state roots, and vote IDs MUST be hashed with BLAKE3.
+pub const CONSENSUS_HASH_FUNCTION: &str = "BLAKE3";
+
+/// Computes the canonical consensus hash of `data` using BLAKE3.
+///
+/// Use this for any data that enters a consensus-critical path.
+pub fn canonical_consensus_hash(data: &[u8]) -> [u8; 32] {
+    blake3::hash(data).into()
+}
+
+#[cfg(test)]
+mod canonical_hash_tests {
+    use super::*;
+
+    #[test]
+    fn test_canonical_consensus_hash_is_deterministic() {
+        let data = b"consensus-critical block header";
+        assert_eq!(canonical_consensus_hash(data), canonical_consensus_hash(data));
+    }
+
+    #[test]
+    fn test_canonical_consensus_hash_matches_blake3() {
+        let data = b"state root commitment";
+        let expected: [u8; 32] = blake3::hash(data).into();
+        assert_eq!(canonical_consensus_hash(data), expected);
+    }
+}
 
 /// Blake3 hash function - primary hash function for ZHTP
 pub fn hash_blake3(data: &[u8]) -> [u8; 32] {
