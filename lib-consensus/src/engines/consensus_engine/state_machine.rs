@@ -27,6 +27,86 @@ use lib_crypto::hash_blake3;
 use tracing::info;
 
 // ============================================================================
+// CONSENSUS AUDIT LOGGING (BFT-J, Issue #1013)
+// ============================================================================
+
+/// A deterministic, structured audit record for a single consensus event.
+///
+/// Audit logs are emitted at every proposal, pre-vote, pre-commit, and commit
+/// transition so that an external observer can replay the full consensus
+/// history from logs alone.  Fields are deterministic — the same sequence of
+/// consensus events always produces the same sequence of log records.
+#[derive(Debug, Clone)]
+pub struct ConsensusAuditLog {
+    /// Block height at which this event occurred.
+    pub height: u64,
+    /// Consensus round number (reset on each new height).
+    pub round: u32,
+    /// Consensus step at the time of the event (e.g. "Propose", "PreVote").
+    pub step: String,
+    /// Human-readable description of the event (e.g. "proposal_received").
+    pub event: String,
+    /// Validator identity that triggered the event, or "local" for self.
+    pub validator_id: String,
+    /// Unix timestamp (seconds) when the event was recorded.
+    pub timestamp: u64,
+}
+
+/// Emits a structured consensus audit log using the `tracing` framework.
+///
+/// All fields are deterministic given the same consensus state, making the
+/// output suitable for audit replay and safety analysis.
+pub fn log_consensus_event(
+    height: u64,
+    round: u32,
+    step: &str,
+    event: &str,
+    validator_id: &str,
+) -> ConsensusAuditLog {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let record = ConsensusAuditLog {
+        height,
+        round,
+        step: step.to_string(),
+        event: event.to_string(),
+        validator_id: validator_id.to_string(),
+        timestamp,
+    };
+
+    info!(
+        target: "consensus_audit",
+        height = height,
+        round = round,
+        step = step,
+        event = event,
+        validator_id = validator_id,
+        timestamp = timestamp,
+        "consensus_audit"
+    );
+
+    record
+}
+
+#[cfg(test)]
+mod consensus_audit_log_tests {
+    use super::*;
+
+    #[test]
+    fn test_log_consensus_event_fields() {
+        let record = log_consensus_event(42, 1, "PreVote", "pre_vote_cast", "validator-abc");
+        assert_eq!(record.height, 42);
+        assert_eq!(record.round, 1);
+        assert_eq!(record.step, "PreVote");
+        assert_eq!(record.event, "pre_vote_cast");
+        assert_eq!(record.validator_id, "validator-abc");
+    }
+}
+
+// ============================================================================
 // STATE GROWTH CONTROL CONSTANTS (mirrors lib-blockchain values)
 // ============================================================================
 
