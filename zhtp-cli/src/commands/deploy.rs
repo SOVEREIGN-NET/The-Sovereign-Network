@@ -76,7 +76,6 @@ pub enum DeployOperation {
     List,
     History,
     Rollback,
-    FetchManifest,
 }
 
 impl DeployOperation {
@@ -90,7 +89,6 @@ impl DeployOperation {
             DeployOperation::List => "List deployments",
             DeployOperation::History => "Show deployment history",
             DeployOperation::Rollback => "Rollback to previous version",
-            DeployOperation::FetchManifest => "Fetch manifest by CID",
         }
     }
 }
@@ -107,7 +105,6 @@ pub fn action_to_operation(action: &DeployAction) -> DeployOperation {
         DeployAction::List { .. } => DeployOperation::List,
         DeployAction::History { .. } => DeployOperation::History,
         DeployAction::Rollback { .. } => DeployOperation::Rollback,
-        DeployAction::FetchManifest { .. } => DeployOperation::FetchManifest,
     }
 }
 
@@ -448,7 +445,7 @@ async fn handle_deploy_command_impl(
                 &build_dir,
                 &domain,
                 deploy_mode,
-                keystore.as_deref(),
+                Some(keystore.as_str()),
                 fee,
                 dry_run,
                 trust.pin_spki.as_deref(),
@@ -487,7 +484,7 @@ async fn handle_deploy_command_impl(
                 &build_dir,
                 &domain,
                 deploy_mode,
-                keystore.as_deref(),
+                Some(keystore.as_str()),
                 fee,
                 dry_run,
                 trust.pin_spki.as_deref(),
@@ -514,7 +511,7 @@ async fn handle_deploy_command_impl(
             // Imperative: Network communication
             delete_deployment_impl(
                 &domain,
-                keystore.as_deref(),
+                Some(keystore.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -612,33 +609,13 @@ async fn handle_deploy_command_impl(
             rollback_deployment_impl(
                 &domain,
                 &to_version.to_string(),
-                keystore.as_deref(),
+                Some(keystore.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
                 trust.trust_node,
                 &cli.server,
                 force,
-                output,
-            )
-            .await
-        }
-        DeployAction::FetchManifest { cid, keystore, trust } => {
-            if cid.trim().is_empty() {
-                return Err(CliError::ConfigError("CID cannot be empty".to_string()));
-            }
-
-            output.header("Fetch Manifest")?;
-            output.print(&format!("CID: {}", cid))?;
-
-            fetch_manifest_impl(
-                &cid,
-                keystore.as_deref(),
-                trust.pin_spki.as_deref(),
-                trust.node_did.as_deref(),
-                trust.tofu,
-                trust.trust_node,
-                &cli.server,
                 output,
             )
             .await

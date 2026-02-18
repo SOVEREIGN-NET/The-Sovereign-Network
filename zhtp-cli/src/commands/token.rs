@@ -128,8 +128,8 @@ pub async fn handle_token_command_with_output<O: Output>(
     output: &O,
 ) -> CliResult<()> {
     match args.action {
-        TokenAction::Create { name, symbol, supply, decimals } => {
-            handle_create(cli, output, &name, &symbol, supply, decimals).await
+        TokenAction::Create { name, symbol, supply } => {
+            handle_create(cli, output, &name, &symbol, supply).await
         }
         TokenAction::Mint { token_id, amount, to } => {
             handle_mint(cli, output, &token_id, amount, &to).await
@@ -160,29 +160,15 @@ async fn handle_create<O: Output>(
     name: &str,
     symbol: &str,
     supply: u64,
-    decimals: u8,
 ) -> CliResult<()> {
     output.info(&format!("Creating token: {} ({})", name, symbol))?;
-    output.info(&format!("Initial supply: {} (decimals: {})", supply, decimals))?;
+    output.info(&format!("Initial supply: {}", supply))?;
     output.info("Signing token creation transaction with local keypair")?;
 
     let keypair = load_default_keypair()?;
 
-    // Serialize as CreateTokenParams struct (must match server expectation)
-    #[derive(serde::Serialize)]
-    struct CreateTokenParams {
-        name: String,
-        symbol: String,
-        initial_supply: u64,
-        decimals: u8,
-    }
-    let create_params = CreateTokenParams {
-        name: name.to_string(),
-        symbol: symbol.to_string(),
-        initial_supply: supply,
-        decimals,
-    };
-    let params = ContractCall::serialize_params(&create_params)
+    // Canonical token create payload is (name, symbol, initial_supply).
+    let params = ContractCall::serialize_params(&(name.to_string(), symbol.to_string(), supply))
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize params: {}", e)))?;
     let call = ContractCall::new(
         lib_blockchain::ContractType::Token,
