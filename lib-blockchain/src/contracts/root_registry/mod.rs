@@ -70,6 +70,8 @@ pub use types::{
     // Status and lifecycle
     NameStatus, SuspensionReason, SuspensionAuthority,
     ReasonCode, AppealStatus, RevokedRecord,
+    EffectiveStatus, CustodianId,
+    LifecycleParams, LifecycleFields,
 
     // Governance (Phase 2: Issue #657)
     GovernanceRecord, VCReference,
