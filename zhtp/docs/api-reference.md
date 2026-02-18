@@ -7,6 +7,7 @@ The ZHTP API provides a comprehensive interface for interacting with the ZHTP no
 ## Base Configuration
 
 - **Protocol**: ZHTP/1.0 over QUIC
+- **Default QUIC endpoint**: 127.0.0.1:9334
 - **Content-Type**: application/json
 
 ## Authentication

@@ -295,6 +295,9 @@ mesh_port = 9334
 environment = "development"
 data_dir = "./data"
 
+[protocols_config]
+api_port = 9333
+
 [mesh]
 mode = "pure-mesh"              # pure-mesh, offline
 enable_bluetooth = true

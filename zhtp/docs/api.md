@@ -4,7 +4,7 @@
 
 The ZHTP API provides endpoints for interacting with the Zero-Knowledge Hypertext Transfer Protocol network. All communication is handled over QUIC.
 
-**Base URL**: `zhtp://127.0.0.1:9334`
+**Base URL**: `zhtp://127.0.0.1:9334/api/v1`
 
 ## Authentication
 
