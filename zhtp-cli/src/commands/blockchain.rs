@@ -7,8 +7,7 @@ use crate::output::Output;
 use lib_blockchain::{
     blake3_hash,
     CallPermissions, ContractCall, ContractTransactionBuilder,
-    ContractDeploymentPayloadV1, ContractType, Transaction, TransactionOutput,
-    create_contract_deployment_transaction,
+    ContractDeploymentPayloadV1, ContractType, Transaction, TransactionOutput, TransactionType,
 };
 use lib_crypto::keypair::KeyPair;
 use lib_network::client::ZhtpClient;
@@ -102,31 +101,44 @@ fn build_signed_contract_deploy_tx(
     keypair: &KeyPair,
     payload: ContractDeploymentPayloadV1,
 ) -> CliResult<Transaction> {
-    payload
-        .validate()
+    let memo = payload
+        .encode_memo()
         .map_err(|e| CliError::ConfigError(format!("Invalid deployment payload: {e}")))?;
     let output = TransactionOutput::new(
         blake3_hash(&payload.code),
         blake3_hash(b"contract-deploy"),
         keypair.public_key.clone(),
     );
-    let temp_tx = create_contract_deployment_transaction(
-        vec![],
-        vec![output.clone()],
-        payload.clone(),
-        0,
-        &keypair.private_key,
-    )
-    .map_err(|e| CliError::ConfigError(format!("Failed to build deployment tx: {e}")))?;
-    let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(temp_tx.size());
-    create_contract_deployment_transaction(
-        vec![],
-        vec![output],
-        payload,
-        min_fee,
-        &keypair.private_key,
-    )
-    .map_err(|e| CliError::ConfigError(format!("Failed to build deployment tx: {e}")))
+    let placeholder_signature = keypair
+        .sign(b"deployment-placeholder-signature")
+        .map_err(|e| CliError::ConfigError(format!("Failed to create placeholder signature: {e}")))?;
+
+    let mut tx = Transaction {
+        version: 1,
+        chain_id: 0x03,
+        transaction_type: TransactionType::ContractDeployment,
+        inputs: vec![],
+        outputs: vec![output],
+        fee: 0,
+        signature: placeholder_signature,
+        memo,
+        identity_data: None,
+        wallet_data: None,
+        validator_data: None,
+        dao_proposal_data: None,
+        dao_vote_data: None,
+        dao_execution_data: None,
+        ubi_claim_data: None,
+        profit_declaration_data: None,
+        token_transfer_data: None,
+        token_mint_data: None,
+        governance_config_data: None,
+    };
+    tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
+    tx.signature = keypair
+        .sign(tx.signing_hash().as_bytes())
+        .map_err(|e| CliError::ConfigError(format!("Failed to sign deployment tx: {e}")))?;
+    Ok(tx)
 }
 
 async fn broadcast_signed_tx(client: &ZhtpClient, tx: &Transaction) -> CliResult<serde_json::Value> {
@@ -336,6 +348,8 @@ async fn fetch_and_display_blockchain_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::keypair::KeyPair;
+    use lib_blockchain::{TransactionType, CONTRACT_DEPLOYMENT_MEMO_PREFIX};
 
     #[test]
     fn test_validate_tx_hash_valid() {
@@ -369,5 +383,39 @@ mod tests {
     fn test_parse_contract_type_token() {
         let ty = parse_contract_type("token").unwrap();
         assert_eq!(ty, ContractType::Token);
+    }
+
+    #[test]
+    fn test_build_signed_contract_deploy_tx_uses_canonical_schema() {
+        let keypair = KeyPair::generate().unwrap();
+        let payload = ContractDeploymentPayloadV1 {
+            contract_type: "wasm".to_string(),
+            code: vec![1, 2, 3, 4],
+            abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+            init_args: vec![0xaa],
+            gas_limit: 100_000,
+            memory_limit_bytes: 65_536,
+        };
+
+        let tx = build_signed_contract_deploy_tx(&keypair, payload.clone()).unwrap();
+        assert_eq!(tx.transaction_type, TransactionType::ContractDeployment);
+        assert!(tx.memo.starts_with(CONTRACT_DEPLOYMENT_MEMO_PREFIX));
+        assert!(!tx.memo[CONTRACT_DEPLOYMENT_MEMO_PREFIX.len()..].is_empty());
+    }
+
+    #[test]
+    fn test_build_signed_contract_call_tx_uses_contract_execution_format() {
+        let keypair = KeyPair::generate().unwrap();
+        let tx = build_signed_contract_call_tx(
+            &keypair,
+            ContractType::Token,
+            "mint",
+            vec![1, 2, 3],
+        )
+        .unwrap();
+
+        assert_eq!(tx.transaction_type, TransactionType::ContractExecution);
+        assert!(tx.memo.starts_with(b"ZHTP"));
+        assert!(tx.fee > 0);
     }
 }
