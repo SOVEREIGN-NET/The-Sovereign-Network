@@ -109,23 +109,19 @@ impl PouwHandler {
                 "Rate limit exceeded for challenge request"
             );
             
-            let body = serde_json::json!({
+            let error_body = serde_json::json!({
                 "error": "Rate limit exceeded",
                 "reason": reason.to_string(),
                 "retry_after_seconds": retry_after.as_secs(),
             });
 
-            return Ok(ZhtpResponse {
-                status: ZhtpStatus::TooManyRequests,
-                headers: [
-                    ("Content-Type".to_string(), "application/json".to_string()),
-                    ("Retry-After".to_string(), retry_after.as_secs().to_string()),
-                ]
-                .iter()
-                .cloned()
-                .collect(),
-                body: serde_json::to_vec(&body).unwrap_or_default(),
-            });
+            let mut response = ZhtpResponse::error_json(ZhtpStatus::TooManyRequests, &error_body)
+                .map_err(|e| anyhow::anyhow!("Failed to create error response: {}", e))?;
+            
+            // Add Retry-After header
+            response.headers = response.headers.with_custom_header("Retry-After".to_string(), retry_after.as_secs().to_string());
+            
+            return Ok(response);
         }
 
         // Parse query parameters from the request URI to configure the challenge.
@@ -144,7 +140,7 @@ impl PouwHandler {
 
         let max_receipts = params
             .get("max_receipts")
-            .and_then(|v| v.parse::<u64>().ok());
+            .and_then(|v| v.parse::<u32>().ok());
 
         let challenge = self
             .challenge_generator
@@ -179,23 +175,19 @@ impl PouwHandler {
                 "Rate limit exceeded for receipt submission"
             );
             
-            let body = serde_json::json!({
+            let error_body = serde_json::json!({
                 "error": "Rate limit exceeded",
                 "reason": reason.to_string(),
                 "retry_after_seconds": retry_after.as_secs(),
             });
 
-            return Ok(ZhtpResponse {
-                status: ZhtpStatus::TooManyRequests,
-                headers: [
-                    ("Content-Type".to_string(), "application/json".to_string()),
-                    ("Retry-After".to_string(), retry_after.as_secs().to_string()),
-                ]
-                .iter()
-                .cloned()
-                .collect(),
-                body: serde_json::to_vec(&body).unwrap_or_default(),
-            });
+            let mut response = ZhtpResponse::error_json(ZhtpStatus::TooManyRequests, &error_body)
+                .map_err(|e| anyhow::anyhow!("Failed to create error response: {}", e))?;
+            
+            // Add Retry-After header
+            response.headers = response.headers.with_custom_header("Retry-After".to_string(), retry_after.as_secs().to_string());
+            
+            return Ok(response);
         }
 
         let batch: ReceiptBatch = serde_json::from_slice(&request.body)
@@ -213,21 +205,15 @@ impl PouwHandler {
                 "Batch size limit exceeded for receipt submission"
             );
             
-            let body = serde_json::json!({
+            let error_body = serde_json::json!({
                 "error": "Batch size limit exceeded",
                 "reason": reason.to_string(),
                 "batch_size": batch_size,
                 "max_batch_size": 100, // From default config
             });
 
-            return Ok(ZhtpResponse {
-                status: ZhtpStatus::BadRequest,
-                headers: [("Content-Type".to_string(), "application/json".to_string())]
-                    .iter()
-                    .cloned()
-                    .collect(),
-                body: serde_json::to_vec(&body).unwrap_or_default(),
-            });
+            return Ok(ZhtpResponse::error_json(ZhtpStatus::BadRequest, &error_body)
+                .map_err(|e| anyhow::anyhow!("Failed to create error response: {}", e))?);
         }
 
         let validator = self.receipt_validator.read().await;
