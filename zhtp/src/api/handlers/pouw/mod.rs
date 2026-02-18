@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use tracing::debug;
 use async_trait::async_trait;
+use hex;
 
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
@@ -80,9 +81,35 @@ impl PouwHandler {
             .await
             .map_err(|e| anyhow::anyhow!("Validation failed: {}", e))?;
 
+        // Calculate rewards for accepted receipts
+        let mut rewards = vec![];
+        if !result.accepted.is_empty() {
+            // Get all validated receipts for reward calculation
+            let validated = validator.get_validated_receipts().await;
+            if !validated.is_empty() {
+                let calculator = self.reward_calculator.read().await;
+                match calculator.calculate_epoch_rewards(&validated, 0).await {
+                    Ok(epoch_rewards) => {
+                        for r in epoch_rewards {
+                            rewards.push(serde_json::json!({
+                                "reward_id": hex::encode(&r.reward_id),
+                                "client_did": r.client_did,
+                                "amount": r.final_amount,
+                                "epoch": r.epoch,
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Failed to calculate rewards: {}", e);
+                    }
+                }
+            }
+        }
+
         let body = serde_json::json!({
             "accepted": result.accepted.len(),
             "rejected": result.rejected.len(),
+            "rewards": rewards,
         });
 
         Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
