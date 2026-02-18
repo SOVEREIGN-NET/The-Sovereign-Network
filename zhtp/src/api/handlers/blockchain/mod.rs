@@ -16,6 +16,8 @@ use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 // Blockchain imports
 use lib_blockchain::types::Hash;
 use lib_blockchain::Blockchain;
+use lib_blockchain::transaction::Transaction;
+use lib_blockchain::types::transaction_type::TransactionType;
 
 /// Clean blockchain handler implementation
 ///
@@ -484,6 +486,18 @@ struct BroadcastTransactionRequest {
     transaction_data: String, // Hex-encoded transaction
 }
 
+#[derive(Deserialize)]
+struct ContractTransactionRequest {
+    transaction_data: String, // Hex-encoded canonical transaction
+}
+
+#[derive(Serialize)]
+struct ContractSubmissionResponse {
+    status: String,
+    transaction_hash: String,
+    message: String,
+}
+
 fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
     match bincode::deserialize::<lib_blockchain::transaction::Transaction>(raw_tx) {
         Ok(mut tx) => {
@@ -505,6 +519,18 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
 }
 
 impl BlockchainHandler {
+    fn decode_transaction_hex(hex_data: &str) -> Result<Transaction> {
+        let tx_bytes = hex::decode(hex_data)
+            .map_err(|_| anyhow::anyhow!("Invalid hex transaction data"))?;
+
+        if let Ok(tx) = serde_json::from_slice::<Transaction>(&tx_bytes) {
+            return Ok(tx);
+        }
+
+        bincode::deserialize::<Transaction>(&tx_bytes)
+            .map_err(|_| anyhow::anyhow!("Invalid transaction encoding (expected JSON or bincode)"))
+    }
+
     /// Handle blockchain status request
     async fn handle_blockchain_status(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         let blockchain_arc = self.get_blockchain().await?;
@@ -1819,19 +1845,109 @@ impl BlockchainHandler {
 impl BlockchainHandler {
     /// Deploy a new smart contract
     async fn handle_deploy_contract(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let _ = request;
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Direct /contracts/deploy is disabled. Submit canonical on-chain ContractDeployment transactions via /api/v1/blockchain/transaction/broadcast using schema docs in lib-blockchain/docs/contract-deployment-transaction-schema.md.".to_string(),
+        let req_data: ContractTransactionRequest = match serde_json::from_slice(&request.body) {
+            Ok(data) => data,
+            Err(_) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Invalid request body. Expected JSON: {\"transaction_data\":\"<hex>\"}".to_string(),
+                ))
+            }
+        };
+
+        let transaction = match Self::decode_transaction_hex(&req_data.transaction_data) {
+            Ok(tx) => tx,
+            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+        };
+
+        if transaction.transaction_type != TransactionType::ContractDeployment {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                format!(
+                    "Expected ContractDeployment transaction, got {:?}",
+                    transaction.transaction_type
+                ),
+            ));
+        }
+
+        let tx_hash = transaction.hash();
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        if let Err(e) = blockchain.add_pending_transaction(transaction) {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                format!(
+                    "Contract deployment transaction {} rejected: {}",
+                    tx_hash, e
+                ),
+            ));
+        }
+
+        let response_data = ContractSubmissionResponse {
+            status: "accepted".to_string(),
+            transaction_hash: tx_hash.to_string(),
+            message: "Contract deployment transaction accepted to mempool".to_string(),
+        };
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
         ))
     }
 
     /// Call a smart contract function
     async fn handle_call_contract(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let _ = request;
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Direct /contracts/{id}/call is disabled. Submit canonical on-chain ContractExecution transactions via /api/v1/blockchain/transaction/broadcast.".to_string(),
+        let req_data: ContractTransactionRequest = match serde_json::from_slice(&request.body) {
+            Ok(data) => data,
+            Err(_) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Invalid request body. Expected JSON: {\"transaction_data\":\"<hex>\"}".to_string(),
+                ))
+            }
+        };
+
+        let transaction = match Self::decode_transaction_hex(&req_data.transaction_data) {
+            Ok(tx) => tx,
+            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+        };
+
+        if transaction.transaction_type != TransactionType::ContractExecution {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                format!(
+                    "Expected ContractExecution transaction, got {:?}",
+                    transaction.transaction_type
+                ),
+            ));
+        }
+
+        let tx_hash = transaction.hash();
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        if let Err(e) = blockchain.add_pending_transaction(transaction) {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                format!(
+                    "Contract execution transaction {} rejected: {}",
+                    tx_hash, e
+                ),
+            ));
+        }
+
+        let response_data = ContractSubmissionResponse {
+            status: "accepted".to_string(),
+            transaction_hash: tx_hash.to_string(),
+            message: "Contract execution transaction accepted to mempool".to_string(),
+        };
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
         ))
     }
 
