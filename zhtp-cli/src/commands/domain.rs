@@ -25,7 +25,6 @@ pub enum DomainOperation {
     Register,
     Check,
     Info,
-    Status,
     Transfer,
     Release,
     Migrate,
@@ -38,7 +37,6 @@ impl DomainOperation {
             DomainOperation::Register => "Register a new domain",
             DomainOperation::Check => "Check domain availability",
             DomainOperation::Info => "Get domain information",
-            DomainOperation::Status => "Get domain status",
             DomainOperation::Transfer => "Transfer domain to new owner",
             DomainOperation::Release => "Release domain from use",
             DomainOperation::Migrate => "Migrate legacy domain records",
@@ -54,7 +52,6 @@ pub fn action_to_operation(action: &DomainAction) -> DomainOperation {
         DomainAction::Register { .. } => DomainOperation::Register,
         DomainAction::Check { .. } => DomainOperation::Check,
         DomainAction::Info { .. } => DomainOperation::Info,
-        DomainAction::Status { .. } => DomainOperation::Status,
         DomainAction::Transfer { .. } => DomainOperation::Transfer,
         DomainAction::Release { .. } => DomainOperation::Release,
         DomainAction::Migrate { .. } => DomainOperation::Migrate,
@@ -184,28 +181,6 @@ async fn handle_domain_command_impl(
             )
             .await
         }
-        DomainAction::Status {
-            domain,
-            keystore,
-            trust,
-        } => {
-            let domain = validate_domain(&domain)?;
-
-            output.header("Domain Status")?;
-            output.print(&format!("Domain: {}", domain))?;
-
-            get_domain_info_impl(
-                &domain,
-                keystore.as_ref().map(|s| s.as_str()),
-                trust.pin_spki.as_deref(),
-                trust.node_did.as_deref(),
-                trust.tofu,
-                trust.trust_node,
-                &cli.server,
-                output,
-            )
-            .await
-        }
         DomainAction::Transfer {
             domain,
             new_owner,
@@ -223,7 +198,7 @@ async fn handle_domain_command_impl(
             transfer_domain_impl(
                 &domain,
                 &new_owner,
-                keystore.as_ref().map(|s| s.as_str()),
+                Some(keystore.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -248,7 +223,7 @@ async fn handle_domain_command_impl(
             // Imperative: Network communication
             release_domain_impl(
                 &domain,
-                keystore.as_ref().map(|s| s.as_str()),
+                Some(keystore.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -263,7 +238,7 @@ async fn handle_domain_command_impl(
             output.header("Migrate Domain Records")?;
 
             migrate_domains_impl(
-                keystore.as_ref().map(|s| s.as_str()),
+                Some(keystore.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
