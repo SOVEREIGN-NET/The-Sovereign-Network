@@ -34,6 +34,7 @@ fn make_header(
         version: 1,
         previous_block_hash: Hash::new([0xAB; 32]),
         merkle_root: Hash::new([0xCD; 32]),
+        state_root: Hash::default(),
         timestamp: 1_700_000_000,
         difficulty: Difficulty::from_bits(difficulty_bits),
         nonce,
@@ -291,6 +292,7 @@ fn test_different_non_pow_fields_produce_different_bytes() {
             version: 1,
             previous_block_hash: Hash::new([0x11; 32]),
             merkle_root: Hash::new([0xAA; 32]),
+            state_root: Hash::default(),
             timestamp: 1_000_000,
             difficulty: Difficulty::from_bits(0x207fffff), // same PoW fields
             nonce: 100,
@@ -309,6 +311,7 @@ fn test_different_non_pow_fields_produce_different_bytes() {
             version: 1,
             previous_block_hash: Hash::new([0x22; 32]), // different non-PoW field
             merkle_root: Hash::new([0xAA; 32]),
+            state_root: Hash::default(),
             timestamp: 1_000_000,
             difficulty: Difficulty::from_bits(0x207fffff), // same PoW fields
             nonce: 100,

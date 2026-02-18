@@ -13,6 +13,14 @@ fn create_test_identity(name: &str) -> IdentityId {
     Hash::from_bytes(&hash_blake3(name.as_bytes()))
 }
 
+fn validator_keys(seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    (
+        vec![seed; 32],
+        vec![seed.wrapping_add(64); 32],
+        vec![seed.wrapping_add(128); 32],
+    )
+}
+
 #[test]
 fn test_byzantine_fault_detector_initialization() {
     let mut detector = ByzantineFaultDetector::new();
@@ -174,11 +182,14 @@ fn test_fault_processing_and_slashing() -> Result<()> {
 
     // Register a validator
     let validator_id = create_test_identity("malicious_validator");
+    let (consensus_key, networking_key, rewards_key) = validator_keys(1);
     validator_manager.register_validator(
         validator_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
-        vec![1u8; 32],
+        consensus_key,
+        networking_key,
+        rewards_key,
         5,
     )?;
 

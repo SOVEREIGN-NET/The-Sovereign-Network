@@ -112,6 +112,7 @@ fn block(height: u64, txs: Vec<Transaction>) -> Block {
         timestamp: 1_700_000_000 + height,
         previous_block_hash: Hash::zero(),
         merkle_root: Hash::zero(),
+        state_root: Hash::default(),
         block_hash: Hash::zero(),
         nonce: 0,
         difficulty: Difficulty::from_bits(0),
