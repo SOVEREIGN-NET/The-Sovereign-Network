@@ -4870,7 +4870,14 @@ impl Blockchain {
             .ok_or_else(|| anyhow::anyhow!("Recipient identity {} not found", recipient_identity))?;
 
         // Basic proposal-type guard to prevent accidental execution of non-treasury proposals.
-        if !proposal.proposal_type.to_ascii_lowercase().contains("treasury") {
+        let proposal_type_normalized = proposal.proposal_type.to_ascii_lowercase();
+        if !matches!(
+            proposal_type_normalized.as_str(),
+            "treasury"
+                | "treasuryspending"
+                | "treasury_spending"
+                | "treasury_allocation"
+        ) {
             return Err(anyhow::anyhow!(
                 "Proposal type '{}' is not treasury spending",
                 proposal.proposal_type
@@ -4925,7 +4932,7 @@ impl Blockchain {
         let mut selected = treasury_utxos.clone();
         selected.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
         let mut inputs = Vec::new();
-        for (utxo_id, _output) in selected.into_iter().take(8) {
+        for (utxo_id, _output) in selected {
             inputs.push(TransactionInput {
                 previous_output: utxo_id,
                 output_index: 0,
@@ -4938,7 +4945,7 @@ impl Blockchain {
         let yes_voters: Vec<String> = self
             .get_dao_votes_for_proposal(&proposal_id)
             .into_iter()
-            .filter(|v| v.vote_choice.eq_ignore_ascii_case("yes") && v.voting_power > 0)
+            .filter(|v| v.vote_choice == "Yes" && v.voting_power > 0)
             .map(|v| v.voter)
             .collect();
         if yes_voters.is_empty() {
@@ -4948,7 +4955,7 @@ impl Blockchain {
         }
         let multisig_signatures: Vec<Vec<u8>> = yes_voters
             .iter()
-            .map(|voter| crate::types::hash::blake3_hash(voter.as_bytes()).as_bytes().to_vec())
+            .map(|voter| voter.as_bytes().to_vec())
             .collect();
 
         // 7. Create execution data
@@ -4959,30 +4966,55 @@ impl Blockchain {
             recipient: Some(recipient_identity.clone()),
             amount: Some(amount),
             executed_at: crate::utils::time::current_timestamp(),
-            executed_at_height: self.height + 1,
+            executed_at_height: self.height,
             multisig_signatures,
         };
 
-        // 8. Create recipient output (amount represented in commitment).
-        let outputs = vec![
+        // 8. Create recipient output plus deterministic treasury change output.
+        let mut outputs = vec![
             TransactionOutput {
                 commitment: crate::types::hash::blake3_hash(&amount.to_le_bytes()),
                 note: Hash::default(),
                 recipient: recipient_pubkey,
             }
         ];
+        if treasury_balance > required_amount {
+            let change_amount = treasury_balance - required_amount;
+            let treasury_wallet = self.get_dao_treasury_wallet()?;
+            outputs.push(TransactionOutput {
+                commitment: crate::types::hash::blake3_hash(&change_amount.to_le_bytes()),
+                note: Hash::default(),
+                recipient: crate::integration::crypto_integration::PublicKey::new(
+                    treasury_wallet.public_key.clone(),
+                ),
+            });
+        }
 
         // 9. Create execution transaction
         let proposal_id_bytes = proposal_id.as_bytes();
         let memo_text = format!("DAO Proposal {} Execution", hex::encode(&proposal_id_bytes[..8]));
+        let executor_pubkey = self.identity_registry
+            .get(&execution_data.executor)
+            .map(|id| crate::integration::crypto_integration::PublicKey::new(id.public_key.clone()))
+            .ok_or_else(|| anyhow::anyhow!("Executor identity {} not found", execution_data.executor))?;
+        let execution_signature = crate::types::hash::blake3_hash(
+            &[
+                proposal_id.as_bytes(),
+                execution_data.executor.as_bytes(),
+                &execution_data.executed_at.to_le_bytes(),
+            ]
+            .concat(),
+        )
+        .as_bytes()
+        .to_vec();
         let execution_tx = Transaction::new_dao_execution(
             execution_data,
             inputs,
             outputs,
             execution_fee,
             crate::integration::crypto_integration::Signature {
-                signature: vec![],
-                public_key: crate::integration::crypto_integration::PublicKey::new(vec![]),
+                signature: execution_signature,
+                public_key: executor_pubkey,
                 algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                 timestamp: crate::utils::time::current_timestamp(),
             },
@@ -4992,6 +5024,7 @@ impl Blockchain {
         // 10. Add to pending transactions
         let tx_hash = execution_tx.hash();
         self.add_pending_transaction(execution_tx)?;
+        self.executed_dao_proposals.insert(proposal_id);
         
         info!("✅ DAO proposal {:?} executed, transaction: {:?}", proposal_id, tx_hash);
         Ok(tx_hash)
