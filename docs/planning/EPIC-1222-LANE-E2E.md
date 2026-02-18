@@ -1,6 +1,9 @@
 # EPIC #1222 Lane: E2E Validation
 
-Branch: `feature/epic-1222-e2e`
+**Status:** PLANNING → IMPLEMENTATION
+**Branch:** `feature/epic-1222-e2e`
+
+---
 
 ## Scope
 - #1232 Add multi-node E2E tests for contract + DAO lifecycle
