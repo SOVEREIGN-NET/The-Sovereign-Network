@@ -400,6 +400,45 @@ pub enum BlockchainAction {
     },
     /// Get blockchain stats
     Stats,
+    /// Deploy a contract via canonical ContractDeployment transaction broadcast
+    ContractDeploy {
+        /// Contract family/type (for example: wasm, token, web4)
+        #[arg(long)]
+        contract_type: String,
+        /// Compiled contract code as hex string
+        #[arg(long)]
+        code_hex: String,
+        /// ABI JSON string
+        #[arg(long)]
+        abi_json: String,
+        /// Optional init args as hex string
+        #[arg(long)]
+        init_args_hex: Option<String>,
+        /// Deployment gas limit
+        #[arg(long, default_value = "100000")]
+        gas_limit: u64,
+        /// Deployment memory limit in bytes
+        #[arg(long, default_value = "65536")]
+        memory_limit_bytes: u32,
+    },
+    /// Call a contract method via canonical ContractExecution transaction broadcast
+    ContractCall {
+        /// Contract type (token, messaging, contact, group, file, governance, web4, ubi, devgrants)
+        #[arg(long)]
+        contract_type: String,
+        /// Contract method name
+        #[arg(long)]
+        method: String,
+        /// Encoded call params as hex string
+        #[arg(long, default_value = "")]
+        params_hex: String,
+    },
+    /// Broadcast a pre-signed transaction as hex-encoded bytes
+    BroadcastRaw {
+        /// Hex-encoded signed transaction bytes (bincode/json serialized)
+        #[arg(long)]
+        tx_hex: String,
+    },
 }
 
 /// Monitoring commands
