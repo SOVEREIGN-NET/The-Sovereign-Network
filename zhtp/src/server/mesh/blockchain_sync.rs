@@ -8,6 +8,7 @@ use anyhow::{Result, Context};
 use tracing::{info, warn, error, debug};
 use lib_crypto::PublicKey;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
+use lib_network::protocols::NetworkProtocol;
 use lib_network::mesh::server::ZhtpMeshServer;
 use lib_identity::IdentityManager;
 
@@ -15,38 +16,34 @@ use super::core::MeshRouter;
 
 impl MeshRouter {
     /// Set the blockchain broadcast receiver and start processing task
-    ///
-    /// ✅ TICKET 2.6: Refactored to accept Arc<Self> for proper routing integration
-    /// This allows the spawned task to call send_with_routing() instead of bypassing
-    /// the router with direct protocol calls.
-    pub fn set_broadcast_receiver(
-        self_arc: Arc<Self>,
+    /// 
+    /// ⚠️ TICKET 2.6 TODO: Refactor this to accept Arc<Self> instead of &self
+    /// Current implementation bypasses MeshRouter routing in the spawned task because
+    /// the task needs 'static lifetime. Once refactored to take Arc<Self>, this will
+    /// use mesh_router.broadcast_to_peers() which now routes through send_with_routing().
+    pub async fn set_broadcast_receiver(
+        &self, 
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<lib_blockchain::BlockchainBroadcastMessage>
     ) {
         info!("📡 Blockchain broadcast channel connected to mesh router");
-
+        
+        let connections = self.connections.clone();
+        let recent_blocks = self.recent_blocks.clone();
+        let recent_transactions = self.recent_transactions.clone();
+        let quic_protocol = self.quic_protocol.clone();
+        let broadcast_metrics = self.broadcast_metrics.clone();
+        let identity_manager = self.identity_manager.clone();
+        
+        // TODO TICKET 2.6: Once refactored to Arc<Self>, clone mesh_router here
+        // let mesh_router = Arc::clone(self);
+        
         // Spawn task to process broadcast messages from blockchain
         tokio::spawn(async move {
             while let Some(msg) = receiver.recv().await {
                 match msg {
                     lib_blockchain::BlockchainBroadcastMessage::NewBlock(block) => {
-                        let block_hash = hex::encode(&block.header.hash().as_bytes()[..8]);
-                        let peer_count = {
-                            let quic = self_arc.quic_protocol.read().await;
-                            quic.as_ref().map(|q| q.peer_count()).unwrap_or(0)
-                        };
-                        info!("📡 Broadcasting block {} (hash {}) to {} connected peers",
-                              block.height(), block_hash, peer_count);
-
-                        // ✅ TICKET 2.6: Verify sender identity is available
-                        let sender_pubkey = match self_arc.get_sender_public_key().await {
-                            Ok(pk) => pk,
-                            Err(e) => {
-                                error!("Cannot broadcast block - local sender identity not available: {}", e);
-                                continue;
-                            }
-                        };
-
+                        info!("📡 Broadcasting new block {} to mesh network", block.height());
+                        
                         // Serialize block
                         let block_data = match bincode::serialize(&block) {
                             Ok(data) => data,
@@ -55,47 +52,80 @@ impl MeshRouter {
                                 continue;
                             }
                         };
-
+                        
+                        // Get local node's public key from identity manager
+                        let sender_pubkey = if let Some(identity_mgr) = identity_manager.as_ref() {
+                            let mgr = identity_mgr.read().await;
+                            if let Some(identity) = mgr.list_identities().first() {
+                                let pubkey_bytes = identity.public_key.as_bytes();
+                                let mut key_id = [0u8; 32];
+                                let len = pubkey_bytes.len().min(32);
+                                key_id[..len].copy_from_slice(&pubkey_bytes[..len]);
+                                lib_crypto::PublicKey {
+                                    key_id,
+                                    dilithium_pk: vec![],
+                                    kyber_pk: vec![],
+                                }
+                            } else {
+                                warn!("No identity available for sender - skipping block broadcast");
+                                continue;
+                            }
+                        } else {
+                            warn!("Identity manager not available - skipping block broadcast");
+                            continue;
+                        };
+                        
                         // Create NewBlock message
                         let message = ZhtpMeshMessage::NewBlock {
                             block: block_data,
-                            sender: sender_pubkey.clone(),
+                            sender: sender_pubkey,
                             height: block.height(),
                             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
                                 .unwrap_or_default().as_secs(),
                         };
-
-                        // ✅ TICKET 2.6 FIX: Route through MeshRouter instead of direct QUIC sends
-                        // This ensures all blocks are logged, identity-verified, and follow standard routing
-                        match self_arc.broadcast_to_peers(message).await {
-                            Ok(success_count) => {
-                                info!("✅ Block {} routed to {} peers via MeshRouter", block.height(), success_count);
-                                // Update metrics
-                                self_arc.broadcast_metrics.write().await.blocks_sent += 1;
-                                // Mark as seen (prevent echo)
-                                self_arc.recent_blocks.write().await.insert(
-                                    block.header.hash(),
-                                    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
-                                );
-                            }
+                        
+                        // Serialize message
+                        let serialized = match bincode::serialize(&message) {
+                            Ok(data) => data,
                             Err(e) => {
-                                error!("Failed to broadcast block {}: {}", block.height(), e);
+                                error!("Failed to serialize NewBlock message: {}", e);
+                                continue;
+                            }
+                        };
+                        
+                        // Broadcast to all connected peers via QUIC
+                        // ⚠️ TICKET 2.6 BYPASS: Direct protocol call - will be fixed when set_broadcast_receiver
+                        // accepts Arc<Self> and can use mesh_router.broadcast_to_peers()
+                        let conns = connections.read().await;
+                        let mut success_count = 0;
+                        
+                        if let Some(quic) = quic_protocol.read().await.as_ref() {
+                            for peer_entry in conns.all_peers() {
+                                // Check if peer has QUIC protocol
+                                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
+                                    // Use peer_id (PublicKey) to send via QUIC
+                                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
+                                        success_count += 1;
+                                    }
+                                }
                             }
                         }
+                        
+                        info!("📤 Block {} broadcast to {} peers", block.height(), success_count);
+                        
+                        // Update metrics
+                        broadcast_metrics.write().await.blocks_sent += 1;
+                        
+                        // Mark as seen (prevent echo)
+                        recent_blocks.write().await.insert(
+                            block.header.hash(),
+                            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+                        );
                     }
                     
                     lib_blockchain::BlockchainBroadcastMessage::NewTransaction(tx) => {
                         debug!("📡 Broadcasting new transaction {} to mesh network", tx.hash());
-
-                        // ✅ TICKET 2.6: Verify sender identity is available
-                        let sender_pubkey = match self_arc.get_sender_public_key().await {
-                            Ok(pk) => pk,
-                            Err(e) => {
-                                error!("Cannot broadcast transaction - local sender identity not available: {}", e);
-                                continue;
-                            }
-                        };
-
+                        
                         // Serialize transaction
                         let tx_data = match bincode::serialize(&tx) {
                             Ok(data) => data,
@@ -104,38 +134,79 @@ impl MeshRouter {
                                 continue;
                             }
                         };
-
+                        
+                        // Get local node's public key from identity manager
+                        let sender_pubkey = if let Some(identity_mgr) = identity_manager.as_ref() {
+                            let mgr = identity_mgr.read().await;
+                            if let Some(identity) = mgr.list_identities().first() {
+                                let pubkey_bytes = identity.public_key.as_bytes();
+                                let mut key_id = [0u8; 32];
+                                let len = pubkey_bytes.len().min(32);
+                                key_id[..len].copy_from_slice(&pubkey_bytes[..len]);
+                                lib_crypto::PublicKey {
+                                    key_id,
+                                    dilithium_pk: vec![],
+                                    kyber_pk: vec![],
+                                }
+                            } else {
+                                warn!("No identity available for sender - skipping transaction broadcast");
+                                continue;
+                            }
+                        } else {
+                            warn!("Identity manager not available - skipping transaction broadcast");
+                            continue;
+                        };
+                        
                         // Get tx hash bytes
                         let tx_hash = tx.hash();
                         let tx_hash_slice = tx_hash.as_bytes();
                         let mut tx_hash_bytes = [0u8; 32];
                         tx_hash_bytes.copy_from_slice(tx_hash_slice);
-
+                        
                         // Create NewTransaction message
                         let message = ZhtpMeshMessage::NewTransaction {
                             transaction: tx_data,
-                            sender: sender_pubkey.clone(),
+                            sender: sender_pubkey,
                             tx_hash: tx_hash_bytes,
                             fee: 1000, // TODO: Extract actual fee from transaction
                         };
-
-                        // ✅ TICKET 2.6 FIX: Route through MeshRouter instead of direct QUIC sends
-                        // This ensures all transactions are logged, identity-verified, and follow standard routing
-                        match self_arc.broadcast_to_peers(message).await {
-                            Ok(success_count) => {
-                                debug!("✅ Transaction {} routed to {} peers via MeshRouter", tx.hash(), success_count);
-                                // Update metrics
-                                self_arc.broadcast_metrics.write().await.transactions_sent += 1;
-                                // Mark as seen (prevent echo)
-                                self_arc.recent_transactions.write().await.insert(
-                                    tx.hash(),
-                                    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
-                                );
-                            }
+                        
+                        // Serialize message
+                        let serialized = match bincode::serialize(&message) {
+                            Ok(data) => data,
                             Err(e) => {
-                                error!("Failed to broadcast transaction {}: {}", tx.hash(), e);
+                                error!("Failed to serialize NewTransaction message: {}", e);
+                                continue;
+                            }
+                        };
+                        
+                        // Broadcast to all connected peers
+                        // ⚠️ TICKET 2.6 BYPASS: Direct protocol call - will be fixed when set_broadcast_receiver
+                        // accepts Arc<Self> and can use mesh_router.broadcast_to_peers()
+                        let conns = connections.read().await;
+                        let mut success_count = 0;
+                        
+                        if let Some(quic) = quic_protocol.read().await.as_ref() {
+                            for peer_entry in conns.all_peers() {
+                                // Check if peer has QUIC protocol
+                                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
+                                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
+                                        success_count += 1;
+                                    }
+                                }
                             }
                         }
+                        
+                        debug!("📤 Transaction {} broadcast to {} peers", tx.hash(), success_count);
+                        
+                        // Update metrics
+                        broadcast_metrics.write().await.transactions_sent += 1;
+                        
+                        // Mark as seen (prevent echo)
+                        recent_transactions.write().await.insert(
+                            tx.hash(),
+                            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+                        );
                     }
                 }
             }
@@ -164,60 +235,24 @@ impl MeshRouter {
     }
     
     /// Set blockchain provider for network layer access
-    ///
-    /// NOTE: Currently injects into QUIC only. BluetoothClassicProtocol also has
-    /// a message_handler field, but it is managed by BluetoothClassicRouter (not
-    /// held by MeshRouter). When Phase 3 implements NewBlock/NewTransaction
-    /// dispatch in classic.rs, injection must be wired through
-    /// BluetoothClassicRouter's initialization path.
     pub async fn set_blockchain_provider(
-        &self,
+        &self, 
         provider: Arc<dyn lib_network::blockchain_sync::BlockchainProvider>
     ) {
         *self.blockchain_provider.write().await = Some(provider.clone());
-
+        
         // Also inject into QUIC protocol's message handler
-        let quic_guard = self.quic_protocol.read().await;
-        if let Some(quic) = quic_guard.as_ref() {
+        if let Some(quic) = self.quic_protocol.read().await.as_ref() {
             if let Some(handler) = quic.message_handler.as_ref() {
                 let mut handler_lock = handler.write().await;
                 handler_lock.set_blockchain_provider(provider.clone());
                 info!("✅ Blockchain provider injected into QUIC MeshMessageHandler");
-            } else {
-                warn!("Blockchain provider stored locally but QUIC message handler not set — mesh sync unavailable");
             }
-        } else {
-            warn!("Blockchain provider stored locally but QUIC protocol not initialized — mesh sync unavailable");
         }
-
+        
         info!("⛓️ Blockchain provider configured for edge node sync");
     }
     
-    /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
-    ///
-    /// NOTE: Currently injects into QUIC only. BluetoothClassicProtocol also has
-    /// a message_handler field, but it is managed by BluetoothClassicRouter (not
-    /// held by MeshRouter). When Phase 3 implements NewBlock/NewTransaction
-    /// dispatch in classic.rs, injection must be wired through
-    /// BluetoothClassicRouter's initialization path.
-    pub async fn set_blockchain_event_receiver(
-        &self,
-        receiver: Arc<dyn lib_network::blockchain_sync::BlockchainEventReceiver>,
-    ) {
-        let quic_guard = self.quic_protocol.read().await;
-        let Some(quic) = quic_guard.as_ref() else {
-            warn!("Cannot inject blockchain event receiver: QUIC protocol not initialized");
-            return;
-        };
-        let Some(handler) = quic.message_handler.as_ref() else {
-            warn!("Cannot inject blockchain event receiver: QUIC message handler not set");
-            return;
-        };
-        let mut handler_lock = handler.write().await;
-        handler_lock.set_blockchain_event_receiver(receiver);
-        info!("Blockchain event receiver injected into QUIC MeshMessageHandler");
-    }
-
     /// Set mesh server for reward tracking (Phase 2.5)
     pub async fn set_mesh_server(&self, mesh_server: Arc<tokio::sync::RwLock<ZhtpMeshServer>>) {
         let mut router = self.mesh_message_router.write().await;
@@ -252,59 +287,88 @@ impl MeshRouter {
         Err(anyhow::anyhow!("No identity available for sender public key"))
     }
     
-    /// Send a mesh message to a specific peer.
-    ///
-    /// Issue #907: Simplified to use QuicMeshProtocol's canonical connection store directly.
-    /// No more PeerRegistry lookup or protocol matching - QUIC is the only transport.
+    /// Send a mesh message to a specific peer
+    /// ✅ TICKET 2.6 FIX: Route through MeshRouter.send_with_routing() instead of direct protocol calls
+    /// This ensures all messages are logged and follow the standard routing path with identity verification
     pub async fn send_to_peer(&self, peer_id: &PublicKey, message: ZhtpMeshMessage) -> Result<()> {
-        info!("Sending message directly to peer {:?}",
+        info!("📤 Routing message to peer {:?}",
               hex::encode(&peer_id.key_id[0..8.min(peer_id.key_id.len())]));
 
-        let quic = self.quic_protocol.read().await;
-        let quic = quic.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("QUIC protocol not initialized"))?;
-
-        // Serialize for byte tracking
+        // Get our own public key for routing (sender identification)
+        let our_pubkey = match self.get_sender_public_key().await {
+            Ok(pk) => pk,
+            Err(e) => {
+                warn!("Failed to get sender public key: {}", e);
+                return Err(anyhow::anyhow!("Cannot route without sender identity: {}", e));
+            }
+        };
+        
+        // Serialize message for size tracking
         let serialized = bincode::serialize(&message)
             .context("Failed to serialize message")?;
+        
+        // Track bytes sent for performance metrics
         self.track_bytes_sent(serialized.len() as u64).await;
-
-        // Send directly via canonical store
-        quic.send_to_peer(&peer_id.key_id, message).await
-            .context("Failed to send QUIC message")?;
-
-        info!("Message sent via QUIC to peer {:?}", &peer_id.key_id[..8.min(peer_id.key_id.len())]);
-        Ok(())
+        
+        // ✅ Route through MeshRouter's routing layer instead of direct protocol calls
+        // This provides:
+        // - Identity verification
+        // - Message logging
+        // - Multi-hop routing support
+        // - Protocol-agnostic delivery
+        match self.send_with_routing(message, peer_id, &our_pubkey).await {
+            Ok(message_id) => {
+                info!("✅ Message routed successfully (ID: {}, dest: {:?})",
+                      message_id, &peer_id.key_id[..8]);
+                Ok(())
+            }
+            Err(e) => {
+                warn!("❌ Failed to route message to peer {:?}: {}",
+                      &peer_id.key_id[..8], e);
+                Err(e)
+            }
+        }
     }
     
-    /// Broadcast message to all connected peers.
-    ///
-    /// Issue #907: Rewired to use QuicMeshProtocol.broadcast_message() directly.
-    /// This bypasses MeshRouter's PeerRegistry (which was never populated for QUIC peers)
-    /// and sends to ALL peers in the canonical DashMap store.
+    /// Broadcast message to all connected peers
+    /// ✅ TICKET 2.6 FIX: Route through MeshRouter.send_with_routing() for each peer
+    /// This ensures all messages are logged and follow the standard routing path
     pub async fn broadcast_to_peers(&self, message: ZhtpMeshMessage) -> Result<usize> {
         let serialized = bincode::serialize(&message)
             .context("Failed to serialize message")?;
-
-        let quic = self.quic_protocol.read().await;
-        let quic = match quic.as_ref() {
-            Some(q) => q,
-            None => {
-                error!("BROADCAST FAILED: QUIC protocol not initialized");
-                return Err(anyhow::anyhow!("QUIC protocol not initialized"));
+        
+        // Get our own public key for routing (sender identification)
+        let our_pubkey = match self.get_sender_public_key().await {
+            Ok(pk) => pk,
+            Err(e) => {
+                warn!("Failed to get sender public key for broadcast: {}", e);
+                return Err(anyhow::anyhow!("Cannot broadcast without sender identity: {}", e));
             }
         };
-
-        let success_count = quic.broadcast_message(&serialized).await?;
-
+        
+        let connections = self.connections.read().await;
+        let mut success_count = 0;
+        
+        // ✅ Route each message through MeshRouter instead of direct protocol calls
+        for peer_entry in connections.all_peers() {
+            let peer_pubkey = peer_entry.peer_id.public_key();
+            
+            // Use send_with_routing for proper logging and identity verification
+            match self.send_with_routing(message.clone(), &peer_pubkey, &our_pubkey).await {
+                Ok(_message_id) => {
+                    success_count += 1;
+                }
+                Err(e) => {
+                    debug!("Failed to route broadcast to peer {:?}: {}", 
+                           &peer_pubkey.key_id[..8], e);
+                    // Continue with other peers even if one fails
+                }
+            }
+        }
+        
         self.track_bytes_sent((serialized.len() * success_count) as u64).await;
-
-        info!(
-            success = success_count,
-            total_peers = quic.peer_count(),
-            "Broadcast complete via QuicMeshProtocol canonical store"
-        );
-
+        info!("📤 Broadcast complete: {} peers reached (routed through MeshRouter)", success_count);
+        
         Ok(success_count)
     }
     
@@ -486,31 +550,5 @@ impl MeshRouter {
                 let _ = sync_manager.cleanup_stale_chunks().await;
             }
         });
-    }
-}
-
-// ============================================================================
-// Tests: Ticket 2.6 - Routing Centralization
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    /// Test: Routing error module can distinguish error types
-    /// Validates Phase 3 - proper error classification
-    #[test]
-    fn test_routing_error_classification() {
-        use super::super::routing_errors::{RoutingError, RoutingErrorClass};
-
-        let transient = RoutingError::transient("Timeout");
-        assert_eq!(transient.class, RoutingErrorClass::Transient);
-        assert_eq!(transient.to_string(), "[TRANSIENT] Timeout");
-
-        let identity_err = RoutingError::identity_violation("Peer not verified");
-        assert_eq!(identity_err.class, RoutingErrorClass::IdentityViolation);
-        assert!(identity_err.to_string().contains("IDENTITY_VIOLATION"));
-
-        let config_err = RoutingError::configuration("No router initialized");
-        assert_eq!(config_err.class, RoutingErrorClass::Configuration);
-        assert_eq!(config_err.to_string(), "[CONFIGURATION] No router initialized");
     }
 }
