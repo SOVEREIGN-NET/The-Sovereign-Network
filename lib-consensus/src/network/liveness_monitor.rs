@@ -92,130 +92,27 @@ use std::collections::{HashMap, HashSet};
 use lib_identity::IdentityId;
 
 // =============================================================================
-// CONSENSUS INVARIANT CHECKS — FAIL FAST ON VIOLATION (BFT-J, Issue #1015)
+// NOTE: CONSENSUS SAFETY INVARIANTS ARE ENFORCED BY THE CONSENSUS ENGINE
 // =============================================================================
-
-/// Enumeration of core BFT consensus safety invariants.
-///
-/// Each variant describes a property that MUST hold at all times during correct
-/// consensus operation.  Violations indicate a safety or liveness bug that
-/// requires immediate investigation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConsensusInvariant {
-    /// No two valid commits exist at the same block height (no forks).
-    NoFork,
-    /// Committed block height is strictly monotonically increasing.
-    MonotonicHeight,
-    /// Every commit requires a quorum of ≥ 2/3 + 1 validators.
-    QuorumRequired,
-    /// Once a block is committed it cannot be reverted (irreversibility).
-    FinalityIrreversible,
-}
-
-impl ConsensusInvariant {
-    /// Returns a human-readable description of this invariant.
-    pub fn description(&self) -> &'static str {
-        match self {
-            Self::NoFork => "no two commits may exist at the same height",
-            Self::MonotonicHeight => "committed height must increase strictly monotonically",
-            Self::QuorumRequired => "every commit requires ≥ 2/3+1 validator agreement",
-            Self::FinalityIrreversible => "committed blocks are final and cannot be reverted",
-        }
-    }
-}
-
-/// Validates a single consensus invariant against the provided evidence.
-///
-/// Returns `Ok(())` if the invariant holds, or an `Err` with a descriptive
-/// message if it is violated.
-///
-/// # Arguments
-/// * `invariant` — the invariant to check.
-/// * `holds` — caller-supplied boolean indicating whether the invariant holds.
-///
-/// # Errors
-/// Returns `Err` when `holds` is `false`.
-pub fn check_invariant(invariant: &ConsensusInvariant, holds: bool) -> Result<(), String> {
-    if !holds {
-        Err(format!(
-            "consensus invariant violated [{:?}]: {}",
-            invariant,
-            invariant.description()
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-/// Asserts all consensus invariants simultaneously.
-///
-/// **Fail-fast**: panics immediately if any invariant is violated.  A panic
-/// here indicates a safety or liveness bug in the consensus implementation
-/// and must halt the node to prevent further state corruption.
-///
-/// # Arguments
-/// Each boolean argument corresponds to one invariant in declaration order:
-/// `no_fork`, `monotonic_height`, `quorum_satisfied`, `finality_irreversible`.
-///
-/// # Panics
-/// Panics with a descriptive message if any invariant is `false`.
-pub fn assert_consensus_invariants(
-    no_fork: bool,
-    monotonic_height: bool,
-    quorum_satisfied: bool,
-    finality_irreversible: bool,
-) {
-    let checks = [
-        (ConsensusInvariant::NoFork, no_fork),
-        (ConsensusInvariant::MonotonicHeight, monotonic_height),
-        (ConsensusInvariant::QuorumRequired, quorum_satisfied),
-        (ConsensusInvariant::FinalityIrreversible, finality_irreversible),
-    ];
-    for (invariant, holds) in &checks {
-        if !holds {
-            panic!(
-                "CONSENSUS SAFETY BUG — invariant violated [{:?}]: {}\n\
-                 The node must halt to prevent further state corruption.",
-                invariant,
-                invariant.description()
-            );
-        }
-    }
-}
-
-#[cfg(test)]
-mod invariant_tests {
-    use super::*;
-
-    #[test]
-    fn test_check_invariant_passes_when_true() {
-        assert!(check_invariant(&ConsensusInvariant::NoFork, true).is_ok());
-        assert!(check_invariant(&ConsensusInvariant::MonotonicHeight, true).is_ok());
-        assert!(check_invariant(&ConsensusInvariant::QuorumRequired, true).is_ok());
-        assert!(check_invariant(&ConsensusInvariant::FinalityIrreversible, true).is_ok());
-    }
-
-    #[test]
-    fn test_check_invariant_fails_when_false() {
-        let err = check_invariant(&ConsensusInvariant::NoFork, false);
-        assert!(err.is_err());
-        let msg = err.unwrap_err();
-        assert!(msg.contains("NoFork"));
-        assert!(msg.contains("no two commits may exist at the same height"));
-    }
-
-    #[test]
-    fn test_assert_consensus_invariants_all_pass() {
-        // Should not panic when all invariants hold
-        assert_consensus_invariants(true, true, true, true);
-    }
-
-    #[test]
-    #[should_panic(expected = "CONSENSUS SAFETY BUG")]
-    fn test_assert_consensus_invariants_panics_on_fork() {
-        assert_consensus_invariants(false, true, true, true);
-    }
-}
+//
+// This liveness monitor is intentionally restricted to *observing* validator
+// heartbeat activity and *emitting* high-level events (e.g. `ConsensusStalled`)
+// when it detects that progress is unlikely, as documented in the module
+// overview above.
+//
+// Core BFT safety invariants (e.g. no forks, monotonic height, quorum
+// requirements, and finality) MUST be enforced in the consensus engine or
+// blockchain state machine where state transitions are applied, not here.
+//
+// For consensus safety invariant checking, see:
+//   - `lib-consensus/src/invariants.rs` - Invariant definitions and enforcement
+//   - `lib-consensus/src/engines/consensus_engine/mod.rs` - Integration points
+//   - `lib-blockchain/src/blockchain.rs` - Block commit validation
+//
+// The liveness monitor may *observe* or *report* on the effects of such
+// invariants (for example, via events), but it does not define or enforce
+// them directly.
+// =============================================================================
 
 // =============================================================================
 // LIVENESS THRESHOLD CONSTANTS
