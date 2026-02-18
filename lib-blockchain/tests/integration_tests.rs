@@ -5,6 +5,9 @@
 
 use lib_blockchain::*;
 use lib_blockchain::integration::*;
+use lib_blockchain::integration::storage_integration::BlockchainStorageConfig;
+use lib_blockchain::block::BlockHeader;
+use lib_blockchain::types::Hash;
 use anyhow::Result;
 
 #[test]
@@ -238,6 +241,46 @@ fn test_identity_commitment_creation() -> Result<()> {
     let commitment3 = identity_integration::create_identity_commitment(&did, different_secret, &attributes.iter().map(|s| s.as_str()).collect::<Vec<&str>>())?;
     assert_ne!(commitment, commitment3);
     
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_blockchain_state_restart_equivalence() -> Result<()> {
+    let config = BlockchainStorageConfig::default();
+    let mut blockchain = Blockchain::new_with_storage(config.clone()).await?;
+
+    let mining_config = lib_blockchain::types::mining::get_mining_config_from_env();
+    let latest = blockchain.latest_block().unwrap();
+
+    let header = BlockHeader::new(
+        1,
+        latest.hash(),
+        Hash::default(),
+        latest.timestamp() + 10,
+        mining_config.difficulty,
+        blockchain.height + 1,
+        0,
+        0,
+        mining_config.difficulty,
+    );
+
+    let block = Block::new(header, Vec::new());
+
+    blockchain.add_block_with_persistence(block).await?;
+    blockchain.persist_blockchain_state().await?;
+
+    if let Some(ref storage_manager_arc) = blockchain.storage_manager {
+        let storage_manager = storage_manager_arc.read().await;
+        let latest_state = storage_manager.retrieve_latest_blockchain_state().await?;
+
+        let state = latest_state.expect("expected latest blockchain state");
+        assert_eq!(state.height, blockchain.height);
+        assert_eq!(state.difficulty.bits(), blockchain.difficulty.bits());
+        assert_eq!(state.total_work, blockchain.total_work);
+        assert_eq!(state.finality_depth, blockchain.finality_depth);
+        assert_eq!(state.finalized_blocks, blockchain.finalized_blocks);
+    }
+
     Ok(())
 }
 
