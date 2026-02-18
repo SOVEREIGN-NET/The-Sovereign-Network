@@ -13,9 +13,7 @@ use crate::error::{CliResult, CliError};
 use crate::output::Output;
 use crate::logic;
 use lib_network::client::ZhtpClient;
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-use tokio::net::UdpSocket;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -108,7 +106,7 @@ async fn handle_network_command_impl(
             logic::validate_socket_address(&target)?;
             logic::validate_ping_count(count)?;
 
-            // Imperative: UDP operations
+            // Imperative: QUIC operations
             ping_peer(&target, count, output).await
         }
     }
@@ -144,30 +142,16 @@ async fn fetch_and_display_network_info(
     Ok(())
 }
 
-/// Ping a peer node directly via UDP
+/// Ping a peer node directly via QUIC
 async fn ping_peer(target: &str, count: u32, output: &dyn Output) -> CliResult<()> {
-    use lib_network::types::mesh_message::ZhtpMeshMessage;
-    use lib_crypto::PublicKey;
-
-    output.print(&format!("🏓 ZHTP Mesh Ping to {}", target))?;
+    output.print(&format!("🏓 ZHTP QUIC Ping to {}", target))?;
     output.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")?;
 
-    // Parse target address (already validated in caller)
-    let target_addr: SocketAddr = target.parse().map_err(|_| {
-        CliError::NetworkError(format!("Invalid socket address: {}", target))
-    })?;
+    // Validate socket address format
+    logic::validate_socket_address(target)?;
 
-    // Bind to a random local port
-    let socket = UdpSocket::bind("0.0.0.0:0")
-        .await
-        .map_err(|e| CliError::NetworkError(format!("Failed to bind socket: {}", e)))?;
-
-    let local_addr = socket.local_addr().map_err(|e| {
-        CliError::NetworkError(format!("Failed to get local address: {}", e))
-    })?;
-
-    output.print(&format!("📡 Sending from {}", local_addr))?;
-    output.print("")?;
+    // Create a single client connection and reuse it for all pings
+    let mut client = connect_default(target).await?;
 
     let mut successful_pings = 0;
     let mut total_rtt = Duration::ZERO;
@@ -175,85 +159,37 @@ async fn ping_peer(target: &str, count: u32, output: &dyn Output) -> CliResult<(
     let mut max_rtt = Duration::ZERO;
 
     for seq in 1..=count {
-        let request_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
-
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        // Create a ping message
-        let ping_msg = ZhtpMeshMessage::DhtPing {
-            requester: PublicKey::new(vec![0u8; 32]),
-            request_id,
-            timestamp,
-        };
-
-        let ping_data = bincode::serialize(&ping_msg)
-            .map_err(|e| CliError::NetworkError(format!("Failed to serialize ping: {}", e)))?;
-
         let start = Instant::now();
 
-        // Send ping
-        socket.send_to(&ping_data, target_addr).await.map_err(|e| {
-            CliError::NetworkError(format!("Failed to send ping: {}", e))
-        })?;
+        let response = client.get("/api/v1/network/ping").await;
 
-        // Wait for pong with timeout
-        let mut buf = [0u8; 4096];
-        let timeout = Duration::from_secs(2);
+        let rtt = start.elapsed();
 
-        match tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await {
-            Ok(Ok((len, from))) => {
-                let rtt = start.elapsed();
+        match response {
+            Ok(res) => {
+                if res.status.is_success() {
+                    successful_pings += 1;
+                    total_rtt += rtt;
+                    min_rtt = min_rtt.min(rtt);
+                    max_rtt = max_rtt.max(rtt);
 
-                // Try to deserialize as DhtPong
-                if let Ok(response) = bincode::deserialize::<ZhtpMeshMessage>(&buf[..len]) {
-                    match response {
-                        ZhtpMeshMessage::DhtPong { request_id: resp_id, .. } => {
-                            if resp_id == request_id {
-                                successful_pings += 1;
-                                total_rtt += rtt;
-                                min_rtt = min_rtt.min(rtt);
-                                max_rtt = max_rtt.max(rtt);
-
-                                output.print(&format!(
-                                    "✅ Reply from {}: seq={} time={:.2}ms request_id={}",
-                                    from,
-                                    seq,
-                                    rtt.as_secs_f64() * 1000.0,
-                                    resp_id
-                                ))?;
-                            } else {
-                                output.print(&format!(
-                                    "⚠️  seq={}: Request ID mismatch (expected {}, got {})",
-                                    seq, request_id, resp_id
-                                ))?;
-                            }
-                        }
-                        other => {
-                            output.print(&format!(
-                                "📨 seq={}: Received {:?} (expected DhtPong)",
-                                seq,
-                                std::mem::discriminant(&other)
-                            ))?;
-                        }
-                    }
+                    output.print(&format!(
+                        "✅ Reply from {}: seq={} time={:.2}ms",
+                        target,
+                        seq,
+                        rtt.as_secs_f64() * 1000.0,
+                    ))?;
                 } else {
                     output.print(&format!(
-                        "⚠️  seq={}: Received {} bytes from {} (invalid message format)",
-                        seq, len, from
+                        "❌ Reply from {}: seq={} status={}",
+                        target,
+                        seq,
+                        res.status.code(),
                     ))?;
                 }
             }
-            Ok(Err(e)) => {
-                output.print(&format!("❌ seq={}: Socket error: {}", seq, e))?;
-            }
-            Err(_) => {
-                output.print(&format!("❌ seq={}: Request timeout (>{}ms)", seq, timeout.as_millis()))?;
+            Err(e) => {
+                output.print(&format!("❌ seq={}: Request error: {}", seq, e))?;
             }
         }
 
@@ -262,6 +198,9 @@ async fn ping_peer(target: &str, count: u32, output: &dyn Output) -> CliResult<(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
+
+    // Explicitly close the client to release network resources
+    let _ = client.close().await;
 
     // Print statistics
     output.print("")?;

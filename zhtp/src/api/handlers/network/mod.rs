@@ -297,6 +297,9 @@ impl ZhtpRequestHandler for NetworkHandler {
             (ZhtpMethod::Get, "/api/v1/network/gas") => {
                 self.handle_get_gas_info(request).await
             }
+            (ZhtpMethod::Get, "/api/v1/network/ping") => {
+                self.handle_ping(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/blockchain/network/peers") => {
                 self.handle_get_network_peers(request).await
             }
@@ -427,6 +430,22 @@ impl NetworkHandler {
         let json_response = serde_json::to_vec(&response)
             .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
 
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            CONTENT_TYPE_JSON.to_string(),
+            None,
+        ))
+    }
+
+    /// Handle a ping request
+    /// GET /api/v1/network/ping
+    async fn handle_ping(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Handling ping request");
+        let response = serde_json::json!({
+            "status": "ok"
+        });
+        let json_response = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
             CONTENT_TYPE_JSON.to_string(),
