@@ -13,7 +13,6 @@ use crate::error::{CliResult, CliError};
 use crate::output::Output;
 use crate::logic;
 use lib_network::client::ZhtpClient;
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 // ============================================================================
@@ -148,11 +147,11 @@ async fn ping_peer(target: &str, count: u32, output: &dyn Output) -> CliResult<(
     output.print(&format!("🏓 ZHTP QUIC Ping to {}", target))?;
     output.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")?;
 
-    // Pure validation
+    // Validate socket address format
     logic::validate_socket_address(target)?;
-    let target_addr: SocketAddr = target.parse().map_err(|_| {
-        CliError::NetworkError(format!("Invalid socket address: {}", target))
-    })?;
+
+    // Create a single client connection and reuse it for all pings
+    let mut client = connect_default(target).await?;
 
     let mut successful_pings = 0;
     let mut total_rtt = Duration::ZERO;
@@ -161,9 +160,6 @@ async fn ping_peer(target: &str, count: u32, output: &dyn Output) -> CliResult<(
 
     for seq in 1..=count {
         let start = Instant::now();
-
-        // Create a new client for each ping to measure connection time as well
-        let mut client = connect_default(&target_addr.to_string()).await?;
 
         let response = client.get("/api/v1/network/ping").await;
 
@@ -202,6 +198,9 @@ async fn ping_peer(target: &str, count: u32, output: &dyn Output) -> CliResult<(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
+
+    // Explicitly close the client to release network resources
+    let _ = client.close().await;
 
     // Print statistics
     output.print("")?;
