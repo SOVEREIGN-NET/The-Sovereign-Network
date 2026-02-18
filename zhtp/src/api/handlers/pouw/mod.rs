@@ -52,10 +52,30 @@ impl PouwHandler {
         params
     }
 
-    async fn handle_get_challenge(&self, _request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+    async fn handle_get_challenge(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         debug!("Handling PoUW challenge request");
-        
-        let challenge = self.challenge_generator.generate_challenge(Some("hash"), None, None, None)
+
+        // Parse query parameters from the request URI to configure the challenge.
+        let params = Self::parse_query_params(&request.uri);
+
+        // Capability: default to "hash" if not provided.
+        let capability = params
+            .get("cap")
+            .map(|s| s.as_str())
+            .or(Some("hash"));
+
+        // Optional numeric limits from query parameters; invalid values are ignored.
+        let max_bytes = params
+            .get("max_bytes")
+            .and_then(|v| v.parse::<u64>().ok());
+
+        let max_receipts = params
+            .get("max_receipts")
+            .and_then(|v| v.parse::<u64>().ok());
+
+        let challenge = self
+            .challenge_generator
+            .generate_challenge(capability, max_bytes, max_receipts, None)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
 
