@@ -494,8 +494,10 @@ pub struct ImportResult {
 mod tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
+    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
     use crate::storage::SledStore;
-    use crate::types::{Hash, Difficulty};
+    use crate::transaction::Transaction;
+    use crate::types::{Hash, Difficulty, TransactionType};
     use tempfile::TempDir;
 
     fn create_test_store() -> (TempDir, Arc<dyn BlockchainStore>) {
@@ -542,6 +544,35 @@ mod tests {
             fee_model_version: 2, // Phase 2+ uses v2
         };
         Block::new(header, vec![])
+    }
+
+    fn create_test_tx(transaction_type: TransactionType) -> Transaction {
+        Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: Signature {
+                signature: vec![0u8; 64],
+                public_key: PublicKey::new(vec![1u8; 32]),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: 0,
+            },
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
     }
 
     #[test]
@@ -669,6 +700,19 @@ mod tests {
         let result = sync.import_blocks(vec![]).unwrap();
         assert_eq!(result.blocks_imported, 0);
         assert_eq!(result.final_height, None);
+    }
+
+    #[test]
+    fn test_requires_canonical_runtime_import_detection() {
+        let normal_block = create_block_at_height(0, Hash::default());
+        let canonical_header = create_block_at_height(1, normal_block.header.block_hash).header;
+        let canonical_block = Block::new(
+            canonical_header,
+            vec![create_test_tx(TransactionType::ContractExecution)],
+        );
+
+        assert!(!ChainSync::requires_canonical_runtime_import(&[normal_block.clone()]));
+        assert!(ChainSync::requires_canonical_runtime_import(&[normal_block, canonical_block]));
     }
 
     #[test]
