@@ -754,7 +754,13 @@ impl BlockExecutor {
             | TransactionType::ProfitDeclaration
             | TransactionType::GovernanceConfigUpdate
             | TransactionType::ContractDeployment
-            | TransactionType::ContractExecution => {
+            | TransactionType::ContractExecution
+            // Phase 3/4 types - handled by executor but validation not fully wired yet
+            | TransactionType::TokenCreation
+            | TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
                 return Ok(());
             }
         }
@@ -938,8 +944,24 @@ impl BlockExecutor {
                 }
             }
             TransactionType::TokenTransfer => {
-                // Token transfer validation would check sender balance
-                // For now, the actual balance check happens during apply
+                let transfer = tx.token_transfer_data.as_ref().ok_or_else(|| {
+                    TxApplyError::InvalidType("TokenTransfer requires token_transfer_data".into())
+                })?;
+
+                let token = if transfer.is_native() {
+                    TokenId::NATIVE
+                } else {
+                    TokenId::new(transfer.token_id)
+                };
+                let from = Address::new(transfer.from);
+
+                let expected_nonce = view.get_token_nonce(&token, &from)?;
+                if transfer.nonce != expected_nonce {
+                    return Err(TxApplyError::InvalidNonce {
+                        expected: expected_nonce,
+                        actual: transfer.nonce,
+                    });
+                }
             }
             _ => {}
         }
@@ -1116,6 +1138,9 @@ impl BlockExecutor {
 
                 // Apply the token transfer (debit from, credit to)
                 tx_apply::apply_token_transfer(mutator, &token, &from, &to, amount)?;
+
+                // Increment nonce for replay protection
+                mutator.increment_token_nonce(&token, &from)?;
 
                 Ok(TxOutcome::TokenTransfer(TokenTransferOutcome {
                     token,

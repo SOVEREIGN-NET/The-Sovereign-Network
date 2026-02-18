@@ -1724,8 +1724,14 @@ impl Blockchain {
         // Process identity transactions
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
-        self.process_contract_transactions(&block)?;
-        self.process_token_transactions(&block)?;
+
+        // Skip token/contract processing when using BlockExecutor - it handles these
+        if !self.has_executor() {
+            self.process_contract_transactions(&block)?;
+            self.process_token_transactions(&block)?;
+        } else {
+            debug!("Skipping legacy token/contract processing - BlockExecutor is single source of truth");
+        }
 
         // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
@@ -3296,7 +3302,18 @@ impl Blockchain {
     /// Get the current expected nonce for a sender address and token.
     /// For SOV transfers, the address is the wallet_id bytes.
     /// For custom token transfers, the address is the key_id bytes.
+    /// 
+    /// Reads from BlockchainStore (sled) if available, otherwise falls back to HashMap.
     pub fn get_token_nonce(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u64 {
+        // Try store first (single source of truth when using BlockExecutor)
+        if let Some(store) = self.get_store() {
+            let token = crate::storage::TokenId::new(*token_id);
+            let addr = crate::storage::Address::new(*address);
+            if let Ok(nonce) = store.get_token_nonce(&token, &addr) {
+                return nonce;
+            }
+        }
+        // Fallback to HashMap (legacy path)
         self.token_nonces
             .get(&(*token_id, *address))
             .copied()
@@ -7667,11 +7684,24 @@ impl Blockchain {
     }
     
     /// Get a token contract from the blockchain
-    pub fn get_token_contract(&self, contract_id: &[u8; 32]) -> Option<&crate::contracts::TokenContract> {
-        self.token_contracts.get(contract_id)
+    /// 
+    /// Reads from BlockchainStore (sled) if available, otherwise falls back to HashMap.
+    /// This enables the single-source-of-truth pattern when using BlockExecutor.
+    pub fn get_token_contract(&self, contract_id: &[u8; 32]) -> Option<crate::contracts::TokenContract> {
+        // Try store first (single source of truth when using BlockExecutor)
+        if let Some(store) = self.get_store() {
+            let token_id = crate::storage::TokenId::new(*contract_id);
+            if let Ok(Some(contract)) = store.get_token_contract(&token_id) {
+                return Some(contract);
+            }
+        }
+        // Fallback to HashMap (legacy path)
+        self.token_contracts.get(contract_id).cloned()
     }
     
     /// Get a mutable reference to a token contract
+    /// 
+    /// WARNING: This modifies the HashMap. For BlockExecutor path, use store methods instead.
     pub fn get_token_contract_mut(&mut self, contract_id: &[u8; 32]) -> Option<&mut crate::contracts::TokenContract> {
         self.token_contracts.get_mut(contract_id)
     }
