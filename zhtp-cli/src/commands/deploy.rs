@@ -1129,9 +1129,10 @@ async fn show_deployment_history_impl(
 
     output.success(&format!("✓ Found {} version(s)", versions.len()))?;
     for (idx, version) in versions.iter().enumerate() {
-        output.print(&format!("  Version {}", idx + 1))?;
-        if let Some(v) = version.get("version").and_then(|v| v.as_u64()) {
-            output.print(&format!("    Version: {}", v))?;
+        let display_version = version.get("version").and_then(|v| v.as_u64());
+        match display_version {
+            Some(v) => output.print(&format!("  Version {}", v))?,
+            None => output.print(&format!("  Version {}", idx + 1))?,
         }
         if let Some(cid) = version.get("web4_manifest_cid")
             .or_else(|| version.get("manifest_cid"))  // Fallback for backwards compatibility
