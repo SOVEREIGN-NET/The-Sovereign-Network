@@ -10,6 +10,7 @@ use serde_json;
 use lib_crypto::{PublicKey, Signature};
 use crate::mesh::{MeshConnection, MeshProtocolStats};
 use crate::protocols::NetworkProtocol;
+use crate::NodeId;
 
 // Port configuration for mesh networking protocols
 // These are runtime/transport configuration, not node state
@@ -340,7 +341,7 @@ use crate::storage_stub::UnifiedStorageSystem;
 /// Network configuration for mesh node
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
-    pub node_id: [u8; 32],
+    pub node_id: NodeId,
     pub listen_port: u16,
     pub mesh_port: u16,
     pub max_peers: usize,
@@ -434,7 +435,7 @@ pub struct ZhtpMeshServer {
 #[derive(Debug)]
 pub struct MeshNode {
     /// Node ID for this mesh node
-    pub node_id: [u8; 32],
+    pub node_id: NodeId,
     /// Supported protocols for mesh networking
     pub protocols: Vec<NetworkProtocol>,
     /// Maximum number of peers to connect to
@@ -840,10 +841,10 @@ impl ZhtpMeshServer {
         
         // Create temporary PublicKey from node_id for Bluetooth initialization
         // Note: In production, the main zhtp application provides the real PublicKey
-        let temp_public_key = lib_crypto::PublicKey::new(node_id.to_vec());
+        let temp_public_key = lib_crypto::PublicKey::new(node_id.as_bytes().to_vec());
         
         // Initialize Bluetooth LE mesh protocol
-        let bluetooth_protocol = BluetoothMeshProtocol::new(node_id, temp_public_key)?;
+        let bluetooth_protocol = BluetoothMeshProtocol::new(*node_id.as_bytes(), temp_public_key)?;
         let bluetooth_arc = Arc::new(RwLock::new(bluetooth_protocol));
         
         // Start discovery
@@ -885,7 +886,7 @@ impl ZhtpMeshServer {
         let node_id = self.mesh_node.read().await.node_id;
         
         // Initialize WiFi Direct mesh protocol
-        let wifi_protocol = WiFiDirectMeshProtocol::new(node_id)?;
+        let wifi_protocol = WiFiDirectMeshProtocol::new(*node_id.as_bytes())?;
         let wifi_arc = Arc::new(RwLock::new(wifi_protocol));
         
         // Start discovery
@@ -1083,7 +1084,7 @@ impl ZhtpMeshServer {
 
     /// Create a new ZHTP Mesh Server - The Internet
     pub async fn new(
-        node_id: [u8; 32],
+        node_id: NodeId,
         owner_key: PublicKey,  // Owner key for security
         storage: UnifiedStorageSystem,
         protocols: Vec<NetworkProtocol>,
@@ -1424,7 +1425,7 @@ impl ZhtpMeshServer {
             
             // Set node ID in handler
             let node = self.mesh_node.read().await;
-            let node_id = PublicKey::new(node.node_id.to_vec());
+            let node_id = PublicKey::new(node.node_id.as_bytes().to_vec());
             handler_guard.set_node_id(node_id);
         }
         
