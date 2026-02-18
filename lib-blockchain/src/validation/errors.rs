@@ -23,6 +23,13 @@ pub enum BlockValidateError {
     #[error("Invalid block version: {0}")]
     InvalidVersion(u32),
 
+    #[error("Invalid protocol version {version} at height {height}: {reason}")]
+    InvalidProtocolVersion {
+        version: u32,
+        height: u64,
+        reason: String,
+    },
+
     #[error("Transaction count mismatch: header says {header_count}, actual {actual_count}")]
     TransactionCountMismatch { header_count: usize, actual_count: usize },
 

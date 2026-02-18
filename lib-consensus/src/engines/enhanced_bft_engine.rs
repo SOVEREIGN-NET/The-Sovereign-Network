@@ -189,6 +189,10 @@ impl EnhancedBftEngine {
     }
 
     /// Validate proposal structure
+    ///
+    /// Note: Block protocol version validation occurs when block_data is
+    /// deserialized and validated via lib-blockchain's block validation,
+    /// which enforces height-based protocol version transitions.
     async fn validate_proposal_structure(&self, proposal: &ConsensusProposal) -> Result<()> {
         // Check proposal has valid structure
         if proposal.height == 0 {
