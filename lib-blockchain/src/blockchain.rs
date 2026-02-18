@@ -1448,7 +1448,6 @@ impl Blockchain {
         }
     }
 
-    /// Persist just the blockchain state (height, difficulty, nullifiers) to storage
     pub async fn persist_blockchain_state(&mut self) -> Result<Option<()>> {
         if let Some(ref storage_manager_arc) = self.storage_manager {
             let storage_manager = storage_manager_arc.read().await;
@@ -1457,6 +1456,9 @@ impl Blockchain {
                 height: self.height,
                 difficulty: self.difficulty.clone(),
                 nullifier_set: self.nullifier_set.clone(),
+                total_work: self.total_work,
+                finality_depth: self.finality_depth,
+                finalized_blocks: self.finalized_blocks.clone(),
             };
             
             storage_manager.store_latest_blockchain_state(&state).await?;
@@ -1735,34 +1737,63 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Add a new block to the chain with automatic persistence (without proof generation - for syncing)
     pub async fn add_block_with_persistence(&mut self, block: Block) -> Result<()> {
-        self.add_block(block.clone()).await?;
-        self.persist_block_state(&block).await
+        let snapshot = self.clone();
+
+        let result: Result<()> = async {
+            self.add_block(block.clone()).await?;
+
+            if let Some(_) = self.persist_block(&block).await? {
+                info!(" Block {} persisted to storage", block.height());
+            }
+
+            if self.auto_persist_enabled && (self.height % 10 == 0 || self.blocks_since_last_persist >= 10) {
+                if let Some(_) = self.persist_utxo_set().await? {
+                    info!(" UTXO set persisted to storage at height {}", self.height);
+                }
+            }
+
+            self.auto_persist_if_needed().await?;
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = result {
+            *self = snapshot;
+            return Err(e);
+        }
+
+        Ok(())
     }
 
     /// Add a network-received block with persistence. Skips mesh broadcast.
     pub async fn add_block_from_network_with_persistence(&mut self, block: Block) -> Result<()> {
-        self.add_block_from_network(block.clone()).await?;
-        self.persist_block_state(&block).await
-    }
+        let snapshot = self.clone();
 
-    /// Persist block and UTXO state after a block has been committed.
-    async fn persist_block_state(&mut self, block: &Block) -> Result<()> {
-        // Persist the block to storage if storage manager is available
-        if let Some(_) = self.persist_block(block).await? {
-            info!(" Block {} persisted to storage", block.height());
-        }
+        let result: Result<()> = async {
+            self.add_block_from_network(block.clone()).await?;
 
-        // Persist UTXO set every 10 blocks or if auto-persist is enabled
-        if self.auto_persist_enabled && (self.height % 10 == 0 || self.blocks_since_last_persist >= 10) {
-            if let Some(_) = self.persist_utxo_set().await? {
-                info!(" UTXO set persisted to storage at height {}", self.height);
+            if let Some(_) = self.persist_block(&block).await? {
+                info!(" Block {} persisted to storage", block.height());
             }
-        }
 
-        // Auto-persist blockchain state if needed
-        self.auto_persist_if_needed().await?;
+            if self.auto_persist_enabled && (self.height % 10 == 0 || self.blocks_since_last_persist >= 10) {
+                if let Some(_) = self.persist_utxo_set().await? {
+                    info!(" UTXO set persisted to storage at height {}", self.height);
+                }
+            }
+
+            self.auto_persist_if_needed().await?;
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = result {
+            *self = snapshot;
+            return Err(e);
+        }
 
         Ok(())
     }

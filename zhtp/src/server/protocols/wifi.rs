@@ -13,11 +13,13 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use std::net::SocketAddr;
 use uuid::Uuid;
+#[cfg(debug_assertions)]
+use tracing::{debug, info, warn};
+#[cfg(not(debug_assertions))]
 use tracing::{debug, error, info, warn};
 use lib_network::protocols::wifi_direct::WiFiDirectMeshProtocol;
 use lib_network::protocols::wifi_direct_handshake::handshake_as_responder;
