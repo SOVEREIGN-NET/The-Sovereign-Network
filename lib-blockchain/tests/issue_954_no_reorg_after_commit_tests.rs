@@ -38,6 +38,8 @@ fn register_n_validators(blockchain: &mut Blockchain, n: usize) {
             stake: 1_000_000_000,
             storage_provided: 100 * 1024 * 1024 * 1024,
             consensus_key: vec![(i + 1) as u8; 32],
+            networking_key: vec![(i + 65) as u8; 32],
+            rewards_key: vec![(i + 129) as u8; 32],
             network_address: format!("127.0.0.1:{}", 9000 + i),
             commission_rate: 5,
             status: "active".to_string(),
@@ -45,6 +47,8 @@ fn register_n_validators(blockchain: &mut Blockchain, n: usize) {
             last_activity: 1_000,
             blocks_validated: 0,
             slash_count: 0,
+            admission_source: "genesis".to_string(),
+            governance_proposal_id: None,
         };
         blockchain.validator_registry.insert(id, info);
     }

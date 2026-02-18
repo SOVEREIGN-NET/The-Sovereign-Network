@@ -7,7 +7,7 @@ use lib_blockchain::*;
 use lib_blockchain::integration::*;
 use lib_blockchain::integration::storage_integration::BlockchainStorageConfig;
 use lib_blockchain::block::BlockHeader;
-use lib_blockchain::types::Hash;
+use lib_blockchain::types::{Difficulty, Hash};
 use anyhow::Result;
 
 #[test]
@@ -343,9 +343,11 @@ fn test_network_serialization_integration() -> Result<()> {
         Hash::default(),
         Hash::default(),
         12345,
+        Difficulty::minimum(),
         1,
         0,
         0,
+        Difficulty::minimum(),
     );
     let block = Block::new(header, Vec::new());
     

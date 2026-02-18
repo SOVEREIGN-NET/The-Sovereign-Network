@@ -558,6 +558,7 @@ pub struct EdgeNodeCheckpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::Difficulty;
 
     #[test]
     fn test_edge_node_creation() {
@@ -691,6 +692,9 @@ mod tests {
             merkle_root: Hash::zero(),
             state_root: Hash::default(),
             timestamp: 1700000000 + height * 10,
+            difficulty: Difficulty::minimum(),
+            nonce: 0,
+            cumulative_difficulty: Difficulty::minimum(),
             height,
             block_hash: Hash::zero(),
             transaction_count: 0,

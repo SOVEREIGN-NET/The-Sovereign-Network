@@ -85,6 +85,7 @@ fn block(height: u64, txs: Vec<Transaction>) -> Block {
             Hash::new(prev)
         },
         merkle_root: Hash::zero(),
+        state_root: Hash::default(),
         block_hash: Hash::new(block_hash_bytes),
         nonce: 0,
         difficulty: Difficulty::from_bits(0),
