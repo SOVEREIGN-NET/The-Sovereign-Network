@@ -88,6 +88,18 @@ pub enum ConsensusStep {
     NewRound,
 }
 
+impl std::fmt::Display for ConsensusStep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConsensusStep::Propose => write!(f, "Propose"),
+            ConsensusStep::PreVote => write!(f, "PreVote"),
+            ConsensusStep::PreCommit => write!(f, "PreCommit"),
+            ConsensusStep::Commit => write!(f, "Commit"),
+            ConsensusStep::NewRound => write!(f, "NewRound"),
+        }
+    }
+}
+
 impl ConsensusStep {
     /// Convert step to ordinal value for comparison and serialization
     pub fn as_ordinal(&self) -> u8 {
