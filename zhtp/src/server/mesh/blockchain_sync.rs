@@ -325,7 +325,7 @@ impl MeshRouter {
             Err(e) => {
                 warn!("❌ Failed to route message to peer {:?}: {}",
                       &peer_id.key_id[..8], e);
-                Err(e)
+                Err(anyhow::anyhow!("Routing error: {:?}", e))
             }
         }
     }
