@@ -106,18 +106,19 @@ fn validate_spending_proposal(title: &str, description: &str, recipient: &str, a
 /// Request types for DAO operations
 #[derive(Debug, Deserialize)]
 struct CreateProposalRequest {
-    proposer_identity_id: String,
+    proposer_identity_id: Option<String>,
     title: String,
     description: String,
-    proposal_type: String,
-    voting_period_days: u32,
+    proposal_type: Option<String>,
+    voting_period_days: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CastVoteRequest {
-    voter_identity_id: String,
+    voter_identity_id: Option<String>,
     proposal_id: String,
-    vote_choice: String,
+    vote_choice: Option<String>,
+    choice: Option<String>,
     justification: Option<String>,
 }
 
@@ -355,19 +356,46 @@ impl DaoHandler {
         request_data: CreateProposalRequest,
     ) -> Result<ZhtpResponse> {
         let proposer_hex = hex::encode(authenticated_identity_id.as_bytes());
-        if request_data.proposer_identity_id.to_lowercase() != proposer_hex {
+        if let Some(proposer_identity_id) = request_data.proposer_identity_id.as_ref() {
+            if proposer_identity_id.to_lowercase() != proposer_hex {
+                return Ok(create_error_response(
+                    ZhtpStatus::Forbidden,
+                    "proposer_identity_id must match authenticated identity".to_string(),
+                ));
+            }
+        }
+
+        if request_data.title.trim().is_empty() {
             return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "proposer_identity_id must match authenticated identity".to_string(),
+                ZhtpStatus::BadRequest,
+                "Proposal title cannot be empty".to_string(),
+            ));
+        }
+        if request_data.description.trim().is_empty() {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Proposal description cannot be empty".to_string(),
             ));
         }
 
-        let proposal_type = match Self::parse_proposal_type(&request_data.proposal_type) {
+        let proposal_type_str = request_data
+            .proposal_type
+            .clone()
+            .unwrap_or_else(|| "community_funding".to_string());
+        let voting_period_days = request_data.voting_period_days.unwrap_or(7);
+        if voting_period_days == 0 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "voting_period_days must be greater than 0".to_string(),
+            ));
+        }
+
+        let proposal_type = match Self::parse_proposal_type(&proposal_type_str) {
             Ok(pt) => pt,
             Err(_) => {
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Invalid proposal type: {}", request_data.proposal_type),
+                    format!("Invalid proposal type: {}", proposal_type_str),
                 ))
             }
         };
@@ -406,7 +434,7 @@ impl DaoHandler {
             title: request_data.title.clone(),
             description: request_data.description.clone(),
             proposal_type: Self::proposal_type_to_string(&proposal_type),
-            voting_period_blocks: (request_data.voting_period_days as u64).saturating_mul(14_400),
+            voting_period_blocks: (voting_period_days as u64).saturating_mul(14_400),
             quorum_required: Self::proposal_quorum_required(&proposal_type),
             execution_params: None,
             created_at: now,
@@ -449,8 +477,8 @@ impl DaoHandler {
             "status": "success",
             "proposal_id": Self::hash_to_string(&proposal_id),
             "title": request_data.title,
-            "proposal_type": request_data.proposal_type,
-            "voting_period_days": request_data.voting_period_days,
+            "proposal_type": proposal_type_str,
+            "voting_period_days": voting_period_days,
             "message": "Proposal submitted to mempool"
         });
         create_json_response(response)
@@ -759,11 +787,13 @@ impl DaoHandler {
 
         let request_data: CastVoteRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-        if request_data.voter_identity_id.to_lowercase() != authenticated_hex {
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "voter_identity_id must match authenticated identity".to_string(),
-            ));
+        if let Some(voter_identity_id) = request_data.voter_identity_id.as_ref() {
+            if voter_identity_id.to_lowercase() != authenticated_hex {
+                return Ok(create_error_response(
+                    ZhtpStatus::Forbidden,
+                    "voter_identity_id must match authenticated identity".to_string(),
+                ));
+            }
         }
 
         let proposal_id = match Self::string_to_bc_hash(&request_data.proposal_id) {
@@ -776,12 +806,17 @@ impl DaoHandler {
             }
         };
 
-        let vote_choice = match Self::parse_vote_choice(&request_data.vote_choice) {
+        let vote_choice_raw = request_data
+            .vote_choice
+            .as_deref()
+            .or(request_data.choice.as_deref())
+            .ok_or_else(|| anyhow::anyhow!("Missing vote_choice (or legacy choice) field"))?;
+        let vote_choice = match Self::parse_vote_choice(vote_choice_raw) {
             Ok(choice) => choice,
             Err(_) => {
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Invalid vote choice: {}", request_data.vote_choice),
+                    format!("Invalid vote choice: {}", vote_choice_raw),
                 ))
             }
         };
@@ -887,8 +922,8 @@ impl DaoHandler {
             "status": "success",
             "vote_id": Self::hash_to_string(&vote_id),
             "proposal_id": request_data.proposal_id,
-            "vote_choice": request_data.vote_choice,
-            "voter_id": request_data.voter_identity_id,
+            "vote_choice": vote_choice_raw,
+            "voter_id": authenticated_hex,
             "message": "Vote submitted to mempool"
         });
         create_json_response(response)
@@ -1244,7 +1279,7 @@ impl DaoHandler {
 
         // Create treasury allocation proposal
         let create_request = CreateProposalRequest {
-            proposer_identity_id: proposer_id.to_string(),
+            proposer_identity_id: Some(proposer_id.to_string()),
             title: request_data.title.clone(),
             description: format!(
                 "{}\n\nAmount: {}\nRecipient: {}",
@@ -1252,8 +1287,8 @@ impl DaoHandler {
                 request_data.amount,
                 request_data.recipient
             ),
-            proposal_type: "treasury_allocation".to_string(),
-            voting_period_days: 7,
+            proposal_type: Some("treasury_allocation".to_string()),
+            voting_period_days: Some(7),
         };
 
         self.handle_create_proposal_from_identity(authenticated_identity_id, create_request).await
