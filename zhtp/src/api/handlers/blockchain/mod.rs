@@ -473,6 +473,41 @@ struct TransactionReceiptResponse {
     logs: Vec<String>,
 }
 
+#[derive(Serialize)]
+struct ContractListItem {
+    contract_id: String,
+    contract_kind: String,
+    block_height: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct ContractsListResponse {
+    status: String,
+    page: usize,
+    limit: usize,
+    total: usize,
+    total_pages: usize,
+    contracts: Vec<ContractListItem>,
+}
+
+#[derive(Serialize)]
+struct ContractInfoResponse {
+    status: String,
+    contract_id: String,
+    contract_kind: String,
+    block_height: Option<u64>,
+    metadata: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct ContractStateResponse {
+    status: String,
+    contract_id: String,
+    contract_kind: String,
+    block_height: Option<u64>,
+    state: serde_json::Value,
+}
+
 #[derive(Deserialize)]
 struct FeeEstimateRequest {
     transaction_size: Option<usize>,
@@ -590,6 +625,32 @@ impl BlockchainHandler {
                 ))
             }
         }
+    }
+
+    fn parse_contract_id_hex(contract_id_hex: &str) -> Result<[u8; 32]> {
+        let bytes = hex::decode(contract_id_hex)
+            .map_err(|_| anyhow::anyhow!("Contract ID must be valid hex"))?;
+        if bytes.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "Contract ID must be 32 bytes (64 hex chars), got {} bytes",
+                bytes.len()
+            ));
+        }
+        let mut contract_id = [0u8; 32];
+        contract_id.copy_from_slice(&bytes);
+        Ok(contract_id)
+    }
+
+    fn extract_contract_id_from_request_uri(uri: &str) -> Result<(&str, [u8; 32])> {
+        let path = uri.split('?').next().unwrap_or(uri);
+        let path_parts: Vec<&str> = path.split('/').collect();
+        let contract_id_hex = path_parts
+            .get(5)
+            .copied()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Contract ID is required"))?;
+        let contract_id = Self::parse_contract_id_hex(contract_id_hex)?;
+        Ok((contract_id_hex, contract_id))
     }
 
     /// Handle blockchain status request
@@ -1923,28 +1984,199 @@ impl BlockchainHandler {
     }
 
     /// List all deployed contracts
-    async fn handle_list_contracts(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Contract index endpoint is disabled until fully backed by canonical chain state.".to_string(),
+    async fn handle_list_contracts(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let params = Self::parse_query_params(&request.uri);
+        let (page, limit) = Self::parse_pagination(&params);
+        let contract_filter = params
+            .get("type")
+            .map(|v| v.to_ascii_lowercase())
+            .unwrap_or_else(|| "all".to_string());
+        if !matches!(contract_filter.as_str(), "all" | "token" | "web4") {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Invalid contract type. Must be 'all', 'token', or 'web4'.".to_string(),
+            ));
+        }
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let mut contracts = Vec::new();
+        if contract_filter == "all" || contract_filter == "token" {
+            contracts.extend(blockchain.token_contracts.keys().map(|id| ContractListItem {
+                contract_id: hex::encode(id),
+                contract_kind: "token".to_string(),
+                block_height: blockchain.contract_blocks.get(id).copied(),
+            }));
+        }
+        if contract_filter == "all" || contract_filter == "web4" {
+            contracts.extend(blockchain.web4_contracts.keys().map(|id| ContractListItem {
+                contract_id: hex::encode(id),
+                contract_kind: "web4".to_string(),
+                block_height: blockchain.contract_blocks.get(id).copied(),
+            }));
+        }
+
+        contracts.sort_by(|a, b| {
+            a.contract_kind
+                .cmp(&b.contract_kind)
+                .then_with(|| a.contract_id.cmp(&b.contract_id))
+        });
+
+        let total = contracts.len();
+        let total_pages = if total == 0 {
+            0
+        } else {
+            (total + limit - 1) / limit
+        };
+        let offset = (page - 1).saturating_mul(limit);
+        let contracts = if offset >= total {
+            Vec::new()
+        } else {
+            contracts.into_iter().skip(offset).take(limit).collect()
+        };
+
+        let response_data = ContractsListResponse {
+            status: "success".to_string(),
+            page,
+            limit,
+            total,
+            total_pages,
+            contracts,
+        };
+
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
         ))
     }
 
     /// Get contract state
     async fn handle_get_contract_state(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let _ = request;
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Contract state endpoint is disabled until fully backed by canonical chain state.".to_string(),
+        let (contract_id_hex, contract_id) = match Self::extract_contract_id_from_request_uri(&request.uri)
+        {
+            Ok(parts) => parts,
+            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+        };
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let block_height = blockchain.contract_blocks.get(&contract_id).copied();
+        let (contract_kind, state_json) = if let Some(token) = blockchain.token_contracts.get(&contract_id)
+        {
+            let raw_state = blockchain
+                .get_contract_state(&contract_id)
+                .map(hex::encode)
+                .unwrap_or_default();
+            (
+                "token".to_string(),
+                serde_json::json!({
+                    "name": token.name,
+                    "symbol": token.symbol,
+                    "decimals": token.decimals,
+                    "total_supply": token.total_supply,
+                    "max_supply": token.max_supply,
+                    "holder_count": token.balances.len(),
+                    "raw_state_hex": raw_state,
+                }),
+            )
+        } else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
+            let raw_state = blockchain
+                .get_contract_state(&contract_id)
+                .map(hex::encode)
+                .unwrap_or_default();
+            (
+                "web4".to_string(),
+                serde_json::json!({
+                    "domain": web4.domain,
+                    "owner": web4.owner,
+                    "route_count": web4.routes.len(),
+                    "created_at": web4.created_at,
+                    "updated_at": web4.updated_at,
+                    "raw_state_hex": raw_state,
+                }),
+            )
+        } else {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                format!("Contract {} not found", contract_id_hex),
+            ));
+        };
+
+        let response_data = ContractStateResponse {
+            status: "success".to_string(),
+            contract_id: contract_id_hex.to_string(),
+            contract_kind,
+            block_height,
+            state: state_json,
+        };
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
         ))
     }
 
     /// Get contract information
     async fn handle_get_contract_info(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let _ = request;
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Contract metadata endpoint is disabled until fully backed by canonical chain state.".to_string(),
+        let (contract_id_hex, contract_id) = match Self::extract_contract_id_from_request_uri(&request.uri)
+        {
+            Ok(parts) => parts,
+            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+        };
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let block_height = blockchain.contract_blocks.get(&contract_id).copied();
+        let (contract_kind, metadata) = if let Some(token) = blockchain.token_contracts.get(&contract_id) {
+            (
+                "token".to_string(),
+                serde_json::json!({
+                    "token_id": hex::encode(token.token_id),
+                    "name": token.name,
+                    "symbol": token.symbol,
+                    "decimals": token.decimals,
+                    "max_supply": token.max_supply,
+                    "is_deflationary": token.is_deflationary,
+                    "kernel_only_mode": token.kernel_only_mode,
+                }),
+            )
+        } else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
+            (
+                "web4".to_string(),
+                serde_json::json!({
+                    "contract_id": web4.contract_id,
+                    "domain": web4.domain,
+                    "owner": web4.owner,
+                    "route_count": web4.routes.len(),
+                    "created_at": web4.created_at,
+                    "updated_at": web4.updated_at,
+                }),
+            )
+        } else {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                format!("Contract {} not found", contract_id_hex),
+            ));
+        };
+
+        let response_data = ContractInfoResponse {
+            status: "success".to_string(),
+            contract_id: contract_id_hex.to_string(),
+            contract_kind,
+            block_height,
+            metadata,
+        };
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
         ))
     }
 
