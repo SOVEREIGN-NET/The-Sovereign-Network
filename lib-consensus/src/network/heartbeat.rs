@@ -116,9 +116,10 @@ impl ConsensusMetrics {
 /// - `fork_rate > 0.0` — a safety violation (conflicting commits observed).
 /// - `!liveness` — the consensus protocol has stalled.
 pub fn check_consensus_health(metrics: &ConsensusMetrics) -> Result<(), String> {
-    if metrics.fork_rate > 0.0 {
+    // Fail closed: reject NaN, infinity, and any non-zero value
+    if !metrics.fork_rate.is_finite() || metrics.fork_rate != 0.0 {
         return Err(format!(
-            "consensus safety violation: fork_rate is {:.4} (expected 0.0 in BFT mode)",
+            "consensus safety violation: fork_rate is {:.4e} (expected 0.0 in BFT mode)",
             metrics.fork_rate
         ));
     }
@@ -147,6 +148,24 @@ mod consensus_metrics_tests {
     #[test]
     fn test_liveness_failure_detected() {
         let m = ConsensusMetrics { liveness: false, ..ConsensusMetrics::healthy() };
+        assert!(check_consensus_health(&m).is_err());
+    }
+
+    #[test]
+    fn test_nan_fork_rate_fails() {
+        let m = ConsensusMetrics { fork_rate: f64::NAN, ..ConsensusMetrics::healthy() };
+        assert!(check_consensus_health(&m).is_err());
+    }
+
+    #[test]
+    fn test_infinity_fork_rate_fails() {
+        let m = ConsensusMetrics { fork_rate: f64::INFINITY, ..ConsensusMetrics::healthy() };
+        assert!(check_consensus_health(&m).is_err());
+    }
+
+    #[test]
+    fn test_negative_fork_rate_fails() {
+        let m = ConsensusMetrics { fork_rate: -0.01, ..ConsensusMetrics::healthy() };
         assert!(check_consensus_health(&m).is_err());
     }
 }
