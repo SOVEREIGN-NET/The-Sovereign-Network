@@ -95,17 +95,17 @@ Add the following repository secrets:
 - `ZHTP_SERVER`
 - `ZHTP_SERVER_SPKI`
 
-To generate the `ZHTP_KEYSTORE_B64` value, use the CLI to base64-encode your keystore:
+To generate the `ZHTP_KEYSTORE_B64` value, tar and base64-encode your keystore directory:
 
 ```bash
-zhtp pubkey to-base64 --input ~/.zhtp/keystore > keystore.b64
+tar -czf - -C ~/.zhtp keystore | base64 | tr -d '\n' > keystore.b64
 cat keystore.b64  # Paste this into the GitHub secret
 ```
 
 Or, for a keystore directory:
 
 ```bash
-tar -czf - -C ~/.zhtp keystore | base64 -w 0 > keystore.b64
+tar -czf - -C ~/.zhtp keystore | base64 | tr -d '\n' > keystore.b64
 cat keystore.b64
 ```
 

@@ -15,7 +15,7 @@ sudo mv zhtp-cli /usr/local/bin/
 zhtp-cli identity create --keystore ~/.zhtp/keystore
 
 # Backup immediately!
-tar -czf - ~/.zhtp/keystore | base64 -w 0 > keystore-secret.b64
+tar -czf - ~/.zhtp/keystore | base64 | tr -d '\n' > keystore-secret.b64
 ```
 
 Save `keystore-secret.b64` - you'll need it for GitHub Actions.
@@ -141,7 +141,7 @@ If your site uses client-side routing (React Router, Vue Router), change line 42
 - Did you register it? `zhtp-cli domain check mysite.sov`
 
 **"Keystore decode error"**
-- Regenerate: `tar -czf - ~/.zhtp/keystore | base64 -w 0 > keystore-secret.b64`
+- Regenerate: `tar -czf - ~/.zhtp/keystore | base64 | tr -d '\n' > keystore-secret.b64`
 - No line breaks in the GitHub secret!
 
 **"Build failed"**

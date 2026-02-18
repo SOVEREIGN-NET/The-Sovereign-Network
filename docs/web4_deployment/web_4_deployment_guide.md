@@ -28,16 +28,16 @@ Missing any of these will cause deployment failure.
 
 ## Preparing Your Keystore for GitHub Secrets
 
-You must provide your keystore as a base64-encoded tarball for the `ZHTP_KEYSTORE_B64` secret. The CLI provides a command to automate this:
+You must provide your keystore as a base64-encoded tarball for the `ZHTP_KEYSTORE_B64` secret:
 
 ```bash
-zhtp pubkey to-base64 --input ~/.zhtp/keystore > keystore.b64
+tar -czf - -C ~/.zhtp keystore | base64 | tr -d '\n' > keystore.b64
 ```
 
 Or, for a keystore directory (tar and encode):
 
 ```bash
-tar -czf - -C ~/.zhtp keystore | base64 -w 0 > keystore.b64
+tar -czf - -C ~/.zhtp keystore | base64 | tr -d '\n' > keystore.b64
 ```
 
 Copy the contents of `keystore.b64` into your GitHub secret. This ensures your CI/CD pipeline can deploy securely and without manual encoding errors.

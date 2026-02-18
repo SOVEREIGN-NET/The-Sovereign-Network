@@ -115,21 +115,21 @@ Add the following repository secrets:
 
 | Secret | How to Create |
 |--------|---------------|
-| `ZHTP_KEYSTORE_B64` | `tar -czf - -C ~/.zhtp keystore \| base64 -w 0` |
+| `ZHTP_KEYSTORE_B64` | `tar -czf - -C ~/.zhtp keystore \| base64 | tr -d '\n'` |
 | `ZHTP_SERVER` | Provided by network administrator |
 | `ZHTP_SERVER_SPKI` | Provided by network administrator |
 
 The keystore is a **directory**, not a file. You must tar it before encoding:
 
 ```bash
-tar -czf - -C ~/.zhtp keystore | base64 -w 0 > keystore.b64
+tar -czf - -C ~/.zhtp keystore | base64 | tr -d '\n' > keystore.b64
 cat keystore.b64  # Paste this into ZHTP_KEYSTORE_B64 secret
 ```
 
-Alternatively, use the CLI to base64-encode your keystore file for secrets:
+Use the following command to generate `ZHTP_KEYSTORE_B64`:
 
 ```bash
-zhtp pubkey to-base64 --input ~/.zhtp/keystore > keystore.b64
+tar -czf - -C ~/.zhtp keystore | base64 | tr -d '\n' > keystore.b64
 cat keystore.b64
 ```
 

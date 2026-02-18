@@ -104,12 +104,12 @@ Result:
 When using CI/CD, you may need to encode your keystore for use as a secret. Use the CLI to automate this:
 
 ```bash
-zhtp pubkey to-base64 --input ~/.zhtp/keystore > keystore.b64
+tar -czf - -C ~/.zhtp keystore | base64 | tr -d '\n' > keystore.b64
 ```
 
 Or, for a keystore directory:
 
 ```bash
-tar -czf - -C ~/.zhtp keystore | base64 -w 0 > keystore.b64
+tar -czf - -C ~/.zhtp keystore | base64 | tr -d '\n' > keystore.b64
 ```
 
