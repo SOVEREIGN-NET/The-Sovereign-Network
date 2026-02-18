@@ -61,6 +61,96 @@ use tracing;
 use crate::types::ConsensusStep;
 use crate::validators::validator_protocol::{HeartbeatMessage, NetworkSummary};
 
+// ============================================================================
+// CONSENSUS SAFETY METRICS (BFT-J, Issue #1014)
+// ============================================================================
+
+/// Safety and liveness metrics for the BFT consensus protocol.
+///
+/// These metrics are **non-authoritative telemetry** — they are exposed for
+/// monitoring and alerting but do not affect consensus decisions directly.
+///
+/// # Invariant
+///
+/// `fork_rate` MUST be `0.0` during correct BFT operation.  A non-zero
+/// `fork_rate` indicates that two conflicting blocks were committed at the
+/// same height, which is a **safety violation** that must be investigated
+/// immediately.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConsensusMetrics {
+    /// Whether the consensus protocol has made progress within the liveness window.
+    pub liveness: bool,
+    /// Latency of the most recent commit in milliseconds.
+    pub last_commit_latency_ms: u64,
+    /// Rate of conflicting commits (forks) observed.  MUST be `0.0` in BFT mode.
+    pub fork_rate: f64,
+    /// Number of rounds required to reach commit at the current height.
+    pub rounds_to_commit: u32,
+}
+
+impl Default for ConsensusMetrics {
+    fn default() -> Self {
+        Self {
+            liveness: true,
+            last_commit_latency_ms: 0,
+            fork_rate: 0.0,
+            rounds_to_commit: 1,
+        }
+    }
+}
+
+impl ConsensusMetrics {
+    /// Returns a set of metrics indicating a healthy consensus state.
+    pub fn healthy() -> Self {
+        Self::default()
+    }
+}
+
+/// Checks that consensus metrics are within acceptable safety bounds.
+///
+/// Returns `Ok(())` for a healthy consensus state, or an `Err` string
+/// describing the safety violation.
+///
+/// # Errors
+///
+/// - `fork_rate > 0.0` — a safety violation (conflicting commits observed).
+/// - `!liveness` — the consensus protocol has stalled.
+pub fn check_consensus_health(metrics: &ConsensusMetrics) -> Result<(), String> {
+    if metrics.fork_rate > 0.0 {
+        return Err(format!(
+            "consensus safety violation: fork_rate is {:.4} (expected 0.0 in BFT mode)",
+            metrics.fork_rate
+        ));
+    }
+    if !metrics.liveness {
+        return Err("consensus liveness failure: no commit progress within liveness window".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod consensus_metrics_tests {
+    use super::*;
+
+    #[test]
+    fn test_healthy_metrics_pass() {
+        let m = ConsensusMetrics::healthy();
+        assert!(check_consensus_health(&m).is_ok());
+    }
+
+    #[test]
+    fn test_nonzero_fork_rate_fails() {
+        let m = ConsensusMetrics { fork_rate: 0.01, ..ConsensusMetrics::healthy() };
+        assert!(check_consensus_health(&m).is_err());
+    }
+
+    #[test]
+    fn test_liveness_failure_detected() {
+        let m = ConsensusMetrics { liveness: false, ..ConsensusMetrics::healthy() };
+        assert!(check_consensus_health(&m).is_err());
+    }
+}
+
 /// Error type for heartbeat validation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HeartbeatValidationError {
