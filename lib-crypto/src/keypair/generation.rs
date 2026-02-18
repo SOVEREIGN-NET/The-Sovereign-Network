@@ -26,12 +26,11 @@ pub const KEY_ROTATION_POLICY: &str = "no_rotation";
 ///
 /// Call this from any code path that would attempt to replace a validator's
 /// key without creating a new validator identity.
-pub fn validate_key_rotation_prohibited() -> Result<(), String> {
-    Err(
+pub fn validate_key_rotation_prohibited() -> Result<()> {
+    Err(anyhow::anyhow!(
         "key rotation is not supported (policy=no_rotation): \
          register a new validator identity for a new key"
-            .to_string(),
-    )
+    ))
 }
 
 #[cfg(test)]
