@@ -592,7 +592,7 @@ impl BlockHeader {
             transaction_count,
             block_size,
             cumulative_difficulty,
-            fee_model_version: 1, // Default to v1 for backwards compatibility
+            fee_model_version: 2, // Protocol v2 active from genesis (fee_model_active_from_height_v2 = 0)
             state_root: Hash::default(), // Set via set_state_root() after execution
         };
 
