@@ -7,14 +7,14 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use sled::{Db, Tree, Batch};
+use sled::{Batch, Db, Tree};
 
-use crate::block::Block;
 use super::{
-    keys, AccountState, Address, Amount, BlockchainStore, BlockHash, BlockHeight,
+    keys, AccountState, Address, Amount, BlockHash, BlockHeight, BlockchainStore,
     IdentityConsensus, IdentityMetadata, OutPoint, StorageError, StorageResult, TokenId,
     TokenStateSnapshot, Utxo,
 };
+use crate::block::Block;
 use crate::contracts::TokenContract;
 
 // =============================================================================
@@ -28,8 +28,9 @@ const TREE_BLOCKS_BY_HASH: &str = "blocks_by_hash";
 const TREE_UTXOS: &str = "utxos";
 const TREE_ACCOUNTS: &str = "accounts";
 const TREE_TOKEN_BALANCES: &str = "token_balances";
+const TREE_TOKEN_NONCES: &str = "token_nonces"; // Token transfer nonces for replay protection
 const TREE_TOKEN_CONTRACTS: &str = "token_contracts";
-const TREE_IDENTITIES: &str = "identities";           // Consensus state (participates in state hash)
+const TREE_IDENTITIES: &str = "identities"; // Consensus state (participates in state hash)
 const TREE_IDENTITY_METADATA: &str = "identity_meta"; // Non-consensus (for DID resolution)
 const TREE_IDENTITY_BY_OWNER: &str = "identity_owner"; // Index: owner → did_hash
 const TREE_META: &str = "meta";
@@ -44,10 +45,11 @@ pub struct SledStore {
     utxos: Tree,
     accounts: Tree,
     token_balances: Tree,
+    token_nonces: Tree, // Nonce for token transfers (replay protection)
     token_contracts: Tree,
-    identities: Tree,          // Consensus: did_hash → IdentityConsensus
-    identity_metadata: Tree,   // Non-consensus: did_hash → IdentityMetadata
-    identity_by_owner: Tree,   // Index: owner_addr → did_hash
+    identities: Tree,        // Consensus: did_hash → IdentityConsensus
+    identity_metadata: Tree, // Non-consensus: did_hash → IdentityMetadata
+    identity_by_owner: Tree, // Index: owner_addr → did_hash
     meta: Tree,
 
     // Transaction state
@@ -63,6 +65,7 @@ struct PendingBatch {
     utxos: Batch,
     accounts: Batch,
     token_balances: Batch,
+    token_nonces: Batch, // Nonce for token transfers
     token_contracts: Batch,
     identities: Batch,
     identity_metadata: Batch,
@@ -79,6 +82,7 @@ impl PendingBatch {
             utxos: Batch::default(),
             accounts: Batch::default(),
             token_balances: Batch::default(),
+            token_nonces: Batch::default(),
             token_contracts: Batch::default(),
             identities: Batch::default(),
             identity_metadata: Batch::default(),
@@ -133,6 +137,9 @@ impl SledStore {
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let token_nonces = db
+            .open_tree(TREE_TOKEN_NONCES)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         Ok(Self {
             db,
@@ -141,6 +148,7 @@ impl SledStore {
             utxos,
             accounts,
             token_balances,
+            token_nonces,
             token_contracts,
             identities,
             identity_metadata,
@@ -190,6 +198,9 @@ impl SledStore {
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let token_nonces = db
+            .open_tree(TREE_TOKEN_NONCES)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         Ok(Self {
             db,
@@ -198,6 +209,7 @@ impl SledStore {
             utxos,
             accounts,
             token_balances,
+            token_nonces,
             token_contracts,
             identities,
             identity_metadata,
@@ -470,8 +482,7 @@ impl BlockchainStore for SledStore {
         let value = Self::serialize(snapshot)?;
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.meta
-                .insert(keys::meta::TOKEN_STATE_SNAPSHOT, value);
+            batch.meta.insert(keys::meta::TOKEN_STATE_SNAPSHOT, value);
         }
 
         Ok(())
@@ -547,6 +558,52 @@ impl BlockchainStore for SledStore {
     }
 
     // =========================================================================
+    // Token Transfer Nonce Operations (Replay Protection)
+    // =========================================================================
+
+    fn get_token_nonce(&self, token_id: &TokenId, sender: &Address) -> StorageResult<u64> {
+        let key = keys::token_nonce_key(token_id, sender);
+        match self.token_nonces.get(key.as_ref()) {
+            Ok(Some(bytes)) => {
+                if bytes.len() != 8 {
+                    return Err(StorageError::CorruptedData(
+                        "Invalid nonce length".to_string(),
+                    ));
+                }
+                let nonce = u64::from_be_bytes(bytes.as_ref().try_into().unwrap());
+                Ok(nonce)
+            }
+            Ok(None) => Ok(0), // No nonce = first transfer
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn set_token_nonce(
+        &self,
+        token_id: &TokenId,
+        sender: &Address,
+        nonce: u64,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let key = keys::token_nonce_key(token_id, sender);
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            if nonce == 0 {
+                // Delete zero nonces to save space
+                batch.token_nonces.remove(key.as_ref());
+            } else {
+                batch
+                    .token_nonces
+                    .insert(key.as_ref(), &nonce.to_be_bytes());
+            }
+        }
+
+        Ok(())
+    }
+
+    // =========================================================================
     // Identity Consensus Operations (fixed-size keys only)
     // =========================================================================
 
@@ -610,7 +667,9 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.identity_by_owner.insert(key.as_ref(), did_hash.as_ref());
+            batch
+                .identity_by_owner
+                .insert(key.as_ref(), did_hash.as_ref());
         }
 
         Ok(())
@@ -633,7 +692,10 @@ impl BlockchainStore for SledStore {
     // Identity Metadata Operations (non-consensus)
     // =========================================================================
 
-    fn get_identity_metadata(&self, did_hash: &[u8; 32]) -> StorageResult<Option<IdentityMetadata>> {
+    fn get_identity_metadata(
+        &self,
+        did_hash: &[u8; 32],
+    ) -> StorageResult<Option<IdentityMetadata>> {
         match self.identity_metadata.get(did_hash) {
             Ok(Some(bytes)) => {
                 let metadata: IdentityMetadata = Self::deserialize(&bytes)?;
@@ -644,7 +706,11 @@ impl BlockchainStore for SledStore {
         }
     }
 
-    fn put_identity_metadata(&self, did_hash: &[u8; 32], metadata: &IdentityMetadata) -> StorageResult<()> {
+    fn put_identity_metadata(
+        &self,
+        did_hash: &[u8; 32],
+        metadata: &IdentityMetadata,
+    ) -> StorageResult<()> {
         self.require_transaction()?;
 
         let value = Self::serialize(metadata)?;
@@ -730,7 +796,9 @@ impl BlockchainStore for SledStore {
         // Take the batch
         let batch = {
             let mut batch_guard = self.tx_batch.lock().unwrap();
-            batch_guard.take().ok_or(StorageError::NoActiveTransaction)?
+            batch_guard
+                .take()
+                .ok_or(StorageError::NoActiveTransaction)?
         };
 
         // Apply all batches
@@ -821,10 +889,10 @@ impl BlockchainStore for SledStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::{TxHash, WalletState};
+    use super::*;
     use crate::block::{Block, BlockHeader};
-    use crate::types::{Hash, Difficulty};
+    use crate::types::{Difficulty, Hash};
 
     fn create_test_block(height: u64, prev_hash: Hash) -> Block {
         // Create a unique block hash based on height
@@ -874,7 +942,10 @@ mod tests {
 
         // Trying to begin at height 1 without genesis should fail
         let result = store.begin_block(1);
-        assert!(matches!(result, Err(StorageError::InvalidBlockHeight { .. })));
+        assert!(matches!(
+            result,
+            Err(StorageError::InvalidBlockHeight { .. })
+        ));
     }
 
     #[test]
@@ -993,7 +1064,10 @@ mod tests {
         store.begin_block(0).unwrap();
         let result = store.begin_block(0);
 
-        assert!(matches!(result, Err(StorageError::TransactionAlreadyActive)));
+        assert!(matches!(
+            result,
+            Err(StorageError::TransactionAlreadyActive)
+        ));
     }
 
     #[test]
@@ -1059,7 +1133,7 @@ mod tests {
 
     #[test]
     fn test_identity_consensus_operations() {
-        use super::super::{IdentityConsensus, IdentityType, IdentityStatus};
+        use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
 
         let store = SledStore::open_temporary().unwrap();
         let block = create_test_block(0, Hash::default());
@@ -1104,7 +1178,7 @@ mod tests {
 
     #[test]
     fn test_identity_metadata_operations() {
-        use super::super::{IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus};
+        use super::super::{IdentityConsensus, IdentityMetadata, IdentityStatus, IdentityType};
 
         let store = SledStore::open_temporary().unwrap();
         let block = create_test_block(0, Hash::default());
@@ -1149,7 +1223,10 @@ mod tests {
 
         // Get consensus state (participates in state hash)
         let retrieved_consensus = store.get_identity(&did_hash).unwrap().unwrap();
-        assert_eq!(retrieved_consensus.identity_type, IdentityType::Organization);
+        assert_eq!(
+            retrieved_consensus.identity_type,
+            IdentityType::Organization
+        );
 
         // Get metadata (for DID resolution, non-consensus)
         let retrieved_metadata = store.get_identity_metadata(&did_hash).unwrap().unwrap();
@@ -1160,7 +1237,7 @@ mod tests {
 
     #[test]
     fn test_identity_owner_index() {
-        use super::super::{IdentityConsensus, IdentityType, IdentityStatus};
+        use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
 
         let store = SledStore::open_temporary().unwrap();
         let block = create_test_block(0, Hash::default());
@@ -1204,7 +1281,7 @@ mod tests {
 
     #[test]
     fn test_identity_with_seed_commitment() {
-        use super::super::{IdentityConsensus, IdentityType, IdentityStatus};
+        use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
 
         let store = SledStore::open_temporary().unwrap();
         let block = create_test_block(0, Hash::default());
@@ -1245,7 +1322,7 @@ mod tests {
 
     #[test]
     fn test_identity_delete() {
-        use super::super::{IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus};
+        use super::super::{IdentityConsensus, IdentityMetadata, IdentityStatus, IdentityType};
 
         let store = SledStore::open_temporary().unwrap();
         let block0 = create_test_block(0, Hash::default());
@@ -1310,7 +1387,7 @@ mod tests {
 
     #[test]
     fn test_identity_rollback() {
-        use super::super::{IdentityConsensus, IdentityType, IdentityStatus};
+        use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
 
         let store = SledStore::open_temporary().unwrap();
         let block = create_test_block(0, Hash::default());
@@ -1347,7 +1424,7 @@ mod tests {
 
     #[test]
     fn test_get_identities_at_height() {
-        use super::super::{IdentityConsensus, IdentityType, IdentityStatus};
+        use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
 
         let store = SledStore::open_temporary().unwrap();
         let block0 = create_test_block(0, Hash::default());

@@ -40,9 +40,9 @@
 pub mod keys;
 pub mod sled_store;
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // Re-export the store implementation
@@ -50,7 +50,7 @@ pub use sled_store::SledStore;
 
 // Import canonical type aliases from lib-types
 // These are the authoritative definitions for consensus-critical values
-pub use lib_types::primitives::{BlockHeight, Amount, Bps};
+pub use lib_types::primitives::{Amount, BlockHeight, Bps};
 
 // =============================================================================
 // CANONICAL TYPES
@@ -893,7 +893,8 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     ///
     /// Default implementation falls back to get_block_by_height.
     fn get_block_hash_by_height(&self, h: BlockHeight) -> StorageResult<Option<BlockHash>> {
-        Ok(self.get_block_by_height(h)?
+        Ok(self
+            .get_block_by_height(h)?
             .map(|b| BlockHash::new(b.header.block_hash.as_array())))
     }
 
@@ -932,7 +933,10 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Get a token contract by its ID.
     ///
     /// Returns None if no contract exists for that token.
-    fn get_token_contract(&self, id: &TokenId) -> StorageResult<Option<crate::contracts::TokenContract>>;
+    fn get_token_contract(
+        &self,
+        id: &TokenId,
+    ) -> StorageResult<Option<crate::contracts::TokenContract>>;
 
     /// Store a token contract.
     ///
@@ -967,6 +971,40 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// - MUST be called within begin_block/commit_block
     /// - Setting balance to 0 may delete the entry (implementation detail)
     fn set_token_balance(&self, t: &TokenId, a: &Address, v: Amount) -> StorageResult<()>;
+
+    // =========================================================================
+    // Token Transfer Nonces (Replay Protection)
+    // =========================================================================
+    // Nonces prevent replay attacks on token transfers.
+    // Key: (token_id, sender_address) -> nonce
+    // =========================================================================
+
+    /// Get the nonce for a token transfer from a specific sender.
+    ///
+    /// Returns 0 if no nonce exists (first transfer).
+    fn get_token_nonce(&self, token_id: &TokenId, sender: &Address) -> StorageResult<u64>;
+
+    /// Set the nonce for a token transfer.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn set_token_nonce(
+        &self,
+        token_id: &TokenId,
+        sender: &Address,
+        nonce: u64,
+    ) -> StorageResult<()>;
+
+    /// Increment the nonce for a token transfer after successful execution.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn increment_token_nonce(&self, token_id: &TokenId, sender: &Address) -> StorageResult<u64> {
+        let current = self.get_token_nonce(token_id, sender)?;
+        let new_nonce = current + 1;
+        self.set_token_nonce(token_id, sender, new_nonce)?;
+        Ok(new_nonce)
+    }
 
     // =========================================================================
     // Identity Consensus State (Phase 0 - DID Recovery)
@@ -1034,7 +1072,10 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Get identity metadata by DID hash.
     ///
     /// This is for DID resolution and display, NOT consensus.
-    fn get_identity_metadata(&self, did_hash: &[u8; 32]) -> StorageResult<Option<IdentityMetadata>> {
+    fn get_identity_metadata(
+        &self,
+        did_hash: &[u8; 32],
+    ) -> StorageResult<Option<IdentityMetadata>> {
         // Default implementation returns None
         let _ = did_hash;
         Ok(None)
@@ -1043,7 +1084,11 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Store identity metadata.
     ///
     /// This is for DID resolution and display, NOT consensus.
-    fn put_identity_metadata(&self, did_hash: &[u8; 32], metadata: &IdentityMetadata) -> StorageResult<()> {
+    fn put_identity_metadata(
+        &self,
+        did_hash: &[u8; 32],
+        metadata: &IdentityMetadata,
+    ) -> StorageResult<()> {
         // Default implementation is a no-op
         let _ = (did_hash, metadata);
         Ok(())
