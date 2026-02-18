@@ -5,10 +5,12 @@
 //!
 //! # Design Principles
 //!
-//! 1. **Import uses executor** - All imports go through `BlockExecutor::apply_block`
-//! 2. **No direct state writes** - Import never writes directly to store
-//! 3. **Atomic failure** - If any block fails, stop immediately; state reflects last committed block
-//! 4. **Deterministic** - Same blocks always produce same state
+//! 1. **Import uses executor by default** - Standard imports go through `BlockExecutor::apply_block`
+//! 2. **Canonical fallback for Contract/DAO txs** - Imports containing `Contract*`/`Dao*`
+//!    transactions replay via canonical `Blockchain` runtime path
+//! 3. **No direct state writes** - Import never writes directly to store
+//! 4. **Atomic failure** - If any block fails, stop immediately; state reflects last committed block
+//! 5. **Deterministic** - Same blocks always produce same state
 //!
 //! # Phase 3E: Snapshot and Fast Sync
 //!
@@ -40,6 +42,7 @@ use thiserror::Error;
 use crate::block::Block;
 use crate::execution::{BlockExecutor, ExecutorConfig, BlockApplyError};
 use crate::storage::{BlockchainStore, StorageError};
+use crate::types::TransactionType;
 
 /// Errors that can occur during sync operations
 #[derive(Debug, Error)]
@@ -70,6 +73,10 @@ pub enum SyncError {
     /// Import height mismatch
     #[error("Import height mismatch: expected {expected}, got {actual}")]
     HeightMismatch { expected: u64, actual: u64 },
+
+    /// Runtime import path failed
+    #[error("Runtime import failed: {0}")]
+    RuntimeImportFailed(String),
 }
 
 pub type SyncResult<T> = Result<T, SyncError>;
@@ -181,10 +188,12 @@ impl ChainSync {
     /// * `blocks` - Blocks to import, must be in ascending height order
     ///
     /// # Rules
-    /// 1. Each block is applied through `BlockExecutor::apply_block`
-    /// 2. No direct state writes occur - all state changes go through executor
-    /// 3. If ANY block fails: stop immediately, return error
-    /// 4. On error, state reflects the last successfully committed block only
+    /// 1. Default path: each block is applied through `BlockExecutor::apply_block`
+    /// 2. Batches containing `Contract*`/`Dao*` tx variants replay through canonical
+    ///    `Blockchain` runtime path for consensus parity
+    /// 3. No direct state writes occur - all state changes go through executor/runtime
+    /// 4. If ANY block fails: stop immediately, return error
+    /// 5. On error, state reflects the last successfully committed block only
     ///
     /// # Errors
     /// - `HeightMismatch` if blocks are not in correct sequence
@@ -196,6 +205,10 @@ impl ChainSync {
                 blocks_imported: 0,
                 final_height: None,
             });
+        }
+
+        if Self::requires_canonical_runtime_import(&blocks) {
+            return self.import_blocks_via_canonical_runtime(blocks, None);
         }
 
         let executor = BlockExecutor::from_config(Arc::clone(&self.store), self.executor_config.clone());
@@ -258,6 +271,10 @@ impl ChainSync {
             });
         }
 
+        if Self::requires_canonical_runtime_import(&blocks) {
+            return self.import_blocks_via_canonical_runtime(blocks, Some(&mut on_progress));
+        }
+
         let executor = BlockExecutor::from_config(Arc::clone(&self.store), self.executor_config.clone());
 
         // Determine expected starting height
@@ -297,6 +314,167 @@ impl ChainSync {
             final_height: last_height,
         })
     }
+
+    /// Contract/DAO variants currently execute through canonical `Blockchain` flow,
+    /// not `BlockExecutor`'s phase-2 transaction applicator.
+    fn requires_canonical_runtime_import(blocks: &[Block]) -> bool {
+        blocks.iter().any(Self::block_needs_canonical_runtime)
+    }
+
+    fn import_blocks_via_canonical_runtime(
+        &self,
+        blocks: Vec<Block>,
+        mut on_progress: Option<&mut dyn FnMut(u64, usize)>,
+    ) -> SyncResult<ImportResult> {
+        let expected_start = match self.store.latest_height() {
+            Ok(h) => h + 1,
+            Err(StorageError::NotInitialized) => 0,
+            Err(e) => return Err(SyncError::Storage(e)),
+        };
+
+        let first_block_height = blocks[0].header.height;
+        if first_block_height != expected_start {
+            return Err(SyncError::HeightMismatch {
+                expected: expected_start,
+                actual: first_block_height,
+            });
+        }
+
+        let mut imported_count = 0usize;
+        let mut last_height = None;
+        let mut remaining_blocks = blocks;
+
+        if expected_start == 0 {
+            let split_index = remaining_blocks
+                .iter()
+                .position(|block| Self::block_needs_canonical_runtime(block))
+                .unwrap_or(remaining_blocks.len());
+
+            if split_index > 0 {
+                let prefix: Vec<Block> = remaining_blocks.drain(..split_index).collect();
+                let executor = BlockExecutor::from_config(
+                    Arc::clone(&self.store),
+                    self.executor_config.clone(),
+                );
+
+                for block in prefix {
+                    let height = block.header.height;
+                    executor.apply_block(&block).map_err(|e| SyncError::BlockApplyFailed {
+                        height,
+                        error: e,
+                    })?;
+                    imported_count += 1;
+                    last_height = Some(height);
+                    if let Some(progress) = on_progress.as_mut() {
+                        progress(height, imported_count);
+                    }
+                }
+            }
+        }
+
+        if remaining_blocks.is_empty() {
+            return Ok(ImportResult {
+                blocks_imported: imported_count,
+                final_height: last_height,
+            });
+        }
+
+        let canonical = self.run_canonical_import(remaining_blocks)?;
+        if let Some(progress) = on_progress.as_mut() {
+            for (offset, height) in canonical.heights.iter().enumerate() {
+                progress(*height, imported_count + offset + 1);
+            }
+        }
+
+        Ok(ImportResult {
+            blocks_imported: imported_count + canonical.blocks_imported,
+            final_height: canonical.final_height.or(last_height),
+        })
+    }
+
+    fn block_needs_canonical_runtime(block: &Block) -> bool {
+        block.transactions.iter().any(|tx| {
+            matches!(
+                tx.transaction_type,
+                TransactionType::ContractDeployment
+                    | TransactionType::ContractExecution
+                    | TransactionType::DaoProposal
+                    | TransactionType::DaoVote
+                    | TransactionType::DaoExecution
+            )
+        })
+    }
+
+    fn run_canonical_import(&self, blocks: Vec<Block>) -> SyncResult<CanonicalImportResult> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            let store = Arc::clone(&self.store);
+            std::thread::spawn(move || run_canonical_import_inner(store, blocks))
+                .join()
+                .map_err(|_| SyncError::RuntimeImportFailed("canonical import thread panicked".to_string()))?
+        } else {
+            run_canonical_import_inner(Arc::clone(&self.store), blocks)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CanonicalImportResult {
+    blocks_imported: usize,
+    final_height: Option<u64>,
+    heights: Vec<u64>,
+}
+
+fn run_canonical_import_inner(
+    store: Arc<dyn BlockchainStore>,
+    blocks: Vec<Block>,
+) -> SyncResult<CanonicalImportResult> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| SyncError::RuntimeImportFailed(format!("failed to create runtime: {}", e)))?;
+
+    rt.block_on(async move {
+        let mut blockchain = crate::blockchain::Blockchain::load_from_store(Arc::clone(&store))
+            .map_err(|e| SyncError::RuntimeImportFailed(format!("failed to load chain from store: {}", e)))?
+            .ok_or_else(|| {
+                SyncError::RuntimeImportFailed(
+                    "canonical runtime import requires initialized chain state".to_string(),
+                )
+            })?;
+
+        let mut heights = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            let height = block.header.height;
+            blockchain
+                .add_block_from_network(block)
+                .await
+                .map_err(|e| SyncError::BlockApplyFailed {
+                    height,
+                    error: BlockApplyError::ValidationFailed(format!(
+                        "canonical runtime import failed: {}",
+                        e
+                    )),
+                })?;
+
+            let persisted_height = store.latest_height().map_err(SyncError::Storage)?;
+            if persisted_height < height {
+                return Err(SyncError::BlockApplyFailed {
+                    height,
+                    error: BlockApplyError::ValidationFailed(format!(
+                        "block at height {} was applied in runtime but not persisted to store (latest persisted height: {})",
+                        height, persisted_height
+                    )),
+                });
+            }
+            heights.push(height);
+        }
+
+        Ok(CanonicalImportResult {
+            blocks_imported: heights.len(),
+            final_height: heights.last().copied(),
+            heights,
+        })
+    })
 }
 
 /// Result of a successful import operation
@@ -316,8 +494,10 @@ pub struct ImportResult {
 mod tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
+    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
     use crate::storage::SledStore;
-    use crate::types::{Hash, Difficulty};
+    use crate::transaction::Transaction;
+    use crate::types::{Hash, Difficulty, TransactionType};
     use tempfile::TempDir;
 
     fn create_test_store() -> (TempDir, Arc<dyn BlockchainStore>) {
@@ -370,6 +550,35 @@ mod tests {
             fee_model_version: 2, // Phase 2+ uses v2
         };
         Block::new(header, vec![])
+    }
+
+    fn create_test_tx(transaction_type: TransactionType) -> Transaction {
+        Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: Signature {
+                signature: vec![0u8; 64],
+                public_key: PublicKey::new(vec![1u8; 32]),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: 0,
+            },
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
     }
 
     #[test]
@@ -497,6 +706,19 @@ mod tests {
         let result = sync.import_blocks(vec![]).unwrap();
         assert_eq!(result.blocks_imported, 0);
         assert_eq!(result.final_height, None);
+    }
+
+    #[test]
+    fn test_requires_canonical_runtime_import_detection() {
+        let normal_block = create_block_at_height(0, Hash::default());
+        let canonical_header = create_block_at_height(1, normal_block.header.block_hash).header;
+        let canonical_block = Block::new(
+            canonical_header,
+            vec![create_test_tx(TransactionType::ContractExecution)],
+        );
+
+        assert!(!ChainSync::requires_canonical_runtime_import(&[normal_block.clone()]));
+        assert!(ChainSync::requires_canonical_runtime_import(&[normal_block, canonical_block]));
     }
 
     #[test]
