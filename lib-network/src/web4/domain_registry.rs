@@ -331,8 +331,10 @@ impl DomainRegistry {
                 .map_err(|e| anyhow!("Failed to parse DeployManifest JSON {}: {}", deploy_manifest_cid, e))?;
 
             // Convert CLI manifest format to Web4Manifest
-            // CLI manifest has files as Vec<FileEntry>, we need HashMap<String, ManifestFile>
-            let mut manifest_files = HashMap::new();
+            // Use BTreeMap for deterministic iteration order — HashMap serialization order is
+            // non-deterministic, which would cause compute_cid() to produce different hashes
+            // for identical manifests across nodes.
+            let mut manifest_files = std::collections::BTreeMap::new();
             let files_array = cli_manifest_data
                 .get("files")
                 .and_then(|f| f.as_array())
@@ -416,7 +418,7 @@ impl DomainRegistry {
                 build_hash: hex::encode(lib_crypto::hash_blake3(
                     format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
                 )),
-                files: HashMap::new(),
+                files: std::collections::BTreeMap::new(),
                 created_at: current_time,
                 created_by: format!("{}", request.owner.id),
                 message: if existing_record.is_some() {
@@ -1263,17 +1265,31 @@ impl DomainRegistry {
         let manifest_bytes = serde_json::to_vec(&manifest)
             .map_err(|e| anyhow!("Failed to serialize manifest: {}", e))?;
 
-        // Validate manifest chain if we have the previous one
+        // Validate manifest chain — version > 1 MUST have a recorded previous manifest.
+        // Silently skipping validation when history is absent would allow unanchored
+        // version chains to be stored (e.g. after a restart with a failed migration).
         if manifest.version > 1 {
             let manifests = self.manifest_history.read().await;
-            if let Some(domain_manifests) = manifests.get(&domain) {
-                if let Some(prev) = domain_manifests.last() {
-                    manifest.validate_chain(Some(prev))
-                        .map_err(|e| anyhow!("Manifest chain validation failed: {}", e))?;
-                }
-            }
+            let domain_manifests = manifests.get(&domain).ok_or_else(|| {
+                anyhow!(
+                    "Cannot store version {} manifest: no history found for domain '{}'",
+                    manifest.version,
+                    domain
+                )
+            })?;
+            let prev = domain_manifests.last().ok_or_else(|| {
+                anyhow!(
+                    "Cannot store version {} manifest: history is empty for domain '{}'",
+                    manifest.version,
+                    domain
+                )
+            })?;
+            manifest
+                .validate_chain(Some(prev))
+                .map_err(|e| anyhow!("Manifest chain validation failed: {}", e))?;
         } else {
-            manifest.validate_chain(None)
+            manifest
+                .validate_chain(None)
                 .map_err(|e| anyhow!("Manifest validation failed: {}", e))?;
         }
 
