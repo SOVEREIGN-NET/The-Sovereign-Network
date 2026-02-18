@@ -505,6 +505,29 @@ impl BlockExecutor {
         }
 
         // =====================================================================
+        // Genesis block exception (height 0)
+        // =====================================================================
+        //
+        // Genesis is created out-of-band by the founding node (UTXOs are injected
+        // directly into the UTXO set by GenesisFundingService).  When a peer
+        // receives and replays the genesis block its transactions don't satisfy
+        // normal executor invariants (empty inputs, system recipients, etc.).
+        // We accept the genesis block as-is: just record it in the store and
+        // return an empty outcome — the founding node already committed the state.
+        if block_height == 0 {
+            self.store.append_block(block)
+                .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
+            self.store.commit_block()?;
+            return Ok(ApplyOutcome {
+                height: block_height,
+                block_hash,
+                tx_count: block.transactions.len(),
+                state_changes: summary,
+                fees_collected: total_fees,
+            });
+        }
+
+        // =====================================================================
         // Step 4: Apply transactions (Phase 3C: two-pass for fee routing)
         // =====================================================================
         //
@@ -565,6 +588,9 @@ impl BlockExecutor {
                 TxOutcome::Coinbase(_) => {
                     // Should not happen - coinbase filtered out
                     unreachable!("Coinbase should not be in non-coinbase pass");
+                }
+                TxOutcome::LegacySystem => {
+                    // No state changes for legacy system transactions.
                 }
             }
         }
@@ -658,14 +684,49 @@ impl BlockExecutor {
     /// module is for pre-execution filtering (e.g., mempool acceptance), while
     /// executor validation is the authoritative check during block application.
     fn validate_tx_stateless(&self, tx: &crate::transaction::Transaction) -> Result<(), TxApplyError> {
-        // Check transaction type is supported in Phase 2
+        // Check transaction type is supported in Phase 2.
+        //
+        // The executor understands four Phase-2 types (Transfer, TokenTransfer, TokenMint,
+        // Coinbase) and applies full structural + fee validation to them below.
+        //
+        // All other types in the TransactionType enum are legacy system types that existed
+        // before the Phase-2 executor was introduced. Blocks mined on earlier protocol
+        // versions may contain them, and peers must be able to sync those blocks without
+        // rejection. We accept them here as pass-throughs (no structural validation) and
+        // apply them as no-ops in apply_transaction.
+        //
+        // Using an exhaustive match (rather than a catch-all `_`) forces the compiler to
+        // demand an explicit decision for any new TransactionType variant added in the future,
+        // preventing accidental silent acceptance of unrelated future types.
         match tx.transaction_type {
+            // Phase-2 types: fall through to structural validation below.
             TransactionType::Transfer => {}
             TransactionType::TokenTransfer => {}
             TransactionType::TokenMint => {}
             TransactionType::Coinbase => {}
-            other => {
-                return Err(TxApplyError::UnsupportedType(format!("{:?}", other)));
+            // Known legacy system types: no structural validation, applied as no-ops.
+            TransactionType::IdentityRegistration
+            | TransactionType::IdentityUpdate
+            | TransactionType::IdentityRevocation
+            | TransactionType::WalletRegistration
+            | TransactionType::WalletUpdate
+            | TransactionType::ValidatorRegistration
+            | TransactionType::ValidatorUpdate
+            | TransactionType::ValidatorUnregister
+            | TransactionType::SessionCreation
+            | TransactionType::SessionTermination
+            | TransactionType::ContentUpload
+            | TransactionType::UbiDistribution
+            | TransactionType::DaoProposal
+            | TransactionType::DaoVote
+            | TransactionType::DaoExecution
+            | TransactionType::DifficultyUpdate
+            | TransactionType::UBIClaim
+            | TransactionType::ProfitDeclaration
+            | TransactionType::GovernanceConfigUpdate
+            | TransactionType::ContractDeployment
+            | TransactionType::ContractExecution => {
+                return Ok(());
             }
         }
 
@@ -1063,8 +1124,33 @@ impl BlockExecutor {
                     amount,
                 }))
             }
-            _ => Err(TxApplyError::UnsupportedType(
-                format!("{:?}", tx.transaction_type)
+            // Known legacy system types: accepted as no-ops. This mirrors the allowlist in
+            // validate_tx_stateless — any type listed here must also be listed there.
+            TransactionType::IdentityRegistration
+            | TransactionType::IdentityUpdate
+            | TransactionType::IdentityRevocation
+            | TransactionType::WalletRegistration
+            | TransactionType::WalletUpdate
+            | TransactionType::ValidatorRegistration
+            | TransactionType::ValidatorUpdate
+            | TransactionType::ValidatorUnregister
+            | TransactionType::SessionCreation
+            | TransactionType::SessionTermination
+            | TransactionType::ContentUpload
+            | TransactionType::UbiDistribution
+            | TransactionType::DaoProposal
+            | TransactionType::DaoVote
+            | TransactionType::DaoExecution
+            | TransactionType::DifficultyUpdate
+            | TransactionType::UBIClaim
+            | TransactionType::ProfitDeclaration
+            | TransactionType::GovernanceConfigUpdate
+            | TransactionType::ContractDeployment
+            | TransactionType::ContractExecution => Ok(TxOutcome::LegacySystem),
+
+            // Coinbase is routed through apply_coinbase_with_fees, never here.
+            TransactionType::Coinbase => Err(TxApplyError::InvalidType(
+                "Coinbase must not be routed through apply_transaction".to_string()
             )),
         }
     }
@@ -1129,6 +1215,9 @@ enum TxOutcome {
     TokenTransfer(TokenTransferOutcome),
     TokenMint(TokenMintOutcome),
     Coinbase(CoinbaseOutcome),
+    /// Legacy system transaction types (IdentityRegistration, WalletRegistration, etc.)
+    /// accepted as no-ops by the Phase-2 executor for backwards compatibility.
+    LegacySystem,
 }
 
 /// Outcome of a token transfer transaction
@@ -1528,6 +1617,118 @@ mod tests {
 
         // Verify state was not changed
         assert_eq!(store.latest_height().unwrap(), 0);
+    }
+
+    // =========================================================================
+    // Legacy system transaction tests
+    // =========================================================================
+
+    fn create_legacy_tx(tx_type: TransactionType) -> Transaction {
+        Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: tx_type,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: create_dummy_signature(),
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    /// Known legacy types must pass validate_tx_stateless without structural validation.
+    #[test]
+    fn test_legacy_tx_passes_stateless_validation() {
+        let store = create_test_store();
+        let executor = create_test_executor(store);
+
+        let legacy_types = [
+            TransactionType::IdentityRegistration,
+            TransactionType::IdentityUpdate,
+            TransactionType::IdentityRevocation,
+            TransactionType::WalletRegistration,
+            TransactionType::WalletUpdate,
+            TransactionType::ValidatorRegistration,
+            TransactionType::ValidatorUpdate,
+            TransactionType::ValidatorUnregister,
+            TransactionType::SessionCreation,
+            TransactionType::SessionTermination,
+            TransactionType::ContentUpload,
+            TransactionType::UbiDistribution,
+            TransactionType::DaoProposal,
+            TransactionType::DaoVote,
+            TransactionType::DaoExecution,
+            TransactionType::DifficultyUpdate,
+            TransactionType::UBIClaim,
+            TransactionType::ProfitDeclaration,
+            TransactionType::GovernanceConfigUpdate,
+            TransactionType::ContractDeployment,
+            TransactionType::ContractExecution,
+        ];
+
+        for tx_type in legacy_types {
+            let tx = create_legacy_tx(tx_type);
+            let result = executor.validate_tx_stateless(&tx);
+            assert!(
+                result.is_ok(),
+                "Expected legacy tx type {:?} to pass stateless validation, got {:?}",
+                tx_type, result
+            );
+        }
+    }
+
+    /// A block containing legacy tx types must be accepted end-to-end by apply_block.
+    #[test]
+    fn test_block_with_legacy_tx_is_accepted() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        // Apply genesis
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        // Build block 1 with legacy txs: IdentityRegistration and WalletRegistration
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes[0..8].copy_from_slice(&1u64.to_be_bytes());
+        let block_hash = Hash::new(hash_bytes);
+
+        let mut tx1 = create_legacy_tx(TransactionType::IdentityRegistration);
+        tx1.fee = 0; // legacy txs are fee-free
+        let mut tx2 = create_legacy_tx(TransactionType::WalletRegistration);
+        tx2.fee = 0;
+
+        let header = BlockHeader {
+            version: 1,
+            previous_block_hash: genesis.header.block_hash,
+            merkle_root: Hash::default(),
+            state_root: Hash::default(),
+            timestamp: 1001,
+            difficulty: Difficulty::minimum(),
+            nonce: 0,
+            cumulative_difficulty: Difficulty::minimum(),
+            height: 1,
+            block_hash,
+            transaction_count: 2,
+            block_size: 0,
+            fee_model_version: 2,
+        };
+        let block1 = Block::new(header, vec![tx1, tx2]);
+
+        let outcome = executor.apply_block(&block1).unwrap();
+        assert_eq!(outcome.height, 1);
+        assert_eq!(outcome.tx_count, 2);
+        assert_eq!(store.latest_height().unwrap(), 1);
     }
 
     /// T5: State persists across store restart

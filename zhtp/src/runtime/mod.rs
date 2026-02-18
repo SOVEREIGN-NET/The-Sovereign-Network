@@ -1232,12 +1232,55 @@ impl RuntimeOrchestrator {
             std::fs::create_dir_all(parent)?;
         }
 
-        let store = std::sync::Arc::new(
-            lib_blockchain::storage::SledStore::open(&sled_path)
-                .map_err(|e| anyhow::anyhow!("Failed to open SledStore: {}", e))?
-        );
+        // Try to open SledStore.
+        //
+        // On error we do NOT assume corruption and do NOT delete data automatically —
+        // the failure could be a permission issue, a file lock from another process,
+        // or a transient I/O error. Unconditionally wiping the store on any error
+        // risks data loss for non-corruption failures.
+        //
+        // Operators who are certain the store is corrupted and want to reset it can
+        // opt in by setting ZHTP_SLED_RESET_ON_ERROR=true (or =1) before restarting.
+        let store = match lib_blockchain::storage::SledStore::open(&sled_path) {
+            Ok(s) => std::sync::Arc::new(s),
+            Err(e) => {
+                let allow_reset = std::env::var("ZHTP_SLED_RESET_ON_ERROR")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+
+                if !allow_reset {
+                    error!(
+                        "Failed to open SledStore at {:?}: {}. \
+                         To attempt a destructive reset, set ZHTP_SLED_RESET_ON_ERROR=true and restart.",
+                        sled_path, e
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Failed to open SledStore at {:?}: {}",
+                        sled_path, e
+                    ));
+                }
+
+                warn!(
+                    "⚠️  SledStore open error ({}). ZHTP_SLED_RESET_ON_ERROR is set — \
+                     wiping store directory and attempting recovery from blockchain.dat",
+                    e
+                );
+                if let Err(rm_err) = std::fs::remove_dir_all(&sled_path) {
+                    warn!("   Failed to remove sled directory during reset: {}", rm_err);
+                }
+                std::fs::create_dir_all(&sled_path)?;
+                std::sync::Arc::new(
+                    lib_blockchain::storage::SledStore::open(&sled_path)
+                        .map_err(|e2| anyhow::anyhow!("Failed to re-open fresh SledStore after reset: {}", e2))?
+                )
+            }
+        };
 
         let mut synced_blockchain: Option<lib_blockchain::Blockchain> = None;
+
+        // Before peer sync or genesis: try loading from blockchain.dat backup if sled is empty
+        let dat_path = std::path::PathBuf::from(self.config.environment.blockchain_data_path());
+
         let (blockchain, was_loaded) = match lib_blockchain::Blockchain::load_from_store(store.clone())? {
             Some(mut bc) => {
                 info!("📂 Loaded existing blockchain from SledStore (height: {}, tokens: {})",
@@ -1256,6 +1299,45 @@ impl RuntimeOrchestrator {
                 (bc, true)
             }
             None => {
+                // First: try loading from blockchain.dat backup before attempting peer sync or genesis
+                if dat_path.exists() {
+                    match lib_blockchain::Blockchain::load_from_file(&dat_path) {
+                        Ok(mut bc) => {
+                            info!("📂 Recovered blockchain from backup file (height: {})", bc.height);
+                            bc.set_store(store.clone());
+                            // Persist all blocks to the fresh SledStore
+                            let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
+                            let mut migration_ok = true;
+                            for block in &bc.blocks {
+                                let h = block.height();
+                                if let Err(e) = store_ref.begin_block(h) {
+                                    warn!("⚠️  Failed to begin migration tx for block {}: {}", h, e);
+                                    migration_ok = false;
+                                    break;
+                                }
+                                let write_result = store_ref.append_block(block)
+                                    .and_then(|_| store_ref.commit_block());
+                                if let Err(e) = write_result {
+                                    warn!("⚠️  Failed to migrate block {} to SledStore: {}", h, e);
+                                    // begin_block succeeded — rollback to leave the store clean
+                                    if let Err(rb) = store_ref.rollback_block() {
+                                        warn!("   rollback_block also failed: {}", rb);
+                                    }
+                                    migration_ok = false;
+                                    break;
+                                }
+                            }
+                            if migration_ok {
+                                info!("✅ Migrated {} blocks from blockchain.dat to SledStore", bc.blocks.len());
+                                synced_blockchain = Some(bc);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("⚠️  blockchain.dat recovery failed: {}", e);
+                        }
+                    }
+                }
+
                 // If we discovered peers, try to sync before creating genesis.
                 if let Some(ref net_info) = network_info {
                     if !net_info.bootstrap_peers.is_empty() {
