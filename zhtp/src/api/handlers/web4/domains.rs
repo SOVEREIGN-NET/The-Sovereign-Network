@@ -1341,17 +1341,29 @@ impl Web4Handler {
         };
 
         // Store the canonical Web4Manifest and get its CID.
-        // NOTE: This CID differs from update_request.new_manifest_cid (DeployManifest CID) because:
-        // - DeployManifest CID = signed by owner, content authorization proof
-        // - Web4Manifest CID = canonical runtime format, deterministically derived
-        // The DeployManifest CID remains in the request for audit trail purposes.
+        // SECURITY: The owner signs new_manifest_cid (the DeployManifest CID) to prove
+        // content authorization. The server then derives a canonical Web4Manifest from that
+        // content and verifies the computed CID matches what the owner signed. This ensures
+        // the owner explicitly authorized the exact canonical representation that gets stored.
         let canonical_web4_manifest_cid = self
             .domain_registry
             .store_manifest(web4_manifest)
             .await
             .map_err(|e| anyhow!("Failed to store canonical Web4Manifest: {}", e))?;
 
-        // Update the request with the canonical Web4Manifest CID for domain record update
+        // Verify the canonicalized CID matches what the owner signed.
+        // If these differ it means the owner signed a different manifest than what we stored —
+        // either a replay of an old request or a server-side transform that was not authorized.
+        if canonical_web4_manifest_cid != update_request.new_manifest_cid {
+            return Err(anyhow!(
+                "CID mismatch: signed manifest CID {} does not match computed canonical CID {}. \
+                 The owner must sign the canonical Web4Manifest CID, not the DeployManifest CID.",
+                update_request.new_manifest_cid,
+                canonical_web4_manifest_cid
+            ));
+        }
+
+        // Update the request with the verified canonical Web4Manifest CID for domain record update
         let mut canonical_update_request = update_request.clone();
         canonical_update_request.new_manifest_cid = canonical_web4_manifest_cid;
 
