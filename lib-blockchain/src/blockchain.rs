@@ -1050,6 +1050,26 @@ impl Blockchain {
             }
         }
 
+        // Populate contract_blocks for any contracts missing deployment height tracking.
+        // This ensures get_contract_block_height() returns valid data after restart.
+        // Contracts without a known deployment height are assigned to genesis (block 0).
+        let mut backfilled_blocks = 0;
+        for contract_id in blockchain.token_contracts.keys() {
+            if !blockchain.contract_blocks.contains_key(contract_id) {
+                blockchain.contract_blocks.insert(*contract_id, 0);
+                backfilled_blocks += 1;
+            }
+        }
+        for contract_id in blockchain.web4_contracts.keys() {
+            if !blockchain.contract_blocks.contains_key(contract_id) {
+                blockchain.contract_blocks.insert(*contract_id, 0);
+                backfilled_blocks += 1;
+            }
+        }
+        if backfilled_blocks > 0 {
+            info!("📦 Backfilled {} contract deployment heights to genesis (block 0)", backfilled_blocks);
+        }
+
         // Migrate legacy initial_balance values from human SOV to atomic units.
         // Old code stored raw 5000 instead of 5000 * 10^8. Any initial_balance that is
         // non-zero but less than SOV_ATOMIC_UNITS was in human SOV and needs scaling.
