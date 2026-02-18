@@ -1083,6 +1083,26 @@ impl Blockchain {
             }
         }
 
+        // Populate contract_blocks for any contracts missing deployment height tracking.
+        // This ensures get_contract_block_height() returns valid data after restart.
+        // Contracts without a known deployment height are assigned to genesis (block 0).
+        let mut backfilled_blocks = 0;
+        for contract_id in blockchain.token_contracts.keys() {
+            if !blockchain.contract_blocks.contains_key(contract_id) {
+                blockchain.contract_blocks.insert(*contract_id, 0);
+                backfilled_blocks += 1;
+            }
+        }
+        for contract_id in blockchain.web4_contracts.keys() {
+            if !blockchain.contract_blocks.contains_key(contract_id) {
+                blockchain.contract_blocks.insert(*contract_id, 0);
+                backfilled_blocks += 1;
+            }
+        }
+        if backfilled_blocks > 0 {
+            info!("📦 Backfilled {} contract deployment heights to genesis (block 0)", backfilled_blocks);
+        }
+
         // Migrate legacy initial_balance values from human SOV to atomic units.
         // Old code stored raw 5000 instead of 5000 * 10^8. Any initial_balance that is
         // non-zero but less than SOV_ATOMIC_UNITS was in human SOV and needs scaling.
@@ -8954,5 +8974,47 @@ mod replay_contract_execution_tests {
         assert_eq!(replayed_token.total_supply, direct_token.total_supply);
         assert_eq!(replayed_token.balance_of(&creator), direct_token.balance_of(&creator));
         assert_eq!(replayed_token.balance_of(&recipient), direct_token.balance_of(&recipient));
+    }
+
+    #[test]
+    fn contract_blocks_populated_during_replay() {
+        #[derive(serde::Serialize)]
+        struct CreateTokenParams {
+            name: String,
+            symbol: String,
+            initial_supply: u64,
+            decimals: u8,
+        }
+
+        let creator = test_pubkey(0x43);
+        let token_name = "BlockHeightToken";
+        let token_symbol = "BHT";
+        let token_id = crate::contracts::utils::generate_custom_token_id(token_name, token_symbol);
+
+        let create_params = CreateTokenParams {
+            name: token_name.to_string(),
+            symbol: token_symbol.to_string(),
+            initial_supply: 5_000,
+            decimals: 8,
+        };
+
+        let tx = contract_execution_tx(
+            &creator,
+            "create_custom_token",
+            bincode::serialize(&create_params).expect("create params should serialize"),
+        );
+
+        let mut blockchain = Blockchain::default();
+        blockchain
+            .process_contract_execution(&tx, 42)
+            .expect("contract execution should succeed");
+
+        // Verify contract_blocks is updated with the correct block height
+        assert!(blockchain.token_contracts.contains_key(&token_id), "Token contract should exist");
+        assert_eq!(
+            blockchain.get_contract_block_height(&token_id),
+            Some(42),
+            "Contract deployment height should be tracked"
+        );
     }
 }
