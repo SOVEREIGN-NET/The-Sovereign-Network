@@ -1403,6 +1403,11 @@ impl ZhtpMeshServer {
                 self.revenue_pools.clone(),
             )
         ));
+
+        // Create identity store-and-forward queue
+        let mut identity_store = crate::identity_store_forward::IdentityStoreForward::new(128);
+        identity_store.set_pouw_verifier(crate::identity_store_forward::IdentityStoreForward::default_pouw_verifier());
+        let identity_store = Arc::new(RwLock::new(identity_store));
         
         // Create message router (Ticket #149: using peer_registry)
         let message_router = Arc::new(RwLock::new(
@@ -1427,6 +1432,9 @@ impl ZhtpMeshServer {
             let node = self.mesh_node.read().await;
             let node_id = PublicKey::new(node.node_id.as_bytes().to_vec());
             handler_guard.set_node_id(node_id);
+
+            // Wire identity store-and-forward
+            handler_guard.set_identity_store_forward(identity_store.clone());
         }
         
         // Set protocol handlers in router

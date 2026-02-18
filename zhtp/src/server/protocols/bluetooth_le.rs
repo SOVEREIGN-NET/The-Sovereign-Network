@@ -63,6 +63,7 @@ impl BluetoothRouter {
         info!("📱 Initializing Bluetooth mesh protocol for phone connectivity...");
         
         // Create Bluetooth mesh protocol instance
+        let local_public_key_for_gatt = our_public_key.clone(); // Capture before move
         let mut bluetooth_protocol = BluetoothMeshProtocol::new(self.node_id, our_public_key)?;
         
         // ========================================================================
@@ -99,7 +100,6 @@ impl BluetoothRouter {
         let sync_coordinator_for_gatt = sync_coordinator.clone();
         let mesh_router_for_gatt = mesh_router.clone();
         let bluetooth_protocol_for_gatt = protocol_arc.clone(); // Clone protocol for GATT handler
-        let local_public_key_for_gatt = our_public_key.clone(); // Capture local key for response sender field
         tokio::spawn(async move {
             while let Some(gatt_message) = gatt_rx.recv().await {
                 use lib_network::protocols::bluetooth::gatt::GattMessage;
@@ -111,7 +111,7 @@ impl BluetoothRouter {
                         }
                         
                         // Try to parse as MeshHandshake first (initial connection)
-                        if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&data) {
+                        if let Ok(handshake) = bincode::deserialize::<lib_network::protocols::bluetooth::MeshHandshake>(&data) {
                             info!("🤝 GATT handshake from: {}", handshake.node_id);
                             
                             // Extract the real cryptographic public key from handshake
@@ -416,7 +416,7 @@ impl BluetoothRouter {
             debug!("Bluetooth data received: {} bytes", bytes_read);
             
             // Try to parse as binary mesh handshake (same as TCP!)
-            if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&buffer[..bytes_read]) {
+            if let Ok(handshake) = bincode::deserialize::<lib_network::protocols::bluetooth::MeshHandshake>(&buffer[..bytes_read]) {
                 info!("🤝 Received Bluetooth mesh handshake from peer: {}", handshake.node_id);
                 info!("   Version: {}, Port: {}, Protocols: {:?}", 
                     handshake.version, handshake.mesh_port, handshake.protocols);

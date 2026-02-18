@@ -45,6 +45,7 @@ pub use crate::peer_registry::{
 pub use crate::peer_reputation::{
     PeerReputation, PeerReputationManager, ReputationEvent,
 };
+pub use crate::identity_store_forward::{IdentityStoreForward, IdentityQueueStats};
 
 // Unified Handshake Protocol exports (always available)
 // NOTE: NodeIdentity is a lightweight version containing only public fields from ZhtpIdentity
@@ -105,6 +106,7 @@ pub mod constants; // Protocol constants
 pub mod mesh;
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
 pub mod messaging;
+pub mod identity_store_forward;
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
 pub mod discovery;
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]

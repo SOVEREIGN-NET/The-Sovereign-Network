@@ -112,6 +112,38 @@ pub struct RemovePeerResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct IdentityPendingRequest {
+    pub recipient_did: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IdentityPendingResponse {
+    pub status: String,
+    pub recipient_did: String,
+    pub device_id: String,
+    pub envelopes: Vec<lib_protocols::types::IdentityEnvelope>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IdentityAckRequest {
+    pub recipient_did: String,
+    pub device_id: String,
+    pub message_id: u64,
+    #[serde(default)]
+    pub retain_until_ttl: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IdentityAckResponse {
+    pub status: String,
+    pub recipient_did: String,
+    pub device_id: String,
+    pub message_id: u64,
+    pub acknowledged: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SyncMetricsResponse {
     pub status: String,
     pub blocks_sent: u64,
@@ -336,6 +368,12 @@ impl ZhtpRequestHandler for NetworkHandler {
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/sync/peers/") => {
                 self.handle_get_specific_peer_performance(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/network/identity/pending") => {
+                self.handle_get_identity_pending(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/network/identity/ack") => {
+                self.handle_identity_ack(request).await
             }
             // Existing endpoints
             (ZhtpMethod::Post, "/api/v1/blockchain/network/peer/add") => {
@@ -678,6 +716,99 @@ impl NetworkHandler {
                 ))
             }
         }
+    }
+
+    /// Fetch pending identity envelopes for a recipient device
+    /// POST /api/v1/network/identity/pending
+    async fn handle_get_identity_pending(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting identity pending envelopes");
+
+        let req: IdentityPendingRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid identity pending request: {}", e))?;
+
+        let mesh_router = crate::runtime::mesh_router_provider::get_global_mesh_router()
+            .await
+            .map_err(|e| anyhow::anyhow!("Mesh router unavailable: {}", e))?;
+
+        let quic = mesh_router.quic_protocol.read().await;
+        let quic = quic
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("QUIC mesh protocol not available"))?;
+        let handler = quic
+            .message_handler
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Mesh message handler not configured"))?;
+
+        let envelopes = handler
+            .read()
+            .await
+            .get_identity_pending_for_device(&req.recipient_did, &req.device_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch pending envelopes: {}", e))?;
+
+        let response = IdentityPendingResponse {
+            status: "success".to_string(),
+            recipient_did: req.recipient_did,
+            device_id: req.device_id,
+            envelopes,
+        };
+
+        let json_response = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            CONTENT_TYPE_JSON.to_string(),
+            None,
+        ))
+    }
+
+    /// Acknowledge delivery of an identity envelope
+    /// POST /api/v1/network/identity/ack
+    async fn handle_identity_ack(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Acknowledging identity delivery");
+
+        let req: IdentityAckRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid identity ack request: {}", e))?;
+
+        let mesh_router = crate::runtime::mesh_router_provider::get_global_mesh_router()
+            .await
+            .map_err(|e| anyhow::anyhow!("Mesh router unavailable: {}", e))?;
+
+        let quic = mesh_router.quic_protocol.read().await;
+        let quic = quic
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("QUIC mesh protocol not available"))?;
+        let handler = quic
+            .message_handler
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Mesh message handler not configured"))?;
+
+        let acknowledged = handler
+            .read()
+            .await
+            .acknowledge_identity_delivery(&req.recipient_did, req.message_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to acknowledge delivery: {}", e))?;
+
+        let response = IdentityAckResponse {
+            status: "success".to_string(),
+            recipient_did: req.recipient_did,
+            device_id: req.device_id,
+            message_id: req.message_id,
+            acknowledged,
+        };
+
+        let json_response = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            CONTENT_TYPE_JSON.to_string(),
+            None,
+        ))
     }
 
 

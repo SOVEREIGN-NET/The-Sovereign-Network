@@ -389,7 +389,7 @@ impl ZhtpUnifiedServer {
         // 2. Blockchain broadcast immediately sends blocks/transactions when channel is ready
         // 3. If identity is not initialized, broadcast_to_peers() will panic with configuration error
         let mesh_router_arc = Arc::new(mesh_router);
-        MeshRouter::set_broadcast_receiver(mesh_router_arc.clone(), broadcast_receiver);
+        mesh_router_arc.set_broadcast_receiver(broadcast_receiver).await;
         
         // Initialize WiFi Direct protocol
         if let Err(e) = wifi_router.initialize().await {
@@ -639,6 +639,12 @@ impl ZhtpUnifiedServer {
             long_range_relays,
             revenue_pools,
         );
+
+        // Wire identity store-and-forward for identity envelopes
+        let mut identity_store = lib_network::identity_store_forward::IdentityStoreForward::new(128);
+        identity_store.set_pouw_verifier(lib_network::identity_store_forward::IdentityStoreForward::default_pouw_verifier());
+        let identity_store = Arc::new(RwLock::new(identity_store));
+        message_handler.set_identity_store_forward(identity_store);
 
         // If integration layer has already registered a DHT payload sender, wire it now
         info!(" [QUIC] Wiring message handler for DHT integration");
@@ -1051,7 +1057,6 @@ impl ZhtpUnifiedServer {
                 bluetooth_provider,
                 sync_coordinator_clone,
                 mesh_router_clone,
-                enable_bluetooth_from_config,
             ).await {
                 Ok(_) => {
                     // Store bluetooth protocol in mesh router for send_to_peer()
