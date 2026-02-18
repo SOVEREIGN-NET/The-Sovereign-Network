@@ -53,9 +53,11 @@ mod canonical_hash_tests {
 }
 
 /// Blake3 hash function - primary hash function for ZHTP
+///
+/// This function wraps [`canonical_consensus_hash`] to maintain API compatibility
+/// while ensuring a single source of truth for BLAKE3 hashing.
 pub fn hash_blake3(data: &[u8]) -> [u8; 32] {
-    let hash = blake3::hash(data);
-    hash.into()
+    canonical_consensus_hash(data)
 }
 
 /// Hash multiple data segments
