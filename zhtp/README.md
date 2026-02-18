@@ -154,7 +154,7 @@ cargo run
 
 # Available commands in the shell(not all of them work):
 zhtp> help                    # Show all available commands
-zhtp> node start --port 9333  # Start the orchestrator node
+zhtp> node start --port 9334  # Start the orchestrator node
 zhtp> node status             # Check node health
 zhtp> monitor system          # View system metrics
 zhtp> wallet create --name "MyWallet" --type citizen
@@ -163,16 +163,7 @@ zhtp> identity create TestUser # Create new DID identity
 zhtp> network status          # Check mesh network status
 ```
 
-#### Method 2: Server Mode
-```bash
-# Start ZHTP server (API mode)
-cargo run -- --server
-
-# Server will be available at http://127.0.0.1:9333
-# API documentation: http://127.0.0.1:9333/docs
-```
-
-#### Method 3: Direct Commands
+#### Method 2: Direct Commands
 ```bash
 # Execute single commands directly
 cargo run -- node start --config config.toml
@@ -190,7 +181,7 @@ cargo run -- network peers
 cargo run -- node start
 
 # Start with custom configuration
-cargo run -- node start --config custom.toml --port 9333 --dev
+cargo run -- node start --config custom.toml --port 9334 --dev
 
 # Start in pure mesh mode (no TCP/IP fallback)
 cargo run -- node start --pure-mesh
@@ -300,13 +291,12 @@ cargo run -- component restart lib-consensus
 ```toml
 [node]
 name = "zhtp-node"
-mesh_port = 33444
-api_port = 9333
+mesh_port = 9334
 environment = "development"
 data_dir = "./data"
 
 [mesh]
-mode = "hybrid"              # hybrid, pure-mesh, offline
+mode = "pure-mesh"              # pure-mesh, offline
 enable_bluetooth = true
 enable_wifi_direct = true
 enable_lorawan = false
@@ -340,42 +330,9 @@ file_path = "./logs/zhtp.log"
 export ZHTP_CONFIG_PATH="./config.toml"
 export ZHTP_DATA_DIR="./data"
 export ZHTP_LOG_LEVEL="info"
-export ZHTP_MESH_PORT="33444"
-export ZHTP_API_PORT="9333"
+export ZHTP_MESH_PORT="9334"
 export ZHTP_ENVIRONMENT="development"
 ```
-
-## API Reference
-
-### REST API Endpoints
-
-The ZHTP node provides a comprehensive REST API on port 9333:
-
-**Base URL**: `http://127.0.0.1:9333/api/v1`
-
-#### Identity Management
-- `POST /identity/create` - Create new DID identity
-- `POST /identity/verify` - Verify identity
-- `GET /identity/list` - List all identities
-
-#### Wallet Operations
-- `POST /wallet/create` - Create new wallet
-- `GET /wallet/balance/{address}` - Get wallet balance
-- `POST /wallet/transfer` - Transfer funds
-- `GET /wallet/history/{address}` - Get transaction history
-
-#### DAO Operations
-- `GET /dao/info` - Get DAO information
-- `POST /dao/proposal/create` - Create proposal
-- `POST /dao/proposal/vote` - Vote on proposal
-- `POST /dao/ubi/claim` - Claim UBI
-
-#### Network Operations
-- `GET /network/status` - Network status
-- `GET /network/peers` - Connected peers
-- `GET /network/test` - Network connectivity test
-
-For complete API documentation, visit: `http://127.0.0.1:9333/docs` when the server is running.
 
 ## Monitoring & Debugging
 
@@ -406,12 +363,9 @@ grep "ERROR" ./logs/zhtp.log
 
 ### Health Checks
 
+Health checks are performed via the CLI:
 ```bash
-# Check overall system health
-curl http://127.0.0.1:9333/api/v1/health
-
-# Check specific component health
-curl http://127.0.0.1:9333/api/v1/health/lib-blockchain
+zhtp-cli network status
 ```
 
 ## Development
