@@ -1822,7 +1822,7 @@ impl BlockchainHandler {
         let _ = request;
         Ok(ZhtpResponse::error(
             ZhtpStatus::NotImplemented,
-            "Direct /contracts/deploy is disabled. Submit canonical on-chain ContractDeployment transactions via /api/v1/blockchain/transaction/broadcast.".to_string(),
+            "Direct /contracts/deploy is disabled. Submit canonical on-chain ContractDeployment transactions via /api/v1/blockchain/transaction/broadcast using schema docs in lib-blockchain/docs/contract-deployment-transaction-schema.md.".to_string(),
         ))
     }
 

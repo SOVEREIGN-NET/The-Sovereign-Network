@@ -3,6 +3,7 @@
 //! Provides functionality for creating new transactions in the ZHTP blockchain.
 
 use crate::transaction::core::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData, WalletTransactionData};
+use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::types::transaction_type::TransactionType;
 use crate::integration::crypto_integration::{Signature, PublicKey, PrivateKey, SignatureAlgorithm};
 use tracing::debug;
@@ -374,6 +375,27 @@ pub fn create_contract_transaction(
         .transaction_type(TransactionType::ContractDeployment)
         .add_inputs(inputs)
         .add_outputs(outputs)
+        .fee(fee)
+        .build(private_key)
+}
+
+/// Create a canonical contract deployment transaction with schema-validated payload.
+pub fn create_contract_deployment_transaction(
+    inputs: Vec<TransactionInput>,
+    outputs: Vec<TransactionOutput>,
+    payload: ContractDeploymentPayloadV1,
+    fee: u64,
+    private_key: &PrivateKey,
+) -> Result<Transaction, TransactionCreateError> {
+    let memo = payload
+        .encode_memo()
+        .map_err(|_| TransactionCreateError::InvalidInputs)?;
+
+    TransactionBuilder::new()
+        .transaction_type(TransactionType::ContractDeployment)
+        .add_inputs(inputs)
+        .add_outputs(outputs)
+        .memo(memo)
         .fee(fee)
         .build(private_key)
 }
