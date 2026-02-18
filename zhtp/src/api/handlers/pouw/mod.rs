@@ -19,6 +19,9 @@ use crate::pouw::{
 pub struct PouwHandler {
     challenge_generator: Arc<ChallengeGenerator>,
     receipt_validator: Arc<RwLock<ReceiptValidator>>,
+    /// TODO: Wire up reward_calculator to calculate and distribute rewards for validated receipts.
+    /// This will be used in Phase 3 to aggregate receipts by epoch, apply proof type multipliers,
+    /// and trigger on-chain payouts. See zhtp/src/pouw/rewards.rs for implementation details.
     reward_calculator: Arc<RwLock<RewardCalculator>>,
     metrics: Arc<PouwMetrics>,
     rate_limiter: Arc<PouwRateLimiter>,
