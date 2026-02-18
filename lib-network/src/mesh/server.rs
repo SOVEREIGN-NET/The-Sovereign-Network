@@ -175,18 +175,18 @@ use crate::relays::LongRangeRelay;
 ///
 /// # Who can trigger
 ///
-/// | Level | Trigger | Quorum required |
-/// |---|---|---|
-/// | Node-level | Owner or Admin wallet | No |
-/// | Consensus-level | Governance vote / DAO proposal | Yes (2/3+1) |
+/// | Level             | Trigger                        | Quorum required |
+/// |-------------------|--------------------------------|-----------------|
+/// | Node-level        | Owner or Admin wallet          | No              |
+/// | Consensus-level   | Governance vote / DAO proposal | Yes (2/3+1)     |
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmergencyHaltPolicy {
     /// Whether this halt is coordinated across consensus validators.
     pub requires_consensus_quorum: bool,
-    /// Minimum fraction of validators that must agree (numerator out of 3).
-    pub quorum_numerator: u32,
-    /// Denominator for quorum fraction (always 3 for BFT).
-    pub quorum_denominator: u32,
+    /// Numerator of the quorum fraction (defaults to 2 for 2/3 majority).
+    pub quorum_numerator: u64,
+    /// Denominator of the quorum fraction (defaults to 3 for 2/3 majority).
+    pub quorum_denominator: u64,
 }
 
 impl Default for EmergencyHaltPolicy {
@@ -201,11 +201,11 @@ impl Default for EmergencyHaltPolicy {
 
 impl EmergencyHaltPolicy {
     /// Returns whether the given validator count satisfies the quorum requirement.
-    pub fn quorum_satisfied(&self, agreeing_validators: u32, total_validators: u32) -> bool {
+    pub fn quorum_satisfied(&self, agreeing_validators: u64, total_validators: u64) -> bool {
         if total_validators == 0 {
             return false;
         }
-        // require strictly more than 2/3: agreeing > 2/3 * total  ⟺  agreeing * 3 > 2 * total
+        // require 2/3+1: agreeing >= floor(2/3 * total) + 1  ⟺  agreeing * 3 > 2 * total
         agreeing_validators * self.quorum_denominator > self.quorum_numerator * total_validators
     }
 
@@ -215,8 +215,8 @@ impl EmergencyHaltPolicy {
     /// Returns `Err` if `requires_consensus_quorum` is `true` and quorum is not met.
     pub fn validate_consensus_halt(
         &self,
-        agreeing_validators: u32,
-        total_validators: u32,
+        agreeing_validators: u64,
+        total_validators: u64,
     ) -> Result<(), String> {
         if self.requires_consensus_quorum && !self.quorum_satisfied(agreeing_validators, total_validators) {
             return Err(format!(
@@ -227,6 +227,10 @@ impl EmergencyHaltPolicy {
         Ok(())
     }
 }
+
+// TODO: Integrate `EmergencyHaltPolicy` into `ZhtpMeshServer::emergency_stop`
+// to enforce consensus-level emergency halt semantics at runtime rather than
+// serving only as documentation. See associated ADR/issue for details.
 
 #[cfg(test)]
 mod emergency_halt_tests {
@@ -249,6 +253,40 @@ mod emergency_halt_tests {
     fn test_validate_consensus_halt_passes_with_quorum() {
         let policy = EmergencyHaltPolicy::default();
         assert!(policy.validate_consensus_halt(8, 10).is_ok());
+    }
+
+    #[test]
+    fn test_quorum_with_zero_validators() {
+        let policy = EmergencyHaltPolicy::default();
+        // With zero total validators, quorum should never be satisfied.
+        assert!(!policy.quorum_satisfied(0, 0));
+    }
+
+    #[test]
+    fn test_quorum_with_all_validators() {
+        let policy = EmergencyHaltPolicy::default();
+        // All validators agreeing should always satisfy quorum.
+        assert!(policy.quorum_satisfied(10, 10));
+    }
+
+    #[test]
+    fn test_quorum_with_7_validators() {
+        let policy = EmergencyHaltPolicy::default();
+        // For 7 validators, 5 should be enough for a 2/3+1 style quorum, 4 should not.
+        assert!(policy.quorum_satisfied(5, 7));
+        assert!(!policy.quorum_satisfied(4, 7));
+    }
+
+    #[test]
+    fn test_validate_consensus_halt_without_requirement() {
+        // When requires_consensus_quorum is false, validation should always pass
+        // regardless of whether quorum is actually met.
+        let mut policy = EmergencyHaltPolicy::default();
+        policy.requires_consensus_quorum = false;
+
+        assert!(policy.validate_consensus_halt(0, 0).is_ok());
+        assert!(policy.validate_consensus_halt(1, 10).is_ok());
+        assert!(policy.validate_consensus_halt(4, 7).is_ok());
     }
 }
 
