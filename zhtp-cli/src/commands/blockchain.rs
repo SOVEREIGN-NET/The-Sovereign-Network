@@ -5,24 +5,14 @@ use crate::commands::web4_utils::{connect_default, default_keystore_path, load_i
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_blockchain::{
+    blake3_hash,
     CallPermissions, ContractCall, ContractTransactionBuilder,
-    ContractType, Hash, Transaction, TransactionOutput, TransactionType,
+    ContractDeploymentPayloadV1, ContractType, Transaction, TransactionOutput,
+    create_contract_deployment_transaction,
 };
 use lib_crypto::keypair::KeyPair;
 use lib_network::client::ZhtpClient;
 use serde_json::json;
-
-const DEPLOYMENT_MEMO_PREFIX: &[u8] = b"ZHTP_DEPLOY_V1:";
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct ContractDeploymentPayloadV1 {
-    contract_type: String,
-    code: Vec<u8>,
-    abi: Vec<u8>,
-    init_args: Vec<u8>,
-    gas_limit: u64,
-    memory_limit_bytes: u32,
-}
 
 fn validate_tx_hash(tx_hash: &str) -> CliResult<()> {
     if tx_hash.is_empty() {
@@ -87,8 +77,8 @@ fn build_signed_contract_call_tx(
         .map_err(|e| CliError::ConfigError(format!("Failed to sign call: {e}")))?;
 
     let output = TransactionOutput::new(
-        Hash::from_slice(&call_bytes),
-        Hash::from_slice(b"contract-call"),
+        blake3_hash(&call_bytes),
+        blake3_hash(b"contract-call"),
         keypair.public_key.clone(),
     );
 
@@ -112,68 +102,31 @@ fn build_signed_contract_deploy_tx(
     keypair: &KeyPair,
     payload: ContractDeploymentPayloadV1,
 ) -> CliResult<Transaction> {
-    if payload.contract_type.trim().is_empty() {
-        return Err(CliError::ConfigError("contract_type is required".to_string()));
-    }
-    if payload.code.is_empty() {
-        return Err(CliError::ConfigError("code is required".to_string()));
-    }
-    if payload.abi.is_empty() {
-        return Err(CliError::ConfigError("abi is required".to_string()));
-    }
-    if payload.gas_limit == 0 {
-        return Err(CliError::ConfigError("gas_limit must be > 0".to_string()));
-    }
-    if payload.memory_limit_bytes == 0 {
-        return Err(CliError::ConfigError(
-            "memory_limit_bytes must be > 0".to_string(),
-        ));
-    }
-    let encoded_payload = bincode::serialize(&payload)
-        .map_err(|e| CliError::ConfigError(format!("Failed to encode deployment payload: {e}")))?;
-    let mut memo = DEPLOYMENT_MEMO_PREFIX.to_vec();
-    memo.extend_from_slice(&encoded_payload);
-
+    payload
+        .validate()
+        .map_err(|e| CliError::ConfigError(format!("Invalid deployment payload: {e}")))?;
     let output = TransactionOutput::new(
-        Hash::from_slice(&payload.code),
-        Hash::from_slice(b"contract-deploy"),
+        blake3_hash(&payload.code),
+        blake3_hash(b"contract-deploy"),
         keypair.public_key.clone(),
     );
-
-    let mut tx = Transaction {
-        version: 1,
-        chain_id: 0x03,
-        transaction_type: TransactionType::ContractDeployment,
-        inputs: vec![],
-        outputs: vec![output],
-        fee: 0,
-        signature: lib_crypto::Signature {
-            signature: Vec::new(),
-            public_key: lib_crypto::PublicKey::new(Vec::new()),
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
-            timestamp: 0,
-        },
-        memo,
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-    };
-
-    tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
-    let tx_hash = tx.signing_hash();
-    tx.signature = keypair
-        .sign(tx_hash.as_bytes())
-        .map_err(|e| CliError::ConfigError(format!("Failed to sign deployment tx: {e}")))?;
-
-    Ok(tx)
+    let temp_tx = create_contract_deployment_transaction(
+        vec![],
+        vec![output.clone()],
+        payload.clone(),
+        0,
+        &keypair.private_key,
+    )
+    .map_err(|e| CliError::ConfigError(format!("Failed to build deployment tx: {e}")))?;
+    let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(temp_tx.size());
+    create_contract_deployment_transaction(
+        vec![],
+        vec![output],
+        payload,
+        min_fee,
+        &keypair.private_key,
+    )
+    .map_err(|e| CliError::ConfigError(format!("Failed to build deployment tx: {e}")))
 }
 
 async fn broadcast_signed_tx(client: &ZhtpClient, tx: &Transaction) -> CliResult<serde_json::Value> {
@@ -226,6 +179,9 @@ async fn handle_blockchain_command_impl(
             memory_limit_bytes,
         } => {
             let keypair = load_default_keypair()?;
+            serde_json::from_str::<serde_json::Value>(&abi_json).map_err(|e| {
+                CliError::ConfigError(format!("Invalid abi_json: {e}"))
+            })?;
             let code = parse_hex("code", &code_hex)?;
             let init_args = match init_args_hex {
                 Some(raw) => parse_hex("init args", &raw)?,
@@ -268,8 +224,8 @@ async fn handle_blockchain_command_impl(
             Ok(())
         }
         BlockchainAction::BroadcastRaw { tx_hex } => {
-            parse_hex("tx", &tx_hex)?;
-            let body = json!({ "transaction_data": tx_hex.trim_start_matches("0x") });
+            let tx_bytes = parse_hex("tx", &tx_hex)?;
+            let body = json!({ "transaction_data": hex::encode(tx_bytes) });
             let response = client
                 .post_json("/api/v1/blockchain/transaction/broadcast", &body)
                 .await
@@ -396,6 +352,17 @@ mod tests {
     fn test_build_transaction_endpoint() {
         let endpoint = build_transaction_endpoint("abc123def456");
         assert_eq!(endpoint, "/api/v1/blockchain/transaction/abc123def456");
+    }
+
+    #[test]
+    fn test_parse_hex_accepts_prefixed_values() {
+        let parsed = parse_hex("payload", "0x0a0b").unwrap();
+        assert_eq!(parsed, vec![0x0a, 0x0b]);
+    }
+
+    #[test]
+    fn test_parse_hex_rejects_invalid_values() {
+        assert!(parse_hex("payload", "xyz").is_err());
     }
 
     #[test]

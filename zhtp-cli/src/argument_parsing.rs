@@ -429,7 +429,8 @@ pub enum BlockchainAction {
         /// Contract method name
         #[arg(long)]
         method: String,
-        /// Encoded call params as hex string
+        /// Encoded call params as hex string.
+        /// Omitted or empty values are both treated as "no params" (empty bytes).
         #[arg(long, default_value = "")]
         params_hex: String,
     },
