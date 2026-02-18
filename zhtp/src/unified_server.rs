@@ -1472,7 +1472,8 @@ impl ZhtpUnifiedServer {
     /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
     pub async fn set_blockchain_event_receiver(&mut self, receiver: Arc<dyn lib_network::blockchain_sync::BlockchainEventReceiver>) {
         let _ = receiver;
-        warn!("set_blockchain_event_receiver is not wired on MeshRouter in this build; receiver ignored");
+        // TODO(#916): wire MeshRouter to forward blockchain events via lib-network message handler.
+        warn!("set_blockchain_event_receiver is a temporary no-op until MeshRouter event forwarding (#916) is wired");
     }
     
     /// Configure sync manager for edge node mode (headers + ZK proofs only)
