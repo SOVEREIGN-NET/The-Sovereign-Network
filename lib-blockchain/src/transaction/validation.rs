@@ -1570,7 +1570,7 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transaction::ContractDeploymentPayloadV1;
+    use crate::transaction::{ContractDeploymentPayloadV1, CONTRACT_DEPLOYMENT_MEMO_PREFIX};
     use crate::types::ContractCall;
     use crate::integration::zk_integration::ZkTransactionProof;
 
@@ -1977,7 +1977,19 @@ mod tests {
     #[test]
     fn test_contract_deployment_schema_rejects_invalid_bounds() {
         let sender = test_public_key(11);
-        let payload = ContractDeploymentPayloadV1 {
+        let mut tx = create_contract_deployment_transaction_with_payload(
+            &sender,
+            ContractDeploymentPayloadV1 {
+                contract_type: "wasm".to_string(),
+                code: vec![1, 2, 3],
+                abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+                init_args: vec![],
+                gas_limit: 10_000,
+                memory_limit_bytes: 65_536,
+            },
+        );
+
+        let invalid_payload = ContractDeploymentPayloadV1 {
             contract_type: "wasm".to_string(),
             code: vec![1, 2, 3],
             abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
@@ -1985,7 +1997,9 @@ mod tests {
             gas_limit: 0,
             memory_limit_bytes: 65_536,
         };
-        let tx = create_contract_deployment_transaction_with_payload(&sender, payload);
+        let mut memo = CONTRACT_DEPLOYMENT_MEMO_PREFIX.to_vec();
+        memo.extend_from_slice(&bincode::serialize(&invalid_payload).unwrap());
+        tx.memo = memo;
 
         let validator = TransactionValidator::new();
         let result = validator.validate_contract_transaction(&tx);
