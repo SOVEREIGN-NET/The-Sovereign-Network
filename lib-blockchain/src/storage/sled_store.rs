@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use sled::{Batch, Db, Tree};
+use sled::{Batch, Db, IVec, Tree};
 
 use super::{
     keys, AccountState, Address, Amount, BlockHash, BlockHeight, BlockchainStore,
@@ -30,6 +30,9 @@ const TREE_ACCOUNTS: &str = "accounts";
 const TREE_TOKEN_BALANCES: &str = "token_balances";
 const TREE_TOKEN_NONCES: &str = "token_nonces"; // Token transfer nonces for replay protection
 const TREE_TOKEN_CONTRACTS: &str = "token_contracts";
+const TREE_TOKEN_SUPPLY: &str = "token_supply"; // Total supply tracking
+const TREE_CONTRACT_CODE: &str = "contract_code"; // WASM contract code
+const TREE_CONTRACT_STORAGE: &str = "contract_storage"; // Contract key-value storage
 const TREE_IDENTITIES: &str = "identities"; // Consensus state (participates in state hash)
 const TREE_IDENTITY_METADATA: &str = "identity_meta"; // Non-consensus (for DID resolution)
 const TREE_IDENTITY_BY_OWNER: &str = "identity_owner"; // Index: owner → did_hash
@@ -47,6 +50,9 @@ pub struct SledStore {
     token_balances: Tree,
     token_nonces: Tree, // Nonce for token transfers (replay protection)
     token_contracts: Tree,
+    token_supply: Tree,      // Total supply tracking for deflationary tokens
+    contract_code: Tree,     // WASM contract code storage
+    contract_storage: Tree,  // Contract key-value storage
     identities: Tree,        // Consensus: did_hash → IdentityConsensus
     identity_metadata: Tree, // Non-consensus: did_hash → IdentityMetadata
     identity_by_owner: Tree, // Index: owner_addr → did_hash
@@ -67,6 +73,9 @@ struct PendingBatch {
     token_balances: Batch,
     token_nonces: Batch, // Nonce for token transfers
     token_contracts: Batch,
+    token_supply: Batch,     // Total supply tracking
+    contract_code: Batch,    // Contract code storage
+    contract_storage: Batch, // Contract key-value storage
     identities: Batch,
     identity_metadata: Batch,
     identity_by_owner: Batch,
@@ -84,6 +93,9 @@ impl PendingBatch {
             token_balances: Batch::default(),
             token_nonces: Batch::default(),
             token_contracts: Batch::default(),
+            token_supply: Batch::default(),
+            contract_code: Batch::default(),
+            contract_storage: Batch::default(),
             identities: Batch::default(),
             identity_metadata: Batch::default(),
             identity_by_owner: Batch::default(),
@@ -140,6 +152,15 @@ impl SledStore {
         let token_nonces = db
             .open_tree(TREE_TOKEN_NONCES)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let token_supply = db
+            .open_tree(TREE_TOKEN_SUPPLY)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let contract_code = db
+            .open_tree(TREE_CONTRACT_CODE)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let contract_storage = db
+            .open_tree(TREE_CONTRACT_STORAGE)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         Ok(Self {
             db,
@@ -150,6 +171,9 @@ impl SledStore {
             token_balances,
             token_nonces,
             token_contracts,
+            token_supply,
+            contract_code,
+            contract_storage,
             identities,
             identity_metadata,
             identity_by_owner,
@@ -201,6 +225,15 @@ impl SledStore {
         let token_nonces = db
             .open_tree(TREE_TOKEN_NONCES)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let token_supply = db
+            .open_tree(TREE_TOKEN_SUPPLY)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let contract_code = db
+            .open_tree(TREE_CONTRACT_CODE)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let contract_storage = db
+            .open_tree(TREE_CONTRACT_STORAGE)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         Ok(Self {
             db,
@@ -211,6 +244,9 @@ impl SledStore {
             token_balances,
             token_nonces,
             token_contracts,
+            token_supply,
+            contract_code,
+            contract_storage,
             identities,
             identity_metadata,
             identity_by_owner,
@@ -450,6 +486,30 @@ impl BlockchainStore for SledStore {
         }
     }
 
+    fn iter_token_contracts(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = (TokenId, TokenContract)> + '_>> {
+        use crate::contracts::TokenContract;
+
+        let mut results = Vec::new();
+        for result in self.token_contracts.iter() {
+            match result {
+                Ok((key, value)) => {
+                    let token_id_arr: [u8; 32] = match key.as_ref().try_into() {
+                        Ok(arr) => arr,
+                        Err(_) => continue,
+                    };
+                    let token_id = TokenId::new(token_id_arr);
+                    let contract: TokenContract = Self::deserialize(&value)?;
+                    results.push((token_id, contract));
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+
+        Ok(Box::new(results.into_iter()))
+    }
+
     fn put_token_contract(&self, c: &TokenContract) -> StorageResult<()> {
         self.require_transaction()?;
 
@@ -460,6 +520,110 @@ impl BlockchainStore for SledStore {
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
             batch.token_contracts.insert(key.as_ref(), value);
+        }
+
+        Ok(())
+    }
+
+    fn get_token_supply(&self, token: &TokenId) -> StorageResult<Option<u64>> {
+        let key = keys::token_supply_key(token);
+        match self.token_supply.get(key) {
+            Ok(Some(bytes)) => {
+                let supply = u64::from_le_bytes(bytes.as_ref().try_into().map_err(|_| {
+                    StorageError::Serialization("Failed to deserialize supply".into())
+                })?);
+                Ok(Some(supply))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_token_supply(&self, token: &TokenId, supply: u64) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let key = keys::token_supply_key(token);
+        let value = supply.to_le_bytes();
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.token_supply.insert(key.as_ref(), value.as_ref());
+        }
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Smart Contract Storage (Phase 4)
+    // =========================================================================
+
+    fn get_contract_code(&self, contract_id: &[u8; 32]) -> StorageResult<Option<Vec<u8>>> {
+        match self.contract_code.get(contract_id) {
+            Ok(Some(bytes)) => Ok(Some(bytes.to_vec())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_contract_code(&self, contract_id: &[u8; 32], code: &[u8]) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.contract_code.insert(contract_id, code);
+        }
+
+        Ok(())
+    }
+
+    fn get_contract_storage(
+        &self,
+        contract_id: &[u8; 32],
+        key: &[u8],
+    ) -> StorageResult<Option<Vec<u8>>> {
+        let mut composite_key = Vec::with_capacity(32 + key.len());
+        composite_key.extend_from_slice(contract_id);
+        composite_key.extend_from_slice(key);
+
+        match self.contract_storage.get(&composite_key) {
+            Ok(Some(bytes)) => Ok(Some(bytes.to_vec())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_contract_storage(
+        &self,
+        contract_id: &[u8; 32],
+        key: &[u8],
+        value: &[u8],
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let mut composite_key = Vec::with_capacity(32 + key.len());
+        composite_key.extend_from_slice(contract_id);
+        composite_key.extend_from_slice(key);
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch
+                .contract_storage
+                .insert(IVec::from(composite_key), value);
+        }
+
+        Ok(())
+    }
+
+    fn delete_contract_storage(&self, contract_id: &[u8; 32], key: &[u8]) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let mut composite_key = Vec::with_capacity(32 + key.len());
+        composite_key.extend_from_slice(contract_id);
+        composite_key.extend_from_slice(key);
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.contract_storage.remove(IVec::from(composite_key));
         }
 
         Ok(())

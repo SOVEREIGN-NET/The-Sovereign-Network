@@ -938,11 +938,29 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         id: &TokenId,
     ) -> StorageResult<Option<crate::contracts::TokenContract>>;
 
+    /// Iterate over all token contracts.
+    ///
+    /// Returns an iterator of (TokenId, TokenContract) pairs.
+    fn iter_token_contracts(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = (TokenId, crate::contracts::TokenContract)> + '_>>;
+
     /// Store a token contract.
     ///
     /// # Requirements
     /// - MUST be called within begin_block/commit_block
     fn put_token_contract(&self, c: &crate::contracts::TokenContract) -> StorageResult<()>;
+
+    /// Get token total supply.
+    ///
+    /// Returns None if no supply is tracked (token not initialized with supply).
+    fn get_token_supply(&self, token: &TokenId) -> StorageResult<Option<u64>>;
+
+    /// Set token total supply.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_token_supply(&self, token: &TokenId, supply: u64) -> StorageResult<()>;
 
     /// Get the latest persisted token subsystem snapshot.
     fn get_token_state_snapshot(&self) -> StorageResult<Option<TokenStateSnapshot>>;
@@ -1005,6 +1023,47 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         self.set_token_nonce(token_id, sender, new_nonce)?;
         Ok(new_nonce)
     }
+
+    // =========================================================================
+    // Smart Contract Storage (Phase 4)
+    // =========================================================================
+
+    /// Get contract code by ID.
+    ///
+    /// Returns None if no contract exists at that ID.
+    fn get_contract_code(&self, contract_id: &[u8; 32]) -> StorageResult<Option<Vec<u8>>>;
+
+    /// Store contract code.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_contract_code(&self, contract_id: &[u8; 32], code: &[u8]) -> StorageResult<()>;
+
+    /// Get contract storage value.
+    ///
+    /// Returns None if no value exists at that key.
+    fn get_contract_storage(
+        &self,
+        contract_id: &[u8; 32],
+        key: &[u8],
+    ) -> StorageResult<Option<Vec<u8>>>;
+
+    /// Set contract storage value.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_contract_storage(
+        &self,
+        contract_id: &[u8; 32],
+        key: &[u8],
+        value: &[u8],
+    ) -> StorageResult<()>;
+
+    /// Delete contract storage value.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn delete_contract_storage(&self, contract_id: &[u8; 32], key: &[u8]) -> StorageResult<()>;
 
     // =========================================================================
     // Identity Consensus State (Phase 0 - DID Recovery)

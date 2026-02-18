@@ -157,6 +157,14 @@ pub fn token_contract_key(token: &TokenId) -> &[u8; 32] {
     token.as_bytes()
 }
 
+/// Key prefix for token supply tree: token_id (32 bytes) → supply_u64
+#[inline]
+pub fn token_supply_key(token: &TokenId) -> [u8; 32] {
+    let mut key = *token.as_bytes();
+    key[0] = 0xFF; // Use different prefix to avoid collision
+    key
+}
+
 // =============================================================================
 // IDENTITY KEYS
 // =============================================================================

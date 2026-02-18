@@ -14,7 +14,7 @@
 //! The explicit `#[repr(u8)]` ensures bincode serializes to a single byte with
 //! predictable values, making cross-platform compatibility reliable.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Transaction types supported by ZHTP blockchain
 ///
@@ -87,34 +87,46 @@ pub enum TransactionType {
     /// Requires: caller has Governance role in token's authorities
     GovernanceConfigUpdate = 22,
     /// Wallet update (owner/public key rebinding, rotation, metadata updates)
-    ///
-    /// This is a durable on-chain update for existing wallet records.
     WalletUpdate = 23,
     /// Token mint (system-controlled issuance, e.g., welcome bonus, UBI, migrations)
     TokenMint = 24,
+    /// Token creation (deploy new token contract with initial supply)
+    TokenCreation = 25,
+    /// Token swap (exchange one token for another via AMM pool)
+    TokenSwap = 26,
+    /// Create AMM liquidity pool
+    CreatePool = 27,
+    /// Add liquidity to AMM pool
+    AddLiquidity = 28,
+    /// Remove liquidity from AMM pool
+    RemoveLiquidity = 29,
 }
 
 impl TransactionType {
     /// Check if this transaction type relates to identity management
     pub fn is_identity_transaction(&self) -> bool {
-        matches!(self, 
-            TransactionType::IdentityRegistration |
-            TransactionType::IdentityUpdate |
-            TransactionType::IdentityRevocation
+        matches!(
+            self,
+            TransactionType::IdentityRegistration
+                | TransactionType::IdentityUpdate
+                | TransactionType::IdentityRevocation
         )
     }
 
     /// Check if this transaction type relates to smart contracts
     pub fn is_contract_transaction(&self) -> bool {
-        matches!(self,
-            TransactionType::ContractDeployment |
-            TransactionType::ContractExecution
+        matches!(
+            self,
+            TransactionType::ContractDeployment | TransactionType::ContractExecution
         )
     }
 
     /// Check if this transaction type relates to wallet management
     pub fn is_wallet_transaction(&self) -> bool {
-        matches!(self, TransactionType::WalletRegistration | TransactionType::WalletUpdate)
+        matches!(
+            self,
+            TransactionType::WalletRegistration | TransactionType::WalletUpdate
+        )
     }
 
     /// Check if this is a standard transfer transaction
@@ -134,20 +146,22 @@ impl TransactionType {
 
     /// Check if this transaction type relates to validator management
     pub fn is_validator_transaction(&self) -> bool {
-        matches!(self,
-            TransactionType::ValidatorRegistration |
-            TransactionType::ValidatorUpdate |
-            TransactionType::ValidatorUnregister
+        matches!(
+            self,
+            TransactionType::ValidatorRegistration
+                | TransactionType::ValidatorUpdate
+                | TransactionType::ValidatorUnregister
         )
     }
 
     /// Check if this transaction type relates to DAO governance
     pub fn is_dao_transaction(&self) -> bool {
-        matches!(self,
-            TransactionType::DaoProposal |
-            TransactionType::DaoVote |
-            TransactionType::DaoExecution |
-            TransactionType::DifficultyUpdate
+        matches!(
+            self,
+            TransactionType::DaoProposal
+                | TransactionType::DaoVote
+                | TransactionType::DaoExecution
+                | TransactionType::DifficultyUpdate
         )
     }
 
@@ -178,7 +192,14 @@ impl TransactionType {
             TransactionType::UBIClaim => "UBI claim - citizen-initiated claim from pool",
             TransactionType::ProfitDeclaration => "Profit declaration - enforces 20% tribute",
             TransactionType::GovernanceConfigUpdate => "Token governance configuration update",
-            TransactionType::TokenMint => "System-controlled token mint (welcome bonus, UBI, migrations)",
+            TransactionType::TokenMint => {
+                "System-controlled token mint (welcome bonus, UBI, migrations)"
+            }
+            TransactionType::TokenCreation => "Token creation (new token contract deployment)",
+            TransactionType::TokenSwap => "Token swap via AMM pool",
+            TransactionType::CreatePool => "Create AMM liquidity pool",
+            TransactionType::AddLiquidity => "Add liquidity to AMM pool",
+            TransactionType::RemoveLiquidity => "Remove liquidity from AMM pool",
         }
     }
 
@@ -210,6 +231,11 @@ impl TransactionType {
             TransactionType::ProfitDeclaration => "profit_declaration",
             TransactionType::GovernanceConfigUpdate => "governance_config_update",
             TransactionType::TokenMint => "token_mint",
+            TransactionType::TokenCreation => "token_creation",
+            TransactionType::TokenSwap => "token_swap",
+            TransactionType::CreatePool => "create_pool",
+            TransactionType::AddLiquidity => "add_liquidity",
+            TransactionType::RemoveLiquidity => "remove_liquidity",
         }
     }
 
@@ -240,6 +266,12 @@ impl TransactionType {
             "ubi_claim" => Some(TransactionType::UBIClaim),
             "profit_declaration" => Some(TransactionType::ProfitDeclaration),
             "governance_config_update" => Some(TransactionType::GovernanceConfigUpdate),
+            "token_mint" => Some(TransactionType::TokenMint),
+            "token_creation" => Some(TransactionType::TokenCreation),
+            "token_swap" => Some(TransactionType::TokenSwap),
+            "create_pool" => Some(TransactionType::CreatePool),
+            "add_liquidity" => Some(TransactionType::AddLiquidity),
+            "remove_liquidity" => Some(TransactionType::RemoveLiquidity),
             _ => None,
         }
     }

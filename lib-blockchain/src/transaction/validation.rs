@@ -207,6 +207,14 @@ impl TransactionValidator {
                 // Validate minting authority and supply cap
                 self.validate_token_mint(transaction)?;
             }
+            TransactionType::TokenCreation
+            | TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
+                // AMM/Token operations - not yet fully implemented
+                // TODO: Add validation for these transaction types
+            }
         }
 
         // Signature validation:
@@ -360,6 +368,13 @@ impl TransactionValidator {
                 if transaction.governance_config_data.is_none() {
                     return Err(ValidationError::InvalidInputs);
                 }
+            }
+            TransactionType::TokenCreation
+            | TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
+                // AMM/Token operations - not yet fully implemented
             }
         }
 
@@ -1435,6 +1450,13 @@ impl<'a> StatefulTransactionValidator<'a> {
                     return Err(ValidationError::InvalidInputs);
                 }
             }
+            TransactionType::TokenCreation
+            | TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
+                // AMM/Token operations - not yet fully implemented
+            }
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -1796,10 +1818,18 @@ pub mod utils {
                 // Governance config updates should have governance_config_data
                 transaction.governance_config_data.is_some()
             }
+            TransactionType::TokenCreation
+            | TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
+                // AMM/Token operations - not yet fully implemented
+                true
+            }
         }
     }
 
-    /// Check if transaction has valid zero-knowledge structure
+    /// Check if transaction has valid zero-zero-knowledge structure
     pub fn has_valid_zk_structure(transaction: &Transaction) -> bool {
         // All inputs must have nullifiers and ZK proofs
         transaction.inputs.iter().all(|input| {
