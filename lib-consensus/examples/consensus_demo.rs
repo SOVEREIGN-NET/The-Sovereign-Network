@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
 
     // 1. Initialize consensus engine with hybrid consensus
     let config = ConsensusConfig {
-        consensus_type: ConsensusType::Hybrid,
+        consensus_type: ConsensusType::ByzantineFaultTolerance,
         min_stake: 1000 * 1_000_000,           // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 10,

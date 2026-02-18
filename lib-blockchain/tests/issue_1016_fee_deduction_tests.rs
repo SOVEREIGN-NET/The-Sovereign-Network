@@ -78,7 +78,11 @@ fn create_test_block(height: u64, transactions: Vec<Transaction>) -> Block {
             .as_secs(),
         previous_block_hash: Hash::zero(),
         merkle_root: Hash::zero(),
+        state_root: Hash::default(),
         block_hash: Hash::zero(),
+        nonce: 0,
+        difficulty: Difficulty::minimum(),
+        cumulative_difficulty: Difficulty::minimum(),
         transaction_count: transactions.len() as u32,
         block_size: 0,
         fee_model_version: 2, // Phase 2+ uses v2
