@@ -2,7 +2,7 @@ use anyhow::Result;
 use lib_blockchain::types::mining::get_mining_config_from_env;
 use lib_blockchain::types::{ContractCall, ContractType, Hash};
 use lib_blockchain::transaction::{
-    DaoExecutionData, DaoProposalData, DaoVoteData, Transaction, TransactionInput,
+    DaoExecutionData, DaoProposalData, DaoVoteData, Transaction,
     TransactionOutput, CONTRACT_DEPLOYMENT_MEMO_PREFIX, ContractDeploymentPayloadV1,
 };
 use lib_blockchain::{Block, BlockHeader, Blockchain, TransactionType};
@@ -26,15 +26,6 @@ fn mk_output(seed: u8) -> TransactionOutput {
         commitment: Hash::from([seed; 32]),
         note: Hash::default(),
         recipient: test_public_key(seed),
-    }
-}
-
-fn mk_input(seed: u8) -> TransactionInput {
-    TransactionInput {
-        previous_output: Hash::from([seed; 32]),
-        output_index: 0,
-        nullifier: Hash::from([seed.wrapping_add(1); 32]),
-        zk_proof: lib_blockchain::integration::zk_integration::ZkTransactionProof::default(),
     }
 }
 
@@ -87,8 +78,8 @@ fn mk_contract_call_tx() -> Transaction {
         chain_id: 0x03,
         transaction_type: TransactionType::ContractExecution,
         inputs: vec![],
-        outputs: vec![],
-        fee: 1,
+        outputs: vec![mk_output(2)],
+        fee: 0,
         signature: test_signature(2),
         memo,
         identity_data: None,
@@ -141,25 +132,25 @@ fn mk_dao_lifecycle_txs(proposal_id: Hash) -> Vec<Transaction> {
     vec![
         Transaction::new_dao_proposal(
             proposal,
-            vec![mk_input(10)],
+            vec![],
             vec![mk_output(10)],
-            1,
+            0,
             test_signature(10),
             b"dao proposal".to_vec(),
         ),
         Transaction::new_dao_vote(
             vote,
-            vec![mk_input(11)],
+            vec![],
             vec![mk_output(11)],
-            1,
+            0,
             test_signature(11),
             b"dao vote".to_vec(),
         ),
         Transaction::new_dao_execution(
             execution,
-            vec![mk_input(12)],
+            vec![],
             vec![mk_output(12)],
-            1,
+            0,
             test_signature(12),
             b"dao execution".to_vec(),
         ),
@@ -254,7 +245,7 @@ async fn test_multinode_contract_dao_lifecycle_sync_and_replay_convergence() -> 
 }
 
 #[test]
-fn test_contract_deployment_rejection_path_invalid_memo_prefix() -> Result<()> {
+fn test_contract_deployment_rejection_path_invalid_memo_payload() -> Result<()> {
     let blockchain = Blockchain::new()?;
 
     let mut bad_memo = CONTRACT_DEPLOYMENT_MEMO_PREFIX.to_vec();
