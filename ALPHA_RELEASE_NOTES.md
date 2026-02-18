@@ -86,7 +86,7 @@ let node_id_from_did = NodeId::from_did_device("did:zhtp:...", "device-name");
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines.
+See [README.md](./README.md) for development guidelines and contribution workflow.
 
 ## Support
 
