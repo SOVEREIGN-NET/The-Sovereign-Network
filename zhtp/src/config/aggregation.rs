@@ -110,9 +110,11 @@ pub struct NodeConfig {
     pub data_directory: String,
 
     // Canonical node type - SINGLE SOURCE OF TRUTH
-    // Determined at startup from config and immutable thereafter
-    // If explicitly set in config, that value is preserved (especially for Relay).
-    // If not set, derived from validator_enabled and storage settings.
+    // Determined at startup from config and immutable thereafter.
+    // 
+    // - If explicitly set in config (e.g., `node_type = "relay"`), that value is used.
+    // - If not set, auto-derived as Validator/EdgeNode/FullNode based on config flags.
+    // - **Important**: Relay nodes MUST be explicitly configured (cannot be auto-derived).
     #[serde(default)]
     pub node_type: Option<NodeType>,
 
@@ -835,15 +837,38 @@ impl NodeConfig {
         !validator_enabled && !smart_contracts && (edge_mode || hosted_storage_gb == 0)
     }
 
-    /// Derive canonical node type from configuration (SINGLE SOURCE OF TRUTH)
+    /// Derive node type from configuration settings
     ///
-    /// Only derives node_type if it was NOT explicitly set in the config.
-    /// This allows users to set node_type="relay" in TOML and have it respected.
+    /// # Derivation Rules
+    /// 
+    /// This method determines the node type based on configuration flags when
+    /// `node_type` is not explicitly set in the config file.
     ///
-    /// Determines the node's primary mode based on:
-    /// 1. Validator flags (validator_enabled in consensus_config)
-    /// 2. Storage configuration (edge_mode, hosted_storage_gb, smart_contracts)
-    /// 3. Defaults to FullNode if neither validator nor edge criteria are met
+    /// ## Explicit Configuration (Recommended for Relay)
+    /// 
+    /// If `node_type` is explicitly set in the config (e.g., `node_type = "relay"`),
+    /// that value is used as-is and no derivation occurs. **This is the ONLY way to
+    /// configure a Relay node** since Relay nodes have no distinguishing config flags
+    /// to derive from (they are routing-only with no blockchain state).
+    ///
+    /// ## Auto-Derivation Logic (when node_type is unset)
+    ///
+    /// When `node_type` is not explicitly configured, the following rules apply:
+    /// 
+    /// 1. **Validator**: If `validator_enabled = true`
+    ///    - Full blockchain + block production + consensus participation
+    ///    
+    /// 2. **EdgeNode**: If edge node criteria met:
+    ///    - `validator_enabled = false`
+    ///    - `edge_mode = true` OR minimal storage settings
+    ///    - Headers-only mode, ZK proof validation, no mining
+    ///    
+    /// 3. **FullNode**: Default fallback
+    ///    - Complete blockchain sync and verification
+    ///    - No block production (read-only consensus participation)
+    ///
+    /// **Note**: `NodeType::Relay` is never auto-derived and must be explicitly
+    /// configured via `node_type = "relay"` in the config file.
     pub fn derive_node_type(&mut self) {
         // Only derive if node_type was not explicitly set
         if self.node_type.is_some() {
@@ -855,6 +880,7 @@ impl NodeConfig {
         }
 
         // Logic for determining node type from config fields
+        // Note: Relay is NOT included here - it must be explicitly configured
         let derived_type = if self.consensus_config.validator_enabled {
             // Validator enabled => this is a Validator node
             tracing::info!(
