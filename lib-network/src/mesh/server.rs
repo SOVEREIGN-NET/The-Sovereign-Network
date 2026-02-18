@@ -158,6 +158,100 @@ use crate::types::api_response::ZhtpApiResponse;
 use crate::types::relay_type::LongRangeRelayType;
 use crate::relays::LongRangeRelay;
 
+/// Emergency halt policy governing kill-switch semantics (BFT-H, Issue #1007).
+///
+/// # Semantics
+///
+/// An emergency halt operates at **two distinct levels**:
+///
+/// 1. **Node-level halt** (`emergency_stop` on a single mesh server): stops
+///    the local node from processing new connections.  This is always a
+///    node-local effect; it does NOT alter the global consensus state.
+///
+/// 2. **Consensus-level halt**: a coordinated halt of the BFT protocol that
+///    requires explicit agreement from ≥ 2/3 + 1 validators.  Without quorum,
+///    uncoordinated halts create network partitions that break liveness and may
+///    violate safety.
+///
+/// # Who can trigger
+///
+/// | Level | Trigger | Quorum required |
+/// |---|---|---|
+/// | Node-level | Owner or Admin wallet | No |
+/// | Consensus-level | Governance vote / DAO proposal | Yes (2/3+1) |
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmergencyHaltPolicy {
+    /// Whether this halt is coordinated across consensus validators.
+    pub requires_consensus_quorum: bool,
+    /// Minimum fraction of validators that must agree (numerator out of 3).
+    pub quorum_numerator: u32,
+    /// Denominator for quorum fraction (always 3 for BFT).
+    pub quorum_denominator: u32,
+}
+
+impl Default for EmergencyHaltPolicy {
+    fn default() -> Self {
+        Self {
+            requires_consensus_quorum: true,
+            quorum_numerator: 2,
+            quorum_denominator: 3,
+        }
+    }
+}
+
+impl EmergencyHaltPolicy {
+    /// Returns whether the given validator count satisfies the quorum requirement.
+    pub fn quorum_satisfied(&self, agreeing_validators: u32, total_validators: u32) -> bool {
+        if total_validators == 0 {
+            return false;
+        }
+        // require strictly more than 2/3: agreeing > 2/3 * total  ⟺  agreeing * 3 > 2 * total
+        agreeing_validators * self.quorum_denominator > self.quorum_numerator * total_validators
+    }
+
+    /// Validates that a consensus-level halt has sufficient quorum.
+    ///
+    /// # Errors
+    /// Returns `Err` if `requires_consensus_quorum` is `true` and quorum is not met.
+    pub fn validate_consensus_halt(
+        &self,
+        agreeing_validators: u32,
+        total_validators: u32,
+    ) -> Result<(), String> {
+        if self.requires_consensus_quorum && !self.quorum_satisfied(agreeing_validators, total_validators) {
+            return Err(format!(
+                "consensus halt requires 2/3+1 validator agreement \
+                 ({agreeing_validators}/{total_validators} is insufficient)"
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod emergency_halt_tests {
+    use super::*;
+
+    #[test]
+    fn test_quorum_satisfied() {
+        let policy = EmergencyHaltPolicy::default();
+        assert!(policy.quorum_satisfied(7, 10));  // 7 > 6.67
+        assert!(!policy.quorum_satisfied(6, 10)); // 6 ≤ 6.67
+    }
+
+    #[test]
+    fn test_validate_consensus_halt_fails_without_quorum() {
+        let policy = EmergencyHaltPolicy::default();
+        assert!(policy.validate_consensus_halt(1, 10).is_err());
+    }
+
+    #[test]
+    fn test_validate_consensus_halt_passes_with_quorum() {
+        let policy = EmergencyHaltPolicy::default();
+        assert!(policy.validate_consensus_halt(8, 10).is_ok());
+    }
+}
+
 /// Security permission levels for network operations
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionLevel {
@@ -604,7 +698,24 @@ impl ZhtpMeshServer {
         Ok(())
     }
     
-    /// Emergency stop (owner or admin only)
+    /// Emergency stop (owner or admin only).
+    ///
+    /// # BFT-H Emergency Halt Semantics (Issue #1007)
+    ///
+    /// **This is a NODE-LEVEL control only.**  It does NOT constitute a
+    /// consensus-level halt.  Specifically:
+    ///
+    /// - Calling this on a single node stops that node from processing new
+    ///   connections and messages, but it does NOT halt the consensus protocol
+    ///   across the validator set.
+    /// - A **consensus-level halt** (one that safely stops finality) requires
+    ///   agreement from at least 2/3 + 1 validators.  Without quorum, an
+    ///   uncoordinated halt partitions the validator set and risks breaking
+    ///   liveness or, in extreme cases, safety.
+    /// - Operators MUST coordinate out-of-band before triggering emergency stops
+    ///   on multiple validators simultaneously.
+    ///
+    /// See [`EmergencyHaltPolicy`] for the governing rules.
     pub async fn emergency_stop(&self, caller_wallet_key: &PublicKey) -> Result<()> {
         let permission_level = self.get_permission_level(caller_wallet_key).await;
         
