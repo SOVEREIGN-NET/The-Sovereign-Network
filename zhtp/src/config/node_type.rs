@@ -151,8 +151,9 @@ mod tests {
 
     #[test]
     fn test_nodetype_display() {
-        assert_eq!(NodeType::FullNode.to_string(), "full-node");
-        assert_eq!(NodeType::EdgeNode.to_string(), "edge-node");
+        // Display output matches serde names so round-tripping through config works.
+        assert_eq!(NodeType::FullNode.to_string(), "full");
+        assert_eq!(NodeType::EdgeNode.to_string(), "edge");
         assert_eq!(NodeType::Validator.to_string(), "validator");
         assert_eq!(NodeType::Relay.to_string(), "relay");
     }
