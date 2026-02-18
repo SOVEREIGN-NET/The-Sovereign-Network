@@ -4,6 +4,7 @@
 //! `CONTRACT_DEPLOYMENT_MEMO_PREFIX || bincode(ContractDeploymentPayloadV1)`.
 
 use serde::{Deserialize, Serialize};
+use bincode::Options;
 
 /// Versioned memo prefix for contract deployment payloads.
 pub const CONTRACT_DEPLOYMENT_MEMO_PREFIX: &[u8] = b"ZHTP_DEPLOY_V1:";
@@ -16,6 +17,10 @@ pub const MAX_DEPLOYMENT_ABI_BYTES: usize = 4 * 1024;
 pub const MAX_DEPLOYMENT_INIT_ARGS_BYTES: usize = 2 * 1024;
 /// Maximum memory limit accepted in deployment payload.
 pub const MAX_DEPLOYMENT_MEMORY_BYTES: u32 = 16 * 1024 * 1024;
+/// Maximum contract type string length.
+pub const MAX_DEPLOYMENT_CONTRACT_TYPE_BYTES: usize = 64;
+/// Maximum memo bytes accepted by transaction validator.
+pub const MAX_DEPLOYMENT_MEMO_BYTES: usize = 16 * 1024;
 
 /// Canonical deployment payload for `TransactionType::ContractDeployment`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,6 +44,13 @@ impl ContractDeploymentPayloadV1 {
     pub fn validate(&self) -> Result<(), String> {
         if self.contract_type.trim().is_empty() {
             return Err("contract_type is required".to_string());
+        }
+        if self.contract_type.len() > MAX_DEPLOYMENT_CONTRACT_TYPE_BYTES {
+            return Err(format!(
+                "contract_type length {} exceeds max {}",
+                self.contract_type.len(),
+                MAX_DEPLOYMENT_CONTRACT_TYPE_BYTES
+            ));
         }
         if self.code.is_empty() {
             return Err("code is required".to_string());
@@ -90,6 +102,13 @@ impl ContractDeploymentPayloadV1 {
             .map_err(|e| format!("failed to serialize deployment payload: {e}"))?;
         let mut memo = CONTRACT_DEPLOYMENT_MEMO_PREFIX.to_vec();
         memo.extend_from_slice(&encoded);
+        if memo.len() > MAX_DEPLOYMENT_MEMO_BYTES {
+            return Err(format!(
+                "deployment memo length {} exceeds max {}",
+                memo.len(),
+                MAX_DEPLOYMENT_MEMO_BYTES
+            ));
+        }
         Ok(memo)
     }
 
@@ -98,8 +117,17 @@ impl ContractDeploymentPayloadV1 {
         if !memo.starts_with(CONTRACT_DEPLOYMENT_MEMO_PREFIX) {
             return Err("missing deployment memo prefix".to_string());
         }
+        if memo.len() > MAX_DEPLOYMENT_MEMO_BYTES {
+            return Err(format!(
+                "deployment memo length {} exceeds max {}",
+                memo.len(),
+                MAX_DEPLOYMENT_MEMO_BYTES
+            ));
+        }
         let payload_bytes = &memo[CONTRACT_DEPLOYMENT_MEMO_PREFIX.len()..];
-        let payload: Self = bincode::deserialize(payload_bytes)
+        let payload: Self = bincode::DefaultOptions::new()
+            .with_limit(MAX_DEPLOYMENT_MEMO_BYTES as u64)
+            .deserialize(payload_bytes)
             .map_err(|e| format!("invalid deployment payload encoding: {e}"))?;
         payload.validate()?;
         Ok(payload)
