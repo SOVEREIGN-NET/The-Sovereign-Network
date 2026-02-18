@@ -1510,6 +1510,12 @@ impl BlockchainConsensusCoordinator {
     }
 
     /// Create a cryptographic signature for a consensus vote
+    ///
+    /// # BFT-I Consensus Signature Scheme (Issue #1009)
+    ///
+    /// This function MUST use Dilithium2 (CONSENSUS_SIGNATURE_SCHEME) exclusively.
+    /// Dilithium5 and other schemes are prohibited for consensus votes.
+    /// The signing key is the Dilithium2 key bound to the validator at registration.
     async fn create_vote_signature(&self, proposal_id: &Hash, vote_type: &VoteType) -> Result<lib_crypto::Signature> {
         // Create the vote data to sign
         let mut vote_data = Vec::new();
@@ -1531,6 +1537,8 @@ impl BlockchainConsensusCoordinator {
             private_key: validator_keypair.private_key,
         };
         
+        // BFT-I: Only Dilithium2 (CONSENSUS_SIGNATURE_SCHEME) is permitted here.
+        // Dilithium5 and other schemes are prohibited for consensus votes.
         // Create signature using lib-crypto
         let signature = lib_crypto::sign_message(&keypair, &vote_data)?;
         
