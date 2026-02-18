@@ -847,12 +847,11 @@ impl ZhtpUnifiedServer {
         // TODO: Use real node keys from identity in production
         let pouw_node_key = [0u8; 32]; // Placeholder - use real node key
         let pouw_node_id = [0u8; 32];  // Placeholder - use real node ID
-        let pouw_generator = crate::pouw::ChallengeGenerator::new(pouw_node_key, pouw_node_id);
-        let pouw_generator_arc = std::sync::Arc::new(pouw_generator.clone());
-        let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc);
+        let pouw_generator_arc = std::sync::Arc::new(crate::pouw::ChallengeGenerator::new(pouw_node_key, pouw_node_id));
+        let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc.clone());
         let pouw_calculator = crate::pouw::RewardCalculator::new(0); // genesis block
         let pouw_handler = crate::api::handlers::pouw::PouwHandler::new(
-            pouw_generator,
+            pouw_generator_arc,
             pouw_validator,
             pouw_calculator,
         );
