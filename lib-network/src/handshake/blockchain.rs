@@ -88,9 +88,9 @@ pub fn validate_genesis_hash_strict(
     peer_genesis_hash: &str,
 ) -> Result<(), String> {
     let local_bytes = local_genesis_hash.as_bytes();
-    let peer_bytes  = peer_genesis_hash.as_bytes();
-    let length_ok   = local_bytes.len() == peer_bytes.len();
-    let content_ok  = length_ok && local_bytes.ct_eq(peer_bytes).unwrap_u8() == 1;
+    let peer_bytes = peer_genesis_hash.as_bytes();
+    let length_ok = local_bytes.len() == peer_bytes.len();
+    let content_ok = length_ok && local_bytes.ct_eq(peer_bytes).unwrap_u8() == 1;
     if !content_ok {
         return Err(format!(
             "genesis hash mismatch (policy={GENESIS_TRUST_POLICY}): \
