@@ -220,6 +220,19 @@ impl ConsensusEngine {
     /// Uses the vote's own height and round to reconstruct the signed data.
     /// Returns true if signature is valid, false otherwise.
     pub(super) async fn verify_vote_signature(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
+        // BFT-I: Enforce Dilithium2-only consensus signature scheme (Issue #1009)
+        // Validate the public key is Dilithium2 before any other checks
+        if let Err(e) = lib_crypto::validate_consensus_vote_signature_scheme(&vote.signature.public_key.dilithium_pk) {
+            tracing::warn!(
+                "Vote rejected: signature scheme validation failed for validator {} at height {} round {}: {}",
+                vote.voter,
+                vote.height,
+                vote.round,
+                e
+            );
+            return Ok(false);
+        }
+
         let validator = match self.validator_manager.get_validator(&vote.voter) {
             Some(validator) => validator,
             None => {

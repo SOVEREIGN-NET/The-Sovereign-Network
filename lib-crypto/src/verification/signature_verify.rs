@@ -179,14 +179,32 @@ pub fn verify_signature(message: &[u8], signature: &[u8], public_key: &[u8]) -> 
 ///
 /// Returns Err if the public key length does not match Dilithium2.
 pub fn validate_consensus_vote_signature_scheme(public_key: &[u8]) -> anyhow::Result<()> {
-    const CONSENSUS_DILITHIUM2_PK_BYTES: usize = 1312;
-    if public_key.len() != CONSENSUS_DILITHIUM2_PK_BYTES {
+    if public_key.len() != DILITHIUM2_PUBLICKEY_BYTES {
         return Err(anyhow::anyhow!(
-            "consensus vote signature must use Dilithium2 (pk_len={}); \n             expected {} bytes for Dilithium2",
-            public_key.len(), CONSENSUS_DILITHIUM2_PK_BYTES
+            "consensus vote signature must use Dilithium2 (pk_len={}); expected {} bytes for Dilithium2",
+            public_key.len(), DILITHIUM2_PUBLICKEY_BYTES
         ));
     }
     Ok(())
+}
+
+/// Verify a consensus vote signature, enforcing the Dilithium2-only rule.
+///
+/// This function is a thin wrapper around [`verify_signature`] that first
+/// validates the public key length using
+/// [`validate_consensus_vote_signature_scheme`]. It should be used by
+/// consensus vote verification code paths (e.g. in `lib-consensus`) to
+/// ensure that only Dilithium2 keys are accepted for votes and commits.
+pub fn verify_consensus_vote_signature(
+    message: &[u8],
+    signature: &[u8],
+    public_key: &[u8],
+) -> Result<bool> {
+    // Enforce that consensus votes use Dilithium2 public keys.
+    validate_consensus_vote_signature_scheme(public_key)?;
+
+    // Delegate to the generic signature verifier.
+    verify_signature(message, signature, public_key)
 }
 
 #[cfg(test)]

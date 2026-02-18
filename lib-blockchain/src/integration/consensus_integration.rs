@@ -1539,6 +1539,20 @@ impl BlockchainConsensusCoordinator {
         
         // BFT-I: Only Dilithium2 (CONSENSUS_SIGNATURE_SCHEME) is permitted here.
         // Dilithium5 and other schemes are prohibited for consensus votes.
+        //
+        // Enforce this invariant by validating the key sizes against the expected
+        // Dilithium2 public/private key lengths before signing.
+        const DILITHIUM2_PUBLIC_KEY_LEN: usize = 1312;
+        const DILITHIUM2_PRIVATE_KEY_LEN: usize = 2528;
+
+        if keypair.public_key.dilithium_pk.len() != DILITHIUM2_PUBLIC_KEY_LEN
+            || keypair.private_key.dilithium_sk.len() != DILITHIUM2_PRIVATE_KEY_LEN
+        {
+            return Err(anyhow!(
+                "Invalid consensus keypair: expected Dilithium2 key sizes (CONSENSUS_SIGNATURE_SCHEME) for votes"
+            ));
+        }
+
         // Create signature using lib-crypto
         let signature = lib_crypto::sign_message(&keypair, &vote_data)?;
         
