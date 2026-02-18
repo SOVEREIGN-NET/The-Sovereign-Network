@@ -146,6 +146,68 @@ pub const MAX_SUPPORTED_VERSION: u8 = 2;
 /// Minimum supported protocol version (for backwards compatibility)
 pub const MIN_SUPPORTED_VERSION: u8 = 2;
 
+/// Backward compatibility policy for peers running older protocol versions.
+///
+/// # BFT-H Policy (Issue #1006)
+///
+/// The deterministic backward compatibility rules are:
+/// - **Accept**: peer version is within `[MIN_SUPPORTED_VERSION, UHP_VERSION]`
+/// - **Reject**: peer version is below `MIN_SUPPORTED_VERSION` or above local version
+///
+/// There is no quarantine state — mixed-version validators produce divergent
+/// views and MUST be rejected immediately to preserve deterministic finality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackwardCompatibilityPolicy {
+    /// Peer version is acceptable; connection may proceed.
+    Accept,
+    /// Peer version is incompatible; connection MUST be refused.
+    Reject,
+}
+
+/// Evaluates the backward compatibility policy for a peer's protocol version.
+///
+/// This MUST be called before accepting any block, vote, or validator
+/// registration from a peer.
+pub fn check_backward_compatibility(peer_version: u8, local_version: u8) -> BackwardCompatibilityPolicy {
+    if peer_version >= MIN_SUPPORTED_VERSION && peer_version <= local_version {
+        BackwardCompatibilityPolicy::Accept
+    } else {
+        BackwardCompatibilityPolicy::Reject
+    }
+}
+
+#[cfg(test)]
+mod backward_compat_tests {
+    use super::*;
+
+    #[test]
+    fn test_accept_current_version() {
+        assert_eq!(
+            check_backward_compatibility(UHP_VERSION, UHP_VERSION),
+            BackwardCompatibilityPolicy::Accept
+        );
+    }
+
+    #[test]
+    fn test_reject_below_minimum() {
+        let old = MIN_SUPPORTED_VERSION.saturating_sub(1);
+        if old < MIN_SUPPORTED_VERSION {
+            assert_eq!(
+                check_backward_compatibility(old, UHP_VERSION),
+                BackwardCompatibilityPolicy::Reject
+            );
+        }
+    }
+
+    #[test]
+    fn test_reject_future_version() {
+        assert_eq!(
+            check_backward_compatibility(UHP_VERSION + 1, UHP_VERSION),
+            BackwardCompatibilityPolicy::Reject
+        );
+    }
+}
+
 /// Declared role for handshake participants.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HandshakeRole {
