@@ -448,7 +448,7 @@ impl NetworkHandler {
             .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
-            "application/json".to_string(),
+            CONTENT_TYPE_JSON.to_string(),
             None,
         ))
     }
