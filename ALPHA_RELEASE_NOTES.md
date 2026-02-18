@@ -12,12 +12,13 @@ This is the first alpha release of The Sovereign Network. This release establish
 
 ## What's New
 
-### Identity System (ADR-0001)
+### Identity System (ADR-0001, ADR-0004)
 
-- **Seed-Anchored Identity**: All identity components derive from a single seed
+- **Seed-Anchored Identity**: All identity components derive from a single seed via a deterministic root signing key
+- **Deterministic Root Key (ADR-0004)**: DID is anchored to the deterministic root signing public key derived from the seed
 - **NodeId Derivation**: `Blake3("ZHTP_NODE_V2:" + DID + ":" + device)` → 32 bytes
-- **Unified Constructor**: `ZhtpIdentity::new_unified(type, age, jurisdiction, device, seed?)`
-- **Multi-Device Support**: Same seed = same DID, different NodeIds per device
+- **Unified Constructor**: `ZhtpIdentity::new_unified(type, age, jurisdiction, device, seed?)` derives the root key, DID, and per-device keys
+- **Multi-Device Support**: Same seed = same root signing key and DID; per-device NodeIds and operational keys are distinct and rotatable
 
 ### Network Layer
 
