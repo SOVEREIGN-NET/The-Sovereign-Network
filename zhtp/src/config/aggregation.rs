@@ -1371,4 +1371,70 @@ bootstrap_peers = ["10.0.0.1:9334", "10.0.0.2:9334"]
         let network = partial.network_config.expect("network_config should be present");
         assert_eq!(network.bootstrap_peer_pins.len(), 2);
     }
+
+    /// Test that explicitly configured Relay node type is preserved (Issue #454)
+    #[test]
+    fn test_derive_node_type_preserves_explicit_relay() {
+        // Create a minimal NodeConfig with explicitly set Relay type
+        let mut config = NodeConfig::default();
+        config.node_type = Some(NodeType::Relay);
+        
+        // Call derive_node_type - it should NOT overwrite the explicit Relay setting
+        config.derive_node_type();
+        
+        assert_eq!(
+            config.node_type,
+            Some(NodeType::Relay),
+            "derive_node_type must preserve explicitly configured Relay node type"
+        );
+    }
+
+    /// Test that Relay is never auto-derived (Issue #454)
+    #[test]
+    fn test_derive_node_type_never_produces_relay() {
+        // Test 1: Validator enabled -> should produce Validator, not Relay
+        let mut config1 = NodeConfig::default();
+        config1.node_type = None;
+        config1.consensus_config.validator_enabled = true;
+        config1.derive_node_type();
+        assert_eq!(config1.node_type, Some(NodeType::Validator));
+
+        // Test 2: Edge node config -> should produce EdgeNode, not Relay
+        let mut config2 = NodeConfig::default();
+        config2.node_type = None;
+        config2.consensus_config.validator_enabled = false;
+        config2.blockchain_config.edge_mode = true;
+        config2.derive_node_type();
+        assert_eq!(config2.node_type, Some(NodeType::EdgeNode));
+
+        // Test 3: Default config -> should produce FullNode, not Relay
+        let mut config3 = NodeConfig::default();
+        config3.node_type = None;
+        config3.consensus_config.validator_enabled = false;
+        config3.blockchain_config.edge_mode = false;
+        config3.derive_node_type();
+        assert_eq!(config3.node_type, Some(NodeType::FullNode));
+    }
+
+    /// Test that explicit node_type is always preserved during derivation
+    #[test]
+    fn test_derive_node_type_preserves_all_explicit_types() {
+        // Test each explicit node type is preserved
+        for explicit_type in [NodeType::Validator, NodeType::EdgeNode, NodeType::FullNode, NodeType::Relay] {
+            let mut config = NodeConfig::default();
+            config.node_type = Some(explicit_type);
+            
+            // Set conflicting config that would normally derive a different type
+            config.consensus_config.validator_enabled = true;
+            
+            config.derive_node_type();
+            
+            assert_eq!(
+                config.node_type,
+                Some(explicit_type),
+                "derive_node_type must preserve explicit {:?} configuration",
+                explicit_type
+            );
+        }
+    }
 }
