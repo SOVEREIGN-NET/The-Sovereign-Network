@@ -176,8 +176,8 @@
             vote_type,
             height,
             round,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
             signature,
