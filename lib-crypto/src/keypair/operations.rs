@@ -376,12 +376,18 @@ pub fn encrypt_with_public_key(
         return Err(anyhow::anyhow!("Recipient public key missing Kyber component"));
     }
 
-    let kyber_pk = kyber1024::PublicKey::from_bytes(&public_key.kyber_pk)
-        .map_err(|_| anyhow::anyhow!("Invalid Kyber public key"))?;
+    let kyber_pk: [u8; kyber1024::KYBER_PUBLICKEYBYTES] = public_key
+        .kyber_pk
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid Kyber public key length"))?;
 
-    let (shared_secret_bytes, ciphertext) = kyber1024::encapsulate(&kyber_pk);
+    // pqc_kyber::encapsulate returns (ciphertext, shared_secret), requires an RNG
+    let (ciphertext, shared_secret_bytes) =
+        kyber1024::encapsulate(&kyber_pk, &mut rand::rngs::OsRng)
+            .map_err(|e| anyhow::anyhow!("Kyber encapsulation failed: {:?}", e))?;
 
-    let hk = Hkdf::<Sha3_256>::new(None, shared_secret_bytes.as_bytes());
+    let hk = Hkdf::<Sha3_256>::new(None, &shared_secret_bytes);
     let mut shared_secret = [0u8; 32];
     let kdf_info = b"ZHTP-KEM-v2.0";
     hk.expand(kdf_info, &mut shared_secret)
@@ -391,7 +397,7 @@ pub fn encrypt_with_public_key(
     let nonce = generate_nonce();
 
     let mut ciphertext_out = Vec::new();
-    ciphertext_out.extend_from_slice(&ciphertext.as_bytes());
+    ciphertext_out.extend_from_slice(&ciphertext);
     ciphertext_out.extend_from_slice(&nonce);
 
     let mut combined_data = Vec::new();
