@@ -341,6 +341,88 @@ mod protocol_version_tests {
         let result = enforce_block_protocol_version(0, 100);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_protocol_version_gate_integration() {
+        // Test that current version passes peer gate
+        assert!(enforce_protocol_version_gate(BLOCKCHAIN_VERSION).is_ok());
+        
+        // Test that version within range passes
+        for v in MIN_COMPATIBLE_PROTOCOL_VERSION..=BLOCKCHAIN_VERSION {
+            assert!(
+                enforce_protocol_version_gate(v).is_ok(),
+                "Version {} should be accepted", v
+            );
+        }
+        
+        // Test that versions outside range fail
+        if MIN_COMPATIBLE_PROTOCOL_VERSION > 1 {
+            assert!(enforce_protocol_version_gate(MIN_COMPATIBLE_PROTOCOL_VERSION - 1).is_err());
+        }
+        assert!(enforce_protocol_version_gate(BLOCKCHAIN_VERSION + 1).is_err());
+        assert!(enforce_protocol_version_gate(BLOCKCHAIN_VERSION + 100).is_err());
+    }
+
+    #[test]
+    fn test_block_height_activation_sequence() {
+        // Test that version transitions happen at correct heights
+        // With current config, version 1 should be active at all heights
+        assert_eq!(expected_protocol_version_at_height(0), 1);
+        assert_eq!(expected_protocol_version_at_height(1), 1);
+        assert_eq!(expected_protocol_version_at_height(1000), 1);
+        assert_eq!(expected_protocol_version_at_height(u64::MAX), 1);
+        
+        // When we add version 2, this test will help verify the transition
+        // For example, if we set:
+        // PROTOCOL_VERSION_ACTIVATION_HEIGHTS = &[(1, 0), (2, 100_000)]
+        // Then:
+        // assert_eq!(expected_protocol_version_at_height(99_999), 1);
+        // assert_eq!(expected_protocol_version_at_height(100_000), 2);
+        // assert_eq!(expected_protocol_version_at_height(100_001), 2);
+    }
+
+    #[test]
+    fn test_enforce_block_protocol_version_comprehensive() {
+        // Test genesis block
+        assert!(enforce_block_protocol_version(1, 0).is_ok());
+        
+        // Test blocks at various heights with correct version
+        for height in [1, 10, 100, 1000, 10000, u64::MAX] {
+            let expected = expected_protocol_version_at_height(height);
+            assert!(
+                enforce_block_protocol_version(expected, height).is_ok(),
+                "Height {} should accept version {}", height, expected
+            );
+        }
+        
+        // Test that wrong version is rejected
+        for height in [0, 1, 10, 100] {
+            let wrong_version = expected_protocol_version_at_height(height) + 1;
+            assert!(
+                enforce_block_protocol_version(wrong_version, height).is_err(),
+                "Height {} should reject version {}", height, wrong_version
+            );
+        }
+    }
+
+    #[test]
+    fn test_error_messages() {
+        // Test that error messages are descriptive
+        let err = enforce_protocol_version_gate(0).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("below minimum"));
+        assert!(msg.contains("upgrade required"));
+        
+        let err = enforce_protocol_version_gate(BLOCKCHAIN_VERSION + 1).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("ahead of local version"));
+        assert!(msg.contains("local node must be upgraded"));
+        
+        let err = enforce_block_protocol_version(2, 0).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("height 0"));
+        assert!(msg.contains("expected version 1"));
+    }
 }
 
 /// Maximum block size in bytes (1MB)
