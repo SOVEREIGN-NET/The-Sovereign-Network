@@ -24,6 +24,7 @@
 
 use super::*;
 use lib_crypto::hash_blake3;
+use serde::{Deserialize, Serialize};
 use tracing::info;
 
 // ============================================================================
@@ -34,57 +35,62 @@ use tracing::info;
 ///
 /// Audit logs are emitted at every proposal, pre-vote, pre-commit, and commit
 /// transition so that an external observer can replay the full consensus
-/// history from logs alone.  Fields are deterministic — the same sequence of
-/// consensus events always produces the same sequence of log records.
-#[derive(Debug, Clone)]
+/// history from logs alone.
+///
+/// **Determinism**: All fields are deterministic given the same consensus state sequence,
+/// with the exception of the `logical_time` field which uses block height and round number
+/// to provide a deterministic ordering rather than wall-clock time. This ensures that
+/// replaying the same consensus events always produces the same sequence of log records.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsensusAuditLog {
     /// Block height at which this event occurred.
     pub height: u64,
     /// Consensus round number (reset on each new height).
     pub round: u32,
-    /// Consensus step at the time of the event (e.g. "Propose", "PreVote").
-    pub step: String,
+    /// Consensus step at the time of the event.
+    pub step: ConsensusStep,
     /// Human-readable description of the event (e.g. "proposal_received").
     pub event: String,
     /// Validator identity that triggered the event, or "local" for self.
     pub validator_id: String,
-    /// Unix timestamp (seconds) when the event was recorded.
-    pub timestamp: u64,
+    /// Logical timestamp derived from height and round (height * 1_000_000 + round).
+    /// This provides deterministic ordering without relying on wall-clock time.
+    pub logical_time: u64,
 }
 
 /// Emits a structured consensus audit log using the `tracing` framework.
 ///
 /// All fields are deterministic given the same consensus state, making the
-/// output suitable for audit replay and safety analysis.
+/// output suitable for audit replay and safety analysis. The logical_time field
+/// uses a combination of block height and round number to provide deterministic
+/// ordering without depending on wall-clock time.
 pub fn log_consensus_event(
     height: u64,
     round: u32,
-    step: &str,
+    step: ConsensusStep,
     event: &str,
     validator_id: &str,
 ) -> ConsensusAuditLog {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    // Derive logical timestamp from height and round for deterministic ordering
+    let logical_time = height * 1_000_000 + round as u64;
 
     let record = ConsensusAuditLog {
         height,
         round,
-        step: step.to_string(),
+        step: step.clone(),
         event: event.to_string(),
         validator_id: validator_id.to_string(),
-        timestamp,
+        logical_time,
     };
 
     info!(
         target: "consensus_audit",
         height = height,
         round = round,
-        step = step,
+        step = %step,
         event = event,
         validator_id = validator_id,
-        timestamp = timestamp,
+        logical_time = logical_time,
         "consensus_audit"
     );
 
@@ -97,12 +103,106 @@ mod consensus_audit_log_tests {
 
     #[test]
     fn test_log_consensus_event_fields() {
-        let record = log_consensus_event(42, 1, "PreVote", "pre_vote_cast", "validator-abc");
+        let record = log_consensus_event(
+            42,
+            1,
+            ConsensusStep::PreVote,
+            "pre_vote_cast",
+            "validator-abc"
+        );
         assert_eq!(record.height, 42);
         assert_eq!(record.round, 1);
-        assert_eq!(record.step, "PreVote");
+        assert_eq!(record.step, ConsensusStep::PreVote);
         assert_eq!(record.event, "pre_vote_cast");
         assert_eq!(record.validator_id, "validator-abc");
+        assert_eq!(record.logical_time, 42 * 1_000_000 + 1);
+    }
+
+    #[test]
+    fn test_logical_time_determinism() {
+        // Same inputs should produce identical logical_time values
+        let record1 = log_consensus_event(
+            100,
+            5,
+            ConsensusStep::Propose,
+            "proposal_created",
+            "validator-1"
+        );
+        let record2 = log_consensus_event(
+            100,
+            5,
+            ConsensusStep::Propose,
+            "proposal_created",
+            "validator-1"
+        );
+        
+        assert_eq!(record1.logical_time, record2.logical_time);
+        assert_eq!(record1.logical_time, 100 * 1_000_000 + 5);
+    }
+
+    #[test]
+    fn test_logical_time_ordering() {
+        // Verify that logical_time provides correct ordering
+        let record_h1_r1 = log_consensus_event(
+            1,
+            1,
+            ConsensusStep::Propose,
+            "test",
+            "validator-1"
+        );
+        let record_h1_r2 = log_consensus_event(
+            1,
+            2,
+            ConsensusStep::PreVote,
+            "test",
+            "validator-1"
+        );
+        let record_h2_r1 = log_consensus_event(
+            2,
+            1,
+            ConsensusStep::Propose,
+            "test",
+            "validator-1"
+        );
+        
+        // Same height, higher round should have higher logical_time
+        assert!(record_h1_r2.logical_time > record_h1_r1.logical_time);
+        
+        // Higher height should have higher logical_time
+        assert!(record_h2_r1.logical_time > record_h1_r2.logical_time);
+    }
+
+    #[test]
+    fn test_serialization() {
+        let record = log_consensus_event(
+            42,
+            1,
+            ConsensusStep::PreCommit,
+            "pre_commit_cast",
+            "validator-xyz"
+        );
+        
+        // Test JSON serialization/deserialization
+        let json = serde_json::to_string(&record).expect("Failed to serialize");
+        let deserialized: ConsensusAuditLog = 
+            serde_json::from_str(&json).expect("Failed to deserialize");
+        
+        assert_eq!(deserialized.height, record.height);
+        assert_eq!(deserialized.round, record.round);
+        assert_eq!(deserialized.step, record.step);
+        assert_eq!(deserialized.event, record.event);
+        assert_eq!(deserialized.validator_id, record.validator_id);
+        assert_eq!(deserialized.logical_time, record.logical_time);
+    }
+
+    #[test]
+    fn test_consensus_step_display() {
+        // Verify ConsensusStep Display trait for logging
+        assert_eq!(format!("{}", ConsensusStep::Propose), "Propose");
+        assert_eq!(format!("{}", ConsensusStep::PreVote), "PreVote");
+        assert_eq!(format!("{}", ConsensusStep::PreCommit), "PreCommit");
+        assert_eq!(format!("{}", ConsensusStep::Commit), "Commit");
+        assert_eq!(format!("{}", ConsensusStep::NewRound), "NewRound");
     }
 }
 
@@ -384,12 +484,30 @@ impl ConsensusEngine {
     pub(super) async fn run_propose_step(&mut self) -> ConsensusResult<()> {
         self.current_round.step = ConsensusStep::Propose;
 
+        // Audit log: Entering propose step
+        log_consensus_event(
+            self.current_round.height,
+            self.current_round.round,
+            ConsensusStep::Propose,
+            "step_started",
+            "local",
+        );
+
         // If we are the proposer, create a proposal
         if let Some(ref validator_id) = self.validator_identity {
             if Some(validator_id) == self.current_round.proposer.as_ref() {
                 let proposal = self.create_proposal().await?;
                 self.current_round.proposals.push(proposal.id.clone());
                 self.pending_proposals.push_back(proposal.clone());
+
+                // Audit log: Proposal created
+                log_consensus_event(
+                    self.current_round.height,
+                    self.current_round.round,
+                    ConsensusStep::Propose,
+                    "proposal_created",
+                    &format!("{:?}", validator_id),
+                );
 
                 // Invariant CE-ENG-3: Broadcast after state transition (proposal now in state)
                 // Create canonical ValidatorMessage from already-formed proposal
@@ -426,10 +544,33 @@ impl ConsensusEngine {
     pub(super) async fn run_prevote_step(&mut self) -> ConsensusResult<()> {
         self.current_round.step = ConsensusStep::PreVote;
 
+        // Audit log: Entering prevote step
+        log_consensus_event(
+            self.current_round.height,
+            self.current_round.round,
+            ConsensusStep::PreVote,
+            "step_started",
+            "local",
+        );
+
         // Cast prevote
         if let Some(proposal_id) = self.current_round.proposals.first() {
             let vote = self.cast_vote(proposal_id.clone(), VoteType::PreVote)
                 .await?;
+
+            // Audit log: Pre-vote cast
+            let validator_id_str = self.validator_identity
+                .as_ref()
+                .map(|id| format!("{:?}", id))
+                .unwrap_or_else(|| "unknown".to_string());
+            
+            log_consensus_event(
+                self.current_round.height,
+                self.current_round.round,
+                ConsensusStep::PreVote,
+                "pre_vote_cast",
+                &validator_id_str,
+            );
 
             // Invariant CE-ENG-3: Broadcast after state transition
             // Create canonical ValidatorMessage from already-formed vote
@@ -463,6 +604,15 @@ impl ConsensusEngine {
     async fn run_precommit_step(&mut self) -> ConsensusResult<()> {
         self.current_round.step = ConsensusStep::PreCommit;
 
+        // Audit log: Entering precommit step
+        log_consensus_event(
+            self.current_round.height,
+            self.current_round.round,
+            ConsensusStep::PreCommit,
+            "step_started",
+            "local",
+        );
+
         // Check if we received enough prevotes
         if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
             let prevote_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreVote);
@@ -472,6 +622,20 @@ impl ConsensusEngine {
                 let vote = self.cast_vote(proposal_id.clone(), VoteType::PreCommit)
                     .await?;
                 self.current_round.valid_proposal = Some(proposal_id);
+
+                // Audit log: Pre-commit cast
+                let validator_id_str = self.validator_identity
+                    .as_ref()
+                    .map(|id| format!("{:?}", id))
+                    .unwrap_or_else(|| "unknown".to_string());
+                
+                log_consensus_event(
+                    self.current_round.height,
+                    self.current_round.round,
+                    ConsensusStep::PreCommit,
+                    "pre_commit_cast",
+                    &validator_id_str,
+                );
 
                 // Invariant CE-ENG-3: Broadcast after state transition
                 // Create canonical ValidatorMessage from already-formed vote
@@ -506,6 +670,15 @@ impl ConsensusEngine {
     async fn run_commit_step(&mut self) -> ConsensusResult<()> {
         self.current_round.step = ConsensusStep::Commit;
 
+        // Audit log: Entering commit step
+        log_consensus_event(
+            self.current_round.height,
+            self.current_round.round,
+            ConsensusStep::Commit,
+            "step_started",
+            "local",
+        );
+
         // Check if we received enough precommits
         if let Some(proposal_id) = self.current_round.valid_proposal.as_ref().cloned() {
             let precommit_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreCommit);
@@ -514,6 +687,20 @@ impl ConsensusEngine {
             if check_supermajority(precommit_count, active_validator_count) {
                 let vote = self.cast_vote(proposal_id.clone(), VoteType::Commit)
                     .await?;
+
+                // Audit log: Block committed
+                let validator_id_str = self.validator_identity
+                    .as_ref()
+                    .map(|id| format!("{:?}", id))
+                    .unwrap_or_else(|| "unknown".to_string());
+                
+                log_consensus_event(
+                    self.current_round.height,
+                    self.current_round.round,
+                    ConsensusStep::Commit,
+                    "block_committed",
+                    &validator_id_str,
+                );
 
                 tracing::info!(
                     "Block committed at height {} with proposal {:?}",
