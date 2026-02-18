@@ -87,15 +87,20 @@ fn test_dao_prefixed_requires_parent_ownership() {
 fn test_parent_expiry_propagates_suspension() {
     let mut registry = RootRegistry::new();
     let owner = test_public_key(1);
+    let current_height = 0;
+    let duration_blocks = 100;
 
     let parent_hash = registry
-        .register_commercial("parent.sov", owner.clone(), 0, 100)
+        .register_commercial("parent.sov", owner.clone(), current_height, duration_blocks)
         .expect("register parent");
     let child_hash = registry
-        .register_commercial("child.parent.sov", owner, 0, 100)
+        .register_commercial("child.parent.sov", owner, current_height, duration_blocks)
         .expect("register child");
 
-    registry.expire_name(&parent_hash).expect("expire parent");
+    // Expire at a height after the expiry period
+    let past_expiry = current_height + duration_blocks + 1;
+    #[allow(deprecated)]
+    registry.expire_name(&parent_hash, past_expiry).expect("expire parent");
 
     let child = registry.get_record(&child_hash).expect("child record");
     assert_eq!(child.status, NameStatus::SuspendedByParent);
@@ -285,4 +290,202 @@ fn test_phase2_invariant_no_dao_records_stored() {
     // Verify: count should be 2 (only shoes.sov and boots.sov)
     // No dao.* records should exist
     // (We can't directly iterate the registry, but the rejection above proves it)
+}
+
+// ============================================================================
+// Phase 6: Lifecycle Tests
+// ============================================================================
+
+/// Test touch() correctly finalizes commercial domains past grace to Released
+#[test]
+fn test_touch_commercial_past_grace_releases() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+
+    // Register a commercial domain at height 0 with 100 block duration
+    let name_hash = registry
+        .register_commercial("mystore.sov", owner.clone(), 0, 100)
+        .expect("register");
+
+    // Before grace: should return Some
+    let record = registry.touch(&name_hash, 50);
+    assert!(record.is_some());
+
+    // Still in grace period (100 + grace_blocks): should return Some
+    // Default grace is EXPIRATION_GRACE_BLOCKS (30 days * 8600 = 258,000)
+    let record = registry.touch(&name_hash, 101);
+    assert!(record.is_some());
+
+    // Way past grace period: should finalize and return None (released)
+    let record = registry.touch(&name_hash, 500_000);
+    assert!(record.is_none(), "Commercial domain should be released past grace");
+
+    // After release, the record should still exist but be Released
+    let final_record = registry.get_record(&name_hash).expect("record exists");
+    assert!(matches!(final_record.status, NameStatus::Released));
+}
+
+/// Test touch() correctly returns welfare domains to governance
+#[test]
+fn test_touch_welfare_returns_to_governance() {
+    use super::types::WelfareSector;
+
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+    let dao_id = [42u8; 32];
+
+    // Register a welfare root
+    let root_hash = registry
+        .register_reserved_root("food.dao.sov", owner.clone(), 0, 100, Some(dao_id))
+        .expect("register root");
+
+    // Link the sector DAO
+    registry.link_welfare_sector_dao(WelfareSector::Food, dao_id).unwrap();
+
+    // Way past grace: should finalize to ReturnedToGovernance
+    let record = registry.touch(&root_hash, 500_000);
+    assert!(record.is_some(), "Welfare domain should return Some (not None like commercial)");
+
+    // Check custodian is set
+    let final_record = registry.get_record(&root_hash).expect("record exists");
+    assert!(final_record.custodian.is_some(), "Custodian should be set for welfare domain");
+}
+
+/// Test touch() doesn't mutate active domains
+#[test]
+fn test_touch_active_domain_unchanged() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+
+    let name_hash = registry
+        .register_commercial("active.sov", owner.clone(), 0, 100)
+        .expect("register");
+
+    // Touch within active period
+    let record = registry.touch(&name_hash, 50).expect("record exists");
+    assert!(matches!(record.status, NameStatus::Active));
+
+    // Should still be active
+    let record2 = registry.get_record(&name_hash).expect("record exists");
+    assert!(matches!(record2.status, NameStatus::Active));
+}
+
+/// Test renew_name() succeeds for owner within renewal window
+#[test]
+fn test_renew_name_success() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+
+    // Register at height 0 with 1000 block duration
+    let name_hash = registry
+        .register_commercial("renewable.sov", owner.clone(), 0, 1000)
+        .expect("register");
+
+    // Renew during active period (within renewal window)
+    let result = registry.renew_name(&name_hash, &owner, 900, 500, 100);
+    assert!(result.is_ok());
+    let fee = result.unwrap();
+    assert_eq!(fee, 100, "Base fee should be charged before expiry");
+
+    // Verify expiry was extended
+    let record = registry.get_record(&name_hash).expect("record exists");
+    assert!(record.expires_at_height > 1000, "Expiry should be extended");
+}
+
+/// Test renew_name() applies late penalty during grace period
+#[test]
+fn test_renew_name_late_penalty() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+
+    // Register at height 0 with 100 block duration
+    let name_hash = registry
+        .register_commercial("late.sov", owner.clone(), 0, 100)
+        .expect("register");
+
+    // Renew during grace period (past 100, within grace)
+    // Default late penalty is 20% (timing::DEFAULT_LATE_RENEWAL_PENALTY_PERCENT)
+    let result = registry.renew_name(&name_hash, &owner, 150, 500, 100);
+    assert!(result.is_ok());
+    let fee = result.unwrap();
+    // 100 base + 20% penalty = 120
+    assert_eq!(fee, 120, "Late penalty should be applied");
+}
+
+/// Test renew_name() fails for non-owner
+#[test]
+fn test_renew_name_non_owner_fails() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+    let other = test_public_key(2);
+
+    let name_hash = registry
+        .register_commercial("owned.sov", owner.clone(), 0, 100)
+        .expect("register");
+
+    let result = registry.renew_name(&name_hash, &other, 50, 500, 100);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Only owner can renew"));
+}
+
+/// Test renew_name() fails past grace period
+#[test]
+fn test_renew_name_past_grace_fails() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+
+    let name_hash = registry
+        .register_commercial("expired.sov", owner.clone(), 0, 100)
+        .expect("register");
+
+    // Way past grace period
+    let result = registry.renew_name(&name_hash, &owner, 500_000, 500, 100);
+    assert!(result.is_err());
+}
+
+/// Test sweep_expired() processes domains in height order
+#[test]
+fn test_sweep_expired_height_order() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+
+    // Register domains with different expiry times
+    registry.register_commercial("first.sov", owner.clone(), 0, 50).unwrap();
+    registry.register_commercial("second.sov", owner.clone(), 0, 100).unwrap();
+    registry.register_commercial("third.sov", owner.clone(), 0, 150).unwrap();
+
+    // Way past all grace periods
+    let swept = registry.sweep_expired(600_000, 10);
+    assert_eq!(swept, 3, "Should sweep all 3 expired domains");
+}
+
+/// Test sweep_expired() respects limit parameter
+#[test]
+fn test_sweep_expired_respects_limit() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+
+    // Register 5 domains
+    for i in 0..5 {
+        registry.register_commercial(&format!("domain{}.sov", i), owner.clone(), 0, 100).unwrap();
+    }
+
+    // Sweep with limit of 2
+    let swept = registry.sweep_expired(600_000, 2);
+    assert_eq!(swept, 2, "Should only sweep 2 domains due to limit");
+}
+
+/// Test sweep_expired() skips active domains
+#[test]
+fn test_sweep_expired_skips_active() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+
+    // Register one active, one expired
+    registry.register_commercial("active.sov", owner.clone(), 0, 1_000_000).unwrap();
+    registry.register_commercial("expired.sov", owner.clone(), 0, 100).unwrap();
+
+    // Sweep at height where only expired.sov is past grace
+    let swept = registry.sweep_expired(600_000, 10);
+    assert_eq!(swept, 1, "Should only sweep the expired domain");
 }
