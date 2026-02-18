@@ -1,6 +1,53 @@
 //! KeyPair generation - preserving ZHTP post-quantum key generation
-//! 
+//!
 //! implementations from crypto.rs, lines 204-250, 260-310
+//!
+//! # Key Rotation Policy (BFT-I, Issue #1011)
+//!
+//! **Key rotation is NOT supported in the current protocol.**
+//!
+//! Validator identity is permanently bound to the public key used at
+//! registration.  To use a different key, de-register and create a new
+//! validator identity.  Key rotation without a new identity is prohibited
+//! because it enables equivocation attacks.
+//!
+//! See [`KEY_ROTATION_POLICY`] and [`validate_key_rotation_prohibited`].
+
+// ============================================================================
+// KEY ROTATION POLICY (BFT-I, Issue #1011)
+// ============================================================================
+
+/// Key rotation policy: rotation is not supported in the current protocol.
+///
+/// Validator identity is permanently bound to the key at registration.
+pub const KEY_ROTATION_POLICY: &str = "no_rotation";
+
+/// Returns an error explaining that key rotation is prohibited.
+///
+/// Call this from any code path that would attempt to replace a validator's
+/// key without creating a new validator identity.
+pub fn validate_key_rotation_prohibited() -> Result<(), String> {
+    Err(
+        "key rotation is not supported (policy=no_rotation): \
+         register a new validator identity for a new key"
+            .to_string(),
+    )
+}
+
+#[cfg(test)]
+mod key_rotation_policy_tests {
+    use super::*;
+
+    #[test]
+    fn test_key_rotation_is_prohibited() {
+        assert!(validate_key_rotation_prohibited().is_err());
+    }
+
+    #[test]
+    fn test_key_rotation_policy_constant() {
+        assert_eq!(KEY_ROTATION_POLICY, "no_rotation");
+    }
+}
 
 use anyhow::Result;
 use blake3::Hasher as Blake3Hasher;
