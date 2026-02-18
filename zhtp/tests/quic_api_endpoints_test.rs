@@ -165,7 +165,8 @@ fn get_mock_body(path: &str) -> Option<String> {
         "/api/v1/blockchain/transaction" => Some(r#"{"from":"test_from","to":"test_to","amount":100,"fee":10,"signature":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
         "/api/v1/blockchain/transaction/estimate-fee" => Some(r#"{"transaction_size":250,"amount":1000,"priority":"normal"}"#.to_string()),
         "/api/v1/blockchain/transaction/broadcast" => Some(r#"{"transaction_data":"0000"}"#.to_string()),
-        "/api/v1/blockchain/contracts/deploy" => Some(r#"{"name":"TestContract","contract_type":"token","code":"test code","initial_state":{}}"#.to_string()),
+        "/api/v1/blockchain/contracts/deploy" => Some(r#"{"transaction_data":"00"}"#.to_string()),
+        "/api/v1/blockchain/contracts/test_address/call" => Some(r#"{"transaction_data":"00"}"#.to_string()),
         // Import expects binary data, empty body will fail - skip in test
         "/api/v1/blockchain/import" => Some(r#"{}"#.to_string()), // Will fail - expects binary blockchain data from /export
 
@@ -305,8 +306,10 @@ async fn test_all_api_endpoints() -> Result<()> {
         ("POST", "/api/v1/blockchain/transaction/broadcast"),
         ("POST", "/api/v1/blockchain/transaction/estimate-fee"),
         ("GET", "/api/v1/blockchain/contracts"),
+        ("GET", "/api/v1/blockchain/contracts/test_address/state"),
         ("GET", "/api/v1/blockchain/contracts/test_address"),
         ("POST", "/api/v1/blockchain/contracts/deploy"),
+        ("POST", "/api/v1/blockchain/contracts/test_address/call"),
         ("GET", "/api/v1/blockchain/edge-stats"),
         ("GET", "/api/v1/blockchain/blocks/0/10"),
     ] {
