@@ -165,3 +165,68 @@ pub fn verify_signature(message: &[u8], signature: &[u8], public_key: &[u8]) -> 
         }
     }
 }
+
+/// Validates that a consensus vote message uses the required signature scheme.
+///
+/// # BFT-I Consensus Verification Rules (Issue #1009)
+///
+/// All signatures on consensus votes and commits MUST use Dilithium2.
+/// This function checks the public key length to detect the algorithm:
+/// - Dilithium2 public key: 1312 bytes (CONSENSUS_DILITHIUM2_PK_BYTES)
+/// - Dilithium5 public key: 2592 bytes (NOT permitted for consensus)
+///
+/// # Errors
+///
+/// Returns Err if the public key length does not match Dilithium2.
+pub fn validate_consensus_vote_signature_scheme(public_key: &[u8]) -> anyhow::Result<()> {
+    if public_key.len() != DILITHIUM2_PUBLICKEY_BYTES {
+        return Err(anyhow::anyhow!(
+            "consensus vote signature must use Dilithium2 (pk_len={}); expected {} bytes for Dilithium2",
+            public_key.len(), DILITHIUM2_PUBLICKEY_BYTES
+        ));
+    }
+    Ok(())
+}
+
+/// Verify a consensus vote signature, enforcing the Dilithium2-only rule.
+///
+/// This function is a thin wrapper around [`verify_signature`] that first
+/// validates the public key length using
+/// [`validate_consensus_vote_signature_scheme`]. It should be used by
+/// consensus vote verification code paths (e.g. in `lib-consensus`) to
+/// ensure that only Dilithium2 keys are accepted for votes and commits.
+pub fn verify_consensus_vote_signature(
+    message: &[u8],
+    signature: &[u8],
+    public_key: &[u8],
+) -> Result<bool> {
+    // Enforce that consensus votes use Dilithium2 public keys.
+    validate_consensus_vote_signature_scheme(public_key)?;
+
+    // Delegate to the generic signature verifier.
+    verify_signature(message, signature, public_key)
+}
+
+#[cfg(test)]
+mod consensus_verification_tests {
+    use super::validate_consensus_vote_signature_scheme;
+
+    #[test]
+    fn test_dilithium2_public_key_accepted_for_consensus() {
+        let dilithium2_pk = vec![0u8; 1312];
+        assert!(validate_consensus_vote_signature_scheme(&dilithium2_pk).is_ok());
+    }
+
+    #[test]
+    fn test_dilithium5_public_key_rejected_for_consensus() {
+        let dilithium5_pk = vec![0u8; 2592];
+        assert!(validate_consensus_vote_signature_scheme(&dilithium5_pk).is_err(),
+            "Dilithium5 must be rejected for consensus votes");
+    }
+
+    #[test]
+    fn test_unknown_key_size_rejected_for_consensus() {
+        let unknown_pk = vec![0u8; 64];
+        assert!(validate_consensus_vote_signature_scheme(&unknown_pk).is_err());
+    }
+}
