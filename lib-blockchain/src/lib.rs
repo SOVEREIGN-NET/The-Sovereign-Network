@@ -185,9 +185,11 @@ pub use contracts::{
 /// - Upgrades are gated by block height; incompatible peers and blocks are
 ///   rejected **deterministically** at both the handshake layer and block
 ///   acceptance layer.
-/// - A new version MUST be accompanied by a hard-fork block height constant.
+/// - A new version MUST be accompanied by a hard-fork activation height constant
+///   (see `PROTOCOL_VERSION_ACTIVATION_HEIGHTS` map below).
 /// - Validators running an incompatible version are automatically rejected
 ///   and cannot participate in consensus.
+/// - Version transitions happen at specific block heights to coordinate network-wide upgrades.
 pub const BLOCKCHAIN_VERSION: u32 = 1;
 
 /// Minimum compatible protocol version.
@@ -196,26 +198,81 @@ pub const BLOCKCHAIN_VERSION: u32 = 1;
 /// Update this constant when a breaking protocol change is introduced.
 pub const MIN_COMPATIBLE_PROTOCOL_VERSION: u32 = 1;
 
+/// Protocol version activation heights for hard forks.
+///
+/// Maps protocol version -> block height at which that version becomes active.
+/// Nodes must enforce that blocks use the correct version for their height.
+///
+/// # Example
+/// ```ignore
+/// // Version 1 active from genesis
+/// (1, 0)
+/// // Version 2 activates at block 100000
+/// (2, 100000)
+/// ```
+pub const PROTOCOL_VERSION_ACTIVATION_HEIGHTS: &[(u32, u64)] = &[
+    (1, 0), // Version 1 active from genesis
+];
+
 /// Enforces the protocol version gate for a connecting peer.
 ///
 /// Returns `Ok(())` if the peer version is within the accepted range,
-/// otherwise returns an `Err` describing the mismatch.  This check MUST be
+/// otherwise returns an `Err` describing the mismatch. This check MUST be
 /// performed before accepting any block or vote from a peer.
 ///
 /// # Errors
 /// Returns an error if `peer_version < MIN_COMPATIBLE_PROTOCOL_VERSION` or
 /// `peer_version > BLOCKCHAIN_VERSION`.
-pub fn enforce_protocol_version_gate(peer_version: u32) -> std::result::Result<(), String> {
+pub fn enforce_protocol_version_gate(peer_version: u32) -> anyhow::Result<()> {
     if peer_version < MIN_COMPATIBLE_PROTOCOL_VERSION {
-        return Err(format!(
-            "peer protocol version {peer_version} is below minimum compatible version \
-             {MIN_COMPATIBLE_PROTOCOL_VERSION}; upgrade required"
+        return Err(anyhow::anyhow!(
+            "peer protocol version {} is below minimum compatible version {}; upgrade required",
+            peer_version,
+            MIN_COMPATIBLE_PROTOCOL_VERSION
         ));
     }
     if peer_version > BLOCKCHAIN_VERSION {
-        return Err(format!(
-            "peer protocol version {peer_version} is ahead of local version \
-             {BLOCKCHAIN_VERSION}; local node must be upgraded"
+        return Err(anyhow::anyhow!(
+            "peer protocol version {} is ahead of local version {}; local node must be upgraded",
+            peer_version,
+            BLOCKCHAIN_VERSION
+        ));
+    }
+    Ok(())
+}
+
+/// Determines the expected protocol version for a given block height.
+///
+/// Returns the highest protocol version that is active at or before the given height.
+///
+/// # Panics
+/// Panics if `PROTOCOL_VERSION_ACTIVATION_HEIGHTS` is empty or misconfigured.
+pub fn expected_protocol_version_at_height(height: u64) -> u32 {
+    let mut active_version = 1;
+    for &(version, activation_height) in PROTOCOL_VERSION_ACTIVATION_HEIGHTS {
+        if height >= activation_height {
+            active_version = version;
+        } else {
+            break;
+        }
+    }
+    active_version
+}
+
+/// Enforces that a block's protocol version matches the expected version for its height.
+///
+/// This ensures that protocol upgrades happen at coordinated block heights across the network.
+///
+/// # Errors
+/// Returns an error if the block's version doesn't match the expected version for its height.
+pub fn enforce_block_protocol_version(block_version: u32, block_height: u64) -> anyhow::Result<()> {
+    let expected = expected_protocol_version_at_height(block_height);
+    if block_version != expected {
+        return Err(anyhow::anyhow!(
+            "block at height {} has protocol version {} but expected version {} for this height",
+            block_height,
+            block_version,
+            expected
         ));
     }
     Ok(())
@@ -232,16 +289,45 @@ mod protocol_version_tests {
 
     #[test]
     fn test_enforce_protocol_version_gate_rejects_old() {
-        // If MIN_COMPATIBLE_PROTOCOL_VERSION is 1 this test is skipped (nothing below)
-        if MIN_COMPATIBLE_PROTOCOL_VERSION > 0 {
-            let too_old = MIN_COMPATIBLE_PROTOCOL_VERSION - 1;
-            assert!(enforce_protocol_version_gate(too_old).is_err());
-        }
+        // Test rejection of version 0 (always invalid)
+        let result = enforce_protocol_version_gate(0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("below minimum"));
     }
 
     #[test]
     fn test_enforce_protocol_version_gate_rejects_future() {
-        assert!(enforce_protocol_version_gate(BLOCKCHAIN_VERSION + 1).is_err());
+        let result = enforce_protocol_version_gate(BLOCKCHAIN_VERSION + 1);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("ahead of local version"));
+    }
+
+    #[test]
+    fn test_expected_protocol_version_at_height() {
+        // Version 1 should be active from genesis
+        assert_eq!(expected_protocol_version_at_height(0), 1);
+        assert_eq!(expected_protocol_version_at_height(1), 1);
+        assert_eq!(expected_protocol_version_at_height(1000), 1);
+        assert_eq!(expected_protocol_version_at_height(u64::MAX), 1);
+    }
+
+    #[test]
+    fn test_enforce_block_protocol_version_accepts_correct() {
+        // Version 1 at early heights should be accepted
+        assert!(enforce_block_protocol_version(1, 0).is_ok());
+        assert!(enforce_block_protocol_version(1, 100).is_ok());
+    }
+
+    #[test]
+    fn test_enforce_block_protocol_version_rejects_wrong() {
+        // Version 2 at height 0 should be rejected (not yet active)
+        let result = enforce_block_protocol_version(2, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("expected version 1"));
+        
+        // Version 0 at any height should be rejected
+        let result = enforce_block_protocol_version(0, 100);
+        assert!(result.is_err());
     }
 }
 
