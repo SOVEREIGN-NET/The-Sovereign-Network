@@ -810,6 +810,7 @@ impl DaoHandler {
             .vote_choice
             .as_deref()
             .or(request_data.choice.as_deref())
+            .map(str::trim)
             .ok_or_else(|| anyhow::anyhow!("Missing vote_choice (or legacy choice) field"))?;
         let vote_choice = match Self::parse_vote_choice(vote_choice_raw) {
             Ok(choice) => choice,
