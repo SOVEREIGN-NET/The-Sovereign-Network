@@ -451,6 +451,28 @@ impl ReceiptValidator {
         self.validated_receipts.read().await.clone()
     }
 
+    /// Get validated receipts matching a set of accepted nonce hex strings.
+    pub async fn get_validated_receipts_for_nonces(
+        &self,
+        accepted_nonce_hex: &[String],
+    ) -> Vec<ValidatedReceipt> {
+        let accepted_set: HashSet<Vec<u8>> = accepted_nonce_hex
+            .iter()
+            .filter_map(|nonce| hex::decode(nonce).ok())
+            .collect();
+        if accepted_set.is_empty() {
+            return Vec::new();
+        }
+
+        self.validated_receipts
+            .read()
+            .await
+            .iter()
+            .filter(|receipt| accepted_set.contains(&receipt.receipt_nonce))
+            .cloned()
+            .collect()
+    }
+
     /// Get dispute log entries
     pub async fn get_disputes(&self) -> Vec<DisputeLogEntry> {
         self.dispute_log.read().await.clone()
