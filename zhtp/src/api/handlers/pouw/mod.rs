@@ -318,18 +318,103 @@ impl PouwHandler {
         let body = serde_json::json!({"status": "ok"});
         Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
     }
+
+    /// Handle GET /pouw/rewards/{client_did} - Get rewards for a specific client
+    async fn handle_get_client_rewards(&self, client_did: &str) -> ZhtpResult<ZhtpResponse> {
+        debug!("Getting rewards for client: {}", client_did);
+        
+        let calculator = self.reward_calculator.read().await;
+        let rewards = calculator.get_client_rewards(client_did).await;
+        
+        let total_earned: u64 = rewards.iter().map(|r| r.final_amount).sum();
+        let total_paid: u64 = rewards.iter()
+            .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Paid)
+            .map(|r| r.final_amount)
+            .sum();
+        
+        let reward_list: Vec<serde_json::Value> = rewards.iter().map(|r| {
+            serde_json::json!({
+                "reward_id": hex::encode(&r.reward_id),
+                "epoch": r.epoch,
+                "total_bytes": r.total_bytes,
+                "raw_amount": r.raw_amount,
+                "final_amount": r.final_amount,
+                "payout_status": format!("{:?}", r.payout_status),
+                "paid_at": r.paid_at,
+                "tx_hash": r.tx_hash.as_ref().map(|h| hex::encode(h)),
+            })
+        }).collect();
+        
+        let body = serde_json::json!({
+            "client_did": client_did,
+            "total_rewards": reward_list.len(),
+            "total_earned": total_earned,
+            "total_paid": total_paid,
+            "pending": total_earned.saturating_sub(total_paid),
+            "rewards": reward_list,
+        });
+        
+        Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
+    }
+
+    /// Handle GET /pouw/epochs/{epoch} - Get rewards for a specific epoch
+    async fn handle_get_epoch_rewards(&self, epoch: u64) -> ZhtpResult<ZhtpResponse> {
+        debug!("Getting rewards for epoch: {}", epoch);
+        
+        let calculator = self.reward_calculator.read().await;
+        let rewards = calculator.get_epoch_rewards(epoch).await;
+        
+        let total_earned: u64 = rewards.iter().map(|r| r.final_amount).sum();
+        
+        let reward_list: Vec<serde_json::Value> = rewards.iter().map(|r| {
+            serde_json::json!({
+                "reward_id": hex::encode(&r.reward_id),
+                "client_did": r.client_did,
+                "total_bytes": r.total_bytes,
+                "final_amount": r.final_amount,
+                "payout_status": format!("{:?}", r.payout_status),
+            })
+        }).collect();
+        
+        let body = serde_json::json!({
+            "epoch": epoch,
+            "total_rewards": reward_list.len(),
+            "total_earned": total_earned,
+            "rewards": reward_list,
+        });
+        
+        Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
+    }
 }
 
 #[async_trait]
 impl ZhtpRequestHandler for PouwHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        match (request.method.as_str(), request.uri.as_str()) {
+        let uri = request.uri.as_str();
+        
+        // Handle routes with path parameters
+        if uri.starts_with("/pouw/rewards/") {
+            // GET /pouw/rewards/{client_did}
+            let client_did = uri.strip_prefix("/pouw/rewards/").unwrap_or("");
+            return self.handle_get_client_rewards(client_did).await;
+        }
+        
+        if uri.starts_with("/pouw/epochs/") {
+            // GET /pouw/epochs/{epoch}
+            if let Some(epoch_str) = uri.strip_prefix("/pouw/epochs/") {
+                if let Ok(epoch) = epoch_str.parse::<u64>() {
+                    return self.handle_get_epoch_rewards(epoch).await;
+                }
+            }
+        }
+        
+        match (request.method.as_str(), uri) {
             ("GET", "/pouw/challenge") => self.handle_get_challenge(&request).await,
             ("POST", "/pouw/submit") => self.handle_submit_receipt(&request).await,
             ("GET", "/pouw/health") => self.handle_health_check().await,
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
-                format!("Not found: {} {}", request.method, request.uri),
+                format!("Not found: {} {}", request.method, uri),
             ))
         }
     }
@@ -417,5 +502,45 @@ mod tests {
         // Test did:zhtp: format - should also work
         let result = handler.validate_client_identity("did:zhtp:test").await;
         assert!(result.is_err(), "did:zhtp: format should pass format check but fail registry");
+    }
+
+    #[tokio::test]
+    async fn rewards_endpoint_returns_client_data() {
+        let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
+        let mut priv_arr = [0u8; 32];
+        let mut node_id = [0u8; 32];
+        priv_arr.copy_from_slice(&node_privkey[..32]);
+        node_id.copy_from_slice(&node_pubkey[..32]);
+        let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
+        let validator = ReceiptValidator::new(generator.clone());
+        let reward_calculator = RewardCalculator::new(1_700_000_000);
+        
+        let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
+        let handler = PouwHandler::new(generator, validator, reward_calculator, identity_manager);
+        
+        // Test rewards endpoint
+        let req = ZhtpRequest::get("/pouw/rewards/did:sov:test-client".to_string(), None).unwrap();
+        let resp = handler.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Ok);
+    }
+
+    #[tokio::test]
+    async fn epoch_endpoint_returns_epoch_data() {
+        let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
+        let mut priv_arr = [0u8; 32];
+        let mut node_id = [0u8; 32];
+        priv_arr.copy_from_slice(&node_privkey[..32]);
+        node_id.copy_from_slice(&node_pubkey[..32]);
+        let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
+        let validator = ReceiptValidator::new(generator.clone());
+        let reward_calculator = RewardCalculator::new(1_700_000_000);
+        
+        let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
+        let handler = PouwHandler::new(generator, validator, reward_calculator, identity_manager);
+        
+        // Test epoch endpoint
+        let req = ZhtpRequest::get("/pouw/epochs/1".to_string(), None).unwrap();
+        let resp = handler.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Ok);
     }
 }
