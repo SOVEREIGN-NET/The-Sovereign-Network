@@ -448,7 +448,13 @@ impl PouwHandler {
     }
 
     async fn handle_health_check(&self) -> ZhtpResult<ZhtpResponse> {
-        let body = serde_json::json!({"status": "ok"});
+        let calculator = self.reward_calculator.read().await;
+        let suspicious_dids = calculator.get_suspicious_dids().await;
+        let body = serde_json::json!({
+            "status": "ok",
+            "suspicious_dids": suspicious_dids,
+            "suspicious_did_count": suspicious_dids.len(),
+        });
         Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
     }
 
@@ -801,6 +807,10 @@ mod tests {
                 bytes_verified: 4096,
                 validated_at: 1_700_003_601,
                 challenge_nonce: vec![3u8; 16],
+                manifest_cid: None,
+                domain: None,
+                route_hops: None,
+                served_from_cache: None,
             }];
             let _ = calc.calculate_epoch_rewards(&validated, 1).await.unwrap();
         }
@@ -852,6 +862,10 @@ mod tests {
                 bytes_verified: 8192,
                 validated_at: 1_700_025_201,
                 challenge_nonce: vec![7u8; 16],
+                manifest_cid: None,
+                domain: None,
+                route_hops: None,
+                served_from_cache: None,
             }];
             let _ = calc.calculate_epoch_rewards(&validated, 7).await.unwrap();
         }

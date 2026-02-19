@@ -571,7 +571,7 @@ mod tests {
     async fn test_format_validation() {
         let (priv_key, pub_key) = test_keys();
         let generator = Arc::new(ChallengeGenerator::new(priv_key, pub_key));
-        let validator = ReceiptValidator::new(generator);
+        let validator = ReceiptValidator::new(generator, Arc::new(RwLock::new(IdentityManager::new())));
 
         // Test invalid version
         let receipt = Receipt {
@@ -598,7 +598,7 @@ mod tests {
     async fn test_replay_detection() {
         let (priv_key, pub_key) = test_keys();
         let generator = Arc::new(ChallengeGenerator::new(priv_key, pub_key));
-        let validator = ReceiptValidator::new(generator);
+        let validator = ReceiptValidator::new(generator, Arc::new(RwLock::new(IdentityManager::new())));
 
         let nonce = vec![1u8; 32];
 
@@ -616,7 +616,7 @@ mod tests {
     async fn test_challenge_binding() {
         let (priv_key, pub_key) = test_keys();
         let generator = Arc::new(ChallengeGenerator::new(priv_key, pub_key));
-        let validator = ReceiptValidator::new(generator.clone());
+        let validator = ReceiptValidator::new(generator.clone(), Arc::new(RwLock::new(IdentityManager::new())));
 
         // Generate a challenge
         let challenge_response = generator.generate_challenge(Some("hash"), None, None, None).await.unwrap();
@@ -654,7 +654,7 @@ mod tests {
     async fn test_policy_enforcement() {
         let (priv_key, pub_key) = test_keys();
         let generator = Arc::new(ChallengeGenerator::new(priv_key, pub_key));
-        let validator = ReceiptValidator::new(generator);
+        let validator = ReceiptValidator::new(generator, Arc::new(RwLock::new(IdentityManager::new())));
 
         let policy = Policy {
             max_receipts: 20,

@@ -8,7 +8,7 @@
 //! Reference: docs/dapps_auth/pouw-protocol-spec.md Section 9
 
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -59,6 +59,22 @@ pub const POUW_PER_NODE_EPOCH_CAP: u64 = POUW_EPOCH_POOL / EXPECTED_ACTIVE_NODES
 
 /// Backwards-compatible alias — use POUW_PER_NODE_EPOCH_CAP for new code
 pub const MAX_REWARD_PER_EPOCH: u64 = POUW_PER_NODE_EPOCH_CAP;
+
+// ─── Anomaly Detection ────────────────────────────────────────────────────────
+
+/// Number of past epochs to retain per-DID in memory (1 epoch = 1 hour → 24h)
+pub const HISTORY_EPOCHS: usize = 24;
+
+/// Flag a DID if it hits the per-node cap for this many consecutive epochs
+pub const MAX_CONSECUTIVE_CAP_EPOCHS: usize = 12;
+
+/// Flag a DID if its weighted receipt count is > SPIKE_FACTOR × its own recent average
+pub const SPIKE_FACTOR: u64 = 3;
+
+/// Number of epochs used for the spike baseline average (7 days)
+pub const SPIKE_BASELINE_EPOCHS: usize = 7 * 24;
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Reward record stored in database
 #[derive(Debug, Clone)]
@@ -163,6 +179,16 @@ impl EpochPoolConfig {
     }
 }
 
+/// Per-DID, per-epoch history record used for anomaly detection
+#[derive(Debug, Clone)]
+pub struct DIDEpochRecord {
+    pub epoch: u64,
+    pub weighted_receipt_count: u64,
+    pub bytes_verified: u64,
+    pub reward_amount: u64,
+    pub hit_cap: bool,
+}
+
 /// Reward calculator
 pub struct RewardCalculator {
     /// Epoch duration in seconds
@@ -175,6 +201,10 @@ pub struct RewardCalculator {
     multipliers: ProofTypeMultipliers,
     /// Epoch pool config for per-node cap calculation
     pool_config: EpochPoolConfig,
+    /// Per-DID epoch history for anomaly detection (last HISTORY_EPOCHS epochs per DID)
+    did_history: Arc<RwLock<HashMap<String, VecDeque<DIDEpochRecord>>>>,
+    /// DIDs flagged for manual review due to anomalous reward patterns
+    suspicious_dids: Arc<RwLock<HashSet<String>>>,
 }
 
 /// Configurable multipliers for proof types
@@ -208,6 +238,8 @@ impl RewardCalculator {
             rewards: Arc::new(RwLock::new(Vec::new())),
             multipliers: ProofTypeMultipliers::default(),
             pool_config: EpochPoolConfig::default_beta(),
+            did_history: Arc::new(RwLock::new(HashMap::new())),
+            suspicious_dids: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -284,7 +316,7 @@ impl RewardCalculator {
         aggregated
     }
 
-    /// Calculate reward for a client's epoch stats
+    /// Calculate reward for a client's epoch stats (sync portion — history recording is async)
     pub fn calculate_reward(&self, stats: &EpochClientStats) -> Reward {
         // Calculate weighted reward based on proof types
         let weighted_count =
@@ -299,6 +331,8 @@ impl RewardCalculator {
 
         // Apply per-node epoch cap (governance-adjustable via EpochPoolConfig)
         let final_amount = raw_amount.min(self.pool_config.per_node_cap());
+        let hit_cap = raw_amount > self.pool_config.per_node_cap();
+        let _ = hit_cap; // used by calculate_epoch_rewards async path
 
         // Generate reward ID
         let mut reward_id = vec![0u8; 16];
@@ -329,6 +363,93 @@ impl RewardCalculator {
         }
     }
 
+    /// Record epoch history for a DID and run anomaly detection
+    async fn record_and_check_anomalies(
+        &self,
+        client_did: &str,
+        weighted_count: u64,
+        bytes_verified: u64,
+        reward_amount: u64,
+        epoch: u64,
+        hit_cap: bool,
+        min_bytes_per_receipt: u64,
+        receipt_count: u64,
+    ) {
+        let record = DIDEpochRecord {
+            epoch,
+            weighted_receipt_count: weighted_count,
+            bytes_verified,
+            reward_amount,
+            hit_cap,
+        };
+
+        let mut history_map = self.did_history.write().await;
+        let history = history_map.entry(client_did.to_string()).or_default();
+        history.push_back(record);
+
+        // Extend baseline window if needed but keep no more than SPIKE_BASELINE_EPOCHS
+        let max_keep = SPIKE_BASELINE_EPOCHS.max(HISTORY_EPOCHS);
+        while history.len() > max_keep {
+            history.pop_front();
+        }
+
+        // ── Anomaly 1: Sustained cap-hitting ────────────────────────────────
+        let recent: Vec<&DIDEpochRecord> = history.iter().rev().take(MAX_CONSECUTIVE_CAP_EPOCHS).collect();
+        if recent.len() == MAX_CONSECUTIVE_CAP_EPOCHS && recent.iter().all(|r| r.hit_cap) {
+            warn!(
+                did = %client_did,
+                consecutive_epochs = MAX_CONSECUTIVE_CAP_EPOCHS,
+                "PoUW anomaly: DID hitting per-node cap every epoch (sustained cap-hitting)"
+            );
+            self.suspicious_dids.write().await.insert(client_did.to_string());
+        }
+
+        // ── Anomaly 2: Receipt volume spike ─────────────────────────────────
+        // Compare current epoch's weighted count against the DID's own baseline average
+        let baseline_epochs: Vec<&DIDEpochRecord> = history
+            .iter()
+            .rev()
+            .skip(1) // exclude current epoch
+            .take(SPIKE_BASELINE_EPOCHS)
+            .collect();
+        if !baseline_epochs.is_empty() {
+            let baseline_sum: u64 = baseline_epochs.iter().map(|r| r.weighted_receipt_count).sum();
+            let baseline_avg = baseline_sum / baseline_epochs.len() as u64;
+            if baseline_avg > 0 && weighted_count > SPIKE_FACTOR * baseline_avg {
+                warn!(
+                    did = %client_did,
+                    epoch = epoch,
+                    weighted_count = weighted_count,
+                    baseline_avg = baseline_avg,
+                    spike_factor = SPIKE_FACTOR,
+                    "PoUW anomaly: DID receipt volume spike ({}x above own average)", weighted_count / baseline_avg
+                );
+                self.suspicious_dids.write().await.insert(client_did.to_string());
+            }
+        }
+
+        // ── Anomaly 3: Bytes uniformity (fabrication signal) ─────────────────
+        // If every receipt claims exactly min_bytes_per_receipt, it's suspicious
+        if receipt_count >= 3 && min_bytes_per_receipt > 0 {
+            let expected_uniform = min_bytes_per_receipt * receipt_count;
+            if bytes_verified == expected_uniform {
+                warn!(
+                    did = %client_did,
+                    epoch = epoch,
+                    bytes_verified = bytes_verified,
+                    receipt_count = receipt_count,
+                    "PoUW anomaly: all receipts claim exactly MIN_BYTES_PER_RECEIPT (fabrication signal)"
+                );
+                self.suspicious_dids.write().await.insert(client_did.to_string());
+            }
+        }
+    }
+
+    /// Get the set of DIDs flagged as suspicious for manual review
+    pub async fn get_suspicious_dids(&self) -> Vec<String> {
+        self.suspicious_dids.read().await.iter().cloned().collect()
+    }
+
     /// Calculate rewards for all clients in a given epoch
     pub async fn calculate_epoch_rewards(
         &self,
@@ -340,7 +461,29 @@ impl RewardCalculator {
 
         for ((_client_did, receipt_epoch), stats) in aggregated {
             if receipt_epoch == epoch {
+                // Compute weighted count for anomaly detection
+                let weighted_count =
+                    stats.proof_type_counts.hash_count * self.multipliers.hash +
+                    stats.proof_type_counts.merkle_count * self.multipliers.merkle +
+                    stats.proof_type_counts.signature_count * self.multipliers.signature +
+                    stats.proof_type_counts.web4_manifest_route_count * self.multipliers.web4_manifest_route +
+                    stats.proof_type_counts.web4_content_served_count * self.multipliers.web4_content_served;
+
                 let reward = self.calculate_reward(&stats);
+                let hit_cap = reward.raw_amount > self.pool_config.per_node_cap();
+
+                // Run anomaly detection — uses MIN_BYTES_PER_RECEIPT from policy default
+                self.record_and_check_anomalies(
+                    &stats.client_did,
+                    weighted_count,
+                    stats.total_bytes,
+                    reward.final_amount,
+                    epoch,
+                    hit_cap,
+                    super::types::DEFAULT_MIN_BYTES_PER_RECEIPT,
+                    stats.receipt_count,
+                ).await;
+
                 rewards.push(reward.clone());
 
                 // Store reward
@@ -467,6 +610,10 @@ mod tests {
             bytes_verified: bytes,
             validated_at: timestamp,
             challenge_nonce: vec![3u8; 32],
+            manifest_cid: None,
+            domain: None,
+            route_hops: None,
+            served_from_cache: None,
         }
     }
 
@@ -531,6 +678,8 @@ mod tests {
                 hash_count: 2,     // 2 * 1 = 2
                 merkle_count: 1,   // 1 * 2 = 2
                 signature_count: 1, // 1 * 3 = 3
+                web4_manifest_route_count: 0,
+                web4_content_served_count: 0,
             },
             receipts: vec![],
         };
@@ -553,19 +702,23 @@ mod tests {
             client_did: "did:zhtp:whale".to_string(),
             epoch: 0,
             total_bytes: 1_000_000_000,
-            receipt_count: 10000,
+            // Need enough receipts so raw_amount > POUW_PER_NODE_EPOCH_CAP (~59,931,506)
+            // 30,000 Signature receipts × 3 multiplier × 1000 base = 90,000,000 > cap
+            receipt_count: 30_000,
             proof_type_counts: ProofTypeCounts {
                 hash_count: 0,
                 merkle_count: 0,
-                signature_count: 10000, // 10000 * 3 = 30000 weighted
+                signature_count: 30_000, // 30000 * 3 * 1000 = 90_000_000 > cap
+                web4_manifest_route_count: 0,
+                web4_content_served_count: 0,
             },
             receipts: vec![],
         };
 
         let reward = calculator.calculate_reward(&stats);
 
-        // Raw: 1000 * 30000 = 30_000_000
-        // Should be capped at MAX_REWARD_PER_EPOCH
+        // Raw: 1000 * 90000 = 90_000_000
+        // Should be capped at POUW_PER_NODE_EPOCH_CAP
         assert!(reward.raw_amount > MAX_REWARD_PER_EPOCH);
         assert_eq!(reward.final_amount, MAX_REWARD_PER_EPOCH);
     }
@@ -584,6 +737,8 @@ mod tests {
                 hash_count: 1,
                 merkle_count: 0,
                 signature_count: 0,
+                web4_manifest_route_count: 0,
+                web4_content_served_count: 0,
             },
             receipts: vec![],
         };
