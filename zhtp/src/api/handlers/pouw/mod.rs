@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use async_trait::async_trait;
@@ -18,6 +19,9 @@ use crate::pouw::{
 pub struct PouwHandler {
     challenge_generator: Arc<ChallengeGenerator>,
     receipt_validator: Arc<RwLock<ReceiptValidator>>,
+    /// TODO: Wire up reward_calculator to calculate and distribute rewards for validated receipts.
+    /// This will be used in Phase 3 to aggregate receipts by epoch, apply proof type multipliers,
+    /// and trigger on-chain payouts. See zhtp/src/pouw/rewards.rs for implementation details.
     reward_calculator: Arc<RwLock<RewardCalculator>>,
     metrics: Arc<PouwMetrics>,
     rate_limiter: Arc<PouwRateLimiter>,
@@ -51,10 +55,98 @@ impl PouwHandler {
         params
     }
 
-    async fn handle_get_challenge(&self, _request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+    /// Extract client IP from request headers
+    fn extract_client_ip(request: &ZhtpRequest) -> IpAddr {
+        // Try X-Real-IP first (from reverse proxy)
+        if let Some(ip_str) = request.headers.get("X-Real-IP") {
+            if let Ok(ip) = ip_str.parse() {
+                return ip;
+            }
+        }
+
+        // Try X-Forwarded-For (may contain multiple IPs, take first)
+        if let Some(forwarded) = request.headers.get("X-Forwarded-For") {
+            if let Some(first_ip) = forwarded.split(',').next() {
+                if let Ok(ip) = first_ip.trim().parse() {
+                    return ip;
+                }
+            }
+        }
+
+        // Default to localhost if no IP headers are present
+        "127.0.0.1".parse().unwrap()
+    }
+
+    /// Extract client DID from request
+    fn extract_client_did(request: &ZhtpRequest) -> String {
+        // Try to get DID from requester identity first
+        if let Some(ref identity) = request.requester {
+            // Convert IdentityId to string representation
+            return format!("did:zhtp:{}", hex::encode(identity.as_bytes()));
+        }
+
+        // Fallback to header if present
+        if let Some(did) = request.headers.get("X-Client-DID") {
+            return did;
+        }
+
+        // Default DID for anonymous requests
+        "did:zhtp:anonymous".to_string()
+    }
+
+    async fn handle_get_challenge(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         debug!("Handling PoUW challenge request");
-        
-        let challenge = self.challenge_generator.generate_challenge(Some("hash"), None, None, None)
+
+        // Extract client information for rate limiting
+        let client_ip = Self::extract_client_ip(request);
+        let client_did = Self::extract_client_did(request);
+
+        // Check rate limits
+        let rate_check = self.rate_limiter.check_request(client_ip, &client_did).await;
+        if let crate::pouw::rate_limiter::RateLimitResult::Denied { reason, retry_after } = rate_check {
+            warn!(
+                ip = %client_ip,
+                did = %client_did,
+                reason = %reason,
+                "Rate limit exceeded for challenge request"
+            );
+            
+            let error_body = serde_json::json!({
+                "error": "Rate limit exceeded",
+                "reason": reason.to_string(),
+                "retry_after_seconds": retry_after.as_secs(),
+            });
+
+            let mut response = ZhtpResponse::error_json(ZhtpStatus::TooManyRequests, &error_body)
+                .map_err(|e| anyhow::anyhow!("Failed to create error response: {}", e))?;
+            
+            // Add Retry-After header
+            response.headers = response.headers.with_custom_header("Retry-After".to_string(), retry_after.as_secs().to_string());
+            
+            return Ok(response);
+        }
+
+        // Parse query parameters from the request URI to configure the challenge.
+        let params = Self::parse_query_params(&request.uri);
+
+        // Capability: default to "hash" if not provided.
+        let capability = params
+            .get("cap")
+            .map(|s| s.as_str())
+            .or(Some("hash"));
+
+        // Optional numeric limits from query parameters; invalid values are ignored.
+        let max_bytes = params
+            .get("max_bytes")
+            .and_then(|v| v.parse::<u64>().ok());
+
+        let max_receipts = params
+            .get("max_receipts")
+            .and_then(|v| v.parse::<u32>().ok());
+
+        let challenge = self
+            .challenge_generator
+            .generate_challenge(capability, max_bytes, max_receipts, None)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
 
@@ -71,8 +163,60 @@ impl PouwHandler {
     async fn handle_submit_receipt(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         debug!("Handling PoUW receipt submission");
 
+        // Extract client information for rate limiting
+        let client_ip = Self::extract_client_ip(request);
+        let client_did = Self::extract_client_did(request);
+
+        // Check rate limits
+        let rate_check = self.rate_limiter.check_request(client_ip, &client_did).await;
+        if let crate::pouw::rate_limiter::RateLimitResult::Denied { reason, retry_after } = rate_check {
+            warn!(
+                ip = %client_ip,
+                did = %client_did,
+                reason = %reason,
+                "Rate limit exceeded for receipt submission"
+            );
+            
+            let error_body = serde_json::json!({
+                "error": "Rate limit exceeded",
+                "reason": reason.to_string(),
+                "retry_after_seconds": retry_after.as_secs(),
+            });
+
+            let mut response = ZhtpResponse::error_json(ZhtpStatus::TooManyRequests, &error_body)
+                .map_err(|e| anyhow::anyhow!("Failed to create error response: {}", e))?;
+            
+            // Add Retry-After header
+            response.headers = response.headers.with_custom_header("Retry-After".to_string(), retry_after.as_secs().to_string());
+            
+            return Ok(response);
+        }
+
         let batch: ReceiptBatch = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        // Check batch size limit
+        let batch_size = batch.receipts.len();
+        let batch_check = self.rate_limiter.check_batch_size(batch_size);
+        if let crate::pouw::rate_limiter::RateLimitResult::Denied { reason, .. } = batch_check {
+            warn!(
+                ip = %client_ip,
+                did = %client_did,
+                batch_size = batch_size,
+                reason = %reason,
+                "Batch size limit exceeded for receipt submission"
+            );
+            
+            let error_body = serde_json::json!({
+                "error": "Batch size limit exceeded",
+                "reason": reason.to_string(),
+                "batch_size": batch_size,
+                "max_batch_size": 100, // From default config
+            });
+
+            return Ok(ZhtpResponse::error_json(ZhtpStatus::BadRequest, &error_body)
+                .map_err(|e| anyhow::anyhow!("Failed to create error response: {}", e))?);
+        }
 
         let validator = self.receipt_validator.read().await;
         let result = validator.validate_batch(&batch)
