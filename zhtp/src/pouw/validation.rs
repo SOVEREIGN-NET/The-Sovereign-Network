@@ -95,6 +95,8 @@ pub struct ReceiptValidator {
     identity_manager: Arc<RwLock<IdentityManager>>,
     /// Session log for proof-of-presence verification (Web4 proof types)
     session_log: Option<SharedSessionLog>,
+    /// Minimum identity age in seconds for reward eligibility (None = disabled)
+    min_identity_age_secs: Option<u64>,
 }
 
 /// A validated and accepted receipt
@@ -138,12 +140,20 @@ impl ReceiptValidator {
             dispute_log: Arc::new(RwLock::new(Vec::new())),
             identity_manager,
             session_log: None,
+            min_identity_age_secs: None,
         }
     }
 
     /// Attach a session log for proof-of-presence verification on Web4 receipts
     pub fn with_session_log(mut self, session_log: SharedSessionLog) -> Self {
         self.session_log = Some(session_log);
+        self
+    }
+
+    /// Enforce a minimum identity age for reward eligibility.
+    /// Receipts from identities newer than `min_age_secs` will be rejected with `ClientInvalid`.
+    pub fn with_min_identity_age(mut self, min_age_secs: u64) -> Self {
+        self.min_identity_age_secs = Some(min_age_secs);
         self
     }
 
@@ -219,12 +229,22 @@ impl ReceiptValidator {
 
         // Step 2: Client DID validation
         if receipt.client_did != batch_client_did {
-            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), RejectionReason::ClientInvalid, 
+            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), RejectionReason::ClientInvalid,
                 "Client DID mismatch with batch").await;
             return ReceiptValidationResult {
                 receipt_nonce: nonce_hex,
                 accepted: false,
                 rejection_reason: Some(RejectionReason::ClientInvalid),
+            };
+        }
+
+        // Step 2.1: Identity age enforcement (if configured)
+        if let Err(reason) = self.validate_identity_age(batch_client_did).await {
+            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), reason, "Identity too new for reward eligibility").await;
+            return ReceiptValidationResult {
+                receipt_nonce: nonce_hex,
+                accepted: false,
+                rejection_reason: Some(reason),
             };
         }
 
@@ -463,6 +483,31 @@ impl ReceiptValidator {
                 "Web4 receipt session ID not found or expired in session log"
             );
             return Err(RejectionReason::BadProof);
+        }
+
+        Ok(())
+    }
+
+    /// Step 2.1: Verify the client identity is old enough for reward eligibility
+    async fn validate_identity_age(&self, client_did: &str) -> Result<(), RejectionReason> {
+        let Some(min_age) = self.min_identity_age_secs else {
+            return Ok(()); // Age check disabled
+        };
+
+        let mgr = self.identity_manager.read().await;
+        let identity = mgr.get_identity_by_did(client_did)
+            .ok_or(RejectionReason::ClientInvalid)?;
+
+        let now = self.now_secs();
+        let age_secs = now.saturating_sub(identity.created_at);
+        if age_secs < min_age {
+            warn!(
+                client = %client_did,
+                age_secs = age_secs,
+                min_age_secs = min_age,
+                "Receipt rejected: identity too new for reward eligibility"
+            );
+            return Err(RejectionReason::ClientInvalid);
         }
 
         Ok(())
