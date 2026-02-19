@@ -893,6 +893,7 @@ impl ZhtpUnifiedServer {
             pouw_generator_arc,
             pouw_validator,
             pouw_calculator,
+            identity_manager.clone(),
         );
         zhtp_router.register_handler("/pouw".to_string(), Arc::new(pouw_handler));
 
