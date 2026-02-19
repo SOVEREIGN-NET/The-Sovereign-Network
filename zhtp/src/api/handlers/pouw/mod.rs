@@ -10,6 +10,7 @@ use hex;
 
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
+use lib_identity::IdentityManager;
 
 use crate::pouw::{
     ChallengeGenerator, ReceiptValidator, RewardCalculator,
@@ -19,12 +20,10 @@ use crate::pouw::{
 pub struct PouwHandler {
     challenge_generator: Arc<ChallengeGenerator>,
     receipt_validator: Arc<RwLock<ReceiptValidator>>,
-    /// TODO: Wire up reward_calculator to calculate and distribute rewards for validated receipts.
-    /// This will be used in Phase 3 to aggregate receipts by epoch, apply proof type multipliers,
-    /// and trigger on-chain payouts. See zhtp/src/pouw/rewards.rs for implementation details.
     reward_calculator: Arc<RwLock<RewardCalculator>>,
     metrics: Arc<PouwMetrics>,
     rate_limiter: Arc<PouwRateLimiter>,
+    identity_manager: Arc<RwLock<IdentityManager>>,
 }
 
 impl PouwHandler {
@@ -32,6 +31,7 @@ impl PouwHandler {
         challenge_generator: Arc<ChallengeGenerator>,
         receipt_validator: ReceiptValidator,
         reward_calculator: RewardCalculator,
+        identity_manager: Arc<RwLock<IdentityManager>>,
     ) -> Self {
         Self {
             challenge_generator,
@@ -39,6 +39,7 @@ impl PouwHandler {
             reward_calculator: Arc::new(RwLock::new(reward_calculator)),
             metrics: Arc::new(PouwMetrics::new()),
             rate_limiter: Arc::new(PouwRateLimiter::with_defaults()),
+            identity_manager,
         }
     }
 
@@ -92,6 +93,26 @@ impl PouwHandler {
 
         // Default DID for anonymous requests
         "did:zhtp:anonymous".to_string()
+    }
+
+    /// Validate client DID against identity registry
+    async fn validate_client_identity(&self, client_did: &str) -> Result<(), String> {
+        // Check DID format (did:sov:... or did:zhtp:...)
+        if !client_did.starts_with("did:sov:") && !client_did.starts_with("did:zhtp:") {
+            return Err(format!("Invalid DID format: must start with 'did:sov:' or 'did:zhtp:'"));
+        }
+
+        // Check if identity exists in registry
+        let identity_manager = self.identity_manager.read().await;
+        match identity_manager.get_identity_by_did(client_did) {
+            Some(_identity) => {
+                debug!("Client identity validated: {}", client_did);
+                Ok(())
+            }
+            None => {
+                Err(format!("Client DID not found in identity registry: {}", client_did))
+            }
+        }
     }
 
     async fn handle_get_challenge(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
@@ -194,6 +215,24 @@ impl PouwHandler {
 
         let batch: ReceiptBatch = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        // Validate client DID against identity registry
+        if let Err(e) = self.validate_client_identity(&batch.client_did).await {
+            warn!(
+                ip = %client_ip,
+                did = %client_did,
+                error = %e,
+                "Client identity validation failed"
+            );
+            
+            let error_body = serde_json::json!({
+                "error": "Invalid client identity",
+                "reason": e.to_string(),
+            });
+
+            return Ok(ZhtpResponse::error_json(ZhtpStatus::Unauthorized, &error_body)
+                .map_err(|e| anyhow::anyhow!("Failed to create error response: {}", e))?);
+        }
 
         // Check batch size limit
         let batch_size = batch.receipts.len();
@@ -315,7 +354,8 @@ mod tests {
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
         let validator = ReceiptValidator::new(generator.clone());
         let reward_calculator = RewardCalculator::new(1_700_000_000);
-        PouwHandler::new(generator, validator, reward_calculator)
+        let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
+        PouwHandler::new(generator, validator, reward_calculator, identity_manager)
     }
 
     #[test]
@@ -346,5 +386,36 @@ mod tests {
         let req = ZhtpRequest::get("/pouw/unknown".to_string(), None).unwrap();
         let resp = handler.handle_request(req).await.unwrap();
         assert_eq!(resp.status, ZhtpStatus::NotFound);
+    }
+
+    #[tokio::test]
+    async fn test_client_identity_validation() {
+        let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
+        let mut priv_arr = [0u8; 32];
+        let mut node_id = [0u8; 32];
+        priv_arr.copy_from_slice(&node_privkey[..32]);
+        node_id.copy_from_slice(&node_pubkey[..32]);
+        let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
+        let validator = ReceiptValidator::new(generator.clone());
+        let reward_calculator = RewardCalculator::new(1_700_000_000);
+        
+        // Create identity manager without pre-loaded identities (empty registry)
+        let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
+        
+        let handler = PouwHandler::new(generator, validator, reward_calculator, identity_manager);
+        
+        // Test invalid DID format - should fail format check
+        let result = handler.validate_client_identity("invalid-did").await;
+        assert!(result.is_err(), "Invalid DID format should be rejected");
+        assert!(result.unwrap_err().contains("Invalid DID format"), "Error should mention format");
+        
+        // Test valid format but non-existent DID - should fail registry check
+        let result = handler.validate_client_identity("did:sov:nonexistent").await;
+        assert!(result.is_err(), "Non-existent identity should be rejected");
+        assert!(result.unwrap_err().contains("not found"), "Error should mention not found");
+        
+        // Test did:zhtp: format - should also work
+        let result = handler.validate_client_identity("did:zhtp:test").await;
+        assert!(result.is_err(), "did:zhtp: format should pass format check but fail registry");
     }
 }
