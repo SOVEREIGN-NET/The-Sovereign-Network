@@ -27,6 +27,9 @@ pub struct PouwHandler {
 }
 
 impl PouwHandler {
+    const DEFAULT_PAGE_LIMIT: usize = 100;
+    const MAX_PAGE_LIMIT: usize = 1000;
+
     pub fn new(
         challenge_generator: Arc<ChallengeGenerator>,
         receipt_validator: ReceiptValidator,
@@ -54,6 +57,32 @@ impl PouwHandler {
             }
         }
         params
+    }
+
+    fn extract_path_param(uri: &str, prefix: &str) -> String {
+        let raw = uri
+            .strip_prefix(prefix)
+            .unwrap_or("")
+            .split('?')
+            .next()
+            .unwrap_or("");
+        urlencoding::decode(raw)
+            .unwrap_or_else(|_| std::borrow::Cow::Borrowed(raw))
+            .to_string()
+    }
+
+    fn parse_pagination(uri: &str) -> (usize, usize) {
+        let params = Self::parse_query_params(uri);
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(Self::DEFAULT_PAGE_LIMIT)
+            .min(Self::MAX_PAGE_LIMIT);
+        let offset = params
+            .get("offset")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        (limit, offset)
     }
 
     /// Extract client IP from request headers
@@ -97,22 +126,101 @@ impl PouwHandler {
 
     /// Validate client DID against identity registry
     async fn validate_client_identity(&self, client_did: &str) -> Result<(), String> {
-        // Check DID format (did:sov:... or did:zhtp:...)
-        if !client_did.starts_with("did:sov:") && !client_did.starts_with("did:zhtp:") {
-            return Err(format!("Invalid DID format: must start with 'did:sov:' or 'did:zhtp:'"));
+        // Check DID format (currently only did:zhtp:... is supported by identity registry)
+        if !client_did.starts_with("did:zhtp:") {
+            return Err("Invalid DID format: must start with 'did:zhtp:'".to_string());
         }
 
-        // Check if identity exists in registry
+        // Check if identity exists in registry, ensuring exact DID match.
         let identity_manager = self.identity_manager.read().await;
         match identity_manager.get_identity_by_did(client_did) {
-            Some(_identity) => {
-                debug!("Client identity validated: {}", client_did);
-                Ok(())
+            Some(identity) => {
+                if identity.did == client_did {
+                    debug!("Client identity validated: {}", client_did);
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "Client DID mismatch: requested {}, found {}",
+                        client_did, identity.did
+                    ))
+                }
             }
-            None => {
-                Err(format!("Client DID not found in identity registry: {}", client_did))
-            }
+            None => Err(format!("Client DID not found in identity registry: {}", client_did)),
         }
+    }
+
+    fn payout_status_str(status: crate::pouw::rewards::PayoutStatus) -> &'static str {
+        match status {
+            crate::pouw::rewards::PayoutStatus::Pending => "pending",
+            crate::pouw::rewards::PayoutStatus::Processing => "processing",
+            crate::pouw::rewards::PayoutStatus::Paid => "paid",
+            crate::pouw::rewards::PayoutStatus::Failed => "failed",
+        }
+    }
+
+    fn checked_reward_sum(
+        rewards: &[crate::pouw::rewards::Reward],
+        field: &str,
+        scope: &str,
+    ) -> u64 {
+        rewards
+            .iter()
+            .try_fold(0u64, |acc, r| acc.checked_add(r.final_amount))
+            .unwrap_or_else(|| {
+                warn!("Overflow calculating {} for {}", field, scope);
+                u64::MAX
+            })
+    }
+
+    async fn check_reward_query_access(
+        &self,
+        request: &ZhtpRequest,
+        target_did: &str,
+        op_name: &str,
+    ) -> Result<(), ZhtpResponse> {
+        let client_ip = Self::extract_client_ip(request);
+        let requester_did = Self::extract_client_did(request);
+        let rate_check = self.rate_limiter.check_request(client_ip, &requester_did).await;
+        if let crate::pouw::rate_limiter::RateLimitResult::Denied { reason, retry_after } = rate_check {
+            let mut response = ZhtpResponse::error_json(
+                ZhtpStatus::TooManyRequests,
+                &serde_json::json!({
+                    "error": "Rate limit exceeded",
+                    "reason": reason.to_string(),
+                    "retry_after_seconds": retry_after.as_secs(),
+                }),
+            )
+            .map_err(|_| ZhtpResponse::error(
+                ZhtpStatus::InternalServerError,
+                "Failed to create error response".to_string(),
+            ))?;
+            response.headers = response
+                .headers
+                .with_custom_header("Retry-After".to_string(), retry_after.as_secs().to_string());
+            return Err(response);
+        }
+
+        if requester_did == "did:zhtp:anonymous" {
+            return Err(ZhtpResponse::error(
+                ZhtpStatus::Unauthorized,
+                format!("{} requires authenticated requester DID", op_name),
+            ));
+        }
+        if requester_did != target_did {
+            return Err(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                format!("Requester DID {} cannot access {}", requester_did, target_did),
+            ));
+        }
+
+        if let Err(e) = self.validate_client_identity(target_did).await {
+            return Err(ZhtpResponse::error(
+                ZhtpStatus::Unauthorized,
+                format!("Invalid client identity: {}", e),
+            ));
+        }
+
+        Ok(())
     }
 
     async fn handle_get_challenge(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
@@ -318,18 +426,209 @@ impl PouwHandler {
         let body = serde_json::json!({"status": "ok"});
         Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
     }
+
+    /// Handle GET /pouw/rewards/{client_did} - Get rewards for a specific client
+    async fn handle_get_client_rewards(
+        &self,
+        request: &ZhtpRequest,
+        client_did: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        debug!("Getting rewards for client: {}", client_did);
+
+        if let Err(response) = self
+            .check_reward_query_access(request, client_did, "reward lookup")
+            .await
+        {
+            return Ok(response);
+        }
+
+        let (limit, offset) = Self::parse_pagination(&request.uri);
+        let calculator = self.reward_calculator.read().await;
+        let rewards = calculator.get_client_rewards(client_did).await;
+
+        let total_earned: u64 = Self::checked_reward_sum(
+            &rewards,
+            "total_earned",
+            &format!("client {}", client_did),
+        );
+        let paid_rewards: Vec<_> = rewards
+            .iter()
+            .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Paid)
+            .cloned()
+            .collect();
+        let total_paid: u64 = Self::checked_reward_sum(
+            &paid_rewards,
+            "total_paid",
+            &format!("client {}", client_did),
+        );
+
+        let total_rewards = rewards.len();
+        let page_rewards: Vec<_> = rewards.into_iter().skip(offset).take(limit).collect();
+
+        let reward_list: Vec<serde_json::Value> = page_rewards.iter().map(|r| {
+            serde_json::json!({
+                "reward_id": hex::encode(&r.reward_id),
+                "epoch": r.epoch,
+                "total_bytes": r.total_bytes,
+                "raw_amount": r.raw_amount,
+                "final_amount": r.final_amount,
+                "payout_status": Self::payout_status_str(r.payout_status),
+                "paid_at": r.paid_at,
+                "tx_hash": r.tx_hash.as_ref().map(|h| hex::encode(h)),
+            })
+        }).collect();
+
+        let body = serde_json::json!({
+            "client_did": client_did,
+            "total_rewards": total_rewards,
+            "total_earned": total_earned,
+            "total_paid": total_paid,
+            "pending": total_earned.saturating_sub(total_paid),
+            "limit": limit,
+            "offset": offset,
+            "rewards": reward_list,
+        });
+
+        Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
+    }
+
+    /// Handle GET /pouw/epochs/{epoch} - Get rewards for a specific epoch
+    async fn handle_get_epoch_rewards(
+        &self,
+        request: &ZhtpRequest,
+        epoch: u64,
+    ) -> ZhtpResult<ZhtpResponse> {
+        debug!("Getting rewards for epoch: {}", epoch);
+
+        let client_ip = Self::extract_client_ip(request);
+        let requester_did = Self::extract_client_did(request);
+        let rate_check = self.rate_limiter.check_request(client_ip, &requester_did).await;
+        if let crate::pouw::rate_limiter::RateLimitResult::Denied { reason, retry_after } = rate_check {
+            let mut response = ZhtpResponse::error_json(
+                ZhtpStatus::TooManyRequests,
+                &serde_json::json!({
+                    "error": "Rate limit exceeded",
+                    "reason": reason.to_string(),
+                    "retry_after_seconds": retry_after.as_secs(),
+                }),
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to create error response: {}", e))?;
+            response.headers = response
+                .headers
+                .with_custom_header("Retry-After".to_string(), retry_after.as_secs().to_string());
+            return Ok(response);
+        }
+
+        let (limit, offset) = Self::parse_pagination(&request.uri);
+        let calculator = self.reward_calculator.read().await;
+        let rewards = calculator.get_epoch_rewards(epoch).await;
+
+        let total_earned: u64 = Self::checked_reward_sum(
+            &rewards,
+            "total_earned",
+            &format!("epoch {}", epoch),
+        );
+        let paid_rewards: Vec<_> = rewards
+            .iter()
+            .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Paid)
+            .cloned()
+            .collect();
+        let total_paid: u64 = Self::checked_reward_sum(
+            &paid_rewards,
+            "total_paid",
+            &format!("epoch {}", epoch),
+        );
+        let total_rewards = rewards.len();
+        let page_rewards: Vec<_> = rewards.into_iter().skip(offset).take(limit).collect();
+
+        let reward_list: Vec<serde_json::Value> = page_rewards.iter().map(|r| {
+            serde_json::json!({
+                "reward_id": hex::encode(&r.reward_id),
+                "client_did": r.client_did,
+                "epoch": r.epoch,
+                "total_bytes": r.total_bytes,
+                "raw_amount": r.raw_amount,
+                "final_amount": r.final_amount,
+                "payout_status": Self::payout_status_str(r.payout_status),
+                "paid_at": r.paid_at,
+                "tx_hash": r.tx_hash.as_ref().map(|h| hex::encode(h)),
+            })
+        }).collect();
+
+        let body = serde_json::json!({
+            "epoch": epoch,
+            "total_rewards": total_rewards,
+            "total_earned": total_earned,
+            "total_paid": total_paid,
+            "pending": total_earned.saturating_sub(total_paid),
+            "limit": limit,
+            "offset": offset,
+            "rewards": reward_list,
+        });
+
+        Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
+    }
 }
 
 #[async_trait]
 impl ZhtpRequestHandler for PouwHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        match (request.method.as_str(), request.uri.as_str()) {
+        let uri = request.uri.as_str();
+        
+        // Handle routes with path parameters
+        if uri.starts_with("/pouw/rewards/") && request.method.as_str() == "GET" {
+            // GET /pouw/rewards/{client_did}
+            let client_did = Self::extract_path_param(uri, "/pouw/rewards/");
+            if client_did.is_empty() {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Missing client DID parameter".to_string(),
+                ));
+            }
+            return self.handle_get_client_rewards(&request, &client_did).await;
+        }
+        
+        if uri.starts_with("/pouw/rewards/") {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::MethodNotAllowed,
+                "Method not allowed for rewards endpoint".to_string(),
+            ));
+        }
+
+        if uri.starts_with("/pouw/epochs/") && request.method.as_str() == "GET" {
+            // GET /pouw/epochs/{epoch}
+            let epoch_str = Self::extract_path_param(uri, "/pouw/epochs/");
+            if epoch_str.is_empty() {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Missing epoch parameter: must be a valid number".to_string(),
+                ));
+            }
+            match epoch_str.parse::<u64>() {
+                Ok(epoch) => return self.handle_get_epoch_rewards(&request, epoch).await,
+                Err(_) => {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::BadRequest,
+                        "Invalid epoch parameter: must be a valid number".to_string(),
+                    ));
+                }
+            }
+        }
+
+        if uri.starts_with("/pouw/epochs/") {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::MethodNotAllowed,
+                "Method not allowed for epochs endpoint".to_string(),
+            ));
+        }
+        
+        match (request.method.as_str(), uri) {
             ("GET", "/pouw/challenge") => self.handle_get_challenge(&request).await,
             ("POST", "/pouw/submit") => self.handle_submit_receipt(&request).await,
             ("GET", "/pouw/health") => self.handle_health_check().await,
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
-                format!("Not found: {} {}", request.method, request.uri),
+                format!("Not found: {} {}", request.method, uri),
             ))
         }
     }
@@ -344,6 +643,30 @@ impl ZhtpRequestHandler for PouwHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pouw::types::ProofType;
+    use crate::pouw::validation::ValidatedReceipt;
+    use lib_identity::IdentityType;
+
+    async fn register_known_identity(
+        identity_manager: &Arc<RwLock<lib_identity::IdentityManager>>,
+        did: &str,
+    ) {
+        let keypair = lib_crypto::generate_keypair().expect("keypair");
+        let identity_id = lib_identity::did::parse_did_to_identity_id(did).expect("did parse");
+        identity_manager
+            .write()
+            .await
+            .register_external_identity(
+                identity_id,
+                did.to_string(),
+                keypair.public_key,
+                IdentityType::Human,
+                "test-device".to_string(),
+                Some("test-user".to_string()),
+                1_700_000_000,
+            )
+            .expect("register external identity");
+    }
 
     fn build_test_handler() -> PouwHandler {
         let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
@@ -398,10 +721,13 @@ mod tests {
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
         let validator = ReceiptValidator::new(generator.clone());
         let reward_calculator = RewardCalculator::new(1_700_000_000);
-        
-        // Create identity manager without pre-loaded identities (empty registry)
         let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
-        
+        register_known_identity(
+            &identity_manager,
+            "did:zhtp:1111111111111111111111111111111111111111111111111111111111111111",
+        )
+        .await;
+
         let handler = PouwHandler::new(generator, validator, reward_calculator, identity_manager);
         
         // Test invalid DID format - should fail format check
@@ -409,13 +735,123 @@ mod tests {
         assert!(result.is_err(), "Invalid DID format should be rejected");
         assert!(result.unwrap_err().contains("Invalid DID format"), "Error should mention format");
         
-        // Test valid format but non-existent DID - should fail registry check
-        let result = handler.validate_client_identity("did:sov:nonexistent").await;
+        // Test valid format but non-existent DID - should fail registry check.
+        let result = handler
+            .validate_client_identity("did:zhtp:2222222222222222222222222222222222222222222222222222222222222222")
+            .await;
         assert!(result.is_err(), "Non-existent identity should be rejected");
         assert!(result.unwrap_err().contains("not found"), "Error should mention not found");
         
-        // Test did:zhtp: format - should also work
-        let result = handler.validate_client_identity("did:zhtp:test").await;
-        assert!(result.is_err(), "did:zhtp: format should pass format check but fail registry");
+        // Test known DID success path.
+        let result = handler
+            .validate_client_identity("did:zhtp:1111111111111111111111111111111111111111111111111111111111111111")
+            .await;
+        assert!(result.is_ok(), "Known identity in registry should be accepted");
+    }
+
+    #[tokio::test]
+    async fn rewards_endpoint_returns_client_data() {
+        let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
+        let mut priv_arr = [0u8; 32];
+        let mut node_id = [0u8; 32];
+        priv_arr.copy_from_slice(&node_privkey[..32]);
+        node_id.copy_from_slice(&node_pubkey[..32]);
+        let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
+        let validator = ReceiptValidator::new(generator.clone());
+        let reward_calculator = RewardCalculator::new(1_700_000_000);
+        let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
+        let client_did = "did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        register_known_identity(&identity_manager, client_did).await;
+        let handler = PouwHandler::new(generator, validator, reward_calculator, identity_manager);
+
+        {
+            let calc = handler.reward_calculator.read().await;
+            let validated = vec![ValidatedReceipt {
+                receipt_nonce: vec![1u8; 16],
+                client_did: client_did.to_string(),
+                task_id: vec![2u8; 16],
+                proof_type: ProofType::Hash,
+                bytes_verified: 4096,
+                validated_at: 1_700_003_601,
+                challenge_nonce: vec![3u8; 16],
+            }];
+            let _ = calc.calculate_epoch_rewards(&validated, 1).await.unwrap();
+        }
+
+        let mut req = ZhtpRequest::get(
+            format!("/pouw/rewards/{}?limit=10&offset=0", urlencoding::encode(client_did)),
+            None,
+        )
+        .unwrap();
+        req.headers = req
+            .headers
+            .with_custom_header("x-client-did".to_string(), client_did.to_string());
+        let resp = handler.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Ok);
+
+        let body: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
+        assert_eq!(body["client_did"], client_did);
+        assert!(body["total_rewards"].as_u64().unwrap() >= 1);
+        assert!(body["total_earned"].as_u64().unwrap() >= body["total_paid"].as_u64().unwrap());
+        assert_eq!(
+            body["pending"].as_u64().unwrap(),
+            body["total_earned"].as_u64().unwrap() - body["total_paid"].as_u64().unwrap()
+        );
+        assert!(body["rewards"].is_array());
+    }
+
+    #[tokio::test]
+    async fn epoch_endpoint_returns_epoch_data() {
+        let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
+        let mut priv_arr = [0u8; 32];
+        let mut node_id = [0u8; 32];
+        priv_arr.copy_from_slice(&node_privkey[..32]);
+        node_id.copy_from_slice(&node_pubkey[..32]);
+        let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
+        let validator = ReceiptValidator::new(generator.clone());
+        let reward_calculator = RewardCalculator::new(1_700_000_000);
+        let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
+        let client_did = "did:zhtp:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        register_known_identity(&identity_manager, client_did).await;
+        let handler = PouwHandler::new(generator, validator, reward_calculator, identity_manager);
+
+        {
+            let calc = handler.reward_calculator.read().await;
+            let validated = vec![ValidatedReceipt {
+                receipt_nonce: vec![5u8; 16],
+                client_did: client_did.to_string(),
+                task_id: vec![6u8; 16],
+                proof_type: ProofType::Merkle,
+                bytes_verified: 8192,
+                validated_at: 1_700_025_201,
+                challenge_nonce: vec![7u8; 16],
+            }];
+            let _ = calc.calculate_epoch_rewards(&validated, 7).await.unwrap();
+        }
+
+        let mut req = ZhtpRequest::get("/pouw/epochs/7?limit=10&offset=0".to_string(), None).unwrap();
+        req.headers = req
+            .headers
+            .with_custom_header("x-client-did".to_string(), client_did.to_string());
+        let resp = handler.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Ok);
+
+        let body: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
+        assert_eq!(body["epoch"], 7);
+        assert!(body["total_rewards"].as_u64().unwrap() >= 1);
+        assert!(body["total_earned"].as_u64().unwrap() >= body["total_paid"].as_u64().unwrap());
+        assert_eq!(
+            body["pending"].as_u64().unwrap(),
+            body["total_earned"].as_u64().unwrap() - body["total_paid"].as_u64().unwrap()
+        );
+        assert!(body["rewards"].is_array());
+    }
+
+    #[tokio::test]
+    async fn epoch_endpoint_rejects_invalid_epoch_param() {
+        let handler = build_test_handler();
+        let req = ZhtpRequest::get("/pouw/epochs/not-a-number".to_string(), None).unwrap();
+        let resp = handler.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::BadRequest);
     }
 }
