@@ -831,37 +831,10 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/v1/protocol".to_string(), protocol_handler);
 
-        // FIXME(regression): RuntimeOrchestrator creation with default config causes panic
-        // because config.node_type is None. The unified server is initialized before the
-        // main RuntimeOrchestrator, so creating a second one here with NodeConfig::default()
-        // triggers the "NodeType must be set" panic in RuntimeOrchestrator::new().
-        //
-        // Temporary fix: Comment out NetworkHandler and MeshHandler registration until
-        // the architecture is refactored to either:
-        // 1. Pass the properly configured RuntimeOrchestrator to UnifiedServer::new(), or
-        // 2. Remove the RuntimeOrchestrator dependency from these handlers
-        //
-        // These handlers are not critical for core node operation (blockchain, identity,
-        // wallet, token, DAO, storage, crypto, zkp, web4, validator APIs still work).
-        //
-        // Tracked in: https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/TBD
-
-        // let runtime_config = crate::config::NodeConfig::default();
-        // let runtime = Arc::new(crate::runtime::RuntimeOrchestrator::new(runtime_config).await?);
-        //
-        // // Network management (gas pricing, peers, sync metrics)
-        // let network_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-        //     crate::api::handlers::NetworkHandler::new(runtime.clone())
-        // );
-        // zhtp_router.register_handler("/api/v1/network".to_string(), network_handler.clone());
-        // zhtp_router.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
-        // zhtp_router.register_handler("/api/v1/blockchain/sync".to_string(), network_handler);
-        //
-        // // Mesh blockchain operations
-        // let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-        //     crate::api::handlers::MeshHandler::new(runtime.clone())
-        // );
-        // zhtp_router.register_handler("/api/v1/mesh".to_string(), mesh_handler);
+        // NOTE: NetworkHandler and MeshHandler require RuntimeOrchestrator, which is not
+        // available during UnifiedServer construction (it's created later in the startup flow).
+        // These handlers are registered via register_runtime_handlers() after the
+        // RuntimeOrchestrator becomes available.
 
         // PoUW (Proof-of-Useful-Work) handler
         // Derive node key/id from identity manager; never use shared placeholder material.
@@ -1543,7 +1516,43 @@ impl ZhtpUnifiedServer {
         info!("🔧 Configuring edge sync mode: max_headers={}", max_headers);
         self.mesh_router.set_edge_sync_mode(max_headers).await;
     }
-    
+
+    /// Register runtime-dependent handlers after RuntimeOrchestrator becomes available.
+    ///
+    /// NetworkHandler and MeshHandler require Arc<RuntimeOrchestrator> which is created
+    /// after UnifiedServer initialization, so these handlers are registered via this
+    /// deferred registration method.
+    pub async fn register_runtime_handlers(
+        &mut self,
+        runtime: Arc<crate::runtime::RuntimeOrchestrator>
+    ) -> Result<()> {
+        use crate::api::handlers::{NetworkHandler, MeshHandler};
+        use lib_protocols::zhtp::ZhtpRequestHandler;
+
+        info!("🔌 Registering runtime-dependent API handlers...");
+
+        // Get mutable access to the ZHTP router via QuicHandler getter
+        let zhtp_router = self.quic_handler.get_zhtp_router();
+        let mut router_write = zhtp_router.write().await;
+
+        // Network management (gas pricing, peers, sync metrics)
+        let network_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            NetworkHandler::new(runtime.clone())
+        );
+        router_write.register_handler("/api/v1/network".to_string(), network_handler.clone());
+        router_write.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
+        router_write.register_handler("/api/v1/blockchain/sync".to_string(), network_handler);
+
+        // Mesh blockchain operations
+        let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            MeshHandler::new(runtime)
+        );
+        router_write.register_handler("/api/v1/mesh".to_string(), mesh_handler);
+
+        info!("✅ Runtime-dependent handlers registered: NetworkHandler, MeshHandler");
+        Ok(())
+    }
+
     /// Get server information
     pub fn get_server_info(&self) -> (Uuid, u16) {
         (self.server_id, self.port)

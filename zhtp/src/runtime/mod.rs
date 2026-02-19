@@ -2114,12 +2114,16 @@ impl RuntimeOrchestrator {
                     if component_id == ComponentId::Protocols {
                         // Give mesh server a moment to fully initialize
                         tokio::time::sleep(Duration::from_millis(500)).await;
-                        
+
                         if let Err(e) = self.start_reward_orchestrator().await {
                             warn!("Failed to start reward orchestrator: {}", e);
                         } else {
                             info!(" Reward orchestrator started (mesh server ready for statistics)");
                         }
+
+                        // NOTE: Runtime-dependent handlers (NetworkHandler, MeshHandler) are now
+                        // registered from main.rs after wrapping RuntimeOrchestrator in Arc.
+                        // See register_runtime_handlers() call in main.rs after node startup.
                     }
                     
                     // Sync wallet balances from blockchain after BLOCKCHAIN component starts
@@ -3064,6 +3068,35 @@ impl RuntimeOrchestrator {
 
         info!("Unified reward orchestrator started successfully");
         Ok(())
+    }
+
+    /// Register runtime-dependent handlers on ProtocolsComponent
+    ///
+    /// Called after ProtocolsComponent has started to register handlers that require
+    /// Arc<RuntimeOrchestrator> (NetworkHandler, MeshHandler). These handlers couldn't
+    /// be registered during UnifiedServer construction because RuntimeOrchestrator
+    /// wasn't available yet.
+    ///
+    /// This must be called from main.rs or another location that has access to
+    /// Arc<RuntimeOrchestrator>.
+    pub async fn register_runtime_handlers(
+        &self,
+        runtime_arc: Arc<RuntimeOrchestrator>
+    ) -> Result<()> {
+        use std::any::Any;
+
+        // Get ProtocolsComponent from the components HashMap
+        let components = self.components.read().await;
+        let component = components.get(&ComponentId::Protocols)
+            .ok_or_else(|| anyhow::anyhow!("ProtocolsComponent not found"))?;
+
+        // Downcast to ProtocolsComponent
+        let protocols_component = component.as_any()
+            .downcast_ref::<crate::runtime::components::ProtocolsComponent>()
+            .ok_or_else(|| anyhow::anyhow!("Failed to downcast to ProtocolsComponent"))?;
+
+        // Register the runtime handlers on the protocols component
+        protocols_component.register_runtime_handlers(runtime_arc).await
     }
 
     /// Stop the unified reward orchestrator
