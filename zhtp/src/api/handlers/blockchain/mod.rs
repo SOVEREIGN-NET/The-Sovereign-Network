@@ -16,8 +16,11 @@ use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 // Blockchain imports
 use lib_blockchain::types::Hash;
 use lib_blockchain::Blockchain;
-use lib_blockchain::transaction::Transaction;
-use lib_blockchain::types::transaction_type::TransactionType;
+use lib_blockchain::integration::crypto_integration::Signature as BlockchainSignature;
+use lib_blockchain::transaction::{
+    ContractDeploymentPayloadV1, Transaction, CONTRACT_DEPLOYMENT_MEMO_PREFIX,
+};
+use lib_blockchain::types::{transaction_type::TransactionType, ContractCall, ContractType};
 
 /// Clean blockchain handler implementation
 ///
@@ -554,22 +557,99 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
 }
 
 impl BlockchainHandler {
-    fn decode_transaction_hex(hex_data: &str) -> Result<Transaction> {
+    fn decode_canonical_transaction_hex(hex_data: &str) -> Result<Transaction> {
         let tx_bytes = hex::decode(hex_data)
             .map_err(|_| anyhow::anyhow!("Invalid hex transaction data"))?;
+        bincode::deserialize::<Transaction>(&tx_bytes)
+            .map_err(|_| anyhow::anyhow!("Invalid transaction encoding (expected canonical bincode)"))
+    }
 
-        if let Ok(tx) = serde_json::from_slice::<Transaction>(&tx_bytes) {
-            return Ok(tx);
+    fn decode_contract_execution_call(memo: &[u8]) -> Result<(ContractCall, BlockchainSignature)> {
+        if memo.len() <= 4 || &memo[0..4] != b"ZHTP" {
+            return Err(anyhow::anyhow!(
+                "ContractExecution memo must start with canonical ZHTP prefix"
+            ));
+        }
+        let call_data = &memo[4..];
+        let (call, memo_sig): (ContractCall, BlockchainSignature) = bincode::deserialize(call_data)
+            .map_err(|_| anyhow::anyhow!(
+                "ContractExecution memo must contain canonical bincode((ContractCall, Signature))"
+            ))?;
+        Ok((call, memo_sig))
+    }
+
+    fn decode_contract_deployment_payload_compat(
+        memo: &[u8],
+    ) -> Result<ContractDeploymentPayloadV1> {
+        if let Ok(payload) = ContractDeploymentPayloadV1::decode_memo(memo) {
+            return Ok(payload);
+        }
+        if !memo.starts_with(CONTRACT_DEPLOYMENT_MEMO_PREFIX) {
+            return Err(anyhow::anyhow!("missing deployment memo prefix"));
+        }
+        let payload_bytes = &memo[CONTRACT_DEPLOYMENT_MEMO_PREFIX.len()..];
+        let payload: ContractDeploymentPayloadV1 = bincode::deserialize(payload_bytes).map_err(
+            |_| anyhow::anyhow!("invalid deployment payload encoding"),
+        )?;
+        payload
+            .validate()
+            .map_err(|e| anyhow::anyhow!("invalid deployment payload: {e}"))?;
+        Ok(payload)
+    }
+
+    fn validate_canonical_contract_payload(
+        transaction: &Transaction,
+        expected_type: TransactionType,
+        expected_contract_id: Option<[u8; 32]>,
+    ) -> Result<()> {
+        if transaction.transaction_type != expected_type {
+            return Err(anyhow::anyhow!(
+                "Expected {:?} transaction, got {:?}",
+                expected_type,
+                transaction.transaction_type
+            ));
         }
 
-        bincode::deserialize::<Transaction>(&tx_bytes)
-            .map_err(|_| anyhow::anyhow!("Invalid transaction encoding (expected JSON or bincode)"))
+        match transaction.transaction_type {
+            TransactionType::ContractDeployment => {
+                Self::decode_contract_deployment_payload_compat(&transaction.memo).map_err(
+                    |e| anyhow::anyhow!("ContractDeployment requires canonical deployment memo: {e}"),
+                )?;
+            }
+            TransactionType::ContractExecution => {
+                let (call, memo_sig) = Self::decode_contract_execution_call(&transaction.memo)?;
+                if memo_sig.public_key.key_id != transaction.signature.public_key.key_id {
+                    return Err(anyhow::anyhow!(
+                        "ContractExecution memo signer must match transaction signer"
+                    ));
+                }
+                if call.contract_type == ContractType::Token
+                    && matches!(
+                        call.method.as_str(),
+                        "create_custom_token" | "mint" | "transfer" | "burn"
+                    )
+                {
+                    return Err(anyhow::anyhow!(
+                        "Token contract mutation via ContractExecution is deprecated; use canonical typed token transactions"
+                    ));
+                }
+                if let Some(contract_id) = expected_contract_id {
+                    if contract_id == [0u8; 32] {
+                        return Err(anyhow::anyhow!("Contract ID must not be all zeros"));
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 
     async fn submit_canonical_contract_transaction(
         &self,
         request: ZhtpRequest,
         expected_type: TransactionType,
+        expected_contract_id: Option<[u8; 32]>,
         success_message: &str,
     ) -> Result<ZhtpResponse> {
         let req_data: ContractTransactionRequest = serde_json::from_slice(&request.body)
@@ -577,15 +657,15 @@ impl BlockchainHandler {
                 "Invalid request body. Expected JSON: {{\"transaction_data\":\"<hex>\"}}"
             ))?;
 
-        let transaction = Self::decode_transaction_hex(&req_data.transaction_data)?;
-
-        if transaction.transaction_type != expected_type {
+        let transaction = Self::decode_canonical_transaction_hex(&req_data.transaction_data)?;
+        if let Err(e) = Self::validate_canonical_contract_payload(
+            &transaction,
+            expected_type,
+            expected_contract_id,
+        ) {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
-                format!(
-                    "Expected {:?} transaction, got {:?}",
-                    expected_type, transaction.transaction_type
-                ),
+                e.to_string(),
             ));
         }
 
@@ -1970,15 +2050,21 @@ impl BlockchainHandler {
         self.submit_canonical_contract_transaction(
             request,
             TransactionType::ContractDeployment,
+            None,
             "Contract deployment transaction accepted to mempool",
         ).await
     }
 
     /// Call a smart contract function
     async fn handle_call_contract(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let (_, contract_id) = match Self::extract_contract_id_from_request_uri(&request.uri) {
+            Ok(parts) => parts,
+            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+        };
         self.submit_canonical_contract_transaction(
             request,
             TransactionType::ContractExecution,
+            Some(contract_id),
             "Contract execution transaction accepted to mempool",
         ).await
     }
@@ -2558,5 +2644,143 @@ impl BlockchainHandler {
             "application/json".to_string(),
             None,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lib_blockchain::integration::crypto_integration::PublicKey;
+    use lib_blockchain::{TransactionInput, TransactionOutput};
+    use lib_crypto::SignatureAlgorithm;
+
+    fn test_signature(seed: u8) -> BlockchainSignature {
+        BlockchainSignature {
+            signature: vec![seed; 64],
+            public_key: PublicKey::new(vec![seed; 2592]),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        }
+    }
+
+    fn test_output(recipient: PublicKey) -> TransactionOutput {
+        TransactionOutput {
+            commitment: Hash::from_slice(b"test-commitment"),
+            note: Hash::from_slice(b"test-note"),
+            recipient,
+        }
+    }
+
+    fn build_contract_tx(
+        tx_type: TransactionType,
+        memo: Vec<u8>,
+        signature: BlockchainSignature,
+    ) -> Transaction {
+        Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: tx_type,
+            inputs: vec![TransactionInput {
+                previous_output: Hash::from_slice(b"prev"),
+                output_index: 0,
+                nullifier: Hash::from_slice(b"nullifier"),
+                zk_proof: lib_blockchain::integration::zk_integration::ZkTransactionProof::default(),
+            }],
+            outputs: vec![test_output(signature.public_key.clone())],
+            fee: 1000,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    #[test]
+    fn validate_contract_deploy_requires_canonical_memo() {
+        let sig = test_signature(1);
+        let payload = ContractDeploymentPayloadV1 {
+            contract_type: "wasm".to_string(),
+            code: vec![1, 2, 3],
+            abi: b"{}".to_vec(),
+            init_args: vec![],
+            gas_limit: 1,
+            memory_limit_bytes: 1024,
+        };
+        let memo = payload.encode_memo().unwrap();
+        let tx = build_contract_tx(TransactionType::ContractDeployment, memo, sig);
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractDeployment,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "canonical deployment payload must validate, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn validate_contract_deploy_rejects_noncanonical_memo() {
+        let sig = test_signature(2);
+        let tx = build_contract_tx(
+            TransactionType::ContractDeployment,
+            b"ZHTPlegacy".to_vec(),
+            sig,
+        );
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractDeployment,
+            None,
+        );
+        assert!(result.is_err(), "non-canonical deployment memo must be rejected");
+    }
+
+    #[test]
+    fn validate_contract_call_rejects_invalid_memo_encoding() {
+        let sig = test_signature(3);
+        let tx = build_contract_tx(
+            TransactionType::ContractExecution,
+            b"bad-memo".to_vec(),
+            sig,
+        );
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractExecution,
+            Some([1u8; 32]),
+        );
+        assert!(result.is_err(), "invalid execution memo must be rejected");
+    }
+
+    #[test]
+    fn validate_contract_call_rejects_token_mutation_via_contract_execution() {
+        let sig = test_signature(4);
+        let call = ContractCall::token_call("mint".to_string(), vec![1, 2, 3]);
+        let memo_tuple = (call, sig.clone());
+        let mut memo = b"ZHTP".to_vec();
+        memo.extend(bincode::serialize(&memo_tuple).unwrap());
+        let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractExecution,
+            Some([2u8; 32]),
+        );
+        assert!(
+            result.is_err(),
+            "deprecated token mutation method via ContractExecution must be rejected"
+        );
     }
 }
