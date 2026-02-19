@@ -3,8 +3,13 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
+
+/// Minimum identity age in seconds before a DID is eligible for PoUW rewards.
+/// Default: 86400s = 24 hours. Prevents Sybil attacks from freshly registered DIDs.
+pub const MIN_IDENTITY_AGE_SECS: u64 = 86_400;
 use async_trait::async_trait;
 use hex;
 
@@ -135,15 +140,35 @@ impl PouwHandler {
         let identity_manager = self.identity_manager.read().await;
         match identity_manager.get_identity_by_did(client_did) {
             Some(identity) => {
-                if identity.did == client_did {
-                    debug!("Client identity validated: {}", client_did);
-                    Ok(())
-                } else {
-                    Err(format!(
+                if identity.did != client_did {
+                    return Err(format!(
                         "Client DID mismatch: requested {}, found {}",
                         client_did, identity.did
-                    ))
+                    ));
                 }
+
+                // Identity age check: reject DIDs registered less than MIN_IDENTITY_AGE_SECS ago.
+                // Prevents Sybil attacks from freshly created identities.
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let age_secs = now.saturating_sub(identity.created_at);
+                if age_secs < MIN_IDENTITY_AGE_SECS {
+                    warn!(
+                        did = %client_did,
+                        age_secs = age_secs,
+                        required_secs = MIN_IDENTITY_AGE_SECS,
+                        "PoUW reward rejected: identity too new"
+                    );
+                    return Err(format!(
+                        "Identity too new for reward eligibility: {} seconds old, minimum {} seconds required",
+                        age_secs, MIN_IDENTITY_AGE_SECS
+                    ));
+                }
+
+                debug!("Client identity validated: {}", client_did);
+                Ok(())
             }
             None => Err(format!("Client DID not found in identity registry: {}", client_did)),
         }
