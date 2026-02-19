@@ -2,10 +2,10 @@
 //!
 //! Defines the fundamental transaction data structures used in the ZHTP blockchain.
 
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
-use crate::types::{Hash, transaction_type::TransactionType};
-use crate::integration::crypto_integration::{Signature, PublicKey};
+use crate::integration::crypto_integration::{PublicKey, Signature};
 use crate::integration::zk_integration::ZkTransactionProof;
+use crate::types::{transaction_type::TransactionType, Hash};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Zero-knowledge transaction with identity support
 #[derive(Debug, Clone)]
@@ -74,7 +74,11 @@ impl Serialize for Transaction {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeTuple;
 
-        let field_count = if self.version >= 2 { TX_FIELD_COUNT_V2 } else { TX_FIELD_COUNT_V1 };
+        let field_count = if self.version >= 2 {
+            TX_FIELD_COUNT_V2
+        } else {
+            TX_FIELD_COUNT_V1
+        };
         let mut tup = serializer.serialize_tuple(field_count)?;
 
         tup.serialize_element(&self.version)?;
@@ -122,27 +126,29 @@ impl<'de> Deserialize<'de> for Transaction {
 
                 macro_rules! next {
                     ($name:literal) => {
-                        seq.next_element()?.ok_or_else(|| A::Error::missing_field($name))?
+                        seq.next_element()?
+                            .ok_or_else(|| A::Error::missing_field($name))?
                     };
                 }
 
-                let version: u32                                      = next!("version");
-                let chain_id: u8                                      = next!("chain_id");
-                let transaction_type: TransactionType                 = next!("transaction_type");
-                let inputs: Vec<TransactionInput>                     = next!("inputs");
-                let outputs: Vec<TransactionOutput>                   = next!("outputs");
-                let fee: u64                                          = next!("fee");
-                let signature: Signature                              = next!("signature");
-                let memo: Vec<u8>                                     = next!("memo");
-                let identity_data: Option<IdentityTransactionData>    = next!("identity_data");
-                let wallet_data: Option<WalletTransactionData>        = next!("wallet_data");
-                let validator_data: Option<ValidatorTransactionData>  = next!("validator_data");
-                let dao_proposal_data: Option<DaoProposalData>        = next!("dao_proposal_data");
-                let dao_vote_data: Option<DaoVoteData>                = next!("dao_vote_data");
-                let dao_execution_data: Option<DaoExecutionData>      = next!("dao_execution_data");
-                let ubi_claim_data: Option<UbiClaimData>              = next!("ubi_claim_data");
-                let profit_declaration_data: Option<ProfitDeclarationData> = next!("profit_declaration_data");
-                let token_transfer_data: Option<TokenTransferData>    = next!("token_transfer_data");
+                let version: u32 = next!("version");
+                let chain_id: u8 = next!("chain_id");
+                let transaction_type: TransactionType = next!("transaction_type");
+                let inputs: Vec<TransactionInput> = next!("inputs");
+                let outputs: Vec<TransactionOutput> = next!("outputs");
+                let fee: u64 = next!("fee");
+                let signature: Signature = next!("signature");
+                let memo: Vec<u8> = next!("memo");
+                let identity_data: Option<IdentityTransactionData> = next!("identity_data");
+                let wallet_data: Option<WalletTransactionData> = next!("wallet_data");
+                let validator_data: Option<ValidatorTransactionData> = next!("validator_data");
+                let dao_proposal_data: Option<DaoProposalData> = next!("dao_proposal_data");
+                let dao_vote_data: Option<DaoVoteData> = next!("dao_vote_data");
+                let dao_execution_data: Option<DaoExecutionData> = next!("dao_execution_data");
+                let ubi_claim_data: Option<UbiClaimData> = next!("ubi_claim_data");
+                let profit_declaration_data: Option<ProfitDeclarationData> =
+                    next!("profit_declaration_data");
+                let token_transfer_data: Option<TokenTransferData> = next!("token_transfer_data");
 
                 // V2 added token_mint_data between token_transfer_data and governance_config_data.
                 // V1 data (version < 2) does not contain it; skip reading and default to None.
@@ -152,7 +158,8 @@ impl<'de> Deserialize<'de> for Transaction {
                     None
                 };
 
-                let governance_config_data: Option<GovernanceConfigUpdateData> = next!("governance_config_data");
+                let governance_config_data: Option<GovernanceConfigUpdateData> =
+                    next!("governance_config_data");
 
                 Ok(Transaction {
                     version,
@@ -445,7 +452,10 @@ impl GovernanceConfigUpdateData {
             }
             GovernanceConfigOperation::SetTransferPolicy { policy } => {
                 // Only allowed policies (not ComplianceGated)
-                matches!(policy.as_str(), "Free" | "AllowlistOnly" | "NonTransferable")
+                matches!(
+                    policy.as_str(),
+                    "Free" | "AllowlistOnly" | "NonTransferable"
+                )
             }
             GovernanceConfigOperation::SetPaused { .. } => {
                 // Always valid
@@ -462,6 +472,74 @@ impl GovernanceConfigUpdateData {
             GovernanceConfigOperation::SetPaused { .. } => "set_paused",
         }
     }
+}
+
+/// Token swap data - exchange one token for another via AMM pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenSwapData {
+    /// Pool token ID (the token being swapped to)
+    pub pool_token_id: [u8; 32],
+    /// Amount of input token to swap
+    pub amount_in: u128,
+    /// Minimum amount expected out (slippage protection)
+    pub min_amount_out: u128,
+    /// Is this swapping SOV -> Token (true) or Token -> SOV (false)
+    pub sov_to_token: bool,
+    /// Sender's address
+    pub from: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Create pool data - initialize a new AMM liquidity pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatePoolData {
+    /// Token ID for the pool (must not already exist)
+    pub token_id: [u8; 32],
+    /// Initial SOV liquidity provided
+    pub initial_sov_liquidity: u128,
+    /// Initial token liquidity provided
+    pub initial_token_liquidity: u128,
+    /// Fee tier in basis points (100 = 1%, max 1000 = 10%)
+    pub fee_bps: u16,
+    /// Creator's address
+    pub creator: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Add liquidity data - add funds to an existing AMM pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddLiquidityData {
+    /// Pool token ID
+    pub pool_token_id: [u8; 32],
+    /// Amount of SOV to add
+    pub sov_amount: u128,
+    /// Amount of pool token to add
+    pub token_amount: u128,
+    /// Minimum SOV to receive as LP tokens (slippage protection)
+    pub min_lp_tokens: u128,
+    /// Provider's address
+    pub provider: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Remove liquidity data - withdraw funds from an AMM pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveLiquidityData {
+    /// Pool token ID
+    pub pool_token_id: [u8; 32],
+    /// Amount of LP tokens to burn
+    pub lp_tokens: u128,
+    /// Minimum SOV to receive (slippage protection)
+    pub min_sov_out: u128,
+    /// Minimum token to receive (slippage protection)
+    pub min_token_out: u128,
+    /// Provider's address
+    pub provider: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
 }
 
 impl TokenTransferData {
@@ -668,7 +746,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -699,7 +777,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -732,7 +810,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -781,7 +859,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -812,7 +890,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -860,7 +938,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -970,7 +1048,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -1003,7 +1081,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -1011,7 +1089,7 @@ impl Transaction {
     /// Create a new validator unregister transaction
     pub fn new_validator_unregister(
         validator_data: ValidatorTransactionData,
-        inputs: Vec<TransactionInput>, // Authorization
+        inputs: Vec<TransactionInput>,   // Authorization
         outputs: Vec<TransactionOutput>, // Stake return
         fee: u64,
         signature: Signature,
@@ -1036,7 +1114,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -1069,7 +1147,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -1102,7 +1180,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -1110,7 +1188,7 @@ impl Transaction {
     /// Create a new DAO execution transaction
     pub fn new_dao_execution(
         execution_data: DaoExecutionData,
-        inputs: Vec<TransactionInput>, // Treasury UTXOs being spent
+        inputs: Vec<TransactionInput>,   // Treasury UTXOs being spent
         outputs: Vec<TransactionOutput>, // Recipient + change
         fee: u64,
         signature: Signature,
@@ -1135,7 +1213,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -1180,7 +1258,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -1232,7 +1310,7 @@ impl Transaction {
             profit_declaration_data: Some(declaration_data),
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: None,
         }
     }
@@ -1282,7 +1360,7 @@ impl Transaction {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-            
+
             governance_config_data: Some(config_data),
         }
     }
@@ -1370,11 +1448,7 @@ impl TransactionInput {
 
 impl TransactionOutput {
     /// Create a new transaction output
-    pub fn new(
-        commitment: Hash,
-        note: Hash,
-        recipient: PublicKey,
-    ) -> Self {
+    pub fn new(commitment: Hash, note: Hash, recipient: PublicKey) -> Self {
         Self {
             commitment,
             note,
@@ -1542,7 +1616,8 @@ impl ProfitDeclarationData {
     /// # Returns
     /// true if tribute_amount == profit_amount * 20 / 100
     pub fn validate_tribute_calculation(&self) -> bool {
-        let expected_tribute = self.profit_amount
+        let expected_tribute = self
+            .profit_amount
             .checked_mul(20)
             .and_then(|x| x.checked_div(100));
 
@@ -1579,9 +1654,7 @@ impl ProfitDeclarationData {
         }
 
         // Verify revenue sources sum to profit amount
-        let total_revenue: u64 = self.revenue_sources.iter()
-            .map(|src| src.amount)
-            .sum();
+        let total_revenue: u64 = self.revenue_sources.iter().map(|src| src.amount).sum();
         if total_revenue != self.profit_amount {
             return false;
         }

@@ -37,20 +37,21 @@
 use std::sync::Arc;
 
 use crate::block::Block;
-use crate::storage::{Address, Amount, BlockchainStore, BlockHash, BlockHeight, StorageError, TokenId};
+use crate::storage::{
+    Address, Amount, BlockHash, BlockHeight, BlockchainStore, StorageError, TokenId,
+};
 use crate::transaction::hash_transaction;
 use crate::types::TransactionType;
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
-use super::tx_apply::{self, StateMutator, TransferOutcome, CoinbaseOutcome};
+use super::tx_apply::{self, CoinbaseOutcome, StateMutator, TransferOutcome};
 
-use crate::protocol::{ProtocolParams, fee_model};
+use crate::protocol::{fee_model, ProtocolParams};
 use crate::resources::{BlockAccumulator, BlockLimits};
 
 // Re-export lib-fees types for convenience
 pub use lib_fees::{
-    compute_fee_v2, verify_fee, FeeDeficit,
-    FeeInput, FeeParams, TxKind, SigScheme,
+    compute_fee_v2, verify_fee, FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind,
 };
 
 // =============================================================================
@@ -79,7 +80,7 @@ impl Default for FeeModelV2 {
     fn default() -> Self {
         Self {
             fee_params: FeeParams::default(),
-            block_reward: 50_000_000,       // 50 tokens
+            block_reward: 50_000_000, // 50 tokens
             protocol_params: ProtocolParams::default(),
         }
     }
@@ -130,24 +131,25 @@ impl FeeModelV2 {
             TransactionType::Transfer => TxKind::NativeTransfer,
             TransactionType::TokenTransfer => TxKind::TokenTransfer,
             TransactionType::Coinbase => TxKind::NativeTransfer, // Coinbase doesn't pay fees
-            TransactionType::IdentityRegistration |
-            TransactionType::IdentityUpdate |
-            TransactionType::IdentityRevocation => TxKind::Governance,
-            TransactionType::ValidatorRegistration |
-            TransactionType::ValidatorUpdate |
-            TransactionType::DaoProposal |
-            TransactionType::DaoVote |
-            TransactionType::DaoExecution |
-            TransactionType::GovernanceConfigUpdate => TxKind::Governance,
+            TransactionType::IdentityRegistration
+            | TransactionType::IdentityUpdate
+            | TransactionType::IdentityRevocation => TxKind::Governance,
+            TransactionType::ValidatorRegistration
+            | TransactionType::ValidatorUpdate
+            | TransactionType::DaoProposal
+            | TransactionType::DaoVote
+            | TransactionType::DaoExecution
+            | TransactionType::GovernanceConfigUpdate => TxKind::Governance,
             TransactionType::UbiDistribution => TxKind::NativeTransfer,
-            TransactionType::ContractDeployment |
-            TransactionType::ContractExecution => TxKind::ContractCall,
+            TransactionType::ContractDeployment | TransactionType::ContractExecution => {
+                TxKind::ContractCall
+            }
             TransactionType::ContentUpload => TxKind::DataUpload,
             // Other types default to NativeTransfer pricing
-            TransactionType::SessionCreation |
-            TransactionType::SessionTermination |
-            TransactionType::WalletRegistration |
-            TransactionType::WalletUpdate => TxKind::NativeTransfer,
+            TransactionType::SessionCreation
+            | TransactionType::SessionTermination
+            | TransactionType::WalletRegistration
+            | TransactionType::WalletUpdate => TxKind::NativeTransfer,
             // Catch-all for any future types
             _ => TxKind::NativeTransfer,
         };
@@ -168,7 +170,7 @@ impl FeeModelV2 {
             envelope_bytes,
             payload_bytes,
             witness_bytes,
-            exec_units: 0,  // Would be set for contract calls
+            exec_units: 0, // Would be set for contract calls
             state_reads: (tx.inputs.len() + tx.outputs.len()) as u32,
             state_writes: tx.outputs.len() as u32,
             state_write_bytes: (tx.outputs.len() * 64) as u32, // Estimate per output
@@ -268,6 +270,7 @@ pub struct StateChangesSummary {
 /// # Invariant
 ///
 /// All state mutations happen through BlockExecutor. Period.
+#[derive(Debug)]
 pub struct BlockExecutor {
     store: Arc<dyn BlockchainStore>,
     fee_model: FeeModelV2,
@@ -312,13 +315,21 @@ impl BlockExecutor {
         fee_model: FeeModelV2,
         limits: BlockLimits,
     ) -> Self {
-        Self { store, fee_model, limits }
+        Self {
+            store,
+            fee_model,
+            limits,
+        }
     }
 
     /// Create with legacy ExecutorConfig (converts internally)
     pub fn from_config(store: Arc<dyn BlockchainStore>, config: ExecutorConfig) -> Self {
         let (fee_model, limits) = config.to_fee_model_and_limits();
-        Self { store, fee_model, limits }
+        Self {
+            store,
+            fee_model,
+            limits,
+        }
     }
 
     /// Create with default fee model and limits
@@ -418,7 +429,8 @@ impl BlockExecutor {
         }
 
         // Fee model version must be correct for this height
-        self.fee_model.validate_version(block_height, block.header.fee_model_version)?;
+        self.fee_model
+            .validate_version(block_height, block.header.fee_model_version)?;
 
         Ok(())
     }
@@ -447,8 +459,7 @@ impl BlockExecutor {
         if tx_count > self.limits.max_tx_count {
             return Err(BlockApplyError::ValidationFailed(format!(
                 "Block has {} transactions, max is {}",
-                tx_count,
-                self.limits.max_tx_count
+                tx_count, self.limits.max_tx_count
             )));
         }
 
@@ -482,24 +493,28 @@ impl BlockExecutor {
         // =====================================================================
 
         // Count coinbase transactions and validate position
-        let coinbase_count = block.transactions.iter()
+        let coinbase_count = block
+            .transactions
+            .iter()
             .filter(|tx| tx.transaction_type == TransactionType::Coinbase)
             .count();
 
         if coinbase_count > 1 {
             return Err(BlockApplyError::ValidationFailed(
-                "Block must have at most one coinbase transaction".to_string()
+                "Block must have at most one coinbase transaction".to_string(),
             ));
         }
 
         // If there is a coinbase, it must be the first transaction
         if coinbase_count == 1 {
-            if block.transactions.first()
+            if block
+                .transactions
+                .first()
                 .map(|tx| tx.transaction_type != TransactionType::Coinbase)
                 .unwrap_or(true)
             {
                 return Err(BlockApplyError::ValidationFailed(
-                    "Coinbase transaction must be first in block".to_string()
+                    "Coinbase transaction must be first in block".to_string(),
                 ));
             }
         }
@@ -515,7 +530,8 @@ impl BlockExecutor {
         // We accept the genesis block as-is: just record it in the store and
         // return an empty outcome — the founding node already committed the state.
         if block_height == 0 {
-            self.store.append_block(block)
+            self.store
+                .append_block(block)
                 .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
             self.store.commit_block()?;
             return Ok(ApplyOutcome {
@@ -569,7 +585,8 @@ impl BlockExecutor {
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
 
             // apply_tx (writes)
-            let tx_result = self.apply_tx(&mutator, tx, block_height)
+            let tx_result = self
+                .apply_tx(&mutator, tx, block_height)
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
 
             // Accumulate results
@@ -609,14 +626,17 @@ impl BlockExecutor {
             )?;
 
             self.validate_tx_stateless(coinbase)
-                .map_err(|e| BlockApplyError::TxFailed { index: 0, reason: e })?;
+                .map_err(|e| BlockApplyError::TxFailed {
+                    index: 0,
+                    reason: e,
+                })?;
 
-            let coinbase_result = self.apply_coinbase_with_fees(
-                &mutator,
-                coinbase,
-                block_height,
-                total_fees,
-            ).map_err(|e| BlockApplyError::TxFailed { index: 0, reason: e })?;
+            let coinbase_result = self
+                .apply_coinbase_with_fees(&mutator, coinbase, block_height, total_fees)
+                .map_err(|e| BlockApplyError::TxFailed {
+                    index: 0,
+                    reason: e,
+                })?;
 
             summary.utxos_created += coinbase_result.outputs_created;
         }
@@ -625,7 +645,8 @@ impl BlockExecutor {
         // Step 5: append_block
         // =====================================================================
 
-        self.store.append_block(block)
+        self.store
+            .append_block(block)
             .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
 
         // =====================================================================
@@ -659,10 +680,15 @@ impl BlockExecutor {
         let prev_height = height - 1;
 
         // Use optimized hash lookup to avoid full block deserialization
-        let expected_hash = self.store.get_block_hash_by_height(prev_height)?
-            .ok_or_else(|| BlockApplyError::ValidationFailed(
-                format!("Previous block at height {} not found", prev_height)
-            ))?;
+        let expected_hash = self
+            .store
+            .get_block_hash_by_height(prev_height)?
+            .ok_or_else(|| {
+                BlockApplyError::ValidationFailed(format!(
+                    "Previous block at height {} not found",
+                    prev_height
+                ))
+            })?;
 
         let actual_hash = BlockHash::new(block.header.previous_block_hash.as_array());
 
@@ -683,7 +709,10 @@ impl BlockExecutor {
     /// execution-time checks are consistent with what it expects. The validation
     /// module is for pre-execution filtering (e.g., mempool acceptance), while
     /// executor validation is the authoritative check during block application.
-    fn validate_tx_stateless(&self, tx: &crate::transaction::Transaction) -> Result<(), TxApplyError> {
+    fn validate_tx_stateless(
+        &self,
+        tx: &crate::transaction::Transaction,
+    ) -> Result<(), TxApplyError> {
         // Check transaction type is supported in Phase 2.
         //
         // The executor understands four Phase-2 types (Transfer, TokenTransfer, TokenMint,
@@ -725,7 +754,13 @@ impl BlockExecutor {
             | TransactionType::ProfitDeclaration
             | TransactionType::GovernanceConfigUpdate
             | TransactionType::ContractDeployment
-            | TransactionType::ContractExecution => {
+            | TransactionType::ContractExecution
+            // Phase 3/4 types - handled by executor but validation not fully wired yet
+            | TransactionType::TokenCreation
+            | TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
                 return Ok(());
             }
         }
@@ -757,7 +792,7 @@ impl BlockExecutor {
                 // Coinbase must have no inputs
                 if !tx.inputs.is_empty() {
                     return Err(TxApplyError::InvalidType(
-                        "Coinbase must have no inputs".to_string()
+                        "Coinbase must have no inputs".to_string(),
                     ));
                 }
                 // Coinbase must have outputs
@@ -767,16 +802,21 @@ impl BlockExecutor {
                 // Phase 2 lock: Coinbase fee must be 0
                 if tx.fee != 0 {
                     return Err(TxApplyError::InvalidType(
-                        "Coinbase transaction fee must be 0".to_string()
+                        "Coinbase transaction fee must be 0".to_string(),
                     ));
                 }
                 // Coinbase must not have non-Phase-2 fields set
-                if tx.identity_data.is_some() || tx.wallet_data.is_some() ||
-                   tx.validator_data.is_some() || tx.dao_proposal_data.is_some() ||
-                   tx.dao_vote_data.is_some() || tx.dao_execution_data.is_some() ||
-                   tx.ubi_claim_data.is_some() || tx.profit_declaration_data.is_some() {
+                if tx.identity_data.is_some()
+                    || tx.wallet_data.is_some()
+                    || tx.validator_data.is_some()
+                    || tx.dao_proposal_data.is_some()
+                    || tx.dao_vote_data.is_some()
+                    || tx.dao_execution_data.is_some()
+                    || tx.ubi_claim_data.is_some()
+                    || tx.profit_declaration_data.is_some()
+                {
                     return Err(TxApplyError::InvalidType(
-                        "Coinbase must not have non-Phase-2 data fields".to_string()
+                        "Coinbase must not have non-Phase-2 data fields".to_string(),
                     ));
                 }
             }
@@ -784,48 +824,49 @@ impl BlockExecutor {
                 // Token transfer must have token_transfer_data
                 if tx.token_transfer_data.is_none() {
                     return Err(TxApplyError::InvalidType(
-                        "TokenTransfer requires token_transfer_data field".to_string()
+                        "TokenTransfer requires token_transfer_data field".to_string(),
                     ));
                 }
                 // Validate token_transfer_data fields
                 let data = tx.token_transfer_data.as_ref().unwrap();
                 if data.amount == 0 {
                     return Err(TxApplyError::InvalidType(
-                        "Token transfer amount must be greater than 0".to_string()
+                        "Token transfer amount must be greater than 0".to_string(),
                     ));
                 }
                 // Phase 2 lock: TokenTransfer fee must be 0
                 if tx.fee != 0 {
                     return Err(TxApplyError::InvalidType(
-                        "TokenTransfer transaction fee must be 0 in Phase 2".to_string()
+                        "TokenTransfer transaction fee must be 0 in Phase 2".to_string(),
                     ));
                 }
             }
             TransactionType::TokenMint => {
                 if tx.version < 2 {
                     return Err(TxApplyError::InvalidType(
-                        "TokenMint transactions not supported in this serialization version".to_string()
+                        "TokenMint transactions not supported in this serialization version"
+                            .to_string(),
                     ));
                 }
                 if tx.token_mint_data.is_none() {
                     return Err(TxApplyError::InvalidType(
-                        "TokenMint requires token_mint_data field".to_string()
+                        "TokenMint requires token_mint_data field".to_string(),
                     ));
                 }
                 let data = tx.token_mint_data.as_ref().unwrap();
                 if data.amount == 0 {
                     return Err(TxApplyError::InvalidType(
-                        "TokenMint amount must be greater than 0".to_string()
+                        "TokenMint amount must be greater than 0".to_string(),
                     ));
                 }
                 if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
                     return Err(TxApplyError::InvalidType(
-                        "TokenMint must not have UTXO inputs or outputs".to_string()
+                        "TokenMint must not have UTXO inputs or outputs".to_string(),
                     ));
                 }
                 if tx.fee != 0 {
                     return Err(TxApplyError::InvalidType(
-                        "TokenMint transaction fee must be 0 in Phase 2".to_string()
+                        "TokenMint transaction fee must be 0 in Phase 2".to_string(),
                     ));
                 }
             }
@@ -855,9 +896,9 @@ impl BlockExecutor {
     fn validate_tx_fee(&self, tx: &crate::transaction::Transaction) -> Result<(), TxApplyError> {
         // Exempt transactions that don't pay fees
         match tx.transaction_type {
-            TransactionType::Coinbase => return Ok(()),       // Creates value, no fee
-            TransactionType::TokenTransfer => return Ok(()),  // Phase 2: subsidized
-            TransactionType::TokenMint => return Ok(()),      // Phase 2: system mint
+            TransactionType::Coinbase => return Ok(()), // Creates value, no fee
+            TransactionType::TokenTransfer => return Ok(()), // Phase 2: subsidized
+            TransactionType::TokenMint => return Ok(()), // Phase 2: system mint
             _ => {}
         }
 
@@ -879,9 +920,12 @@ impl BlockExecutor {
     }
 
     /// Stateful transaction validation (reads only, no writes)
-    fn validate_tx_stateful(&self, tx: &crate::transaction::Transaction) -> Result<(), TxApplyError> {
-        use crate::storage::TxHash;
+    fn validate_tx_stateful(
+        &self,
+        tx: &crate::transaction::Transaction,
+    ) -> Result<(), TxApplyError> {
         use super::state_view::StateView;
+        use crate::storage::TxHash;
 
         let view = StateView::new(self.store.as_ref());
 
@@ -900,8 +944,24 @@ impl BlockExecutor {
                 }
             }
             TransactionType::TokenTransfer => {
-                // Token transfer validation would check sender balance
-                // For now, the actual balance check happens during apply
+                let transfer = tx.token_transfer_data.as_ref().ok_or_else(|| {
+                    TxApplyError::InvalidType("TokenTransfer requires token_transfer_data".into())
+                })?;
+
+                let token = if transfer.is_native() {
+                    TokenId::NATIVE
+                } else {
+                    TokenId::new(transfer.token_id)
+                };
+                let from = Address::new(transfer.from);
+
+                let expected_nonce = view.get_token_nonce(&token, &from)?;
+                if transfer.nonce != expected_nonce {
+                    return Err(TxApplyError::InvalidNonce {
+                        expected: expected_nonce,
+                        actual: transfer.nonce,
+                    });
+                }
             }
             _ => {}
         }
@@ -933,7 +993,12 @@ impl BlockExecutor {
         // Inputs (deletions) + outputs (insertions) + token balance updates
         let state_write_bytes = self.estimate_tx_state_writes(tx);
 
-        (payload_bytes, witness_bytes, verify_units, state_write_bytes)
+        (
+            payload_bytes,
+            witness_bytes,
+            verify_units,
+            state_write_bytes,
+        )
     }
 
     /// Estimate payload size (serialized tx minus witnesses)
@@ -949,12 +1014,11 @@ impl BlockExecutor {
         let outputs = tx.outputs.len() * 96;
 
         // Optional data fields (rough estimates)
-        let optional_data =
-            tx.identity_data.as_ref().map(|_| 256).unwrap_or(0) +
-            tx.wallet_data.as_ref().map(|_| 128).unwrap_or(0) +
-            tx.validator_data.as_ref().map(|_| 256).unwrap_or(0) +
-            tx.token_transfer_data.as_ref().map(|_| 104).unwrap_or(0) +
-            tx.token_mint_data.as_ref().map(|_| 72).unwrap_or(0); // 32+32+8
+        let optional_data = tx.identity_data.as_ref().map(|_| 256).unwrap_or(0)
+            + tx.wallet_data.as_ref().map(|_| 128).unwrap_or(0)
+            + tx.validator_data.as_ref().map(|_| 256).unwrap_or(0)
+            + tx.token_transfer_data.as_ref().map(|_| 104).unwrap_or(0)
+            + tx.token_mint_data.as_ref().map(|_| 72).unwrap_or(0); // 32+32+8
 
         (base + inputs_payload + outputs + optional_data) as u64
     }
@@ -965,11 +1029,13 @@ impl BlockExecutor {
         let sig_size = tx.signature.signature.len();
 
         // ZK proofs in inputs: sum of all proof data from amount, balance, nullifier proofs
-        let proof_size: usize = tx.inputs.iter()
+        let proof_size: usize = tx
+            .inputs
+            .iter()
             .map(|i| {
-                i.zk_proof.amount_proof.proof_data.len() +
-                i.zk_proof.balance_proof.proof_data.len() +
-                i.zk_proof.nullifier_proof.proof_data.len()
+                i.zk_proof.amount_proof.proof_data.len()
+                    + i.zk_proof.balance_proof.proof_data.len()
+                    + i.zk_proof.nullifier_proof.proof_data.len()
             })
             .sum();
 
@@ -1028,12 +1094,7 @@ impl BlockExecutor {
 
         match tx.transaction_type {
             TransactionType::Transfer => {
-                let outcome = tx_apply::apply_native_transfer(
-                    mutator,
-                    tx,
-                    &tx_hash,
-                    block_height,
-                )?;
+                let outcome = tx_apply::apply_native_transfer(mutator, tx, &tx_hash, block_height)?;
                 Ok(TxOutcome::Transfer(outcome))
             }
             TransactionType::Coinbase => {
@@ -1052,10 +1113,11 @@ impl BlockExecutor {
             }
             TransactionType::TokenTransfer => {
                 // Extract token transfer data - must be present for TokenTransfer type
-                let transfer_data = tx.token_transfer_data.as_ref()
-                    .ok_or_else(|| TxApplyError::InvalidType(
-                        "TokenTransfer requires token_transfer_data field".to_string()
-                    ))?;
+                let transfer_data = tx.token_transfer_data.as_ref().ok_or_else(|| {
+                    TxApplyError::InvalidType(
+                        "TokenTransfer requires token_transfer_data field".to_string(),
+                    )
+                })?;
 
                 // Convert to storage types
                 let token = if transfer_data.is_native() {
@@ -1070,18 +1132,15 @@ impl BlockExecutor {
                 // Validate amount > 0
                 if amount == 0 {
                     return Err(TxApplyError::InvalidType(
-                        "Token transfer amount must be greater than 0".to_string()
+                        "Token transfer amount must be greater than 0".to_string(),
                     ));
                 }
 
                 // Apply the token transfer (debit from, credit to)
-                tx_apply::apply_token_transfer(
-                    mutator,
-                    &token,
-                    &from,
-                    &to,
-                    amount,
-                )?;
+                tx_apply::apply_token_transfer(mutator, &token, &from, &to, amount)?;
+
+                // Increment nonce for replay protection
+                mutator.increment_token_nonce(&token, &from)?;
 
                 Ok(TxOutcome::TokenTransfer(TokenTransferOutcome {
                     token,
@@ -1091,14 +1150,15 @@ impl BlockExecutor {
                 }))
             }
             TransactionType::TokenMint => {
-                let mint_data = tx.token_mint_data.as_ref()
-                    .ok_or_else(|| TxApplyError::InvalidType(
-                        "TokenMint requires token_mint_data field".to_string()
-                    ))?;
+                let mint_data = tx.token_mint_data.as_ref().ok_or_else(|| {
+                    TxApplyError::InvalidType(
+                        "TokenMint requires token_mint_data field".to_string(),
+                    )
+                })?;
 
                 if mint_data.amount == 0 {
                     return Err(TxApplyError::InvalidType(
-                        "TokenMint amount must be greater than 0".to_string()
+                        "TokenMint amount must be greater than 0".to_string(),
                     ));
                 }
 
@@ -1111,18 +1171,9 @@ impl BlockExecutor {
                 let to = Address::new(mint_data.to);
                 let amount = mint_data.amount;
 
-                tx_apply::apply_token_mint(
-                    mutator,
-                    &token,
-                    &to,
-                    amount,
-                )?;
+                tx_apply::apply_token_mint(mutator, &token, &to, amount)?;
 
-                Ok(TxOutcome::TokenMint(TokenMintOutcome {
-                    token,
-                    to,
-                    amount,
-                }))
+                Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
             }
             // Known legacy system types: accepted as no-ops. This mirrors the allowlist in
             // validate_tx_stateless — any type listed here must also be listed there.
@@ -1150,8 +1201,12 @@ impl BlockExecutor {
 
             // Coinbase is routed through apply_coinbase_with_fees, never here.
             TransactionType::Coinbase => Err(TxApplyError::InvalidType(
-                "Coinbase must not be routed through apply_transaction".to_string()
+                "Coinbase must not be routed through apply_transaction".to_string(),
             )),
+            _ => Err(TxApplyError::UnsupportedType(format!(
+                "{:?}",
+                tx.transaction_type
+            ))),
         }
     }
 
@@ -1169,7 +1224,7 @@ impl BlockExecutor {
         // Coinbase should not be passed to this method
         if tx.transaction_type == TransactionType::Coinbase {
             return Err(TxApplyError::InvalidType(
-                "Coinbase should not be processed in apply_tx pass".to_string()
+                "Coinbase should not be processed in apply_tx pass".to_string(),
             ));
         }
 
@@ -1190,7 +1245,7 @@ impl BlockExecutor {
     ) -> Result<CoinbaseOutcome, TxApplyError> {
         if tx.transaction_type != TransactionType::Coinbase {
             return Err(TxApplyError::InvalidType(
-                "Expected coinbase transaction".to_string()
+                "Expected coinbase transaction".to_string(),
             ));
         }
 
@@ -1244,9 +1299,9 @@ pub struct TokenMintOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::SledStore;
     use crate::block::{Block, BlockHeader};
-    use crate::types::{Hash, Difficulty};
+    use crate::storage::SledStore;
+    use crate::types::{Difficulty, Hash};
 
     fn create_test_store() -> Arc<dyn BlockchainStore> {
         Arc::new(SledStore::open_temporary().unwrap())
@@ -1350,7 +1405,10 @@ mod tests {
         let block = create_block_at_height(1, Hash::default());
         let result = executor.apply_block(&block);
 
-        assert!(matches!(result, Err(BlockApplyError::HeightMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(BlockApplyError::HeightMismatch { .. })
+        ));
     }
 
     #[test]
@@ -1366,16 +1424,19 @@ mod tests {
         let mut block1 = create_block_at_height(1, Hash::default()); // Wrong!
         let result = executor.apply_block(&block1);
 
-        assert!(matches!(result, Err(BlockApplyError::InvalidPreviousHash { .. })));
+        assert!(matches!(
+            result,
+            Err(BlockApplyError::InvalidPreviousHash { .. })
+        ));
     }
 
     // =========================================================================
     // Integration Tests T2-T5
     // =========================================================================
 
-    use crate::transaction::{Transaction, TransactionInput, TransactionOutput};
-    use crate::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
+    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
     use crate::integration::zk_integration::ZkTransactionProof;
+    use crate::transaction::{Transaction, TransactionInput, TransactionOutput};
     use crate::types::TransactionType;
     use lib_proofs::types::ZkProof;
 
@@ -1433,7 +1494,7 @@ mod tests {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-                        governance_config_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -1461,7 +1522,7 @@ mod tests {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-                        governance_config_data: None,
+            governance_config_data: None,
         }
     }
 
@@ -1527,8 +1588,10 @@ mod tests {
         executor.apply_block(&genesis).unwrap();
 
         // Create a block with a transfer tx referencing non-existent UTXO
-        let fake_tx_hash = Hash::new([0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let fake_tx_hash = Hash::new([
+            0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0,
+        ]);
         let bad_tx = create_transfer_tx(fake_tx_hash, 0);
 
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![bad_tx]);
@@ -1584,7 +1647,7 @@ mod tests {
     /// T4: Token transfer with insufficient balance fails
     #[test]
     fn test_t4_token_transfer_balance_underflow() {
-        use crate::storage::{TokenId, Address};
+        use crate::storage::{Address, TokenId};
 
         let store = create_test_store();
         let executor = create_test_executor(store.clone());
@@ -1683,7 +1746,8 @@ mod tests {
             assert!(
                 result.is_ok(),
                 "Expected legacy tx type {:?} to pass stateless validation, got {:?}",
-                tx_type, result
+                tx_type,
+                result
             );
         }
     }
