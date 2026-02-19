@@ -11,7 +11,6 @@ use crate::pouw::{ChallengeGenerator, ReceiptValidator};
 use rand::{Rng, thread_rng};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 
 /// Configuration for load test generation
 #[derive(Debug, Clone)]
@@ -420,9 +419,39 @@ mod tests {
     }
 }
 
+#[cfg(test)]
 mod stress_tests {
     use super::*;
     use std::collections::HashSet;
+
+    fn build_validator() -> ReceiptValidator {
+        let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
+        let mut priv_arr = [0u8; 32];
+        let mut node_id = [0u8; 32];
+        priv_arr.copy_from_slice(&node_privkey[..32]);
+        node_id.copy_from_slice(&node_pubkey[..32]);
+
+        let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
+        ReceiptValidator::new(generator)
+    }
+
+    fn build_batch_with_client(config: &LoadTestConfig, client_did: &str) -> crate::pouw::types::ReceiptBatch {
+        let synth_gen = SyntheticReceiptGenerator::new(config.clone());
+        let receipts: Vec<SignedReceipt> = synth_gen
+            .generate_batch(config.batch_size)
+            .into_iter()
+            .map(|(_, mut receipt)| {
+                receipt.receipt.client_did = client_did.to_string();
+                receipt
+            })
+            .collect();
+
+        crate::pouw::types::ReceiptBatch {
+            version: POUW_VERSION,
+            client_did: client_did.to_string(),
+            receipts,
+        }
+    }
 
     #[tokio::test]
     async fn test_high_throughput_receipt_validation() {
@@ -434,57 +463,73 @@ mod stress_tests {
             invalid_receipt_percentage: 10.0,
             ..Default::default()
         };
+        let validator = build_validator();
 
         let start = Instant::now();
-        let mut total_valid = 0u64;
-        let mut total_invalid = 0u64;
+        let mut total_accepted = 0u64;
+        let mut total_rejected = 0u64;
 
         for _ in 0..10 {
-            let generator = SyntheticReceiptGenerator::new(config.clone());
-            let batch = generator.generate_batch(config.batch_size);
-            
-            for (challenge, receipt) in batch {
-                if receipt.receipt.task_id == challenge.task_id 
-                    && receipt.receipt.challenge_nonce == challenge.challenge_nonce {
-                    total_valid += 1;
-                } else {
-                    total_invalid += 1;
-                }
-            }
+            let batch_struct = build_batch_with_client(&config, "did:sov:throughput-test");
+            let result = validator.validate_batch(&batch_struct).await.unwrap();
+            total_accepted += result.accepted.len() as u64;
+            total_rejected += result.rejected.len() as u64;
         }
 
         let elapsed = start.elapsed();
-        let throughput = (total_valid + total_invalid) as f64 / elapsed.as_secs_f64();
+        let total_processed = total_accepted + total_rejected;
+        let throughput = total_processed as f64 / elapsed.as_secs_f64();
         
-        println!("High throughput test: {} receipts/sec", throughput);
-        assert!(throughput > 500.0, "Expected >500 receipts/sec, got {}", throughput);
+        println!(
+            "High throughput validation test: {} receipts/sec (accepted={}, rejected={})",
+            throughput, total_accepted, total_rejected
+        );
+        assert_eq!(total_processed, 1000, "Expected 1000 processed receipts");
+        assert!(throughput > 100.0, "Expected >100 receipts/sec, got {}", throughput);
     }
 
     #[tokio::test]
     async fn test_concurrent_validation_stress() {
+        let validator = Arc::new(build_validator());
+        let config = LoadTestConfig {
+            concurrent_clients: 50,
+            batch_size: 50,
+            ..Default::default()
+        };
+        let base_batch = build_batch_with_client(&config, "did:sov:concurrent-overlap");
+        let base_receipts = base_batch.receipts.clone();
+
+        let start = Instant::now();
         let mut handles = vec![];
         
-        for _ in 0..10 {
-            let handle = tokio::spawn(async {
-                let config = LoadTestConfig {
-                    concurrent_clients: 50,
-                    batch_size: 50,
-                    ..Default::default()
+        for _ in 0..20 {
+            let validator = Arc::clone(&validator);
+            let receipts = base_receipts.clone();
+            let handle = tokio::spawn(async move {
+                let batch_struct = crate::pouw::types::ReceiptBatch {
+                    version: POUW_VERSION,
+                    client_did: "did:sov:concurrent-overlap".to_string(),
+                    receipts,
                 };
-                let generator = SyntheticReceiptGenerator::new(config.clone());
-                
-                let batch = generator.generate_batch(config.batch_size);
-                batch.len()
+                validator.validate_batch(&batch_struct).await.unwrap()
             });
             handles.push(handle);
         }
 
-        let mut total = 0usize;
+        let mut total_processed = 0usize;
         for handle in handles {
-            total += handle.await.unwrap();
+            let result = handle.await.unwrap();
+            total_processed += result.accepted.len() + result.rejected.len();
         }
-        
-        assert_eq!(total, 500, "Should process 500 receipts concurrently");
+
+        let elapsed = start.elapsed();
+        let throughput = total_processed as f64 / elapsed.as_secs_f64();
+        println!(
+            "Concurrent overlap validation: {} receipts/sec processed={}",
+            throughput, total_processed
+        );
+        assert_eq!(total_processed, 1000, "Should process 1000 receipts concurrently");
+        assert!(throughput > 100.0, "Should process >100 receipts/sec concurrently");
     }
 
     #[tokio::test]
@@ -511,48 +556,43 @@ mod stress_tests {
             }
         }
         
-        println!("Deduplication test: {} duplicates out of 1000 unique nonces", duplicates);
-        assert!(duplicates < 10, "Too many duplicates in random nonces");
+        println!(
+            "Deduplication test: {} duplicate nonces observed in 1000 generated nonces",
+            duplicates
+        );
+        assert_eq!(duplicates, 0, "Expected no duplicate random nonces");
     }
 
     #[tokio::test]
     async fn test_signature_verification_throughput() {
-        let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
-        let mut priv_arr = [0u8; 32];
-        let mut node_id = [0u8; 32];
-        priv_arr.copy_from_slice(&node_privkey[..32]);
-        node_id.copy_from_slice(&node_pubkey[..32]);
-        
-        let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator);
+        let validator = build_validator();
         
         let config = LoadTestConfig {
-            batch_size: 1000,
+            batch_size: 100,
             ..Default::default()
         };
         
-        let generator = SyntheticReceiptGenerator::new(config);
-        
         let start = Instant::now();
         let iterations = 100;
+        let mut total_accepted = 0u64;
+        let mut total_rejected = 0u64;
         
         for _ in 0..iterations {
-            let batch = generator.generate_batch(100);
-            let receipts: Vec<SignedReceipt> = batch.into_iter().map(|(_, r)| r).collect();
-            
-            let batch_struct = crate::pouw::types::ReceiptBatch {
-                version: POUW_VERSION,
-                client_did: "did:sov:stress-test".to_string(),
-                receipts,
-            };
-            
-            let _ = validator.validate_batch(&batch_struct).await;
+            let batch_struct = build_batch_with_client(&config, "did:sov:signature-path");
+            let result = validator.validate_batch(&batch_struct).await.unwrap();
+            total_accepted += result.accepted.len() as u64;
+            total_rejected += result.rejected.len() as u64;
         }
         
         let elapsed = start.elapsed();
-        let throughput = (iterations * 100) as f64 / elapsed.as_secs_f64();
+        let total_processed = total_accepted + total_rejected;
+        let throughput = total_processed as f64 / elapsed.as_secs_f64();
         
-        println!("Signature verification throughput: {} verifications/sec", throughput);
+        println!(
+            "Signature-path throughput: {} receipts/sec (accepted={}, rejected={})",
+            throughput, total_accepted, total_rejected
+        );
+        assert_eq!(total_processed, 10000, "Expected 10k receipts processed");
         assert!(throughput > 50.0, "Expected >50 verifications/sec");
     }
 
@@ -629,7 +669,7 @@ mod stress_tests {
         node_id.copy_from_slice(&node_pubkey[..32]);
         
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = Arc::new(RwLock::new(ReceiptValidator::new(generator)));
+        let validator = ReceiptValidator::new(generator);
         
         let mut latencies = vec![];
         
@@ -645,7 +685,7 @@ mod stress_tests {
             };
             
             let start = Instant::now();
-            let _ = validator.read().await.validate_batch(&batch_struct).await;
+            let _ = validator.validate_batch(&batch_struct).await;
             latencies.push(start.elapsed().as_millis() as f64);
         }
         
@@ -660,38 +700,30 @@ mod stress_tests {
 
     #[tokio::test]
     async fn test_concurrent_batch_validation() {
-        let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
-        let mut priv_arr = [0u8; 32];
-        let mut node_id = [0u8; 32];
-        priv_arr.copy_from_slice(&node_privkey[..32]);
-        node_id.copy_from_slice(&node_pubkey[..32]);
-        
-        let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = Arc::new(RwLock::new(ReceiptValidator::new(generator)));
+        let validator = Arc::new(build_validator());
         
         let config = LoadTestConfig {
             batch_size: 50,
             ..Default::default()
         };
+        let base_batch = build_batch_with_client(&config, "did:sov:concurrent-test");
+        let base_receipts = base_batch.receipts.clone();
         
         let start = Instant::now();
         
         let mut handles = vec![];
         for _ in 0..20 {
             let validator = validator.clone();
-            let synth_gen = SyntheticReceiptGenerator::new(config.clone());
+            let receipts = base_receipts.clone();
             
             let handle = tokio::spawn(async move {
-                let batch = synth_gen.generate_batch(config.batch_size);
-                let receipts: Vec<SignedReceipt> = batch.into_iter().map(|(_, r)| r).collect();
-                
                 let batch_struct = crate::pouw::types::ReceiptBatch {
                     version: POUW_VERSION,
                     client_did: "did:sov:concurrent-test".to_string(),
                     receipts,
                 };
                 
-                validator.read().await.validate_batch(&batch_struct).await
+                validator.validate_batch(&batch_struct).await
             });
             handles.push(handle);
         }
