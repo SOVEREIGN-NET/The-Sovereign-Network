@@ -229,6 +229,11 @@ impl QuicHandler {
         }
     }
 
+    /// Get the ZHTP router for registering additional handlers
+    pub fn get_zhtp_router(&self) -> Arc<RwLock<ZhtpRouter>> {
+        self.zhtp_router.clone()
+    }
+
     /// Check and update handshake rate limit for an IP address
     async fn check_handshake_rate_limit(&self, peer_addr: &SocketAddr) -> Result<()> {
         let mut limits = self.handshake_rate_limits.write().await;
