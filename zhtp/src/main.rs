@@ -58,6 +58,18 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Wrap orchestrator in Arc for shared ownership (needed by runtime handlers)
+    let orchestrator = std::sync::Arc::new(orchestrator);
+
+    // Register runtime-dependent handlers (NetworkHandler, MeshHandler) now that
+    // RuntimeOrchestrator is available as Arc. Give components a moment to fully initialize.
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    if let Err(e) = orchestrator.register_runtime_handlers(orchestrator.clone()).await {
+        tracing::warn!("Failed to register runtime handlers: {}", e);
+    } else {
+        tracing::info!("✅ Runtime handlers registered (NetworkHandler, MeshHandler)");
+    }
+
     // Wait for shutdown signal (SIGTERM/SIGINT)
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {

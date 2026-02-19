@@ -529,10 +529,32 @@ impl Component for ProtocolsComponent {
         let mut metrics = HashMap::new();
         let start_time = *self.start_time.read().await;
         let uptime_secs = start_time.map(|t| t.elapsed().as_secs() as f64).unwrap_or(0.0);
-        
+
         metrics.insert("uptime_seconds".to_string(), uptime_secs);
         metrics.insert("is_running".to_string(), if matches!(*self.status.read().await, ComponentStatus::Running) { 1.0 } else { 0.0 });
-        
+
         Ok(metrics)
+    }
+}
+
+impl ProtocolsComponent {
+    /// Register runtime-dependent handlers after RuntimeOrchestrator becomes available.
+    ///
+    /// This method should be called from RuntimeOrchestrator after the ProtocolsComponent
+    /// has started and the RuntimeOrchestrator is fully initialized. It delegates to the
+    /// UnifiedServer's register_runtime_handlers method.
+    pub async fn register_runtime_handlers(
+        &self,
+        runtime: Arc<crate::runtime::RuntimeOrchestrator>
+    ) -> Result<()> {
+        let mut server_guard = self.unified_server.write().await;
+        if let Some(ref mut unified_server) = *server_guard {
+            unified_server.register_runtime_handlers(runtime).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Cannot register runtime handlers: UnifiedServer not initialized"
+            ))
+        }
     }
 }
