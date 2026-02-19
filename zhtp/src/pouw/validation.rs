@@ -521,6 +521,14 @@ impl ReceiptValidator {
         self.dispute_log.write().await.push(entry);
     }
 
+    /// Directly emit a pre-validated receipt (for server-side hooks, bypasses challenge-response)
+    ///
+    /// Used by Web4ContentService and MeshMessageRouter to credit server-observed work
+    /// without requiring the full client challenge-response flow.
+    pub async fn emit_direct(&self, receipt: ValidatedReceipt) {
+        self.validated_receipts.write().await.push(receipt);
+    }
+
     /// Get all validated receipts (for reward calculation)
     pub async fn get_validated_receipts(&self) -> Vec<ValidatedReceipt> {
         self.validated_receipts.read().await.clone()
