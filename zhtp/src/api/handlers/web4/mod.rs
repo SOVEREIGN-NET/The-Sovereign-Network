@@ -28,9 +28,12 @@ use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use lib_network::web4::{DomainRegistry, ContentPublisher, NameResolver, Web4ContentService};
 use tracing::{info, warn, error, debug};
+use crate::pouw::validation::{ReceiptValidator, ValidatedReceipt};
+use crate::pouw::types::ProofType;
 use serde::{Serialize, Deserialize};
 use chrono;
 use uuid;
@@ -62,6 +65,10 @@ pub struct Web4Handler {
     blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
     /// Chunked upload manager for large files
     chunked_upload_manager: Arc<ChunkedUploadManager>,
+    /// Optional POUW validator for emitting Web4 receipts on successful serves/resolves
+    pouw_validator: Option<Arc<RwLock<ReceiptValidator>>>,
+    /// DID of this node (for receipt attribution)
+    node_did: Option<String>,
 }
 
 impl Web4Handler {
@@ -93,12 +100,71 @@ impl Web4Handler {
             identity_manager,
             blockchain,
             chunked_upload_manager: Arc::new(ChunkedUploadManager::new()),
+            pouw_validator: None,
+            node_did: None,
         })
     }
 
     /// Get reference to the domain registry
     pub fn get_domain_registry(&self) -> Arc<DomainRegistry> {
         Arc::clone(&self.domain_registry)
+    }
+
+    /// Attach a POUW validator for emitting Web4 receipts on successful serves/resolves
+    pub fn with_pouw_validator(
+        mut self,
+        pouw_validator: Arc<RwLock<ReceiptValidator>>,
+        node_did: String,
+    ) -> Self {
+        self.pouw_validator = Some(pouw_validator);
+        self.node_did = Some(node_did);
+        self
+    }
+
+    /// Emit a Web4ContentServed receipt (server-side, fire-and-forget)
+    async fn emit_content_served(&self, domain: &str, bytes: u64) {
+        let Some(v) = &self.pouw_validator else { return };
+        let node_did = self.node_did.as_deref().unwrap_or("did:zhtp:node");
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let mut nonce = vec![0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
+        let receipt = ValidatedReceipt {
+            receipt_nonce: nonce,
+            client_did: node_did.to_string(),
+            task_id: vec![0u8; 16],
+            proof_type: ProofType::Web4ContentServed,
+            bytes_verified: bytes,
+            validated_at: now,
+            challenge_nonce: vec![0u8; 16],
+            manifest_cid: None,
+            domain: Some(domain.to_string()),
+            route_hops: None,
+            served_from_cache: Some(true),
+        };
+        v.read().await.emit_direct(receipt).await;
+    }
+
+    /// Emit a Web4ManifestRoute receipt (server-side, fire-and-forget)
+    async fn emit_manifest_route(&self, domain: &str, bytes: u64) {
+        let Some(v) = &self.pouw_validator else { return };
+        let node_did = self.node_did.as_deref().unwrap_or("did:zhtp:node");
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let mut nonce = vec![0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
+        let receipt = ValidatedReceipt {
+            receipt_nonce: nonce,
+            client_did: node_did.to_string(),
+            task_id: vec![0u8; 16],
+            proof_type: ProofType::Web4ManifestRoute,
+            bytes_verified: bytes,
+            validated_at: now,
+            challenge_nonce: vec![0u8; 16],
+            manifest_cid: None,
+            domain: Some(domain.to_string()),
+            route_hops: Some(1),
+            served_from_cache: None,
+        };
+        v.read().await.emit_direct(receipt).await;
     }
 
     /// Create standardized JSON error response (Issue #11)
@@ -231,6 +297,9 @@ impl Web4Handler {
                 let json = serde_json::to_vec(&response)
                     .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
 
+                // Emit Web4ManifestRoute receipt for successful domain resolution
+                self.emit_manifest_route(domain, json.len() as u64).await;
+
                 Ok(ZhtpResponse::success_with_content_type(
                     json,
                     "application/json".to_string(),
@@ -293,6 +362,9 @@ impl Web4Handler {
                     content_length = result.content.len(),
                     "Content served successfully"
                 );
+
+                // Emit Web4ContentServed receipt for successful content serve
+                self.emit_content_served(&domain, result.content.len() as u64).await;
 
                 // Build response with headers
                 let mut response = ZhtpResponse::success_with_content_type(

@@ -16,9 +16,11 @@ pub mod load_test;
 pub mod metrics;
 pub mod rate_limiter;
 pub mod rewards;
+pub mod session_log;
 pub mod types;
 pub mod validation;
 
+pub use session_log::{SessionLog, SessionLogEntry, SharedSessionLog, new_shared_session_log};
 pub use challenge::ChallengeGenerator;
 pub use disputes::{DisputeService, Dispute, DisputeType, DisputeStatus, DisputeError};
 pub use health::{PouwHealthChecker, HealthCheckResponse, HealthStatus, HealthCheck};
@@ -27,4 +29,4 @@ pub use metrics::{PouwMetrics, PouwMetricsSnapshot, RejectionType};
 pub use rate_limiter::{PouwRateLimiter, RateLimitConfig, RateLimitResult, RateLimitReason};
 pub use rewards::{RewardCalculator, Reward, PayoutStatus, EpochClientStats};
 pub use types::*;
-pub use validation::{ReceiptValidator, ReceiptValidationResult, SubmitResponse, RejectionReason};
+pub use validation::{ReceiptValidator, ReceiptValidationResult, SubmitResponse, RejectionReason, spawn_mesh_routing_listener};

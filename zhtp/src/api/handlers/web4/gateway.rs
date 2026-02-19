@@ -21,7 +21,11 @@ use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_network::web4::DomainRegistry;
 use crate::web4_stub::{Web4ContentService, ZdnsResolver};
+use crate::pouw::validation::{ReceiptValidator, ValidatedReceipt};
+use crate::pouw::types::ProofType;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
 use tracing::{info, warn, debug};
 
 /// Configuration for the Web4 gateway
@@ -53,6 +57,10 @@ pub struct Web4GatewayHandler {
     content_service: Arc<Web4ContentService>,
     /// Gateway configuration
     config: GatewayConfig,
+    /// Optional POUW validator for emitting content-served receipts
+    pouw_validator: Option<Arc<RwLock<ReceiptValidator>>>,
+    /// DID of this node (for receipt attribution)
+    node_did: Option<String>,
 }
 
 impl Web4GatewayHandler {
@@ -61,6 +69,8 @@ impl Web4GatewayHandler {
         Self {
             content_service: Arc::new(Web4ContentService::new(registry)),
             config: GatewayConfig::default(),
+            pouw_validator: None,
+            node_did: None,
         }
     }
 
@@ -69,6 +79,8 @@ impl Web4GatewayHandler {
         Self {
             content_service: Arc::new(Web4ContentService::new(registry)),
             config,
+            pouw_validator: None,
+            node_did: None,
         }
     }
 
@@ -80,6 +92,8 @@ impl Web4GatewayHandler {
         Self {
             content_service,
             config,
+            pouw_validator: None,
+            node_did: None,
         }
     }
 
@@ -92,7 +106,20 @@ impl Web4GatewayHandler {
         Self {
             content_service: Arc::new(Web4ContentService::with_zdns(registry, zdns_resolver)),
             config,
+            pouw_validator: None,
+            node_did: None,
         }
+    }
+
+    /// Attach a POUW validator for emitting Web4ContentServed receipts on successful serves
+    pub fn with_pouw_validator(
+        mut self,
+        pouw_validator: Arc<RwLock<ReceiptValidator>>,
+        node_did: String,
+    ) -> Self {
+        self.pouw_validator = Some(pouw_validator);
+        self.node_did = Some(node_did);
+        self
     }
 
     /// Extract domain from Host header
@@ -189,6 +216,38 @@ impl Web4GatewayHandler {
         true
     }
 
+    /// Emit a Web4ContentServed receipt to the POUW validator (fire-and-forget)
+    async fn emit_content_served_receipt(
+        &self,
+        domain: &str,
+        manifest_cid: Option<String>,
+        bytes_verified: u64,
+    ) {
+        let Some(validator_lock) = &self.pouw_validator else { return };
+        let node_did = self.node_did.as_deref().unwrap_or("did:zhtp:node");
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let mut nonce = vec![0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
+
+        let receipt = ValidatedReceipt {
+            receipt_nonce: nonce,
+            client_did: node_did.to_string(),
+            task_id: vec![0u8; 16],
+            proof_type: ProofType::Web4ContentServed,
+            bytes_verified,
+            validated_at: now,
+            challenge_nonce: vec![0u8; 16],
+            manifest_cid,
+            domain: Some(domain.to_string()),
+            route_hops: None,
+            served_from_cache: Some(true),
+        };
+
+        validator_lock.read().await.emit_direct(receipt).await;
+
+        debug!(domain = %domain, bytes = bytes_verified, "Emitted Web4ContentServed receipt");
+    }
+
     /// Handle a Web4 gateway request
     async fn handle_gateway_request(
         &self,
@@ -219,6 +278,11 @@ impl Web4GatewayHandler {
                     content_length = result.content.len(),
                     "Gateway: Content served successfully"
                 );
+
+                // Emit Web4ContentServed POUW receipt for served content (fire-and-forget)
+                let bytes = result.content.len() as u64;
+                let domain_owned = domain.to_string();
+                self.emit_content_served_receipt(&domain_owned, None, bytes).await;
 
                 // Build response with headers
                 let mut response = ZhtpResponse::success_with_content_type(

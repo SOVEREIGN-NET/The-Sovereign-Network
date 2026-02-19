@@ -10,6 +10,7 @@ use crate::pouw::types::{
 use crate::pouw::{ChallengeGenerator, ReceiptValidator};
 use rand::{Rng, thread_rng};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use std::time::{Duration, Instant};
 
 /// Configuration for load test generation
@@ -432,7 +433,7 @@ mod stress_tests {
         node_id.copy_from_slice(&node_pubkey[..32]);
 
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        ReceiptValidator::new(generator)
+        ReceiptValidator::new(generator, Arc::new(RwLock::new(lib_identity::IdentityManager::new())))
     }
 
     fn build_batch_with_client(config: &LoadTestConfig, client_did: &str) -> crate::pouw::types::ReceiptBatch {
@@ -669,7 +670,7 @@ mod stress_tests {
         node_id.copy_from_slice(&node_pubkey[..32]);
         
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator);
+        let validator = ReceiptValidator::new(generator, Arc::new(RwLock::new(lib_identity::IdentityManager::new())));
         
         let mut latencies = vec![];
         
