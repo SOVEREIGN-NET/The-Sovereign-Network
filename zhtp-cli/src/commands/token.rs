@@ -12,6 +12,7 @@ use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
 use lib_blockchain::{ContractCall, CallPermissions, ContractTransactionBuilder, Transaction, TransactionOutput, Hash};
+use lib_blockchain::transaction::{TokenMintData, TokenTransferData};
 use lib_network::client::ZhtpClient;
 use serde_json::json;
 use lib_crypto::keypair::KeyPair;
@@ -108,6 +109,104 @@ fn build_signed_token_tx(keypair: &KeyPair, call: ContractCall) -> CliResult<Tra
         .map_err(|e| CliError::ConfigError(format!("Failed to build signed tx: {}", e)))
 }
 
+fn build_signed_token_mint_tx(
+    keypair: &KeyPair,
+    token_id: [u8; 32],
+    to: [u8; 32],
+    amount: u64,
+) -> CliResult<Transaction> {
+    let placeholder_signature = keypair
+        .sign(b"token-mint-placeholder-signature")
+        .map_err(|e| CliError::ConfigError(format!("Failed to create placeholder signature: {e}")))?;
+
+    let mint_data = TokenMintData {
+        token_id,
+        to,
+        amount: amount as u128,
+    };
+
+    let mut tx = Transaction::new_token_mint_with_chain_id(
+        0x03,
+        mint_data,
+        placeholder_signature,
+        b"token:mint:v1".to_vec(),
+    );
+
+    tx.signature = keypair
+        .sign(tx.signing_hash().as_bytes())
+        .map_err(|e| CliError::ConfigError(format!("Failed to sign TokenMint tx: {e}")))?;
+    Ok(tx)
+}
+
+fn build_signed_token_transfer_tx(
+    keypair: &KeyPair,
+    token_id: [u8; 32],
+    to: [u8; 32],
+    amount: u64,
+    nonce: u64,
+) -> CliResult<Transaction> {
+    let placeholder_signature = keypair
+        .sign(b"token-transfer-placeholder-signature")
+        .map_err(|e| CliError::ConfigError(format!("Failed to create placeholder signature: {e}")))?;
+
+    let transfer_data = TokenTransferData {
+        token_id,
+        from: keypair.public_key.key_id,
+        to,
+        amount: amount as u128,
+        nonce,
+    };
+
+    let mut tx = Transaction::new_token_transfer_with_chain_id(
+        0x03,
+        transfer_data,
+        placeholder_signature,
+        b"token:transfer:v1".to_vec(),
+    );
+
+    tx.signature = keypair
+        .sign(tx.signing_hash().as_bytes())
+        .map_err(|e| CliError::ConfigError(format!("Failed to sign TokenTransfer tx: {e}")))?;
+    Ok(tx)
+}
+
+async fn fetch_token_nonce(
+    client: &ZhtpClient,
+    token_id: &[u8; 32],
+    address: &[u8; 32],
+) -> CliResult<u64> {
+    let path = format!(
+        "/api/v1/token/nonce/{}/{}",
+        hex::encode(token_id),
+        hex::encode(address)
+    );
+
+    let response = client
+        .get(&path)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: path.clone(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    let response_json: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+            endpoint: path,
+            status: 0,
+            reason: format!("Failed to parse response: {e}"),
+        })?;
+
+    response_json
+        .get("nonce")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| CliError::ApiCallFailed {
+            endpoint: "/api/v1/token/nonce/{token_id}/{address}".to_string(),
+            status: 0,
+            reason: "Missing nonce in response".to_string(),
+        })
+}
+
 // ============================================================================
 // IMPERATIVE SHELL - QUIC calls and output
 // ============================================================================
@@ -178,10 +277,8 @@ async fn handle_create<O: Output>(
     );
 
     let tx = build_signed_token_tx(&keypair, call)?;
-    eprintln!("DEBUG: transaction_type = {:?}", tx.transaction_type);
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
-    eprintln!("DEBUG: serialized tx len = {}, first 20 bytes = {:02x?}", tx_bytes.len(), &tx_bytes[..20.min(tx_bytes.len())]);
     let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
 
     let client = connect_default(&cli.server).await?;
@@ -231,17 +328,7 @@ async fn handle_mint<O: Output>(
     let keypair = load_default_keypair()?;
     let token_id_bytes = parse_token_id(token_id)?;
     let to_pubkey = parse_public_key(to)?;
-
-    let params = ContractCall::serialize_params(&(token_id_bytes, to_pubkey, amount))
-        .map_err(|e| CliError::ConfigError(format!("Failed to serialize params: {}", e)))?;
-    let call = ContractCall::new(
-        lib_blockchain::ContractType::Token,
-        "mint".to_string(),
-        params,
-        CallPermissions::restricted(keypair.public_key.clone(), Vec::new()),
-    );
-
-    let tx = build_signed_token_tx(&keypair, call)?;
+    let tx = build_signed_token_mint_tx(&keypair, token_id_bytes, to_pubkey.key_id, amount)?;
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
     let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
@@ -292,22 +379,13 @@ async fn handle_transfer<O: Output>(
     let keypair = load_default_keypair()?;
     let token_id_bytes = parse_token_id(token_id)?;
     let to_pubkey = parse_public_key(to)?;
-
-    let params = ContractCall::serialize_params(&(token_id_bytes, to_pubkey, amount))
-        .map_err(|e| CliError::ConfigError(format!("Failed to serialize params: {}", e)))?;
-    let call = ContractCall::new(
-        lib_blockchain::ContractType::Token,
-        "transfer".to_string(),
-        params,
-        CallPermissions::restricted(keypair.public_key.clone(), Vec::new()),
-    );
-
-    let tx = build_signed_token_tx(&keypair, call)?;
+    let client = connect_default(&cli.server).await?;
+    let nonce = fetch_token_nonce(&client, &token_id_bytes, &keypair.public_key.key_id).await?;
+    output.info(&format!("Using transfer nonce: {}", nonce))?;
+    let tx = build_signed_token_transfer_tx(&keypair, token_id_bytes, to_pubkey.key_id, amount, nonce)?;
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
     let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
-
-    let client = connect_default(&cli.server).await?;
 
     let response = client
         .post_json("/api/v1/token/transfer", &request_body)
@@ -345,55 +423,10 @@ async fn handle_burn<O: Output>(
     token_id: &str,
     amount: u64,
 ) -> CliResult<()> {
-    output.info(&format!("Burning {} tokens from caller", amount))?;
-    output.info("Signing burn transaction with local keypair")?;
-
-    let keypair = load_default_keypair()?;
-    let token_id_bytes = parse_token_id(token_id)?;
-
-    let params = ContractCall::serialize_params(&(token_id_bytes, amount))
-        .map_err(|e| CliError::ConfigError(format!("Failed to serialize params: {}", e)))?;
-    let call = ContractCall::new(
-        lib_blockchain::ContractType::Token,
-        "burn".to_string(),
-        params,
-        CallPermissions::restricted(keypair.public_key.clone(), Vec::new()),
-    );
-
-    let tx = build_signed_token_tx(&keypair, call)?;
-    let tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
-    let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
-
-    let client = connect_default(&cli.server).await?;
-
-    let response = client
-        .post_json("/api/v1/token/burn", &request_body)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/token/burn".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let response_json: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/token/burn".to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
-
-    if response_json.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-        output.success("Burn submitted successfully!")?;
-    } else {
-        let error = response_json.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
-        output.error(&format!("Burn failed: {}", error))?;
-    }
-
-    let formatted = format_output(&response_json, &cli.format)?;
-    output.print(&formatted)?;
-
-    Ok(())
+    let _ = (token_id, amount);
+    Err(CliError::ConfigError(
+        "Token burn is currently disabled on canonical API path".to_string(),
+    ))
 }
 
 /// Handle token info query
