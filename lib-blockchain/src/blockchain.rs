@@ -1018,22 +1018,13 @@ impl Blockchain {
                             blockchain.wallet_blocks.insert(wallet_id, height);
                         }
 
-                        // Process token contract deployments
+                        // Replay contract executions through the canonical runtime path.
+                        // This keeps restart reconstruction behavior aligned with normal
+                        // block processing logic instead of a separate ad-hoc extractor.
                         if tx.transaction_type == TransactionType::ContractExecution {
-                            debug!("📦 Found ContractExecution tx at height {}, memo_len={}", height, tx.memo.len());
-                            match blockchain.extract_token_contract_from_tx(tx) {
-                                Ok(Some(token_contract)) => {
-                                    info!("🪙 Extracted token from block {}: {} ({})", height, token_contract.name, token_contract.symbol);
-                                    let contract_id = token_contract.token_id;
-                                    blockchain.token_contracts.insert(contract_id, token_contract);
-                                    blockchain.contract_blocks.insert(contract_id, height);
-                                }
-                                Ok(None) => {
-                                    debug!("📦 ContractExecution tx is not a token creation");
-                                }
-                                Err(e) => {
-                                    warn!("⚠️ Failed to extract token from tx at height {}: {}", height, e);
-                                }
+                            debug!("📦 Replaying ContractExecution tx at height {}, memo_len={}", height, tx.memo.len());
+                            if let Err(e) = blockchain.process_contract_execution(tx, height) {
+                                warn!("⚠️ Failed to replay ContractExecution at height {}: {}", height, e);
                             }
                         }
 
@@ -1092,6 +1083,26 @@ impl Blockchain {
             }
         }
 
+        // Populate contract_blocks for any contracts missing deployment height tracking.
+        // This ensures get_contract_block_height() returns valid data after restart.
+        // Contracts without a known deployment height are assigned to genesis (block 0).
+        let mut backfilled_blocks = 0;
+        for contract_id in blockchain.token_contracts.keys() {
+            if !blockchain.contract_blocks.contains_key(contract_id) {
+                blockchain.contract_blocks.insert(*contract_id, 0);
+                backfilled_blocks += 1;
+            }
+        }
+        for contract_id in blockchain.web4_contracts.keys() {
+            if !blockchain.contract_blocks.contains_key(contract_id) {
+                blockchain.contract_blocks.insert(*contract_id, 0);
+                backfilled_blocks += 1;
+            }
+        }
+        if backfilled_blocks > 0 {
+            info!("📦 Backfilled {} contract deployment heights to genesis (block 0)", backfilled_blocks);
+        }
+
         // Migrate legacy initial_balance values from human SOV to atomic units.
         // Old code stored raw 5000 instead of 5000 * 10^8. Any initial_balance that is
         // non-zero but less than SOV_ATOMIC_UNITS was in human SOV and needs scaling.
@@ -1141,70 +1152,6 @@ impl Blockchain {
         );
 
         Ok(Some(blockchain))
-    }
-
-    /// Helper to extract token contract from a contract execution transaction
-    fn extract_token_contract_from_tx(&self, tx: &Transaction) -> Result<Option<crate::contracts::TokenContract>> {
-        if tx.memo.len() <= 4 || &tx.memo[0..4] != b"ZHTP" {
-            return Ok(None);
-        }
-
-        let contract_data = &tx.memo[4..];
-        let (call, _sig): (crate::types::ContractCall, Signature) = match bincode::deserialize(contract_data) {
-            Ok(parsed) => parsed,
-            Err(_) => return Ok(None),
-        };
-
-        if call.contract_type != crate::types::ContractType::Token {
-            return Ok(None);
-        }
-
-        if call.method != "create_custom_token" {
-            return Ok(None);
-        }
-
-        // Deserialize token creation params
-        #[derive(serde::Deserialize)]
-        struct CreateTokenParams {
-            name: String,
-            symbol: String,
-            initial_supply: u64,
-            #[serde(default)]
-            decimals: u8,
-        }
-
-        let params: CreateTokenParams = match bincode::deserialize(&call.params) {
-            Ok(p) => p,
-            Err(_) => return Ok(None),
-        };
-
-        // Generate token ID from name+symbol (MUST match runtime creation)
-        let token_id = crate::contracts::utils::generate_custom_token_id(&params.name, &params.symbol);
-
-        // Credit initial supply to creator
-        let mut balances = std::collections::HashMap::new();
-        balances.insert(tx.signature.public_key.clone(), params.initial_supply);
-
-        let token_contract = crate::contracts::TokenContract {
-            token_id,
-            name: params.name.clone(),
-            symbol: params.symbol.clone(),
-            decimals: if params.decimals == 0 { 8 } else { params.decimals },
-            total_supply: params.initial_supply,
-            max_supply: params.initial_supply, // Default max to initial
-            is_deflationary: false,
-            burn_rate: 0,
-            balances,
-            allowances: std::collections::HashMap::new(),
-            creator: tx.signature.public_key.clone(),
-            kernel_mint_authority: None,
-            locked_balances: std::collections::HashMap::new(),
-            kernel_only_mode: false,
-            creator_did: None,
-            fee_schedule_bps: None,
-        };
-
-        Ok(Some(token_contract))
     }
 
     /// Set or replace the Phase 2 incremental store.
@@ -4182,12 +4129,16 @@ impl Blockchain {
                     name: String,
                     symbol: String,
                     initial_supply: u64,
-                    #[allow(dead_code)]
                     decimals: u8,
                 }
                 let params: CreateTokenParams = bincode::deserialize(&call.params)
                     .map_err(|e| anyhow::anyhow!("Invalid create_custom_token params: {}", e))?;
-                let CreateTokenParams { name, symbol, initial_supply, .. } = params;
+                let CreateTokenParams {
+                    name,
+                    symbol,
+                    initial_supply,
+                    decimals,
+                } = params;
 
                 // CRITICAL: Check for duplicate symbol across ALL existing tokens
                 // This prevents confusion where multiple tokens share the same symbol
@@ -4202,12 +4153,15 @@ impl Blockchain {
                     }
                 }
 
-                let token = crate::contracts::TokenContract::new_custom(
+                let mut token = crate::contracts::TokenContract::new_custom(
                     name.clone(),
                     symbol.clone(),
                     initial_supply,
                     caller.clone(),
                 );
+                // Preserve legacy create_custom_token replay semantics.
+                token.decimals = if decimals == 0 { 8 } else { decimals };
+                token.max_supply = initial_supply;
 
                 let token_id = token.token_id;
                 if self.token_contracts.contains_key(&token_id) {
@@ -4217,6 +4171,7 @@ impl Blockchain {
                 info!("Creating token contract: {} ({}) with supply {} at block {}",
                     name, symbol, initial_supply, block_height);
                 self.token_contracts.insert(token_id, token);
+                self.contract_blocks.insert(token_id, block_height);
                 info!("Token contract created: {} ({}), token_id: {}",
                     name, symbol, hex::encode(token_id));
             }
@@ -8885,5 +8840,181 @@ impl Default for Blockchain {
         // Note: Consensus coordinator requires async initialization and external dependencies
         // so it's not initialized in Default. Call initialize_consensus_coordinator() separately.
         blockchain
+    }
+}
+
+#[cfg(test)]
+mod replay_contract_execution_tests {
+    use super::*;
+    use crate::types::ContractCall;
+    use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
+
+    fn test_pubkey(seed: u8) -> PublicKey {
+        PublicKey::new(vec![seed; 32])
+    }
+
+    fn test_signature(pubkey: &PublicKey) -> Signature {
+        Signature {
+            signature: vec![0u8; 64],
+            public_key: pubkey.clone(),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 1_700_000_000,
+        }
+    }
+
+    fn contract_execution_tx(
+        signer: &PublicKey,
+        method: &str,
+        params: Vec<u8>,
+    ) -> Transaction {
+        let call = ContractCall::token_call(method.to_string(), params);
+        let payload = bincode::serialize(&(call, test_signature(signer)))
+            .expect("contract call payload should serialize");
+        let mut memo = b"ZHTP".to_vec();
+        memo.extend_from_slice(&payload);
+
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::ContractExecution,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(signer),
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    #[test]
+    fn contract_execution_is_deterministic() {
+        #[derive(serde::Serialize)]
+        struct CreateTokenParams {
+            name: String,
+            symbol: String,
+            initial_supply: u64,
+            decimals: u8,
+        }
+
+        #[derive(serde::Serialize)]
+        struct MintParams {
+            token_id: [u8; 32],
+            to: Vec<u8>,
+            amount: u64,
+        }
+
+        let creator = test_pubkey(0x41);
+        let recipient = test_pubkey(0x42);
+        let token_name = "ReplayToken";
+        let token_symbol = "RPT";
+        let token_id = crate::contracts::utils::generate_custom_token_id(token_name, token_symbol);
+
+        let create_params = CreateTokenParams {
+            name: token_name.to_string(),
+            symbol: token_symbol.to_string(),
+            initial_supply: 1_000,
+            decimals: 8,
+        };
+        let mint_params = MintParams {
+            token_id,
+            to: recipient.key_id.to_vec(),
+            amount: 250,
+        };
+
+        let txs = vec![
+            contract_execution_tx(
+                &creator,
+                "create_custom_token",
+                bincode::serialize(&create_params).expect("create params should serialize"),
+            ),
+            contract_execution_tx(
+                &creator,
+                "mint",
+                bincode::serialize(&mint_params).expect("mint params should serialize"),
+            ),
+        ];
+
+        let mut direct = Blockchain::default();
+        for tx in &txs {
+            direct
+                .process_contract_execution(tx, 10)
+                .expect("direct contract execution should succeed");
+        }
+
+        let mut replayed = Blockchain::default();
+        for tx in &txs {
+            replayed
+                .process_contract_execution(tx, 10)
+                .expect("replayed contract execution should succeed");
+        }
+
+        let direct_token = direct
+            .token_contracts
+            .get(&token_id)
+            .expect("token should exist in direct path");
+        let replayed_token = replayed
+            .token_contracts
+            .get(&token_id)
+            .expect("token should exist in replay path");
+
+        assert_eq!(direct_token.total_supply, 1_250);
+        assert_eq!(direct_token.balance_of(&creator), 1_000);
+        assert_eq!(direct_token.balance_of(&recipient), 250);
+
+        assert_eq!(replayed_token.total_supply, direct_token.total_supply);
+        assert_eq!(replayed_token.balance_of(&creator), direct_token.balance_of(&creator));
+        assert_eq!(replayed_token.balance_of(&recipient), direct_token.balance_of(&recipient));
+    }
+
+    #[test]
+    fn contract_blocks_populated_during_replay() {
+        #[derive(serde::Serialize)]
+        struct CreateTokenParams {
+            name: String,
+            symbol: String,
+            initial_supply: u64,
+            decimals: u8,
+        }
+
+        let creator = test_pubkey(0x43);
+        let token_name = "BlockHeightToken";
+        let token_symbol = "BHT";
+        let token_id = crate::contracts::utils::generate_custom_token_id(token_name, token_symbol);
+
+        let create_params = CreateTokenParams {
+            name: token_name.to_string(),
+            symbol: token_symbol.to_string(),
+            initial_supply: 5_000,
+            decimals: 8,
+        };
+
+        let tx = contract_execution_tx(
+            &creator,
+            "create_custom_token",
+            bincode::serialize(&create_params).expect("create params should serialize"),
+        );
+
+        let mut blockchain = Blockchain::default();
+        blockchain
+            .process_contract_execution(&tx, 42)
+            .expect("contract execution should succeed");
+
+        // Verify contract_blocks is updated with the correct block height
+        assert!(blockchain.token_contracts.contains_key(&token_id), "Token contract should exist");
+        assert_eq!(
+            blockchain.get_contract_block_height(&token_id),
+            Some(42),
+            "Contract deployment height should be tracked"
+        );
     }
 }
