@@ -211,6 +211,8 @@ pub struct QuicHandler {
 
     /// Identity manager for auto-registration of authenticated peers
     identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
+    /// Optional POUW session log — records authenticated sessions for proof-of-presence
+    pouw_session_log: Option<crate::pouw::SharedSessionLog>,
 }
 
 impl QuicHandler {
@@ -226,7 +228,14 @@ impl QuicHandler {
             mesh_handler: None,
             handshake_rate_limits: Arc::new(RwLock::new(HashMap::new())),
             identity_manager,
+            pouw_session_log: None,
         }
+    }
+
+    /// Attach a POUW session log for proof-of-presence recording
+    pub fn with_pouw_session_log(mut self, session_log: crate::pouw::SharedSessionLog) -> Self {
+        self.pouw_session_log = Some(session_log);
+        self
     }
 
     /// Get the ZHTP router for registering additional handlers
@@ -412,6 +421,16 @@ impl QuicHandler {
 
         // Auto-register the authenticated peer identity
         self.auto_register_peer_identity(&handshake_result.verified_peer.identity).await;
+
+        // Record session in POUW session log for proof-of-presence verification
+        if let Some(session_log) = &self.pouw_session_log {
+            let mut sid_8 = [0u8; 8];
+            sid_8.copy_from_slice(&session_id_v2[..8]);
+            session_log
+                .write()
+                .await
+                .record(sid_8, peer_did.clone(), "/api/v1/pouw".to_string());
+        }
 
         // Create V2Session for request authentication
         let v2_session = lib_network::protocols::types::session::V2Session::new(
@@ -1360,6 +1379,7 @@ impl Clone for QuicHandler {
             mesh_handler: self.mesh_handler.clone(),
             handshake_rate_limits: self.handshake_rate_limits.clone(),
             identity_manager: self.identity_manager.clone(),
+            pouw_session_log: self.pouw_session_log.clone(),
         }
     }
 }
