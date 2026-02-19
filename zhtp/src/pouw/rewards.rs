@@ -59,6 +59,8 @@ pub struct ProofTypeCounts {
     pub hash_count: u64,
     pub merkle_count: u64,
     pub signature_count: u64,
+    pub web4_manifest_route_count: u64,
+    pub web4_content_served_count: u64,
 }
 
 impl ProofTypeCounts {
@@ -67,11 +69,14 @@ impl ProofTypeCounts {
             ProofType::Hash => self.hash_count += 1,
             ProofType::Merkle => self.merkle_count += 1,
             ProofType::Signature => self.signature_count += 1,
+            ProofType::Web4ManifestRoute => self.web4_manifest_route_count += 1,
+            ProofType::Web4ContentServed => self.web4_content_served_count += 1,
         }
     }
 
     pub fn total(&self) -> u64 {
         self.hash_count + self.merkle_count + self.signature_count
+            + self.web4_manifest_route_count + self.web4_content_served_count
     }
 }
 
@@ -117,6 +122,8 @@ pub struct ProofTypeMultipliers {
     pub hash: u64,
     pub merkle: u64,
     pub signature: u64,
+    pub web4_manifest_route: u64,
+    pub web4_content_served: u64,
 }
 
 impl Default for ProofTypeMultipliers {
@@ -125,6 +132,8 @@ impl Default for ProofTypeMultipliers {
             hash: 1,
             merkle: 2,
             signature: 3,
+            web4_manifest_route: 2,
+            web4_content_served: 3,
         }
     }
 }
@@ -216,10 +225,12 @@ impl RewardCalculator {
     /// Calculate reward for a client's epoch stats
     pub fn calculate_reward(&self, stats: &EpochClientStats) -> Reward {
         // Calculate weighted reward based on proof types
-        let weighted_count = 
+        let weighted_count =
             stats.proof_type_counts.hash_count * self.multipliers.hash +
             stats.proof_type_counts.merkle_count * self.multipliers.merkle +
-            stats.proof_type_counts.signature_count * self.multipliers.signature;
+            stats.proof_type_counts.signature_count * self.multipliers.signature +
+            stats.proof_type_counts.web4_manifest_route_count * self.multipliers.web4_manifest_route +
+            stats.proof_type_counts.web4_content_served_count * self.multipliers.web4_content_served;
 
         // Raw amount = base unit * weighted count
         let raw_amount = BASE_REWARD_UNIT * weighted_count;
