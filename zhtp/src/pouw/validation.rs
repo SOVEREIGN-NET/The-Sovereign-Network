@@ -104,6 +104,15 @@ pub struct ValidatedReceipt {
     pub bytes_verified: u64,
     pub validated_at: u64,
     pub challenge_nonce: Vec<u8>,
+    // Web4 context — None for non-Web4 proof types
+    /// CID of the Web4 manifest that was routed or served
+    pub manifest_cid: Option<String>,
+    /// Domain associated with the manifest (e.g. "central.sov")
+    pub domain: Option<String>,
+    /// Number of mesh hops used to route the manifest (Web4ManifestRoute only)
+    pub route_hops: Option<u8>,
+    /// Whether the content was served from local cache (Web4ContentServed only)
+    pub served_from_cache: Option<bool>,
 }
 
 /// Dispute log entry for rejected receipts
@@ -303,6 +312,30 @@ impl ReceiptValidator {
             return Err(RejectionReason::BadProof);
         }
 
+        // Web4 proof types require manifest_cid in the aux field
+        match receipt.proof_type {
+            ProofType::Web4ManifestRoute | ProofType::Web4ContentServed => {
+                let aux_obj = receipt.aux.as_deref()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+                let manifest_cid = aux_obj.as_ref()
+                    .and_then(|v| v.get("manifest_cid"))
+                    .and_then(|v| v.as_str());
+                if manifest_cid.is_none() || manifest_cid.unwrap_or("").is_empty() {
+                    return Err(RejectionReason::BadProof);
+                }
+                // Web4ContentServed additionally requires served_from_cache
+                if receipt.proof_type == ProofType::Web4ContentServed {
+                    let has_cache_field = aux_obj.as_ref()
+                        .and_then(|v| v.get("served_from_cache"))
+                        .is_some();
+                    if !has_cache_field {
+                        return Err(RejectionReason::BadProof);
+                    }
+                }
+            }
+            _ => {}
+        }
+
         Ok(())
     }
 
@@ -419,8 +452,38 @@ impl ReceiptValidator {
         Ok(identity.public_key.dilithium_pk.clone())
     }
 
+    /// Parse Web4 context fields from receipt aux JSON
+    fn parse_web4_aux(receipt: &Receipt) -> (Option<String>, Option<String>, Option<u8>, Option<bool>) {
+        let aux_obj = receipt.aux.as_deref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+        let manifest_cid = aux_obj.as_ref()
+            .and_then(|v| v.get("manifest_cid"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let domain = aux_obj.as_ref()
+            .and_then(|v| v.get("domain"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let route_hops = aux_obj.as_ref()
+            .and_then(|v| v.get("route_hops"))
+            .and_then(|v| v.as_u64())
+            .map(|n| n.min(255) as u8);
+        let served_from_cache = aux_obj.as_ref()
+            .and_then(|v| v.get("served_from_cache"))
+            .and_then(|v| v.as_bool());
+        (manifest_cid, domain, route_hops, served_from_cache)
+    }
+
     /// Accept a validated receipt
     async fn accept_receipt(&self, receipt: &Receipt) {
+        let (manifest_cid, domain, route_hops, served_from_cache) = match receipt.proof_type {
+            ProofType::Web4ManifestRoute | ProofType::Web4ContentServed => {
+                Self::parse_web4_aux(receipt)
+            }
+            _ => (None, None, None, None),
+        };
+
         let validated = ValidatedReceipt {
             receipt_nonce: receipt.receipt_nonce.clone(),
             client_did: receipt.client_did.clone(),
@@ -429,6 +492,10 @@ impl ReceiptValidator {
             bytes_verified: receipt.bytes_verified,
             validated_at: self.now_secs(),
             challenge_nonce: receipt.challenge_nonce.clone(),
+            manifest_cid,
+            domain,
+            route_hops,
+            served_from_cache,
         };
 
         self.validated_receipts.write().await.push(validated);
