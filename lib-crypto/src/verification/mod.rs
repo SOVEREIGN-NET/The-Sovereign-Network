@@ -11,6 +11,7 @@ pub use signature_verify::{
 };
 
 // Re-export development mode functions (gated behind feature)
+#[cfg(feature = "development")]
 pub use dev_mode::development::{
     accept_development_signature, is_development_public_key, is_development_signature,
 };
