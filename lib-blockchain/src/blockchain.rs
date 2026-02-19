@@ -17,6 +17,7 @@ use crate::integration::economic_integration::{EconomicTransactionProcessor, Tre
 use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, ConsensusStatus};
 use crate::integration::storage_integration::{BlockchainStorageManager, BlockchainStorageConfig, StorageOperationResult};
 use crate::storage::{BlockchainStore, IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus, did_to_hash};
+use crate::contracts::treasury_kernel::TreasuryKernel;
 use lib_storage::dht::storage::DhtStorage;
 
 /// Validator was bootstrapped from off-chain genesis configuration at height 0.
@@ -161,6 +162,10 @@ pub struct Blockchain {
     /// Per-contract state storage (contract_id -> state bytes)
     #[serde(default)]
     pub contract_states: HashMap<[u8; 32], Vec<u8>>,
+    /// Treasury Kernel - single authority for SOV and DAO token balance mutations
+    /// Custom tokens (without kernel_mint_authority) bypass the kernel
+    #[serde(skip)]
+    pub treasury_kernel: Option<TreasuryKernel>,
     /// Contract state snapshots per block height for historical queries
     #[serde(default)]
     pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
@@ -490,6 +495,7 @@ impl BlockchainV1 {
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
             executor: None,
+            treasury_kernel: None,
         }
     }
 }
@@ -798,6 +804,9 @@ impl BlockchainStorageV3 {
 
             // Block executor - single source of truth when configured
             executor: None,
+
+            // Treasury Kernel - initialized separately
+            treasury_kernel: None,
         }
     }
 }
@@ -871,6 +880,7 @@ impl Blockchain {
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
             executor: None,
+            treasury_kernel: None,
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -2116,7 +2126,9 @@ impl Blockchain {
             }
 
             // Deduct fee from sender's balance
-            // Note: We use the internal balance mutation since this is at the blockchain level
+            // Note: Direct balance mutation for backward compatibility.
+            // SOV token operations go through TreasuryKernel for new transactions,
+            // but this historical fee deduction maintains existing behavior.
             let new_balance = sender_balance - tx.fee;
             sov_token.balances.insert(fee_payer.clone(), new_balance);
 
@@ -2131,6 +2143,8 @@ impl Blockchain {
         }
 
         // Credit collected fees to DAO treasury wallet (conservation invariant: total supply unchanged)
+        // Note: Direct balance mutation for backward compatibility.
+        // New token operations should route through TreasuryKernel.
         if total_fees > 0 {
             if let Some(ref treasury_wallet_id) = self.dao_treasury_wallet_id {
                 match hex::decode(treasury_wallet_id) {
@@ -3148,6 +3162,76 @@ impl Blockchain {
             dilithium_pk: Vec::new(),
             kyber_pk: Vec::new(),
             key_id: *wallet_id,
+        }
+    }
+
+    /// Initialize Treasury Kernel with SOV token authority.
+    /// Must be called after SOV token is created with kernel authority.
+    pub fn initialize_treasury_kernel(&mut self, kernel_authority: PublicKey) {
+        use crate::contracts::treasury_kernel::TreasuryKernel;
+        
+        let governance_authority = kernel_authority.clone();
+        self.treasury_kernel = Some(TreasuryKernel::new(
+            kernel_authority,
+            governance_authority,
+            100, // blocks per epoch
+        ));
+        info!("Treasury Kernel initialized");
+    }
+
+    /// Check if a token is controlled by Treasury Kernel.
+    /// Returns true if token has kernel_mint_authority set.
+    fn is_kernel_controlled_token(&self, token: &crate::contracts::TokenContract) -> bool {
+        token.kernel_mint_authority.is_some()
+    }
+
+    /// Credit tokens to an account - routes through Treasury Kernel for SOV/DAO tokens,
+    /// uses direct method for custom tokens.
+    ///
+    /// SECURITY: For kernel-controlled tokens, this REQUIRES the kernel to be initialized.
+    /// There is NO fallback to direct methods for security reasons.
+    fn credit_tokens(
+        &mut self,
+        token: &mut crate::contracts::TokenContract,
+        to: &PublicKey,
+        amount: u64,
+        reason: crate::contracts::treasury_kernel::CreditReason,
+    ) -> Result<(), String> {
+        // Check if token is kernel-controlled (SOV, DAO tokens)
+        if self.is_kernel_controlled_token(token) {
+            // Must route through Treasury Kernel - no fallback for security
+            let kernel = self.treasury_kernel.as_mut()
+                .ok_or_else(|| "Treasury Kernel not initialized - kernel-controlled token operations require kernel".to_string())?;
+            let caller = kernel.governance_authority().clone();
+            kernel.credit(token, &caller, to, amount, reason).map_err(|e| e.to_string())
+        } else {
+            // Custom token - use direct method (no kernel control)
+            token.credit_balance(to, amount)
+        }
+    }
+
+    /// Debit tokens from an account - routes through Treasury Kernel for SOV/DAO tokens,
+    /// uses direct method for custom tokens.
+    ///
+    /// SECURITY: For kernel-controlled tokens, this REQUIRES the kernel to be initialized.
+    /// There is NO fallback to direct methods for security reasons.
+    fn debit_tokens(
+        &mut self,
+        token: &mut crate::contracts::TokenContract,
+        from: &PublicKey,
+        amount: u64,
+        reason: crate::contracts::treasury_kernel::DebitReason,
+    ) -> Result<(), String> {
+        // Check if token is kernel-controlled (SOV, DAO tokens)
+        if self.is_kernel_controlled_token(token) {
+            // Must route through Treasury Kernel - no fallback for security
+            let kernel = self.treasury_kernel.as_mut()
+                .ok_or_else(|| "Treasury Kernel not initialized - kernel-controlled token operations require kernel".to_string())?;
+            let caller = kernel.governance_authority().clone();
+            kernel.debit(token, &caller, from, amount, reason).map_err(|e| e.to_string())
+        } else {
+            // Custom token - use direct method (no kernel control)
+            token.debit_balance(from, amount)
         }
     }
 
