@@ -912,10 +912,14 @@ impl Blockchain {
     /// ```
     pub fn new_with_store(store: std::sync::Arc<dyn BlockchainStore>) -> Result<Self> {
         let mut blockchain = Self::new()?;
+        let executor = std::sync::Arc::new(
+            crate::execution::executor::BlockExecutor::with_store(store.clone())
+        );
+        blockchain.executor = Some(executor);
         blockchain.store = Some(store);
         // Disable legacy auto-persistence when using the new store
         blockchain.auto_persist_enabled = false;
-        info!("Blockchain initialized with Phase 2 incremental store");
+        info!("Blockchain initialized with incremental store + canonical BlockExecutor path");
         Ok(blockchain)
     }
 
@@ -987,6 +991,10 @@ impl Blockchain {
 
         // Create a fresh blockchain (with genesis)
         let mut blockchain = Self::new()?;
+        let executor = std::sync::Arc::new(
+            crate::execution::executor::BlockExecutor::with_store(store.clone())
+        );
+        blockchain.executor = Some(executor);
         blockchain.store = Some(store.clone());
         blockchain.auto_persist_enabled = false;
 
