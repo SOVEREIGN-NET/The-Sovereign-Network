@@ -51,6 +51,24 @@ impl PouwHandler {
         }
     }
 
+    /// Create with a pre-wrapped `Arc<RwLock<ReceiptValidator>>` so it can be shared
+    /// with Web4 handlers, QuicHandler, and MeshMessageRouter.
+    pub fn new_with_validator_arc(
+        challenge_generator: Arc<ChallengeGenerator>,
+        receipt_validator: Arc<RwLock<ReceiptValidator>>,
+        reward_calculator: RewardCalculator,
+        identity_manager: Arc<RwLock<IdentityManager>>,
+    ) -> Self {
+        Self {
+            challenge_generator,
+            receipt_validator,
+            reward_calculator: Arc::new(RwLock::new(reward_calculator)),
+            metrics: Arc::new(PouwMetrics::new()),
+            rate_limiter: Arc::new(PouwRateLimiter::with_defaults()),
+            identity_manager,
+        }
+    }
+
     fn parse_query_params(uri: &str) -> HashMap<String, String> {
         let mut params = HashMap::new();
         if let Some(query) = uri.split('?').nth(1) {

@@ -685,7 +685,7 @@ impl ReceiptValidator {
 /// Call this in `unified_server.rs` after creating the `ReceiptValidator` and
 /// attaching a `pouw_routing_tx` to `MeshMessageRouter`.
 pub fn spawn_mesh_routing_listener(
-    validator: Arc<ReceiptValidator>,
+    validator: Arc<RwLock<ReceiptValidator>>,
     mut rx: tokio::sync::mpsc::Receiver<lib_network::MeshRoutingEvent>,
     node_did: String,
 ) {
@@ -714,7 +714,7 @@ pub fn spawn_mesh_routing_listener(
                 served_from_cache: None,
             };
 
-            validator.emit_direct(receipt).await;
+            validator.read().await.emit_direct(receipt).await;
         }
 
         tracing::info!("POUW mesh routing listener stopped (channel closed)");
