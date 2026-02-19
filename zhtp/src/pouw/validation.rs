@@ -562,6 +562,47 @@ impl ReceiptValidator {
     }
 }
 
+/// Spawn a background task that converts `MeshRoutingEvent`s into `Web4ManifestRoute` receipts.
+///
+/// Call this in `unified_server.rs` after creating the `ReceiptValidator` and
+/// attaching a `pouw_routing_tx` to `MeshMessageRouter`.
+pub fn spawn_mesh_routing_listener(
+    validator: Arc<ReceiptValidator>,
+    mut rx: tokio::sync::mpsc::Receiver<lib_network::MeshRoutingEvent>,
+    node_did: String,
+) {
+    tokio::spawn(async move {
+        tracing::info!(did = %node_did, "POUW mesh routing listener started");
+
+        while let Some(event) = rx.recv().await {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let mut nonce = vec![0u8; 16];
+            rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
+
+            let receipt = ValidatedReceipt {
+                receipt_nonce: nonce,
+                client_did: node_did.clone(),
+                task_id: vec![0u8; 16],
+                proof_type: ProofType::Web4ManifestRoute,
+                bytes_verified: event.message_size,
+                validated_at: now,
+                challenge_nonce: vec![0u8; 16],
+                manifest_cid: None,
+                domain: None,
+                route_hops: Some(event.hop_count),
+                served_from_cache: None,
+            };
+
+            validator.emit_direct(receipt).await;
+        }
+
+        tracing::info!("POUW mesh routing listener stopped (channel closed)");
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

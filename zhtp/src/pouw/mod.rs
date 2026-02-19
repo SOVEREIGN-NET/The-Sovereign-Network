@@ -27,4 +27,4 @@ pub use metrics::{PouwMetrics, PouwMetricsSnapshot, RejectionType};
 pub use rate_limiter::{PouwRateLimiter, RateLimitConfig, RateLimitResult, RateLimitReason};
 pub use rewards::{RewardCalculator, Reward, PayoutStatus, EpochClientStats};
 pub use types::*;
-pub use validation::{ReceiptValidator, ReceiptValidationResult, SubmitResponse, RejectionReason};
+pub use validation::{ReceiptValidator, ReceiptValidationResult, SubmitResponse, RejectionReason, spawn_mesh_routing_listener};
