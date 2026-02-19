@@ -196,6 +196,12 @@ pub struct Blockchain {
     /// Key: (token_id, sender address) where address is wallet_id for SOV or key_id for custom tokens
     #[serde(default)]
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
+    /// Block executor for state changes
+    /// When present, this is the SINGLE SOURCE OF TRUTH for state mutations.
+    /// All block applications should go through this executor.
+    #[serde(skip)]
+    #[allow(clippy::redundant_closure_call)]
+    pub executor: Option<std::sync::Arc<crate::execution::executor::BlockExecutor>>,
 }
 
 /// Validator information stored on-chain.
@@ -483,6 +489,7 @@ impl BlockchainV1 {
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
+            executor: None,
         }
     }
 }
@@ -788,6 +795,9 @@ impl BlockchainStorageV3 {
 
             // Token nonces
             token_nonces: self.token_nonces,
+
+            // Block executor - single source of truth when configured
+            executor: None,
         }
     }
 }
@@ -860,6 +870,7 @@ impl Blockchain {
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
+            executor: None,
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -895,6 +906,28 @@ impl Blockchain {
         // Disable legacy auto-persistence when using the new store
         blockchain.auto_persist_enabled = false;
         info!("Blockchain initialized with Phase 2 incremental store");
+        Ok(blockchain)
+    }
+
+    /// Create a new blockchain with BlockExecutor as single source of truth.
+    ///
+    /// This is the recommended constructor for production use.
+    /// All state mutations go through the executor, ensuring consistency.
+    pub fn new_with_executor(
+        store: std::sync::Arc<dyn BlockchainStore>,
+    ) -> Result<Self> {
+        let mut blockchain = Self::new()?;
+        
+        // Create BlockExecutor with the store
+        let executor = std::sync::Arc::new(
+            crate::execution::executor::BlockExecutor::with_store(store.clone())
+        );
+        
+        blockchain.executor = Some(executor);
+        blockchain.store = Some(store);
+        blockchain.auto_persist_enabled = false;
+        
+        info!("Blockchain initialized with BlockExecutor as single source of truth");
         Ok(blockchain)
     }
 
@@ -1186,6 +1219,21 @@ impl Blockchain {
     /// Get a reference to the Phase 2 incremental store, if configured.
     pub fn get_store(&self) -> Option<&std::sync::Arc<dyn BlockchainStore>> {
         self.store.as_ref()
+    }
+
+    /// Set the BlockExecutor as the single source of truth for state mutations.
+    ///
+    /// When an executor is set, all block applications should go through
+    /// BlockExecutor.apply_block() instead of direct state updates.
+    /// This ensures consistent state between memory and storage.
+    pub fn set_executor(&mut self, executor: std::sync::Arc<crate::execution::executor::BlockExecutor>) {
+        self.executor = Some(executor);
+        info!("BlockExecutor set as single source of truth for state mutations");
+    }
+
+    /// Check if BlockExecutor is configured as the single source of truth
+    pub fn has_executor(&self) -> bool {
+        self.executor.is_some()
     }
 
     /// Initialize the storage manager
@@ -1529,6 +1577,35 @@ impl Blockchain {
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
+        // If BlockExecutor is configured, use it as single source of truth
+        if let Some(ref executor) = self.executor {
+            // Use BlockExecutor for state mutations
+            // Note: executor.apply_block() handles begin_block/commit_block internally
+            match executor.apply_block(&block) {
+                Ok(_outcome) => {
+                    // Block applied successfully through executor
+                    // Update blockchain metadata
+                    self.blocks.push(block.clone());
+                    self.height += 1;
+                    self.adjust_difficulty()?;
+                    
+                    debug!("Block {} applied via BlockExecutor (single source of truth)", block.height());
+                    
+                    // Continue with post-processing (events, persistence)
+                    self.finish_block_processing(block).await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("BlockExecutor failed to apply block: {}", e));
+                }
+            }
+        }
+
+        // DEPRECATED: Legacy path without BlockExecutor
+        // This path will be removed in a future version
+        warn!("DEPRECATED: Using legacy block processing path without BlockExecutor. Please use Blockchain::new_with_executor() or set_executor().");
+
+        // Legacy path: direct state mutations (when no executor configured)
         // Verify the block
         let previous_block = self.blocks.last();
         if !self.verify_block(&block, previous_block)? {
@@ -1545,7 +1622,6 @@ impl Blockchain {
         }
 
         // Issue #1016: Deduct transaction fees from sender balances BEFORE updating UTXO set
-        // This ensures fees are collected at the consensus layer, not just declared
         let block_fees = self.deduct_transaction_fees(&block)?;
         if block_fees > 0 {
             debug!("Collected {} in fees from block {}", block_fees, block.height());
@@ -1558,32 +1634,10 @@ impl Blockchain {
         self.save_utxo_snapshot(self.height)?;
         self.adjust_difficulty()?;
 
-        // TODO(BFT-J-1015): Add consensus invariant enforcement here
-        // Once consensus coordinator is fully integrated, validate:
-        // - No fork detected at this height
-        // - Height progression is monotonic
-        // - Block has sufficient validator quorum (if applicable)
-        // - No reorg of finalized blocks
-        //
-        // Example integration (currently disabled pending full consensus integration):
-        // ```
-        // use lib_consensus::invariants::{ConsensusState, enforce_consensus_invariants};
-        // let state = ConsensusState {
-        //     current_height: self.height,
-        //     previous_height: if self.height > 0 { Some(self.height - 1) } else { None },
-        //     votes_received: validator_votes_count, // From consensus coordinator
-        //     total_validators: total_validator_count, // From consensus coordinator
-        //     fork_detected: false, // Check for conflicting blocks at this height
-        //     reorg_detected: false, // Check if any finalized blocks were reverted
-        // };
-        // enforce_consensus_invariants(&state);
-        // ```
-
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
 
-        // Begin sled transaction BEFORE processing identity/wallet transactions
-        // This ensures any sled writes during processing have an active transaction
+        // Begin sled transaction for remaining processing
         if let Some(ref store) = self.store {
             store.begin_block(block.header.height)
                 .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
@@ -1595,50 +1649,40 @@ impl Blockchain {
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
 
-        // Process approved governance proposals (e.g., difficulty parameter updates)
-        // This executes any proposals that have passed voting since the last block
+        // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
-            // Don't fail block processing, governance is non-critical
         }
 
-        // Process economic features (UBI claims and profit declarations)
+        // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
             warn!("Error processing UBI claims at height {}: {}", self.height, e);
-            // Don't fail block processing for UBI errors
         }
-
-        // Automatic UBI distribution is now minted via TokenMint transactions
-        // constructed during block creation (block-authoritative path).
 
         if let Err(e) = self.process_profit_declarations(&block) {
             warn!("Error processing profit declarations at height {}: {}", self.height, e);
-            // Don't fail block processing for profit declaration errors
         }
 
-        // Create transaction receipts for all transactions in block
+        // Create transaction receipts
         let block_hash = block.hash();
         for (tx_index, tx) in block.transactions.iter().enumerate() {
             if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
                 warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
-                // Continue processing even if receipt creation fails
             }
         }
 
-        // Persist block to SledStore (Phase 3 incremental storage)
+        // Persist block to SledStore
         if let Some(ref store) = self.store {
             if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
                 error!("Failed to persist block {} to SledStore: {}", block.height(), e);
-                // Don't fail block processing - log error but continue
             } else {
                 debug!("Block {} persisted to SledStore", block.height());
             }
         }
 
-        // Update persistence counter
         self.blocks_since_last_persist += 1;
 
-        // Emit BlockAdded event (Issue #11)
+        // Emit BlockAdded event
         let block_hash_bytes = block.hash();
         let block_hash_array: [u8; 32] = match block_hash_bytes.as_bytes().try_into() {
             Ok(arr) => arr,
@@ -1660,7 +1704,90 @@ impl Blockchain {
         };
         if let Err(e) = self.event_publisher.publish(event).await {
             warn!("Failed to publish BlockAdded event: {}", e);
-            // Don't fail block processing for event publishing errors
+        }
+
+        Ok(())
+    }
+
+    /// Finish block processing after state mutations are complete.
+    /// This handles post-processing steps that happen regardless of which path was used.
+    async fn finish_block_processing(&mut self, block: Block) -> Result<()> {
+        // Remove processed transactions from pending pool
+        self.remove_pending_transactions(&block.transactions);
+
+        // Begin sled transaction for remaining processing
+        if let Some(ref store) = self.store {
+            store.begin_block(block.header.height)
+                .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
+        }
+
+        // Process identity transactions
+        self.process_identity_transactions(&block)?;
+        self.process_wallet_transactions(&block)?;
+
+        // Skip token/contract processing when using BlockExecutor - it handles these
+        if !self.has_executor() {
+            self.process_contract_transactions(&block)?;
+            self.process_token_transactions(&block)?;
+        } else {
+            debug!("Skipping legacy token/contract processing - BlockExecutor is single source of truth");
+        }
+
+        // Process approved governance proposals
+        if let Err(e) = self.process_approved_governance_proposals() {
+            warn!("Error processing governance proposals at height {}: {}", self.height, e);
+        }
+
+        // Process economic features
+        if let Err(e) = self.process_ubi_claim_transactions(&block) {
+            warn!("Error processing UBI claims at height {}: {}", self.height, e);
+        }
+
+        if let Err(e) = self.process_profit_declarations(&block) {
+            warn!("Error processing profit declarations at height {}: {}", self.height, e);
+        }
+
+        // Create transaction receipts
+        let block_hash = block.hash();
+        for (tx_index, tx) in block.transactions.iter().enumerate() {
+            if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
+                warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
+            }
+        }
+
+        // Persist block to SledStore
+        if let Some(ref store) = self.store {
+            if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
+                error!("Failed to persist block {} to SledStore: {}", block.height(), e);
+            } else {
+                debug!("Block {} persisted to SledStore", block.height());
+            }
+        }
+
+        self.blocks_since_last_persist += 1;
+
+        // Emit BlockAdded event
+        let block_hash_bytes = block.hash();
+        let block_hash_array: [u8; 32] = match block_hash_bytes.as_bytes().try_into() {
+            Ok(arr) => arr,
+            Err(e) => {
+                error!(
+                    "Invariant violation: block hash for height {} is not 32 bytes (len = {}, error = {:?})",
+                    block.header.height,
+                    block_hash_bytes.as_bytes().len(),
+                    e
+                );
+                [0u8; 32]
+            }
+        };
+        let event = crate::events::BlockchainEvent::BlockAdded {
+            height: block.header.height,
+            block_hash: block_hash_array,
+            timestamp: block.header.timestamp,
+            transaction_count: block.transactions.len() as u64,
+        };
+        if let Err(e) = self.event_publisher.publish(event).await {
+            warn!("Failed to publish BlockAdded event: {}", e);
         }
 
         Ok(())
@@ -3175,7 +3302,18 @@ impl Blockchain {
     /// Get the current expected nonce for a sender address and token.
     /// For SOV transfers, the address is the wallet_id bytes.
     /// For custom token transfers, the address is the key_id bytes.
+    /// 
+    /// Reads from BlockchainStore (sled) if available, otherwise falls back to HashMap.
     pub fn get_token_nonce(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u64 {
+        // Try store first (single source of truth when using BlockExecutor)
+        if let Some(store) = self.get_store() {
+            let token = crate::storage::TokenId::new(*token_id);
+            let addr = crate::storage::Address::new(*address);
+            if let Ok(nonce) = store.get_token_nonce(&token, &addr) {
+                return nonce;
+            }
+        }
+        // Fallback to HashMap (legacy path)
         self.token_nonces
             .get(&(*token_id, *address))
             .copied()
@@ -7546,11 +7684,24 @@ impl Blockchain {
     }
     
     /// Get a token contract from the blockchain
-    pub fn get_token_contract(&self, contract_id: &[u8; 32]) -> Option<&crate::contracts::TokenContract> {
-        self.token_contracts.get(contract_id)
+    /// 
+    /// Reads from BlockchainStore (sled) if available, otherwise falls back to HashMap.
+    /// This enables the single-source-of-truth pattern when using BlockExecutor.
+    pub fn get_token_contract(&self, contract_id: &[u8; 32]) -> Option<crate::contracts::TokenContract> {
+        // Try store first (single source of truth when using BlockExecutor)
+        if let Some(store) = self.get_store() {
+            let token_id = crate::storage::TokenId::new(*contract_id);
+            if let Ok(Some(contract)) = store.get_token_contract(&token_id) {
+                return Some(contract);
+            }
+        }
+        // Fallback to HashMap (legacy path)
+        self.token_contracts.get(contract_id).cloned()
     }
     
     /// Get a mutable reference to a token contract
+    /// 
+    /// WARNING: This modifies the HashMap. For BlockExecutor path, use store methods instead.
     pub fn get_token_contract_mut(&mut self, contract_id: &[u8; 32]) -> Option<&mut crate::contracts::TokenContract> {
         self.token_contracts.get_mut(contract_id)
     }
