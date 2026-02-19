@@ -219,6 +219,21 @@ impl<'a> StateMutator<'a> {
     }
 
     // =========================================================================
+    // Contract/DAO State Primitives
+    // =========================================================================
+
+    /// Persist contract key-value storage for a contract identifier.
+    pub fn put_contract_storage(
+        &self,
+        contract_id: &[u8; 32],
+        key: &[u8],
+        value: &[u8],
+    ) -> TxApplyResult<()> {
+        self.store.put_contract_storage(contract_id, key, value)?;
+        Ok(())
+    }
+
+    // =========================================================================
     // Account Primitives
     // =========================================================================
 
