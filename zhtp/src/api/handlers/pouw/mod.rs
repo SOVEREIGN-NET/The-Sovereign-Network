@@ -3,8 +3,13 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
+
+/// Minimum identity age in seconds before a DID is eligible for PoUW rewards.
+/// Default: 86400s = 24 hours. Prevents Sybil attacks from freshly registered DIDs.
+pub const MIN_IDENTITY_AGE_SECS: u64 = 86_400;
 use async_trait::async_trait;
 use hex;
 
@@ -39,6 +44,24 @@ impl PouwHandler {
         Self {
             challenge_generator,
             receipt_validator: Arc::new(RwLock::new(receipt_validator)),
+            reward_calculator: Arc::new(RwLock::new(reward_calculator)),
+            metrics: Arc::new(PouwMetrics::new()),
+            rate_limiter: Arc::new(PouwRateLimiter::with_defaults()),
+            identity_manager,
+        }
+    }
+
+    /// Create with a pre-wrapped `Arc<RwLock<ReceiptValidator>>` so it can be shared
+    /// with Web4 handlers, QuicHandler, and MeshMessageRouter.
+    pub fn new_with_validator_arc(
+        challenge_generator: Arc<ChallengeGenerator>,
+        receipt_validator: Arc<RwLock<ReceiptValidator>>,
+        reward_calculator: RewardCalculator,
+        identity_manager: Arc<RwLock<IdentityManager>>,
+    ) -> Self {
+        Self {
+            challenge_generator,
+            receipt_validator,
             reward_calculator: Arc::new(RwLock::new(reward_calculator)),
             metrics: Arc::new(PouwMetrics::new()),
             rate_limiter: Arc::new(PouwRateLimiter::with_defaults()),
@@ -135,15 +158,35 @@ impl PouwHandler {
         let identity_manager = self.identity_manager.read().await;
         match identity_manager.get_identity_by_did(client_did) {
             Some(identity) => {
-                if identity.did == client_did {
-                    debug!("Client identity validated: {}", client_did);
-                    Ok(())
-                } else {
-                    Err(format!(
+                if identity.did != client_did {
+                    return Err(format!(
                         "Client DID mismatch: requested {}, found {}",
                         client_did, identity.did
-                    ))
+                    ));
                 }
+
+                // Identity age check: reject DIDs registered less than MIN_IDENTITY_AGE_SECS ago.
+                // Prevents Sybil attacks from freshly created identities.
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let age_secs = now.saturating_sub(identity.created_at);
+                if age_secs < MIN_IDENTITY_AGE_SECS {
+                    warn!(
+                        did = %client_did,
+                        age_secs = age_secs,
+                        required_secs = MIN_IDENTITY_AGE_SECS,
+                        "PoUW reward rejected: identity too new"
+                    );
+                    return Err(format!(
+                        "Identity too new for reward eligibility: {} seconds old, minimum {} seconds required",
+                        age_secs, MIN_IDENTITY_AGE_SECS
+                    ));
+                }
+
+                debug!("Client identity validated: {}", client_did);
+                Ok(())
             }
             None => Err(format!("Client DID not found in identity registry: {}", client_did)),
         }
@@ -423,7 +466,13 @@ impl PouwHandler {
     }
 
     async fn handle_health_check(&self) -> ZhtpResult<ZhtpResponse> {
-        let body = serde_json::json!({"status": "ok"});
+        let calculator = self.reward_calculator.read().await;
+        let suspicious_dids = calculator.get_suspicious_dids().await;
+        let body = serde_json::json!({
+            "status": "ok",
+            "suspicious_dids": suspicious_dids,
+            "suspicious_did_count": suspicious_dids.len(),
+        });
         Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
     }
 
@@ -573,7 +622,9 @@ impl PouwHandler {
 #[async_trait]
 impl ZhtpRequestHandler for PouwHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let uri = request.uri.as_str();
+        let full_uri = request.uri.as_str();
+        // Strip /api/v1 prefix so internal routing works with /pouw/... paths
+        let uri = full_uri.strip_prefix("/api/v1").unwrap_or(full_uri);
         
         // Handle routes with path parameters
         if uri.starts_with("/pouw/rewards/") && request.method.as_str() == "GET" {
@@ -634,7 +685,7 @@ impl ZhtpRequestHandler for PouwHandler {
     }
 
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
-        request.uri.starts_with("/pouw")
+        request.uri.starts_with("/api/v1/pouw") || request.uri.starts_with("/pouw")
     }
 
     fn priority(&self) -> u32 { 100 }
@@ -675,7 +726,7 @@ mod tests {
         priv_arr.copy_from_slice(&node_privkey[..32]);
         node_id.copy_from_slice(&node_pubkey[..32]);
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator.clone());
+        let validator = ReceiptValidator::new(generator.clone(), Arc::new(tokio::sync::RwLock::new(lib_identity::IdentityManager::new())));
         let reward_calculator = RewardCalculator::new(1_700_000_000);
         let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
         PouwHandler::new(generator, validator, reward_calculator, identity_manager)
@@ -719,7 +770,7 @@ mod tests {
         priv_arr.copy_from_slice(&node_privkey[..32]);
         node_id.copy_from_slice(&node_pubkey[..32]);
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator.clone());
+        let validator = ReceiptValidator::new(generator.clone(), Arc::new(tokio::sync::RwLock::new(lib_identity::IdentityManager::new())));
         let reward_calculator = RewardCalculator::new(1_700_000_000);
         let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
         register_known_identity(
@@ -757,7 +808,7 @@ mod tests {
         priv_arr.copy_from_slice(&node_privkey[..32]);
         node_id.copy_from_slice(&node_pubkey[..32]);
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator.clone());
+        let validator = ReceiptValidator::new(generator.clone(), Arc::new(tokio::sync::RwLock::new(lib_identity::IdentityManager::new())));
         let reward_calculator = RewardCalculator::new(1_700_000_000);
         let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
         let client_did = "did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -774,6 +825,10 @@ mod tests {
                 bytes_verified: 4096,
                 validated_at: 1_700_003_601,
                 challenge_nonce: vec![3u8; 16],
+                manifest_cid: None,
+                domain: None,
+                route_hops: None,
+                served_from_cache: None,
             }];
             let _ = calc.calculate_epoch_rewards(&validated, 1).await.unwrap();
         }
@@ -808,7 +863,7 @@ mod tests {
         priv_arr.copy_from_slice(&node_privkey[..32]);
         node_id.copy_from_slice(&node_pubkey[..32]);
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator.clone());
+        let validator = ReceiptValidator::new(generator.clone(), Arc::new(tokio::sync::RwLock::new(lib_identity::IdentityManager::new())));
         let reward_calculator = RewardCalculator::new(1_700_000_000);
         let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
         let client_did = "did:zhtp:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -825,6 +880,10 @@ mod tests {
                 bytes_verified: 8192,
                 validated_at: 1_700_025_201,
                 challenge_nonce: vec![7u8; 16],
+                manifest_cid: None,
+                domain: None,
+                route_hops: None,
+                served_from_cache: None,
             }];
             let _ = calc.calculate_epoch_rewards(&validated, 7).await.unwrap();
         }

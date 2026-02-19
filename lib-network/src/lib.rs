@@ -113,6 +113,7 @@ pub mod discovery;
 pub mod relays;
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
 pub mod routing;
+pub use crate::routing::message_routing::MeshRoutingEvent;
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
 pub mod protocols;
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
