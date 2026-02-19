@@ -451,8 +451,23 @@ impl ZhtpUnifiedServer {
         );
         info!(" Content publisher initialized");
 
+        // Create PoUW shared infrastructure — created here so it can be wired into
+        // QuicHandler, Web4Handler, and MeshMessageRouter after handler registration.
+        let pouw_session_log = crate::pouw::new_shared_session_log();
+        let (pouw_routing_tx, pouw_routing_rx) =
+            tokio::sync::mpsc::channel::<lib_network::MeshRoutingEvent>(1024);
+
+        // Derive node DID for PoUW receipt attribution
+        let pouw_node_did = {
+            let mgr = identity_manager.read().await;
+            mgr.list_identities()
+                .first()
+                .map(|id| id.did.clone())
+                .unwrap_or_else(|| "did:zhtp:node".to_string())
+        };
+
         // Register comprehensive API handlers on ZHTP router (QUIC is the only entry point)
-        Self::register_api_handlers(
+        let pouw_validator_arc = Self::register_api_handlers(
             &mut zhtp_router,
             blockchain.clone(),
             storage.clone(),
@@ -462,6 +477,8 @@ impl ZhtpUnifiedServer {
             dht_handler,
             domain_registry.clone(),
             content_publisher.clone(),
+            pouw_session_log.clone(),
+            pouw_node_did.clone(),
         ).await?;
 
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
@@ -476,12 +493,30 @@ impl ZhtpUnifiedServer {
         // No need to link MeshRouter's PeerRegistry - broadcast_to_peers() now calls
         // quic_protocol.broadcast_message() directly.
 
+        // Wire PoUW session log into QuicHandler for proof-of-presence recording
+        let quic_handler = quic_handler.with_pouw_session_log(pouw_session_log.clone());
+
         let quic_handler = Arc::new(quic_handler);
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
         mesh_router_arc.set_zhtp_router(zhtp_router_arc.clone()).await;
         info!(" ZHTP router registered with mesh router for UDP endpoint handling");
+
+        // Wire PoUW routing event channel into MeshMessageRouter
+        {
+            let mut mmr = mesh_router_arc.mesh_message_router.write().await;
+            mmr.pouw_routing_tx = Some(pouw_routing_tx);
+        }
+        info!("✓ PoUW routing event channel wired into MeshMessageRouter");
+
+        // Spawn background listener that converts MeshRoutingEvents → Web4ManifestRoute receipts
+        crate::pouw::spawn_mesh_routing_listener(
+            pouw_validator_arc.clone(),
+            pouw_routing_rx,
+            pouw_node_did.clone(),
+        );
+        info!("✓ PoUW mesh routing listener spawned (did: {})", pouw_node_did);
 
         // Initialize NodeRuntime - Policy Authority (NR-1: Policy Ownership)
         // Delegates all "should we?" decisions to runtime, server only executes "can we?" operations
@@ -675,7 +710,9 @@ impl ZhtpUnifiedServer {
         dht_handler: Arc<dyn ZhtpRequestHandler>,
         domain_registry: Arc<lib_network::web4::DomainRegistry>,
         content_publisher: Arc<lib_network::web4::ContentPublisher>,
-    ) -> Result<()> {
+        pouw_session_log: crate::pouw::SharedSessionLog,
+        node_did: String,
+    ) -> Result<Arc<RwLock<crate::pouw::validation::ReceiptValidator>>> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
         
         // Blockchain operations
@@ -783,6 +820,50 @@ impl ZhtpUnifiedServer {
         // Register DHT handler on ZHTP (already registered on mesh_router for pure UDP)
         zhtp_router.register_handler("/api/v1/dht".to_string(), dht_handler);
         
+        // PoUW validator (created early so it can be shared with Web4 handlers)
+        // Derive node key/id from identity manager; never use shared placeholder material.
+        let (pouw_node_key, pouw_node_id) = {
+            let manager = identity_manager.read().await;
+            let identities = manager.list_identities();
+            if let Some(identity) = identities.first() {
+                let node_key = identity
+                    .private_key
+                    .as_ref()
+                    .map(|k| {
+                        lib_crypto::hash_blake3(&k.dilithium_sk)
+                    })
+                    .unwrap_or_else(|| lib_crypto::hash_blake3(identity.did.as_bytes()));
+                let node_id = *identity.node_id.as_bytes();
+                (node_key, node_id)
+            } else {
+                warn!("No identity available for PoUW handler; using deterministic local fallback key/id");
+                let fallback = lib_crypto::hash_blake3(b"pouw-local-fallback");
+                (fallback, fallback)
+            }
+        };
+        let pouw_genesis_timestamp = {
+            let blockchain_guard = blockchain.read().await;
+            blockchain_guard
+                .blocks
+                .first()
+                .map(|b| b.header.timestamp)
+                .unwrap_or_else(|| {
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()
+                })
+        };
+        let pouw_generator_arc = std::sync::Arc::new(crate::pouw::ChallengeGenerator::new(
+            pouw_node_key,
+            pouw_node_id,
+        ));
+        let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc.clone(), identity_manager.clone())
+            .with_session_log(pouw_session_log.clone())
+            .with_min_identity_age(crate::api::handlers::pouw::MIN_IDENTITY_AGE_SECS);
+        let pouw_validator_arc: Arc<RwLock<crate::pouw::validation::ReceiptValidator>> =
+            Arc::new(RwLock::new(pouw_validator));
+
         // Web4 domain and content (handle async creation first)
         // Pass the shared domain_registry and content_publisher to avoid creating duplicates
         // This ensures domain registrations are visible to all handlers
@@ -791,7 +872,8 @@ impl ZhtpUnifiedServer {
             content_publisher.clone(),
             identity_manager.clone(),
             blockchain.clone()
-        ).await?;
+        ).await?
+        .with_pouw_validator(pouw_validator_arc.clone(), node_did.clone());
         let wallet_content_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::WalletContentHandler::new(Arc::clone(&wallet_content_manager))
         );
@@ -836,56 +918,18 @@ impl ZhtpUnifiedServer {
         // These handlers are registered via register_runtime_handlers() after the
         // RuntimeOrchestrator becomes available.
 
-        // PoUW (Proof-of-Useful-Work) handler
-        // Derive node key/id from identity manager; never use shared placeholder material.
-        let (pouw_node_key, pouw_node_id) = {
-            let manager = identity_manager.read().await;
-            let identities = manager.list_identities();
-            if let Some(identity) = identities.first() {
-                let node_key = identity
-                    .private_key
-                    .as_ref()
-                    .map(|k| {
-                        lib_crypto::hash_blake3(&k.dilithium_sk)
-                    })
-                    .unwrap_or_else(|| lib_crypto::hash_blake3(identity.did.as_bytes()));
-                let node_id = *identity.node_id.as_bytes();
-                (node_key, node_id)
-            } else {
-                warn!("No identity available for PoUW handler; using deterministic local fallback key/id");
-                let fallback = lib_crypto::hash_blake3(b"pouw-local-fallback");
-                (fallback, fallback)
-            }
-        };
-        let pouw_genesis_timestamp = {
-            let blockchain_guard = blockchain.read().await;
-            blockchain_guard
-                .blocks
-                .first()
-                .map(|b| b.header.timestamp)
-                .unwrap_or_else(|| {
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()
-                })
-        };
-        let pouw_generator_arc = std::sync::Arc::new(crate::pouw::ChallengeGenerator::new(
-            pouw_node_key,
-            pouw_node_id,
-        ));
-        let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc.clone(), identity_manager.clone());
+        // PoUW HTTP handler — uses the already-created validator Arc
         let pouw_calculator = crate::pouw::RewardCalculator::new(pouw_genesis_timestamp);
-        let pouw_handler = crate::api::handlers::pouw::PouwHandler::new(
+        let pouw_handler = crate::api::handlers::pouw::PouwHandler::new_with_validator_arc(
             pouw_generator_arc,
-            pouw_validator,
+            pouw_validator_arc.clone(),
             pouw_calculator,
             identity_manager.clone(),
         );
         zhtp_router.register_handler("/api/v1/pouw".to_string(), Arc::new(pouw_handler));
 
         info!("✅ All API handlers registered successfully on ZHTP router");
-        Ok(())
+        Ok(pouw_validator_arc)
     }
     
     /// Start the unified server on port 9333
