@@ -196,6 +196,12 @@ pub struct Blockchain {
     /// Key: (token_id, sender address) where address is wallet_id for SOV or key_id for custom tokens
     #[serde(default)]
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
+    /// Block executor for state changes
+    /// When present, this is the SINGLE SOURCE OF TRUTH for state mutations.
+    /// All block applications should go through this executor.
+    #[serde(skip)]
+    #[allow(clippy::redundant_closure_call)]
+    pub executor: Option<std::sync::Arc<crate::execution::executor::BlockExecutor>>,
 }
 
 /// Validator information stored on-chain.
@@ -483,6 +489,7 @@ impl BlockchainV1 {
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
+            executor: None,
         }
     }
 }
@@ -788,6 +795,9 @@ impl BlockchainStorageV3 {
 
             // Token nonces
             token_nonces: self.token_nonces,
+
+            // Block executor - single source of truth when configured
+            executor: None,
         }
     }
 }
@@ -860,6 +870,7 @@ impl Blockchain {
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
+            executor: None,
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -895,6 +906,28 @@ impl Blockchain {
         // Disable legacy auto-persistence when using the new store
         blockchain.auto_persist_enabled = false;
         info!("Blockchain initialized with Phase 2 incremental store");
+        Ok(blockchain)
+    }
+
+    /// Create a new blockchain with BlockExecutor as single source of truth.
+    ///
+    /// This is the recommended constructor for production use.
+    /// All state mutations go through the executor, ensuring consistency.
+    pub fn new_with_executor(
+        store: std::sync::Arc<dyn BlockchainStore>,
+    ) -> Result<Self> {
+        let mut blockchain = Self::new()?;
+        
+        // Create BlockExecutor with the store
+        let executor = std::sync::Arc::new(
+            crate::execution::executor::BlockExecutor::with_store(store.clone())
+        );
+        
+        blockchain.executor = Some(executor);
+        blockchain.store = Some(store);
+        blockchain.auto_persist_enabled = false;
+        
+        info!("Blockchain initialized with BlockExecutor as single source of truth");
         Ok(blockchain)
     }
 
@@ -1186,6 +1219,21 @@ impl Blockchain {
     /// Get a reference to the Phase 2 incremental store, if configured.
     pub fn get_store(&self) -> Option<&std::sync::Arc<dyn BlockchainStore>> {
         self.store.as_ref()
+    }
+
+    /// Set the BlockExecutor as the single source of truth for state mutations.
+    ///
+    /// When an executor is set, all block applications should go through
+    /// BlockExecutor.apply_block() instead of direct state updates.
+    /// This ensures consistent state between memory and storage.
+    pub fn set_executor(&mut self, executor: std::sync::Arc<crate::execution::executor::BlockExecutor>) {
+        self.executor = Some(executor);
+        info!("BlockExecutor set as single source of truth for state mutations");
+    }
+
+    /// Check if BlockExecutor is configured as the single source of truth
+    pub fn has_executor(&self) -> bool {
+        self.executor.is_some()
     }
 
     /// Initialize the storage manager
