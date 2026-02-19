@@ -15,6 +15,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use lib_identity::IdentityManager;
+use super::session_log::SharedSessionLog;
 
 use super::challenge::ChallengeGenerator;
 use super::types::{
@@ -92,6 +93,8 @@ pub struct ReceiptValidator {
     dispute_log: Arc<RwLock<Vec<DisputeLogEntry>>>,
     /// Identity manager for DID public key resolution
     identity_manager: Arc<RwLock<IdentityManager>>,
+    /// Session log for proof-of-presence verification (Web4 proof types)
+    session_log: Option<SharedSessionLog>,
 }
 
 /// A validated and accepted receipt
@@ -134,7 +137,14 @@ impl ReceiptValidator {
             validated_receipts: Arc::new(RwLock::new(Vec::new())),
             dispute_log: Arc::new(RwLock::new(Vec::new())),
             identity_manager,
+            session_log: None,
         }
+    }
+
+    /// Attach a session log for proof-of-presence verification on Web4 receipts
+    pub fn with_session_log(mut self, session_log: SharedSessionLog) -> Self {
+        self.session_log = Some(session_log);
+        self
     }
 
     /// Get current timestamp
@@ -215,6 +225,16 @@ impl ReceiptValidator {
                 receipt_nonce: nonce_hex,
                 accepted: false,
                 rejection_reason: Some(RejectionReason::ClientInvalid),
+            };
+        }
+
+        // Step 2.5: Proof-of-presence — Web4 receipts must include a valid QUIC session ID
+        if let Err(reason) = self.verify_session_presence(receipt).await {
+            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), reason, "Session presence check failed").await;
+            return ReceiptValidationResult {
+                receipt_nonce: nonce_hex,
+                accepted: false,
+                rejection_reason: Some(reason),
             };
         }
 
@@ -392,6 +412,59 @@ impl ReceiptValidator {
             return Err(RejectionReason::Replay);
         }
         seen.insert(nonce.to_vec());
+        Ok(())
+    }
+
+    /// Step 2.5: Verify proof-of-presence for Web4 receipts via QUIC session ID
+    ///
+    /// For Web4ManifestRoute and Web4ContentServed receipts, the aux JSON must include a
+    /// `quic_session_id` (hex, 8 bytes) that matches an active session for the client DID.
+    /// If no session log is configured, this check is skipped (for backwards compatibility).
+    async fn verify_session_presence(&self, receipt: &Receipt) -> Result<(), RejectionReason> {
+        let is_web4 = matches!(
+            receipt.proof_type,
+            ProofType::Web4ManifestRoute | ProofType::Web4ContentServed
+        );
+        if !is_web4 {
+            return Ok(());
+        }
+
+        let Some(session_log) = &self.session_log else {
+            // No session log attached — skip check (permissive mode for dev/test)
+            return Ok(());
+        };
+
+        // Extract quic_session_id from aux JSON
+        let aux_obj = receipt.aux.as_deref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+        let session_id_hex = aux_obj.as_ref()
+            .and_then(|v| v.get("quic_session_id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if session_id_hex.is_empty() {
+            warn!(client = %receipt.client_did, "Web4 receipt missing quic_session_id in aux");
+            return Err(RejectionReason::BadProof);
+        }
+
+        let session_id_bytes = hex::decode(session_id_hex)
+            .map_err(|_| RejectionReason::BadProof)?;
+        if session_id_bytes.len() != 8 {
+            return Err(RejectionReason::BadProof);
+        }
+        let mut session_id = [0u8; 8];
+        session_id.copy_from_slice(&session_id_bytes);
+
+        let log = session_log.read().await;
+        if !log.verify(session_id, &receipt.client_did) {
+            warn!(
+                client = %receipt.client_did,
+                session_id = %session_id_hex,
+                "Web4 receipt session ID not found or expired in session log"
+            );
+            return Err(RejectionReason::BadProof);
+        }
+
         Ok(())
     }
 

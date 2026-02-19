@@ -16,9 +16,11 @@ pub mod load_test;
 pub mod metrics;
 pub mod rate_limiter;
 pub mod rewards;
+pub mod session_log;
 pub mod types;
 pub mod validation;
 
+pub use session_log::{SessionLog, SessionLogEntry, SharedSessionLog, new_shared_session_log};
 pub use challenge::ChallengeGenerator;
 pub use disputes::{DisputeService, Dispute, DisputeType, DisputeStatus, DisputeError};
 pub use health::{PouwHealthChecker, HealthCheckResponse, HealthStatus, HealthCheck};
