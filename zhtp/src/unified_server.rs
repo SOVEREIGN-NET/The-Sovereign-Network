@@ -874,7 +874,7 @@ impl ZhtpUnifiedServer {
             pouw_node_key,
             pouw_node_id,
         ));
-        let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc.clone());
+        let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc.clone(), identity_manager.clone());
         let pouw_calculator = crate::pouw::RewardCalculator::new(pouw_genesis_timestamp);
         let pouw_handler = crate::api::handlers::pouw::PouwHandler::new(
             pouw_generator_arc,

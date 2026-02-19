@@ -14,6 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use lib_identity::IdentityManager;
+
 use super::challenge::ChallengeGenerator;
 use super::types::{
     ChallengeIssue, ChallengeToken, Policy, ProofType, Receipt, ReceiptBatch, SignedReceipt,
@@ -88,6 +90,8 @@ pub struct ReceiptValidator {
     validated_receipts: Arc<RwLock<Vec<ValidatedReceipt>>>,
     /// Dispute log for rejected receipts
     dispute_log: Arc<RwLock<Vec<DisputeLogEntry>>>,
+    /// Identity manager for DID public key resolution
+    identity_manager: Arc<RwLock<IdentityManager>>,
 }
 
 /// A validated and accepted receipt
@@ -114,12 +118,13 @@ pub struct DisputeLogEntry {
 
 impl ReceiptValidator {
     /// Create a new receipt validator
-    pub fn new(challenge_generator: Arc<ChallengeGenerator>) -> Self {
+    pub fn new(challenge_generator: Arc<ChallengeGenerator>, identity_manager: Arc<RwLock<IdentityManager>>) -> Self {
         Self {
             challenge_generator,
             seen_nonces: Arc::new(RwLock::new(HashSet::new())),
             validated_receipts: Arc::new(RwLock::new(Vec::new())),
             dispute_log: Arc::new(RwLock::new(Vec::new())),
+            identity_manager,
         }
     }
 
@@ -398,17 +403,20 @@ impl ReceiptValidator {
         bincode::serialize(receipt).context("Failed to serialize receipt")
     }
 
-    /// Get client's Ed25519 public key from DID
-    async fn get_client_pubkey(&self, _client_did: &str) -> Result<Vec<u8>> {
-        // TODO: Implement DID resolution to get public key
-        // For now, return placeholder
-        Err(anyhow::anyhow!("DID resolution not implemented"))
+    /// Get client's Ed25519-compatible public key from DID (key_id bytes)
+    async fn get_client_pubkey(&self, client_did: &str) -> Result<Vec<u8>> {
+        let mgr = self.identity_manager.read().await;
+        let identity = mgr.get_identity_by_did(client_did)
+            .ok_or_else(|| anyhow::anyhow!("DID not registered: {}", client_did))?;
+        Ok(identity.public_key.key_id.to_vec())
     }
 
-    /// Get client's Dilithium public key from DID
-    async fn get_client_pubkey_dilithium(&self, _client_did: &str) -> Result<Vec<u8>> {
-        // TODO: Implement DID resolution to get Dilithium public key
-        Err(anyhow::anyhow!("Dilithium DID resolution not implemented"))
+    /// Get client's Dilithium5 public key from DID
+    async fn get_client_pubkey_dilithium(&self, client_did: &str) -> Result<Vec<u8>> {
+        let mgr = self.identity_manager.read().await;
+        let identity = mgr.get_identity_by_did(client_did)
+            .ok_or_else(|| anyhow::anyhow!("DID not registered: {}", client_did))?;
+        Ok(identity.public_key.dilithium_pk.clone())
     }
 
     /// Accept a validated receipt

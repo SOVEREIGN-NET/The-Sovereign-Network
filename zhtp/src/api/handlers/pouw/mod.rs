@@ -677,7 +677,7 @@ mod tests {
         priv_arr.copy_from_slice(&node_privkey[..32]);
         node_id.copy_from_slice(&node_pubkey[..32]);
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator.clone());
+        let validator = ReceiptValidator::new(generator.clone(), Arc::new(tokio::sync::RwLock::new(lib_identity::IdentityManager::new())));
         let reward_calculator = RewardCalculator::new(1_700_000_000);
         let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
         PouwHandler::new(generator, validator, reward_calculator, identity_manager)
@@ -721,7 +721,7 @@ mod tests {
         priv_arr.copy_from_slice(&node_privkey[..32]);
         node_id.copy_from_slice(&node_pubkey[..32]);
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator.clone());
+        let validator = ReceiptValidator::new(generator.clone(), Arc::new(tokio::sync::RwLock::new(lib_identity::IdentityManager::new())));
         let reward_calculator = RewardCalculator::new(1_700_000_000);
         let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
         register_known_identity(
@@ -759,7 +759,7 @@ mod tests {
         priv_arr.copy_from_slice(&node_privkey[..32]);
         node_id.copy_from_slice(&node_pubkey[..32]);
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator.clone());
+        let validator = ReceiptValidator::new(generator.clone(), Arc::new(tokio::sync::RwLock::new(lib_identity::IdentityManager::new())));
         let reward_calculator = RewardCalculator::new(1_700_000_000);
         let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
         let client_did = "did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -810,7 +810,7 @@ mod tests {
         priv_arr.copy_from_slice(&node_privkey[..32]);
         node_id.copy_from_slice(&node_pubkey[..32]);
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator.clone());
+        let validator = ReceiptValidator::new(generator.clone(), Arc::new(tokio::sync::RwLock::new(lib_identity::IdentityManager::new())));
         let reward_calculator = RewardCalculator::new(1_700_000_000);
         let identity_manager = Arc::new(RwLock::new(lib_identity::IdentityManager::new()));
         let client_did = "did:zhtp:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
