@@ -882,7 +882,7 @@ impl ZhtpUnifiedServer {
             pouw_calculator,
             identity_manager.clone(),
         );
-        zhtp_router.register_handler("/pouw".to_string(), Arc::new(pouw_handler));
+        zhtp_router.register_handler("/api/v1/pouw".to_string(), Arc::new(pouw_handler));
 
         info!("✅ All API handlers registered successfully on ZHTP router");
         Ok(())

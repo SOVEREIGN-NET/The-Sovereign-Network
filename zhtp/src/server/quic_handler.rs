@@ -645,7 +645,7 @@ impl QuicHandler {
 
         // Route request through ZHTP router
         let mut request = wire_request.request;
-        request.requester = Some(lib_crypto::Hash(lib_crypto::hash_blake3(session.peer_did().as_bytes())));
+        request.requester = lib_identity::did::parse_did_to_identity_id(session.peer_did()).ok();
         // Attach authoritative peer address for handlers (prevents spoofed forwarded headers).
         request.headers.custom.insert("peer_addr".to_string(), peer_addr.to_string());
         request.headers.custom.insert("peer_addr_source".to_string(), "quic".to_string());

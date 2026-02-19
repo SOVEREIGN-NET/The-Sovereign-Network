@@ -573,7 +573,9 @@ impl PouwHandler {
 #[async_trait]
 impl ZhtpRequestHandler for PouwHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let uri = request.uri.as_str();
+        let full_uri = request.uri.as_str();
+        // Strip /api/v1 prefix so internal routing works with /pouw/... paths
+        let uri = full_uri.strip_prefix("/api/v1").unwrap_or(full_uri);
         
         // Handle routes with path parameters
         if uri.starts_with("/pouw/rewards/") && request.method.as_str() == "GET" {
@@ -634,7 +636,7 @@ impl ZhtpRequestHandler for PouwHandler {
     }
 
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
-        request.uri.starts_with("/pouw")
+        request.uri.starts_with("/api/v1/pouw") || request.uri.starts_with("/pouw")
     }
 
     fn priority(&self) -> u32 { 100 }
