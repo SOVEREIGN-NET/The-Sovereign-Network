@@ -11,8 +11,8 @@
 //! - All changes are deterministic and reproducible
 
 use crate::storage::{
-    AccountState, Address, BlockchainStore, IdentityConsensus, IdentityMetadata,
-    OutPoint, TokenId, Utxo, WalletState,
+    AccountState, Address, BlockchainStore, IdentityConsensus, IdentityMetadata, OutPoint, TokenId,
+    Utxo, WalletState,
 };
 use crate::transaction::{Transaction, TransactionOutput};
 use crate::types::Hash;
@@ -47,7 +47,8 @@ impl<'a> StateMutator<'a> {
     /// - `UtxoNotFound` if the UTXO doesn't exist
     pub fn spend_utxo(&self, outpoint: &OutPoint) -> TxApplyResult<Utxo> {
         // Load the UTXO
-        let utxo = self.store
+        let utxo = self
+            .store
             .get_utxo(outpoint)?
             .ok_or_else(|| TxApplyError::UtxoNotFound(outpoint.clone()))?;
 
@@ -80,26 +81,23 @@ impl<'a> StateMutator<'a> {
 
         if outputs.len() != amounts.len() {
             return Err(TxApplyError::Internal(
-                "Output count doesn't match amount count".to_string()
+                "Output count doesn't match amount count".to_string(),
             ));
         }
 
         let tx_hash_bytes = tx_hash.as_array();
 
         for (index, (output, &amount)) in outputs.iter().zip(amounts.iter()).enumerate() {
-            let outpoint = OutPoint::new(
-                TxHash::new(tx_hash_bytes),
-                index as u32,
-            );
+            let outpoint = OutPoint::new(TxHash::new(tx_hash_bytes), index as u32);
 
             // Convert recipient public key to address bytes
             // IMPORTANT: Must not silently fall back to zero address on conversion failure
-            let owner_bytes: [u8; 32] = output.recipient.as_bytes()
-                .try_into()
-                .map_err(|_| TxApplyError::Internal(format!(
+            let owner_bytes: [u8; 32] = output.recipient.as_bytes().try_into().map_err(|_| {
+                TxApplyError::Internal(format!(
                     "Failed to convert recipient public key to address at output index {}",
                     index
-                )))?;
+                ))
+            })?;
 
             let utxo = Utxo {
                 amount,
@@ -123,12 +121,7 @@ impl<'a> StateMutator<'a> {
     ///
     /// # Errors
     /// - `InsufficientBalance` if balance < amount
-    pub fn debit_token(
-        &self,
-        token: &TokenId,
-        addr: &Address,
-        amount: u128,
-    ) -> TxApplyResult<()> {
+    pub fn debit_token(&self, token: &TokenId, addr: &Address, amount: u128) -> TxApplyResult<()> {
         if amount == 0 {
             return Ok(());
         }
@@ -153,22 +146,18 @@ impl<'a> StateMutator<'a> {
     ///
     /// # Errors
     /// Returns `InvalidTokenAmount` on u128 overflow
-    pub fn credit_token(
-        &self,
-        token: &TokenId,
-        addr: &Address,
-        amount: u128,
-    ) -> TxApplyResult<()> {
+    pub fn credit_token(&self, token: &TokenId, addr: &Address, amount: u128) -> TxApplyResult<()> {
         if amount == 0 {
             return Ok(());
         }
 
         let current = self.store.get_token_balance(token, addr)?;
-        let new_balance = current.checked_add(amount)
-            .ok_or_else(|| TxApplyError::InvalidTokenAmount(format!(
+        let new_balance = current.checked_add(amount).ok_or_else(|| {
+            TxApplyError::InvalidTokenAmount(format!(
                 "Token balance overflow: {} + {} exceeds u128::MAX",
                 current, amount
-            )))?;
+            ))
+        })?;
 
         self.store.set_token_balance(token, addr, new_balance)?;
 
@@ -185,9 +174,48 @@ impl<'a> StateMutator<'a> {
         to: &Address,
         amount: u128,
     ) -> TxApplyResult<()> {
+        // Check if token is deflationary and apply burn if needed
+        let burn_amount = if let Ok(Some(contract)) = self.store.get_token_contract(token) {
+            if contract.is_deflationary && contract.burn_rate > 0 {
+                // burn_rate is in basis points (1/10000)
+                let burn = (amount * contract.burn_rate as u128 / 10_000) as u64;
+                if burn > 0 {
+                    // Debit sender the full amount
+                    self.debit_token(token, from, amount)?;
+                    // Credit receiver the amount minus burn
+                    self.credit_token(token, to, amount.saturating_sub(burn as u128))?;
+                    // Reduce total supply
+                    if let Ok(Some(supply)) = self.store.get_token_supply(token) {
+                        self.store
+                            .put_token_supply(token, supply.saturating_sub(burn))?;
+                    }
+                    return Ok(());
+                }
+            }
+            0u64
+        } else {
+            0u64
+        };
+
+        // Non-deflationary transfer (or burn_rate = 0)
         self.debit_token(token, from, amount)?;
         self.credit_token(token, to, amount)?;
         Ok(())
+    }
+
+    // =========================================================================
+    // Token Nonce Primitives (for replay protection)
+    // =========================================================================
+
+    /// Get token nonce for a sender address
+    pub fn get_token_nonce(&self, token: &TokenId, sender: &Address) -> TxApplyResult<u64> {
+        Ok(self.store.get_token_nonce(token, sender)?)
+    }
+
+    /// Increment token nonce after successful transfer
+    pub fn increment_token_nonce(&self, token: &TokenId, sender: &Address) -> TxApplyResult<u64> {
+        let new_nonce = self.store.increment_token_nonce(token, sender)?;
+        Ok(new_nonce)
     }
 
     // =========================================================================
@@ -196,7 +224,9 @@ impl<'a> StateMutator<'a> {
 
     /// Load account state, returning default if not exists
     pub fn load_account(&self, addr: &Address) -> TxApplyResult<AccountState> {
-        Ok(self.store.get_account(addr)?
+        Ok(self
+            .store
+            .get_account(addr)?
             .unwrap_or_else(|| AccountState::new(*addr)))
     }
 
@@ -269,7 +299,8 @@ impl<'a> StateMutator<'a> {
         self.store.put_identity_metadata(did_hash, metadata)?;
 
         // Update owner index
-        self.store.put_identity_owner_index(&consensus.owner, did_hash)?;
+        self.store
+            .put_identity_owner_index(&consensus.owner, did_hash)?;
 
         Ok(())
     }
@@ -298,19 +329,29 @@ impl<'a> StateMutator<'a> {
 
         // Enforce immutable ownership/identity invariants
         if existing.did_hash != consensus.did_hash {
-            return Err(TxApplyError::Internal("Immutable DID hash mismatch".to_string()));
+            return Err(TxApplyError::Internal(
+                "Immutable DID hash mismatch".to_string(),
+            ));
         }
         if existing.owner != consensus.owner {
-            return Err(TxApplyError::Internal("Immutable owner mismatch".to_string()));
+            return Err(TxApplyError::Internal(
+                "Immutable owner mismatch".to_string(),
+            ));
         }
         if existing.public_key_hash != consensus.public_key_hash {
-            return Err(TxApplyError::Internal("Immutable public key mismatch".to_string()));
+            return Err(TxApplyError::Internal(
+                "Immutable public key mismatch".to_string(),
+            ));
         }
         if existing.registered_at_height != consensus.registered_at_height {
-            return Err(TxApplyError::Internal("Immutable registered_at_height mismatch".to_string()));
+            return Err(TxApplyError::Internal(
+                "Immutable registered_at_height mismatch".to_string(),
+            ));
         }
         if existing.identity_type != consensus.identity_type {
-            return Err(TxApplyError::Internal("Immutable identity type mismatch".to_string()));
+            return Err(TxApplyError::Internal(
+                "Immutable identity type mismatch".to_string(),
+            ));
         }
 
         self.store.put_identity(did_hash, consensus)?;
@@ -372,7 +413,10 @@ impl<'a> StateMutator<'a> {
     /// Get identity metadata by DID hash
     ///
     /// Returns the human-readable metadata for DID resolution.
-    pub fn get_identity_metadata(&self, did_hash: &[u8; 32]) -> TxApplyResult<Option<IdentityMetadata>> {
+    pub fn get_identity_metadata(
+        &self,
+        did_hash: &[u8; 32],
+    ) -> TxApplyResult<Option<IdentityMetadata>> {
         Ok(self.store.get_identity_metadata(did_hash)?)
     }
 
@@ -384,7 +428,10 @@ impl<'a> StateMutator<'a> {
     /// Get identity by owner address
     ///
     /// Looks up the DID hash from the owner index, then retrieves the identity.
-    pub fn get_identity_by_owner(&self, addr: &Address) -> TxApplyResult<Option<IdentityConsensus>> {
+    pub fn get_identity_by_owner(
+        &self,
+        addr: &Address,
+    ) -> TxApplyResult<Option<IdentityConsensus>> {
         match self.store.get_identity_by_owner(addr)? {
             Some(did_hash) => Ok(self.store.get_identity(&did_hash)?),
             None => Ok(None),
@@ -445,10 +492,7 @@ pub fn apply_native_transfer(
 
     let mut total_output: u64 = 0;
     for (index, output) in tx.outputs.iter().enumerate() {
-        let outpoint = OutPoint::new(
-            TxHash::new(tx_hash.as_array()),
-            index as u32,
-        );
+        let outpoint = OutPoint::new(TxHash::new(tx_hash.as_array()), index as u32);
 
         // First output gets remainder
         let amount = if index == 0 {
@@ -459,12 +503,12 @@ pub fn apply_native_transfer(
 
         // Convert recipient public key to address bytes
         // IMPORTANT: Must not silently fall back to zero address on conversion failure
-        let owner_bytes: [u8; 32] = output.recipient.as_bytes()
-            .try_into()
-            .map_err(|_| TxApplyError::Internal(format!(
+        let owner_bytes: [u8; 32] = output.recipient.as_bytes().try_into().map_err(|_| {
+            TxApplyError::Internal(format!(
                 "Failed to convert recipient public key to address at output index {}",
                 index
-            )))?;
+            ))
+        })?;
 
         let utxo = Utxo {
             amount,
@@ -538,12 +582,14 @@ pub fn apply_coinbase(
     // Coinbase must have no inputs
     if !tx.inputs.is_empty() {
         return Err(TxApplyError::InvalidType(
-            "Coinbase transaction must have no inputs".to_string()
+            "Coinbase transaction must have no inputs".to_string(),
         ));
     }
 
     if tx.outputs.is_empty() {
-        return Err(TxApplyError::Internal("Coinbase must have outputs".to_string()));
+        return Err(TxApplyError::Internal(
+            "Coinbase must have outputs".to_string(),
+        ));
     }
 
     let expected_total = block_reward.saturating_add(fees_collected);
@@ -557,9 +603,7 @@ pub fn apply_coinbase(
         // Convert recipient public key to address bytes
         // Note: In first pass we can use unwrap_or for checking fee sink,
         // but the second pass (below) will properly error on conversion failure
-        let addr_bytes: [u8; 32] = output.recipient.as_bytes()
-            .try_into()
-            .unwrap_or([0u8; 32]);
+        let addr_bytes: [u8; 32] = output.recipient.as_bytes().try_into().unwrap_or([0u8; 32]);
         let output_address = Address::new(addr_bytes);
 
         if &output_address == fee_sink_address {
@@ -600,19 +644,16 @@ pub fn apply_coinbase(
     let mut reward_output_index = 0;
 
     for (index, output) in tx.outputs.iter().enumerate() {
-        let outpoint = OutPoint::new(
-            TxHash::new(tx_hash.as_array()),
-            index as u32,
-        );
+        let outpoint = OutPoint::new(TxHash::new(tx_hash.as_array()), index as u32);
 
         // Convert recipient public key to address bytes
         // IMPORTANT: Must not silently fall back to zero address on conversion failure
-        let addr_bytes: [u8; 32] = output.recipient.as_bytes()
-            .try_into()
-            .map_err(|_| TxApplyError::Internal(format!(
+        let addr_bytes: [u8; 32] = output.recipient.as_bytes().try_into().map_err(|_| {
+            TxApplyError::Internal(format!(
                 "Failed to convert recipient public key to address at coinbase output index {}",
                 index
-            )))?;
+            ))
+        })?;
         let output_address = Address::new(addr_bytes);
 
         // Determine amount based on output type
