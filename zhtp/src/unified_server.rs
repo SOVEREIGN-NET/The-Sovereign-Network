@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 // REMOVED: TCP/UDP no longer used - QUIC-only architecture
 // use tokio::net::{TcpListener, UdpSocket, TcpStream};
@@ -850,12 +850,45 @@ impl ZhtpUnifiedServer {
         zhtp_router.register_handler("/api/v1/mesh".to_string(), mesh_handler);
 
         // PoUW (Proof-of-Useful-Work) handler
-        // TODO: Use real node keys from identity in production
-        let pouw_node_key = [0u8; 32]; // Placeholder - use real node key
-        let pouw_node_id = [0u8; 32];  // Placeholder - use real node ID
-        let pouw_generator_arc = std::sync::Arc::new(crate::pouw::ChallengeGenerator::new(pouw_node_key, pouw_node_id));
+        // Derive node key/id from identity manager; never use shared placeholder material.
+        let (pouw_node_key, pouw_node_id) = {
+            let manager = identity_manager.read().await;
+            let identities = manager.list_identities();
+            if let Some(identity) = identities.first() {
+                let node_key = identity
+                    .private_key
+                    .as_ref()
+                    .map(|k| {
+                        lib_crypto::hash_blake3(&k.dilithium_sk)
+                    })
+                    .unwrap_or_else(|| lib_crypto::hash_blake3(identity.did.as_bytes()));
+                let node_id = *identity.node_id.as_bytes();
+                (node_key, node_id)
+            } else {
+                warn!("No identity available for PoUW handler; using deterministic local fallback key/id");
+                let fallback = lib_crypto::hash_blake3(b"pouw-local-fallback");
+                (fallback, fallback)
+            }
+        };
+        let pouw_genesis_timestamp = {
+            let blockchain_guard = blockchain.read().await;
+            blockchain_guard
+                .blocks
+                .first()
+                .map(|b| b.header.timestamp)
+                .unwrap_or_else(|| {
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()
+                })
+        };
+        let pouw_generator_arc = std::sync::Arc::new(crate::pouw::ChallengeGenerator::new(
+            pouw_node_key,
+            pouw_node_id,
+        ));
         let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc.clone());
-        let pouw_calculator = crate::pouw::RewardCalculator::new(0); // genesis block
+        let pouw_calculator = crate::pouw::RewardCalculator::new(pouw_genesis_timestamp);
         let pouw_handler = crate::api::handlers::pouw::PouwHandler::new(
             pouw_generator_arc,
             pouw_validator,

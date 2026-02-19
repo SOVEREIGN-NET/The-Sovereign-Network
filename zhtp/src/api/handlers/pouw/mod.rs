@@ -3,9 +3,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
-use anyhow::Result;
-use tracing::debug;
+use tracing::{debug, warn};
 use async_trait::async_trait;
 use hex;
 
@@ -81,14 +79,17 @@ impl PouwHandler {
             .await
             .map_err(|e| anyhow::anyhow!("Validation failed: {}", e))?;
 
-        // Calculate rewards for accepted receipts
+        // Calculate rewards for newly accepted receipts only.
         let mut rewards = vec![];
+        let mut reward_calc = serde_json::json!({ "status": "skipped", "reason": "no_accepted_receipts" });
         if !result.accepted.is_empty() {
-            // Get all validated receipts for reward calculation
-            let validated = validator.get_validated_receipts().await;
+            let validated = validator
+                .get_validated_receipts_for_nonces(&result.accepted)
+                .await;
             if !validated.is_empty() {
                 let calculator = self.reward_calculator.read().await;
-                match calculator.calculate_epoch_rewards(&validated, 0).await {
+                let current_epoch = calculator.current_epoch();
+                match calculator.calculate_epoch_rewards(&validated, current_epoch).await {
                     Ok(epoch_rewards) => {
                         for r in epoch_rewards {
                             rewards.push(serde_json::json!({
@@ -98,11 +99,25 @@ impl PouwHandler {
                                 "epoch": r.epoch,
                             }));
                         }
+                        reward_calc = serde_json::json!({
+                            "status": "ok",
+                            "epoch": current_epoch,
+                            "calculated_rewards": rewards.len(),
+                        });
                     }
                     Err(e) => {
-                        debug!("Failed to calculate rewards: {}", e);
+                        warn!("Failed to calculate rewards: {}", e);
+                        reward_calc = serde_json::json!({
+                            "status": "failed",
+                            "error": e.to_string(),
+                        });
                     }
                 }
+            } else {
+                reward_calc = serde_json::json!({
+                    "status": "skipped",
+                    "reason": "no_validated_receipts_for_batch",
+                });
             }
         }
 
@@ -110,6 +125,7 @@ impl PouwHandler {
             "accepted": result.accepted.len(),
             "rejected": result.rejected.len(),
             "rewards": rewards,
+            "reward_calculation": reward_calc,
         });
 
         Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
@@ -140,4 +156,51 @@ impl ZhtpRequestHandler for PouwHandler {
     }
 
     fn priority(&self) -> u32 { 100 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_test_handler() -> PouwHandler {
+        let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
+        let mut priv_arr = [0u8; 32];
+        let mut node_id = [0u8; 32];
+        priv_arr.copy_from_slice(&node_privkey[..32]);
+        node_id.copy_from_slice(&node_pubkey[..32]);
+        let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
+        let validator = ReceiptValidator::new(generator.clone());
+        let reward_calculator = RewardCalculator::new(1_700_000_000);
+        PouwHandler::new(generator, validator, reward_calculator)
+    }
+
+    #[test]
+    fn can_handle_pouw_routes() {
+        let handler = build_test_handler();
+        let req = ZhtpRequest::get("/pouw/health".to_string(), None).unwrap();
+        assert!(handler.can_handle(&req));
+    }
+
+    #[test]
+    fn rejects_non_pouw_routes() {
+        let handler = build_test_handler();
+        let req = ZhtpRequest::get("/status".to_string(), None).unwrap();
+        assert!(!handler.can_handle(&req));
+    }
+
+    #[tokio::test]
+    async fn health_route_returns_ok() {
+        let handler = build_test_handler();
+        let req = ZhtpRequest::get("/pouw/health".to_string(), None).unwrap();
+        let resp = handler.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Ok);
+    }
+
+    #[tokio::test]
+    async fn unknown_route_returns_not_found() {
+        let handler = build_test_handler();
+        let req = ZhtpRequest::get("/pouw/unknown".to_string(), None).unwrap();
+        let resp = handler.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::NotFound);
+    }
 }
