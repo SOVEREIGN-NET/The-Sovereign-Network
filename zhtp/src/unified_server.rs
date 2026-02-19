@@ -831,23 +831,37 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/v1/protocol".to_string(), protocol_handler);
 
-        // Create RuntimeOrchestrator for handlers that need runtime access
-        let runtime_config = crate::config::NodeConfig::default();
-        let runtime = Arc::new(crate::runtime::RuntimeOrchestrator::new(runtime_config).await?);
+        // FIXME(regression): RuntimeOrchestrator creation with default config causes panic
+        // because config.node_type is None. The unified server is initialized before the
+        // main RuntimeOrchestrator, so creating a second one here with NodeConfig::default()
+        // triggers the "NodeType must be set" panic in RuntimeOrchestrator::new().
+        //
+        // Temporary fix: Comment out NetworkHandler and MeshHandler registration until
+        // the architecture is refactored to either:
+        // 1. Pass the properly configured RuntimeOrchestrator to UnifiedServer::new(), or
+        // 2. Remove the RuntimeOrchestrator dependency from these handlers
+        //
+        // These handlers are not critical for core node operation (blockchain, identity,
+        // wallet, token, DAO, storage, crypto, zkp, web4, validator APIs still work).
+        //
+        // Tracked in: https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/TBD
 
-        // Network management (gas pricing, peers, sync metrics)
-        let network_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::NetworkHandler::new(runtime.clone())
-        );
-        zhtp_router.register_handler("/api/v1/network".to_string(), network_handler.clone());
-        zhtp_router.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
-        zhtp_router.register_handler("/api/v1/blockchain/sync".to_string(), network_handler);
-
-        // Mesh blockchain operations
-        let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::MeshHandler::new(runtime.clone())
-        );
-        zhtp_router.register_handler("/api/v1/mesh".to_string(), mesh_handler);
+        // let runtime_config = crate::config::NodeConfig::default();
+        // let runtime = Arc::new(crate::runtime::RuntimeOrchestrator::new(runtime_config).await?);
+        //
+        // // Network management (gas pricing, peers, sync metrics)
+        // let network_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+        //     crate::api::handlers::NetworkHandler::new(runtime.clone())
+        // );
+        // zhtp_router.register_handler("/api/v1/network".to_string(), network_handler.clone());
+        // zhtp_router.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
+        // zhtp_router.register_handler("/api/v1/blockchain/sync".to_string(), network_handler);
+        //
+        // // Mesh blockchain operations
+        // let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+        //     crate::api::handlers::MeshHandler::new(runtime.clone())
+        // );
+        // zhtp_router.register_handler("/api/v1/mesh".to_string(), mesh_handler);
 
         // PoUW (Proof-of-Useful-Work) handler
         // Derive node key/id from identity manager; never use shared placeholder material.
