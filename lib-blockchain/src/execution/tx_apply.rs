@@ -218,6 +218,12 @@ impl<'a> StateMutator<'a> {
         Ok(new_nonce)
     }
 
+    /// Persist a token contract in canonical state storage.
+    pub fn put_token_contract(&self, contract: &crate::contracts::TokenContract) -> TxApplyResult<()> {
+        self.store.put_token_contract(contract)?;
+        Ok(())
+    }
+
     // =========================================================================
     // Account Primitives
     // =========================================================================

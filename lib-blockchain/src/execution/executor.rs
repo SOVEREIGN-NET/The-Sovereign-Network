@@ -40,7 +40,7 @@ use crate::block::Block;
 use crate::storage::{
     Address, Amount, BlockHash, BlockHeight, BlockchainStore, StorageError, TokenId,
 };
-use crate::transaction::hash_transaction;
+use crate::transaction::{hash_transaction, token_creation::TokenCreationPayloadV1};
 use crate::types::TransactionType;
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
@@ -602,6 +602,9 @@ impl BlockExecutor {
                 TxOutcome::TokenMint(_outcome) => {
                     summary.balance_changes += 1; // recipient only
                 }
+                TxOutcome::TokenCreation(_outcome) => {
+                    summary.balance_changes += 1; // creator + token contract state initialized
+                }
                 TxOutcome::Coinbase(_) => {
                     // Should not happen - coinbase filtered out
                     unreachable!("Coinbase should not be in non-coinbase pass");
@@ -732,6 +735,7 @@ impl BlockExecutor {
             TransactionType::Transfer => {}
             TransactionType::TokenTransfer => {}
             TransactionType::TokenMint => {}
+            TransactionType::TokenCreation => {}
             TransactionType::Coinbase => {}
             // Known legacy system types: no structural validation, applied as no-ops.
             TransactionType::IdentityRegistration
@@ -756,7 +760,6 @@ impl BlockExecutor {
             | TransactionType::ContractDeployment
             | TransactionType::ContractExecution
             // Phase 3/4 types - handled by executor but validation not fully wired yet
-            | TransactionType::TokenCreation
             | TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
@@ -869,6 +872,23 @@ impl BlockExecutor {
                         "TokenMint transaction fee must be 0 in Phase 2".to_string(),
                     ));
                 }
+            }
+            TransactionType::TokenCreation => {
+                if !tx.inputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenCreation must not have UTXO inputs".to_string(),
+                    ));
+                }
+                if !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenCreation must not have UTXO outputs".to_string(),
+                    ));
+                }
+                TokenCreationPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "TokenCreation requires canonical memo payload: {e}"
+                    ))
+                })?;
             }
             _ => {}
         }
@@ -1175,6 +1195,41 @@ impl BlockExecutor {
 
                 Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
             }
+            TransactionType::TokenCreation => {
+                let payload = TokenCreationPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "TokenCreation requires canonical memo payload: {e}"
+                    ))
+                })?;
+
+                let creator = tx.signature.public_key.clone();
+                let mut token = crate::contracts::TokenContract::new_custom(
+                    payload.name.clone(),
+                    payload.symbol.clone(),
+                    payload.initial_supply,
+                    creator.clone(),
+                );
+                token.decimals = if payload.decimals == 0 { 8 } else { payload.decimals };
+                token.max_supply = payload.initial_supply;
+
+                let token_id = token.token_id;
+                mutator.put_token_contract(&token)?;
+
+                // Keep balance-tree state consistent with typed token transfer path.
+                let creator_addr = Address::new(creator.key_id);
+                tx_apply::apply_token_mint(
+                    mutator,
+                    &TokenId::new(token_id),
+                    &creator_addr,
+                    payload.initial_supply as u128,
+                )?;
+
+                Ok(TxOutcome::TokenCreation(TokenCreationOutcome {
+                    token_id,
+                    creator: creator_addr,
+                    initial_supply: payload.initial_supply as u128,
+                }))
+            }
             // Known legacy system types: accepted as no-ops. This mirrors the allowlist in
             // validate_tx_stateless — any type listed here must also be listed there.
             TransactionType::IdentityRegistration
@@ -1269,6 +1324,7 @@ enum TxOutcome {
     Transfer(TransferOutcome),
     TokenTransfer(TokenTransferOutcome),
     TokenMint(TokenMintOutcome),
+    TokenCreation(TokenCreationOutcome),
     Coinbase(CoinbaseOutcome),
     /// Legacy system transaction types (IdentityRegistration, WalletRegistration, etc.)
     /// accepted as no-ops by the Phase-2 executor for backwards compatibility.
@@ -1290,6 +1346,14 @@ pub struct TokenMintOutcome {
     pub token: TokenId,
     pub to: Address,
     pub amount: u128,
+}
+
+/// Outcome of a token creation transaction
+#[derive(Debug, Clone)]
+pub struct TokenCreationOutcome {
+    pub token_id: [u8; 32],
+    pub creator: Address,
+    pub initial_supply: u128,
 }
 
 // =============================================================================
