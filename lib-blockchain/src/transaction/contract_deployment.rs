@@ -98,7 +98,11 @@ impl ContractDeploymentPayloadV1 {
     /// Encode this payload into canonical memo bytes.
     pub fn encode_memo(&self) -> Result<Vec<u8>, String> {
         self.validate()?;
-        let encoded = bincode::serialize(self)
+        // Use the same bincode options as decode_memo() to guarantee round-trip
+        // compatibility and deterministic consensus serialization.
+        let encoded = bincode::DefaultOptions::new()
+            .with_limit(MAX_DEPLOYMENT_MEMO_BYTES as u64)
+            .serialize(self)
             .map_err(|e| format!("failed to serialize deployment payload: {e}"))?;
         let mut memo = CONTRACT_DEPLOYMENT_MEMO_PREFIX.to_vec();
         memo.extend_from_slice(&encoded);
