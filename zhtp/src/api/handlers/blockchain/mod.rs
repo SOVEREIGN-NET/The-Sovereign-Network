@@ -19,7 +19,8 @@ use lib_blockchain::types::Hash;
 use lib_blockchain::Blockchain;
 use lib_blockchain::integration::crypto_integration::Signature as BlockchainSignature;
 use lib_blockchain::transaction::{
-    ContractDeploymentPayloadV1, Transaction, CONTRACT_DEPLOYMENT_MEMO_PREFIX,
+    ContractDeploymentPayloadV1, DecodedContractExecutionMemo, Transaction,
+    CONTRACT_DEPLOYMENT_MEMO_PREFIX,
 };
 use lib_blockchain::types::{transaction_type::TransactionType, ContractCall, ContractType};
 
@@ -580,18 +581,9 @@ impl BlockchainHandler {
             .map_err(|_| anyhow::anyhow!("Invalid transaction encoding (expected canonical bincode)"))
     }
 
-    fn decode_contract_execution_call(memo: &[u8]) -> Result<(ContractCall, BlockchainSignature)> {
-        if memo.len() <= 4 || &memo[0..4] != b"ZHTP" {
-            return Err(anyhow::anyhow!(
-                "ContractExecution memo must start with canonical ZHTP prefix"
-            ));
-        }
-        let call_data = &memo[4..];
-        let (call, memo_sig): (ContractCall, BlockchainSignature) = bincode::deserialize(call_data)
-            .map_err(|_| anyhow::anyhow!(
-                "ContractExecution memo must contain canonical bincode((ContractCall, Signature))"
-            ))?;
-        Ok((call, memo_sig))
+    fn decode_contract_execution_call(memo: &[u8]) -> Result<DecodedContractExecutionMemo> {
+        DecodedContractExecutionMemo::decode_compat(memo)
+            .map_err(|e| anyhow::anyhow!("ContractExecution memo decode failed: {e}"))
     }
 
     fn decode_contract_deployment_payload_compat(
@@ -636,7 +628,9 @@ impl BlockchainHandler {
                 )?;
             }
             TransactionType::ContractExecution => {
-                let (call, memo_sig) = Self::decode_contract_execution_call(&transaction.memo)?;
+                let decoded = Self::decode_contract_execution_call(&transaction.memo)?;
+                let call = decoded.call;
+                let memo_sig = decoded.signature;
                 if memo_sig.public_key.key_id != transaction.signature.public_key.key_id {
                     return Err(anyhow::anyhow!(
                         "ContractExecution memo signer must match transaction signer"
@@ -655,6 +649,11 @@ impl BlockchainHandler {
                 if let Some(contract_id) = expected_contract_id {
                     if contract_id == [0u8; 32] {
                         return Err(anyhow::anyhow!("Contract ID must not be all zeros"));
+                    }
+                    if decoded.contract_id != Some(contract_id) {
+                        return Err(anyhow::anyhow!(
+                            "ContractExecution memo target contract_id must match URI contract_id"
+                        ));
                     }
                 }
             }
@@ -2676,6 +2675,7 @@ impl BlockchainHandler {
 mod tests {
     use super::*;
     use lib_blockchain::integration::crypto_integration::PublicKey;
+    use lib_blockchain::transaction::encode_contract_execution_memo_v2;
     use lib_blockchain::{TransactionInput, TransactionOutput};
     use lib_crypto::SignatureAlgorithm;
 
@@ -2792,20 +2792,58 @@ mod tests {
     #[test]
     fn validate_contract_call_rejects_token_mutation_via_contract_execution() {
         let sig = test_signature(4);
+        let contract_id = [2u8; 32];
         let call = ContractCall::token_call("mint".to_string(), vec![1, 2, 3]);
-        let memo_tuple = (call, sig.clone());
-        let mut memo = b"ZHTP".to_vec();
-        memo.extend(bincode::serialize(&memo_tuple).unwrap());
+        let memo = encode_contract_execution_memo_v2(contract_id, &call, &sig).unwrap();
         let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
 
         let result = BlockchainHandler::validate_canonical_contract_payload(
             &tx,
             TransactionType::ContractExecution,
-            Some([2u8; 32]),
+            Some(contract_id),
         );
         assert!(
             result.is_err(),
             "deprecated token mutation method via ContractExecution must be rejected"
         );
+    }
+
+    #[test]
+    fn validate_contract_call_rejects_mismatched_uri_contract_id() {
+        let sig = test_signature(5);
+        let call = ContractCall::public_call(
+            ContractType::Web4Website,
+            "set_page".to_string(),
+            vec![1],
+        );
+        let memo = encode_contract_execution_memo_v2([9u8; 32], &call, &sig).unwrap();
+        let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractExecution,
+            Some([8u8; 32]),
+        );
+        assert!(result.is_err(), "mismatched URI contract_id must be rejected");
+    }
+
+    #[test]
+    fn validate_contract_call_accepts_matching_uri_contract_id() {
+        let sig = test_signature(6);
+        let contract_id = [7u8; 32];
+        let call = ContractCall::public_call(
+            ContractType::Web4Website,
+            "set_page".to_string(),
+            vec![1],
+        );
+        let memo = encode_contract_execution_memo_v2(contract_id, &call, &sig).unwrap();
+        let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractExecution,
+            Some(contract_id),
+        );
+        assert!(result.is_ok(), "matching URI contract_id must validate");
     }
 }
