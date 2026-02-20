@@ -68,6 +68,8 @@ pub mod events;
 pub mod ubi_engine;
 pub mod interface;
 pub mod kernel_ops;
+pub mod srv_types;
+pub mod srv_ops;
 pub mod vesting_types;
 pub mod vesting;
 pub mod role_types;
@@ -87,6 +89,7 @@ pub use interface::{
     KernelOpError, CreditReason, DebitReason, LockReason, ReleaseReason,
     MintAuthorization, BurnAuthorization, MintReason,
 };
+pub use srv_types::{SRVState, SRVGenesisConfig, SRVUpdateRecord, SRVError};
 pub use vesting_types::{VestingId, VestingSchedule, VestingLock, VestingStatus};
 pub use vesting::VestingState;
 pub use role_types::{

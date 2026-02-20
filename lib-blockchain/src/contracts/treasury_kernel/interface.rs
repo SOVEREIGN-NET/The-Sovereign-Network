@@ -43,6 +43,8 @@ pub enum KernelOpError {
     InvalidVestingSchedule,
     /// No tokens available to release yet (vesting not started)
     VestingNotStarted,
+    /// Invalid state for requested operation
+    InvalidState,
 }
 
 impl fmt::Display for KernelOpError {
@@ -63,6 +65,7 @@ impl fmt::Display for KernelOpError {
             Self::VestingAlreadyFullyReleased => write!(f, "Vesting already fully released"),
             Self::InvalidVestingSchedule => write!(f, "Invalid vesting schedule parameters"),
             Self::VestingNotStarted => write!(f, "Vesting period has not started"),
+            Self::InvalidState => write!(f, "Invalid state for requested operation"),
         }
     }
 }

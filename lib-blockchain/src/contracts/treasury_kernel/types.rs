@@ -105,6 +105,10 @@ pub struct KernelState {
     /// Canonical UBI event stream for deterministic replay and auditing.
     #[serde(default)]
     pub ubi_events: Vec<KernelUbiEvent>,
+
+    /// SOV Reference Value (SRV) state for USD-equivalent calculations
+    #[serde(default)]
+    pub srv_state: super::srv_types::SRVState,
 }
 
 /// Statistics for monitoring Kernel health
@@ -132,6 +136,7 @@ impl KernelState {
             last_processed_epoch: None,
             stats: KernelStats::default(),
             ubi_events: Vec::new(),
+            srv_state: super::srv_types::SRVState::new_genesis(),
         }
     }
 
