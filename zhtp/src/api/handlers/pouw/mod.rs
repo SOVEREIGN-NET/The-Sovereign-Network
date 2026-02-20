@@ -732,6 +732,43 @@ impl PouwHandler {
         Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
     }
 
+    /// Handle GET /pouw/rewards/{did}/transactions — paid reward transactions for a DID
+    async fn handle_get_reward_transactions(
+        &self,
+        request: &ZhtpRequest,
+        client_did: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        if let Err(response) = self
+            .check_reward_query_access(request, client_did, "transaction history lookup")
+            .await
+        {
+            return Ok(response);
+        }
+        let (limit, offset) = Self::parse_pagination(&request.uri);
+        let txns = self.reward_calculator.get_reward_transactions_for_did(client_did).await;
+        let total = txns.len();
+        let page: Vec<serde_json::Value> = txns
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|t| serde_json::json!({
+                "reward_id": hex::encode(&t.reward_id),
+                "epoch": t.epoch,
+                "amount": t.amount,
+                "paid_at": t.paid_at,
+                "tx_hash": t.tx_hash.as_ref().map(|h| hex::encode(h)),
+            }))
+            .collect();
+        let body = serde_json::json!({
+            "client_did": client_did,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "transactions": page,
+        });
+        Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
+    }
+
     /// Handle GET /pouw/disputes/{did} — rejection/dispute log for a DID
     async fn handle_get_disputes_for_did(
         &self,
@@ -777,6 +814,21 @@ impl ZhtpRequestHandler for PouwHandler {
         let uri = full_uri.strip_prefix("/api/v1").unwrap_or(full_uri);
         
         // Handle routes with path parameters
+        // GET /pouw/rewards/{did}/transactions — must be checked BEFORE /pouw/rewards/{did}
+        if uri.starts_with("/pouw/rewards/") && uri.ends_with("/transactions") && request.method.as_str() == "GET" {
+            let did = uri
+                .strip_prefix("/pouw/rewards/")
+                .and_then(|s| s.strip_suffix("/transactions"))
+                .unwrap_or("");
+            let did = urlencoding::decode(did)
+                .unwrap_or_else(|_| std::borrow::Cow::Borrowed(did))
+                .to_string();
+            if did.is_empty() {
+                return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, "Missing DID".to_string()));
+            }
+            return self.handle_get_reward_transactions(&request, &did).await;
+        }
+
         if uri.starts_with("/pouw/rewards/") && request.method.as_str() == "GET" {
             // GET /pouw/rewards/{client_did}
             let client_did = Self::extract_path_param(uri, "/pouw/rewards/");
