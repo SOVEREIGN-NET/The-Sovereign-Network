@@ -123,6 +123,9 @@ pub struct ZhtpUnifiedServer {
     runtime: Arc<dyn crate::runtime::NodeRuntime>,
     runtime_orchestrator: Arc<crate::runtime::NodeRuntimeOrchestrator>,
 
+    // POUW reward calculator (shared for persistence)
+    pouw_calculator_arc: Arc<crate::pouw::RewardCalculator>,
+
     // Monitoring system (metrics, health, alerts, dashboard)
     monitoring_system: Option<MonitoringSystem>,
 
@@ -467,7 +470,7 @@ impl ZhtpUnifiedServer {
         };
 
         // Register comprehensive API handlers on ZHTP router (QUIC is the only entry point)
-        let pouw_validator_arc = Self::register_api_handlers(
+        let (pouw_validator_arc, pouw_calculator_arc) = Self::register_api_handlers(
             &mut zhtp_router,
             blockchain.clone(),
             storage.clone(),
@@ -557,6 +560,7 @@ impl ZhtpUnifiedServer {
             domain_registry,
             runtime,
             runtime_orchestrator,
+            pouw_calculator_arc: pouw_calculator_arc.clone(),
             monitoring_system,
             protocols_config,
             is_running: Arc::new(RwLock::new(false)),
@@ -712,7 +716,7 @@ impl ZhtpUnifiedServer {
         content_publisher: Arc<lib_network::web4::ContentPublisher>,
         pouw_session_log: crate::pouw::SharedSessionLog,
         node_did: String,
-    ) -> Result<Arc<RwLock<crate::pouw::validation::ReceiptValidator>>> {
+    ) -> Result<(Arc<RwLock<crate::pouw::validation::ReceiptValidator>>, Arc<crate::pouw::RewardCalculator>)> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
         
         // Blockchain operations
@@ -926,17 +930,17 @@ impl ZhtpUnifiedServer {
         // RuntimeOrchestrator becomes available.
 
         // PoUW HTTP handler — uses the already-created validator Arc
-        let pouw_calculator = crate::pouw::RewardCalculator::new(pouw_genesis_timestamp);
-        let pouw_handler = crate::api::handlers::pouw::PouwHandler::new_with_validator_arc(
+        let pouw_calculator = Arc::new(crate::pouw::RewardCalculator::new(pouw_genesis_timestamp));
+        let pouw_handler = crate::api::handlers::pouw::PouwHandler::new_with_calculator_arc(
             pouw_generator_arc,
             pouw_validator_arc.clone(),
-            pouw_calculator,
+            pouw_calculator.clone(),
             identity_manager.clone(),
         );
         zhtp_router.register_handler("/api/v1/pouw".to_string(), Arc::new(pouw_handler));
 
         info!("✅ All API handlers registered successfully on ZHTP router");
-        Ok(pouw_validator_arc)
+        Ok((pouw_validator_arc, pouw_calculator))
     }
     
     /// Start the unified server on port 9333
@@ -959,6 +963,14 @@ impl ZhtpUnifiedServer {
         // Start block sync responder (serves blockchain data to peers requesting sync)
         // This enables mesh-based blockchain synchronization for new nodes joining the network
         crate::network_output_dispatcher::spawn_app_network_output_processor();
+
+        // Restore persisted POUW rewards from disk
+        let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(
+            std::path::Path::new(&crate::config::environment::Environment::default().blockchain_data_path())
+        );
+        if let Err(e) = self.pouw_calculator_arc.load_rewards_from_file(&rewards_path).await {
+            tracing::warn!("Failed to load POUW rewards from disk: {}", e);
+        }
 
         // STEP 1: Apply network isolation to block internet access
         info!(" Applying network isolation for ISP-free mesh operation...");
@@ -1416,6 +1428,25 @@ impl ZhtpUnifiedServer {
         }
         
         info!(" Bluetooth Classic periodic discovery task started (60s interval)");
+
+        // Periodic POUW rewards persistence (every 60 seconds)
+        {
+            let calc = self.pouw_calculator_arc.clone();
+            // Derive rewards.dat path alongside blockchain.dat
+            let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(
+                std::path::Path::new(&crate::config::environment::Environment::default().blockchain_data_path())
+            );
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                interval.tick().await; // skip the immediate first tick
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = calc.save_rewards_to_file(&rewards_path).await {
+                        tracing::warn!("Failed to save POUW rewards to disk: {}", e);
+                    }
+                }
+            });
+        }
         
         Ok(())
     }
