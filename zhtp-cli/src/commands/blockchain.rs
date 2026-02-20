@@ -1,6 +1,7 @@
 //! Blockchain commands for ZHTP orchestrator CLI.
 
 use crate::argument_parsing::{format_output, BlockchainAction, BlockchainArgs, ZhtpCli};
+use crate::commands::transaction_utils::{broadcast_signed_tx, parse_hex, parse_hex_32, submit_signed_tx};
 use crate::commands::web4_utils::{connect_default, default_keystore_path, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
@@ -27,24 +28,6 @@ fn validate_tx_hash(tx_hash: &str) -> CliResult<()> {
 
 fn build_transaction_endpoint(tx_hash: &str) -> String {
     format!("/api/v1/blockchain/transaction/{}", tx_hash)
-}
-
-fn parse_hex(name: &str, value: &str) -> CliResult<Vec<u8>> {
-    hex::decode(value.strip_prefix("0x").unwrap_or(value))
-        .map_err(|_| CliError::ConfigError(format!("Invalid {name} hex")))
-}
-
-fn parse_hex_32(name: &str, value: &str) -> CliResult<[u8; 32]> {
-    let bytes = parse_hex(name, value)?;
-    if bytes.len() != 32 {
-        return Err(CliError::ConfigError(format!(
-            "Invalid {name}: expected 32 bytes (64 hex chars), got {} bytes",
-            bytes.len()
-        )));
-    }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    Ok(out)
 }
 
 fn parse_contract_filter(value: &str) -> CliResult<&str> {
@@ -165,59 +148,20 @@ fn build_signed_contract_deploy_tx(
     Ok(tx)
 }
 
-async fn broadcast_signed_tx(client: &ZhtpClient, tx: &Transaction) -> CliResult<serde_json::Value> {
-    let tx_bytes = bincode::serialize(tx)
-        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {e}")))?;
-    let request_body = json!({
-        "transaction_data": hex::encode(tx_bytes)
-    });
-
-    let endpoint = "/api/v1/blockchain/transaction/broadcast";
-    let response = client
-        .post_json(endpoint, &request_body)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    ZhtpClient::parse_json(&response).map_err(|e| {
-        CliError::ApiCallFailed {
-            endpoint: endpoint.to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {e}"),
-        }
-    })
+fn build_contract_call_endpoint(contract_id: [u8; 32]) -> String {
+    format!("/api/v1/blockchain/contracts/{}/call", hex::encode(contract_id))
 }
 
-async fn submit_contract_signed_tx(
-    client: &ZhtpClient,
-    endpoint: &str,
-    tx: &Transaction,
-) -> CliResult<serde_json::Value> {
-    let tx_bytes = bincode::serialize(tx)
-        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {e}")))?;
-    let request_body = json!({
-        "transaction_data": hex::encode(tx_bytes)
-    });
+fn build_contract_list_endpoint(filter: &str, limit: u32, offset: u32) -> String {
+    format!("/api/v1/blockchain/contracts?type={filter}&limit={limit}&offset={offset}")
+}
 
-    let response = client
-        .post_json(endpoint, &request_body)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
+fn build_contract_info_endpoint(contract_id: [u8; 32]) -> String {
+    format!("/api/v1/blockchain/contracts/{}", hex::encode(contract_id))
+}
 
-    ZhtpClient::parse_json(&response).map_err(|e| {
-        CliError::ApiCallFailed {
-            endpoint: endpoint.to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {e}"),
-        }
-    })
+fn build_contract_state_endpoint(contract_id: [u8; 32]) -> String {
+    format!("/api/v1/blockchain/contracts/{}/state", hex::encode(contract_id))
 }
 
 pub async fn handle_blockchain_command(args: BlockchainArgs, cli: &ZhtpCli) -> CliResult<()> {
@@ -287,8 +231,8 @@ async fn handle_blockchain_command_impl(
             };
             let tx = build_signed_contract_call_tx(&keypair, contract_type, &method, params)?;
             let tx_hash = tx.hash();
-            let endpoint = format!("/api/v1/blockchain/contracts/{}/call", hex::encode(contract_id));
-            let result = submit_contract_signed_tx(&client, &endpoint, &tx).await?;
+            let endpoint = build_contract_call_endpoint(contract_id);
+            let result = submit_signed_tx(&client, &endpoint, &tx).await?;
             output.header("Contract Call Broadcast")?;
             output.print(&format!("Signed tx hash: {tx_hash}"))?;
             output.print(&format_output(&result, &cli.format)?)?;
@@ -296,9 +240,7 @@ async fn handle_blockchain_command_impl(
         }
         BlockchainAction::ContractList { contract_type, limit, offset } => {
             let filter = parse_contract_filter(&contract_type)?;
-            let endpoint = format!(
-                "/api/v1/blockchain/contracts?type={filter}&limit={limit}&offset={offset}"
-            );
+            let endpoint = build_contract_list_endpoint(filter, limit, offset);
             let response = client.get(&endpoint).await.map_err(|e| CliError::ApiCallFailed {
                 endpoint: endpoint.clone(),
                 status: 0,
@@ -317,7 +259,7 @@ async fn handle_blockchain_command_impl(
         }
         BlockchainAction::ContractInfo { contract_id } => {
             let contract_id = parse_hex_32("contract_id", &contract_id)?;
-            let endpoint = format!("/api/v1/blockchain/contracts/{}", hex::encode(contract_id));
+            let endpoint = build_contract_info_endpoint(contract_id);
             let response = client.get(&endpoint).await.map_err(|e| CliError::ApiCallFailed {
                 endpoint: endpoint.clone(),
                 status: 0,
@@ -336,10 +278,7 @@ async fn handle_blockchain_command_impl(
         }
         BlockchainAction::ContractState { contract_id } => {
             let contract_id = parse_hex_32("contract_id", &contract_id)?;
-            let endpoint = format!(
-                "/api/v1/blockchain/contracts/{}/state",
-                hex::encode(contract_id)
-            );
+            let endpoint = build_contract_state_endpoint(contract_id);
             let response = client.get(&endpoint).await.map_err(|e| CliError::ApiCallFailed {
                 endpoint: endpoint.clone(),
                 status: 0,
@@ -525,6 +464,32 @@ mod tests {
         assert_eq!(parse_contract_filter("token").unwrap(), "token");
         assert_eq!(parse_contract_filter("web4").unwrap(), "web4");
         assert!(parse_contract_filter("wasm").is_err());
+    }
+
+    #[test]
+    fn test_build_contract_list_endpoint() {
+        assert_eq!(
+            build_contract_list_endpoint("token", 50, 10),
+            "/api/v1/blockchain/contracts?type=token&limit=50&offset=10"
+        );
+    }
+
+    #[test]
+    fn test_build_contract_info_endpoint() {
+        let contract_id = [0xabu8; 32];
+        assert_eq!(
+            build_contract_info_endpoint(contract_id),
+            format!("/api/v1/blockchain/contracts/{}", "ab".repeat(32))
+        );
+    }
+
+    #[test]
+    fn test_build_contract_state_endpoint() {
+        let contract_id = [0xcdu8; 32];
+        assert_eq!(
+            build_contract_state_endpoint(contract_id),
+            format!("/api/v1/blockchain/contracts/{}/state", "cd".repeat(32))
+        );
     }
 
     #[test]

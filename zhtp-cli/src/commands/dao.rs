@@ -3,6 +3,7 @@
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 
 use crate::argument_parsing::{DaoAction, DaoArgs, ZhtpCli, format_output};
+use crate::commands::transaction_utils::{broadcast_signed_tx, parse_hex_32};
 use crate::commands::web4_utils::{connect_default, default_keystore_path, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
@@ -117,25 +118,19 @@ pub fn validate_proposal_title(title: &str) -> CliResult<()> {
     Ok(())
 }
 
-fn parse_hex_32(name: &str, value: &str) -> CliResult<[u8; 32]> {
-    let bytes = hex::decode(value.strip_prefix("0x").unwrap_or(value))
-        .map_err(|_| CliError::ConfigError(format!("Invalid {name}: expected hex string")))?;
-    if bytes.len() != 32 {
-        return Err(CliError::ConfigError(format!(
-            "Invalid {name}: expected 32 bytes (64 hex chars), got {} bytes",
-            bytes.len()
-        )));
-    }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    Ok(out)
-}
-
 fn parse_dao_class(value: &str) -> CliResult<DAOType> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "np" | "nonprofit" | "non-profit" | "non_profit" => Ok(DAOType::NP),
-        "fp" | "forprofit" | "for-profit" | "for_profit" => Ok(DAOType::FP),
-        _ => Err(CliError::ConfigError("Invalid class: use np or fp".to_string())),
+    let normalized = value.trim().to_ascii_lowercase();
+    if let Some(class) = DAOType::from_str(&normalized) {
+        return Ok(class);
+    }
+
+    match normalized.as_str() {
+        "nonprofit" => Ok(DAOType::NP),
+        "forprofit" => Ok(DAOType::FP),
+        _ => Err(CliError::ConfigError(
+            "Invalid DAO class. Use one of: np, non_profit, non-profit, nonprofit, fp, for_profit, for-profit, forprofit"
+                .to_string(),
+        )),
     }
 }
 
@@ -182,6 +177,8 @@ pub fn get_operation_message(
 }
 
 fn public_key_from_key_id(key_id: [u8; 32]) -> PublicKey {
+    // This key-id-only placeholder is used strictly for deterministic DAO ID derivation.
+    // It must never be used for signature verification.
     PublicKey {
         dilithium_pk: Vec::new(),
         kyber_pk: Vec::new(),
@@ -226,6 +223,7 @@ fn build_signed_dao_registry_tx(
         recipient: Some(hex::encode(dao_id)),
         amount: None,
         executed_at: now,
+        // CLI tx construction does not know inclusion height; node sets canonical height.
         executed_at_height: 0,
         multisig_signatures: vec![event_bytes],
     };
@@ -255,28 +253,13 @@ fn build_signed_dao_registry_tx(
     Ok((tx, dao_id))
 }
 
-async fn broadcast_signed_tx(client: &ZhtpClient, tx: &Transaction) -> CliResult<Value> {
-    let tx_bytes = bincode::serialize(tx)
-        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {e}")))?;
-    let endpoint = "/api/v1/blockchain/transaction/broadcast";
-    let request_body = json!({ "transaction_data": hex::encode(tx_bytes) });
-    let response = client.post_json(endpoint, &request_body).await.map_err(|e| {
-        CliError::ApiCallFailed {
-            endpoint: endpoint.to_string(),
-            status: 0,
-            reason: e.to_string(),
-        }
-    })?;
-    ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-        endpoint: endpoint.to_string(),
-        status: 0,
-        reason: format!("Failed to parse response: {e}"),
-    })
-}
-
 pub async fn handle_dao_command(args: DaoArgs, cli: &ZhtpCli) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_dao_command_impl(args, cli, &output).await
+}
+
+fn build_registry_get_endpoint(dao_id: &str) -> String {
+    format!("/api/v1/dao/registry/{}", dao_id.trim_start_matches("0x"))
 }
 
 async fn handle_dao_command_impl(
@@ -312,7 +295,7 @@ async fn handle_dao_command_impl(
         }
         DaoAction::RegistryGet { dao_id } => {
             parse_hex_32("dao_id", &dao_id)?;
-            let endpoint = format!("/api/v1/dao/registry/{}", dao_id.trim_start_matches("0x"));
+            let endpoint = build_registry_get_endpoint(&dao_id);
             output.info("Fetching DAO registry entry...")?;
             let response = client.get(&endpoint).await.map_err(|e| CliError::ApiCallFailed {
                 endpoint: endpoint.clone(),
@@ -413,6 +396,7 @@ async fn handle_dao_operation_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::keypair::KeyPair;
 
     #[test]
     fn test_action_to_operation_info() {
@@ -533,8 +517,62 @@ mod tests {
     #[test]
     fn test_parse_dao_class() {
         assert_eq!(parse_dao_class("np").unwrap(), DAOType::NP);
+        assert_eq!(parse_dao_class("non_profit").unwrap(), DAOType::NP);
+        assert_eq!(parse_dao_class("nonprofit").unwrap(), DAOType::NP);
         assert_eq!(parse_dao_class("for-profit").unwrap(), DAOType::FP);
+        assert_eq!(parse_dao_class("for_profit").unwrap(), DAOType::FP);
+        assert_eq!(parse_dao_class("forprofit").unwrap(), DAOType::FP);
         assert!(parse_dao_class("x").is_err());
+    }
+
+    #[test]
+    fn test_build_registry_get_endpoint_trims_hex_prefix() {
+        assert_eq!(
+            build_registry_get_endpoint(&format!("0x{}", "ab".repeat(32))),
+            format!("/api/v1/dao/registry/{}", "ab".repeat(32))
+        );
+    }
+
+    #[test]
+    fn test_build_signed_dao_registry_tx_register_flow() {
+        let keypair = KeyPair::generate().unwrap();
+        let token_id = [0x11u8; 32];
+        let metadata_hash = [0x22u8; 32];
+        let (tx, dao_id) = build_signed_dao_registry_tx(
+            "dao_registry_register_v1",
+            "did:sov:test",
+            keypair.public_key.clone(),
+            keypair.private_key.clone(),
+            token_id,
+            DAOType::NP,
+            metadata_hash,
+        )
+        .unwrap();
+
+        assert_eq!(tx.transaction_type, lib_blockchain::TransactionType::DaoExecution);
+        assert_eq!(tx.dao_execution_data.as_ref().unwrap().execution_type, "dao_registry_register_v1");
+        assert!(!tx.signature.signature.is_empty());
+        assert_ne!(dao_id, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_build_signed_dao_registry_tx_factory_flow() {
+        let keypair = KeyPair::generate().unwrap();
+        let token_id = [0x33u8; 32];
+        let metadata_hash = [0x44u8; 32];
+        let (tx, _dao_id) = build_signed_dao_registry_tx(
+            "dao_factory_create_v1",
+            "did:sov:test",
+            keypair.public_key.clone(),
+            keypair.private_key.clone(),
+            token_id,
+            DAOType::FP,
+            metadata_hash,
+        )
+        .unwrap();
+
+        assert_eq!(tx.dao_execution_data.as_ref().unwrap().execution_type, "dao_factory_create_v1");
+        assert!(!tx.signature.signature.is_empty());
     }
 
     #[test]
