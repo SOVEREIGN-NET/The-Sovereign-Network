@@ -1857,6 +1857,7 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bincode::Options;
     use crate::integration::zk_integration::ZkTransactionProof;
     use crate::transaction::{ContractDeploymentPayloadV1, CONTRACT_DEPLOYMENT_MEMO_PREFIX};
     use crate::types::ContractCall;
@@ -2291,7 +2292,14 @@ mod tests {
             memory_limit_bytes: 65_536,
         };
         let mut memo = CONTRACT_DEPLOYMENT_MEMO_PREFIX.to_vec();
-        memo.extend_from_slice(&bincode::serialize(&invalid_payload).unwrap());
+        memo.extend_from_slice(
+            &bincode::DefaultOptions::new()
+                .with_limit(
+                    crate::transaction::contract_deployment::MAX_DEPLOYMENT_MEMO_BYTES as u64,
+                )
+                .serialize(&invalid_payload)
+                .unwrap(),
+        );
         tx.memo = memo;
 
         let validator = TransactionValidator::new();
