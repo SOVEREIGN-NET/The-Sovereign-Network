@@ -4138,27 +4138,77 @@ impl Blockchain {
                         .map_or(false, |s| s.starts_with("UBI_DISTRIBUTION_V1:"));
                     let is_migration = migration_from.is_some();
 
-                    let token = self.token_contracts.get_mut(&token_id)
-                        .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                    let amount_u64: u64 = mint.amount.try_into()
+                        .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
 
-                    // Creator authorization: custom token mints require signer == creator
-                    if !is_sov && !is_ubi_mint && !is_migration {
+                    let is_kernel_controlled = self.token_contracts.get(&token_id)
+                        .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?
+                        .kernel_mint_authority
+                        .is_some();
+
+                    // Creator authorization: non-kernel custom token mints require signer == creator.
+                    if !is_sov && !is_ubi_mint && !is_migration && !is_kernel_controlled {
+                        let token = self.token_contracts.get(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         token.check_mint_authorization(&transaction.signature.public_key)
                             .map_err(|e| anyhow::anyhow!("{}", e))?;
                     }
 
-                    let amount_u64: u64 = mint.amount.try_into()
-                        .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
-
                     if let Some(from_pk) = migration_from {
-                        token.burn(&from_pk, amount_u64)
-                            .map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                        if is_kernel_controlled {
+                            let mut kernel = self.treasury_kernel.take()
+                                .ok_or_else(|| anyhow::anyhow!(
+                                    "Treasury Kernel not initialized - kernel-controlled token operations require kernel"
+                                ))?;
+                            let burn_result = {
+                                let token = self.token_contracts.get_mut(&token_id)
+                                    .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                                kernel.debit(
+                                    token,
+                                    &transaction.signature.public_key,
+                                    &from_pk,
+                                    amount_u64,
+                                    crate::contracts::treasury_kernel::DebitReason::Burn,
+                                )
+                            };
+                            self.treasury_kernel = Some(kernel);
+                            burn_result.map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                        } else {
+                            let token = self.token_contracts.get_mut(&token_id)
+                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            token.burn(&from_pk, amount_u64)
+                                .map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                        }
                     }
 
-                    token.mint(&recipient_pk, amount_u64)
-                        .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                    if is_kernel_controlled {
+                        let mut kernel = self.treasury_kernel.take()
+                            .ok_or_else(|| anyhow::anyhow!(
+                                "Treasury Kernel not initialized - kernel-controlled token operations require kernel"
+                            ))?;
+                        let mint_result = {
+                            let token = self.token_contracts.get_mut(&token_id)
+                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            kernel.credit(
+                                token,
+                                &transaction.signature.public_key,
+                                &recipient_pk,
+                                amount_u64,
+                                crate::contracts::treasury_kernel::CreditReason::Mint,
+                            )
+                        };
+                        self.treasury_kernel = Some(kernel);
+                        mint_result.map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                    } else {
+                        let token = self.token_contracts.get_mut(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                        token.mint(&recipient_pk, amount_u64)
+                            .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                    }
 
                     if let Some(store) = &self.store {
+                        let token = self.token_contracts.get(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                         if let Err(e) = store_ref.put_token_contract(token) {
                             warn!("Failed to persist token contract after mint: {}", e);
@@ -4380,6 +4430,12 @@ impl Blockchain {
 
                 let token = self.token_contracts.get_mut(&token_id)
                     .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
+
+                if token.kernel_mint_authority.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "Protected token mint must route through Treasury Kernel"
+                    ));
+                }
 
                 if token.creator != *caller {
                     return Err(anyhow::anyhow!("Only token creator can mint"));
