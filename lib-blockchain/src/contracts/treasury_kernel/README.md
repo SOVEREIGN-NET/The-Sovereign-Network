@@ -144,40 +144,38 @@ epoch_boundary()
 
 ### Phase 5: Complete Minting Integration
 
-Currently stubbed for Phase 5:
+Implemented in `ubi_engine.rs`:
 ```rust
-// In ubi_engine.rs process_ubi_distributions()
-let kernel_txid = self.compute_kernel_txid(&claim.citizen_id, epoch, 1000);
-// TODO: Call executor.get_or_load_sov()
-// TODO: Call token.mint_kernel_only(&kernel_address, &recipient, 1000)
-// TODO: Call self.emit_ubi_distributed(...)
+// In process_ubi_claims_with_minting(...)
+token.mint_kernel_only(kernel_address, &recipient, claim.amount)?;
+self.emit_distributed(claim.citizen_id, claim.amount, epoch, kernel_txid)?;
 ```
 
 ### Phase 5: Event Polling
 
-Currently returns empty for Phase 5:
+Event polling from higher-level execution remains integration-dependent, but
+the kernel processing loop accepts deterministic `UbiClaimRecorded` batches and
+processes them canonically.
 ```rust
-// In ubi_engine.rs poll_ubi_claims()
-// TODO: Call executor.query_events(epoch, "UbiClaimRecorded")
-// TODO: Deserialize events into UbiClaimRecorded vector
+let (successes, rejections) =
+    kernel_state.process_ubi_claims_with_minting(&claims, registry, epoch, token, Some(kernel));
 ```
 
 ### Phase 5: Event Emission
 
-Currently documented for Phase 5:
+Implemented as canonical kernel-state events persisted with `KernelState`:
 ```rust
-// In ubi_engine.rs process_ubi_distributions()
-// TODO: Call self.emit_ubi_distributed(..., storage)
-// TODO: Call self.emit_ubi_rejected(..., storage)
-// TODO: Call self.emit_ubi_pool_status(..., storage)
+self.emit_distributed(...)?;
+self.emit_claim_rejected(...)?;
+self.emit_pool_status(...)?;
 ```
 
 ### Phase 6: Storage Persistence
 
-Currently documented for Phase 6:
+Kernel state persistence (including dedup + UBI events) is available via:
 ```rust
-// In ubi_engine.rs process_ubi_distributions()
-// TODO: Call self.save_to_storage(storage)
+let bytes = kernel_state.to_bytes()?;
+let restored = KernelState::from_bytes(&bytes)?;
 ```
 
 ## Security Considerations

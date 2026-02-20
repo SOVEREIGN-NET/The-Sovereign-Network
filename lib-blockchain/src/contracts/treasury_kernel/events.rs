@@ -29,7 +29,7 @@
 //! Emitted when a claim fails validation:
 //! - `citizen_id`: Citizen whose claim was rejected
 //! - `epoch`: Epoch of the rejected claim
-//! - `reason_code`: 1-5 (NotACitizen, AlreadyRevoked, AlreadyClaimedEpoch, PoolExhausted, EligibilityNotMet)
+//! - `reason_code`: 1-6 (includes MintFailed)
 //! - `timestamp`: Block height when rejected
 //!
 //! Citizens never see rejection reasons (silent failure for privacy).
@@ -58,7 +58,7 @@
 //! - Governance audit trails
 //! - Crash recovery validation
 
-use super::types::{KernelState, RejectionReason};
+use super::types::{KernelState, KernelUbiEvent, RejectionReason};
 use super::interface::MintReason;
 
 /// Event emission for Treasury Kernel
@@ -147,24 +147,22 @@ impl KernelState {
     /// # Returns
     /// Ok if event recorded successfully
     pub fn emit_distributed(
-        &self,
-        _citizen_id: [u8; 32],
+        &mut self,
+        citizen_id: [u8; 32],
         amount: u64,
-        _epoch: u64,
-        _kernel_txid: [u8; 32],
+        epoch: u64,
+        kernel_txid: [u8; 32],
     ) -> Result<(), String> {
-        // In production, would persist to storage layer
-        // For now, just validate inputs
         if amount == 0 {
             return Err("Cannot emit distribution for zero amount".to_string());
         }
 
-        // Event structure would be:
-        // - citizen_id: [u8; 32]
-        // - amount: u64
-        // - epoch: u64
-        // - kernel_txid: [u8; 32]
-        // - timestamp: block_height (set by executor)
+        self.ubi_events.push(KernelUbiEvent::Distributed {
+            citizen_id,
+            amount,
+            epoch,
+            kernel_txid,
+        });
 
         Ok(())
     }
@@ -183,24 +181,23 @@ impl KernelState {
     /// # Returns
     /// Ok if event recorded successfully
     pub fn emit_claim_rejected(
-        &self,
-        _citizen_id: [u8; 32],
-        _epoch: u64,
+        &mut self,
+        citizen_id: [u8; 32],
+        epoch: u64,
         reason: RejectionReason,
-        _timestamp: u64,
+        timestamp: u64,
     ) -> Result<(), String> {
-        // In production, would persist to storage layer
-        // Validate reason is in valid range (1-5)
         let reason_code = reason as u8;
-        if reason_code < 1 || reason_code > 5 {
+        if reason_code < 1 || reason_code > 6 {
             return Err("Invalid rejection reason code".to_string());
         }
 
-        // Event structure would be:
-        // - citizen_id: [u8; 32]
-        // - epoch: u64
-        // - reason_code: u8 (1-5)
-        // - timestamp: u64
+        self.ubi_events.push(KernelUbiEvent::ClaimRejected {
+            citizen_id,
+            epoch,
+            reason,
+            timestamp,
+        });
 
         Ok(())
     }
@@ -219,14 +216,12 @@ impl KernelState {
     /// # Returns
     /// Ok if event recorded successfully
     pub fn emit_pool_status(
-        &self,
-        _epoch: u64,
-        _eligible_count: u64,
+        &mut self,
+        epoch: u64,
+        eligible_count: u64,
         total_distributed: u64,
         remaining_capacity: u64,
     ) -> Result<(), String> {
-        // In production, would persist to storage layer
-        // Verify invariant: remaining = 1_000_000 - total_distributed
         const POOL_CAP: u64 = 1_000_000;
 
         let expected_remaining = POOL_CAP.saturating_sub(total_distributed);
@@ -237,13 +232,19 @@ impl KernelState {
             ));
         }
 
-        // Event structure would be:
-        // - epoch: u64
-        // - eligible_count: u64
-        // - total_distributed: u64
-        // - remaining_capacity: u64
+        self.ubi_events.push(KernelUbiEvent::PoolStatus {
+            epoch,
+            eligible_count,
+            total_distributed,
+            remaining_capacity,
+        });
 
         Ok(())
+    }
+
+    /// Read canonical UBI event stream.
+    pub fn ubi_events(&self) -> &[KernelUbiEvent] {
+        &self.ubi_events
     }
 
     // ─── Vesting Events ─────────────────────────────────────────────────
@@ -387,14 +388,15 @@ mod tests {
 
     #[test]
     fn test_emit_distributed_success() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
         let result = state.emit_distributed([1u8; 32], 1000, 100, [88u8; 32]);
         assert!(result.is_ok());
+        assert_eq!(state.ubi_events().len(), 1);
     }
 
     #[test]
     fn test_emit_distributed_zero_amount_fails() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
         let result = state.emit_distributed([1u8; 32], 0, 100, [88u8; 32]);
         assert!(result.is_err());
         assert_eq!(
@@ -405,22 +407,23 @@ mod tests {
 
     #[test]
     fn test_emit_distributed_large_amount() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
         let result = state.emit_distributed([1u8; 32], u64::MAX / 2, 100, [88u8; 32]);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_emit_claim_rejected_valid_reasons() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
 
-        // Test all 5 valid reason codes
+        // Test all valid reason codes
         let reasons = vec![
             RejectionReason::NotACitizen,
             RejectionReason::AlreadyRevoked,
             RejectionReason::AlreadyClaimedEpoch,
             RejectionReason::PoolExhausted,
             RejectionReason::EligibilityNotMet,
+            RejectionReason::MintFailed,
         ];
 
         for reason in reasons {
@@ -435,16 +438,17 @@ mod tests {
 
     #[test]
     fn test_emit_claim_rejected_multiple() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
 
         // Emit multiple rejections
         for i in 0..10 {
-            let reason = match i % 5 {
+            let reason = match i % 6 {
                 0 => RejectionReason::NotACitizen,
                 1 => RejectionReason::AlreadyRevoked,
                 2 => RejectionReason::AlreadyClaimedEpoch,
                 3 => RejectionReason::PoolExhausted,
-                _ => RejectionReason::EligibilityNotMet,
+                4 => RejectionReason::EligibilityNotMet,
+                _ => RejectionReason::MintFailed,
             };
 
             let result = state.emit_claim_rejected([(i as u8); 32], 100, reason, 12345 + i);
@@ -454,28 +458,28 @@ mod tests {
 
     #[test]
     fn test_emit_pool_status_empty_pool() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
         let result = state.emit_pool_status(100, 0, 0, 1_000_000);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_emit_pool_status_full_pool() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
         let result = state.emit_pool_status(100, 1000, 1_000_000, 0);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_emit_pool_status_partial_pool() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
         let result = state.emit_pool_status(100, 500, 500_000, 500_000);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_emit_pool_status_invariant_violated() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
         let result = state.emit_pool_status(100, 500, 500_000, 499_999); // Wrong remaining
 
         assert!(result.is_err());
@@ -484,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_emit_pool_status_multiple_epochs() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
 
         // Emit status for multiple epochs
         for epoch in 100..105 {
@@ -495,7 +499,7 @@ mod tests {
 
     #[test]
     fn test_emit_pool_status_saturating_subtraction() {
-        let state = KernelState::new();
+        let mut state = KernelState::new();
 
         // If total_distributed > cap (shouldn't happen in practice),
         // saturating subtraction gives 0
