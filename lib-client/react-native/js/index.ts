@@ -9,3 +9,14 @@ export type {
   PublicIdentity,
   HandshakeResult,
 } from './NativeIdentityProvisioning';
+
+export { PoUWController } from './PoUWController';
+export type {
+  PoUWControllerConfig,
+  ProofType,
+  Receipt,
+  SignedReceipt,
+  ReceiptBatch,
+  SubmitResponse,
+  ChallengeToken,
+} from './PoUWController';

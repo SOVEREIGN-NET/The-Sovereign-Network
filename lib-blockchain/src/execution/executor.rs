@@ -40,7 +40,10 @@ use crate::block::Block;
 use crate::storage::{
     Address, Amount, BlockHash, BlockHeight, BlockchainStore, StorageError, TokenId,
 };
-use crate::transaction::{contract_deployment::ContractDeploymentPayloadV1, hash_transaction};
+use crate::transaction::{
+    contract_deployment::ContractDeploymentPayloadV1, hash_transaction,
+    token_creation::TokenCreationPayloadV1,
+};
 use crate::types::{ContractCall, TransactionType};
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
@@ -602,6 +605,9 @@ impl BlockExecutor {
                 TxOutcome::TokenMint(_outcome) => {
                     summary.balance_changes += 1; // recipient only
                 }
+                TxOutcome::TokenCreation(_outcome) => {
+                    summary.balance_changes += 1; // creator balance only (token contract init is not counted here)
+                }
                 TxOutcome::ContractDeployment(_outcome) => {
                     summary.balance_changes += 1; // tracks one deterministic contract deployment operation (multiple underlying storage writes: code + metadata)
                 }
@@ -738,6 +744,7 @@ impl BlockExecutor {
             TransactionType::Transfer => {}
             TransactionType::TokenTransfer => {}
             TransactionType::TokenMint => {}
+            TransactionType::TokenCreation => {}
             TransactionType::ContractDeployment => {}
             TransactionType::ContractExecution => {}
             TransactionType::Coinbase => {}
@@ -762,7 +769,6 @@ impl BlockExecutor {
             | TransactionType::ProfitDeclaration
             | TransactionType::GovernanceConfigUpdate
             // Phase 3/4 types - handled by executor but validation not fully wired yet
-            | TransactionType::TokenCreation
             | TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
@@ -875,6 +881,23 @@ impl BlockExecutor {
                         "TokenMint transaction fee must be 0 in Phase 2".to_string(),
                     ));
                 }
+            }
+            TransactionType::TokenCreation => {
+                if !tx.inputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenCreation must not have UTXO inputs".to_string(),
+                    ));
+                }
+                if !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenCreation must not have UTXO outputs".to_string(),
+                    ));
+                }
+                TokenCreationPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "TokenCreation requires canonical memo payload: {e}"
+                    ))
+                })?;
             }
             TransactionType::ContractDeployment => {
                 // Contract deployments must not perform UTXO operations.
@@ -1314,6 +1337,58 @@ impl BlockExecutor {
 
                 Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
             }
+            TransactionType::TokenCreation => {
+                let payload = TokenCreationPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "TokenCreation requires canonical memo payload: {e}"
+                    ))
+                })?;
+
+                let creator = tx.signature.public_key.clone();
+                let mut token = crate::contracts::TokenContract::new_custom(
+                    payload.name.clone(),
+                    payload.symbol.clone(),
+                    payload.initial_supply,
+                    creator.clone(),
+                );
+                token.decimals = if payload.decimals == 0 { 8 } else { payload.decimals };
+                token.max_supply = payload.initial_supply;
+
+                let token_id = token.token_id;
+                let token_id_ref = TokenId::new(token_id);
+
+                // Enforce idempotency/replay-safety: do not overwrite an existing token.
+                if mutator.get_token_contract(&token_id_ref)?.is_some() {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenCreation for existing token_id is not allowed".to_string(),
+                    ));
+                }
+
+                // Enforce case-insensitive symbol uniqueness across all tokens.
+                if mutator.token_symbol_exists_case_insensitive(&payload.symbol)? {
+                    return Err(TxApplyError::InvalidType(format!(
+                        "TokenCreation: symbol '{}' conflicts with an existing token (case-insensitive)",
+                        payload.symbol
+                    )));
+                }
+
+                mutator.put_token_contract(&token)?;
+
+                // Keep balance-tree state consistent with typed token transfer path.
+                let creator_addr = Address::new(creator.key_id);
+                tx_apply::apply_token_mint(
+                    mutator,
+                    &token_id_ref,
+                    &creator_addr,
+                    payload.initial_supply as u128,
+                )?;
+
+                Ok(TxOutcome::TokenCreation(TokenCreationOutcome {
+                    token_id,
+                    creator: creator_addr,
+                    initial_supply: payload.initial_supply as u128,
+                }))
+            }
             TransactionType::ContractDeployment => {
                 let outcome = self.apply_contract_deployment(mutator, tx, &tx_hash)?;
                 Ok(TxOutcome::ContractDeployment(outcome))
@@ -1414,6 +1489,7 @@ enum TxOutcome {
     Transfer(TransferOutcome),
     TokenTransfer(TokenTransferOutcome),
     TokenMint(TokenMintOutcome),
+    TokenCreation(TokenCreationOutcome),
     ContractDeployment(ContractDeploymentOutcome),
     ContractExecution(ContractExecutionOutcome),
     Coinbase(CoinbaseOutcome),
@@ -1437,6 +1513,14 @@ pub struct TokenMintOutcome {
     pub token: TokenId,
     pub to: Address,
     pub amount: u128,
+}
+
+/// Outcome of a token creation transaction
+#[derive(Debug, Clone)]
+pub struct TokenCreationOutcome {
+    pub token_id: [u8; 32],
+    pub creator: Address,
+    pub initial_supply: u128,
 }
 
 /// Outcome of a contract deployment transaction
@@ -1984,6 +2068,115 @@ mod tests {
         assert_eq!(outcome.height, 1);
         assert_eq!(outcome.tx_count, 2);
         assert_eq!(store.latest_height().unwrap(), 1);
+    }
+
+    // =========================================================================
+    // TokenCreation canonical path tests
+    // =========================================================================
+
+    use crate::storage::TokenId;
+    use crate::transaction::token_creation::TokenCreationPayloadV1;
+
+    fn create_token_creation_tx(name: &str, symbol: &str, initial_supply: u64) -> Transaction {
+        let payload = TokenCreationPayloadV1 {
+            name: name.to_string(),
+            symbol: symbol.to_string(),
+            initial_supply,
+            decimals: 8,
+        };
+        let memo = payload.encode_memo().expect("valid token creation memo");
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenCreation,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 10_000,
+            signature: create_dummy_signature(),
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    /// TokenCreation canonical path: token is created and minted to creator.
+    #[test]
+    fn test_token_creation_canonical() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let tx = create_token_creation_tx("Test Token", "TEST", 1_000_000);
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        let outcome = executor.apply_block(&block1).unwrap();
+
+        assert_eq!(outcome.height, 1);
+        assert_eq!(outcome.tx_count, 1);
+
+        // Verify the token contract exists in the store
+        let token_id = crate::contracts::utils::generate_custom_token_id("Test Token", "TEST");
+        let contract = store
+            .get_token_contract(&TokenId::new(token_id))
+            .unwrap()
+            .expect("token contract should exist");
+        assert_eq!(contract.symbol, "TEST");
+        assert_eq!(contract.total_supply, 1_000_000);
+    }
+
+    /// Duplicate TokenCreation for the same token_id must be rejected.
+    #[test]
+    fn test_token_creation_duplicate_rejected() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        // First creation succeeds
+        let tx = create_token_creation_tx("Test Token", "TEST", 1_000_000);
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        executor.apply_block(&block1).unwrap();
+
+        // Second creation with same name+symbol (same token_id) must be rejected
+        let tx2 = create_token_creation_tx("Test Token", "TEST", 500_000);
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx2]);
+        let result = executor.apply_block(&block2);
+        assert!(result.is_err(), "Duplicate TokenCreation should be rejected");
+    }
+
+    /// TokenCreation with a symbol that differs only in case must be rejected.
+    #[test]
+    fn test_token_creation_symbol_case_insensitive_rejected() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        // Create token with uppercase symbol
+        let tx = create_token_creation_tx("Alpha Token", "ALPHA", 1_000_000);
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        executor.apply_block(&block1).unwrap();
+
+        // Token with different name but same symbol (lowercase) must be rejected
+        let tx2 = create_token_creation_tx("Beta Token", "alpha", 500_000);
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx2]);
+        let result = executor.apply_block(&block2);
+        assert!(
+            result.is_err(),
+            "TokenCreation with case-conflicting symbol should be rejected"
+        );
     }
 
     #[test]
