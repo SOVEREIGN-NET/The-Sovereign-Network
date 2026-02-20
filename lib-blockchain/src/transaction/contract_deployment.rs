@@ -1,7 +1,10 @@
 //! Canonical contract deployment transaction schema.
 //!
 //! Contract deployment payloads are encoded in transaction memo bytes as:
-//! `CONTRACT_DEPLOYMENT_MEMO_PREFIX || bincode(ContractDeploymentPayloadV1)`.
+//! `CONTRACT_DEPLOYMENT_MEMO_PREFIX || bincode(DefaultOptions with_limit(MAX_DEPLOYMENT_MEMO_BYTES), ContractDeploymentPayloadV1)`.
+//!
+//! Both `encode_memo` and `decode_memo` use `bincode::DefaultOptions::new().with_limit(...)` to
+//! guarantee deterministic round-trip compatibility required for consensus serialization.
 
 use serde::{Deserialize, Serialize};
 use bincode::Options;
@@ -98,6 +101,8 @@ impl ContractDeploymentPayloadV1 {
     /// Encode this payload into canonical memo bytes.
     pub fn encode_memo(&self) -> Result<Vec<u8>, String> {
         self.validate()?;
+        // Use the same bincode options as decode_memo() to guarantee round-trip
+        // compatibility and deterministic consensus serialization.
         let encoded = bincode::DefaultOptions::new()
             .with_limit(MAX_DEPLOYMENT_MEMO_BYTES as u64)
             .serialize(self)
@@ -133,5 +138,47 @@ impl ContractDeploymentPayloadV1 {
             .map_err(|e| format!("invalid deployment payload encoding: {e}"))?;
         payload.validate()?;
         Ok(payload)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_payload() -> ContractDeploymentPayloadV1 {
+        ContractDeploymentPayloadV1 {
+            contract_type: "wasm".to_string(),
+            code: vec![0x00, 0x61, 0x73, 0x6d], // minimal wasm magic bytes
+            abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+            init_args: vec![],
+            gas_limit: 100_000,
+            memory_limit_bytes: 65_536,
+        }
+    }
+
+    /// Round-trip: encode_memo → decode_memo must produce the original payload.
+    #[test]
+    fn test_encode_decode_round_trip() {
+        let payload = valid_payload();
+        let memo = payload.encode_memo().expect("encode should succeed");
+        let decoded = ContractDeploymentPayloadV1::decode_memo(&memo).expect("decode should succeed");
+        assert_eq!(payload, decoded);
+    }
+
+    /// Memo without the canonical prefix must be rejected.
+    #[test]
+    fn test_decode_rejects_missing_prefix() {
+        let result = ContractDeploymentPayloadV1::decode_memo(b"not_a_valid_memo");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing deployment memo prefix"));
+    }
+
+    /// A payload that fails validation must not be encodable.
+    #[test]
+    fn test_encode_rejects_invalid_payload() {
+        let mut payload = valid_payload();
+        payload.gas_limit = 0; // invalid
+        let result = payload.encode_memo();
+        assert!(result.is_err());
     }
 }
