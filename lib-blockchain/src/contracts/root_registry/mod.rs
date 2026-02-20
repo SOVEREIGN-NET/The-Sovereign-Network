@@ -62,6 +62,7 @@ pub use types::{
 
     // Verification
     VerificationLevel,
+    VerificationProof, VerificationError, ZkProofData,
 
     // Classification
     NameClassification,

@@ -16,7 +16,7 @@ fn test_reserved_namespace_rejected_in_commercial_path() {
     let mut registry = RootRegistry::new();
     let owner = test_public_key(1);
 
-    let result = registry.register_commercial("food.dao.sov", owner, 0, 100);
+    let result = registry.register_commercial_unverified("food.dao.sov", owner, 0, 100);
     assert!(result.is_err());
 }
 
@@ -76,10 +76,10 @@ fn test_dao_prefixed_requires_parent_ownership() {
     let intruder = test_public_key(2);
 
     registry
-        .register_commercial("shoes.sov", owner.clone(), 0, 100)
+        .register_commercial_unverified("shoes.sov", owner.clone(), 0, 100)
         .expect("register parent");
 
-    let result = registry.register_commercial("dao.shoes.sov", intruder, 0, 100);
+    let result = registry.register_commercial_unverified("dao.shoes.sov", intruder, 0, 100);
     assert!(result.is_err());
 }
 
@@ -91,10 +91,10 @@ fn test_parent_expiry_propagates_suspension() {
     let duration_blocks = 100;
 
     let parent_hash = registry
-        .register_commercial("parent.sov", owner.clone(), current_height, duration_blocks)
+        .register_commercial_unverified("parent.sov", owner.clone(), current_height, duration_blocks)
         .expect("register parent");
     let child_hash = registry
-        .register_commercial("child.parent.sov", owner, current_height, duration_blocks)
+        .register_commercial_unverified("child.parent.sov", owner, current_height, duration_blocks)
         .expect("register child");
 
     // Expire at a height after the expiry period
@@ -181,7 +181,7 @@ fn test_phase2_dao_prefix_registration_without_parent_rejected() {
     let intruder = test_public_key(1);
 
     // Try to register dao.shoes.sov without shoes.sov existing
-    let result = registry.register_commercial("dao.shoes.sov", intruder, 0, 100);
+    let result = registry.register_commercial_unverified("dao.shoes.sov", intruder, 0, 100);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -200,11 +200,11 @@ fn test_phase2_dao_prefix_registration_even_with_ownership_rejected() {
 
     // First register shoes.sov
     registry
-        .register_commercial("shoes.sov", owner.clone(), 0, 100)
+        .register_commercial_unverified("shoes.sov", owner.clone(), 0, 100)
         .expect("register parent");
 
     // Now try to register dao.shoes.sov as the owner - should still fail!
-    let result = registry.register_commercial("dao.shoes.sov", owner, 0, 100);
+    let result = registry.register_commercial_unverified("dao.shoes.sov", owner, 0, 100);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -221,7 +221,7 @@ fn test_phase2_mydao_sov_registration_allowed() {
     let owner = test_public_key(1);
 
     // "mydao" is not "dao." prefix - should be allowed
-    let result = registry.register_commercial("mydao.sov", owner, 0, 100);
+    let result = registry.register_commercial_unverified("mydao.sov", owner, 0, 100);
     assert!(result.is_ok());
 }
 
@@ -280,12 +280,12 @@ fn test_phase2_invariant_no_dao_records_stored() {
     let owner = test_public_key(1);
 
     // Register some normal domains
-    registry.register_commercial("shoes.sov", owner.clone(), 0, 100).unwrap();
-    registry.register_commercial("boots.sov", owner.clone(), 0, 100).unwrap();
+    registry.register_commercial_unverified("shoes.sov", owner.clone(), 0, 100).unwrap();
+    registry.register_commercial_unverified("boots.sov", owner.clone(), 0, 100).unwrap();
 
     // Try to register dao-prefixed (should all fail)
-    let _ = registry.register_commercial("dao.shoes.sov", owner.clone(), 0, 100);
-    let _ = registry.register_commercial("dao.boots.sov", owner.clone(), 0, 100);
+    let _ = registry.register_commercial_unverified("dao.shoes.sov", owner.clone(), 0, 100);
+    let _ = registry.register_commercial_unverified("dao.boots.sov", owner.clone(), 0, 100);
 
     // Verify: count should be 2 (only shoes.sov and boots.sov)
     // No dao.* records should exist
@@ -304,7 +304,7 @@ fn test_touch_commercial_past_grace_releases() {
 
     // Register a commercial domain at height 0 with 100 block duration
     let name_hash = registry
-        .register_commercial("mystore.sov", owner.clone(), 0, 100)
+        .register_commercial_unverified("mystore.sov", owner.clone(), 0, 100)
         .expect("register");
 
     // Before grace: should return Some
@@ -358,7 +358,7 @@ fn test_touch_active_domain_unchanged() {
     let owner = test_public_key(1);
 
     let name_hash = registry
-        .register_commercial("active.sov", owner.clone(), 0, 100)
+        .register_commercial_unverified("active.sov", owner.clone(), 0, 100)
         .expect("register");
 
     // Touch within active period
@@ -378,7 +378,7 @@ fn test_renew_name_success() {
 
     // Register at height 0 with 1000 block duration
     let name_hash = registry
-        .register_commercial("renewable.sov", owner.clone(), 0, 1000)
+        .register_commercial_unverified("renewable.sov", owner.clone(), 0, 1000)
         .expect("register");
 
     // Renew during active period (within renewal window)
@@ -400,7 +400,7 @@ fn test_renew_name_late_penalty() {
 
     // Register at height 0 with 100 block duration
     let name_hash = registry
-        .register_commercial("late.sov", owner.clone(), 0, 100)
+        .register_commercial_unverified("late.sov", owner.clone(), 0, 100)
         .expect("register");
 
     // Renew during grace period (past 100, within grace)
@@ -420,7 +420,7 @@ fn test_renew_name_non_owner_fails() {
     let other = test_public_key(2);
 
     let name_hash = registry
-        .register_commercial("owned.sov", owner.clone(), 0, 100)
+        .register_commercial_unverified("owned.sov", owner.clone(), 0, 100)
         .expect("register");
 
     let result = registry.renew_name(&name_hash, &other, 50, 500, 100);
@@ -435,7 +435,7 @@ fn test_renew_name_past_grace_fails() {
     let owner = test_public_key(1);
 
     let name_hash = registry
-        .register_commercial("expired.sov", owner.clone(), 0, 100)
+        .register_commercial_unverified("expired.sov", owner.clone(), 0, 100)
         .expect("register");
 
     // Way past grace period
@@ -450,9 +450,9 @@ fn test_sweep_expired_height_order() {
     let owner = test_public_key(1);
 
     // Register domains with different expiry times
-    registry.register_commercial("first.sov", owner.clone(), 0, 50).unwrap();
-    registry.register_commercial("second.sov", owner.clone(), 0, 100).unwrap();
-    registry.register_commercial("third.sov", owner.clone(), 0, 150).unwrap();
+    registry.register_commercial_unverified("first.sov", owner.clone(), 0, 50).unwrap();
+    registry.register_commercial_unverified("second.sov", owner.clone(), 0, 100).unwrap();
+    registry.register_commercial_unverified("third.sov", owner.clone(), 0, 150).unwrap();
 
     // Way past all grace periods
     let swept = registry.sweep_expired(600_000, 10);
@@ -467,7 +467,7 @@ fn test_sweep_expired_respects_limit() {
 
     // Register 5 domains
     for i in 0..5 {
-        registry.register_commercial(&format!("domain{}.sov", i), owner.clone(), 0, 100).unwrap();
+        registry.register_commercial_unverified(&format!("domain{}.sov", i), owner.clone(), 0, 100).unwrap();
     }
 
     // Sweep with limit of 2
@@ -482,10 +482,253 @@ fn test_sweep_expired_skips_active() {
     let owner = test_public_key(1);
 
     // Register one active, one expired
-    registry.register_commercial("active.sov", owner.clone(), 0, 1_000_000).unwrap();
-    registry.register_commercial("expired.sov", owner.clone(), 0, 100).unwrap();
+    registry.register_commercial_unverified("active.sov", owner.clone(), 0, 1_000_000).unwrap();
+    registry.register_commercial_unverified("expired.sov", owner.clone(), 0, 100).unwrap();
 
     // Sweep at height where only expired.sov is past grace
     let swept = registry.sweep_expired(600_000, 10);
     assert_eq!(swept, 1, "Should only sweep the expired domain");
+}
+
+// ============================================================================
+// Phase 5: Verification Requirements Tests (Issue #661)
+// ============================================================================
+
+use super::types::{VerificationLevel, VerificationProof, ZkProofData};
+use super::namespace_policy::NamespacePolicy;
+
+fn test_verification_proof() -> VerificationProof {
+    VerificationProof {
+        credential_ref: [1u8; 32],
+        zk_proof: ZkProofData {
+            proof_data: vec![1, 2, 3, 4, 5],
+            public_inputs: vec![],
+        },
+        context: [0u8; 32],
+        nonce: 12345,
+    }
+}
+
+/// Test: L0 (Unverified) cannot register any .sov domain
+/// Invariant V1: .sov root issuance is impossible without verification
+#[test]
+fn test_phase5_l0_unverified_rejected_for_sov() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+    let proof = test_verification_proof();
+
+    let result = registry.register_commercial(
+        "shoes.sov",
+        owner,
+        VerificationLevel::L0Unverified,
+        Some(&proof),
+        0,
+        100,
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("L0") || err.contains("unverified") || err.contains("Unverified"),
+        "Error should mention L0 not allowed: {}",
+        err
+    );
+}
+
+/// Test: L1 (BasicDID) insufficient for commercial root registration
+/// Invariant V2: Verification requirements are name-class dependent
+#[test]
+fn test_phase5_l1_insufficient_for_commercial_root() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+    let proof = test_verification_proof();
+
+    let result = registry.register_commercial(
+        "shoes.sov",
+        owner,
+        VerificationLevel::L1BasicDID,
+        Some(&proof),
+        0,
+        100,
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("Insufficient") || err.contains("level"),
+        "Error should mention insufficient level: {}",
+        err
+    );
+}
+
+/// Test: L2 (VerifiedEntity) with valid proof succeeds for commercial root
+#[test]
+fn test_phase5_l2_verified_entity_succeeds() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+    let proof = test_verification_proof();
+
+    let result = registry.register_commercial(
+        "shoes.sov",
+        owner,
+        VerificationLevel::L2VerifiedEntity,
+        Some(&proof),
+        0,
+        100,
+    );
+    assert!(result.is_ok(), "L2 should succeed for commercial: {:?}", result);
+
+    let name_hash = result.unwrap();
+    let record = registry.get_record(&name_hash).expect("record exists");
+    assert_eq!(record.verification_level, VerificationLevel::L2VerifiedEntity);
+}
+
+/// Test: L3 (ConstitutionalActor) also succeeds for commercial root (exceeds minimum)
+#[test]
+fn test_phase5_l3_exceeds_minimum_succeeds() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+    let proof = test_verification_proof();
+
+    let result = registry.register_commercial(
+        "premium.sov",
+        owner,
+        VerificationLevel::L3ConstitutionalActor,
+        Some(&proof),
+        0,
+        100,
+    );
+    assert!(result.is_ok(), "L3 should exceed L2 requirement: {:?}", result);
+}
+
+/// Test: Missing proof fails even with valid level
+/// Invariant V7: Missing verification fails loudly and deterministically
+#[test]
+fn test_phase5_missing_proof_rejected() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+
+    let result = registry.register_commercial(
+        "shoes.sov",
+        owner,
+        VerificationLevel::L2VerifiedEntity,
+        None, // No proof
+        0,
+        100,
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("proof") || err.contains("Proof") || err.contains("Missing"),
+        "Error should mention missing proof: {}",
+        err
+    );
+}
+
+/// Test: Empty proof data is rejected
+#[test]
+fn test_phase5_empty_proof_rejected() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+
+    let empty_proof = VerificationProof {
+        credential_ref: [1u8; 32],
+        zk_proof: ZkProofData {
+            proof_data: vec![], // Empty!
+            public_inputs: vec![],
+        },
+        context: [0u8; 32],
+        nonce: 12345,
+    };
+
+    let result = registry.register_commercial(
+        "shoes.sov",
+        owner,
+        VerificationLevel::L2VerifiedEntity,
+        Some(&empty_proof),
+        0,
+        100,
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("Empty") || err.contains("proof") || err.contains("Invalid"),
+        "Error should mention invalid/empty proof: {}",
+        err
+    );
+}
+
+/// Test: Verification level is snapshotted at registration time
+/// Invariant V6: Domain verification is snapshotted, not continuously policed
+#[test]
+fn test_phase5_verification_level_stored_in_record() {
+    let mut registry = RootRegistry::new();
+    let owner = test_public_key(1);
+    let proof = test_verification_proof();
+
+    let result = registry.register_commercial(
+        "verified.sov",
+        owner,
+        VerificationLevel::L2VerifiedEntity,
+        Some(&proof),
+        0,
+        100,
+    );
+    assert!(result.is_ok());
+
+    let name_hash = result.unwrap();
+    let record = registry.get_record(&name_hash).expect("record exists");
+    assert_eq!(
+        record.verification_level,
+        VerificationLevel::L2VerifiedEntity,
+        "Verification level should be stored in record"
+    );
+}
+
+/// Test: NamespacePolicy correctly maps domain classes to required levels
+#[test]
+fn test_phase5_namespace_policy_required_levels() {
+    use super::types::{NameClass, ReservedReason, WelfareSector};
+
+    let policy = NamespacePolicy::new();
+
+    let commercial = NameClass::Commercial {
+        min_verification: VerificationLevel::L2VerifiedEntity,
+    };
+    assert_eq!(
+        policy.required_verification(&commercial),
+        VerificationLevel::L2VerifiedEntity
+    );
+
+    let reserved_welfare = NameClass::Reserved {
+        reason: ReservedReason::WelfareRoot,
+    };
+    assert_eq!(
+        policy.required_verification(&reserved_welfare),
+        VerificationLevel::L3ConstitutionalActor
+    );
+
+    let welfare_child = NameClass::WelfareChild {
+        sector: WelfareSector::Health,
+        zone_root_hash: [0u8; 32],
+    };
+    assert_eq!(
+        policy.required_verification(&welfare_child),
+        VerificationLevel::L1BasicDID
+    );
+}
+
+/// Test: VerificationLevel ordering is correct
+#[test]
+fn test_phase5_verification_level_ordering() {
+    assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L2VerifiedEntity));
+    assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L1BasicDID));
+    assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L0Unverified));
+
+    assert!(VerificationLevel::L2VerifiedEntity.meets_minimum(VerificationLevel::L1BasicDID));
+    assert!(VerificationLevel::L2VerifiedEntity.meets_minimum(VerificationLevel::L0Unverified));
+    assert!(!VerificationLevel::L2VerifiedEntity.meets_minimum(VerificationLevel::L3ConstitutionalActor));
+
+    assert!(VerificationLevel::L1BasicDID.meets_minimum(VerificationLevel::L0Unverified));
+    assert!(!VerificationLevel::L1BasicDID.meets_minimum(VerificationLevel::L2VerifiedEntity));
+
+    assert!(!VerificationLevel::L0Unverified.meets_minimum(VerificationLevel::L1BasicDID));
 }
