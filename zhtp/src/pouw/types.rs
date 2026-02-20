@@ -28,15 +28,21 @@ pub enum ProofType {
     Hash = 0,
     Merkle = 1,
     Signature = 2,
+    /// Mobile node routed a Web4 manifest request through the mesh
+    Web4ManifestRoute = 3,
+    /// Mobile node served/validated Web4 content from local cache
+    Web4ContentServed = 4,
 }
 
 impl ProofType {
-    /// Parse from string (e.g., "hash", "merkle", "signature")
+    /// Parse from string
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "hash" => Some(ProofType::Hash),
             "merkle" => Some(ProofType::Merkle),
             "signature" | "sig" => Some(ProofType::Signature),
+            "web4manifestroute" | "web4_manifest_route" => Some(ProofType::Web4ManifestRoute),
+            "web4contentserved" | "web4_content_served" => Some(ProofType::Web4ContentServed),
             _ => None,
         }
     }
@@ -47,6 +53,8 @@ impl ProofType {
             ProofType::Hash => 1,
             ProofType::Merkle => 2,
             ProofType::Signature => 3,
+            ProofType::Web4ManifestRoute => 2,
+            ProofType::Web4ContentServed => 3,
         }
     }
 }

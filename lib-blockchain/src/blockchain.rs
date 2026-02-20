@@ -4123,6 +4123,49 @@ impl Blockchain {
                         }
                     }
                 }
+                TransactionType::TokenCreation => {
+                    let payload = crate::transaction::TokenCreationPayloadV1::decode_memo(&transaction.memo)
+                        .map_err(|e| anyhow::anyhow!("Invalid TokenCreation memo: {}", e))?;
+
+                    let creator = transaction.signature.public_key.clone();
+
+                    // Enforce symbol uniqueness deterministically across existing contracts.
+                    let symbol_upper = payload.symbol.to_uppercase();
+                    for existing_token in self.token_contracts.values() {
+                        if existing_token.symbol.to_uppercase() == symbol_upper {
+                            return Err(anyhow::anyhow!(
+                                "Token symbol '{}' already exists",
+                                payload.symbol
+                            ));
+                        }
+                    }
+
+                    let mut token = crate::contracts::TokenContract::new_custom(
+                        payload.name.clone(),
+                        payload.symbol.clone(),
+                        payload.initial_supply,
+                        creator.clone(),
+                    );
+                    token.decimals = if payload.decimals == 0 { 8 } else { payload.decimals };
+                    token.max_supply = payload.initial_supply;
+
+                    let token_id = token.token_id;
+                    if self.token_contracts.contains_key(&token_id) {
+                        return Err(anyhow::anyhow!(
+                            "Token with same name and symbol already exists"
+                        ));
+                    }
+
+                    self.contract_blocks.insert(token_id, block.height());
+                    self.token_contracts.insert(token_id, token.clone());
+
+                    if let Some(store) = &self.store {
+                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                        if let Err(e) = store_ref.put_token_contract(&token) {
+                            warn!("Failed to persist token contract after creation: {}", e);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
