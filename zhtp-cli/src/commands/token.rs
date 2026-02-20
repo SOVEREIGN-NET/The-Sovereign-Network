@@ -12,6 +12,8 @@ use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
 use lib_blockchain::{ContractCall, CallPermissions, ContractTransactionBuilder, Transaction, TransactionOutput, Hash};
+use lib_blockchain::transaction::TokenCreationPayloadV1;
+use lib_blockchain::types::TransactionType;
 use lib_network::client::ZhtpClient;
 use serde_json::json;
 use lib_crypto::keypair::KeyPair;
@@ -167,21 +169,28 @@ async fn handle_create<O: Output>(
 
     let keypair = load_default_keypair()?;
 
-    // Canonical token create payload is (name, symbol, initial_supply).
-    let params = ContractCall::serialize_params(&(name.to_string(), symbol.to_string(), supply))
-        .map_err(|e| CliError::ConfigError(format!("Failed to serialize params: {}", e)))?;
-    let call = ContractCall::new(
-        lib_blockchain::ContractType::Token,
-        "create_custom_token".to_string(),
-        params,
-        CallPermissions::restricted(keypair.public_key.clone(), Vec::new()),
-    );
-
-    let tx = build_signed_token_tx(&keypair, call)?;
-    eprintln!("DEBUG: transaction_type = {:?}", tx.transaction_type);
+    let payload = TokenCreationPayloadV1 {
+        name: name.to_string(),
+        symbol: symbol.to_string(),
+        initial_supply: supply,
+        decimals: 8,
+    };
+    let memo = payload
+        .encode_memo()
+        .map_err(|e| CliError::ConfigError(format!("Failed to encode token creation payload: {e}")))?;
+    let placeholder_signature = keypair
+        .sign(b"token-create-placeholder-signature")
+        .map_err(|e| CliError::ConfigError(format!("Failed to create placeholder signature: {e}")))?;
+    let mut tx = Transaction::new_token_creation_with_chain_id(0x03, placeholder_signature, memo);
+    tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
+    tx.signature = keypair
+        .sign(tx.signing_hash().as_bytes())
+        .map_err(|e| CliError::ConfigError(format!("Failed to sign token creation tx: {e}")))?;
+    if tx.transaction_type != TransactionType::TokenCreation {
+        return Err(CliError::ConfigError("Failed to build TokenCreation transaction".to_string()));
+    }
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
-    eprintln!("DEBUG: serialized tx len = {}, first 20 bytes = {:02x?}", tx_bytes.len(), &tx_bytes[..20.min(tx_bytes.len())]);
     let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
 
     let client = connect_default(&cli.server).await?;

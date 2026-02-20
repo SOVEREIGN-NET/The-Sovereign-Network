@@ -1022,6 +1022,40 @@ impl Transaction {
         }
     }
 
+    /// Create a new token creation transaction.
+    pub fn new_token_creation(signature: Signature, memo: Vec<u8>) -> Self {
+        Self::new_token_creation_with_chain_id(0x03, signature, memo)
+    }
+
+    /// Create a new token creation transaction with an explicit chain id.
+    pub fn new_token_creation_with_chain_id(
+        chain_id: u8,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 2,
+            chain_id,
+            transaction_type: TransactionType::TokenCreation,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
     /// Create a new validator registration transaction
     pub fn new_validator_registration(
         validator_data: ValidatorTransactionData,
