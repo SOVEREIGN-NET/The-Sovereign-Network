@@ -19,7 +19,7 @@
 use std::collections::HashSet;
 use super::types::{
     hash_name, normalize_name, NameClass, NameHash, ReservedReason, VerificationLevel,
-    VerificationError, VerificationProof, WelfareSector, Timestamp,
+    VerificationError, VerificationProof, WelfareSector,
 };
 
 const IMMUTABLE_RESERVED: &[&str] = &[
@@ -31,10 +31,6 @@ const IMMUTABLE_RESERVED: &[&str] = &[
     "dao.sov",
 ];
 
-/// Namespace policy for the root registry
-/// 
-/// [Phase 5] Implements verification gate for domain registration.
-/// Determines what verification is needed and validates proofs.
 #[derive(Debug, Clone)]
 pub struct NamespacePolicy {
     governance_added_reserved: HashSet<NameHash>,
@@ -63,46 +59,26 @@ impl NamespacePolicy {
     /// Get the required verification level for a name classification
     ///
     /// [Phase 5] Maps domain class to required verification level.
-    /// This is the core policy decision for .sov issuance requirements.
-    ///
-    /// # Returns
-    /// The minimum verification level required to register a domain of this class.
     pub fn required_verification(&self, name_class: &NameClass) -> VerificationLevel {
         match name_class {
-            // Reserved roots (welfare sectors, dao.sov) require L3 Constitutional Actor
             NameClass::Reserved { reason } => match reason {
                 ReservedReason::MetaGovernance => VerificationLevel::L3ConstitutionalActor,
                 ReservedReason::WelfareRoot => VerificationLevel::L3ConstitutionalActor,
                 ReservedReason::GovernanceAdded => VerificationLevel::L3ConstitutionalActor,
                 ReservedReason::HighRiskLabel => VerificationLevel::L3ConstitutionalActor,
             },
-            // Commercial roots require L2 Verified Entity
             NameClass::Commercial { .. } => VerificationLevel::L2VerifiedEntity,
-            // Welfare children require L1 Basic DID (sector may raise floor)
             NameClass::WelfareChild { .. } => VerificationLevel::L1BasicDID,
-            // dao.* prefixed names are virtual, cannot be registered
-            // Return L3 as they should be rejected before this check anyway
             NameClass::DaoPrefixed { .. } => VerificationLevel::L3ConstitutionalActor,
         }
     }
 
     /// Verify that a subject meets the verification requirements for a domain class
     ///
-    /// [Phase 5] This is the verification gate - the core security check that
-    /// ensures only appropriately verified entities can register .sov domains.
+    /// [Phase 5] Security gate — ensures only appropriately verified entities can
+    /// register .sov domains.
     ///
-    /// # Arguments
-    /// * `name_class` - Classification of the domain being registered
-    /// * `provided_level` - The verification level the registrant claims
-    /// * `proof` - Optional verification proof (required for .sov domains)
-    /// * `current_time` - Current timestamp for expiration checking
-    /// * `expected_context` - Expected context hash (domain || operation || nonce)
-    ///
-    /// # Returns
-    /// * `Ok(())` - Verification passed
-    /// * `Err(VerificationError)` - Verification failed with specific reason
-    ///
-    /// # Invariants (Phase 5)
+    /// # Invariants
     /// - V1: .sov root issuance is impossible without verification
     /// - V2: Verification requirements are name-class dependent
     /// - V7: Missing verification fails loudly and deterministically
@@ -111,7 +87,7 @@ impl NamespacePolicy {
         name_class: &NameClass,
         provided_level: VerificationLevel,
         proof: Option<&VerificationProof>,
-        _current_time: Timestamp, // Reserved for future credential expiration checking
+        _current_time: u64, // Reserved for future credential expiration checking
         expected_context: Option<&[u8; 32]>,
     ) -> Result<(), VerificationError> {
         let required = self.required_verification(name_class);
@@ -146,14 +122,8 @@ impl NamespacePolicy {
             }
         }
 
-        // TODO: In production, verify the ZK proof cryptographically
-        // This would involve:
-        // 1. Verifying the ZK proof using lib-proofs
-        // 2. Checking credential_ref against trusted issuer registry
-        // 3. Verifying the proof demonstrates the claimed verification level
-        // 
-        // For now, we trust the provided level if proof structure is valid.
-        // The actual ZK verification will be integrated when lib-proofs is wired in.
+        // TODO: In production, verify the ZK proof cryptographically.
+        // For now, trust the provided level if proof structure is valid.
 
         Ok(())
     }
@@ -168,7 +138,7 @@ impl NamespacePolicy {
     }
 
     // ========================================================================
-    // Classification (existing)
+    // Classification
     // ========================================================================
 
     pub fn classify_name(&self, name: &str) -> NameClass {
@@ -204,7 +174,6 @@ impl NamespacePolicy {
         }
 
         // [Phase 5] Commercial roots require L2 Verified Entity
-        // This is enforced by required_verification() + verify()
         NameClass::Commercial {
             min_verification: VerificationLevel::L2VerifiedEntity,
         }

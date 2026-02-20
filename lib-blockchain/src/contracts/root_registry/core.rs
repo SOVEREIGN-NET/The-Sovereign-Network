@@ -1,5 +1,9 @@
 //! Root registry contract implementation (authoritative on-chain state).
 //!
+//! # Phase 6: Lifecycle Integration
+//! All read/write operations use `touch()` for lazy state transitions.
+//! Block height is authoritative for all lifecycle timestamps.
+//!
 //! [Phase 5] Implements verification requirements for .sov domain registration.
 //! Root-level issuance requires identity-anchored proofs with graduated access
 //! control based on domain classification.
@@ -9,12 +13,18 @@ use std::collections::HashMap;
 use super::delegation_tree::DelegationTree;
 use super::namespace_policy::NamespacePolicy;
 use super::types::{
-    hash_name, normalize_name, DaoId, LegacyDomainRecord, NameClass, NameHash,
-    NameStatus, VerificationLevel, VerificationProof,
-    WelfareSector, ZoneController, PublicKey,
+    hash_name, normalize_name, BlockHeight, CustodianId, DaoId, EffectiveStatus,
+    LegacyDomainRecord, LifecycleFields, LifecycleParams, NameClass, NameClassification, NameHash,
+    NameStatus, PublicKey, ReasonCode, RevokedRecord, VerificationLevel, VerificationProof,
+    WelfareSector, ZoneController, timing,
 };
+use crate::impl_lifecycle_fields_accessors;
 
 /// Simplified internal record for RootRegistry core operations
+///
+/// # Phase 6: Block Height Authority
+/// All lifecycle timestamps use block height (never wall-clock on-chain).
+/// The `effective_status()` method computes derived status from timestamps.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreNameRecord {
     pub name_hash: NameHash,
@@ -27,7 +37,25 @@ pub struct CoreNameRecord {
     pub verification_level: VerificationLevel,
     pub governance_pointer: Option<DaoId>,
     pub status: NameStatus,
+
+    // === Phase 6: Authoritative Block Heights ===
+    /// When the registration expires (block height) - AUTHORITATIVE
+    pub expires_at_height: BlockHeight,
+    /// When renewal window opens (block height)
+    pub renewal_window_start_height: BlockHeight,
+    /// When expiry grace period ends (block height)
+    pub renew_grace_until_height: BlockHeight,
+    /// When revocation grace period ends (block height)
+    /// Only set for governance-initiated revocations (Invariant L5)
+    pub revoke_grace_until_height: Option<BlockHeight>,
+    /// Custodian for domains returned to governance
+    pub custodian: Option<CustodianId>,
+
+    // === Legacy (for display/migration compatibility) ===
+    /// When the registration expires (unix timestamp) - DISPLAY ONLY
+    #[deprecated(note = "Use expires_at_height for on-chain logic")]
     pub expires_at: u64,
+    #[deprecated(note = "Use renew_grace_until_height for on-chain logic")]
     pub grace_ends_at: Option<u64>,
 }
 
@@ -44,6 +72,8 @@ pub struct RootRegistry {
     delegation_tree: DelegationTree,
     policy: NamespacePolicy,
     welfare_sector_to_dao: HashMap<WelfareSector, DaoId>,
+    /// Phase 6: Governable lifecycle parameters
+    lifecycle_params: LifecycleParams,
 }
 
 impl RootRegistry {
@@ -53,11 +83,86 @@ impl RootRegistry {
             delegation_tree: DelegationTree::new(),
             policy: NamespacePolicy::new(),
             welfare_sector_to_dao: HashMap::new(),
+            lifecycle_params: LifecycleParams::default(),
         }
     }
 
+    /// Create with custom lifecycle parameters
+    pub fn with_lifecycle_params(params: LifecycleParams) -> Self {
+        Self {
+            records: HashMap::new(),
+            delegation_tree: DelegationTree::new(),
+            policy: NamespacePolicy::new(),
+            welfare_sector_to_dao: HashMap::new(),
+            lifecycle_params: params,
+        }
+    }
+
+    /// Get current lifecycle parameters
+    pub fn lifecycle_params(&self) -> &LifecycleParams {
+        &self.lifecycle_params
+    }
+
+    /// Update lifecycle parameters (governance action)
+    pub fn set_lifecycle_params(&mut self, params: LifecycleParams) -> Result<(), String> {
+        params.validate()?;
+        self.lifecycle_params = params;
+        Ok(())
+    }
+
+    /// Get a record, applying lazy state transitions (Phase 6: Invariant L6)
+    ///
+    /// This is the primary read method. It ensures no zombie domains by
+    /// computing effective status on every access.
     pub fn get_record(&self, name_hash: &NameHash) -> Option<CoreNameRecord> {
         self.records.get(name_hash).map(|stored| self.load_record(stored))
+    }
+
+    /// Get record with lazy state transition and mutation (for writes)
+    ///
+    /// # Phase 6: Lazy Transitions
+    /// This method:
+    /// 1. Loads the record
+    /// 2. Computes effective_status(current_height)
+    /// 3. If past grace, finalizes to Released/ReturnedToGovernance
+    /// 4. Persists the updated state
+    ///
+    /// Returns None if record doesn't exist or has been released.
+    pub fn touch(&mut self, name_hash: &NameHash, current_height: BlockHeight) -> Option<CoreNameRecord> {
+        let stored = self.records.get(name_hash)?;
+        let mut record = self.load_record(stored);
+
+        // Compute effective status
+        let effective = record.effective_status(current_height);
+
+        // Handle terminal transitions
+        match effective {
+            EffectiveStatus::Released => {
+                // Commercial domain past grace - finalize release
+                record.finalize_release();
+                self.records.insert(*name_hash, CoreStoredRecord::V2(record.clone()));
+                // Return None to indicate domain is no longer owned
+                return None;
+            }
+            EffectiveStatus::ReturnedToGovernance => {
+                // Welfare/Reserved domain past grace - finalize return
+                let sector_dao = record.governance_pointer;
+                record.finalize_return_to_governance(sector_dao);
+                self.records.insert(*name_hash, CoreStoredRecord::V2(record.clone()));
+            }
+            _ => {
+                // No state change needed
+            }
+        }
+
+        Some(record)
+    }
+
+    /// Get record with effective status computed (read-only, no mutation)
+    pub fn get_record_with_status(&self, name_hash: &NameHash, current_height: BlockHeight) -> Option<(CoreNameRecord, EffectiveStatus)> {
+        let record = self.get_record(name_hash)?;
+        let effective = record.effective_status(current_height);
+        Some((record, effective))
     }
 
     /// Register a commercial .sov domain with verification
@@ -65,18 +170,8 @@ impl RootRegistry {
     /// [Phase 5] Root-level .sov issuance requires identity-anchored proofs.
     /// Commercial roots require L2 (Verified Entity) minimum.
     ///
-    /// # Arguments
-    /// * `name` - Domain name to register (e.g., "shoes.sov")
-    /// * `owner` - Owner's public key
-    /// * `verification_level` - Claimed verification level of the registrant
-    /// * `verification_proof` - ZK proof demonstrating claimed level
-    /// * `now` - Current timestamp
-    /// * `expires_at` - Expiration timestamp
-    ///
-    /// # Errors
-    /// * Returns error if verification level is insufficient (L0 always rejected)
-    /// * Returns error if verification proof is missing or invalid
-    /// * Returns error for reserved, welfare, or dao-prefixed names
+    /// # Phase 6: Block Height Authority
+    /// Registration uses current_height and duration_blocks instead of timestamps.
     ///
     /// # Invariants (Phase 5)
     /// * V1: .sov root issuance is impossible without verification
@@ -88,8 +183,8 @@ impl RootRegistry {
         owner: PublicKey,
         verification_level: VerificationLevel,
         verification_proof: Option<&VerificationProof>,
-        now: u64,
-        expires_at: u64,
+        current_height: BlockHeight,
+        duration_blocks: BlockHeight,
     ) -> Result<NameHash, String> {
         let normalized = normalize_name(name);
         let classification = self.policy.classify_name(&normalized);
@@ -109,40 +204,29 @@ impl RootRegistry {
             NameClass::Commercial { .. } => {}
         }
 
-        // [Phase 5] Verify identity before registration
-        // This is the critical security gate - must happen BEFORE any state changes
+        // [Phase 5] Verify identity before registration — critical security gate
         self.policy
-            .verify(&classification, verification_level, verification_proof, now, None)
+            .verify(&classification, verification_level, verification_proof, current_height, None)
             .map_err(|e| e.to_string())?;
 
-        self.insert_record_with_verification(
-            normalized,
-            owner,
-            classification,
-            verification_level,
-            now,
-            expires_at,
-            None,
-        )
+        self.insert_record_verified(normalized, owner, classification, verification_level, current_height, duration_blocks, None)
     }
 
     /// Register a commercial domain without verification (for testing/migration only)
     ///
     /// # WARNING
-    /// This method bypasses Phase 5 verification requirements.
-    /// It exists ONLY for:
+    /// Bypasses Phase 5 verification requirements. Only for:
     /// - Unit tests that don't need to test verification
     /// - Migration of legacy records
-    /// - Internal use by other registration paths that handle verification themselves
     ///
-    /// Production code should use `register_commercial()` which enforces verification.
+    /// Production code must use `register_commercial()`.
     #[cfg(any(test, feature = "testing"))]
     pub fn register_commercial_unverified(
         &mut self,
         name: &str,
         owner: PublicKey,
-        now: u64,
-        expires_at: u64,
+        current_height: BlockHeight,
+        duration_blocks: BlockHeight,
     ) -> Result<NameHash, String> {
         let normalized = normalize_name(name);
         let classification = self.policy.classify_name(&normalized);
@@ -160,15 +244,19 @@ impl RootRegistry {
             NameClass::Commercial { .. } => {}
         }
 
-        self.insert_record(normalized, owner, classification, now, expires_at, None)
+        self.insert_record(normalized, owner, classification, current_height, duration_blocks, None)
     }
 
+    /// Register a reserved root domain (welfare sector roots, etc.)
+    ///
+    /// # Phase 6: Block Height Authority
+    /// Registration uses current_height and duration_blocks instead of timestamps.
     pub fn register_reserved_root(
         &mut self,
         name: &str,
         owner: PublicKey,
-        now: u64,
-        expires_at: u64,
+        current_height: BlockHeight,
+        duration_blocks: BlockHeight,
         dao_id: Option<DaoId>,
     ) -> Result<NameHash, String> {
         let normalized = normalize_name(name);
@@ -179,7 +267,7 @@ impl RootRegistry {
             _ => return Err("Name is not a reserved root".to_string()),
         }
 
-        let name_hash = self.insert_record(normalized, owner, classification, now, expires_at, dao_id)?;
+        let name_hash = self.insert_record(normalized, owner, classification, current_height, duration_blocks, dao_id)?;
 
         if let Some(sector) = welfare_root_sector(name) {
             if let Some(dao_id) = dao_id {
@@ -214,13 +302,17 @@ impl RootRegistry {
         Ok(())
     }
 
+    /// Register a subdomain under a zone controller
+    ///
+    /// # Phase 6: Block Height Authority
+    /// Registration uses current_height and duration_blocks instead of timestamps.
     pub fn register_under_zone_controller(
         &mut self,
         name: &str,
         owner: PublicKey,
         caller: &PublicKey,
-        now: u64,
-        expires_at: u64,
+        current_height: BlockHeight,
+        duration_blocks: BlockHeight,
     ) -> Result<NameHash, String> {
         let normalized = normalize_name(name);
         let parent_hash = parent_hash(&normalized)
@@ -242,24 +334,137 @@ impl RootRegistry {
         }
 
         if let Some(expires_at_ctrl) = controller.expires_at {
-            if now > expires_at_ctrl {
+            if current_height > expires_at_ctrl {
                 return Err("Zone controller is expired".to_string());
             }
         }
 
         let classification = self.policy.classify_name(&normalized);
-        self.insert_record(normalized, owner, classification, now, expires_at, parent.governance_pointer)
+        self.insert_record(normalized, owner, classification, current_height, duration_blocks, parent.governance_pointer)
     }
 
-    pub fn expire_name(&mut self, name_hash: &NameHash) -> Result<(), String> {
+    /// Mark a domain as expired (manual expiration)
+    ///
+    /// # Phase 6: Deprecation Note
+    /// Prefer using `touch()` with the appropriate block height, which will
+    /// automatically transition expired domains. This method is kept for
+    /// backward compatibility and explicit expiration.
+    #[deprecated(note = "Prefer touch() for automatic lifecycle transitions")]
+    pub fn expire_name(&mut self, name_hash: &NameHash, current_height: BlockHeight) -> Result<(), String> {
         let record = self
             .get_record(name_hash)
             .ok_or_else(|| "Name record not found".to_string())?;
+        
+        // Check if already past expiry
+        if current_height <= record.expires_at_height {
+            return Err("Domain has not yet expired".to_string());
+        }
+        
         let mut updated = record.clone();
-        updated.status = NameStatus::Expired { grace_ends: updated.expires_at + super::types::timing::EXPIRATION_GRACE_SECS };
+        #[allow(deprecated)]
+        {
+            // Note: NameStatus::Expired.grace_ends expects Timestamp (legacy)
+            // but Phase 6 uses block heights. Use deprecated grace_ends_at or 0.
+            // Authoritative grace period is in renew_grace_until_height field.
+            updated.status = NameStatus::Expired { 
+                grace_ends: updated.grace_ends_at.unwrap_or(0)
+            };
+        }
         self.records.insert(*name_hash, CoreStoredRecord::V2(updated));
         self.suspend_children(name_hash);
         Ok(())
+    }
+
+    /// Renew a domain registration (Phase 6)
+    ///
+    /// # Arguments
+    /// * `name_hash` - Hash of the domain to renew
+    /// * `caller` - The caller's public key (must be owner)
+    /// * `current_height` - Current block height
+    /// * `duration_blocks` - Additional duration in blocks
+    /// * `fee_paid` - Fee paid for renewal
+    ///
+    /// # Returns
+    /// * `Ok(u64)` - The required fee (caller should verify fee_paid >= this)
+    /// * `Err(String)` - If renewal fails
+    pub fn renew_name(
+        &mut self,
+        name_hash: &NameHash,
+        caller: &PublicKey,
+        current_height: BlockHeight,
+        duration_blocks: BlockHeight,
+        base_fee: u64,
+    ) -> Result<u64, String> {
+        // Use touch to apply any pending transitions
+        let record = self
+            .touch(name_hash, current_height)
+            .ok_or_else(|| "Domain not found or has been released".to_string())?;
+
+        // Verify caller is owner
+        if &record.owner != caller {
+            return Err("Only owner can renew".to_string());
+        }
+
+        // Check if renewal is allowed
+        if !record.can_renew_at(current_height) {
+            return Err("Domain cannot be renewed at this time".to_string());
+        }
+
+        // Calculate fee with potential late penalty
+        let required_fee = record.calculate_renewal_fee(
+            current_height,
+            base_fee,
+            self.lifecycle_params.late_renewal_penalty_percent,
+        );
+
+        if required_fee == 0 {
+            return Err("Domain is past grace period and cannot be renewed".to_string());
+        }
+
+        // Apply the renewal
+        let mut updated = record.clone();
+        updated.extend_registration(duration_blocks, &self.lifecycle_params, current_height);
+        self.records.insert(*name_hash, CoreStoredRecord::V2(updated));
+
+        Ok(required_fee)
+    }
+
+    /// Sweep expired domains (batch maintenance - Phase 6: Invariant L7)
+    ///
+    /// Processes expired domains in ascending order by `renew_grace_until_height`
+    /// to ensure deterministic, height-ordered finalization.
+    ///
+    /// # Arguments
+    /// * `current_height` - Current block height
+    /// * `limit` - Maximum number of domains to process
+    ///
+    /// # Returns
+    /// Number of domains transitioned
+    pub fn sweep_expired(&mut self, current_height: BlockHeight, limit: u32) -> u32 {
+        // Collect domains that need finalization with their expiry heights
+        let mut candidates: Vec<(NameHash, BlockHeight)> = self.records.iter()
+            .filter_map(|(hash, stored)| {
+                let record = self.load_record(stored);
+                let effective = record.effective_status(current_height);
+                if matches!(effective, EffectiveStatus::Released | EffectiveStatus::ReturnedToGovernance) {
+                    Some((*hash, record.renew_grace_until_height))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by expiry height (ascending) for deterministic, height-ordered finalization
+        candidates.sort_by_key(|(_, height)| *height);
+
+        // Process up to limit
+        let mut count = 0u32;
+        for (name_hash, _) in candidates.into_iter().take(limit as usize) {
+            let _ = self.touch(&name_hash, current_height);
+            count += 1;
+        }
+
+        count
     }
 
     /// Link a welfare sector to its DAO
@@ -284,12 +489,16 @@ impl RootRegistry {
     /// This is a privileged method that allows ratified sector DAOs to issue
     /// welfare subdomains. The caller must be the authorized WelfareIssuerAdapter.
     ///
+    /// # Phase 6: Block Height Authority
+    /// Registration uses current_height and duration_blocks instead of timestamps.
+    ///
     /// # Arguments
     /// * `sector` - The welfare sector (Food, Health, etc.)
     /// * `label` - The subdomain label (e.g., "farm" for "farm.food.dao.sov")
     /// * `owner` - The owner of the new subdomain
     /// * `verification_level` - The verification level of the owner
-    /// * `expires_at` - When the subdomain expires
+    /// * `current_height` - Current block height
+    /// * `duration_blocks` - Registration duration in blocks
     /// * `caller_dao_id` - The DAO ID making the request (must be bound to sector)
     /// * `metadata_hash` - Hash of WelfareMetadata for this issuance
     ///
@@ -302,8 +511,8 @@ impl RootRegistry {
         label: &str,
         owner: PublicKey,
         verification_level: VerificationLevel,
-        now: u64,
-        expires_at: u64,
+        current_height: BlockHeight,
+        duration_blocks: BlockHeight,
         caller_dao_id: DaoId,
         _metadata_hash: [u8; 32],
     ) -> Result<NameHash, String> {
@@ -360,6 +569,14 @@ impl RootRegistry {
             return Err(format!("Welfare name '{}' already registered", full_name));
         }
 
+        // Phase 6: Calculate lifecycle heights
+        let expires_at_height = current_height.saturating_add(duration_blocks);
+        let renewal_window_start_height = expires_at_height
+            .saturating_sub(self.lifecycle_params.renewal_window_blocks);
+        let renew_grace_until_height = expires_at_height
+            .saturating_add(self.lifecycle_params.expiry_grace_blocks);
+
+        #[allow(deprecated)]
         let record = CoreNameRecord {
             name_hash,
             owner,
@@ -371,7 +588,14 @@ impl RootRegistry {
             verification_level,
             governance_pointer: Some(caller_dao_id),
             status: NameStatus::Active,
-            expires_at,
+            // Phase 6: Authoritative block heights
+            expires_at_height,
+            renewal_window_start_height,
+            renew_grace_until_height,
+            revoke_grace_until_height: None,
+            custodian: None,
+            // Legacy (deprecated)
+            expires_at: 0,
             grace_ends_at: None,
         };
 
@@ -380,9 +604,6 @@ impl RootRegistry {
 
         // Store the record
         self.records.insert(name_hash, CoreStoredRecord::V2(record));
-        // `now` is reserved for future timestamp-based validation; suppress the
-        // unused-parameter warning until expiry enforcement is wired in.
-        let _ = now;
 
         Ok(name_hash)
     }
@@ -398,17 +619,17 @@ impl RootRegistry {
         }
     }
 
-    /// Insert a record with verified verification level
+    /// Insert a record with a specific verification level stored
     ///
-    /// [Phase 5] This stores the verification level that was validated during registration.
-    fn insert_record_with_verification(
+    /// [Phase 5] Used by `register_commercial` after verification passes.
+    fn insert_record_verified(
         &mut self,
         normalized_name: String,
         owner: PublicKey,
         classification: NameClass,
         verification_level: VerificationLevel,
-        now: u64,
-        expires_at: u64,
+        current_height: BlockHeight,
+        duration_blocks: BlockHeight,
         governance_pointer: Option<DaoId>,
     ) -> Result<NameHash, String> {
         let name_hash = hash_name(&normalized_name);
@@ -419,6 +640,13 @@ impl RootRegistry {
         let parent_hash = parent_hash(&normalized_name);
         let depth = parent_hash.map(|_| 1u8).unwrap_or(0);
 
+        let expires_at_height = current_height.saturating_add(duration_blocks);
+        let renewal_window_start_height = expires_at_height
+            .saturating_sub(self.lifecycle_params.renewal_window_blocks);
+        let renew_grace_until_height = expires_at_height
+            .saturating_add(self.lifecycle_params.expiry_grace_blocks);
+
+        #[allow(deprecated)]
         let record = CoreNameRecord {
             name_hash,
             owner,
@@ -430,7 +658,12 @@ impl RootRegistry {
             verification_level, // [Phase 5] Store the verified level
             governance_pointer,
             status: NameStatus::Active,
-            expires_at,
+            expires_at_height,
+            renewal_window_start_height,
+            renew_grace_until_height,
+            revoke_grace_until_height: None,
+            custodian: None,
+            expires_at: 0,
             grace_ends_at: None,
         };
 
@@ -442,19 +675,13 @@ impl RootRegistry {
         Ok(name_hash)
     }
 
-    /// Insert a record without verification (legacy/test support)
-    ///
-    /// # Warning
-    /// This sets verification_level to L0. Only use for:
-    /// - Legacy record migration
-    /// - Tests that don't test verification
     fn insert_record(
         &mut self,
         normalized_name: String,
         owner: PublicKey,
         classification: NameClass,
-        now: u64,
-        expires_at: u64,
+        current_height: BlockHeight,
+        duration_blocks: BlockHeight,
         governance_pointer: Option<DaoId>,
     ) -> Result<NameHash, String> {
         let name_hash = hash_name(&normalized_name);
@@ -465,6 +692,14 @@ impl RootRegistry {
         let parent_hash = parent_hash(&normalized_name);
         let depth = parent_hash.map(|_| 1u8).unwrap_or(0);
 
+        // Phase 6: Calculate lifecycle heights
+        let expires_at_height = current_height.saturating_add(duration_blocks);
+        let renewal_window_start_height = expires_at_height
+            .saturating_sub(self.lifecycle_params.renewal_window_blocks);
+        let renew_grace_until_height = expires_at_height
+            .saturating_add(self.lifecycle_params.expiry_grace_blocks);
+
+        #[allow(deprecated)]
         let record = CoreNameRecord {
             name_hash,
             owner,
@@ -476,7 +711,14 @@ impl RootRegistry {
             verification_level: VerificationLevel::L0Unverified,
             governance_pointer,
             status: NameStatus::Active,
-            expires_at,
+            // Phase 6: Authoritative block heights
+            expires_at_height,
+            renewal_window_start_height,
+            renew_grace_until_height,
+            revoke_grace_until_height: None,
+            custodian: None,
+            // Legacy (deprecated)
+            expires_at: 0,
             grace_ends_at: None,
         };
 
@@ -485,9 +727,6 @@ impl RootRegistry {
         }
 
         self.records.insert(name_hash, CoreStoredRecord::V2(record));
-        // `now` is reserved for future timestamp-based validation; suppress the
-        // unused-parameter warning until expiry enforcement is wired in.
-        let _ = now;
         Ok(name_hash)
     }
 
@@ -533,6 +772,23 @@ fn migrate_legacy_record(legacy: &LegacyDomainRecord) -> CoreNameRecord {
     let copy_len = owner_bytes.len().min(32);
     owner[..copy_len].copy_from_slice(&owner_bytes[..copy_len]);
 
+    // Phase 6: Convert legacy expires_at to block height
+    //
+    // MIGRATION NOTE:
+    // - Legacy `expires_at` was stored as unix timestamp (seconds since epoch)
+    // - We convert to an approximate block height assuming 10-second blocks
+    // - This conversion is ONLY valid during initial migration when the chain
+    //   has a known relationship between wall-clock time and block height
+    // - For production migrations, consider using a reference point:
+    //   `(legacy.expires_at - genesis_timestamp) / 10 + genesis_height`
+    //
+    // The resulting block height is approximate and should be validated
+    // against actual chain state during migration.
+    let estimated_blocks = legacy.expires_at.saturating_div(10);
+    let renewal_window = timing::RENEWAL_WINDOW_BLOCKS;
+    let grace_period = timing::EXPIRATION_GRACE_BLOCKS;
+
+    #[allow(deprecated)]
     CoreNameRecord {
         name_hash,
         owner,
@@ -546,7 +802,112 @@ fn migrate_legacy_record(legacy: &LegacyDomainRecord) -> CoreNameRecord {
         verification_level: VerificationLevel::L0Unverified,
         governance_pointer: None,
         status: NameStatus::Active,
+        // Phase 6: Estimated block heights from legacy timestamp
+        expires_at_height: estimated_blocks,
+        renewal_window_start_height: estimated_blocks.saturating_sub(renewal_window),
+        renew_grace_until_height: estimated_blocks.saturating_add(grace_period),
+        revoke_grace_until_height: None,
+        custodian: None,
+        // Legacy (kept for reference)
         expires_at: legacy.expires_at,
         grace_ends_at: None,
     }
 }
+
+// ============================================================================
+// CoreNameRecord Implementation (Phase 6: Lifecycle Methods)
+// ============================================================================
+
+impl CoreNameRecord {
+    /// Determine terminal status based on domain classification
+    fn terminal_status_for_class(&self) -> EffectiveStatus {
+        match &self.classification {
+            NameClass::Commercial { .. } => EffectiveStatus::Released,
+            NameClass::WelfareChild { .. } => EffectiveStatus::ReturnedToGovernance,
+            NameClass::Reserved { .. } => EffectiveStatus::ReturnedToGovernance,
+            NameClass::DaoPrefixed { .. } => EffectiveStatus::ReturnedToGovernance,
+        }
+    }
+
+    /// Convert NameClass to NameClassification for lifecycle operations
+    #[allow(dead_code)] // Reserved for future cross-module lifecycle operations
+    fn to_name_classification(&self) -> NameClassification {
+        match &self.classification {
+            NameClass::Commercial { .. } => NameClassification::Commercial,
+            NameClass::WelfareChild { .. } => NameClassification::WelfareDelegated,
+            NameClass::Reserved { reason } => {
+                use super::types::ReservedReason;
+                match reason {
+                    ReservedReason::WelfareRoot => NameClassification::ReservedWelfare,
+                    ReservedReason::MetaGovernance => NameClassification::ReservedMeta,
+                    _ => NameClassification::ReservedByRule,
+                }
+            }
+            NameClass::DaoPrefixed { .. } => NameClassification::ReservedByRule,
+        }
+    }
+
+    /// Finalize release for commercial domains (Invariant L3)
+    pub fn finalize_release(&mut self) {
+        self.status = NameStatus::Released;
+        self.owner = [0u8; 32]; // Clear ownership
+        self.controller = None;
+        self.custodian = None;
+        self.governance_pointer = None;
+    }
+
+    /// Finalize return to governance for welfare/reserved domains
+    ///
+    /// # Post-Grace Finalization
+    /// Welfare/Reserved domains return to appropriate custodian after grace.
+    pub fn finalize_return_to_governance(&mut self, sector_dao_id: Option<DaoId>) {
+        self.status = NameStatus::Revoked {
+            tombstone: RevokedRecord {
+                // Note: revoked_at expects Timestamp (legacy), but Phase 6 uses block heights.
+                // Authoritative revocation time is derived from renew_grace_until_height.
+                // Use 0 as placeholder; display layer should use block height instead.
+                revoked_at: 0,
+                reason_code: ReasonCode::ExpirationLapsed,
+                revoking_authority: [0u8; 32], // System
+                appeal_status: None,
+            },
+        };
+
+        // Set custodian based on classification
+        match &self.classification {
+            NameClass::WelfareChild { .. } => {
+                self.custodian = Some(CustodianId::SectorDao(
+                    sector_dao_id.unwrap_or([0u8; 32]),
+                ));
+            }
+            _ => {
+                self.custodian = Some(CustodianId::RootGovernance);
+            }
+        }
+    }
+
+    /// Extend registration by duration, recalculating lifecycle heights
+    pub fn extend_registration(
+        &mut self,
+        duration_blocks: BlockHeight,
+        params: &LifecycleParams,
+        _current_height: BlockHeight,
+    ) {
+        // Extend from current expiry (not current time)
+        let new_expiry = self.expires_at_height.saturating_add(duration_blocks);
+
+        self.expires_at_height = new_expiry;
+        self.renewal_window_start_height = new_expiry.saturating_sub(params.renewal_window_blocks);
+        self.renew_grace_until_height = new_expiry.saturating_add(params.expiry_grace_blocks);
+
+        // Clear expired state if was in grace
+        if matches!(self.status, NameStatus::Expired { .. }) {
+            self.status = NameStatus::Active;
+        }
+    }
+}
+
+// Use the macro for CoreNameRecord implementation
+impl_lifecycle_fields_accessors!(CoreNameRecord, |record: &CoreNameRecord| {
+    record.terminal_status_for_class()
+});

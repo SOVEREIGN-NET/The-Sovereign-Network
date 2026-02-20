@@ -60,9 +60,9 @@ pub use types::{
     // Core identity types
     PublicKey, Address, NameHash, DaoId, BlockHeight, Timestamp,
 
-    // Verification (Phase 5: Issue #661)
+    // Verification
     VerificationLevel,
-    VerificationProof, ZkProofData, VerificationError,
+    VerificationProof, VerificationError, ZkProofData,
 
     // Classification
     NameClassification,
@@ -71,6 +71,8 @@ pub use types::{
     // Status and lifecycle
     NameStatus, SuspensionReason, SuspensionAuthority,
     ReasonCode, AppealStatus, RevokedRecord,
+    EffectiveStatus, CustodianId,
+    LifecycleParams, LifecycleFields,
 
     // Governance (Phase 2: Issue #657)
     GovernanceRecord, VCReference,
