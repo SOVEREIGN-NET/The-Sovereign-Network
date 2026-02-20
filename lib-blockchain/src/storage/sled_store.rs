@@ -1017,6 +1017,14 @@ impl BlockchainStore for SledStore {
             .apply_batch(batch.meta)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
+        self.contract_code
+            .apply_batch(batch.contract_code)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.contract_storage
+            .apply_batch(batch.contract_storage)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
         // Update latest height
         self.meta
             .insert(keys::meta::LATEST_HEIGHT, &height.to_be_bytes())
