@@ -3,6 +3,7 @@
 //! Clean, minimal blockchain operations using lib-blockchain patterns
 
 use anyhow::{Result, Context};
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -556,11 +557,26 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
     }
 }
 
+/// Maximum byte size accepted for a single serialised transaction.
+///
+/// Capped at 512 KiB — generous enough for any valid transaction but small
+/// enough to bound allocations on hostile input (DoS guard for comment #1340).
+const MAX_CANONICAL_TX_BYTES: usize = 512 * 1024;
+
 impl BlockchainHandler {
     fn decode_canonical_transaction_hex(hex_data: &str) -> Result<Transaction> {
+        // Reject oversized hex payloads before even decoding to guard against DoS.
+        if hex_data.len() > MAX_CANONICAL_TX_BYTES * 2 {
+            return Err(anyhow::anyhow!(
+                "transaction_data exceeds maximum size ({} hex chars)",
+                MAX_CANONICAL_TX_BYTES * 2
+            ));
+        }
         let tx_bytes = hex::decode(hex_data)
             .map_err(|_| anyhow::anyhow!("Invalid hex transaction data"))?;
-        bincode::deserialize::<Transaction>(&tx_bytes)
+        bincode::DefaultOptions::new()
+            .with_limit(MAX_CANONICAL_TX_BYTES as u64)
+            .deserialize::<Transaction>(&tx_bytes)
             .map_err(|_| anyhow::anyhow!("Invalid transaction encoding (expected canonical bincode)"))
     }
 
@@ -588,9 +604,12 @@ impl BlockchainHandler {
             return Err(anyhow::anyhow!("missing deployment memo prefix"));
         }
         let payload_bytes = &memo[CONTRACT_DEPLOYMENT_MEMO_PREFIX.len()..];
-        let payload: ContractDeploymentPayloadV1 = bincode::deserialize(payload_bytes).map_err(
-            |_| anyhow::anyhow!("invalid deployment payload encoding"),
-        )?;
+        // Enforce the same size bound as ContractDeploymentPayloadV1::decode_memo to
+        // prevent large allocations on malicious input in the compat fallback path.
+        let payload: ContractDeploymentPayloadV1 = bincode::DefaultOptions::new()
+            .with_limit(lib_blockchain::transaction::MAX_DEPLOYMENT_MEMO_BYTES as u64)
+            .deserialize(payload_bytes)
+            .map_err(|_| anyhow::anyhow!("invalid deployment payload encoding"))?;
         payload
             .validate()
             .map_err(|e| anyhow::anyhow!("invalid deployment payload: {e}"))?;
@@ -657,7 +676,13 @@ impl BlockchainHandler {
                 "Invalid request body. Expected JSON: {{\"transaction_data\":\"<hex>\"}}"
             ))?;
 
-        let transaction = Self::decode_canonical_transaction_hex(&req_data.transaction_data)?;
+        // Decode failures are client errors (bad hex / wrong encoding), not server errors.
+        let transaction = match Self::decode_canonical_transaction_hex(&req_data.transaction_data) {
+            Ok(tx) => tx,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string()));
+            }
+        };
         if let Err(e) = Self::validate_canonical_contract_payload(
             &transaction,
             expected_type,
