@@ -591,4 +591,182 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result, Err(CurveError::InvalidPhase { .. })));
     }
+
+    /// Full lifecycle integration test: Deploy → Buy → Graduate → Migrate to AMM
+    #[test]
+    fn test_full_lifecycle_curve_to_amm() {
+        // 1. DEPLOY: Token creator deploys bonding curve token
+        let mut token = BondingCurveToken::deploy(
+            [42u8; 32],
+            "Lifecycle Token".to_string(),
+            "LIFE".to_string(),
+            CurveType::Linear {
+                base_price: 5_000_000,  // $0.05 starting price
+                slope: 1_000,           // $0.00001 per token
+            },
+            Threshold::ReserveAmount(5_000_000_000), // $5,000 graduation threshold
+            true, // Sell enabled
+            test_pubkey(1),
+            100,           // deployed_at_block
+            1_700_000_000, // deployed_at_timestamp
+        )
+        .unwrap();
+
+        assert_eq!(token.phase, Phase::Curve);
+        assert_eq!(token.total_supply, 0);
+        assert_eq!(token.reserve_balance, 0);
+        assert_eq!(token.current_price(), 5_000_000); // $0.05
+
+        // 2. BUY PHASE: Multiple users buy tokens
+        let buyer1 = test_pubkey(10);
+        let buyer2 = test_pubkey(20);
+        let buyer3 = test_pubkey(30);
+
+        // Buyer 1: $1000 → ~20,000 tokens at $0.05
+        let (tokens1, event1) = token.buy(buyer1.clone(), 1_000_000_000, 101, 1_700_000_100).unwrap();
+        assert!(tokens1 > 0);
+        assert_eq!(token.reserve_balance, 1_000_000_000); // $1K
+        assert!(!token.can_graduate(1_700_000_100)); // Not enough for graduation (need $5K)
+
+        // Buyer 2: $2000 → ~39,000 tokens (price increased slightly)
+        let (tokens2, _event2) = token.buy(buyer2, 2_000_000_000, 102, 1_700_000_200).unwrap();
+        assert!(tokens2 > 0);
+        assert_eq!(token.reserve_balance, 3_000_000_000); // $3K reserve
+        assert!(!token.can_graduate(1_700_000_200)); // Still not graduated (need $5K)
+
+        // Buyer 3: $2500 → pushes over threshold
+        let (tokens3, _event3) = token.buy(buyer3, 2_500_000_000, 103, 1_700_000_300).unwrap();
+        assert!(tokens3 > 0);
+        assert_eq!(token.reserve_balance, 5_500_000_000); // $5.5K reserve
+        assert!(token.can_graduate(1_700_000_300)); // NOW ready to graduate!
+
+        // Verify events
+        match event1 {
+            BondingCurveEvent::TokenPurchased { buyer, stable_amount, .. } => {
+                assert_eq!(buyer, buyer1.key_id);
+                assert_eq!(stable_amount, 1_000_000_000);
+            }
+            _ => panic!("Expected TokenPurchased event"),
+        }
+
+        // 3. GRADUATION: Threshold met, token graduates
+        let grad_event = token.graduate(1_700_000_400, 104).unwrap();
+        assert_eq!(token.phase, Phase::Graduated);
+        assert!(token.amm_pool_id.is_none());
+
+        match grad_event {
+            BondingCurveEvent::Graduated {
+                final_reserve,
+                final_supply,
+                threshold_met,
+                ..
+            } => {
+                assert_eq!(final_reserve, 5_500_000_000);
+                assert_eq!(final_supply, token.total_supply);
+                assert!(threshold_met.contains("Reserve"));
+            }
+            _ => panic!("Expected Graduated event"),
+        }
+
+        // Cannot buy after graduation
+        let buy_result = token.buy(test_pubkey(99), 100, 105, 1_700_000_500);
+        assert!(buy_result.is_err());
+        assert!(matches!(buy_result, Err(CurveError::InvalidPhase { .. })));
+
+        // 4. MIGRATION TO AMM: Pool is seeded
+        let amm_pool_id = [99u8; 32];
+        let migrate_result = token.complete_migration(amm_pool_id);
+        assert!(migrate_result.is_ok());
+        assert_eq!(token.phase, Phase::AMM);
+        assert_eq!(token.amm_pool_id, Some(amm_pool_id));
+
+        // Final state verification
+        assert!(token.total_supply > 0);
+        assert_eq!(token.reserve_balance, 5_500_000_000);
+        assert!(token.current_price() > 5_000_000); // Price increased due to curve
+
+        // Verify stats
+        let stats = token.get_stats(1_700_000_600);
+        assert_eq!(stats.total_supply, token.total_supply);
+        assert_eq!(stats.reserve_balance, 5_500_000_000);
+        assert_eq!(stats.graduation_progress_percent, 100);
+        // can_graduate is false because token already graduated (phase is AMM)
+        assert!(!stats.can_graduate);
+    }
+
+    /// Test sell functionality during curve phase
+    #[test]
+    fn test_sell_tokens_during_curve() {
+        let mut token = BondingCurveToken::deploy(
+            [5u8; 32],
+            "Sellable Token".to_string(),
+            "SELL".to_string(),
+            CurveType::Linear {
+                base_price: 10_000_000, // $0.10
+                slope: 0,
+            },
+            Threshold::ReserveAmount(10_000_000_000), // High threshold
+            true, // Sell ENABLED
+            test_pubkey(1),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy 100 tokens ($10)
+        let (tokens_bought, _) = token.buy(buyer.clone(), 1_000_000_000, 101, 1_600_000_100).unwrap();
+        assert_eq!(tokens_bought, 10_000_000_000); // 100 tokens
+
+        // Sell 50 tokens back
+        let (stable_received, sell_event) = token.sell(buyer.clone(), 5_000_000_000, 102, 1_600_000_200).unwrap();
+        assert_eq!(stable_received, 500_000_000); // $0.50 (50 tokens @ $0.10)
+        assert_eq!(token.total_supply, 5_000_000_000); // 50 tokens remaining
+        assert_eq!(token.reserve_balance, 500_000_000); // $0.50 reserve
+
+        match sell_event {
+            BondingCurveEvent::TokenSold {
+                seller,
+                token_amount,
+                stable_amount,
+                ..
+            } => {
+                assert_eq!(seller, buyer.key_id);
+                assert_eq!(token_amount, 5_000_000_000);
+                assert_eq!(stable_amount, 500_000_000);
+            }
+            _ => panic!("Expected TokenSold event"),
+        }
+    }
+
+    /// Test sell disabled
+    #[test]
+    fn test_sell_disabled() {
+        let mut token = BondingCurveToken::deploy(
+            [6u8; 32],
+            "No Sell Token".to_string(),
+            "NOSELL".to_string(),
+            CurveType::Linear {
+                base_price: 10_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveAmount(10_000_000_000),
+            false, // Sell DISABLED
+            test_pubkey(1),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy tokens
+        let (tokens_bought, _) = token.buy(buyer.clone(), 1_000_000_000, 101, 1_600_000_100).unwrap();
+
+        // Try to sell - should fail
+        let sell_result = token.sell(buyer, tokens_bought, 102, 1_600_000_200);
+        assert!(sell_result.is_err());
+        assert!(matches!(sell_result, Err(CurveError::InvalidParameters(_))));
+    }
 }
