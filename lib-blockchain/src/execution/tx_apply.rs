@@ -218,6 +218,55 @@ impl<'a> StateMutator<'a> {
         Ok(new_nonce)
     }
 
+    /// Get a token contract by its ID.
+    pub fn get_token_contract(
+        &self,
+        token_id: &TokenId,
+    ) -> TxApplyResult<Option<crate::contracts::TokenContract>> {
+        Ok(self.store.get_token_contract(token_id)?)
+    }
+
+    /// Persist a token contract in canonical state storage.
+    pub fn put_token_contract(&self, contract: &crate::contracts::TokenContract) -> TxApplyResult<()> {
+        self.store.put_token_contract(contract)?;
+        Ok(())
+    }
+
+    /// Check whether any existing token contract uses the given symbol (case-insensitive).
+    ///
+    /// Used by TokenCreation to enforce symbol uniqueness across the token registry.
+    pub fn token_symbol_exists_case_insensitive(&self, symbol: &str) -> TxApplyResult<bool> {
+        let upper = symbol.to_ascii_uppercase();
+        let contracts = self.store.iter_token_contracts()?;
+        for (_id, contract) in contracts {
+            if contract.symbol.to_ascii_uppercase() == upper {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    // =========================================================================
+    // Contract State Primitives
+    // =========================================================================
+
+    /// Persist contract code for a contract identifier.
+    pub fn put_contract_code(&self, contract_id: &[u8; 32], code: &[u8]) -> TxApplyResult<()> {
+        self.store.put_contract_code(contract_id, code)?;
+        Ok(())
+    }
+
+    /// Persist contract key-value storage for a contract identifier.
+    pub fn put_contract_storage(
+        &self,
+        contract_id: &[u8; 32],
+        key: &[u8],
+        value: &[u8],
+    ) -> TxApplyResult<()> {
+        self.store.put_contract_storage(contract_id, key, value)?;
+        Ok(())
+    }
+
     // =========================================================================
     // Account Primitives
     // =========================================================================
