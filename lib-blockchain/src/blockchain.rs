@@ -51,6 +51,18 @@ fn default_finality_depth() -> u64 {
     6
 }
 
+/// Indexed DAO registry entry derived from canonical DaoExecution events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DaoRegistryIndexEntry {
+    pub dao_id: [u8; 32],
+    pub token_key_id: [u8; 32],
+    pub class: String,
+    pub metadata_hash: [u8; 32],
+    pub treasury_key_id: [u8; 32],
+    pub owner_key_id: [u8; 32],
+    pub created_at: u64,
+}
+
 /// Blockchain state with identity registry and UTXO management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -98,6 +110,9 @@ pub struct Blockchain {
     /// Contract deployment block heights (contract_id -> block_height)
     #[serde(default)]
     pub contract_blocks: HashMap<[u8; 32], u64>,
+    /// Indexed DAO registry (dao_id -> entry), updated incrementally per block.
+    #[serde(default)]
+    pub dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
     /// On-chain validator registry (identity_id -> Validator info)
     #[serde(default)]
     pub validator_registry: HashMap<String, ValidatorInfo>,
@@ -464,6 +479,7 @@ impl BlockchainV1 {
             token_contracts: self.token_contracts,
             web4_contracts: self.web4_contracts,
             contract_blocks: self.contract_blocks,
+            dao_registry_index: HashMap::new(),
             validator_registry: self.validator_registry,
             validator_blocks: self.validator_blocks,
             dao_treasury_wallet_id: self.dao_treasury_wallet_id,
@@ -556,6 +572,8 @@ struct BlockchainStorageV3 {
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     #[serde(default)]
     pub contract_blocks: HashMap<[u8; 32], u64>,
+    #[serde(default)]
+    pub dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
 
     // === Validator registry (fields 17-18) ===
     #[serde(default)]
@@ -665,6 +683,7 @@ impl BlockchainStorageV3 {
             token_contracts: bc.token_contracts.clone(),
             web4_contracts: bc.web4_contracts.clone(),
             contract_blocks: bc.contract_blocks.clone(),
+            dao_registry_index: bc.dao_registry_index.clone(),
 
             // Validators
             validator_registry: bc.validator_registry.clone(),
@@ -747,6 +766,7 @@ impl BlockchainStorageV3 {
             token_contracts: self.token_contracts,
             web4_contracts: self.web4_contracts,
             contract_blocks: self.contract_blocks,
+            dao_registry_index: self.dao_registry_index,
 
             // Validators
             validator_registry: self.validator_registry,
@@ -822,6 +842,8 @@ pub struct BlockchainImport {
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     pub contract_blocks: HashMap<[u8; 32], u64>,
+    #[serde(default)]
+    pub dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
 }
 
 impl Blockchain {
@@ -849,6 +871,7 @@ impl Blockchain {
             token_contracts: HashMap::new(),
             web4_contracts: HashMap::new(),
             contract_blocks: HashMap::new(),
+            dao_registry_index: HashMap::new(),
             validator_registry: HashMap::new(),
             validator_blocks: HashMap::new(),
             dao_treasury_wallet_id: None,
@@ -1126,6 +1149,7 @@ impl Blockchain {
         if backfilled_blocks > 0 {
             info!("📦 Backfilled {} contract deployment heights to genesis (block 0)", backfilled_blocks);
         }
+        blockchain.rebuild_dao_registry_index();
 
         // Migrate legacy initial_balance values from human SOV to atomic units.
         // Old code stored raw 5000 instead of 5000 * 10^8. Any initial_balance that is
@@ -1558,6 +1582,9 @@ impl Blockchain {
                     // Update blockchain metadata
                     self.blocks.push(block.clone());
                     self.height += 1;
+                    for tx in &block.transactions {
+                        self.index_dao_registry_entry_from_tx(tx, block.header.height);
+                    }
                     self.adjust_difficulty()?;
                     
                     debug!("Block {} applied via BlockExecutor (single source of truth)", block.height());
@@ -1619,6 +1646,9 @@ impl Blockchain {
         self.process_wallet_transactions(&block)?;
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
+        for tx in &block.transactions {
+            self.index_dao_registry_entry_from_tx(tx, block.header.height);
+        }
 
         // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
@@ -4942,6 +4972,110 @@ impl Blockchain {
             .collect()
     }
 
+    fn parse_hex_32(value: &str) -> Option<[u8; 32]> {
+        let trimmed = value.strip_prefix("0x").unwrap_or(value);
+        let decoded = hex::decode(trimmed).ok()?;
+        if decoded.len() != 32 {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&decoded);
+        Some(out)
+    }
+
+    fn parse_dao_class(value: &str) -> Option<crate::types::dao::DAOType> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "np" => Some(crate::types::dao::DAOType::NP),
+            "fp" => Some(crate::types::dao::DAOType::FP),
+            _ => None,
+        }
+    }
+
+    fn index_dao_registry_entry_from_tx(
+        &mut self,
+        tx: &Transaction,
+        block_height: u64,
+    ) {
+        if tx.transaction_type != TransactionType::DaoExecution {
+            return;
+        }
+        let Some(exec) = tx.dao_execution_data.as_ref() else {
+            return;
+        };
+        if exec.execution_type != "dao_registry_register_v1" && exec.execution_type != "dao_factory_create_v1" {
+            return;
+        }
+        let Some(event_bytes) = exec.multisig_signatures.first() else {
+            return;
+        };
+        let Ok(event) = serde_json::from_slice::<serde_json::Value>(event_bytes) else {
+            return;
+        };
+        let token_key_id = event
+            .get("token_id")
+            .and_then(|v| v.as_str())
+            .and_then(Self::parse_hex_32);
+        let class_str = event
+            .get("class")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_ascii_lowercase());
+        let metadata_hash = event
+            .get("metadata_hash")
+            .and_then(|v| v.as_str())
+            .and_then(Self::parse_hex_32);
+        let treasury_key_id = event
+            .get("treasury_key_id")
+            .and_then(|v| v.as_str())
+            .and_then(Self::parse_hex_32);
+        let (Some(token_key_id), Some(class_str), Some(metadata_hash), Some(treasury_key_id)) =
+            (token_key_id, class_str, metadata_hash, treasury_key_id)
+        else {
+            return;
+        };
+        let Some(class) = Self::parse_dao_class(&class_str) else {
+            return;
+        };
+        let token_addr = crate::integration::crypto_integration::PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: token_key_id,
+        };
+        let treasury = crate::integration::crypto_integration::PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: treasury_key_id,
+        };
+        let dao_id = crate::contracts::dao_registry::derive_dao_id(&token_addr, class, &treasury);
+        self.dao_registry_index.entry(dao_id).or_insert(DaoRegistryIndexEntry {
+            dao_id,
+            token_key_id,
+            class: class_str,
+            metadata_hash,
+            treasury_key_id,
+            owner_key_id: tx.signature.public_key.key_id,
+            created_at: block_height,
+        });
+    }
+
+    pub fn rebuild_dao_registry_index(&mut self) {
+        self.dao_registry_index.clear();
+        for block in self.blocks.clone() {
+            for tx in &block.transactions {
+                self.index_dao_registry_entry_from_tx(tx, block.header.height);
+            }
+        }
+    }
+
+    pub fn get_dao_registry_entry(&self, dao_id: &[u8; 32]) -> Option<&DaoRegistryIndexEntry> {
+        self.dao_registry_index.get(dao_id)
+    }
+
+    pub fn list_dao_registry_entries(&self) -> Vec<&DaoRegistryIndexEntry> {
+        let mut entries: Vec<&DaoRegistryIndexEntry> = self.dao_registry_index.values().collect();
+        entries.sort_by(|a, b| a.dao_id.cmp(&b.dao_id));
+        entries
+    }
+
     /// Tally votes for a proposal
     pub fn tally_dao_votes(&self, proposal_id: &Hash) -> (u64, u64, u64, u64) {
         let votes = self.get_dao_votes_for_proposal(proposal_id);
@@ -6749,6 +6883,7 @@ impl Blockchain {
             token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
             web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
             contract_blocks: HashMap<[u8; 32], u64>,
+            dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
         }
 
         // Convert full wallet data to minimal references for sync
@@ -6776,6 +6911,7 @@ impl Blockchain {
             token_contracts: self.token_contracts.clone(),
             web4_contracts: self.web4_contracts.clone(),
             contract_blocks: self.contract_blocks.clone(),
+            dao_registry_index: self.dao_registry_index.clone(),
         };
 
         info!(" Exporting blockchain: {} blocks, {} validators, {} token contracts, {} web4 contracts", 
@@ -6819,6 +6955,8 @@ impl Blockchain {
             self.token_contracts = import.token_contracts;
             self.web4_contracts = import.web4_contracts;
             self.contract_blocks = import.contract_blocks;
+            self.dao_registry_index = import.dao_registry_index;
+            self.rebuild_dao_registry_index();
             info!("Successfully adopted imported chain during bootstrap");
             return Ok(lib_consensus::ChainMergeResult::ImportedAdopted);
         }
@@ -6929,6 +7067,8 @@ impl Blockchain {
                             self.token_contracts = import.token_contracts;
                             self.web4_contracts = import.web4_contracts;
                             self.contract_blocks = import.contract_blocks;
+                            self.dao_registry_index = import.dao_registry_index;
+                            self.rebuild_dao_registry_index();
                             Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
                         }
                     }
@@ -6945,6 +7085,8 @@ impl Blockchain {
                     self.token_contracts = import.token_contracts;
                     self.web4_contracts = import.web4_contracts;
                     self.contract_blocks = import.contract_blocks;
+                    self.dao_registry_index = import.dao_registry_index;
+                    self.rebuild_dao_registry_index();
                     
                     // Clear nullifier set and rebuild from new chain
                     self.nullifier_set.clear();
@@ -7356,6 +7498,7 @@ impl Blockchain {
         self.token_contracts = import.token_contracts.clone();
         self.web4_contracts = import.web4_contracts.clone();
         self.contract_blocks = import.contract_blocks.clone();
+        self.dao_registry_index = import.dao_registry_index.clone();
         
         // Step 7: Merge unique local data into adopted chain
         for (did, identity_data) in local_identities_to_preserve {
@@ -7437,6 +7580,7 @@ impl Blockchain {
               self.validator_registry.len(), self.utxo_set.len());
         info!("   Security improvement: Combined validator set and hash rate");
         info!("   Economic state: All citizens' holdings preserved");
+        self.rebuild_dao_registry_index();
         
         if merge_report.is_empty() {
             Ok("adopted imported chain (no unique local data to merge)".to_string())
@@ -7569,6 +7713,7 @@ impl Blockchain {
               self.blocks.len(), self.identity_registry.len(), 
               self.validator_registry.len(), self.utxo_set.len());
         info!("   Local chain history preserved, imported users migrated successfully");
+        self.rebuild_dao_registry_index();
         
         if merge_report.is_empty() {
             Ok("kept local chain (no unique imported data to merge)".to_string())
@@ -7670,6 +7815,7 @@ impl Blockchain {
                 new_contract_blocks += 1;
             }
         }
+        self.rebuild_dao_registry_index();
         
         if merged_items.is_empty() {
             Ok("no unique content found in shorter chain".to_string())
@@ -8046,6 +8192,7 @@ impl Blockchain {
         if let Err(e) = blockchain.reprocess_contract_executions() {
             warn!("Failed to reprocess contract executions: {}", e);
         }
+        blockchain.rebuild_dao_registry_index();
 
         let elapsed = start.elapsed();
 
