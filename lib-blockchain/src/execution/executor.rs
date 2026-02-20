@@ -41,10 +41,11 @@ use crate::storage::{
     Address, Amount, BlockHash, BlockHeight, BlockchainStore, StorageError, TokenId,
 };
 use crate::transaction::{
-    contract_deployment::ContractDeploymentPayloadV1, hash_transaction,
+    contract_deployment::ContractDeploymentPayloadV1,
+    contract_execution::DecodedContractExecutionMemo, hash_transaction,
     token_creation::TokenCreationPayloadV1,
 };
-use crate::types::{ContractCall, TransactionType};
+use crate::types::TransactionType;
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
 use super::tx_apply::{self, CoinbaseOutcome, StateMutator, TransferOutcome};
@@ -1183,34 +1184,9 @@ impl BlockExecutor {
     }
 
     /// Decode and validate a ContractExecution memo.
-    ///
-    /// Memos must start with a "ZHTP" prefix followed by a bincode-encoded
-    /// `(ContractCall, Signature)` tuple. The signature is extracted but not
-    /// verified here — signature validation happens earlier in the transaction
-    /// processing pipeline (e.g. during mempool/consensus validation).
-    fn decode_contract_call_memo(memo: &[u8]) -> Result<ContractCall, TxApplyError> {
-        if memo.len() <= 4 || &memo[0..4] != b"ZHTP" {
-            return Err(TxApplyError::InvalidType(
-                "ContractExecution memo must start with ZHTP prefix".to_string(),
-            ));
-        }
-
-        let call_data = &memo[4..];
-        // NOTE: Transaction signatures (including public_key.key_id binding) are validated
-        // earlier in the transaction pipeline (e.g. during mempool/consensus validation).
-        // The executor assumes that tx.signature is valid and uses key_id here only to
-        // record the already-authenticated caller identity.
-        let (call, _sig): (ContractCall, crate::integration::crypto_integration::Signature) =
-            bincode::deserialize(call_data).map_err(|e| {
-                TxApplyError::InvalidType(format!(
-                    "ContractExecution memo is not a valid (ContractCall, Signature): {e}"
-                ))
-            })?;
-
-        call.validate()
-            .map_err(|e| TxApplyError::InvalidType(format!("Invalid ContractCall payload: {e}")))?;
-
-        Ok(call)
+    fn decode_contract_call_memo(memo: &[u8]) -> Result<DecodedContractExecutionMemo, TxApplyError> {
+        DecodedContractExecutionMemo::decode_compat(memo)
+            .map_err(|e| TxApplyError::InvalidType(format!("Invalid ContractExecution memo: {e}")))
     }
 
     fn dao_state_contract_id() -> [u8; 32] {
@@ -1408,18 +1384,48 @@ impl BlockExecutor {
         tx_hash: &crate::types::Hash,
         block_height: u64,
     ) -> Result<ContractExecutionOutcome, TxApplyError> {
-        let call = Self::decode_contract_call_memo(&tx.memo)?;
-
-        // Derive a deterministic singleton contract_id per ContractType using bincode serialization
-        // instead of the unstable Debug representation.
-        // NOTE: This design treats each ContractType as a singleton contract storage namespace.
-        // Only builtin ContractType enum values can be executed via ContractExecution.
-        let contract_type_bytes = bincode::serialize(&call.contract_type).map_err(|e| {
-            TxApplyError::Internal(format!(
-                "Failed to serialize contract type for contract_id derivation: {e}"
-            ))
+        let decoded = Self::decode_contract_call_memo(&tx.memo)?;
+        let contract_id = decoded.contract_id.ok_or_else(|| {
+            TxApplyError::InvalidType(
+                "ContractExecution memo must include deployed contract_id (ZHTP2 format)"
+                    .to_string(),
+            )
         })?;
-        let contract_id = lib_crypto::hash_blake3(&contract_type_bytes);
+        let call = decoded.call;
+
+        if self.store.get_contract_code(&contract_id)?.is_none() {
+            return Err(TxApplyError::InvalidType(format!(
+                "ContractExecution references unknown deployed contract_id {}",
+                hex::encode(contract_id)
+            )));
+        }
+        if self
+            .store
+            .get_contract_storage(&contract_id, b"__abi")?
+            .is_none()
+        {
+            return Err(TxApplyError::InvalidType(format!(
+                "ContractExecution target {} missing deployed ABI metadata",
+                hex::encode(contract_id)
+            )));
+        }
+        let limits = self
+            .store
+            .get_contract_storage(&contract_id, b"__limits")?
+            .ok_or_else(|| {
+                TxApplyError::InvalidType(format!(
+                    "ContractExecution target {} missing deployed execution limits",
+                    hex::encode(contract_id)
+                ))
+            })?;
+        let (_gas_limit, _memory_limit_bytes): (u64, u32) =
+            bincode::deserialize(&limits).map_err(|e| {
+                TxApplyError::InvalidType(format!(
+                    "ContractExecution target {} has invalid stored limits: {}",
+                    hex::encode(contract_id),
+                    e
+                ))
+            })?;
 
         // Persist canonical call record under a deterministic per-tx key.
         let mut call_key = b"__call:".to_vec();
@@ -1777,6 +1783,8 @@ mod tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
     use crate::storage::SledStore;
+    use crate::transaction::encode_contract_execution_memo_v2;
+    use crate::types::ContractCall;
     use crate::types::{Difficulty, Hash};
 
     fn create_test_store() -> Arc<dyn BlockchainStore> {
@@ -2204,17 +2212,14 @@ mod tests {
         tx
     }
 
-    fn create_contract_execution_tx(method: &str) -> Transaction {
+    fn create_contract_execution_tx(contract_id: [u8; 32], method: &str) -> Transaction {
         let call = ContractCall::token_call(method.to_string(), vec![0x10, 0x20]);
         let call_sig = create_dummy_signature();
 
         let mut tx = create_legacy_tx(TransactionType::ContractExecution);
         tx.fee = 1_000_000;
-        tx.memo = b"ZHTP".to_vec();
-        tx.memo.extend(
-            bincode::serialize(&(call, call_sig))
-                .expect("contract execution test memo serialization must work"),
-        );
+        tx.memo = encode_contract_execution_memo_v2(contract_id, &call, &call_sig)
+            .expect("contract execution test memo encoding must work");
         tx
     }
 
@@ -2459,13 +2464,13 @@ mod tests {
         let genesis = create_genesis_block();
         executor.apply_block(&genesis).unwrap();
 
-        let tx = create_contract_execution_tx("create_custom_token");
+        let deploy_tx = create_contract_deployment_tx();
+        let contract_id = hash_transaction(&deploy_tx).as_array();
+        let deploy_block = create_block_with_txs(1, genesis.header.block_hash, vec![deploy_tx]);
+        executor.apply_block(&deploy_block).unwrap();
+
+        let tx = create_contract_execution_tx(contract_id, "create_custom_token");
         let tx_hash = hash_transaction(&tx);
-        // Compute contract_id the same way apply_contract_execution does:
-        // bincode serialization of the ContractType enum for deterministic derivation.
-        let contract_type_bytes =
-            bincode::serialize(&crate::types::ContractType::Token).expect("serialize ContractType");
-        let contract_id = lib_crypto::hash_blake3(&contract_type_bytes);
         let mut call_key = b"__call:".to_vec();
         call_key.extend_from_slice(tx_hash.as_bytes());
 
@@ -2475,14 +2480,14 @@ mod tests {
 
         let header = BlockHeader {
             version: 1,
-            previous_block_hash: genesis.header.block_hash,
+            previous_block_hash: deploy_block.header.block_hash,
             merkle_root: Hash::default(),
             state_root: Hash::default(),
             timestamp: 1001,
             difficulty: Difficulty::minimum(),
             nonce: 0,
             cumulative_difficulty: Difficulty::minimum(),
-            height: 1,
+            height: 2,
             block_hash,
             transaction_count: 1,
             block_size: 0,
@@ -2502,9 +2507,102 @@ mod tests {
             [u8; 32],
             Vec<u8>,
         ) = bincode::deserialize(&stored).expect("decode call record");
-        assert_eq!(stored_height, 1);
+        assert_eq!(stored_height, 2);
         assert_eq!(stored_method, "create_custom_token");
         assert_eq!(stored_params, vec![0x10, 0x20]);
+    }
+
+    #[test]
+    fn test_contract_execution_rejects_legacy_memo_without_contract_id() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let mut tx = create_legacy_tx(TransactionType::ContractExecution);
+        tx.fee = 1_000_000;
+        let call = ContractCall::token_call("create_custom_token".to_string(), vec![0x10, 0x20]);
+        let call_sig = create_dummy_signature();
+        tx.memo = b"ZHTP".to_vec();
+        tx.memo.extend(
+            bincode::serialize(&(call, call_sig)).expect("legacy execution memo serialization"),
+        );
+
+        let block = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        let result = executor.apply_block(&block);
+        assert!(
+            result.is_err(),
+            "legacy ContractExecution memo without contract_id must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_contract_execution_same_type_contracts_do_not_collide() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let deploy_a = create_contract_deployment_tx();
+        let contract_a = hash_transaction(&deploy_a).as_array();
+        let mut deploy_b = create_contract_deployment_tx();
+        deploy_b.memo = crate::transaction::contract_deployment::ContractDeploymentPayloadV1 {
+            contract_type: "wasm".to_string(),
+            code: vec![0x09, 0x08, 0x07, 0x06],
+            abi: br#"{"name":"test_b"}"#.to_vec(),
+            init_args: vec![0xCC, 0xDD],
+            gas_limit: 12_000,
+            memory_limit_bytes: 2_048_000,
+        }
+        .encode_memo()
+        .expect("deployment memo encode");
+        let contract_b = hash_transaction(&deploy_b).as_array();
+
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![deploy_a, deploy_b]);
+        executor.apply_block(&block1).unwrap();
+
+        let tx_a = create_contract_execution_tx(contract_a, "set_value");
+        let tx_a_hash = hash_transaction(&tx_a);
+        let tx_b = create_contract_execution_tx(contract_b, "set_value");
+        let tx_b_hash = hash_transaction(&tx_b);
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx_a, tx_b]);
+        executor.apply_block(&block2).unwrap();
+
+        let mut key_a = b"__call:".to_vec();
+        key_a.extend_from_slice(tx_a_hash.as_bytes());
+        let mut key_b = b"__call:".to_vec();
+        key_b.extend_from_slice(tx_b_hash.as_bytes());
+
+        assert!(
+            store
+                .get_contract_storage(&contract_a, &key_a)
+                .expect("read contract_a call")
+                .is_some(),
+            "contract A must contain its call record"
+        );
+        assert!(
+            store
+                .get_contract_storage(&contract_b, &key_b)
+                .expect("read contract_b call")
+                .is_some(),
+            "contract B must contain its call record"
+        );
+        assert!(
+            store
+                .get_contract_storage(&contract_a, &key_b)
+                .expect("read contract_a foreign call")
+                .is_none(),
+            "contract A must not contain contract B call record"
+        );
+        assert!(
+            store
+                .get_contract_storage(&contract_b, &key_a)
+                .expect("read contract_b foreign call")
+                .is_none(),
+            "contract B must not contain contract A call record"
+        );
     }
 
     /// T5: State persists across store restart

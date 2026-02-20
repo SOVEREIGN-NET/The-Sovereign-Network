@@ -4,6 +4,7 @@ use std::io::{self, Read};
 use lib_blockchain::types::ContractCall;
 use lib_blockchain::transaction::core::Transaction;
 use lib_blockchain::transaction::creation::utils::calculate_minimum_fee;
+use lib_blockchain::transaction::DecodedContractExecutionMemo;
 use lib_blockchain::TransactionType;
 use lib_blockchain::types::ContractType;
 use lib_crypto::types::signatures::Signature;
@@ -93,20 +94,10 @@ fn is_token_contract_execution_diagnostic(
         ));
     }
 
-    if transaction.memo.len() <= 4 {
-        return Err(format!("memo too short (len={})", transaction.memo.len()));
-    }
-
-    if &transaction.memo[0..4] != b"ZHTP" {
-        return Err(format!(
-            "memo missing ZHTP prefix (starts with {:?})",
-            &transaction.memo[0..4]
-        ));
-    }
-
-    let call_data = &transaction.memo[4..];
-    let (call, sig): (ContractCall, Signature) = bincode::deserialize(call_data)
-        .map_err(|e| format!("bincode (ContractCall, Signature) failed: {e}"))?;
+    let decoded = DecodedContractExecutionMemo::decode_compat(&transaction.memo)
+        .map_err(|e| format!("memo decode failed: {e}"))?;
+    let call = decoded.call;
+    let sig = decoded.signature;
 
     if call.contract_type != ContractType::Token {
         return Err(format!("contract_type is {:?}, not Token", call.contract_type));
