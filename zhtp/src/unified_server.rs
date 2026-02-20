@@ -1447,6 +1447,16 @@ impl ZhtpUnifiedServer {
                 }
             });
         }
+
+        // Spawn POUW reward payout task -- processes Pending rewards once per epoch
+        crate::pouw::spawn_pouw_payout_task(
+            self.pouw_calculator_arc.clone(),
+            self.blockchain.clone(),
+            std::path::PathBuf::from(crate::config::environment::Environment::default().blockchain_data_path()),
+            crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
+        );
+        info!("POUW reward payout task spawned (epoch interval: {}s)",
+              crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS);
         
         Ok(())
     }
