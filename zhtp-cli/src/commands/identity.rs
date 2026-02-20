@@ -621,24 +621,6 @@ mod tests {
     }
 
     #[test]
-    fn test_action_to_operation_migrate() {
-        let action = IdentityAction::Migrate {
-            display_name: "alice".to_string(),
-            device_id: "device-1".to_string(),
-            phrase: None,
-            phrase_file: None,
-            keystore: None,
-            trust: crate::argument_parsing::TrustFlags {
-                pin_spki: None,
-                node_did: None,
-                tofu: false,
-                trust_node: true,
-            },
-        };
-        assert_eq!(action_to_operation(&action), IdentityOperation::Migrate);
-    }
-
-    #[test]
     fn test_operation_description() {
         assert_eq!(
             IdentityOperation::Create.description(),
@@ -657,8 +639,8 @@ mod tests {
             "List blockchain identities"
         );
         assert_eq!(
-            IdentityOperation::Migrate.description(),
-            "Migrate identity (seed-only)"
+            IdentityOperation::Unsupported.description(),
+            "Run identity operation"
         );
     }
 }
