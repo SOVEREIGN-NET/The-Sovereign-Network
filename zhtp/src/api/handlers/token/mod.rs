@@ -16,9 +16,9 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 // Blockchain imports
 use lib_blockchain::Blockchain;
-use lib_blockchain::transaction::Transaction;
+use lib_blockchain::transaction::{TokenCreationPayloadV1, Transaction};
 use lib_blockchain::contracts::utils::generate_custom_token_id;
-use lib_blockchain::types::ContractCall;
+use lib_blockchain::types::transaction_type::TransactionType;
 use lib_crypto::types::keys::PublicKey;
 
 /// Helper function to create JSON responses
@@ -122,7 +122,7 @@ impl TokenHandler {
         let create_req: CreateTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let (tx, call) = match self.decode_signed_tx(&create_req.signed_tx) {
+        let tx = match self.decode_signed_tx_raw(&create_req.signed_tx) {
             Ok(parsed) => parsed,
             Err(e) => {
                 tracing::warn!("[FLOW] token/create: decode_signed_tx FAILED: {}", e);
@@ -140,30 +140,36 @@ impl TokenHandler {
             tx.inputs.len(),
             tx.outputs.len()
         );
-        if let Err(e) = self.ensure_token_call(&call, "create_custom_token") {
-            tracing::warn!("[FLOW] token/create: ensure_token_call FAILED: {}", e);
-            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
+
+        if tx.transaction_type != TransactionType::TokenCreation {
+            let reason = if tx.transaction_type == TransactionType::ContractExecution {
+                "Deprecated token create transaction type. Use canonical TokenCreation transaction".to_string()
+            } else {
+                format!(
+                    "Invalid transaction type for token/create: expected TokenCreation, got {:?}",
+                    tx.transaction_type
+                )
+            };
+            tracing::warn!("[FLOW] token/create: invalid tx type: {}", reason);
+            return Ok(create_error_response(ZhtpStatus::BadRequest, reason));
         }
 
-        // Extract params for response - must match CreateTokenParams struct from lib-client
-        #[derive(serde::Deserialize)]
-        struct CreateTokenParams {
-            name: String,
-            symbol: String,
-            initial_supply: u64,
-            decimals: u8,
-        }
-        let params: CreateTokenParams = match bincode::deserialize(&call.params) {
+        let payload = match TokenCreationPayloadV1::decode_memo(&tx.memo) {
             Ok(p) => p,
             Err(e) => {
-                tracing::warn!("[FLOW] token/create: params deserialize FAILED: {}", e);
+                tracing::warn!("[FLOW] token/create: payload decode FAILED: {}", e);
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Invalid token create params: {}", e),
+                    format!("Invalid token creation payload: {}", e),
                 ));
             }
         };
-        let CreateTokenParams { name, symbol, initial_supply, decimals } = params;
+        let TokenCreationPayloadV1 {
+            name,
+            symbol,
+            initial_supply,
+            decimals,
+        } = payload;
         tracing::warn!(
             "[FLOW] token/create params: name='{}' symbol='{}' supply={} decimals={}",
             name,
@@ -194,7 +200,7 @@ impl TokenHandler {
         // Check if token already exists (duplicate name+symbol)
         {
             let blockchain = self.blockchain.read().await;
-            if blockchain.token_contracts.contains_key(&token_id) {
+            if blockchain.get_token_contract(&token_id).is_some() {
                 tracing::warn!("[FLOW] token/create: DUPLICATE token_id={}", hex::encode(token_id));
                 return Ok(create_error_response(
                     ZhtpStatus::Conflict,
@@ -770,21 +776,6 @@ impl TokenHandler {
         Some(primary_wallet.wallet_id.as_array())
     }
 
-
-    fn decode_signed_tx(&self, signed_tx: &str) -> Result<(Transaction, ContractCall)> {
-        tracing::warn!("[FLOW] decode_signed_tx: len={}", signed_tx.len());
-        let tx_bytes = hex::decode(signed_tx)
-            .map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
-        tracing::warn!("[FLOW] decode_signed_tx: hex decoded len={}, first 20 bytes={:02x?}",
-            tx_bytes.len(),
-            &tx_bytes[..20.min(tx_bytes.len())]);
-        let tx: Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
-
-        let call = self.extract_contract_call(&tx)?;
-        Ok((tx, call))
-    }
-
     fn decode_signed_tx_raw(&self, signed_tx: &str) -> Result<Transaction> {
         tracing::warn!("[FLOW] decode_signed_tx_raw: len={}", signed_tx.len());
         let tx_bytes = hex::decode(signed_tx)
@@ -792,48 +783,6 @@ impl TokenHandler {
         let tx: Transaction = bincode::deserialize(&tx_bytes)
             .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
         Ok(tx)
-    }
-
-    fn extract_contract_call(&self, tx: &Transaction) -> Result<ContractCall> {
-        tracing::warn!(
-            "[FLOW] extract_contract_call: type={:?}, memo_len={}",
-            tx.transaction_type,
-            tx.memo.len()
-        );
-        if tx.transaction_type != lib_blockchain::TransactionType::ContractExecution {
-            return Err(anyhow::anyhow!("Transaction type must be ContractExecution"));
-        }
-        if tx.memo.len() <= 4 || &tx.memo[0..4] != b"ZHTP" {
-            return Err(anyhow::anyhow!("Transaction memo is missing contract call marker"));
-        }
-
-        let call_data = &tx.memo[4..];
-        let (call, _sig): (ContractCall, lib_crypto::types::signatures::Signature) =
-            bincode::deserialize(call_data)
-                .map_err(|e| anyhow::anyhow!("Invalid contract call data: {}", e))?;
-
-        Ok(call)
-    }
-
-    fn ensure_token_call(&self, call: &ContractCall, expected_method: &str) -> Result<()> {
-        tracing::warn!(
-            "[FLOW] ensure_token_call: contract_type={:?} method={} expected={}",
-            call.contract_type,
-            call.method,
-            expected_method
-        );
-        if call.contract_type != lib_blockchain::types::ContractType::Token {
-            return Err(anyhow::anyhow!("Transaction is not a token contract call"));
-        }
-        if call.method != expected_method {
-            return Err(anyhow::anyhow!("Expected token method '{}'", expected_method));
-        }
-        // NOTE: We don't check call.permissions.requires_caller() because:
-        // - Authorization is done via tx.signature.public_key (the canonical sender)
-        // - The signature cryptographically proves the caller's identity
-        // - CallPermissions::Public is valid - the signature IS the authorization
-        call.validate().map_err(|e| anyhow::anyhow!(e))?;
-        Ok(())
     }
 
     async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {
