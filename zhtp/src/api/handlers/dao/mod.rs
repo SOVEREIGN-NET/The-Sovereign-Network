@@ -272,13 +272,20 @@ impl DaoHandler {
     }
 
     fn parse_dao_class(value: &str) -> Result<DAOType> {
+        // Accept both underscore ("non_profit") and hyphen ("non-profit") forms to
+        // align with DAOType::from_str() which uses underscore variants internally.
         match value.trim().to_ascii_lowercase().as_str() {
-            "np" | "nonprofit" | "non-profit" => Ok(DAOType::NP),
-            "fp" | "forprofit" | "for-profit" => Ok(DAOType::FP),
+            "np" | "nonprofit" | "non-profit" | "non_profit" => Ok(DAOType::NP),
+            "fp" | "forprofit" | "for-profit" | "for_profit" => Ok(DAOType::FP),
             _ => Err(anyhow::anyhow!("class must be 'np' or 'fp'")),
         }
     }
 
+    /// Create a `PublicKey` with only `key_id` populated for registry look-up purposes.
+    ///
+    /// **IMPORTANT**: The returned key has empty `dilithium_pk` and `kyber_pk` fields.
+    /// It must NOT be used for cryptographic verification. Its only valid use is as a
+    /// `HashMap` key within `DAORegistry`, where equality is determined by `key_id`.
     fn public_key_from_key_id(key_id: [u8; 32]) -> PublicKey {
         PublicKey {
             dilithium_pk: Vec::new(),
@@ -319,40 +326,69 @@ impl DaoHandler {
             return;
         }
         let Some(event_bytes) = exec.multisig_signatures.first() else {
+            tracing::warn!("DAO registry replay: DaoExecution at height {} missing event payload", block_height);
             return;
         };
         let Ok(event) = serde_json::from_slice::<DaoRegistryRegisterEvent>(event_bytes) else {
+            tracing::warn!("DAO registry replay: failed to deserialize event payload at height {}", block_height);
             return;
         };
         let token_id = match Self::parse_hex_32(&event.token_id, "token_id") {
             Ok(v) => v,
-            Err(_) => return,
+            Err(e) => {
+                tracing::warn!("DAO registry replay: invalid token_id at height {}: {}", block_height, e);
+                return;
+            }
         };
         let metadata_hash = match Self::parse_hex_32(&event.metadata_hash, "metadata_hash") {
             Ok(v) => v,
-            Err(_) => return,
+            Err(e) => {
+                tracing::warn!("DAO registry replay: invalid metadata_hash at height {}: {}", block_height, e);
+                return;
+            }
         };
         let treasury_key_id = match Self::parse_hex_32(&event.treasury_key_id, "treasury_key_id") {
             Ok(v) => v,
-            Err(_) => return,
+            Err(e) => {
+                tracing::warn!("DAO registry replay: invalid treasury_key_id at height {}: {}", block_height, e);
+                return;
+            }
         };
         let class = match Self::parse_dao_class(&event.class) {
             Ok(v) => v,
-            Err(_) => return,
+            Err(e) => {
+                tracing::warn!("DAO registry replay: invalid class at height {}: {}", block_height, e);
+                return;
+            }
         };
         let token_addr = Self::public_key_from_key_id(token_id);
         let treasury = Self::public_key_from_key_id(treasury_key_id);
         let owner = tx.signature.public_key.clone();
-        let _ = registry.register_dao(
+        // Duplicate registration is silently ignored for idempotent replay: the same
+        // DaoExecution transaction processed twice must not alter the registered state.
+        if let Err(e) = registry.register_dao(
             token_addr,
             class,
             treasury,
             metadata_hash,
             owner,
             block_height,
-        );
+        ) {
+            tracing::debug!(
+                "DAO registry replay: register_dao skipped at height {}: {}",
+                block_height,
+                e
+            );
+        }
     }
 
+    /// Rebuild the DAO registry by replaying all DaoExecution transactions from the chain.
+    ///
+    /// **Performance note**: This is O(blocks × txs_per_block) and is called on every
+    /// registry query (list, get, register). As the chain grows this will become slow.
+    /// A future improvement should maintain the registry in a cached, incrementally-updated
+    /// in-memory structure (e.g. an `Arc<RwLock<DAORegistry>>`) rather than rebuilding from
+    /// scratch on each request.
     fn rebuild_dao_registry(blockchain: &lib_blockchain::Blockchain) -> Result<DAORegistry> {
         let mut registry = DAORegistry::new();
         for block in &blockchain.blocks {
@@ -1473,8 +1509,20 @@ impl DaoHandler {
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
         let token_id = Self::parse_hex_32(&req.token_id, "token_id")?;
+        if token_id == [0u8; 32] {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "token_id must be non-zero".to_string(),
+            ));
+        }
         let class = Self::parse_dao_class(&req.class)?;
         let metadata_hash = Self::parse_hex_32(&req.metadata_hash, "metadata_hash")?;
+        if metadata_hash.iter().all(|&b| b == 0) {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "metadata_hash must be non-zero".to_string(),
+            ));
+        }
 
         let identity_manager = self.identity_manager.read().await;
         let identity = identity_manager
@@ -1483,16 +1531,11 @@ impl DaoHandler {
             .ok_or_else(|| anyhow::anyhow!("Authenticated identity not found"))?;
         drop(identity_manager);
 
-        let treasury_key_id = match req.treasury_key_id {
-            Some(ref key) => Self::parse_hex_32(key, "treasury_key_id")?,
-            None => identity.public_key.key_id,
-        };
-        if treasury_key_id != identity.public_key.key_id {
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "treasury_key_id must belong to authenticated identity".to_string(),
-            ));
-        }
+        // Always use the authenticated identity's public key as the treasury key.
+        // The optional `treasury_key_id` field in the request is accepted but ignored:
+        // since it must always equal the identity's key_id, accepting arbitrary values
+        // would only produce confusing Forbidden errors with no additional security benefit.
+        let treasury_key_id = identity.public_key.key_id;
 
         let token_addr = Self::public_key_from_key_id(token_id);
         let treasury = Self::public_key_from_key_id(treasury_key_id);
@@ -1547,6 +1590,12 @@ impl DaoHandler {
             amount: None,
             executed_at: now,
             executed_at_height: height,
+            // NOTE: DaoExecutionData.multisig_signatures is documented as
+            // "Multi-sig signatures from approving validators". For DAO registry
+            // executions this field carries the serialized event payload (JSON)
+            // instead of actual validator signatures. If DaoExecutionData is
+            // extended with a dedicated execution/event data field in the future,
+            // this should be migrated accordingly.
             multisig_signatures: vec![event_bytes],
         };
 
