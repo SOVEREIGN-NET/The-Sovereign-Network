@@ -77,7 +77,7 @@ pub const SPIKE_BASELINE_EPOCHS: usize = 7 * 24;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Reward record stored in database
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Reward {
     /// Unique reward ID
     pub reward_id: Vec<u8>,
@@ -104,7 +104,7 @@ pub struct Reward {
 }
 
 /// Counts of receipts by proof type
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProofTypeCounts {
     pub hash_count: u64,
     pub merkle_count: u64,
@@ -131,7 +131,7 @@ impl ProofTypeCounts {
 }
 
 /// Payout status for a reward
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PayoutStatus {
     /// Reward calculated, not yet paid
     Pending,
@@ -594,6 +594,69 @@ impl RewardCalculator {
             .filter(|r| r.payout_status == PayoutStatus::Paid)
             .map(|r| r.final_amount)
             .sum()
+    }
+
+    /// Get all rewards (for stats and persistence).
+    pub async fn get_all_rewards(&self) -> Vec<Reward> {
+        self.rewards.read().await.clone()
+    }
+
+    /// List unique epochs that have any rewards, sorted ascending.
+    pub async fn list_epochs_with_rewards(&self) -> Vec<u64> {
+        let rewards = self.rewards.read().await;
+        let mut epochs: Vec<u64> = rewards.iter().map(|r| r.epoch).collect();
+        epochs.sort_unstable();
+        epochs.dedup();
+        epochs
+    }
+
+    /// Persist current rewards to a bincode file.
+    ///
+    /// Rewards survive node restarts when loaded back via `load_rewards_from_file`.
+    /// Conventionally placed alongside blockchain.dat as rewards.dat.
+    pub async fn save_rewards_to_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        use std::io::Write;
+        let rewards = self.rewards.read().await.clone();
+        let encoded = bincode::serialize(&rewards)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize rewards: {}", e))?;
+        let mut file = std::fs::File::create(path)
+            .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", path.display(), e))?;
+        file.write_all(&encoded)
+            .map_err(|e| anyhow::anyhow!("Failed to write rewards file: {}", e))?;
+        info!(
+            path = %path.display(),
+            count = rewards.len(),
+            "POUW rewards saved to disk"
+        );
+        Ok(())
+    }
+
+    /// Load rewards from a bincode file, replacing in-memory state.
+    ///
+    /// Silently returns Ok if the file does not exist (first boot).
+    pub async fn load_rewards_from_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        if !path.exists() {
+            info!("No rewards file at {} — starting with empty state", path.display());
+            return Ok(());
+        }
+        let bytes = std::fs::read(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+        let loaded: Vec<Reward> = bincode::deserialize(&bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize rewards (file may be corrupt): {}", e))?;
+        let count = loaded.len();
+        *self.rewards.write().await = loaded;
+        info!(path = %path.display(), count = count, "POUW rewards loaded from disk");
+        Ok(())
+    }
+
+    /// Derive the rewards file path from a blockchain.dat path.
+    ///
+    /// Example: `/data/testnet/blockchain.dat` → `/data/testnet/rewards.dat`
+    pub fn rewards_path_for(blockchain_dat: &std::path::Path) -> std::path::PathBuf {
+        blockchain_dat
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("rewards.dat")
     }
 }
 
