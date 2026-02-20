@@ -8973,6 +8973,30 @@ impl Blockchain {
         }
         Ok(())
     }
+
+    /// Mint SOV tokens for a POUW reward recipient.
+    ///
+    /// This is an out-of-block kernel operation that mirrors the UBI engine pattern.
+    /// The recipient is identified by a 32-byte key_id derived from their DID.
+    /// After minting, the caller must call `save_to_file()` to persist the updated balance.
+    pub fn mint_sov_for_pouw(
+        &mut self,
+        recipient_key_id: [u8; 32],
+        amount: u64,
+    ) -> anyhow::Result<()> {
+        self.ensure_sov_token_contract();
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self.token_contracts.get_mut(&sov_token_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found after ensure_sov_token_contract"))?;
+        let recipient = crate::integration::crypto_integration::PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: recipient_key_id,
+        };
+        token.mint(&recipient, amount)
+            .map_err(|e| anyhow::anyhow!("POUW SOV mint failed: {}", e))?;
+        Ok(())
+    }
 }
 
 /// Statistics about blockchain persistence state
