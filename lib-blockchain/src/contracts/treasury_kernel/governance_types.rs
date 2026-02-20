@@ -202,6 +202,18 @@ pub enum TreasuryAction {
         identity_id: IdentityId,
         role_id: RoleId,
     },
+    /// Update SOV Reference Value (SRV)
+    ///
+    /// Updates the protocol-defined internal valuation of SOV in USD terms.
+    /// Requires governance vote and is subject to smoothing rules.
+    UpdateSRV {
+        /// New committed value in USD cents
+        new_committed_value_usd: u64,
+        /// New stability multiplier in basis points (optional)
+        new_stability_multiplier_bps: Option<u16>,
+        /// Rationale for the update
+        rationale: String,
+    },
 }
 
 impl fmt::Display for TreasuryAction {
@@ -235,6 +247,11 @@ impl fmt::Display for TreasuryAction {
             }
             Self::RevokeRole { identity_id, role_id } => {
                 write!(f, "RevokeRole {:?} from {:?}", &role_id[..4], &identity_id[..4])
+            }
+            Self::UpdateSRV { new_committed_value_usd, rationale, .. } => {
+                let usd_whole = new_committed_value_usd / 100;
+                let usd_frac = new_committed_value_usd % 100;
+                write!(f, "UpdateSRV to ${}.{:02} ({})", usd_whole, usd_frac, rationale)
             }
         }
     }
@@ -352,6 +369,8 @@ pub enum GovernanceError {
     SystemPaused,
     /// System is not paused (for resume)
     SystemNotPaused,
+    /// Invalid action type for requested operation
+    InvalidActionType,
 }
 
 impl fmt::Display for GovernanceError {
@@ -389,6 +408,7 @@ impl fmt::Display for GovernanceError {
             }
             Self::SystemPaused => write!(f, "System is paused"),
             Self::SystemNotPaused => write!(f, "System is not paused"),
+            Self::InvalidActionType => write!(f, "Invalid action type for requested operation"),
         }
     }
 }
