@@ -639,6 +639,134 @@ impl PouwHandler {
 
         Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
     }
+
+    /// Handle GET /pouw/stats — global POUW statistics
+    async fn handle_get_stats(&self) -> ZhtpResult<ZhtpResponse> {
+        let rewards = self.reward_calculator.get_all_rewards().await;
+        let total_rewards = rewards.len() as u64;
+        let total_earned: u64 = rewards.iter()
+            .map(|r| r.final_amount)
+            .fold(0u64, |acc, x| acc.saturating_add(x));
+        let total_paid: u64 = rewards.iter()
+            .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Paid)
+            .map(|r| r.final_amount)
+            .fold(0u64, |acc, x| acc.saturating_add(x));
+        let pending_count = rewards.iter()
+            .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Pending)
+            .count() as u64;
+        let current_epoch = self.reward_calculator.current_epoch();
+        let body = serde_json::json!({
+            "current_epoch": current_epoch,
+            "total_rewards": total_rewards,
+            "total_earned_atomic": total_earned,
+            "total_paid_atomic": total_paid,
+            "pending_rewards": pending_count,
+            "epoch_duration_secs": crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
+            "per_node_cap_atomic": crate::pouw::rewards::POUW_PER_NODE_EPOCH_CAP,
+            "epoch_pool_atomic": crate::pouw::rewards::POUW_EPOCH_POOL,
+        });
+        Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
+    }
+
+    /// Handle GET /pouw/epochs — paginated list of epochs with rewards
+    async fn handle_list_epochs(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let (limit, offset) = Self::parse_pagination(&request.uri);
+        let epochs = self.reward_calculator.list_epochs_with_rewards().await;
+        let total = epochs.len();
+        let page: Vec<serde_json::Value> = epochs
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|epoch| {
+                serde_json::json!({
+                    "epoch": epoch,
+                    "start_timestamp": self.reward_calculator.epoch_start(epoch),
+                    "end_timestamp": self.reward_calculator.epoch_end(epoch),
+                })
+            })
+            .collect();
+        let body = serde_json::json!({
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "epochs": page,
+        });
+        Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
+    }
+
+    /// Handle GET /pouw/receipts/{did} — validated receipts for a DID
+    async fn handle_get_receipts_for_did(
+        &self,
+        request: &ZhtpRequest,
+        client_did: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        if let Err(response) = self
+            .check_reward_query_access(request, client_did, "receipt lookup")
+            .await
+        {
+            return Ok(response);
+        }
+        let (limit, offset) = Self::parse_pagination(&request.uri);
+        let validator = self.receipt_validator.read().await;
+        let receipts = validator.get_receipts_for_did(client_did).await;
+        let total = receipts.len();
+        let page: Vec<serde_json::Value> = receipts
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|r| serde_json::json!({
+                "receipt_nonce": hex::encode(&r.receipt_nonce),
+                "proof_type": format!("{:?}", r.proof_type),
+                "bytes_verified": r.bytes_verified,
+                "validated_at": r.validated_at,
+                "domain": r.domain,
+            }))
+            .collect();
+        let body = serde_json::json!({
+            "client_did": client_did,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "receipts": page,
+        });
+        Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
+    }
+
+    /// Handle GET /pouw/disputes/{did} — rejection/dispute log for a DID
+    async fn handle_get_disputes_for_did(
+        &self,
+        request: &ZhtpRequest,
+        client_did: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        if let Err(response) = self
+            .check_reward_query_access(request, client_did, "dispute lookup")
+            .await
+        {
+            return Ok(response);
+        }
+        let (limit, offset) = Self::parse_pagination(&request.uri);
+        let validator = self.receipt_validator.read().await;
+        let disputes = validator.get_disputes_for_did(client_did).await;
+        let total = disputes.len();
+        let page: Vec<serde_json::Value> = disputes
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|d| serde_json::json!({
+                "timestamp": d.timestamp,
+                "reason": d.reason.as_str(),
+                "receipt_nonce": d.receipt_nonce.as_ref().map(|n| hex::encode(n)),
+            }))
+            .collect();
+        let body = serde_json::json!({
+            "client_did": client_did,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "disputes": page,
+        });
+        Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
+    }
 }
 
 #[async_trait]
@@ -695,10 +823,30 @@ impl ZhtpRequestHandler for PouwHandler {
             ));
         }
         
+        // GET /pouw/receipts/{did}
+        if uri.starts_with("/pouw/receipts/") && request.method.as_str() == "GET" {
+            let did = Self::extract_path_param(uri, "/pouw/receipts/");
+            if did.is_empty() {
+                return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, "Missing DID".to_string()));
+            }
+            return self.handle_get_receipts_for_did(&request, &did).await;
+        }
+
+        // GET /pouw/disputes/{did}
+        if uri.starts_with("/pouw/disputes/") && request.method.as_str() == "GET" {
+            let did = Self::extract_path_param(uri, "/pouw/disputes/");
+            if did.is_empty() {
+                return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, "Missing DID".to_string()));
+            }
+            return self.handle_get_disputes_for_did(&request, &did).await;
+        }
+
         match (request.method.as_str(), uri) {
             ("GET", "/pouw/challenge") => self.handle_get_challenge(&request).await,
             ("POST", "/pouw/submit") => self.handle_submit_receipt(&request).await,
             ("GET", "/pouw/health") => self.handle_health_check().await,
+            ("GET", "/pouw/stats") => self.handle_get_stats().await,
+            ("GET", "/pouw/epochs") => self.handle_list_epochs(&request).await,
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 format!("Not found: {} {}", request.method, uri),

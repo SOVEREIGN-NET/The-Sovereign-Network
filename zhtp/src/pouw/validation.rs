@@ -678,6 +678,28 @@ impl ReceiptValidator {
     pub async fn get_disputes(&self) -> Vec<DisputeLogEntry> {
         self.dispute_log.read().await.clone()
     }
+
+    /// Get all validated receipts for a specific client DID.
+    pub async fn get_receipts_for_did(&self, client_did: &str) -> Vec<ValidatedReceipt> {
+        self.validated_receipts
+            .read()
+            .await
+            .iter()
+            .filter(|r| r.client_did == client_did)
+            .cloned()
+            .collect()
+    }
+
+    /// Get dispute/rejection log entries for a specific client DID.
+    pub async fn get_disputes_for_did(&self, client_did: &str) -> Vec<DisputeLogEntry> {
+        self.dispute_log
+            .read()
+            .await
+            .iter()
+            .filter(|d| d.client_did == client_did)
+            .cloned()
+            .collect()
+    }
 }
 
 /// Spawn a background task that converts `MeshRoutingEvent`s into `Web4ManifestRoute` receipts.
