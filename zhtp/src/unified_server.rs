@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 // REMOVED: TCP/UDP no longer used - QUIC-only architecture
 // use tokio::net::{TcpListener, UdpSocket, TcpStream};
@@ -122,6 +122,9 @@ pub struct ZhtpUnifiedServer {
     // All "should we?" decisions delegated to runtime
     runtime: Arc<dyn crate::runtime::NodeRuntime>,
     runtime_orchestrator: Arc<crate::runtime::NodeRuntimeOrchestrator>,
+
+    // POUW reward calculator (shared for persistence)
+    pouw_calculator_arc: Arc<crate::pouw::RewardCalculator>,
 
     // Monitoring system (metrics, health, alerts, dashboard)
     monitoring_system: Option<MonitoringSystem>,
@@ -389,7 +392,7 @@ impl ZhtpUnifiedServer {
         // 2. Blockchain broadcast immediately sends blocks/transactions when channel is ready
         // 3. If identity is not initialized, broadcast_to_peers() will panic with configuration error
         let mesh_router_arc = Arc::new(mesh_router);
-        MeshRouter::set_broadcast_receiver(mesh_router_arc.clone(), broadcast_receiver);
+        mesh_router_arc.set_broadcast_receiver(broadcast_receiver).await;
         
         // Initialize WiFi Direct protocol
         if let Err(e) = wifi_router.initialize().await {
@@ -451,8 +454,23 @@ impl ZhtpUnifiedServer {
         );
         info!(" Content publisher initialized");
 
+        // Create PoUW shared infrastructure — created here so it can be wired into
+        // QuicHandler, Web4Handler, and MeshMessageRouter after handler registration.
+        let pouw_session_log = crate::pouw::new_shared_session_log();
+        let (pouw_routing_tx, pouw_routing_rx) =
+            tokio::sync::mpsc::channel::<lib_network::MeshRoutingEvent>(1024);
+
+        // Derive node DID for PoUW receipt attribution
+        let pouw_node_did = {
+            let mgr = identity_manager.read().await;
+            mgr.list_identities()
+                .first()
+                .map(|id| id.did.clone())
+                .unwrap_or_else(|| "did:zhtp:node".to_string())
+        };
+
         // Register comprehensive API handlers on ZHTP router (QUIC is the only entry point)
-        Self::register_api_handlers(
+        let (pouw_validator_arc, pouw_calculator_arc) = Self::register_api_handlers(
             &mut zhtp_router,
             blockchain.clone(),
             storage.clone(),
@@ -462,6 +480,8 @@ impl ZhtpUnifiedServer {
             dht_handler,
             domain_registry.clone(),
             content_publisher.clone(),
+            pouw_session_log.clone(),
+            pouw_node_did.clone(),
         ).await?;
 
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
@@ -476,12 +496,30 @@ impl ZhtpUnifiedServer {
         // No need to link MeshRouter's PeerRegistry - broadcast_to_peers() now calls
         // quic_protocol.broadcast_message() directly.
 
+        // Wire PoUW session log into QuicHandler for proof-of-presence recording
+        let quic_handler = quic_handler.with_pouw_session_log(pouw_session_log.clone());
+
         let quic_handler = Arc::new(quic_handler);
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
         mesh_router_arc.set_zhtp_router(zhtp_router_arc.clone()).await;
         info!(" ZHTP router registered with mesh router for UDP endpoint handling");
+
+        // Wire PoUW routing event channel into MeshMessageRouter
+        {
+            let mut mmr = mesh_router_arc.mesh_message_router.write().await;
+            mmr.pouw_routing_tx = Some(pouw_routing_tx);
+        }
+        info!("✓ PoUW routing event channel wired into MeshMessageRouter");
+
+        // Spawn background listener that converts MeshRoutingEvents → Web4ManifestRoute receipts
+        crate::pouw::spawn_mesh_routing_listener(
+            pouw_validator_arc.clone(),
+            pouw_routing_rx,
+            pouw_node_did.clone(),
+        );
+        info!("✓ PoUW mesh routing listener spawned (did: {})", pouw_node_did);
 
         // Initialize NodeRuntime - Policy Authority (NR-1: Policy Ownership)
         // Delegates all "should we?" decisions to runtime, server only executes "can we?" operations
@@ -522,6 +560,7 @@ impl ZhtpUnifiedServer {
             domain_registry,
             runtime,
             runtime_orchestrator,
+            pouw_calculator_arc: pouw_calculator_arc.clone(),
             monitoring_system,
             protocols_config,
             is_running: Arc::new(RwLock::new(false)),
@@ -640,6 +679,12 @@ impl ZhtpUnifiedServer {
             revenue_pools,
         );
 
+        // Wire identity store-and-forward for identity envelopes
+        let mut identity_store = lib_network::identity_store_forward::IdentityStoreForward::new(128);
+        identity_store.set_pouw_verifier(lib_network::identity_store_forward::IdentityStoreForward::default_pouw_verifier());
+        let identity_store = Arc::new(RwLock::new(identity_store));
+        message_handler.set_identity_store_forward(identity_store);
+
         // If integration layer has already registered a DHT payload sender, wire it now
         info!(" [QUIC] Wiring message handler for DHT integration");
         crate::integration::wire_message_handler(&mut message_handler).await;
@@ -669,7 +714,9 @@ impl ZhtpUnifiedServer {
         dht_handler: Arc<dyn ZhtpRequestHandler>,
         domain_registry: Arc<lib_network::web4::DomainRegistry>,
         content_publisher: Arc<lib_network::web4::ContentPublisher>,
-    ) -> Result<()> {
+        pouw_session_log: crate::pouw::SharedSessionLog,
+        node_did: String,
+    ) -> Result<(Arc<RwLock<crate::pouw::validation::ReceiptValidator>>, Arc<crate::pouw::RewardCalculator>)> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
         
         // Blockchain operations
@@ -777,6 +824,50 @@ impl ZhtpUnifiedServer {
         // Register DHT handler on ZHTP (already registered on mesh_router for pure UDP)
         zhtp_router.register_handler("/api/v1/dht".to_string(), dht_handler);
         
+        // PoUW validator (created early so it can be shared with Web4 handlers)
+        // Derive node key/id from identity manager; never use shared placeholder material.
+        let (pouw_node_key, pouw_node_id) = {
+            let manager = identity_manager.read().await;
+            let identities = manager.list_identities();
+            if let Some(identity) = identities.first() {
+                let node_key = identity
+                    .private_key
+                    .as_ref()
+                    .map(|k| {
+                        lib_crypto::hash_blake3(&k.dilithium_sk)
+                    })
+                    .unwrap_or_else(|| lib_crypto::hash_blake3(identity.did.as_bytes()));
+                let node_id = *identity.node_id.as_bytes();
+                (node_key, node_id)
+            } else {
+                warn!("No identity available for PoUW handler; using deterministic local fallback key/id");
+                let fallback = lib_crypto::hash_blake3(b"pouw-local-fallback");
+                (fallback, fallback)
+            }
+        };
+        let pouw_genesis_timestamp = {
+            let blockchain_guard = blockchain.read().await;
+            blockchain_guard
+                .blocks
+                .first()
+                .map(|b| b.header.timestamp)
+                .unwrap_or_else(|| {
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()
+                })
+        };
+        let pouw_generator_arc = std::sync::Arc::new(crate::pouw::ChallengeGenerator::new(
+            pouw_node_key,
+            pouw_node_id,
+        ));
+        let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc.clone(), identity_manager.clone())
+            .with_session_log(pouw_session_log.clone())
+            .with_min_identity_age(crate::api::handlers::pouw::MIN_IDENTITY_AGE_SECS);
+        let pouw_validator_arc: Arc<RwLock<crate::pouw::validation::ReceiptValidator>> =
+            Arc::new(RwLock::new(pouw_validator));
+
         // Web4 domain and content (handle async creation first)
         // Pass the shared domain_registry and content_publisher to avoid creating duplicates
         // This ensures domain registrations are visible to all handlers
@@ -785,7 +876,8 @@ impl ZhtpUnifiedServer {
             content_publisher.clone(),
             identity_manager.clone(),
             blockchain.clone()
-        ).await?;
+        ).await?
+        .with_pouw_validator(pouw_validator_arc.clone(), node_did.clone());
         let wallet_content_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::WalletContentHandler::new(Arc::clone(&wallet_content_manager))
         );
@@ -813,6 +905,13 @@ impl ZhtpUnifiedServer {
         let web4_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(web4_handler);
         zhtp_router.register_handler("/api/v1/web4".to_string(), web4_handler);
 
+        // Web4 gateway handler — Host-based routing (.sov/.zhtp domains in browser)
+        // Auto-emits Web4ContentServed (×3) and Web4ManifestRoute (×2) POUW receipts
+        let gateway_handler = crate::api::handlers::web4::Web4GatewayHandler::new(domain_registry.clone())
+            .with_pouw_validator(pouw_validator_arc.clone(), node_did.clone());
+        zhtp_router.register_handler("/api/v1/web4/gateway".to_string(), Arc::new(gateway_handler));
+        info!("✓ Web4 gateway handler registered");
+
         // Validator management
         let validator_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::ValidatorHandler::new(blockchain.clone())
@@ -825,26 +924,23 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/v1/protocol".to_string(), protocol_handler);
 
-        // Create RuntimeOrchestrator for handlers that need runtime access
-        let runtime_config = crate::config::NodeConfig::default();
-        let runtime = Arc::new(crate::runtime::RuntimeOrchestrator::new(runtime_config).await?);
+        // NOTE: NetworkHandler and MeshHandler require RuntimeOrchestrator, which is not
+        // available during UnifiedServer construction (it's created later in the startup flow).
+        // These handlers are registered via register_runtime_handlers() after the
+        // RuntimeOrchestrator becomes available.
 
-        // Network management (gas pricing, peers, sync metrics)
-        let network_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::NetworkHandler::new(runtime.clone())
+        // PoUW HTTP handler — uses the already-created validator Arc
+        let pouw_calculator = Arc::new(crate::pouw::RewardCalculator::new(pouw_genesis_timestamp));
+        let pouw_handler = crate::api::handlers::pouw::PouwHandler::new_with_calculator_arc(
+            pouw_generator_arc,
+            pouw_validator_arc.clone(),
+            pouw_calculator.clone(),
+            identity_manager.clone(),
         );
-        zhtp_router.register_handler("/api/v1/network".to_string(), network_handler.clone());
-        zhtp_router.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
-        zhtp_router.register_handler("/api/v1/blockchain/sync".to_string(), network_handler);
-
-        // Mesh blockchain operations
-        let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::MeshHandler::new(runtime.clone())
-        );
-        zhtp_router.register_handler("/api/v1/mesh".to_string(), mesh_handler);
+        zhtp_router.register_handler("/api/v1/pouw".to_string(), Arc::new(pouw_handler));
 
         info!("✅ All API handlers registered successfully on ZHTP router");
-        Ok(())
+        Ok((pouw_validator_arc, pouw_calculator))
     }
     
     /// Start the unified server on port 9333
@@ -867,6 +963,14 @@ impl ZhtpUnifiedServer {
         // Start block sync responder (serves blockchain data to peers requesting sync)
         // This enables mesh-based blockchain synchronization for new nodes joining the network
         crate::network_output_dispatcher::spawn_app_network_output_processor();
+
+        // Restore persisted POUW rewards from disk
+        let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(
+            std::path::Path::new(&crate::config::environment::Environment::default().blockchain_data_path())
+        );
+        if let Err(e) = self.pouw_calculator_arc.load_rewards_from_file(&rewards_path).await {
+            tracing::warn!("Failed to load POUW rewards from disk: {}", e);
+        }
 
         // STEP 1: Apply network isolation to block internet access
         info!(" Applying network isolation for ISP-free mesh operation...");
@@ -1051,7 +1155,6 @@ impl ZhtpUnifiedServer {
                 bluetooth_provider,
                 sync_coordinator_clone,
                 mesh_router_clone,
-                enable_bluetooth_from_config,
             ).await {
                 Ok(_) => {
                     // Store bluetooth protocol in mesh router for send_to_peer()
@@ -1325,6 +1428,35 @@ impl ZhtpUnifiedServer {
         }
         
         info!(" Bluetooth Classic periodic discovery task started (60s interval)");
+
+        // Periodic POUW rewards persistence (every 60 seconds)
+        {
+            let calc = self.pouw_calculator_arc.clone();
+            // Derive rewards.dat path alongside blockchain.dat
+            let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(
+                std::path::Path::new(&crate::config::environment::Environment::default().blockchain_data_path())
+            );
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                interval.tick().await; // skip the immediate first tick
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = calc.save_rewards_to_file(&rewards_path).await {
+                        tracing::warn!("Failed to save POUW rewards to disk: {}", e);
+                    }
+                }
+            });
+        }
+
+        // Spawn POUW reward payout task -- processes Pending rewards once per epoch
+        crate::pouw::spawn_pouw_payout_task(
+            self.pouw_calculator_arc.clone(),
+            self.blockchain.clone(),
+            std::path::PathBuf::from(crate::config::environment::Environment::default().blockchain_data_path()),
+            crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
+        );
+        info!("POUW reward payout task spawned (epoch interval: {}s)",
+              crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS);
         
         Ok(())
     }
@@ -1466,7 +1598,9 @@ impl ZhtpUnifiedServer {
 
     /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
     pub async fn set_blockchain_event_receiver(&mut self, receiver: Arc<dyn lib_network::blockchain_sync::BlockchainEventReceiver>) {
-        self.mesh_router.set_blockchain_event_receiver(receiver).await;
+        let _ = receiver;
+        // TODO(#916): wire MeshRouter to forward blockchain events via lib-network message handler.
+        warn!("set_blockchain_event_receiver is a temporary no-op until MeshRouter event forwarding (#916) is wired");
     }
     
     /// Configure sync manager for edge node mode (headers + ZK proofs only)
@@ -1474,7 +1608,43 @@ impl ZhtpUnifiedServer {
         info!("🔧 Configuring edge sync mode: max_headers={}", max_headers);
         self.mesh_router.set_edge_sync_mode(max_headers).await;
     }
-    
+
+    /// Register runtime-dependent handlers after RuntimeOrchestrator becomes available.
+    ///
+    /// NetworkHandler and MeshHandler require Arc<RuntimeOrchestrator> which is created
+    /// after UnifiedServer initialization, so these handlers are registered via this
+    /// deferred registration method.
+    pub async fn register_runtime_handlers(
+        &mut self,
+        runtime: Arc<crate::runtime::RuntimeOrchestrator>
+    ) -> Result<()> {
+        use crate::api::handlers::{NetworkHandler, MeshHandler};
+        use lib_protocols::zhtp::ZhtpRequestHandler;
+
+        info!("🔌 Registering runtime-dependent API handlers...");
+
+        // Get mutable access to the ZHTP router via QuicHandler getter
+        let zhtp_router = self.quic_handler.get_zhtp_router();
+        let mut router_write = zhtp_router.write().await;
+
+        // Network management (gas pricing, peers, sync metrics)
+        let network_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            NetworkHandler::new(runtime.clone())
+        );
+        router_write.register_handler("/api/v1/network".to_string(), network_handler.clone());
+        router_write.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
+        router_write.register_handler("/api/v1/blockchain/sync".to_string(), network_handler);
+
+        // Mesh blockchain operations
+        let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            MeshHandler::new(runtime)
+        );
+        router_write.register_handler("/api/v1/mesh".to_string(), mesh_handler);
+
+        info!("✅ Runtime-dependent handlers registered: NetworkHandler, MeshHandler");
+        Ok(())
+    }
+
     /// Get server information
     pub fn get_server_info(&self) -> (Uuid, u16) {
         (self.server_id, self.port)

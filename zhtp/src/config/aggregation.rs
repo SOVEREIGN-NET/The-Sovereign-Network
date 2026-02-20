@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::collections::HashMap;
-use super::{MeshMode, SecurityLevel, Environment, ConfigError, CliArgs};
+use super::{MeshMode, SecurityLevel, Environment, ConfigError, CliArgs, NodeType};
 
 /// Partial configuration for simple TOML files with optional sections
 /// This allows users to provide minimal config files with just the sections they need:
@@ -108,6 +108,15 @@ pub struct NodeConfig {
     pub security_level: SecurityLevel,
     pub environment: Environment,
     pub data_directory: String,
+
+    // Canonical node type - SINGLE SOURCE OF TRUTH
+    // Determined at startup from config and immutable thereafter.
+    // 
+    // - If explicitly set in config (e.g., `node_type = "relay"`), that value is used.
+    // - If not set, auto-derived as Validator/EdgeNode/FullNode based on config flags.
+    // - **Important**: Relay nodes MUST be explicitly configured (cannot be auto-derived).
+    #[serde(default)]
+    pub node_type: Option<NodeType>,
 
     // Node role determines what operations this node can perform
     // This is derived from validator_enabled and other config settings during aggregation
@@ -564,6 +573,9 @@ impl Default for NodeConfig {
             environment: Environment::Development,
             data_directory: "./lib-data".to_string(),
 
+            // node_type is not set by default; it will be derived during aggregation
+            node_type: None,
+
             // Default to Observer - can be overridden during aggregation
             // based on validator_enabled and storage configuration
             node_role: crate::runtime::node_runtime::NodeRole::Observer,
@@ -784,11 +796,19 @@ impl NodeConfig {
             );
             NodeRole::FullValidator
         } else {
-            // Validator is not enabled - determine if this is an edge node based on storage config
-            if self.storage_config.hosted_storage_gb == 0 {
-                // Edge node: no hosting storage, minimal blockchain storage
+            // Use the same edge criteria as derive_node_type() so NodeRole never diverges from
+            // NodeType when edge_mode is explicitly set in config.
+            let is_edge = Self::is_edge_node_config(
+                self.consensus_config.validator_enabled,
+                self.blockchain_config.edge_mode,
+                self.blockchain_config.smart_contracts,
+                self.storage_config.hosted_storage_gb,
+            );
+            if is_edge {
                 tracing::info!(
-                    "✓ Deriving NodeRole: validator_enabled=false, hosted_storage_gb=0 → LightNode (headers only)"
+                    "✓ Deriving NodeRole: edge detection (edge_mode={}, hosted_storage_gb={}) → LightNode (headers only)",
+                    self.blockchain_config.edge_mode,
+                    self.storage_config.hosted_storage_gb
                 );
                 NodeRole::LightNode
             } else {
@@ -800,6 +820,96 @@ impl NodeConfig {
                 NodeRole::Observer
             }
         };
+    }
+
+    /// Check if this node configuration represents an edge node
+    /// 
+    /// Unified edge detection: A node is considered an edge node if:
+    /// 1. NOT configured as a validator (validator_enabled=false)
+    /// 2. NOT running smart contracts
+    /// 3. Hosted storage is zero (no DHT/hosting) OR edge_mode is explicitly enabled
+    fn is_edge_node_config(
+        validator_enabled: bool,
+        edge_mode: bool,
+        smart_contracts: bool,
+        hosted_storage_gb: u64,
+    ) -> bool {
+        !validator_enabled && !smart_contracts && (edge_mode || hosted_storage_gb == 0)
+    }
+
+    /// Derive node type from configuration settings
+    ///
+    /// # Derivation Rules
+    /// 
+    /// This method determines the node type based on configuration flags when
+    /// `node_type` is not explicitly set in the config file.
+    ///
+    /// ## Explicit Configuration (Recommended for Relay)
+    /// 
+    /// If `node_type` is explicitly set in the config (e.g., `node_type = "relay"`),
+    /// that value is used as-is and no derivation occurs. **This is the ONLY way to
+    /// configure a Relay node** since Relay nodes have no distinguishing config flags
+    /// to derive from (they are routing-only with no blockchain state).
+    ///
+    /// ## Auto-Derivation Logic (when node_type is unset)
+    ///
+    /// When `node_type` is not explicitly configured, the following rules apply:
+    /// 
+    /// 1. **Validator**: If `validator_enabled = true`
+    ///    - Full blockchain + block production + consensus participation
+    ///    
+    /// 2. **EdgeNode**: If edge node criteria met:
+    ///    - `validator_enabled = false`
+    ///    - `edge_mode = true` OR minimal storage settings
+    ///    - Headers-only mode, ZK proof validation, no mining
+    ///    
+    /// 3. **FullNode**: Default fallback
+    ///    - Complete blockchain sync and verification
+    ///    - No block production (read-only consensus participation)
+    ///
+    /// **Note**: `NodeType::Relay` is never auto-derived and must be explicitly
+    /// configured via `node_type = "relay"` in the config file.
+    pub fn derive_node_type(&mut self) {
+        // Only derive if node_type was not explicitly set
+        if self.node_type.is_some() {
+            tracing::info!(
+                "✓ Using explicitly configured NodeType: {:?}",
+                self.node_type.as_ref().unwrap()
+            );
+            return;
+        }
+
+        // Logic for determining node type from config fields
+        // Note: Relay is NOT included here - it must be explicitly configured
+        let derived_type = if self.consensus_config.validator_enabled {
+            // Validator enabled => this is a Validator node
+            tracing::info!(
+                "✓ Deriving NodeType: validator_enabled=true → Validator (full blockchain + block production)"
+            );
+            NodeType::Validator
+        } else if Self::is_edge_node_config(
+            self.consensus_config.validator_enabled,
+            self.blockchain_config.edge_mode,
+            self.blockchain_config.smart_contracts,
+            self.storage_config.hosted_storage_gb,
+        ) {
+            // Edge node criteria met
+            tracing::info!(
+                "✓ Deriving NodeType: edge detection (validator={}, edge_mode={}, hosted_storage={}) → EdgeNode (headers only)",
+                self.consensus_config.validator_enabled,
+                self.blockchain_config.edge_mode,
+                self.storage_config.hosted_storage_gb
+            );
+            NodeType::EdgeNode
+        } else {
+            // Default: Full node (complete blockchain, no mining)
+            tracing::info!(
+                "✓ Deriving NodeType: default → FullNode (complete blockchain, read-only)"
+            );
+            NodeType::FullNode
+        };
+
+        self.node_type = Some(derived_type);
     }
 }
 
@@ -1030,6 +1140,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
     // Maps validator_enabled and storage settings to the appropriate NodeRole
     config.derive_node_role();
 
+    // CRITICAL: Derive canonical node type (SINGLE SOURCE OF TRUTH)
+    // This determines the node's primary mode: Full, Edge, Validator, or Relay
+    config.derive_node_type();
+
     Ok(config)
 }
 
@@ -1256,5 +1370,71 @@ bootstrap_peers = ["10.0.0.1:9334", "10.0.0.2:9334"]
 
         let network = partial.network_config.expect("network_config should be present");
         assert_eq!(network.bootstrap_peer_pins.len(), 2);
+    }
+
+    /// Test that explicitly configured Relay node type is preserved (Issue #454)
+    #[test]
+    fn test_derive_node_type_preserves_explicit_relay() {
+        // Create a minimal NodeConfig with explicitly set Relay type
+        let mut config = NodeConfig::default();
+        config.node_type = Some(NodeType::Relay);
+        
+        // Call derive_node_type - it should NOT overwrite the explicit Relay setting
+        config.derive_node_type();
+        
+        assert_eq!(
+            config.node_type,
+            Some(NodeType::Relay),
+            "derive_node_type must preserve explicitly configured Relay node type"
+        );
+    }
+
+    /// Test that Relay is never auto-derived (Issue #454)
+    #[test]
+    fn test_derive_node_type_never_produces_relay() {
+        // Test 1: Validator enabled -> should produce Validator, not Relay
+        let mut config1 = NodeConfig::default();
+        config1.node_type = None;
+        config1.consensus_config.validator_enabled = true;
+        config1.derive_node_type();
+        assert_eq!(config1.node_type, Some(NodeType::Validator));
+
+        // Test 2: Edge node config -> should produce EdgeNode, not Relay
+        let mut config2 = NodeConfig::default();
+        config2.node_type = None;
+        config2.consensus_config.validator_enabled = false;
+        config2.blockchain_config.edge_mode = true;
+        config2.derive_node_type();
+        assert_eq!(config2.node_type, Some(NodeType::EdgeNode));
+
+        // Test 3: Default config -> should produce FullNode, not Relay
+        let mut config3 = NodeConfig::default();
+        config3.node_type = None;
+        config3.consensus_config.validator_enabled = false;
+        config3.blockchain_config.edge_mode = false;
+        config3.derive_node_type();
+        assert_eq!(config3.node_type, Some(NodeType::FullNode));
+    }
+
+    /// Test that explicit node_type is always preserved during derivation
+    #[test]
+    fn test_derive_node_type_preserves_all_explicit_types() {
+        // Test each explicit node type is preserved
+        for explicit_type in [NodeType::Validator, NodeType::EdgeNode, NodeType::FullNode, NodeType::Relay] {
+            let mut config = NodeConfig::default();
+            config.node_type = Some(explicit_type);
+            
+            // Set conflicting config that would normally derive a different type
+            config.consensus_config.validator_enabled = true;
+            
+            config.derive_node_type();
+            
+            assert_eq!(
+                config.node_type,
+                Some(explicit_type),
+                "derive_node_type must preserve explicit {:?} configuration",
+                explicit_type
+            );
+        }
     }
 }

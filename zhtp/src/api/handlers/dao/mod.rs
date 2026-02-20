@@ -17,9 +17,11 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 use lib_consensus::{
     DaoProposalType, DaoVoteChoice,
 };
+use lib_blockchain::contracts::{DAORegistry, DAOEntry, TokenContract, derive_dao_id};
 use lib_blockchain::transaction::{DaoExecutionData, DaoProposalData, DaoVoteData, Transaction};
-use lib_blockchain::integration::crypto_integration::{Signature, SignatureAlgorithm};
+use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::types::Hash as BcHash;
+use lib_blockchain::types::dao::DAOType;
 use lib_identity::IdentityManager;
 use lib_crypto::Hash as CryptoHash;
 
@@ -106,18 +108,19 @@ fn validate_spending_proposal(title: &str, description: &str, recipient: &str, a
 /// Request types for DAO operations
 #[derive(Debug, Deserialize)]
 struct CreateProposalRequest {
-    proposer_identity_id: String,
+    proposer_identity_id: Option<String>,
     title: String,
     description: String,
-    proposal_type: String,
-    voting_period_days: u32,
+    proposal_type: Option<String>,
+    voting_period_days: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CastVoteRequest {
-    voter_identity_id: String,
+    voter_identity_id: Option<String>,
     proposal_id: String,
-    vote_choice: String,
+    vote_choice: Option<String>,
+    choice: Option<String>,
     justification: Option<String>,
 }
 
@@ -146,6 +149,42 @@ struct RevokeDelegateRequest {
     user_did: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct RegisterDaoRequest {
+    token_id: String,
+    class: String,
+    metadata_hash: String,
+    treasury_key_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DaoFactoryCreateRequest {
+    token_id: String,
+    class: String,
+    metadata_hash: String,
+    treasury_key_id: Option<String>,
+    governance_config_hash: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DaoRegistryRegisterEvent {
+    token_id: String,
+    class: String,
+    metadata_hash: String,
+    treasury_key_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct DaoFactoryCreateEventV1 {
+    schema_version: u8,
+    token_id: String,
+    class: String,
+    metadata_hash: String,
+    treasury_key_id: String,
+    dao_id: String,
+    governance_config_hash: Option<String>,
+}
+
 /// Spending proposal request (Issue #118)
 #[derive(Debug, Deserialize)]
 struct SpendingProposalRequest {
@@ -164,6 +203,9 @@ pub struct DaoHandler {
 impl DaoHandler {
     const DAO_DELEGATE_REGISTER_EXEC: &'static str = "dao_delegate_register_v1";
     const DAO_DELEGATE_REVOKE_EXEC: &'static str = "dao_delegate_revoke_v1";
+    const DAO_REGISTRY_REGISTER_EXEC: &'static str = "dao_registry_register_v1";
+    const DAO_FACTORY_CREATE_EXEC: &'static str = "dao_factory_create_v1";
+    const DAO_FACTORY_CREATE_SCHEMA_V1: u8 = 1;
 
     pub fn new(
         identity_manager: Arc<RwLock<IdentityManager>>,
@@ -242,6 +284,225 @@ impl DaoHandler {
             }
         }
         params
+    }
+
+    fn parse_hex_32(value: &str, field_name: &str) -> Result<[u8; 32]> {
+        let hex_str = value.strip_prefix("0x").unwrap_or(value);
+        let bytes = hex::decode(hex_str)
+            .map_err(|e| anyhow::anyhow!("Invalid {} hex: {}", field_name, e))?;
+        if bytes.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "{} must be exactly 32 bytes (64 hex chars)",
+                field_name
+            ));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        Ok(out)
+    }
+
+    fn parse_optional_hex_32(
+        value: Option<&str>,
+        field_name: &str,
+    ) -> Result<Option<[u8; 32]>> {
+        value.map(|v| Self::parse_hex_32(v, field_name)).transpose()
+    }
+
+    fn parse_dao_class(value: &str) -> Result<DAOType> {
+        // Accept both underscore ("non_profit") and hyphen ("non-profit") forms to
+        // align with DAOType::from_str() which uses underscore variants internally.
+        match value.trim().to_ascii_lowercase().as_str() {
+            "np" | "nonprofit" | "non-profit" | "non_profit" => Ok(DAOType::NP),
+            "fp" | "forprofit" | "for-profit" | "for_profit" => Ok(DAOType::FP),
+            _ => Err(anyhow::anyhow!("class must be 'np' or 'fp'")),
+        }
+    }
+
+    /// Create a `PublicKey` with only `key_id` populated for registry look-up purposes.
+    ///
+    /// **IMPORTANT**: The returned key has empty `dilithium_pk` and `kyber_pk` fields.
+    /// It must NOT be used for cryptographic verification. Its only valid use is as a
+    /// `HashMap` key within `DAORegistry`, where equality is determined by `key_id`.
+    fn public_key_from_key_id(key_id: [u8; 32]) -> PublicKey {
+        PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id,
+        }
+    }
+
+    fn is_registry_registration_authorized(
+        token_contract: &TokenContract,
+        identity_did: &str,
+        identity_key_id: &[u8; 32],
+    ) -> bool {
+        token_contract.creator.key_id == *identity_key_id
+            || token_contract.creator_did.as_deref() == Some(identity_did)
+    }
+
+    fn decode_registry_event_payload(
+        execution_type: &str,
+        event_bytes: &[u8],
+        block_height: u64,
+    ) -> Option<(String, String, String, String, Option<String>)> {
+        match execution_type {
+            Self::DAO_REGISTRY_REGISTER_EXEC => {
+                let Ok(event) = serde_json::from_slice::<DaoRegistryRegisterEvent>(event_bytes) else {
+                    tracing::warn!(
+                        "DAO registry replay: failed to deserialize legacy registry event payload at height {}",
+                        block_height
+                    );
+                    return None;
+                };
+                Some((
+                    event.token_id,
+                    event.class,
+                    event.metadata_hash,
+                    event.treasury_key_id,
+                    None,
+                ))
+            }
+            Self::DAO_FACTORY_CREATE_EXEC => {
+                let Ok(event) = serde_json::from_slice::<DaoFactoryCreateEventV1>(event_bytes) else {
+                    tracing::warn!(
+                        "DAO registry replay: failed to deserialize factory event payload at height {}",
+                        block_height
+                    );
+                    return None;
+                };
+                if event.schema_version != Self::DAO_FACTORY_CREATE_SCHEMA_V1 {
+                    tracing::warn!(
+                        "DAO registry replay: unsupported factory schema_version={} at height {}",
+                        event.schema_version,
+                        block_height
+                    );
+                    return None;
+                }
+                Some((
+                    event.token_id,
+                    event.class,
+                    event.metadata_hash,
+                    event.treasury_key_id,
+                    Some(event.dao_id),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn apply_registry_registration_from_tx(
+        registry: &mut DAORegistry,
+        tx: &Transaction,
+        block_height: u64,
+    ) {
+        if tx.transaction_type != lib_blockchain::types::transaction_type::TransactionType::DaoExecution {
+            return;
+        }
+        let Some(exec) = tx.dao_execution_data.as_ref() else {
+            return;
+        };
+        if exec.execution_type != Self::DAO_REGISTRY_REGISTER_EXEC
+            && exec.execution_type != Self::DAO_FACTORY_CREATE_EXEC
+        {
+            return;
+        }
+        let Some(event_bytes) = exec.multisig_signatures.first() else {
+            tracing::warn!("DAO registry replay: DaoExecution at height {} missing event payload", block_height);
+            return;
+        };
+        let Some((token_id_hex, class_str, metadata_hash_hex, treasury_key_id_hex, event_dao_id_hex)) =
+            Self::decode_registry_event_payload(&exec.execution_type, event_bytes, block_height)
+        else {
+            return;
+        };
+        let token_id = match Self::parse_hex_32(&token_id_hex, "token_id") {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("DAO registry replay: invalid token_id at height {}: {}", block_height, e);
+                return;
+            }
+        };
+        let metadata_hash = match Self::parse_hex_32(&metadata_hash_hex, "metadata_hash") {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("DAO registry replay: invalid metadata_hash at height {}: {}", block_height, e);
+                return;
+            }
+        };
+        let treasury_key_id = match Self::parse_hex_32(&treasury_key_id_hex, "treasury_key_id") {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("DAO registry replay: invalid treasury_key_id at height {}: {}", block_height, e);
+                return;
+            }
+        };
+        let class = match Self::parse_dao_class(&class_str) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("DAO registry replay: invalid class at height {}: {}", block_height, e);
+                return;
+            }
+        };
+        let token_addr = Self::public_key_from_key_id(token_id);
+        let treasury = Self::public_key_from_key_id(treasury_key_id);
+        let derived_dao_id = derive_dao_id(&token_addr, class, &treasury);
+        if let Some(dao_id_hex) = event_dao_id_hex.as_deref() {
+            match Self::parse_hex_32(dao_id_hex, "dao_id") {
+                Ok(event_dao_id) => {
+                    if event_dao_id != derived_dao_id {
+                        tracing::warn!(
+                            "DAO registry replay: dao_id mismatch at height {} (event={}, derived={})",
+                            block_height,
+                            hex::encode(event_dao_id),
+                            hex::encode(derived_dao_id)
+                        );
+                        return;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "DAO registry replay: invalid dao_id at height {}: {}",
+                        block_height,
+                        e
+                    );
+                    return;
+                }
+            }
+        }
+        let owner = tx.signature.public_key.clone();
+        // Duplicate registration is silently ignored for idempotent replay: the same
+        // DaoExecution transaction processed twice must not alter the registered state.
+        if let Err(e) = registry.register_dao(
+            token_addr,
+            class,
+            treasury,
+            metadata_hash,
+            owner,
+            block_height,
+        ) {
+            tracing::debug!(
+                "DAO registry replay: register_dao skipped at height {}: {}",
+                block_height,
+                e
+            );
+        }
+    }
+
+    /// Rebuild the DAO registry by replaying all DaoExecution transactions from the chain.
+    ///
+    /// **Performance note**: This is O(blocks × txs_per_block) and is called on every
+    /// registry query (list, get, register). As the chain grows this will become slow.
+    /// A future improvement should maintain the registry in a cached, incrementally-updated
+    /// in-memory structure (e.g. an `Arc<RwLock<DAORegistry>>`) rather than rebuilding from
+    /// scratch on each request.
+    fn rebuild_dao_registry(blockchain: &lib_blockchain::Blockchain) -> Result<DAORegistry> {
+        let mut registry = DAORegistry::new();
+        for block in &blockchain.blocks {
+            for tx in &block.transactions {
+                Self::apply_registry_registration_from_tx(&mut registry, tx, block.header.height);
+            }
+        }
+        Ok(registry)
     }
 
     /// Handle treasury status endpoint
@@ -355,19 +616,25 @@ impl DaoHandler {
         request_data: CreateProposalRequest,
     ) -> Result<ZhtpResponse> {
         let proposer_hex = hex::encode(authenticated_identity_id.as_bytes());
-        if request_data.proposer_identity_id.to_lowercase() != proposer_hex {
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "proposer_identity_id must match authenticated identity".to_string(),
-            ));
+        if let Some(ref proposer_id) = request_data.proposer_identity_id {
+            if proposer_id.to_lowercase() != proposer_hex {
+                return Ok(create_error_response(
+                    ZhtpStatus::Forbidden,
+                    "proposer_identity_id must match authenticated identity".to_string(),
+                ));
+            }
         }
 
-        let proposal_type = match Self::parse_proposal_type(&request_data.proposal_type) {
+        let proposal_type_raw = request_data
+            .proposal_type
+            .as_deref()
+            .unwrap_or("community_funding");
+        let proposal_type = match Self::parse_proposal_type(proposal_type_raw) {
             Ok(pt) => pt,
             Err(_) => {
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Invalid proposal type: {}", request_data.proposal_type),
+                    format!("Invalid proposal type: {}", proposal_type_raw),
                 ))
             }
         };
@@ -406,7 +673,7 @@ impl DaoHandler {
             title: request_data.title.clone(),
             description: request_data.description.clone(),
             proposal_type: Self::proposal_type_to_string(&proposal_type),
-            voting_period_blocks: (request_data.voting_period_days as u64).saturating_mul(14_400),
+            voting_period_blocks: (request_data.voting_period_days.unwrap_or(7) as u64).saturating_mul(14_400),
             quorum_required: Self::proposal_quorum_required(&proposal_type),
             execution_params: None,
             created_at: now,
@@ -759,11 +1026,13 @@ impl DaoHandler {
 
         let request_data: CastVoteRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-        if request_data.voter_identity_id.to_lowercase() != authenticated_hex {
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "voter_identity_id must match authenticated identity".to_string(),
-            ));
+        if let Some(ref voter_identity_id) = request_data.voter_identity_id {
+            if voter_identity_id.to_lowercase() != authenticated_hex {
+                return Ok(create_error_response(
+                    ZhtpStatus::Forbidden,
+                    "voter_identity_id must match authenticated identity".to_string(),
+                ));
+            }
         }
 
         let proposal_id = match Self::string_to_bc_hash(&request_data.proposal_id) {
@@ -776,12 +1045,18 @@ impl DaoHandler {
             }
         };
 
-        let vote_choice = match Self::parse_vote_choice(&request_data.vote_choice) {
+        let vote_choice_raw = request_data
+            .vote_choice
+            .as_deref()
+            .or(request_data.choice.as_deref())
+            .map(str::trim)
+            .ok_or_else(|| anyhow::anyhow!("Missing vote_choice (or legacy choice) field"))?;
+        let vote_choice = match Self::parse_vote_choice(vote_choice_raw) {
             Ok(choice) => choice,
             Err(_) => {
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Invalid vote choice: {}", request_data.vote_choice),
+                    format!("Invalid vote choice: {}", vote_choice_raw),
                 ))
             }
         };
@@ -887,8 +1162,8 @@ impl DaoHandler {
             "status": "success",
             "vote_id": Self::hash_to_string(&vote_id),
             "proposal_id": request_data.proposal_id,
-            "vote_choice": request_data.vote_choice,
-            "voter_id": request_data.voter_identity_id,
+            "vote_choice": vote_choice_raw,
+            "voter_id": request_data.voter_identity_id.unwrap_or(authenticated_hex),
             "message": "Vote submitted to mempool"
         });
         create_json_response(response)
@@ -1244,7 +1519,7 @@ impl DaoHandler {
 
         // Create treasury allocation proposal
         let create_request = CreateProposalRequest {
-            proposer_identity_id: proposer_id.to_string(),
+            proposer_identity_id: Some(proposer_id.to_string()),
             title: request_data.title.clone(),
             description: format!(
                 "{}\n\nAmount: {}\nRecipient: {}",
@@ -1252,8 +1527,8 @@ impl DaoHandler {
                 request_data.amount,
                 request_data.recipient
             ),
-            proposal_type: "treasury_allocation".to_string(),
-            voting_period_days: 7,
+            proposal_type: Some("treasury_allocation".to_string()),
+            voting_period_days: Some(7),
         };
 
         self.handle_create_proposal_from_identity(authenticated_identity_id, create_request).await
@@ -1315,6 +1590,295 @@ impl DaoHandler {
 
         create_json_response(response)
     }
+
+    async fn submit_dao_registry_execution(
+        &self,
+        request: &ZhtpRequest,
+        token_id: [u8; 32],
+        class: DAOType,
+        metadata_hash: [u8; 32],
+        governance_config_hash: Option<[u8; 32]>,
+        execution_type: &'static str,
+        memo: &'static [u8],
+        success_message: &'static str,
+    ) -> Result<ZhtpResponse> {
+        let session_token = match request.headers.get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+            Some(token) => token,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Missing or invalid Authorization header".to_string(),
+                ));
+            }
+        };
+
+        let client_ip = extract_client_ip(request);
+        let user_agent = extract_user_agent(request);
+        let session = self.session_manager
+            .validate_session(&session_token, &client_ip, &user_agent)
+            .await
+            .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
+
+        let identity_manager = self.identity_manager.read().await;
+        let identity = identity_manager
+            .get_identity(&session.identity_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Authenticated identity not found"))?;
+        drop(identity_manager);
+
+        // Always use the authenticated identity's public key as the treasury key.
+        // The optional `treasury_key_id` field in the request is accepted but ignored:
+        // since it must always equal the identity's key_id, accepting arbitrary values
+        // would only produce confusing Forbidden errors with no additional security benefit.
+        let treasury_key_id = identity.public_key.key_id;
+
+        let token_addr = Self::public_key_from_key_id(token_id);
+        let treasury = Self::public_key_from_key_id(treasury_key_id);
+        let dao_id = derive_dao_id(&token_addr, class, &treasury);
+
+        let event = if execution_type == Self::DAO_FACTORY_CREATE_EXEC {
+            serde_json::to_value(DaoFactoryCreateEventV1 {
+                schema_version: Self::DAO_FACTORY_CREATE_SCHEMA_V1,
+                token_id: hex::encode(token_id),
+                class: class.as_str().to_string(),
+                metadata_hash: hex::encode(metadata_hash),
+                treasury_key_id: hex::encode(treasury_key_id),
+                dao_id: hex::encode(dao_id),
+                governance_config_hash: governance_config_hash.map(hex::encode),
+            })?
+        } else {
+            json!({
+                "token_id": hex::encode(token_id),
+                "class": class.as_str(),
+                "metadata_hash": hex::encode(metadata_hash),
+                "treasury_key_id": hex::encode(treasury_key_id),
+            })
+        };
+        let event_bytes = serde_json::to_vec(&event)?;
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| anyhow::anyhow!("System time error: {}", e))?
+            .as_secs();
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+        let token_contract = blockchain.get_token_contract(&token_id).ok_or_else(|| {
+            anyhow::anyhow!("token_id does not match a deployed token contract")
+        })?;
+        if !Self::is_registry_registration_authorized(
+            &token_contract,
+            &identity.did,
+            &identity.public_key.key_id,
+        ) {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Only the token creator can register DAO metadata".to_string(),
+            ));
+        }
+        let existing_registry = Self::rebuild_dao_registry(&blockchain)?;
+        if existing_registry.get_dao_by_id(dao_id).is_ok() {
+            return Ok(create_error_response(
+                ZhtpStatus::Conflict,
+                "DAO already registered for this token/class/treasury tuple".to_string(),
+            ));
+        }
+        let height = blockchain.get_height();
+
+        let execution_data = DaoExecutionData {
+            proposal_id: BcHash::from_slice(&lib_crypto::hash_blake3(&[
+                execution_type.as_bytes(),
+                session.identity_id.as_bytes(),
+                &now.to_le_bytes(),
+                &token_id,
+            ].concat())),
+            executor: identity.did.clone(),
+            execution_type: execution_type.to_string(),
+            recipient: Some(hex::encode(dao_id)),
+            amount: None,
+            executed_at: now,
+            executed_at_height: height,
+            // NOTE: DaoExecutionData.multisig_signatures is documented as
+            // "Multi-sig signatures from approving validators". For DAO registry
+            // executions this field carries the serialized event payload (JSON)
+            // instead of actual validator signatures. If DaoExecutionData is
+            // extended with a dedicated execution/event data field in the future,
+            // this should be migrated accordingly.
+            multisig_signatures: vec![event_bytes],
+        };
+
+        let mut tx = Transaction::new_dao_execution(
+            execution_data,
+            Vec::new(),
+            Vec::new(),
+            0,
+            Signature {
+                signature: Vec::new(),
+                public_key: identity.public_key.clone(),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: now,
+            },
+            memo.to_vec(),
+        );
+
+        if let Some(private_key) = identity.private_key.clone() {
+            let keypair = lib_crypto::KeyPair {
+                public_key: identity.public_key.clone(),
+                private_key,
+            };
+            let sig = lib_crypto::sign_message(&keypair, tx.signing_hash().as_bytes())
+                .map_err(|e| anyhow::anyhow!("Failed to sign dao transaction: {}", e))?;
+            tx.signature.signature = sig.signature;
+        } else {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Identity private key unavailable on node".to_string(),
+            ));
+        }
+
+        blockchain
+            .add_pending_transaction(tx)
+            .map_err(|e| anyhow::anyhow!("Failed to submit dao transaction: {}", e))?;
+
+        create_json_response(json!({
+            "status": "success",
+            "dao_id": hex::encode(dao_id),
+            "token_id": hex::encode(token_id),
+            "class": class.as_str(),
+            "execution_type": execution_type,
+            "message": success_message
+        }))
+    }
+
+    /// Handle POST /api/v1/dao/registry/register
+    async fn handle_register_dao(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let req: RegisterDaoRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+        let _legacy_treasury_hint = req.treasury_key_id.as_deref();
+
+        let token_id = Self::parse_hex_32(&req.token_id, "token_id")?;
+        if token_id == [0u8; 32] {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "token_id must be non-zero".to_string(),
+            ));
+        }
+        let class = Self::parse_dao_class(&req.class)?;
+        let metadata_hash = Self::parse_hex_32(&req.metadata_hash, "metadata_hash")?;
+        if metadata_hash.iter().all(|&b| b == 0) {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "metadata_hash must be non-zero".to_string(),
+            ));
+        }
+
+        self.submit_dao_registry_execution(
+            request,
+            token_id,
+            class,
+            metadata_hash,
+            None,
+            Self::DAO_REGISTRY_REGISTER_EXEC,
+            b"dao:registry:register",
+            "DAO registry registration submitted to mempool",
+        ).await
+    }
+
+    /// Handle POST /api/v1/dao/factory/create
+    async fn handle_factory_create_dao(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let req: DaoFactoryCreateRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+        let _legacy_treasury_hint = req.treasury_key_id.as_deref();
+
+        let token_id = Self::parse_hex_32(&req.token_id, "token_id")?;
+        if token_id == [0u8; 32] {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "token_id must be non-zero".to_string(),
+            ));
+        }
+        let class = Self::parse_dao_class(&req.class)?;
+        let metadata_hash = Self::parse_hex_32(&req.metadata_hash, "metadata_hash")?;
+        if metadata_hash.iter().all(|&b| b == 0) {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "metadata_hash must be non-zero".to_string(),
+            ));
+        }
+        let governance_config_hash = Self::parse_optional_hex_32(
+            req.governance_config_hash.as_deref(),
+            "governance_config_hash",
+        )?;
+        if governance_config_hash
+            .as_ref()
+            .is_some_and(|v| v.iter().all(|&b| b == 0))
+        {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "governance_config_hash must be non-zero when provided".to_string(),
+            ));
+        }
+
+        self.submit_dao_registry_execution(
+            request,
+            token_id,
+            class,
+            metadata_hash,
+            governance_config_hash,
+            Self::DAO_FACTORY_CREATE_EXEC,
+            b"dao:factory:create",
+            "DAO factory create transaction submitted to mempool",
+        ).await
+    }
+
+    /// Handle GET /api/v1/dao/registry/list
+    async fn handle_list_registered_daos(&self) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+        let registry = Self::rebuild_dao_registry(&blockchain)?;
+        let entries = registry
+            .list_daos_with_ids()
+            .map_err(|e| anyhow::anyhow!("Failed to list DAO registry entries: {}", e))?;
+
+        let daos: Vec<_> = entries
+            .into_iter()
+            .map(|(entry, dao_id)| dao_entry_json(entry, dao_id))
+            .collect();
+
+        create_json_response(json!({
+            "status": "success",
+            "count": daos.len(),
+            "daos": daos
+        }))
+    }
+
+    /// Handle GET /api/v1/dao/registry/{dao_id}
+    async fn handle_get_registered_dao(&self, dao_id_hex: &str) -> Result<ZhtpResponse> {
+        let dao_id = Self::parse_hex_32(dao_id_hex, "dao_id")?;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+        let registry = Self::rebuild_dao_registry(&blockchain)?;
+        let entry = registry
+            .get_dao_by_id(dao_id)
+            .map_err(|_| anyhow::anyhow!("DAO not found"))?;
+
+        create_json_response(json!({
+            "status": "success",
+            "dao": dao_entry_json(entry, dao_id)
+        }))
+    }
+}
+
+fn dao_entry_json(entry: DAOEntry, dao_id: [u8; 32]) -> serde_json::Value {
+    json!({
+        "dao_id": hex::encode(dao_id),
+        "token_key_id": hex::encode(entry.token_addr.key_id),
+        "class": entry.class.as_str(),
+        "treasury_key_id": hex::encode(entry.treasury.key_id),
+        "owner_key_id": hex::encode(entry.owner.key_id),
+        "metadata_hash": hex::encode(entry.metadata_hash),
+        "created_at": entry.created_at,
+    })
 }
 
 #[async_trait::async_trait]
@@ -1382,6 +1946,18 @@ impl ZhtpRequestHandler for DaoHandler {
             (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", "spending"]) => {
                 self.handle_spending_proposal(&request).await.map_err(anyhow::Error::from)
             },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "registry", "register"]) => {
+                self.handle_register_dao(&request).await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "factory", "create"]) => {
+                self.handle_factory_create_dao(&request).await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Get, ["api", "v1", "dao", "registry", "list"]) => {
+                self.handle_list_registered_daos().await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Get, ["api", "v1", "dao", "registry", dao_id]) => {
+                self.handle_get_registered_dao(dao_id).await.map_err(anyhow::Error::from)
+            },
 
             // Administrative endpoints
             (ZhtpMethod::Post, ["api", "v1", "dao", "admin", "process-expired"]) => {
@@ -1401,5 +1977,240 @@ impl ZhtpRequestHandler for DaoHandler {
     
     fn priority(&self) -> u32 {
         100
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CastVoteRequest, CreateProposalRequest, DaoHandler, DAOType};
+    use lib_blockchain::contracts::{derive_dao_id, DAORegistry, TokenContract};
+    use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+    use lib_blockchain::transaction::{DaoExecutionData, Transaction};
+    use lib_blockchain::types::Hash as BcHash;
+    use serde_json::json;
+
+    fn test_public_key(seed: u8) -> PublicKey {
+        PublicKey {
+            dilithium_pk: vec![seed; 32],
+            kyber_pk: vec![seed.wrapping_add(1); 32],
+            key_id: [seed; 32],
+        }
+    }
+
+    fn dao_registry_tx(event: serde_json::Value, execution_type: &str, signer_seed: u8) -> Transaction {
+        let now = 42_u64;
+        let execution_data = DaoExecutionData {
+            proposal_id: BcHash::from_slice(&lib_crypto::hash_blake3(
+                format!("registry:{execution_type}:{signer_seed}:{now}").as_bytes(),
+            )),
+            executor: "did:zhtp:test".to_string(),
+            execution_type: execution_type.to_string(),
+            recipient: None,
+            amount: None,
+            executed_at: now,
+            executed_at_height: 99,
+            multisig_signatures: vec![serde_json::to_vec(&event).expect("event json")],
+        };
+
+        Transaction::new_dao_execution(
+            execution_data,
+            Vec::new(),
+            Vec::new(),
+            0,
+            Signature {
+                signature: Vec::new(),
+                public_key: test_public_key(signer_seed),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: now,
+            },
+            b"test:dao:registry".to_vec(),
+        )
+    }
+
+    #[test]
+    fn create_proposal_accepts_legacy_cli_shape() {
+        let body = r#"{
+            "title":"Legacy title",
+            "description":"Legacy description",
+            "orchestrated":true
+        }"#;
+
+        let parsed: CreateProposalRequest = serde_json::from_str(body).expect("legacy propose payload should parse");
+        assert_eq!(parsed.title, "Legacy title");
+        assert!(parsed.proposer_identity_id.is_none());
+        assert!(parsed.proposal_type.is_none());
+        assert!(parsed.voting_period_days.is_none());
+    }
+
+    #[test]
+    fn create_proposal_accepts_canonical_shape() {
+        let body = r#"{
+            "proposer_identity_id":"abc",
+            "title":"Canonical title",
+            "description":"Canonical description",
+            "proposal_type":"treasury_allocation",
+            "voting_period_days":7
+        }"#;
+
+        let parsed: CreateProposalRequest = serde_json::from_str(body).expect("canonical propose payload should parse");
+        assert_eq!(parsed.proposal_type.as_deref(), Some("treasury_allocation"));
+        assert_eq!(parsed.voting_period_days, Some(7));
+    }
+
+    #[test]
+    fn cast_vote_accepts_legacy_and_canonical_fields() {
+        let legacy_body = r#"{
+            "proposal_id":"deadbeef",
+            "choice":" yes ",
+            "orchestrated":true
+        }"#;
+        let canonical_body = r#"{
+            "voter_identity_id":"abc",
+            "proposal_id":"deadbeef",
+            "vote_choice":"no"
+        }"#;
+
+        let legacy: CastVoteRequest = serde_json::from_str(legacy_body).expect("legacy vote payload should parse");
+        let canonical: CastVoteRequest = serde_json::from_str(canonical_body).expect("canonical vote payload should parse");
+
+        assert_eq!(legacy.choice.as_deref(), Some(" yes "));
+        assert_eq!(legacy.vote_choice, None);
+        assert_eq!(canonical.vote_choice.as_deref(), Some("no"));
+        assert_eq!(canonical.choice, None);
+    }
+
+    #[test]
+    fn dao_registry_parse_hex_32_validates_length_and_prefix() {
+        let parsed = DaoHandler::parse_hex_32(&format!("0x{}", "ab".repeat(32)), "token_id")
+            .expect("prefixed hex should parse");
+        assert_eq!(parsed, [0xab; 32]);
+
+        let err = DaoHandler::parse_hex_32("01", "token_id").expect_err("short hex must fail");
+        assert!(err.to_string().contains("32 bytes"));
+    }
+
+    #[test]
+    fn dao_registry_authorization_accepts_creator_key_or_creator_did() {
+        let creator = test_public_key(7);
+        let mut token = TokenContract::new(
+            [1; 32],
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            false,
+            0,
+            creator.clone(),
+        );
+
+        assert!(DaoHandler::is_registry_registration_authorized(
+            &token,
+            "did:zhtp:alice",
+            &creator.key_id,
+        ));
+        assert!(!DaoHandler::is_registry_registration_authorized(
+            &token,
+            "did:zhtp:alice",
+            &[9; 32],
+        ));
+
+        token.creator_did = Some("did:zhtp:alice".to_string());
+        assert!(DaoHandler::is_registry_registration_authorized(
+            &token,
+            "did:zhtp:alice",
+            &[9; 32],
+        ));
+    }
+
+    #[test]
+    fn dao_registry_replay_applies_only_valid_registration_events() {
+        let mut registry = DAORegistry::new();
+        let factory_expected_dao_id = derive_dao_id(
+            &DaoHandler::public_key_from_key_id([10u8; 32]),
+            DAOType::FP,
+            &DaoHandler::public_key_from_key_id([12u8; 32]),
+        );
+        let valid = dao_registry_tx(
+            json!({
+                "token_id": hex::encode([1u8; 32]),
+                "class": "np",
+                "metadata_hash": hex::encode([2u8; 32]),
+                "treasury_key_id": hex::encode([3u8; 32]),
+            }),
+            "dao_registry_register_v1",
+            9,
+        );
+        let invalid_class = dao_registry_tx(
+            json!({
+                "token_id": hex::encode([4u8; 32]),
+                "class": "unknown",
+                "metadata_hash": hex::encode([5u8; 32]),
+                "treasury_key_id": hex::encode([6u8; 32]),
+            }),
+            "dao_registry_register_v1",
+            8,
+        );
+        let wrong_exec = dao_registry_tx(
+            json!({
+                "token_id": hex::encode([7u8; 32]),
+                "class": "np",
+                "metadata_hash": hex::encode([8u8; 32]),
+                "treasury_key_id": hex::encode([9u8; 32]),
+            }),
+            "dao_delegate_register_v1",
+            7,
+        );
+        let factory_valid = dao_registry_tx(
+            json!({
+                "schema_version": 1,
+                "token_id": hex::encode([10u8; 32]),
+                "class": "fp",
+                "metadata_hash": hex::encode([11u8; 32]),
+                "treasury_key_id": hex::encode([12u8; 32]),
+                "dao_id": hex::encode(factory_expected_dao_id),
+                "governance_config_hash": hex::encode([13u8; 32]),
+            }),
+            "dao_factory_create_v1",
+            6,
+        );
+        let factory_bad_dao_id = dao_registry_tx(
+            json!({
+                "schema_version": 1,
+                "token_id": hex::encode([14u8; 32]),
+                "class": "np",
+                "metadata_hash": hex::encode([15u8; 32]),
+                "treasury_key_id": hex::encode([16u8; 32]),
+                "dao_id": hex::encode([99u8; 32]),
+                "governance_config_hash": hex::encode([17u8; 32]),
+            }),
+            "dao_factory_create_v1",
+            5,
+        );
+
+        DaoHandler::apply_registry_registration_from_tx(&mut registry, &valid, 120);
+        DaoHandler::apply_registry_registration_from_tx(&mut registry, &invalid_class, 121);
+        DaoHandler::apply_registry_registration_from_tx(&mut registry, &wrong_exec, 122);
+        DaoHandler::apply_registry_registration_from_tx(&mut registry, &factory_valid, 123);
+        DaoHandler::apply_registry_registration_from_tx(&mut registry, &factory_bad_dao_id, 124);
+
+        let entries = registry
+            .list_daos_with_ids()
+            .expect("registry should list entries");
+        assert_eq!(entries.len(), 2);
+        let (entry_legacy, dao_id_legacy) = entries[0].clone();
+        let expected_legacy = derive_dao_id(
+            &DaoHandler::public_key_from_key_id([1u8; 32]),
+            DAOType::NP,
+            &DaoHandler::public_key_from_key_id([3u8; 32]),
+        );
+        assert_eq!(dao_id_legacy, expected_legacy);
+        assert_eq!(entry_legacy.owner.key_id, [9u8; 32]);
+        assert_eq!(entry_legacy.created_at, 120);
+
+        let (entry_factory, dao_id_factory) = entries[1].clone();
+        assert_eq!(dao_id_factory, factory_expected_dao_id);
+        assert_eq!(entry_factory.class, DAOType::FP);
+        assert_eq!(entry_factory.owner.key_id, [6u8; 32]);
+        assert_eq!(entry_factory.created_at, 123);
     }
 }

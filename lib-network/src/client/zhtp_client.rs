@@ -113,19 +113,46 @@ impl ZhtpClient {
         transport.max_idle_timeout(Some(std::time::Duration::from_secs(60).try_into()?));
         let transport = Arc::new(transport);
 
-        // Create nonce cache
-        let nonce_db_path = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".zhtp")
-            .join("client_nonce_cache");
+        // Create nonce cache.
+        // Bootstrap mode uses a temporary path to avoid epoch-mismatch errors with any
+        // pre-existing nonce cache (which was written with the real network epoch).
+        let nonce_db_path = if config.allow_bootstrap {
+            std::env::temp_dir().join(format!(
+                "zhtp_bootstrap_nonce_{}", std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+            ))
+        } else {
+            dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".zhtp")
+                .join("client_nonce_cache")
+        };
 
         // Safely get parent directory, defaulting to current dir if path is malformed
         if let Some(parent) = nonce_db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Derive network epoch from genesis hash (uses environment-appropriate fallback)
-        let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
+        // Derive network epoch from genesis hash.
+        // Bootstrap mode uses chain_id=0 as a safe fallback: the node has no local chain yet
+        // and needs a QUIC connection specifically to fetch genesis from a peer. Requiring genesis
+        // before bootstrapping creates an unresolvable chicken-and-egg deadlock.
+        let network_epoch = if config.allow_bootstrap {
+            match crate::handshake::NetworkEpoch::from_global_or_fail() {
+                Ok(epoch) => epoch,
+                Err(_) => {
+                    warn!(
+                        "Network genesis not yet available (bootstrap mode) - \
+                         using chain_id=0 for initial sync connection"
+                    );
+                    crate::handshake::NetworkEpoch::from_chain_id(0)
+                }
+            }
+        } else {
+            crate::handshake::NetworkEpoch::from_global_or_fail()?
+        };
         let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
             .context("Failed to open nonce cache")?;
 

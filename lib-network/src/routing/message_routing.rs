@@ -22,6 +22,21 @@ use lib_identity::NodeId;
 /// Maximum cached routes to bound memory and prevent cache abuse
 const MAX_ROUTE_CACHE_ENTRIES: usize = 1024;
 
+/// Event emitted by MeshMessageRouter on successful message delivery.
+///
+/// Subscribers (e.g., POUW reward layer) can convert these into receipts.
+#[derive(Debug, Clone)]
+pub struct MeshRoutingEvent {
+    /// Approximate message payload size in bytes
+    pub message_size: u64,
+    /// Number of hops in the delivery route
+    pub hop_count: u8,
+    /// Optional sender node DID (may be unavailable for anonymous messages)
+    pub sender_did: Option<String>,
+    /// Unix timestamp of delivery
+    pub delivered_at: u64,
+}
+
 /// Intelligent mesh message router
 ///
 /// **MIGRATION (Ticket #149):** Now uses unified PeerRegistry instead of separate mesh_connections.
@@ -50,6 +65,8 @@ pub struct MeshMessageRouter {
     pub mesh_server: Option<Arc<RwLock<crate::mesh::server::ZhtpMeshServer>>>,
     /// Transport manager for enforcing secure handler selection
     pub transport_manager: Option<TransportManager>,
+    /// Optional event sink for POUW receipt generation on successful message delivery
+    pub pouw_routing_tx: Option<tokio::sync::mpsc::Sender<MeshRoutingEvent>>,
 }
 
 /// Routing table for mesh network
@@ -213,7 +230,20 @@ impl MeshMessageRouter {
             route_cache: Arc::new(RwLock::new(HashMap::new())),
             mesh_server: None, // Can be set later with set_mesh_server()
             transport_manager: None,
+            pouw_routing_tx: None,
         }
+    }
+
+    /// Attach a POUW routing event sender.
+    ///
+    /// The receiver should be processed by the POUW reward layer in zhtp to
+    /// convert routing events into `Web4ManifestRoute` receipts.
+    pub fn with_pouw_routing_tx(
+        mut self,
+        tx: tokio::sync::mpsc::Sender<MeshRoutingEvent>,
+    ) -> Self {
+        self.pouw_routing_tx = Some(tx);
+        self
     }
 
     /// DEPRECATED (Ticket #149): No longer needed with PeerRegistry
@@ -357,6 +387,12 @@ impl MeshMessageRouter {
             ZhtpMeshMessage::NewBlock { block, .. } => block.len() + 100,
             ZhtpMeshMessage::NewTransaction { transaction, .. } => transaction.len() + 100,
             ZhtpMeshMessage::UbiDistribution { proof, .. } => proof.len() + 100,
+            ZhtpMeshMessage::IdentityEnvelope(envelope) => {
+                envelope.payloads.iter().map(|p| p.ciphertext.len() + p.device_id.len()).sum::<usize>() + 128
+            },
+            ZhtpMeshMessage::IdentityDeliveryAck(ack) => {
+                ack.recipient_did.len() + ack.device_id.len() + 64
+            },
             _ => 256, // Default estimate for other message types
         }
     }
@@ -414,6 +450,16 @@ impl MeshMessageRouter {
         self.execute_routing(message_id, message, route).await?;
         
         Ok(message_id)
+    }
+
+    /// Route identity envelope (per-device fan-out) to destination
+    pub async fn route_identity_envelope(
+        &self,
+        envelope: lib_protocols::types::IdentityEnvelope,
+        destination: PublicKey,
+        sender: PublicKey,
+    ) -> Result<u64> {
+        self.route_message(ZhtpMeshMessage::IdentityEnvelope(envelope), destination, sender).await
     }
     
     /// Find optimal route to destination
@@ -771,6 +817,21 @@ impl MeshMessageRouter {
             }
         }
         
+        // Emit POUW routing event for reward attribution (non-blocking, fire-and-forget)
+        if let Some(tx) = &self.pouw_routing_tx {
+            let event = MeshRoutingEvent {
+                message_size: Self::estimate_message_size(&message) as u64,
+                hop_count: route.len().min(255) as u8,
+                sender_did: None, // DID not available at this routing layer; set by caller when known
+                delivered_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            };
+            // try_send: drop event silently if receiver has closed or buffer is full
+            let _ = tx.try_send(event);
+        }
+
         info!("Message {} successfully delivered", message_id);
         Ok(())
     }

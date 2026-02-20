@@ -8,8 +8,7 @@
 use std::sync::Arc;
 
 use crate::storage::{
-    AccountState, Address, BlockchainStore, BlockHash, OutPoint,
-    StorageResult, TokenId, Utxo,
+    AccountState, Address, BlockHash, BlockchainStore, OutPoint, StorageResult, TokenId, Utxo,
 };
 
 /// Read-only view of blockchain state
@@ -42,7 +41,9 @@ impl<'a> StateView<'a> {
 
     /// Get block hash by height
     pub fn get_block_hash(&self, height: u64) -> StorageResult<Option<BlockHash>> {
-        Ok(self.store.get_block_by_height(height)?
+        Ok(self
+            .store
+            .get_block_by_height(height)?
             .map(|b| BlockHash::new(b.header.block_hash.as_array())))
     }
 
@@ -66,9 +67,7 @@ impl<'a> StateView<'a> {
     ///
     /// Returns a Vec of Option<Utxo> in the same order as input.
     pub fn lookup_utxos(&self, outpoints: &[OutPoint]) -> StorageResult<Vec<Option<Utxo>>> {
-        outpoints.iter()
-            .map(|op| self.store.get_utxo(op))
-            .collect()
+        outpoints.iter().map(|op| self.store.get_utxo(op)).collect()
     }
 
     // =========================================================================
@@ -111,7 +110,9 @@ impl<'a> StateView<'a> {
 
     /// Get account nonce (0 if account doesn't exist)
     pub fn get_nonce(&self, addr: &Address) -> StorageResult<u64> {
-        Ok(self.store.get_account(addr)?
+        Ok(self
+            .store
+            .get_account(addr)?
             .and_then(|a| a.wallet.map(|w| w.nonce))
             .unwrap_or(0))
     }
@@ -119,6 +120,17 @@ impl<'a> StateView<'a> {
     /// Check if account exists
     pub fn account_exists(&self, addr: &Address) -> StorageResult<bool> {
         Ok(self.store.get_account(addr)?.is_some())
+    }
+
+    // =========================================================================
+    // Token Nonce Queries (for replay protection)
+    // =========================================================================
+
+    /// Get token nonce for a sender address
+    ///
+    /// Returns 0 if no nonce has been set (first transaction).
+    pub fn get_token_nonce(&self, token: &TokenId, sender: &Address) -> StorageResult<u64> {
+        self.store.get_token_nonce(token, sender)
     }
 }
 

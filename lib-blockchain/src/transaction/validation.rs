@@ -2,10 +2,14 @@
 //!
 //! Provides comprehensive validation for ZHTP blockchain transactions.
 
-use crate::transaction::core::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData};
-use crate::types::{Hash, transaction_type::TransactionType, ContractCall, ContractType};
-use crate::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
+use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use crate::integration::zk_integration::is_valid_proof_structure;
+use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
+use crate::transaction::token_creation::TokenCreationPayloadV1;
+use crate::transaction::core::{
+    IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
+};
+use crate::types::{transaction_type::TransactionType, ContractCall, ContractType, Hash};
 
 /// Transaction validation error types
 #[derive(Debug, Clone)]
@@ -46,7 +50,9 @@ impl std::fmt::Display for ValidationError {
             ValidationError::InvalidOutputs => write!(f, "Invalid transaction outputs"),
             ValidationError::MissingRequiredData => write!(f, "Missing required transaction data"),
             ValidationError::InvalidTransactionType => write!(f, "Invalid transaction type"),
-            ValidationError::UnregisteredSender => write!(f, "Transaction from unregistered sender identity"),
+            ValidationError::UnregisteredSender => {
+                write!(f, "Transaction from unregistered sender identity")
+            }
             ValidationError::InvalidMemo => write!(f, "Invalid or missing transaction memo"),
             ValidationError::MissingWalletData => write!(f, "Missing wallet data in transaction"),
             ValidationError::InvalidWalletId => write!(f, "Invalid wallet ID"),
@@ -94,8 +100,11 @@ impl TransactionValidator {
     pub fn validate_transaction(&self, transaction: &Transaction) -> ValidationResult {
         // Check if this is a system transaction (empty inputs = coinbase-style)
         let mut is_system_transaction = transaction.inputs.is_empty();
-        // TokenTransfer must pay fees even with empty inputs
-        if matches!(transaction.transaction_type, TransactionType::TokenTransfer) {
+        // Typed token operations must pay fees even with empty inputs.
+        if matches!(
+            transaction.transaction_type,
+            TransactionType::TokenTransfer | TransactionType::TokenCreation
+        ) {
             is_system_transaction = false;
         }
 
@@ -109,55 +118,64 @@ impl TransactionValidator {
                     self.validate_transfer_transaction(transaction)?;
                 }
                 // System transactions with Transfer type are allowed (UBI/rewards)
-            },
-            TransactionType::IdentityRegistration => self.validate_identity_transaction(transaction)?,
+            }
+            TransactionType::IdentityRegistration => {
+                self.validate_identity_transaction(transaction)?
+            }
             TransactionType::IdentityUpdate => self.validate_identity_transaction(transaction)?,
-            TransactionType::IdentityRevocation => self.validate_identity_transaction(transaction)?,
-            TransactionType::ContractDeployment => self.validate_contract_transaction(transaction)?,
-            TransactionType::ContractExecution => self.validate_contract_transaction(transaction)?,
-            TransactionType::SessionCreation | TransactionType::SessionTermination |
-            TransactionType::ContentUpload => {
+            TransactionType::IdentityRevocation => {
+                self.validate_identity_transaction(transaction)?
+            }
+            TransactionType::ContractDeployment => {
+                self.validate_contract_transaction(transaction)?
+            }
+            TransactionType::ContractExecution => {
+                self.validate_contract_transaction(transaction)?
+            }
+            TransactionType::SessionCreation
+            | TransactionType::SessionTermination
+            | TransactionType::ContentUpload => {
                 // Audit transactions - validate they have proper memo data
                 if transaction.memo.is_empty() {
                     return Err(ValidationError::InvalidMemo);
                 }
-            },
+            }
             TransactionType::UbiDistribution => {
                 // UBI distribution is a token transaction - validate with proper token logic
                 self.validate_token_transaction(transaction)?;
                 if transaction.memo.is_empty() {
                     return Err(ValidationError::InvalidMemo);
                 }
-            },
+            }
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
                 self.validate_wallet_registration_transaction(transaction)?;
-            },
+            }
             TransactionType::WalletUpdate => {
                 self.validate_wallet_update_transaction(transaction, is_system_transaction)?;
-            },
+            }
             TransactionType::ValidatorRegistration => {
                 // Validator registration - validate validator data exists
                 if transaction.validator_data.is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
-            },
+            }
             TransactionType::ValidatorUpdate => {
                 // Validator update - validate validator data exists
                 if transaction.validator_data.is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
-            },
+            }
             TransactionType::ValidatorUnregister => {
                 // Validator unregister - validate validator data exists
                 if transaction.validator_data.is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
-            },
-            TransactionType::DaoProposal |
-            TransactionType::DaoVote |
-            TransactionType::DaoExecution |
-            TransactionType::DifficultyUpdate => {
+            }
+            TransactionType::DaoProposal
+            | TransactionType::DaoVote
+            | TransactionType::DaoExecution
+            | TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
             }
 
@@ -180,6 +198,8 @@ impl TransactionValidator {
                 if transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidOutputs);
                 }
+                // Validate sender authorization: signer must match 'from' address
+                self.validate_token_transfer_sender_authorization(transaction)?;
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validate governance_config_data exists
@@ -188,7 +208,26 @@ impl TransactionValidator {
                 }
             }
             TransactionType::TokenMint => {
-                // System-controlled token mint - validation handled at consensus layer
+                // Validate minting authority and supply cap
+                self.validate_token_mint(transaction)?;
+            }
+            TransactionType::TokenCreation
+            => {
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+                TokenCreationPayloadV1::decode_memo(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
+                // AMM/Token operations - not yet fully implemented
+                // TODO: Add validation for these transaction types
             }
         }
 
@@ -196,7 +235,12 @@ impl TransactionValidator {
         // - Historically, "system transactions" (empty inputs) skipped signatures.
         // - WalletUpdate and TokenMint must always be signed (privileged state mutations).
         let require_signature = !is_system_transaction
-            || matches!(transaction.transaction_type, TransactionType::WalletUpdate | TransactionType::TokenMint);
+            || matches!(
+                transaction.transaction_type,
+                TransactionType::WalletUpdate
+                    | TransactionType::TokenMint
+                    | TransactionType::TokenCreation
+            );
         if require_signature {
             self.validate_signature(transaction)?;
         }
@@ -213,7 +257,11 @@ impl TransactionValidator {
     }
 
     /// Validate a transaction with explicit system transaction flag
-    pub fn validate_transaction_with_system_flag(&self, transaction: &Transaction, is_system_transaction: bool) -> ValidationResult {
+    pub fn validate_transaction_with_system_flag(
+        &self,
+        transaction: &Transaction,
+        is_system_transaction: bool,
+    ) -> ValidationResult {
         // Basic structure validation
         self.validate_basic_structure(transaction)?;
 
@@ -224,58 +272,67 @@ impl TransactionValidator {
                     self.validate_transfer_transaction(transaction)?;
                 }
                 // System transactions with Transfer type are allowed (UBI/rewards)
-            },
-            TransactionType::IdentityRegistration => self.validate_identity_transaction(transaction)?,
+            }
+            TransactionType::IdentityRegistration => {
+                self.validate_identity_transaction(transaction)?
+            }
             TransactionType::IdentityUpdate => self.validate_identity_transaction(transaction)?,
-            TransactionType::IdentityRevocation => self.validate_identity_transaction(transaction)?,
-            TransactionType::ContractDeployment => self.validate_contract_transaction(transaction)?,
-            TransactionType::ContractExecution => self.validate_contract_transaction(transaction)?,
-            TransactionType::SessionCreation | TransactionType::SessionTermination |
-            TransactionType::ContentUpload => {
+            TransactionType::IdentityRevocation => {
+                self.validate_identity_transaction(transaction)?
+            }
+            TransactionType::ContractDeployment => {
+                self.validate_contract_transaction(transaction)?
+            }
+            TransactionType::ContractExecution => {
+                self.validate_contract_transaction(transaction)?
+            }
+            TransactionType::SessionCreation
+            | TransactionType::SessionTermination
+            | TransactionType::ContentUpload => {
                 // Audit transactions - validate they have proper memo data
                 if transaction.memo.is_empty() {
                     return Err(ValidationError::InvalidMemo);
                 }
-            },
+            }
             TransactionType::UbiDistribution => {
                 // UBI distribution is a token transaction - validate with proper token logic
                 self.validate_token_transaction(transaction)?;
                 if transaction.memo.is_empty() {
                     return Err(ValidationError::InvalidMemo);
                 }
-            },
+            }
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
                 self.validate_wallet_registration_transaction(transaction)?;
-            },
+            }
             TransactionType::WalletUpdate => {
                 self.validate_wallet_update_transaction(transaction, is_system_transaction)?;
-            },
+            }
             TransactionType::ValidatorRegistration => {
                 // Validator registration - validate validator data exists
                 if transaction.validator_data.is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
-            },
+            }
             TransactionType::ValidatorUpdate => {
                 // Validator update - validate validator data exists
                 if transaction.validator_data.is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
-            },
+            }
             TransactionType::ValidatorUnregister => {
                 // Validator unregister - validate validator data exists
                 if transaction.validator_data.is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
-            },
-            TransactionType::DaoProposal |
-            TransactionType::DaoVote |
-            TransactionType::DaoExecution |
-            TransactionType::DifficultyUpdate => {
+            }
+            TransactionType::DaoProposal
+            | TransactionType::DaoVote
+            | TransactionType::DaoExecution
+            | TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
             }
-        
+
             TransactionType::UBIClaim => {
                 // UBI claim transactions - citizen-initiated claims (Week 7)
                 self.validate_ubi_claim_transaction(transaction)?;
@@ -290,7 +347,9 @@ impl TransactionValidator {
                 }
             }
             TransactionType::TokenTransfer => {
-                let data = transaction.token_transfer_data.as_ref()
+                let data = transaction
+                    .token_transfer_data
+                    .as_ref()
                     .ok_or(ValidationError::MissingRequiredData)?;
                 if data.amount == 0 {
                     return Err(ValidationError::InvalidAmount);
@@ -306,7 +365,9 @@ impl TransactionValidator {
                 if transaction.version < 2 {
                     return Err(ValidationError::InvalidTransaction);
                 }
-                let data = transaction.token_mint_data.as_ref()
+                let data = transaction
+                    .token_mint_data
+                    .as_ref()
                     .ok_or(ValidationError::MissingRequiredData)?;
                 if data.amount == 0 {
                     return Err(ValidationError::InvalidAmount);
@@ -324,13 +385,35 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidInputs);
                 }
             }
+            TransactionType::TokenCreation
+            => {
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+                TokenCreationPayloadV1::decode_memo(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
+                // AMM/Token operations - not yet fully implemented
+            }
         }
 
         // Signature validation:
         // - Historically, "system transactions" (empty inputs) skipped signatures.
         // - WalletUpdate and TokenMint must always be signed (privileged state mutations).
         let require_signature = !is_system_transaction
-            || matches!(transaction.transaction_type, TransactionType::WalletUpdate | TransactionType::TokenMint);
+            || matches!(
+                transaction.transaction_type,
+                TransactionType::WalletUpdate
+                    | TransactionType::TokenMint
+                    | TransactionType::TokenCreation
+            );
         if require_signature {
             self.validate_signature(transaction)?;
         }
@@ -348,8 +431,12 @@ impl TransactionValidator {
 
     /// Validate basic transaction structure
     fn validate_basic_structure(&self, transaction: &Transaction) -> ValidationResult {
-        tracing::debug!("[BREADCRUMB] validate_basic_structure ENTER: version={}, size={}, memo_len={}",
-            transaction.version, transaction.size(), transaction.memo.len());
+        tracing::debug!(
+            "[BREADCRUMB] validate_basic_structure ENTER: version={}, size={}, memo_len={}",
+            transaction.version,
+            transaction.size(),
+            transaction.memo.len()
+        );
 
         // Check version
         if transaction.version == 0 {
@@ -359,13 +446,21 @@ impl TransactionValidator {
 
         // Check transaction size limits
         if transaction.size() > MAX_TRANSACTION_SIZE {
-            tracing::warn!("[BREADCRUMB] validate_basic_structure FAILED: size {} > MAX {}", transaction.size(), MAX_TRANSACTION_SIZE);
+            tracing::warn!(
+                "[BREADCRUMB] validate_basic_structure FAILED: size {} > MAX {}",
+                transaction.size(),
+                MAX_TRANSACTION_SIZE
+            );
             return Err(ValidationError::InvalidTransaction);
         }
 
         // Check memo size
         if transaction.memo.len() > MAX_MEMO_SIZE {
-            tracing::warn!("[BREADCRUMB] validate_basic_structure FAILED: memo.len {} > MAX {}", transaction.memo.len(), MAX_MEMO_SIZE);
+            tracing::warn!(
+                "[BREADCRUMB] validate_basic_structure FAILED: memo.len {} > MAX {}",
+                transaction.memo.len(),
+                MAX_MEMO_SIZE
+            );
             return Err(ValidationError::InvalidTransaction);
         }
 
@@ -377,10 +472,10 @@ impl TransactionValidator {
     fn validate_transfer_transaction(&self, transaction: &Transaction) -> ValidationResult {
         // Allow empty inputs for system transactions (UBI, rewards, minting)
         // System transactions are identified by having a genesis/zero input
-        let is_system_transaction = transaction.inputs.is_empty() || 
-            transaction.inputs.iter().all(|input| {
-                input.previous_output == Hash::default() && 
-                input.nullifier != Hash::default() // Must have unique nullifier even for system tx
+        let is_system_transaction = transaction.inputs.is_empty()
+            || transaction.inputs.iter().all(|input| {
+                input.previous_output == Hash::default() && input.nullifier != Hash::default()
+                // Must have unique nullifier even for system tx
             });
 
         if !is_system_transaction && transaction.inputs.is_empty() {
@@ -408,17 +503,84 @@ impl TransactionValidator {
 
     /// Validate identity transaction
     fn validate_identity_transaction(&self, transaction: &Transaction) -> ValidationResult {
-        let identity_data = transaction.identity_data.as_ref()
+        let identity_data = transaction
+            .identity_data
+            .as_ref()
             .ok_or(ValidationError::MissingRequiredData)?;
 
         // Check if this is a system transaction (empty inputs), except for token contract calls
-        let is_system_transaction = transaction.inputs.is_empty() && !is_token_contract_execution(transaction);
-        
+        let is_system_transaction =
+            transaction.inputs.is_empty() && !is_token_contract_execution(transaction);
+
         self.validate_identity_data(identity_data, is_system_transaction)?;
 
         // Identity transactions should have minimal inputs/outputs
         // The main logic is handled by lib-identity package
-        
+
+        Ok(())
+    }
+
+    /// Validate TokenMint transaction shape and basic mint constraints.
+    ///
+    /// Authorization and token existence require chain state and are validated
+    /// by [`StatefulTransactionValidator`] in `validate_transaction_with_state`.
+    fn validate_token_mint(&self, transaction: &Transaction) -> ValidationResult {
+        // Extract TokenMintData
+        let mint_data = transaction
+            .token_mint_data
+            .as_ref()
+            .ok_or_else(|| ValidationError::InvalidInputs)?;
+
+        // For now, we validate that:
+        // 1. The amount is not zero
+        // 2. The amount doesn't exceed a reasonable cap per block
+
+        if mint_data.amount == 0 {
+            tracing::warn!("TokenMint amount is zero");
+            return Err(ValidationError::InvalidInputs);
+        }
+
+        // Check for excessive mint (sanity check - max 1 billion tokens per mint)
+        const MAX_MINT_AMOUNT: u128 = 1_000_000_000_u128 * 1_000_000_000_u128; // 1B * 10^9
+        if mint_data.amount > MAX_MINT_AMOUNT {
+            tracing::warn!(
+                "TokenMint amount {} exceeds maximum allowed {}",
+                mint_data.amount,
+                MAX_MINT_AMOUNT
+            );
+            return Err(ValidationError::InvalidInputs);
+        }
+
+        Ok(())
+    }
+
+    /// Validate that the signer of a TokenTransfer matches the 'from' address
+    ///
+    /// This prevents unauthorized transfers where someone signs a transaction
+    /// but the 'from' address in the transfer data is different.
+    fn validate_token_transfer_sender_authorization(
+        &self,
+        transaction: &Transaction,
+    ) -> ValidationResult {
+        // Extract TokenTransferData from memo
+        let transfer_data = transaction
+            .token_transfer_data
+            .as_ref()
+            .ok_or_else(|| ValidationError::InvalidMemo)?;
+
+        // Get the signer's public key (from signature)
+        let signer_key_id = transaction.signature.public_key.key_id;
+
+        // The 'from' field in TokenTransferData should match the signer's key_id
+        if signer_key_id != transfer_data.from {
+            tracing::warn!(
+                "TokenTransfer sender authorization failed: signer {:?} != from {:?}",
+                hex::encode(&signer_key_id[..8]),
+                hex::encode(&transfer_data.from[..8])
+            );
+            return Err(ValidationError::InvalidSignature);
+        }
+
         Ok(())
     }
 
@@ -428,6 +590,11 @@ impl TransactionValidator {
 
         if is_forbidden_token_contract_mutation(transaction) {
             return Err(ValidationError::InvalidTransactionType);
+        }
+
+        if transaction.transaction_type == TransactionType::ContractDeployment {
+            ContractDeploymentPayloadV1::decode_memo(&transaction.memo)
+                .map_err(|_| ValidationError::InvalidMemo)?;
         }
 
         // Allow system contract deployments (empty inputs) for Web4 and system contracts
@@ -440,8 +607,11 @@ impl TransactionValidator {
 
         // Token contract executions don't require outputs
         let is_token = is_token_contract_execution(transaction);
-        tracing::warn!("[BREADCRUMB] validate_contract_transaction: outputs.is_empty={}, is_token={}",
-            transaction.outputs.is_empty(), is_token);
+        tracing::debug!(
+            "[BREADCRUMB] validate_contract_transaction: outputs.is_empty={}, is_token={}",
+            transaction.outputs.is_empty(),
+            is_token
+        );
 
         if transaction.outputs.is_empty() && !is_token {
             tracing::warn!("[BREADCRUMB] validate_contract_transaction FAILED: empty outputs for non-token contract");
@@ -456,7 +626,7 @@ impl TransactionValidator {
     fn validate_token_transaction(&self, transaction: &Transaction) -> ValidationResult {
         // Token validation is handled by lib-economy package
         // Here we just validate basic structure
-        
+
         // System transactions (empty inputs) are valid for UBI/rewards
         if transaction.inputs.is_empty() {
             // This is a system transaction - only validate outputs
@@ -497,7 +667,7 @@ impl TransactionValidator {
             algorithm: transaction.signature.algorithm.clone(),
             timestamp: 0,
         };
-        
+
         // CRITICAL FIX: Use signing_hash() to match client-side signing
         // Client uses signing_hash() in ContractTransactionBuilder.build()
         // Previously used .hash() which is a different function (hash_transaction vs hash_for_signature)
@@ -512,33 +682,32 @@ impl TransactionValidator {
         // Get signature data
         let signature_bytes = &transaction.signature.signature;
         let public_key_bytes = transaction.signature.public_key.as_bytes();
-        
+
         if signature_bytes.is_empty() {
             return Err(ValidationError::InvalidSignature);
         }
-        
+
         if public_key_bytes.is_empty() {
             return Err(ValidationError::InvalidSignature);
         }
-        
+
         // Use lib-crypto for signature verification
         match verify_signature(tx_hash.as_bytes(), signature_bytes, &public_key_bytes) {
             Ok(is_valid) => {
                 if !is_valid {
                     return Err(ValidationError::InvalidSignature);
                 }
-            },
+            }
             Err(_) => {
                 return Err(ValidationError::InvalidSignature);
             }
         }
-        
+
         // Verify signature algorithm is supported
         match transaction.signature.algorithm {
-            SignatureAlgorithm::Dilithium2 |
-            SignatureAlgorithm::Dilithium5 => {
+            SignatureAlgorithm::Dilithium2 | SignatureAlgorithm::Dilithium5 => {
                 // Supported algorithms
-            },
+            }
             _ => {
                 return Err(ValidationError::InvalidSignature);
             }
@@ -558,13 +727,19 @@ impl TransactionValidator {
             "[BREADCRUMB] validate_zk_proofs ENTER: inputs={}",
             transaction.inputs.len()
         );
-        println!(" DEBUG: Starting ZK proof validation for {} transaction inputs", transaction.inputs.len());
-        log::info!("Starting ZK proof validation for {} transaction inputs", transaction.inputs.len());
-        
+        println!(
+            " DEBUG: Starting ZK proof validation for {} transaction inputs",
+            transaction.inputs.len()
+        );
+        log::info!(
+            "Starting ZK proof validation for {} transaction inputs",
+            transaction.inputs.len()
+        );
+
         for (i, input) in transaction.inputs.iter().enumerate() {
             println!(" DEBUG: Validating ZK proof for input {}", i);
             log::info!("Validating ZK proof for input {}", i);
-            
+
             // First check if the proof structure is valid
             if !is_valid_proof_structure(&input.zk_proof) {
                 println!(" DEBUG: Input {}: Invalid proof structure", i);
@@ -573,7 +748,7 @@ impl TransactionValidator {
             }
             println!(" DEBUG: Input {}: Proof structure valid", i);
             log::info!("Input {}: Proof structure valid", i);
-            
+
             // Use the proper ZK verification from lib-proofs
             match ZkTransactionProof::verify_transaction(&input.zk_proof) {
                 Ok(is_valid) => {
@@ -582,18 +757,22 @@ impl TransactionValidator {
                         return Err(ValidationError::InvalidZkProof);
                     }
                     log::info!("Input {}: ZkTransactionProof verification passed", i);
-                },
+                }
                 Err(e) => {
-                    log::error!("Input {}: ZK verification failed - NO FALLBACKS ALLOWED: {:?}", i, e);
+                    log::error!(
+                        "Input {}: ZK verification failed - NO FALLBACKS ALLOWED: {:?}",
+                        i,
+                        e
+                    );
                     return Err(ValidationError::InvalidZkProof);
                 }
             }
-            
+
             // Additional ZK proof validations
             log::info!("Input {}: Validating nullifier proof", i);
             self.validate_nullifier_proof(input)?;
             log::info!("Input {}: Nullifier proof valid", i);
-            
+
             log::info!("Input {}: Validating amount range proof", i);
             self.validate_amount_range_proof(input)?;
             log::info!("Input {}: Amount range proof valid", i);
@@ -602,7 +781,7 @@ impl TransactionValidator {
         log::info!("All ZK proofs validated successfully");
         Ok(())
     }
-    
+
     /// Validate nullifier proof to prevent double spending
     fn validate_nullifier_proof(&self, input: &TransactionInput) -> ValidationResult {
         // Verify that the nullifier proof is cryptographically sound
@@ -615,10 +794,13 @@ impl TransactionValidator {
                         if !is_valid {
                             return Err(ValidationError::InvalidZkProof);
                         }
-                    },
+                    }
                     Err(e) => {
                         // NO FALLBACKS - fail hard if ZK verification fails
-                        log::error!("Nullifier ZK verification failed - no fallbacks allowed: {:?}", e);
+                        log::error!(
+                            "Nullifier ZK verification failed - no fallbacks allowed: {:?}",
+                            e
+                        );
                         return Err(ValidationError::InvalidZkProof);
                     }
                 }
@@ -628,38 +810,41 @@ impl TransactionValidator {
             log::error!("Nullifier proof missing Plonky2 verification - no fallbacks allowed");
             return Err(ValidationError::InvalidZkProof);
         }
-        
+
         Ok(())
     }
-    
+
     /// Validate amount range proof to ensure positive amounts
     fn validate_amount_range_proof(&self, input: &TransactionInput) -> ValidationResult {
         println!(" DEBUG: validate_amount_range_proof starting");
         log::info!("validate_amount_range_proof starting");
-        
+
         // Verify that the amount is within valid range (positive, not exceeding max supply)
         if let Some(plonky2_proof) = &input.zk_proof.amount_proof.plonky2_proof {
             println!(" DEBUG: Found Plonky2 amount proof for range validation");
-            println!(" DEBUG: Amount proof system: '{}'", plonky2_proof.proof_system);
+            println!(
+                " DEBUG: Amount proof system: '{}'",
+                plonky2_proof.proof_system
+            );
             log::info!("Found Plonky2 amount proof for range validation");
             log::info!("Amount proof system: '{}'", plonky2_proof.proof_system);
-            
+
             // Use Plonky2 verification if available
             if let Ok(zk_system) = lib_proofs::ZkProofSystem::new() {
                 println!(" DEBUG: ZkProofSystem initialized for range validation");
                 log::info!("ZkProofSystem initialized for range validation");
-                
+
                 // Check if this is a transaction proof or range proof and use appropriate verification
                 match plonky2_proof.proof_system.as_str() {
                     "ZHTP-Optimized-Range" => {
                         println!(" DEBUG: Using verify_range for range proof");
                         log::info!("Using verify_range for range proof");
-                        
+
                         match zk_system.verify_range(plonky2_proof) {
                             Ok(is_valid) => {
                                 println!(" DEBUG: Range verification result: {}", is_valid);
                                 log::info!("Range verification result: {}", is_valid);
-                                
+
                                 if !is_valid {
                                     println!(" DEBUG: Range proof INVALID - returning error");
                                     log::error!("Range proof INVALID - returning error");
@@ -668,23 +853,23 @@ impl TransactionValidator {
                                     println!(" DEBUG: Range proof VALID");
                                     log::info!("Range proof VALID");
                                 }
-                            },
+                            }
                             Err(e) => {
                                 println!(" DEBUG: Range verification error: {:?}", e);
                                 log::error!("Range verification error: {:?}", e);
                                 return Err(ValidationError::InvalidZkProof);
                             }
                         }
-                    },
+                    }
                     "ZHTP-Optimized-Transaction" | "Plonky2" => {
                         println!(" DEBUG: Using verify_transaction for transaction proof");
                         log::info!("Using verify_transaction for transaction proof");
-                        
+
                         match zk_system.verify_transaction(plonky2_proof) {
                             Ok(is_valid) => {
                                 println!(" DEBUG: Transaction verification result: {}", is_valid);
                                 log::info!("Transaction verification result: {}", is_valid);
-                                
+
                                 if !is_valid {
                                     println!(" DEBUG: Transaction proof INVALID - returning error");
                                     log::error!("Transaction proof INVALID - returning error");
@@ -693,16 +878,19 @@ impl TransactionValidator {
                                     println!(" DEBUG: Transaction proof VALID");
                                     log::info!("Transaction proof VALID");
                                 }
-                            },
+                            }
                             Err(e) => {
                                 println!(" DEBUG: Transaction verification error: {:?}", e);
                                 log::error!("Transaction verification error: {:?}", e);
                                 return Err(ValidationError::InvalidZkProof);
                             }
                         }
-                    },
+                    }
                     _ => {
-                        println!(" DEBUG: Unknown proof system: '{}'", plonky2_proof.proof_system);
+                        println!(
+                            " DEBUG: Unknown proof system: '{}'",
+                            plonky2_proof.proof_system
+                        );
                         log::error!("Unknown proof system: '{}'", plonky2_proof.proof_system);
                         return Err(ValidationError::InvalidZkProof);
                     }
@@ -717,15 +905,19 @@ impl TransactionValidator {
             log::error!("Amount proof missing Plonky2 verification - no fallbacks allowed");
             return Err(ValidationError::InvalidZkProof);
         }
-        
+
         println!(" DEBUG: validate_amount_range_proof completed successfully");
         log::info!("validate_amount_range_proof completed successfully");
         Ok(())
     }
 
     /// Validate economic aspects (fees, amounts) with system transaction support
-    fn validate_economics_with_system_check(&self, transaction: &Transaction, is_system_transaction: bool) -> ValidationResult {
-        tracing::warn!(
+    fn validate_economics_with_system_check(
+        &self,
+        transaction: &Transaction,
+        is_system_transaction: bool,
+    ) -> ValidationResult {
+        tracing::debug!(
             "[BREADCRUMB] validate_economics_with_system_check ENTER: system={}, fee={}, size={}",
             is_system_transaction,
             transaction.fee,
@@ -734,7 +926,9 @@ impl TransactionValidator {
         if is_system_transaction {
             // System transactions are fee-free and create new money
             if transaction.fee != 0 {
-                tracing::warn!("[BREADCRUMB] validate_economics_with_system_check FAIL: system fee != 0");
+                tracing::warn!(
+                    "[BREADCRUMB] validate_economics_with_system_check FAIL: system fee != 0"
+                );
                 return Err(ValidationError::InvalidFee);
             }
             // System transactions don't need fee validation
@@ -812,7 +1006,11 @@ impl TransactionValidator {
     }
 
     /// Validate identity transaction data
-    fn validate_identity_data(&self, identity_data: &IdentityTransactionData, is_system_transaction: bool) -> ValidationResult {
+    fn validate_identity_data(
+        &self,
+        identity_data: &IdentityTransactionData,
+        is_system_transaction: bool,
+    ) -> ValidationResult {
         // Check DID format
         if identity_data.did.is_empty() || !identity_data.did.starts_with("did:zhtp:") {
             return Err(ValidationError::InvalidIdentityData);
@@ -834,7 +1032,14 @@ impl TransactionValidator {
         }
 
         // Check identity type
-        let valid_types = ["human", "organization", "device", "service", "validator", "revoked"];
+        let valid_types = [
+            "human",
+            "organization",
+            "device",
+            "service",
+            "validator",
+            "revoked",
+        ];
         if !valid_types.contains(&identity_data.identity_type.as_str()) {
             return Err(ValidationError::InvalidIdentityData);
         }
@@ -848,9 +1053,14 @@ impl TransactionValidator {
     }
 
     /// Validate wallet registration transaction
-    fn validate_wallet_registration_transaction(&self, transaction: &Transaction) -> ValidationResult {
+    fn validate_wallet_registration_transaction(
+        &self,
+        transaction: &Transaction,
+    ) -> ValidationResult {
         // Check that wallet_data exists
-        let wallet_data = transaction.wallet_data.as_ref()
+        let wallet_data = transaction
+            .wallet_data
+            .as_ref()
             .ok_or(ValidationError::MissingWalletData)?;
 
         // Validate wallet ID is not default/empty
@@ -905,7 +1115,8 @@ impl TransactionValidator {
         }
 
         // Must not move value: this transaction is metadata/ownership-only.
-        if !transaction.outputs.is_empty() || !transaction.inputs.is_empty() || transaction.fee != 0 {
+        if !transaction.outputs.is_empty() || !transaction.inputs.is_empty() || transaction.fee != 0
+        {
             return Err(ValidationError::InvalidTransaction);
         }
 
@@ -933,7 +1144,9 @@ impl TransactionValidator {
     /// - transaction has outputs but no inputs (claiming from pool)
     fn validate_ubi_claim_transaction(&self, transaction: &Transaction) -> ValidationResult {
         // Check that ubi_claim_data exists
-        let claim_data = transaction.ubi_claim_data.as_ref()
+        let claim_data = transaction
+            .ubi_claim_data
+            .as_ref()
             .ok_or(ValidationError::MissingRequiredData)?;
 
         // Validate claim data structure
@@ -962,9 +1175,14 @@ impl TransactionValidator {
     /// - revenue sources sum to profit amount
     /// - for-profit and nonprofit treasuries are different (anti-circumvention)
     /// - inputs and outputs represent tribute transfer
-    fn validate_profit_declaration_transaction(&self, transaction: &Transaction) -> ValidationResult {
+    fn validate_profit_declaration_transaction(
+        &self,
+        transaction: &Transaction,
+    ) -> ValidationResult {
         // Check that profit_declaration_data exists
-        let decl_data = transaction.profit_declaration_data.as_ref()
+        let decl_data = transaction
+            .profit_declaration_data
+            .as_ref()
             .ok_or(ValidationError::MissingRequiredData)?;
 
         // Validate declaration data structure
@@ -994,6 +1212,15 @@ fn parse_contract_call(transaction: &Transaction) -> Option<ContractCall> {
     if transaction.transaction_type != TransactionType::ContractExecution {
         return None;
     }
+    if transaction
+        .memo
+        .starts_with(crate::transaction::CONTRACT_EXECUTION_MEMO_PREFIX_V2)
+    {
+        let decoded =
+            crate::transaction::DecodedContractExecutionMemo::decode_compat(&transaction.memo)
+                .ok()?;
+        return Some(decoded.call);
+    }
     if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
         return None;
     }
@@ -1006,23 +1233,12 @@ fn parse_contract_call(transaction: &Transaction) -> Option<ContractCall> {
 ///
 /// Returns true if the transaction:
 /// 1. Has type ContractExecution
-/// 2. Has memo starting with "ZHTP"
+/// 2. Has a valid ContractExecution memo schema
 /// 3. Contains a valid ContractCall with contract_type Token
 /// 4. Has a valid token method (create_custom_token)
 pub fn is_token_contract_execution(transaction: &Transaction) -> bool {
     if transaction.transaction_type != TransactionType::ContractExecution {
         tracing::debug!("is_token_contract_execution: not ContractExecution type");
-        return false;
-    }
-
-    if transaction.memo.len() <= 4 {
-        tracing::warn!("is_token_contract_execution: memo too short (len={})", transaction.memo.len());
-        return false;
-    }
-
-    if &transaction.memo[0..4] != b"ZHTP" {
-        tracing::warn!("is_token_contract_execution: memo doesn't start with ZHTP, starts with {:?}",
-            &transaction.memo[0..4]);
         return false;
     }
 
@@ -1032,16 +1248,25 @@ pub fn is_token_contract_execution(transaction: &Transaction) -> bool {
     };
 
     if call.contract_type != ContractType::Token {
-        tracing::warn!("is_token_contract_execution: contract_type is {:?}, not Token", call.contract_type);
+        tracing::warn!(
+            "is_token_contract_execution: contract_type is {:?}, not Token",
+            call.contract_type
+        );
         return false;
     }
 
     let is_token_method = matches!(call.method.as_str(), "create_custom_token");
 
     if !is_token_method {
-        tracing::warn!("is_token_contract_execution: method '{}' is not a token method", call.method);
+        tracing::warn!(
+            "is_token_contract_execution: method '{}' is not a token method",
+            call.method
+        );
     } else {
-        tracing::info!("is_token_contract_execution: VALID token contract call, method={}", call.method);
+        tracing::info!(
+            "is_token_contract_execution: VALID token contract call, method={}",
+            call.method
+        );
     }
 
     is_token_method
@@ -1057,7 +1282,7 @@ fn is_forbidden_token_contract_mutation(transaction: &Transaction) -> bool {
         return false;
     };
     call.contract_type == ContractType::Token
-        && matches!(call.method.as_str(), "mint" | "transfer" | "burn")
+        && matches!(call.method.as_str(), "create_custom_token" | "mint" | "transfer" | "burn")
 }
 
 impl Default for TransactionValidator {
@@ -1069,21 +1294,22 @@ impl Default for TransactionValidator {
 impl<'a> StatefulTransactionValidator<'a> {
     /// Create a new stateful transaction validator with blockchain access
     pub fn new(blockchain: &'a crate::blockchain::Blockchain) -> Self {
-        Self { 
-            blockchain: Some(blockchain)
+        Self {
+            blockchain: Some(blockchain),
         }
     }
 
     /// Create a stateless validator (no identity verification)
     pub fn stateless() -> Self {
-        Self {
-            blockchain: None,
-        }
+        Self { blockchain: None }
     }
 
     /// Validate a transaction with full state context including identity verification
     pub fn validate_transaction_with_state(&self, transaction: &Transaction) -> ValidationResult {
-        tracing::debug!("[BREADCRUMB] validate_transaction_with_state ENTER, memo.len={}", transaction.memo.len());
+        tracing::debug!(
+            "[BREADCRUMB] validate_transaction_with_state ENTER, memo.len={}",
+            transaction.memo.len()
+        );
 
         // Check if this is a system transaction (empty inputs = coinbase-style), except token contract calls
         let is_token = is_token_contract_execution(transaction);
@@ -1091,14 +1317,21 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         let mut is_system_transaction = transaction.inputs.is_empty() && !is_token;
         // TokenTransfer must pay fees even with empty inputs
-        if matches!(transaction.transaction_type, TransactionType::TokenTransfer) {
+        if matches!(
+            transaction.transaction_type,
+            TransactionType::TokenTransfer | TransactionType::TokenCreation
+        ) {
             is_system_transaction = false;
         }
-        tracing::debug!("[BREADCRUMB] is_system_transaction = {}", is_system_transaction);
+        tracing::debug!(
+            "[BREADCRUMB] is_system_transaction = {}",
+            is_system_transaction
+        );
 
         // Create a stateless validator for basic checks
         let stateless_validator = {
-            let fee_config = self.blockchain
+            let fee_config = self
+                .blockchain
                 .map(|bc| bc.tx_fee_config.clone())
                 .unwrap_or_default();
             TransactionValidator::with_fee_config(fee_config)
@@ -1116,23 +1349,35 @@ impl<'a> StatefulTransactionValidator<'a> {
                     stateless_validator.validate_transfer_transaction(transaction)?;
                 }
                 // System transactions with Transfer type are allowed (UBI/rewards)
-            },
-            TransactionType::IdentityRegistration => stateless_validator.validate_identity_transaction(transaction)?,
-            TransactionType::IdentityUpdate => stateless_validator.validate_identity_transaction(transaction)?,
-            TransactionType::IdentityRevocation => stateless_validator.validate_identity_transaction(transaction)?,
-            TransactionType::ContractDeployment => stateless_validator.validate_contract_transaction(transaction)?,
-            TransactionType::ContractExecution => stateless_validator.validate_contract_transaction(transaction)?,
-            TransactionType::SessionCreation | TransactionType::SessionTermination |
-            TransactionType::ContentUpload | TransactionType::UbiDistribution => {
+            }
+            TransactionType::IdentityRegistration => {
+                stateless_validator.validate_identity_transaction(transaction)?
+            }
+            TransactionType::IdentityUpdate => {
+                stateless_validator.validate_identity_transaction(transaction)?
+            }
+            TransactionType::IdentityRevocation => {
+                stateless_validator.validate_identity_transaction(transaction)?
+            }
+            TransactionType::ContractDeployment => {
+                stateless_validator.validate_contract_transaction(transaction)?
+            }
+            TransactionType::ContractExecution => {
+                stateless_validator.validate_contract_transaction(transaction)?
+            }
+            TransactionType::SessionCreation
+            | TransactionType::SessionTermination
+            | TransactionType::ContentUpload
+            | TransactionType::UbiDistribution => {
                 // Audit transactions - validate they have proper memo data
                 if transaction.memo.is_empty() {
                     return Err(ValidationError::InvalidMemo);
                 }
-            },
+            }
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
                 stateless_validator.validate_transaction(transaction)?;
-            },
+            }
             TransactionType::WalletUpdate => {
                 stateless_validator.validate_transaction(transaction)?;
 
@@ -1147,20 +1392,20 @@ impl<'a> StatefulTransactionValidator<'a> {
                 if !is_active_validator {
                     return Err(ValidationError::InvalidTransaction);
                 }
-            },
-            TransactionType::ValidatorRegistration |
-            TransactionType::ValidatorUpdate |
-            TransactionType::ValidatorUnregister => {
+            }
+            TransactionType::ValidatorRegistration
+            | TransactionType::ValidatorUpdate
+            | TransactionType::ValidatorUnregister => {
                 // Validator transactions - validate with stateless validator
                 stateless_validator.validate_transaction(transaction)?;
-            },
-            TransactionType::DaoProposal |
-            TransactionType::DaoVote |
-            TransactionType::DaoExecution |
-            TransactionType::DifficultyUpdate => {
+            }
+            TransactionType::DaoProposal
+            | TransactionType::DaoVote
+            | TransactionType::DaoExecution
+            | TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
             }
-        
+
             TransactionType::UBIClaim => {
                 // UBI claim transactions - citizen-initiated claims (Week 7)
                 self.validate_ubi_claim_transaction(transaction)?;
@@ -1178,7 +1423,9 @@ impl<'a> StatefulTransactionValidator<'a> {
                 if transaction.outputs.len() != 0 {
                     return Err(ValidationError::InvalidOutputs);
                 }
-                let data = transaction.token_transfer_data.as_ref()
+                let data = transaction
+                    .token_transfer_data
+                    .as_ref()
                     .ok_or(ValidationError::InvalidInputs)?;
                 if data.amount == 0 {
                     return Err(ValidationError::InvalidAmount);
@@ -1188,7 +1435,9 @@ impl<'a> StatefulTransactionValidator<'a> {
                 if is_sov {
                     let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
                     let wallet_id_hex = hex::encode(data.from);
-                    let wallet = blockchain.wallet_registry.get(&wallet_id_hex)
+                    let wallet = blockchain
+                        .wallet_registry
+                        .get(&wallet_id_hex)
                         .ok_or(ValidationError::InvalidTransaction)?;
                     let wallet_pk = lib_crypto::PublicKey::new(wallet.public_key.clone());
                     if wallet_pk.key_id != transaction.signature.public_key.key_id {
@@ -1202,7 +1451,9 @@ impl<'a> StatefulTransactionValidator<'a> {
                 if transaction.version < 2 {
                     return Err(ValidationError::InvalidTransaction);
                 }
-                let data = transaction.token_mint_data.as_ref()
+                let data = transaction
+                    .token_mint_data
+                    .as_ref()
                     .ok_or(ValidationError::MissingRequiredData)?;
                 if data.amount == 0 {
                     return Err(ValidationError::InvalidAmount);
@@ -1213,12 +1464,21 @@ impl<'a> StatefulTransactionValidator<'a> {
                 if !transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidOutputs);
                 }
+
+                self.validate_token_mint_stateful_authorization(transaction)?;
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validate governance_config_data exists
                 if transaction.governance_config_data.is_none() {
                     return Err(ValidationError::InvalidInputs);
                 }
+            }
+            TransactionType::TokenCreation
+            | TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
+                // AMM/Token operations - not yet fully implemented
             }
         }
 
@@ -1245,11 +1505,14 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         // Signature validation (always required except for system transactions)
         // TokenMint is system for fee purposes but MUST still be signed (except genesis)
-        let mut skip_signature = is_system_transaction
-            && transaction.transaction_type != TransactionType::TokenMint;
+        let mut skip_signature =
+            is_system_transaction && transaction.transaction_type != TransactionType::TokenMint;
         if transaction.transaction_type == TransactionType::TokenMint {
             if let Some(blockchain) = self.blockchain {
-                if blockchain.height == 0 && blockchain.blocks.is_empty() && transaction.signature.signature.is_empty() {
+                if blockchain.height == 0
+                    && blockchain.blocks.is_empty()
+                    && transaction.signature.signature.is_empty()
+                {
                     skip_signature = true; // Allow genesis TokenMint without signature
                 }
             }
@@ -1269,7 +1532,8 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         // Economic validation (modified for system transactions)
         tracing::debug!("[BREADCRUMB] validate_economics_with_system_check CALL");
-        stateless_validator.validate_economics_with_system_check(transaction, is_system_transaction)?;
+        stateless_validator
+            .validate_economics_with_system_check(transaction, is_system_transaction)?;
         tracing::debug!("[BREADCRUMB] validate_economics_with_system_check OK");
 
         Ok(())
@@ -1291,7 +1555,7 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         // Extract the public key from the transaction signature
         let sender_public_key = transaction.signature.public_key.as_bytes();
-        
+
         if sender_public_key.is_empty() {
             tracing::error!("SECURITY: Transaction has empty public key");
             return Err(ValidationError::InvalidSignature);
@@ -1300,37 +1564,62 @@ impl<'a> StatefulTransactionValidator<'a> {
         // CORRECT APPROACH: Lookup wallet by public key, then verify owner identity
         // Step 1: Find wallet with matching public key
         let mut owner_did: Option<String> = None;
-        
+
         tracing::info!(" VALIDATION DEBUG: Searching for wallet with sender public key");
-        tracing::info!("   Sender public key length: {} bytes", sender_public_key.len());
-        tracing::info!("   Sender public key (first 16): {}", hex::encode(&sender_public_key[..16.min(sender_public_key.len())]));
-        tracing::info!("   Total wallets to check: {}", blockchain.get_all_wallets().len());
-        
+        tracing::info!(
+            "   Sender public key length: {} bytes",
+            sender_public_key.len()
+        );
+        tracing::info!(
+            "   Sender public key (first 16): {}",
+            hex::encode(&sender_public_key[..16.min(sender_public_key.len())])
+        );
+        tracing::info!(
+            "   Total wallets to check: {}",
+            blockchain.get_all_wallets().len()
+        );
+
         for (wallet_id, wallet_data) in blockchain.get_all_wallets() {
-            tracing::info!("   Checking wallet {}: stored public_key length = {}, first 16 = {}", 
-                wallet_id, 
+            tracing::info!(
+                "   Checking wallet {}: stored public_key length = {}, first 16 = {}",
+                wallet_id,
                 wallet_data.public_key.len(),
-                hex::encode(&wallet_data.public_key[..16.min(wallet_data.public_key.len())]));
-            
+                hex::encode(&wallet_data.public_key[..16.min(wallet_data.public_key.len())])
+            );
+
             // Debug: Show both keys fully
-            tracing::info!("    WALLET public_key (first 64): {}", hex::encode(&wallet_data.public_key[..64.min(wallet_data.public_key.len())]));
-            tracing::info!("    SENDER public_key (first 64): {}", hex::encode(&sender_public_key[..64.min(sender_public_key.len())]));
-            
+            tracing::info!(
+                "    WALLET public_key (first 64): {}",
+                hex::encode(&wallet_data.public_key[..64.min(wallet_data.public_key.len())])
+            );
+            tracing::info!(
+                "    SENDER public_key (first 64): {}",
+                hex::encode(&sender_public_key[..64.min(sender_public_key.len())])
+            );
+
             // Debug: Compare byte by byte
-            tracing::info!("    Comparing {} wallet bytes vs {} sender bytes", wallet_data.public_key.len(), sender_public_key.len());
-            
+            tracing::info!(
+                "    Comparing {} wallet bytes vs {} sender bytes",
+                wallet_data.public_key.len(),
+                sender_public_key.len()
+            );
+
             // CRITICAL FIX: wallet_data.public_key is Vec<u8>, sender_public_key is &[u8]
             // We need to compare as slices, not Vec vs slice
             let keys_match = wallet_data.public_key.as_slice() == sender_public_key;
             tracing::info!("    Direct comparison result: {}", keys_match);
-            
+
             if !keys_match && wallet_data.public_key.len() == sender_public_key.len() {
                 // Find first differing byte (show up to 5 differences)
                 let mut diff_count = 0;
                 for i in 0..wallet_data.public_key.len() {
                     if wallet_data.public_key[i] != sender_public_key[i] {
-                        tracing::error!("    MISMATCH at byte {}: wallet={:02x} vs sender={:02x}", 
-                            i, wallet_data.public_key[i], sender_public_key[i]);
+                        tracing::error!(
+                            "    MISMATCH at byte {}: wallet={:02x} vs sender={:02x}",
+                            i,
+                            wallet_data.public_key[i],
+                            sender_public_key[i]
+                        );
                         diff_count += 1;
                         if diff_count >= 5 {
                             tracing::error!("   ... (showing first 5 differences only)");
@@ -1342,18 +1631,21 @@ impl<'a> StatefulTransactionValidator<'a> {
                     tracing::error!("     WEIRD: Comparison failed but no byte differences found! Check Vec vs slice comparison");
                 }
             }
-            
+
             // Compare wallet public key directly
             if keys_match {
                 tracing::info!("    PUBLIC KEY MATCH FOUND for wallet: {}", wallet_id);
-                tracing::info!("   Wallet owner_identity_id: {:?}", wallet_data.owner_identity_id);
-                
+                tracing::info!(
+                    "   Wallet owner_identity_id: {:?}",
+                    wallet_data.owner_identity_id
+                );
+
                 // Get owner DID from owner_identity_id
                 if let Some(owner_identity_hash) = &wallet_data.owner_identity_id {
                     // Find the DID string from identity registry using the identity hash
                     // Convert the owner_identity_hash to hex string to match against DID format
                     let owner_id_hex = hex::encode(owner_identity_hash.as_bytes());
-                    
+
                     for (did, identity_data) in blockchain.get_all_identities() {
                         // Extract the hex part from the DID (format: did:zhtp:HEX)
                         let did_hex = if did.starts_with("did:zhtp:") {
@@ -1361,7 +1653,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                         } else {
                             did.as_str()
                         };
-                        
+
                         // Check if this identity's ID matches the wallet's owner_identity_id
                         if did_hex == owner_id_hex {
                             owner_did = Some(did.clone());
@@ -1388,27 +1680,39 @@ impl<'a> StatefulTransactionValidator<'a> {
         // Step 3: Verify owner identity exists and is not revoked
         match owner_did {
             Some(did) => {
-                if let Some(identity_data) = blockchain.get_all_identities().iter()
+                if let Some(identity_data) = blockchain
+                    .get_all_identities()
+                    .iter()
                     .find(|(id, _)| **id == did)
-                    .map(|(_, data)| data) {
-                    
+                    .map(|(_, data)| data)
+                {
                     if identity_data.identity_type == "revoked" {
                         tracing::error!("SECURITY: Transaction from revoked identity: {}", did);
                         return Err(ValidationError::InvalidTransaction);
                     }
-                    
-                    tracing::info!(" SECURITY: Sender identity verified: {} ({})", 
-                        identity_data.display_name, did);
+
+                    tracing::info!(
+                        " SECURITY: Sender identity verified: {} ({})",
+                        identity_data.display_name,
+                        did
+                    );
                     return Ok(());
                 }
-                
+
                 tracing::error!("SECURITY: Owner DID {} exists but identity not found!", did);
                 return Err(ValidationError::UnregisteredSender);
-            },
+            }
             None => {
-                tracing::error!("SECURITY CRITICAL: Transaction from unregistered wallet/identity!");
-                tracing::error!("Public key: {:02x?}", &sender_public_key[..std::cmp::min(16, sender_public_key.len())]);
-                tracing::error!(" REJECTED: All transactions must come from registered wallets/identities");
+                tracing::error!(
+                    "SECURITY CRITICAL: Transaction from unregistered wallet/identity!"
+                );
+                tracing::error!(
+                    "Public key: {:02x?}",
+                    &sender_public_key[..std::cmp::min(16, sender_public_key.len())]
+                );
+                tracing::error!(
+                    " REJECTED: All transactions must come from registered wallets/identities"
+                );
 
                 // NO BYPASS: Always reject transactions from unregistered senders
                 return Err(ValidationError::UnregisteredSender);
@@ -1434,7 +1738,10 @@ impl<'a> StatefulTransactionValidator<'a> {
     }
 
     /// Validate profit declaration transaction with state context (Week 7)
-    fn validate_profit_declaration_transaction(&self, transaction: &Transaction) -> ValidationResult {
+    fn validate_profit_declaration_transaction(
+        &self,
+        transaction: &Transaction,
+    ) -> ValidationResult {
         // Use stateless validator for structural checks
         let stateless_validator = TransactionValidator::new();
         stateless_validator.validate_profit_declaration_transaction(transaction)?;
@@ -1446,6 +1753,50 @@ impl<'a> StatefulTransactionValidator<'a> {
         // - Verify for-profit treasury has sufficient balance for tribute
 
         Ok(())
+    }
+
+    /// Stateful TokenMint authorization parity with execution path.
+    ///
+    /// This enforces token existence and signer authorization at mempool/precheck time
+    /// so admission behavior matches block execution behavior.
+    fn validate_token_mint_stateful_authorization(
+        &self,
+        transaction: &Transaction,
+    ) -> ValidationResult {
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+        let mint_data = transaction
+            .token_mint_data
+            .as_ref()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        // SOV mints currently use dedicated consensus paths and are handled separately.
+        let is_sov = mint_data.token_id == [0u8; 32]
+            || mint_data.token_id == crate::contracts::utils::generate_lib_token_id();
+        if is_sov {
+            return Ok(());
+        }
+
+        // Preserve existing execution semantics for UBI and migration flows.
+        let memo_str = std::str::from_utf8(&transaction.memo).ok();
+        let is_ubi_mint = memo_str
+            .map(|memo| memo.starts_with("UBI_DISTRIBUTION_V1:"))
+            .unwrap_or(false);
+        let is_migration = memo_str
+            .map(|memo| memo.starts_with("TOKEN_MIGRATE_V1:"))
+            .unwrap_or(false);
+
+        let token = blockchain
+            .token_contracts
+            .get(&mint_data.token_id)
+            .ok_or(ValidationError::InvalidTransaction)?;
+
+        if is_ubi_mint || is_migration {
+            return Ok(());
+        }
+
+        token
+            .check_mint_authorization(&transaction.signature.public_key)
+            .map_err(|_| ValidationError::InvalidTransaction)
     }
 }
 
@@ -1472,19 +1823,21 @@ pub mod utils {
     /// Validate transaction type consistency
     pub fn validate_type_consistency(transaction: &Transaction) -> bool {
         match transaction.transaction_type {
-            TransactionType::IdentityRegistration | 
-            TransactionType::IdentityUpdate | 
-            TransactionType::IdentityRevocation => transaction.identity_data.is_some(),
-            TransactionType::Transfer | 
-            TransactionType::ContractDeployment | 
-            TransactionType::ContractExecution => {
+            TransactionType::IdentityRegistration
+            | TransactionType::IdentityUpdate
+            | TransactionType::IdentityRevocation => transaction.identity_data.is_some(),
+            TransactionType::Transfer
+            | TransactionType::ContractDeployment
+            | TransactionType::ContractExecution => {
                 !transaction.inputs.is_empty() && !transaction.outputs.is_empty()
-            },
-            TransactionType::SessionCreation | TransactionType::SessionTermination |
-            TransactionType::ContentUpload | TransactionType::UbiDistribution => {
+            }
+            TransactionType::SessionCreation
+            | TransactionType::SessionTermination
+            | TransactionType::ContentUpload
+            | TransactionType::UbiDistribution => {
                 // Audit transactions should have memo data but no strict input/output requirements
                 !transaction.memo.is_empty()
-            },
+            }
             TransactionType::WalletRegistration => {
                 // Wallet registration should have wallet_data
                 transaction.wallet_data.is_some()
@@ -1493,9 +1846,9 @@ pub mod utils {
                 // Wallet update should have wallet_data
                 transaction.wallet_data.is_some()
             }
-            TransactionType::ValidatorRegistration |
-            TransactionType::ValidatorUpdate |
-            TransactionType::ValidatorUnregister => {
+            TransactionType::ValidatorRegistration
+            | TransactionType::ValidatorUpdate
+            | TransactionType::ValidatorUnregister => {
                 // Validator transactions should have validator_data
                 transaction.validator_data.is_some()
             }
@@ -1532,15 +1885,22 @@ pub mod utils {
                 // Governance config updates should have governance_config_data
                 transaction.governance_config_data.is_some()
             }
+            TransactionType::TokenCreation
+            | TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
+                // AMM/Token operations - not yet fully implemented
+                true
+            }
         }
     }
 
-    /// Check if transaction has valid zero-knowledge structure
+    /// Check if transaction has valid zero-zero-knowledge structure
     pub fn has_valid_zk_structure(transaction: &Transaction) -> bool {
         // All inputs must have nullifiers and ZK proofs
         transaction.inputs.iter().all(|input| {
-            input.nullifier != Hash::default() && 
-            is_valid_proof_structure(&input.zk_proof)
+            input.nullifier != Hash::default() && is_valid_proof_structure(&input.zk_proof)
         })
     }
 
@@ -1564,8 +1924,10 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ContractCall, ContractType};
+    use bincode::Options;
     use crate::integration::zk_integration::ZkTransactionProof;
+    use crate::transaction::{ContractDeploymentPayloadV1, CONTRACT_DEPLOYMENT_MEMO_PREFIX};
+    use crate::types::ContractCall;
 
     /// Helper: create a test PublicKey with deterministic content
     fn test_public_key(id: u8) -> PublicKey {
@@ -1622,7 +1984,78 @@ mod tests {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-                        governance_config_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    fn create_contract_deployment_transaction_with_payload(
+        sender_key: &PublicKey,
+        payload: ContractDeploymentPayloadV1,
+    ) -> Transaction {
+        let memo = payload.encode_memo().unwrap();
+        Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: TransactionType::ContractDeployment,
+            inputs: vec![],
+            outputs: vec![TransactionOutput {
+                commitment: Hash::from([7u8; 32]),
+                note: Hash::from([8u8; 32]),
+                recipient: sender_key.clone(),
+            }],
+            fee: 0,
+            signature: test_signature(sender_key),
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    fn create_token_mint_transaction_for_stateful_test(
+        signer: &PublicKey,
+        token_id: [u8; 32],
+        to: [u8; 32],
+        amount: u128,
+    ) -> Transaction {
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenMint,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            // Empty signature bytes are allowed at genesis in stateful validator.
+            signature: Signature {
+                signature: vec![],
+                public_key: signer.clone(),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: 0,
+            },
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: Some(crate::transaction::TokenMintData {
+                token_id,
+                to,
+                amount,
+            }),
+            governance_config_data: None,
         }
     }
 
@@ -1686,7 +2119,7 @@ mod tests {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-                        governance_config_data: None,
+            governance_config_data: None,
         };
 
         assert!(!is_token_contract_execution(&mint_tx));
@@ -1740,7 +2173,10 @@ mod tests {
         // has_valid_zk_structure checks nullifiers are present
         // Note: This won't fully pass with our mock data, but it demonstrates
         // the nullifier check exists and operates independently of identity
-        let has_nullifier = tx.inputs.iter().all(|input| input.nullifier != Hash::default());
+        let has_nullifier = tx
+            .inputs
+            .iter()
+            .all(|input| input.nullifier != Hash::default());
         assert!(
             has_nullifier,
             "All inputs should have nullifiers for replay protection"
@@ -1778,8 +2214,8 @@ mod tests {
                 ubi_claim_data: None,
                 profit_declaration_data: None,
                 token_transfer_data: None,
-            token_mint_data: None,
-                            governance_config_data: None,
+                token_mint_data: None,
+                governance_config_data: None,
             };
 
             assert!(
@@ -1814,8 +2250,8 @@ mod tests {
                 ubi_claim_data: None,
                 profit_declaration_data: None,
                 token_transfer_data: None,
-            token_mint_data: None,
-                            governance_config_data: None,
+                token_mint_data: None,
+                governance_config_data: None,
             };
 
             assert!(
@@ -1851,7 +2287,7 @@ mod tests {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-                        governance_config_data: None,
+            governance_config_data: None,
         };
 
         assert!(
@@ -1893,6 +2329,170 @@ mod tests {
 
         let validator = TransactionValidator::new();
         let result = validator.validate_contract_transaction(&tx);
-        assert!(matches!(result, Err(ValidationError::InvalidTransactionType)));
+        assert!(matches!(
+            result,
+            Err(ValidationError::InvalidTransactionType)
+        ));
+    }
+
+    #[test]
+    fn test_stateful_token_mint_rejects_unauthorized_signer_at_precheck() {
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        let creator = test_public_key(11);
+        let attacker = test_public_key(12);
+        let recipient = test_public_key(13);
+
+        let token = crate::contracts::TokenContract::new_custom(
+            "ParityToken".to_string(),
+            "PAR".to_string(),
+            1_000,
+            creator,
+        );
+        let token_id = token.token_id;
+        blockchain.token_contracts.insert(token_id, token);
+
+        let tx = create_token_mint_transaction_for_stateful_test(
+            &attacker,
+            token_id,
+            recipient.key_id,
+            100,
+        );
+
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        let result = validator.validate_token_mint_stateful_authorization(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidTransaction)),
+            "Unauthorized mint must be rejected during stateful precheck"
+        );
+    }
+
+    #[test]
+    fn test_stateful_token_mint_accepts_creator_at_precheck() {
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        let creator = test_public_key(21);
+        let recipient = test_public_key(22);
+
+        let token = crate::contracts::TokenContract::new_custom(
+            "ParityToken".to_string(),
+            "PAR".to_string(),
+            1_000,
+            creator.clone(),
+        );
+        let token_id = token.token_id;
+        blockchain.token_contracts.insert(token_id, token);
+
+        let tx = create_token_mint_transaction_for_stateful_test(
+            &creator,
+            token_id,
+            recipient.key_id,
+            100,
+        );
+
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        let result = validator.validate_token_mint_stateful_authorization(&tx);
+        assert!(
+            result.is_ok(),
+            "Creator mint should pass stateful mint authorization precheck"
+        );
+    }
+
+    #[test]
+    fn test_stateful_token_mint_rejects_unknown_token_at_precheck() {
+        let blockchain = crate::blockchain::Blockchain::default();
+        let signer = test_public_key(31);
+        let recipient = test_public_key(32);
+        let unknown_token_id = [0xAB; 32];
+
+        let tx = create_token_mint_transaction_for_stateful_test(
+            &signer,
+            unknown_token_id,
+            recipient.key_id,
+            100,
+        );
+
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        let result = validator.validate_token_mint_stateful_authorization(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidTransaction)),
+            "Unknown token mint must be rejected during stateful precheck"
+        );
+    }
+
+    #[test]
+    fn test_contract_deployment_schema_accepts_valid_payload() {
+        let sender = test_public_key(9);
+        let payload = ContractDeploymentPayloadV1 {
+            contract_type: "wasm".to_string(),
+            code: vec![1, 2, 3],
+            abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+            init_args: vec![0xaa, 0xbb],
+            gas_limit: 100_000,
+            memory_limit_bytes: 65_536,
+        };
+        let tx = create_contract_deployment_transaction_with_payload(&sender, payload);
+
+        let validator = TransactionValidator::new();
+        let result = validator.validate_contract_transaction(&tx);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_contract_deployment_schema_rejects_missing_prefix() {
+        let sender = test_public_key(10);
+        let mut tx = create_contract_deployment_transaction_with_payload(
+            &sender,
+            ContractDeploymentPayloadV1 {
+                contract_type: "wasm".to_string(),
+                code: vec![1],
+                abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+                init_args: vec![],
+                gas_limit: 10_000,
+                memory_limit_bytes: 65_536,
+            },
+        );
+        tx.memo = b"legacy-deploy-payload".to_vec();
+
+        let validator = TransactionValidator::new();
+        let result = validator.validate_contract_transaction(&tx);
+        assert!(matches!(result, Err(ValidationError::InvalidMemo)));
+    }
+
+    #[test]
+    fn test_contract_deployment_schema_rejects_invalid_bounds() {
+        let sender = test_public_key(11);
+        let mut tx = create_contract_deployment_transaction_with_payload(
+            &sender,
+            ContractDeploymentPayloadV1 {
+                contract_type: "wasm".to_string(),
+                code: vec![1, 2, 3],
+                abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+                init_args: vec![],
+                gas_limit: 10_000,
+                memory_limit_bytes: 65_536,
+            },
+        );
+
+        let invalid_payload = ContractDeploymentPayloadV1 {
+            contract_type: "wasm".to_string(),
+            code: vec![1, 2, 3],
+            abi: br#"{"contract":"demo","version":"1.0.0"}"#.to_vec(),
+            init_args: vec![],
+            gas_limit: 0,
+            memory_limit_bytes: 65_536,
+        };
+        let mut memo = CONTRACT_DEPLOYMENT_MEMO_PREFIX.to_vec();
+        memo.extend_from_slice(
+            &bincode::DefaultOptions::new()
+                .with_limit(
+                    crate::transaction::contract_deployment::MAX_DEPLOYMENT_MEMO_BYTES as u64,
+                )
+                .serialize(&invalid_payload)
+                .unwrap(),
+        );
+        tx.memo = memo;
+
+        let validator = TransactionValidator::new();
+        let result = validator.validate_contract_transaction(&tx);
+        assert!(matches!(result, Err(ValidationError::InvalidMemo)));
     }
 }

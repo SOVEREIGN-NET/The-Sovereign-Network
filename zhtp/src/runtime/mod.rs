@@ -445,34 +445,31 @@ impl RuntimeOrchestrator {
         
         // Store shutdown monitor handle for cleanup
         let _shutdown_handle = shutdown_monitor;
-        // Detect node type from config
-        // Edge nodes are constrained devices that:
-        // 1. Don't validate blocks (validator_enabled = false)
-        // 2. Don't run smart contracts (resource constrained)
-        // 3. Don't host storage for others (hosted_storage_gb = 0 or very small)
-        //
-        // Note: blockchain_storage_gb is NOT counted - it grows dynamically
-        // Note: personal_storage_gb is NOT counted - user's own data
-        //
-        // hosted_storage_gb=0 is a valid value meaning "no hosted storage" (edge node)
-        // Only use storage_capacity_gb fallback if hosted_storage_gb was NOT explicitly configured
-        // The default hosted_storage_gb is 100, so if it equals default AND storage_capacity_gb differs,
-        // use storage_capacity_gb for backward compatibility
-        let hosted_storage = config.storage_config.hosted_storage_gb;
         
-        let is_edge_node = !config.consensus_config.validator_enabled 
-            && !config.blockchain_config.smart_contracts
-            && hosted_storage < 100;  // Less than 100 GB hosted storage = edge node
+        // ========================================================================
+        // Issue #454 / PR #1120 feedback: Use canonical NodeType (already validated)
+        // ========================================================================
+        // config.node_type has been validated by the start_* method and represents
+        // the SINGLE SOURCE OF TRUTH for node type. Use it to derive NodeRole
+        // instead of re-detecting edge mode with different criteria, which could
+        // cause divergence between dispatch and runtime behavior.
+        // ========================================================================
+        
+        let node_type = config.node_type.expect(
+            "NodeType must be set before RuntimeOrchestrator::new. \
+             This should have been validated by the start_* method."
+        );
+        
+        // Derive is_edge_node from the canonical NodeType
+        let is_edge_node = node_type == crate::config::NodeType::EdgeNode;
         
         // Debug output for node role derivation
-        tracing::debug!("   validator_enabled (config): {}", config.consensus_config.validator_enabled);
-        tracing::debug!("   smart_contracts (config): {}", config.blockchain_config.smart_contracts);
-        tracing::debug!("   hosted_storage: {} GB", hosted_storage);
+        tracing::debug!("   canonical node_type: {:?}", node_type);
         tracing::debug!("   is_edge_node: {}", is_edge_node);
         
-        // Derive NodeRole from configuration
+        // Derive NodeRole from canonical NodeType
         // This determines what services (mining, validation) the node can run
-        let node_role = Self::derive_node_role_from_config(&config, is_edge_node);
+        let node_role = Self::derive_node_role_from_node_type(node_type);
         info!("🎭 Node role determined: {:?}", node_role);
         info!("   can_mine: {}, can_validate: {}, can_verify_blocks: {}", 
               node_role.can_mine(), node_role.can_validate(), node_role.can_verify_blocks());
@@ -568,27 +565,35 @@ impl RuntimeOrchestrator {
     /// - Observer: stores full blockchain but validator_enabled=false
     /// - LightNode: edge node with header-only sync
     /// - MobileNode: edge node optimized for BLE
-    fn derive_node_role_from_config(config: &NodeConfig, is_edge_node: bool) -> node_runtime::NodeRole {
+    /// Derive NodeRole from the canonical NodeType
+    /// 
+    /// This ensures NodeRole is always consistent with the dispatched NodeType,
+    /// preventing divergence between config.node_type and runtime behavior.
+    fn derive_node_role_from_node_type(node_type: crate::config::NodeType) -> node_runtime::NodeRole {
         use node_runtime::NodeRole;
         
-        // Edge nodes are either LightNode or MobileNode
-        if is_edge_node {
-            // Check if this is a mobile/BLE-optimized node
-            // For now, we determine this by checking if BLE is the primary transport
-            // TODO: Add explicit mobile_mode config flag
-            return NodeRole::LightNode;
+        match node_type {
+            crate::config::NodeType::Validator => {
+                // Validator nodes participate in consensus and can mine blocks
+                NodeRole::FullValidator
+            }
+            crate::config::NodeType::EdgeNode => {
+                // Edge nodes are resource-constrained, only store headers
+                // For now, treat all edge nodes as LightNode
+                // TODO: Add mobile_mode detection for MobileNode role
+                NodeRole::LightNode
+            }
+            crate::config::NodeType::FullNode => {
+                // Full nodes store complete blockchain but don't mine
+                NodeRole::Observer
+            }
+            crate::config::NodeType::Relay => {
+                // Relay nodes only route messages, don't maintain blockchain state
+                // They should not need a traditional NodeRole, but for now
+                // treat them as Observer to avoid breaking existing code
+                NodeRole::Observer
+            }
         }
-        
-        // Full nodes: check if they're validators
-        if config.consensus_config.validator_enabled {
-            // This node participates in consensus and can mine blocks
-            return NodeRole::FullValidator;
-        }
-        
-        // Non-validator full nodes are Observers
-        // They store the full blockchain and verify blocks for themselves
-        // but don't participate in consensus voting
-        NodeRole::Observer
     }
     
     /// Get the current node role
@@ -1060,77 +1065,104 @@ impl RuntimeOrchestrator {
     // CANONICAL STARTUP METHODS - Issue #454
     // ========================================================================
     // These are THE canonical entry points per node type. CLI dispatches to one
-    // of these based on NodeRole. All node-type-specific initialization happens
+    // of these based on NodeType (not NodeRole). All node-type-specific initialization happens
     // within these methods, not scattered across component init functions.
     // ========================================================================
 
-    /// Internal helper for canonical startup methods.
-    /// Validates that the config's node_role matches the expected role,
-    /// then calls start_node() for the common startup sequence.
-    async fn start_with_role_validation<F>(
-        config: NodeConfig,
-        _method_name: &str,
-        validate: F,
-    ) -> Result<Self>
-    where
-        F: FnOnce(&node_runtime::NodeRole) -> Result<()>,
-    {
-        validate(&config.node_role)?;
+    /// Internal helper for validating NodeType matches expected type.
+    /// Returns the validated NodeType if it matches, or an error if it doesn't.
+    fn validate_node_type(config: &NodeConfig, expected: crate::config::NodeType) -> Result<crate::config::NodeType> {
+        match config.node_type {
+            Some(actual_type) => {
+                if actual_type == expected {
+                    Ok(actual_type)
+                } else {
+                    Err(anyhow::anyhow!(
+                        "NodeType mismatch: expected {:?}, got {:?}",
+                        expected,
+                        actual_type
+                    ))
+                }
+            }
+            None => Err(anyhow::anyhow!(
+                "NodeType is not set (expected {:?}). Runtime requires node_type to be derived during config aggregation.",
+                expected
+            )),
+        }
+    }
+
+    /// Start a full node - THE canonical way
+    ///
+    /// Full nodes (FullNode type) store the complete blockchain and verify all blocks,
+    /// but do NOT participate in consensus or mining.
+    ///
+    /// # Errors
+    /// Returns an error if config.node_type is not FullNode.
+    pub async fn start_full_node(config: NodeConfig) -> Result<Self> {
+        Self::validate_node_type(&config, crate::config::NodeType::FullNode)?;
         let orchestrator = Self::new(config).await?;
         orchestrator.start_node().await?;
         Ok(orchestrator)
     }
 
-    /// Start a full node - THE canonical way
-    ///
-    /// Full nodes (Observer role) store the complete blockchain and verify all blocks,
-    /// but do NOT participate in consensus or mining.
-    ///
-    /// # Errors
-    /// Returns an error if config.node_role is not compatible with full node operation
-    /// (i.e., if it's an edge/light node role or a validator role).
-    pub async fn start_full_node(config: NodeConfig) -> Result<Self> {
-        Self::start_with_role_validation(config, "start_full_node", |role| {
-            if role.is_light_node() {
-                return Err(anyhow::anyhow!("start_full_node called for light/edge node role: {:?}", role));
-            }
-            if role.can_mine() {
-                return Err(anyhow::anyhow!("start_full_node called for validator role: {:?} - use start_validator instead", role));
-            }
-            Ok(())
-        }).await
-    }
-
     /// Start an edge node - THE canonical way
     ///
-    /// Edge nodes (LightNode/MobileNode role) only store block headers and ZK proofs,
+    /// Edge nodes (EdgeNode type) only store block headers and ZK proofs,
     /// optimized for resource-constrained devices.
     ///
     /// # Errors
-    /// Returns an error if config.node_role is not a light/edge node role.
+    /// Returns an error if config.node_type is not EdgeNode.
     pub async fn start_edge_node(config: NodeConfig) -> Result<Self> {
-        Self::start_with_role_validation(config, "start_edge_node", |role| {
-            if !role.is_light_node() {
-                return Err(anyhow::anyhow!("start_edge_node called for non-edge role: {:?}", role));
-            }
-            Ok(())
-        }).await
+        Self::validate_node_type(&config, crate::config::NodeType::EdgeNode)?;
+        let orchestrator = Self::new(config).await?;
+        orchestrator.start_node().await?;
+        Ok(orchestrator)
     }
 
     /// Start a validator node - THE canonical way
     ///
-    /// Validator nodes (FullValidator role) store the complete blockchain, participate
+    /// Validator nodes (Validator type) store the complete blockchain, participate
     /// in consensus, and can mine blocks.
     ///
     /// # Errors
-    /// Returns an error if config.node_role is not FullValidator.
+    /// Returns an error if config.node_type is not Validator.
     pub async fn start_validator(config: NodeConfig) -> Result<Self> {
-        Self::start_with_role_validation(config, "start_validator", |role| {
-            if !role.can_mine() {
-                return Err(anyhow::anyhow!("start_validator called for non-validator role: {:?}", role));
-            }
-            Ok(())
-        }).await
+        Self::validate_node_type(&config, crate::config::NodeType::Validator)?;
+        let orchestrator = Self::new(config).await?;
+        orchestrator.start_node().await?;
+        Ok(orchestrator)
+    }
+
+    /// Start a relay node - THE canonical way
+    ///
+    /// Relay nodes act as routers on the network, forwarding messages and peer
+    /// discovery information but NOT maintaining blockchain state or validating blocks.
+    /// They are useful for improving network connectivity and message routing.
+    ///
+    /// # Errors
+    /// Returns an error if config.node_type is not Relay.
+    pub async fn start_relay(config: NodeConfig) -> Result<Self> {
+        Self::validate_node_type(&config, crate::config::NodeType::Relay)?;
+        
+        let orchestrator = Self::new(config).await?;
+        
+        // For relay nodes, initialize ONLY mesh routing/networking components,
+        // NOT the full blockchain startup sequence. Relays should not maintain
+        // blockchain state or validate blocks - they only forward messages.
+        use crate::runtime::components::{CryptoComponent, NetworkComponent};
+        
+        info!("Starting Relay Node - initializing mesh/routing only (no blockchain state)");
+        
+        // Initialize crypto and network components for routing
+        orchestrator.register_component(Arc::new(CryptoComponent::new())).await?;
+        orchestrator.start_component(ComponentId::Crypto).await?;
+        
+        orchestrator.register_component(Arc::new(NetworkComponent::new())).await?;
+        orchestrator.start_component(ComponentId::Network).await?;
+        
+        info!("Relay node initialized (routing-only mode - ready for routing)");
+        
+        Ok(orchestrator)
     }
 
     // ========================================================================
@@ -1232,12 +1264,55 @@ impl RuntimeOrchestrator {
             std::fs::create_dir_all(parent)?;
         }
 
-        let store = std::sync::Arc::new(
-            lib_blockchain::storage::SledStore::open(&sled_path)
-                .map_err(|e| anyhow::anyhow!("Failed to open SledStore: {}", e))?
-        );
+        // Try to open SledStore.
+        //
+        // On error we do NOT assume corruption and do NOT delete data automatically —
+        // the failure could be a permission issue, a file lock from another process,
+        // or a transient I/O error. Unconditionally wiping the store on any error
+        // risks data loss for non-corruption failures.
+        //
+        // Operators who are certain the store is corrupted and want to reset it can
+        // opt in by setting ZHTP_SLED_RESET_ON_ERROR=true (or =1) before restarting.
+        let store = match lib_blockchain::storage::SledStore::open(&sled_path) {
+            Ok(s) => std::sync::Arc::new(s),
+            Err(e) => {
+                let allow_reset = std::env::var("ZHTP_SLED_RESET_ON_ERROR")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+
+                if !allow_reset {
+                    error!(
+                        "Failed to open SledStore at {:?}: {}. \
+                         To attempt a destructive reset, set ZHTP_SLED_RESET_ON_ERROR=true and restart.",
+                        sled_path, e
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Failed to open SledStore at {:?}: {}",
+                        sled_path, e
+                    ));
+                }
+
+                warn!(
+                    "⚠️  SledStore open error ({}). ZHTP_SLED_RESET_ON_ERROR is set — \
+                     wiping store directory and attempting recovery from blockchain.dat",
+                    e
+                );
+                if let Err(rm_err) = std::fs::remove_dir_all(&sled_path) {
+                    warn!("   Failed to remove sled directory during reset: {}", rm_err);
+                }
+                std::fs::create_dir_all(&sled_path)?;
+                std::sync::Arc::new(
+                    lib_blockchain::storage::SledStore::open(&sled_path)
+                        .map_err(|e2| anyhow::anyhow!("Failed to re-open fresh SledStore after reset: {}", e2))?
+                )
+            }
+        };
 
         let mut synced_blockchain: Option<lib_blockchain::Blockchain> = None;
+
+        // Before peer sync or genesis: try loading from blockchain.dat backup if sled is empty
+        let dat_path = std::path::PathBuf::from(self.config.environment.blockchain_data_path());
+
         let (blockchain, was_loaded) = match lib_blockchain::Blockchain::load_from_store(store.clone())? {
             Some(mut bc) => {
                 info!("📂 Loaded existing blockchain from SledStore (height: {}, tokens: {})",
@@ -1256,6 +1331,45 @@ impl RuntimeOrchestrator {
                 (bc, true)
             }
             None => {
+                // First: try loading from blockchain.dat backup before attempting peer sync or genesis
+                if dat_path.exists() {
+                    match lib_blockchain::Blockchain::load_from_file(&dat_path) {
+                        Ok(mut bc) => {
+                            info!("📂 Recovered blockchain from backup file (height: {})", bc.height);
+                            bc.set_store(store.clone());
+                            // Persist all blocks to the fresh SledStore
+                            let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
+                            let mut migration_ok = true;
+                            for block in &bc.blocks {
+                                let h = block.height();
+                                if let Err(e) = store_ref.begin_block(h) {
+                                    warn!("⚠️  Failed to begin migration tx for block {}: {}", h, e);
+                                    migration_ok = false;
+                                    break;
+                                }
+                                let write_result = store_ref.append_block(block)
+                                    .and_then(|_| store_ref.commit_block());
+                                if let Err(e) = write_result {
+                                    warn!("⚠️  Failed to migrate block {} to SledStore: {}", h, e);
+                                    // begin_block succeeded — rollback to leave the store clean
+                                    if let Err(rb) = store_ref.rollback_block() {
+                                        warn!("   rollback_block also failed: {}", rb);
+                                    }
+                                    migration_ok = false;
+                                    break;
+                                }
+                            }
+                            if migration_ok {
+                                info!("✅ Migrated {} blocks from blockchain.dat to SledStore", bc.blocks.len());
+                                synced_blockchain = Some(bc);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("⚠️  blockchain.dat recovery failed: {}", e);
+                        }
+                    }
+                }
+
                 // If we discovered peers, try to sync before creating genesis.
                 if let Some(ref net_info) = network_info {
                     if !net_info.bootstrap_peers.is_empty() {
@@ -2000,12 +2114,16 @@ impl RuntimeOrchestrator {
                     if component_id == ComponentId::Protocols {
                         // Give mesh server a moment to fully initialize
                         tokio::time::sleep(Duration::from_millis(500)).await;
-                        
+
                         if let Err(e) = self.start_reward_orchestrator().await {
                             warn!("Failed to start reward orchestrator: {}", e);
                         } else {
                             info!(" Reward orchestrator started (mesh server ready for statistics)");
                         }
+
+                        // NOTE: Runtime-dependent handlers (NetworkHandler, MeshHandler) are now
+                        // registered from main.rs after wrapping RuntimeOrchestrator in Arc.
+                        // See register_runtime_handlers() call in main.rs after node startup.
                     }
                     
                     // Sync wallet balances from blockchain after BLOCKCHAIN component starts
@@ -2950,6 +3068,35 @@ impl RuntimeOrchestrator {
 
         info!("Unified reward orchestrator started successfully");
         Ok(())
+    }
+
+    /// Register runtime-dependent handlers on ProtocolsComponent
+    ///
+    /// Called after ProtocolsComponent has started to register handlers that require
+    /// Arc<RuntimeOrchestrator> (NetworkHandler, MeshHandler). These handlers couldn't
+    /// be registered during UnifiedServer construction because RuntimeOrchestrator
+    /// wasn't available yet.
+    ///
+    /// This must be called from main.rs or another location that has access to
+    /// Arc<RuntimeOrchestrator>.
+    pub async fn register_runtime_handlers(
+        &self,
+        runtime_arc: Arc<RuntimeOrchestrator>
+    ) -> Result<()> {
+        use std::any::Any;
+
+        // Get ProtocolsComponent from the components HashMap
+        let components = self.components.read().await;
+        let component = components.get(&ComponentId::Protocols)
+            .ok_or_else(|| anyhow::anyhow!("ProtocolsComponent not found"))?;
+
+        // Downcast to ProtocolsComponent
+        let protocols_component = component.as_any()
+            .downcast_ref::<crate::runtime::components::ProtocolsComponent>()
+            .ok_or_else(|| anyhow::anyhow!("Failed to downcast to ProtocolsComponent"))?;
+
+        // Register the runtime handlers on the protocols component
+        protocols_component.register_runtime_handlers(runtime_arc).await
     }
 
     /// Stop the unified reward orchestrator

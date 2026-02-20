@@ -32,6 +32,9 @@ pub mod economics;
 pub mod integration;
 pub mod verification;
 
+// Compatibility adapters for interoperability with other ZHTP crates
+pub mod compat;
+
 // ============================================================================
 // PUBLIC API EXPORTS
 // ============================================================================
@@ -43,8 +46,7 @@ pub mod verification;
 // Core Modules (accessible as lib_identity::module_name::Type)
 // ----------------------------------------------------------------------------
 
-// Note: No 'compat' module exists in this codebase. 
-// The system uses direct types without compatibility adapters.
+// Note: compat module provides adapters for gradual migration scenarios.
 
 // ----------------------------------------------------------------------------
 // Type Re-exports (accessible as lib_identity::Type)
@@ -101,8 +103,25 @@ pub use citizenship::{
 // DID module - Decentralized identifiers
 pub use did::{
     DidDocument,         // ✓ DID document structure
+    DidDocumentUpdate,   // ✓ DID document signed update
+    DeviceEntry,         // ✓ Device registry entry
+    DeviceRegistryDiff,  // ✓ Device registry diff
+    DeviceStatus,        // ✓ Device status
     ServiceEndpoint,     // ✓ Service endpoints
     VerificationMethod,  // ✓ Verification methods
+    apply_did_update,    // ✓ Apply DID document update
+    apply_did_update_and_store, // ✓ Apply + store DID update
+    create_device_add_update,    // ✓ Create device add update
+    create_device_remove_update, // ✓ Create device remove update
+    decode_public_key_multibase, // ✓ Decode multibase key
+    get_device_entry,            // ✓ Get device entry
+    get_device_keys,             // ✓ Get device keys
+    list_active_devices,         // ✓ List active devices
+    resolve_did,         // ✓ Resolve DID document
+    store_did_document,  // ✓ Store DID document
+    set_did_store_dir,   // ✓ Configure filesystem DID store
+    set_did_store_memory,// ✓ Configure in-memory DID store
+    validate_did_update, // ✓ Validate DID update
 };
 
 // Recovery module - Identity recovery mechanisms

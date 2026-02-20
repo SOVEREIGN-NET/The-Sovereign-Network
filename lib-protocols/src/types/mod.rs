@@ -11,6 +11,10 @@ pub mod response;
 pub mod access_policy;
 pub mod content;
 pub mod economic;
+pub mod identity_message;
+pub mod identity_payload;
+pub mod group_message;
+pub mod pouw;
 
 // Re-export all types for convenience
 pub use status::ZhtpStatus;
@@ -21,6 +25,29 @@ pub use response::ZhtpResponse;
 pub use access_policy::{AccessPolicy, TimeRestriction};
 pub use content::{ContentMetadata, ServerContent, EncryptionInfo, CompressionInfo, ContentChunk, ReplicationInfo};
 pub use economic::EconomicAssessment;
+pub use identity_message::{
+    IdentityEnvelope,
+    DevicePayload,
+    MessageTtl,
+    IdentityMessageKind,
+    ControlMessageType,
+    ReceiptType,
+    DeliveryReceipt,
+    ReadReceipt,
+    SealedSenderEnvelope,
+};
+pub use identity_payload::IdentityPayload;
+pub use group_message::{
+    GroupId,
+    GroupMember,
+    GroupChange,
+    GroupStateUpdate,
+    GroupMessage,
+    GroupEpochKey,
+    DEFAULT_GROUP_CAP,
+    MAX_GROUP_CAP,
+};
+pub use pouw::PoUwStamp;
 
 // Types defined in this module are automatically available:
 // - StorageRequirements, StorageQuality, etc.

@@ -3,13 +3,11 @@
 use anyhow::Result;
 use lib_consensus::{
     ByzantineFaultDetector, ConsensusConfig, ConsensusEngine, ConsensusType, DaoProposalType,
-    DaoVoteChoice, ValidatorStatus, NoOpBroadcaster,
+    DaoVoteChoice, NoOpBroadcaster, ValidatorStatus,
 };
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio_test;
 
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {
@@ -19,7 +17,7 @@ fn create_test_identity(name: &str) -> IdentityId {
 /// Helper function to create test consensus config
 fn create_test_config() -> ConsensusConfig {
     ConsensusConfig {
-        consensus_type: ConsensusType::Hybrid,
+        consensus_type: ConsensusType::ByzantineFaultTolerance,
         min_stake: 1000 * 1_000_000,           // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 10,
@@ -442,7 +440,6 @@ async fn test_multi_type_consensus_mechanisms() -> Result<()> {
         ConsensusType::ProofOfStake,
         ConsensusType::ProofOfStorage,
         ConsensusType::ProofOfUsefulWork,
-        ConsensusType::Hybrid,
         ConsensusType::ByzantineFaultTolerance,
     ];
 

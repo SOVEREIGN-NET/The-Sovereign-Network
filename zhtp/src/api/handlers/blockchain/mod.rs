@@ -3,6 +3,7 @@
 //! Clean, minimal blockchain operations using lib-blockchain patterns
 
 use anyhow::{Result, Context};
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,6 +17,12 @@ use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 // Blockchain imports
 use lib_blockchain::types::Hash;
 use lib_blockchain::Blockchain;
+use lib_blockchain::integration::crypto_integration::Signature as BlockchainSignature;
+use lib_blockchain::transaction::{
+    ContractDeploymentPayloadV1, DecodedContractExecutionMemo, Transaction,
+    CONTRACT_DEPLOYMENT_MEMO_PREFIX,
+};
+use lib_blockchain::types::{transaction_type::TransactionType, ContractCall, ContractType};
 
 /// Clean blockchain handler implementation
 ///
@@ -471,6 +478,41 @@ struct TransactionReceiptResponse {
     logs: Vec<String>,
 }
 
+#[derive(Serialize)]
+struct ContractListItem {
+    contract_id: String,
+    contract_kind: String,
+    block_height: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct ContractsListResponse {
+    status: String,
+    page: usize,
+    limit: usize,
+    total: usize,
+    total_pages: usize,
+    contracts: Vec<ContractListItem>,
+}
+
+#[derive(Serialize)]
+struct ContractInfoResponse {
+    status: String,
+    contract_id: String,
+    contract_kind: String,
+    block_height: Option<u64>,
+    metadata: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct ContractStateResponse {
+    status: String,
+    contract_id: String,
+    contract_kind: String,
+    block_height: Option<u64>,
+    state: serde_json::Value,
+}
+
 #[derive(Deserialize)]
 struct FeeEstimateRequest {
     transaction_size: Option<usize>,
@@ -482,6 +524,18 @@ struct FeeEstimateRequest {
 #[derive(Deserialize)]
 struct BroadcastTransactionRequest {
     transaction_data: String, // Hex-encoded transaction
+}
+
+#[derive(Deserialize)]
+struct ContractTransactionRequest {
+    transaction_data: String, // Hex-encoded canonical transaction
+}
+
+#[derive(Serialize)]
+struct ContractSubmissionResponse {
+    status: String,
+    transaction_hash: String,
+    message: String,
 }
 
 fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
@@ -504,7 +558,205 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
     }
 }
 
+/// Maximum byte size accepted for a single serialised transaction.
+///
+/// Capped at 512 KiB — generous enough for any valid transaction but small
+/// enough to bound allocations on hostile input (DoS guard for comment #1340).
+const MAX_CANONICAL_TX_BYTES: usize = 512 * 1024;
+
 impl BlockchainHandler {
+    fn decode_canonical_transaction_hex(hex_data: &str) -> Result<Transaction> {
+        // Reject oversized hex payloads before even decoding to guard against DoS.
+        if hex_data.len() > MAX_CANONICAL_TX_BYTES * 2 {
+            return Err(anyhow::anyhow!(
+                "transaction_data exceeds maximum size ({} hex chars)",
+                MAX_CANONICAL_TX_BYTES * 2
+            ));
+        }
+        let tx_bytes = hex::decode(hex_data)
+            .map_err(|_| anyhow::anyhow!("Invalid hex transaction data"))?;
+        bincode::DefaultOptions::new()
+            .with_limit(MAX_CANONICAL_TX_BYTES as u64)
+            .deserialize::<Transaction>(&tx_bytes)
+            .map_err(|_| anyhow::anyhow!("Invalid transaction encoding (expected canonical bincode)"))
+    }
+
+    fn decode_contract_execution_call(memo: &[u8]) -> Result<DecodedContractExecutionMemo> {
+        DecodedContractExecutionMemo::decode_compat(memo)
+            .map_err(|e| anyhow::anyhow!("ContractExecution memo decode failed: {e}"))
+    }
+
+    fn decode_contract_deployment_payload_compat(
+        memo: &[u8],
+    ) -> Result<ContractDeploymentPayloadV1> {
+        if let Ok(payload) = ContractDeploymentPayloadV1::decode_memo(memo) {
+            return Ok(payload);
+        }
+        if !memo.starts_with(CONTRACT_DEPLOYMENT_MEMO_PREFIX) {
+            return Err(anyhow::anyhow!("missing deployment memo prefix"));
+        }
+        let payload_bytes = &memo[CONTRACT_DEPLOYMENT_MEMO_PREFIX.len()..];
+        // Enforce the same size bound as ContractDeploymentPayloadV1::decode_memo to
+        // prevent large allocations on malicious input in the compat fallback path.
+        let payload: ContractDeploymentPayloadV1 = bincode::DefaultOptions::new()
+            .with_limit(lib_blockchain::transaction::MAX_DEPLOYMENT_MEMO_BYTES as u64)
+            .deserialize(payload_bytes)
+            .map_err(|_| anyhow::anyhow!("invalid deployment payload encoding"))?;
+        payload
+            .validate()
+            .map_err(|e| anyhow::anyhow!("invalid deployment payload: {e}"))?;
+        Ok(payload)
+    }
+
+    fn validate_canonical_contract_payload(
+        transaction: &Transaction,
+        expected_type: TransactionType,
+        expected_contract_id: Option<[u8; 32]>,
+    ) -> Result<()> {
+        if transaction.transaction_type != expected_type {
+            return Err(anyhow::anyhow!(
+                "Expected {:?} transaction, got {:?}",
+                expected_type,
+                transaction.transaction_type
+            ));
+        }
+
+        match transaction.transaction_type {
+            TransactionType::ContractDeployment => {
+                Self::decode_contract_deployment_payload_compat(&transaction.memo).map_err(
+                    |e| anyhow::anyhow!("ContractDeployment requires canonical deployment memo: {e}"),
+                )?;
+            }
+            TransactionType::ContractExecution => {
+                let decoded = Self::decode_contract_execution_call(&transaction.memo)?;
+                let call = decoded.call;
+                let memo_sig = decoded.signature;
+                if memo_sig.public_key.key_id != transaction.signature.public_key.key_id {
+                    return Err(anyhow::anyhow!(
+                        "ContractExecution memo signer must match transaction signer"
+                    ));
+                }
+                if call.contract_type == ContractType::Token
+                    && matches!(
+                        call.method.as_str(),
+                        "create_custom_token" | "mint" | "transfer" | "burn"
+                    )
+                {
+                    return Err(anyhow::anyhow!(
+                        "Token contract mutation via ContractExecution is deprecated; use canonical typed token transactions"
+                    ));
+                }
+                if let Some(contract_id) = expected_contract_id {
+                    if contract_id == [0u8; 32] {
+                        return Err(anyhow::anyhow!("Contract ID must not be all zeros"));
+                    }
+                    if decoded.contract_id != Some(contract_id) {
+                        return Err(anyhow::anyhow!(
+                            "ContractExecution memo target contract_id must match URI contract_id"
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    async fn submit_canonical_contract_transaction(
+        &self,
+        request: ZhtpRequest,
+        expected_type: TransactionType,
+        expected_contract_id: Option<[u8; 32]>,
+        success_message: &str,
+    ) -> Result<ZhtpResponse> {
+        let req_data: ContractTransactionRequest = serde_json::from_slice(&request.body)
+            .map_err(|_| anyhow::anyhow!(
+                "Invalid request body. Expected JSON: {{\"transaction_data\":\"<hex>\"}}"
+            ))?;
+
+        // Decode failures are client errors (bad hex / wrong encoding), not server errors.
+        let transaction = match Self::decode_canonical_transaction_hex(&req_data.transaction_data) {
+            Ok(tx) => tx,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string()));
+            }
+        };
+        if let Err(e) = Self::validate_canonical_contract_payload(
+            &transaction,
+            expected_type,
+            expected_contract_id,
+        ) {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                e.to_string(),
+            ));
+        }
+
+        let tx_hash = transaction.hash();
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        match blockchain.add_pending_transaction(transaction) {
+            Ok(()) => {
+                tracing::info!(
+                    "Contract transaction accepted to mempool: {} ({:?})",
+                    tx_hash,
+                    expected_type
+                );
+                let response_data = ContractSubmissionResponse {
+                    status: "accepted".to_string(),
+                    transaction_hash: tx_hash.to_string(),
+                    message: success_message.to_string(),
+                };
+                let json_response = serde_json::to_vec(&response_data)?;
+                Ok(ZhtpResponse::success_with_content_type(
+                    json_response,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Contract transaction rejected: {} ({:?}) error={}",
+                    tx_hash,
+                    expected_type,
+                    e
+                );
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    format!("Contract transaction {} rejected: {}", tx_hash, e),
+                ))
+            }
+        }
+    }
+
+    fn parse_contract_id_hex(contract_id_hex: &str) -> Result<[u8; 32]> {
+        let bytes = hex::decode(contract_id_hex)
+            .map_err(|_| anyhow::anyhow!("Contract ID must be valid hex"))?;
+        if bytes.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "Contract ID must be 32 bytes (64 hex chars), got {} bytes",
+                bytes.len()
+            ));
+        }
+        let mut contract_id = [0u8; 32];
+        contract_id.copy_from_slice(&bytes);
+        Ok(contract_id)
+    }
+
+    fn extract_contract_id_from_request_uri(uri: &str) -> Result<(&str, [u8; 32])> {
+        let path = uri.split('?').next().unwrap_or(uri);
+        let path_parts: Vec<&str> = path.split('/').collect();
+        let contract_id_hex = path_parts
+            .get(5)
+            .copied()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Contract ID is required"))?;
+        let contract_id = Self::parse_contract_id_hex(contract_id_hex)?;
+        Ok((contract_id_hex, contract_id))
+    }
+
     /// Handle blockchain status request
     async fn handle_blockchain_status(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         let blockchain_arc = self.get_blockchain().await?;
@@ -1819,45 +2071,222 @@ impl BlockchainHandler {
 impl BlockchainHandler {
     /// Deploy a new smart contract
     async fn handle_deploy_contract(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let _ = request;
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Direct /contracts/deploy is disabled. Submit canonical on-chain ContractDeployment transactions via /api/v1/blockchain/transaction/broadcast.".to_string(),
-        ))
+        self.submit_canonical_contract_transaction(
+            request,
+            TransactionType::ContractDeployment,
+            None,
+            "Contract deployment transaction accepted to mempool",
+        ).await
     }
 
     /// Call a smart contract function
     async fn handle_call_contract(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let _ = request;
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Direct /contracts/{id}/call is disabled. Submit canonical on-chain ContractExecution transactions via /api/v1/blockchain/transaction/broadcast.".to_string(),
-        ))
+        let (_, contract_id) = match Self::extract_contract_id_from_request_uri(&request.uri) {
+            Ok(parts) => parts,
+            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+        };
+        self.submit_canonical_contract_transaction(
+            request,
+            TransactionType::ContractExecution,
+            Some(contract_id),
+            "Contract execution transaction accepted to mempool",
+        ).await
     }
 
     /// List all deployed contracts
-    async fn handle_list_contracts(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Contract index endpoint is disabled until fully backed by canonical chain state.".to_string(),
+    async fn handle_list_contracts(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let params = Self::parse_query_params(&request.uri);
+        let (page, limit) = Self::parse_pagination(&params);
+        let contract_filter = params
+            .get("type")
+            .map(|v| v.to_ascii_lowercase())
+            .unwrap_or_else(|| "all".to_string());
+        if !matches!(contract_filter.as_str(), "all" | "token" | "web4") {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Invalid contract type. Must be 'all', 'token', or 'web4'.".to_string(),
+            ));
+        }
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let mut contracts = Vec::new();
+        if contract_filter == "all" || contract_filter == "token" {
+            contracts.extend(blockchain.token_contracts.keys().map(|id| ContractListItem {
+                contract_id: hex::encode(id),
+                contract_kind: "token".to_string(),
+                block_height: blockchain.contract_blocks.get(id).copied(),
+            }));
+        }
+        if contract_filter == "all" || contract_filter == "web4" {
+            contracts.extend(blockchain.web4_contracts.keys().map(|id| ContractListItem {
+                contract_id: hex::encode(id),
+                contract_kind: "web4".to_string(),
+                block_height: blockchain.contract_blocks.get(id).copied(),
+            }));
+        }
+
+        contracts.sort_by(|a, b| {
+            a.contract_kind
+                .cmp(&b.contract_kind)
+                .then_with(|| a.contract_id.cmp(&b.contract_id))
+        });
+
+        let total = contracts.len();
+        let total_pages = if total == 0 {
+            0
+        } else {
+            (total + limit - 1) / limit
+        };
+        let offset = (page - 1).saturating_mul(limit);
+        let contracts = if offset >= total {
+            Vec::new()
+        } else {
+            contracts.into_iter().skip(offset).take(limit).collect()
+        };
+
+        let response_data = ContractsListResponse {
+            status: "success".to_string(),
+            page,
+            limit,
+            total,
+            total_pages,
+            contracts,
+        };
+
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
         ))
     }
 
     /// Get contract state
     async fn handle_get_contract_state(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let _ = request;
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Contract state endpoint is disabled until fully backed by canonical chain state.".to_string(),
+        let (contract_id_hex, contract_id) = match Self::extract_contract_id_from_request_uri(&request.uri)
+        {
+            Ok(parts) => parts,
+            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+        };
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let block_height = blockchain.contract_blocks.get(&contract_id).copied();
+        let (contract_kind, state_json) = if let Some(token) = blockchain.token_contracts.get(&contract_id)
+        {
+            let raw_state = blockchain
+                .get_contract_state(&contract_id)
+                .map(hex::encode)
+                .unwrap_or_default();
+            (
+                "token".to_string(),
+                serde_json::json!({
+                    "name": token.name,
+                    "symbol": token.symbol,
+                    "decimals": token.decimals,
+                    "total_supply": token.total_supply,
+                    "max_supply": token.max_supply,
+                    "holder_count": token.balances.len(),
+                    "raw_state_hex": raw_state,
+                }),
+            )
+        } else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
+            let raw_state = blockchain
+                .get_contract_state(&contract_id)
+                .map(hex::encode)
+                .unwrap_or_default();
+            (
+                "web4".to_string(),
+                serde_json::json!({
+                    "domain": web4.domain,
+                    "owner": web4.owner,
+                    "route_count": web4.routes.len(),
+                    "created_at": web4.created_at,
+                    "updated_at": web4.updated_at,
+                    "raw_state_hex": raw_state,
+                }),
+            )
+        } else {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                format!("Contract {} not found", contract_id_hex),
+            ));
+        };
+
+        let response_data = ContractStateResponse {
+            status: "success".to_string(),
+            contract_id: contract_id_hex.to_string(),
+            contract_kind,
+            block_height,
+            state: state_json,
+        };
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
         ))
     }
 
     /// Get contract information
     async fn handle_get_contract_info(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let _ = request;
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Contract metadata endpoint is disabled until fully backed by canonical chain state.".to_string(),
+        let (contract_id_hex, contract_id) = match Self::extract_contract_id_from_request_uri(&request.uri)
+        {
+            Ok(parts) => parts,
+            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+        };
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let block_height = blockchain.contract_blocks.get(&contract_id).copied();
+        let (contract_kind, metadata) = if let Some(token) = blockchain.token_contracts.get(&contract_id) {
+            (
+                "token".to_string(),
+                serde_json::json!({
+                    "token_id": hex::encode(token.token_id),
+                    "name": token.name,
+                    "symbol": token.symbol,
+                    "decimals": token.decimals,
+                    "max_supply": token.max_supply,
+                    "is_deflationary": token.is_deflationary,
+                    "kernel_only_mode": token.kernel_only_mode,
+                }),
+            )
+        } else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
+            (
+                "web4".to_string(),
+                serde_json::json!({
+                    "contract_id": web4.contract_id,
+                    "domain": web4.domain,
+                    "owner": web4.owner,
+                    "route_count": web4.routes.len(),
+                    "created_at": web4.created_at,
+                    "updated_at": web4.updated_at,
+                }),
+            )
+        } else {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                format!("Contract {} not found", contract_id_hex),
+            ));
+        };
+
+        let response_data = ContractInfoResponse {
+            status: "success".to_string(),
+            contract_id: contract_id_hex.to_string(),
+            contract_kind,
+            block_height,
+            metadata,
+        };
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
         ))
     }
 
@@ -2239,5 +2668,182 @@ impl BlockchainHandler {
             "application/json".to_string(),
             None,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lib_blockchain::integration::crypto_integration::PublicKey;
+    use lib_blockchain::transaction::encode_contract_execution_memo_v2;
+    use lib_blockchain::{TransactionInput, TransactionOutput};
+    use lib_crypto::SignatureAlgorithm;
+
+    fn test_signature(seed: u8) -> BlockchainSignature {
+        BlockchainSignature {
+            signature: vec![seed; 64],
+            public_key: PublicKey::new(vec![seed; 2592]),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        }
+    }
+
+    fn test_output(recipient: PublicKey) -> TransactionOutput {
+        TransactionOutput {
+            commitment: Hash::from_slice(b"test-commitment"),
+            note: Hash::from_slice(b"test-note"),
+            recipient,
+        }
+    }
+
+    fn build_contract_tx(
+        tx_type: TransactionType,
+        memo: Vec<u8>,
+        signature: BlockchainSignature,
+    ) -> Transaction {
+        Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: tx_type,
+            inputs: vec![TransactionInput {
+                previous_output: Hash::from_slice(b"prev"),
+                output_index: 0,
+                nullifier: Hash::from_slice(b"nullifier"),
+                zk_proof: lib_blockchain::integration::zk_integration::ZkTransactionProof::default(),
+            }],
+            outputs: vec![test_output(signature.public_key.clone())],
+            fee: 1000,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    #[test]
+    fn validate_contract_deploy_requires_canonical_memo() {
+        let sig = test_signature(1);
+        let payload = ContractDeploymentPayloadV1 {
+            contract_type: "wasm".to_string(),
+            code: vec![1, 2, 3],
+            abi: b"{}".to_vec(),
+            init_args: vec![],
+            gas_limit: 1,
+            memory_limit_bytes: 1024,
+        };
+        let memo = payload.encode_memo().unwrap();
+        let tx = build_contract_tx(TransactionType::ContractDeployment, memo, sig);
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractDeployment,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "canonical deployment payload must validate, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn validate_contract_deploy_rejects_noncanonical_memo() {
+        let sig = test_signature(2);
+        let tx = build_contract_tx(
+            TransactionType::ContractDeployment,
+            b"ZHTPlegacy".to_vec(),
+            sig,
+        );
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractDeployment,
+            None,
+        );
+        assert!(result.is_err(), "non-canonical deployment memo must be rejected");
+    }
+
+    #[test]
+    fn validate_contract_call_rejects_invalid_memo_encoding() {
+        let sig = test_signature(3);
+        let tx = build_contract_tx(
+            TransactionType::ContractExecution,
+            b"bad-memo".to_vec(),
+            sig,
+        );
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractExecution,
+            Some([1u8; 32]),
+        );
+        assert!(result.is_err(), "invalid execution memo must be rejected");
+    }
+
+    #[test]
+    fn validate_contract_call_rejects_token_mutation_via_contract_execution() {
+        let sig = test_signature(4);
+        let contract_id = [2u8; 32];
+        let call = ContractCall::token_call("mint".to_string(), vec![1, 2, 3]);
+        let memo = encode_contract_execution_memo_v2(contract_id, &call, &sig).unwrap();
+        let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractExecution,
+            Some(contract_id),
+        );
+        assert!(
+            result.is_err(),
+            "deprecated token mutation method via ContractExecution must be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_contract_call_rejects_mismatched_uri_contract_id() {
+        let sig = test_signature(5);
+        let call = ContractCall::public_call(
+            ContractType::Web4Website,
+            "set_page".to_string(),
+            vec![1],
+        );
+        let memo = encode_contract_execution_memo_v2([9u8; 32], &call, &sig).unwrap();
+        let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractExecution,
+            Some([8u8; 32]),
+        );
+        assert!(result.is_err(), "mismatched URI contract_id must be rejected");
+    }
+
+    #[test]
+    fn validate_contract_call_accepts_matching_uri_contract_id() {
+        let sig = test_signature(6);
+        let contract_id = [7u8; 32];
+        let call = ContractCall::public_call(
+            ContractType::Web4Website,
+            "set_page".to_string(),
+            vec![1],
+        );
+        let memo = encode_contract_execution_memo_v2(contract_id, &call, &sig).unwrap();
+        let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
+
+        let result = BlockchainHandler::validate_canonical_contract_payload(
+            &tx,
+            TransactionType::ContractExecution,
+            Some(contract_id),
+        );
+        assert!(result.is_ok(), "matching URI contract_id must validate");
     }
 }

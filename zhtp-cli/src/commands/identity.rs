@@ -32,8 +32,7 @@ pub enum IdentityOperation {
     CreateWithType,
     Verify,
     List,
-    Register,
-    Migrate,
+    Unsupported,
 }
 
 impl IdentityOperation {
@@ -44,8 +43,7 @@ impl IdentityOperation {
             IdentityOperation::CreateWithType => "Create identity with specific type",
             IdentityOperation::Verify => "Verify identity on blockchain",
             IdentityOperation::List => "List blockchain identities",
-            IdentityOperation::Register => "Register client-generated identity (creates wallets)",
-            IdentityOperation::Migrate => "Migrate identity (seed-only)",
+            IdentityOperation::Unsupported => "Run identity operation",
         }
     }
 }
@@ -59,8 +57,9 @@ pub fn action_to_operation(action: &IdentityAction) -> IdentityOperation {
         IdentityAction::CreateDid { .. } => IdentityOperation::CreateWithType,
         IdentityAction::Verify { .. } => IdentityOperation::Verify,
         IdentityAction::List => IdentityOperation::List,
-        IdentityAction::Register { .. } => IdentityOperation::Register,
-        IdentityAction::Migrate { .. } => IdentityOperation::Migrate,
+        IdentityAction::SimulateMessage { .. }
+        | IdentityAction::Pending { .. }
+        | IdentityAction::Ack { .. } => IdentityOperation::Unsupported,
     }
 }
 
@@ -119,52 +118,11 @@ async fn handle_identity_command_impl(
             // Imperative: QUIC communication
             list_identities_impl(cli, output).await
         }
-        IdentityAction::Register {
-            display_name,
-            device_id,
-            identity_type,
-            keystore,
-            trust,
-        } => {
-            register_identity_impl(
-                &display_name,
-                &device_id,
-                &identity_type,
-                keystore.as_deref(),
-                trust.pin_spki.as_deref(),
-                trust.node_did.as_deref(),
-                trust.tofu,
-                trust.trust_node,
-                &cli.server,
-                &cli.format,
-                output,
-            )
-            .await
-        }
-        IdentityAction::Migrate {
-            display_name,
-            device_id,
-            phrase,
-            phrase_file,
-            keystore,
-            trust,
-        } => {
-            migrate_identity_impl(
-                &display_name,
-                &device_id,
-                phrase.as_deref(),
-                phrase_file.as_deref(),
-                keystore.as_deref(),
-                trust.pin_spki.as_deref(),
-                trust.node_did.as_deref(),
-                trust.tofu,
-                trust.trust_node,
-                &cli.server,
-                &cli.format,
-                output,
-            )
-            .await
-        }
+        IdentityAction::SimulateMessage { .. }
+        | IdentityAction::Pending { .. }
+        | IdentityAction::Ack { .. } => Err(CliError::ConfigError(
+            "This identity subcommand is not implemented in this command handler".to_string(),
+        )),
     }
 }
 
@@ -663,24 +621,6 @@ mod tests {
     }
 
     #[test]
-    fn test_action_to_operation_migrate() {
-        let action = IdentityAction::Migrate {
-            display_name: "alice".to_string(),
-            device_id: "device-1".to_string(),
-            phrase: None,
-            phrase_file: None,
-            keystore: None,
-            trust: crate::argument_parsing::TrustFlags {
-                pin_spki: None,
-                node_did: None,
-                tofu: false,
-                trust_node: true,
-            },
-        };
-        assert_eq!(action_to_operation(&action), IdentityOperation::Migrate);
-    }
-
-    #[test]
     fn test_operation_description() {
         assert_eq!(
             IdentityOperation::Create.description(),
@@ -699,8 +639,8 @@ mod tests {
             "List blockchain identities"
         );
         assert_eq!(
-            IdentityOperation::Migrate.description(),
-            "Migrate identity (seed-only)"
+            IdentityOperation::Unsupported.description(),
+            "Run identity operation"
         );
     }
 }

@@ -17,6 +17,7 @@ use crate::integration::economic_integration::{EconomicTransactionProcessor, Tre
 use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, ConsensusStatus};
 use crate::integration::storage_integration::{BlockchainStorageManager, BlockchainStorageConfig, StorageOperationResult};
 use crate::storage::{BlockchainStore, IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus, did_to_hash};
+use crate::contracts::treasury_kernel::TreasuryKernel;
 use lib_storage::dht::storage::DhtStorage;
 
 /// Validator was bootstrapped from off-chain genesis configuration at height 0.
@@ -161,6 +162,10 @@ pub struct Blockchain {
     /// Per-contract state storage (contract_id -> state bytes)
     #[serde(default)]
     pub contract_states: HashMap<[u8; 32], Vec<u8>>,
+    /// Treasury Kernel - single authority for SOV and DAO token balance mutations
+    /// Custom tokens (without kernel_mint_authority) bypass the kernel
+    #[serde(skip)]
+    pub treasury_kernel: Option<TreasuryKernel>,
     /// Contract state snapshots per block height for historical queries
     #[serde(default)]
     pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
@@ -196,6 +201,12 @@ pub struct Blockchain {
     /// Key: (token_id, sender address) where address is wallet_id for SOV or key_id for custom tokens
     #[serde(default)]
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
+    /// Block executor for state changes
+    /// When present, this is the SINGLE SOURCE OF TRUTH for state mutations.
+    /// All block applications should go through this executor.
+    #[serde(skip)]
+    #[allow(clippy::redundant_closure_call)]
+    pub executor: Option<std::sync::Arc<crate::execution::executor::BlockExecutor>>,
 }
 
 /// Validator information stored on-chain.
@@ -483,6 +494,8 @@ impl BlockchainV1 {
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
+            executor: None,
+            treasury_kernel: None,
         }
     }
 }
@@ -788,6 +801,12 @@ impl BlockchainStorageV3 {
 
             // Token nonces
             token_nonces: self.token_nonces,
+
+            // Block executor - single source of truth when configured
+            executor: None,
+
+            // Treasury Kernel - initialized separately
+            treasury_kernel: None,
         }
     }
 }
@@ -860,6 +879,8 @@ impl Blockchain {
             ubi_registry: HashMap::new(),
             ubi_blocks: HashMap::new(),
             token_nonces: HashMap::new(),
+            executor: None,
+            treasury_kernel: None,
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -890,11 +911,43 @@ impl Blockchain {
     /// let blockchain = Blockchain::new_with_store(store)?;
     /// ```
     pub fn new_with_store(store: std::sync::Arc<dyn BlockchainStore>) -> Result<Self> {
+        // NOTE: This constructor creates a Blockchain backed by the provided store but does
+        // NOT commit genesis automatically. The store must either be empty (height not yet
+        // initialized) or already contain a committed genesis block. The first call to
+        // add_block() must supply a genesis block (height 0) so that the executor can
+        // initialize the store height. Supplying a non-genesis block first will fail with
+        // an InvalidBlockHeight error from the SledStore.
         let mut blockchain = Self::new()?;
+        let executor = std::sync::Arc::new(
+            crate::execution::executor::BlockExecutor::with_store(store.clone())
+        );
+        blockchain.executor = Some(executor);
         blockchain.store = Some(store);
         // Disable legacy auto-persistence when using the new store
         blockchain.auto_persist_enabled = false;
-        info!("Blockchain initialized with Phase 2 incremental store");
+        info!("Blockchain initialized with incremental store + canonical BlockExecutor path");
+        Ok(blockchain)
+    }
+
+    /// Create a new blockchain with BlockExecutor as single source of truth.
+    ///
+    /// This is the recommended constructor for production use.
+    /// All state mutations go through the executor, ensuring consistency.
+    pub fn new_with_executor(
+        store: std::sync::Arc<dyn BlockchainStore>,
+    ) -> Result<Self> {
+        let mut blockchain = Self::new()?;
+        
+        // Create BlockExecutor with the store
+        let executor = std::sync::Arc::new(
+            crate::execution::executor::BlockExecutor::with_store(store.clone())
+        );
+        
+        blockchain.executor = Some(executor);
+        blockchain.store = Some(store);
+        blockchain.auto_persist_enabled = false;
+        
+        info!("Blockchain initialized with BlockExecutor as single source of truth");
         Ok(blockchain)
     }
 
@@ -944,6 +997,10 @@ impl Blockchain {
 
         // Create a fresh blockchain (with genesis)
         let mut blockchain = Self::new()?;
+        let executor = std::sync::Arc::new(
+            crate::execution::executor::BlockExecutor::with_store(store.clone())
+        );
+        blockchain.executor = Some(executor);
         blockchain.store = Some(store.clone());
         blockchain.auto_persist_enabled = false;
 
@@ -985,22 +1042,13 @@ impl Blockchain {
                             blockchain.wallet_blocks.insert(wallet_id, height);
                         }
 
-                        // Process token contract deployments
+                        // Replay contract executions through the canonical runtime path.
+                        // This keeps restart reconstruction behavior aligned with normal
+                        // block processing logic instead of a separate ad-hoc extractor.
                         if tx.transaction_type == TransactionType::ContractExecution {
-                            debug!("📦 Found ContractExecution tx at height {}, memo_len={}", height, tx.memo.len());
-                            match blockchain.extract_token_contract_from_tx(tx) {
-                                Ok(Some(token_contract)) => {
-                                    info!("🪙 Extracted token from block {}: {} ({})", height, token_contract.name, token_contract.symbol);
-                                    let contract_id = token_contract.token_id;
-                                    blockchain.token_contracts.insert(contract_id, token_contract);
-                                    blockchain.contract_blocks.insert(contract_id, height);
-                                }
-                                Ok(None) => {
-                                    debug!("📦 ContractExecution tx is not a token creation");
-                                }
-                                Err(e) => {
-                                    warn!("⚠️ Failed to extract token from tx at height {}: {}", height, e);
-                                }
+                            debug!("📦 Replaying ContractExecution tx at height {}, memo_len={}", height, tx.memo.len());
+                            if let Err(e) = blockchain.process_contract_execution(tx, height) {
+                                warn!("⚠️ Failed to replay ContractExecution at height {}: {}", height, e);
                             }
                         }
 
@@ -1048,6 +1096,19 @@ impl Blockchain {
             }
         }
 
+        // Load committed TokenStateSnapshot from SledStore to restore token contracts and nonces.
+        // This is the primary source for token state on restart; the snapshot is only written
+        // on commit so uncommitted (crashed) blocks cannot leak state.
+        if let Ok(Some(snapshot)) = store.get_token_state_snapshot() {
+            for (id, contract) in snapshot.token_contracts {
+                blockchain.token_contracts.insert(id, contract);
+            }
+            for (key, nonce) in snapshot.token_nonces {
+                blockchain.token_nonces.insert(key, nonce);
+            }
+            info!("Loaded TokenStateSnapshot from SledStore");
+        }
+
         // CRITICAL: Load persisted SOV token contract from SledStore if not reconstructed from transactions
         // The genesis token contract (with user balances) may not be in ContractExecution transactions
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
@@ -1057,6 +1118,26 @@ impl Blockchain {
                 info!("🪙 Loaded SOV token contract from SledStore (balances preserved)");
                 blockchain.token_contracts.insert(sov_token_id, sov_token);
             }
+        }
+
+        // Populate contract_blocks for any contracts missing deployment height tracking.
+        // This ensures get_contract_block_height() returns valid data after restart.
+        // Contracts without a known deployment height are assigned to genesis (block 0).
+        let mut backfilled_blocks = 0;
+        for contract_id in blockchain.token_contracts.keys() {
+            if !blockchain.contract_blocks.contains_key(contract_id) {
+                blockchain.contract_blocks.insert(*contract_id, 0);
+                backfilled_blocks += 1;
+            }
+        }
+        for contract_id in blockchain.web4_contracts.keys() {
+            if !blockchain.contract_blocks.contains_key(contract_id) {
+                blockchain.contract_blocks.insert(*contract_id, 0);
+                backfilled_blocks += 1;
+            }
+        }
+        if backfilled_blocks > 0 {
+            info!("📦 Backfilled {} contract deployment heights to genesis (block 0)", backfilled_blocks);
         }
 
         // Migrate legacy initial_balance values from human SOV to atomic units.
@@ -1110,70 +1191,6 @@ impl Blockchain {
         Ok(Some(blockchain))
     }
 
-    /// Helper to extract token contract from a contract execution transaction
-    fn extract_token_contract_from_tx(&self, tx: &Transaction) -> Result<Option<crate::contracts::TokenContract>> {
-        if tx.memo.len() <= 4 || &tx.memo[0..4] != b"ZHTP" {
-            return Ok(None);
-        }
-
-        let contract_data = &tx.memo[4..];
-        let (call, _sig): (crate::types::ContractCall, Signature) = match bincode::deserialize(contract_data) {
-            Ok(parsed) => parsed,
-            Err(_) => return Ok(None),
-        };
-
-        if call.contract_type != crate::types::ContractType::Token {
-            return Ok(None);
-        }
-
-        if call.method != "create_custom_token" {
-            return Ok(None);
-        }
-
-        // Deserialize token creation params
-        #[derive(serde::Deserialize)]
-        struct CreateTokenParams {
-            name: String,
-            symbol: String,
-            initial_supply: u64,
-            #[serde(default)]
-            decimals: u8,
-        }
-
-        let params: CreateTokenParams = match bincode::deserialize(&call.params) {
-            Ok(p) => p,
-            Err(_) => return Ok(None),
-        };
-
-        // Generate token ID from name+symbol (MUST match runtime creation)
-        let token_id = crate::contracts::utils::generate_custom_token_id(&params.name, &params.symbol);
-
-        // Credit initial supply to creator
-        let mut balances = std::collections::HashMap::new();
-        balances.insert(tx.signature.public_key.clone(), params.initial_supply);
-
-        let token_contract = crate::contracts::TokenContract {
-            token_id,
-            name: params.name.clone(),
-            symbol: params.symbol.clone(),
-            decimals: if params.decimals == 0 { 8 } else { params.decimals },
-            total_supply: params.initial_supply,
-            max_supply: params.initial_supply, // Default max to initial
-            is_deflationary: false,
-            burn_rate: 0,
-            balances,
-            allowances: std::collections::HashMap::new(),
-            creator: tx.signature.public_key.clone(),
-            kernel_mint_authority: None,
-            locked_balances: std::collections::HashMap::new(),
-            kernel_only_mode: false,
-            creator_did: None,
-            fee_schedule_bps: None,
-        };
-
-        Ok(Some(token_contract))
-    }
-
     /// Set or replace the Phase 2 incremental store.
     ///
     /// This allows attaching a store to an existing blockchain instance.
@@ -1186,6 +1203,21 @@ impl Blockchain {
     /// Get a reference to the Phase 2 incremental store, if configured.
     pub fn get_store(&self) -> Option<&std::sync::Arc<dyn BlockchainStore>> {
         self.store.as_ref()
+    }
+
+    /// Set the BlockExecutor as the single source of truth for state mutations.
+    ///
+    /// When an executor is set, all block applications should go through
+    /// BlockExecutor.apply_block() instead of direct state updates.
+    /// This ensures consistent state between memory and storage.
+    pub fn set_executor(&mut self, executor: std::sync::Arc<crate::execution::executor::BlockExecutor>) {
+        self.executor = Some(executor);
+        info!("BlockExecutor set as single source of truth for state mutations");
+    }
+
+    /// Check if BlockExecutor is configured as the single source of truth
+    pub fn has_executor(&self) -> bool {
+        self.executor.is_some()
     }
 
     /// Initialize the storage manager
@@ -1275,9 +1307,10 @@ impl Blockchain {
         // Add genesis transaction to genesis block
         genesis_block.transactions.push(genesis_tx.clone());
         
-        // Recalculate merkle root
+        // Recalculate merkle root and sync transaction_count header field
         let updated_merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&genesis_block.transactions);
         genesis_block.header.merkle_root = updated_merkle_root;
+        genesis_block.header.transaction_count = genesis_block.transactions.len() as u32;
         
         // Create UTXOs from genesis outputs
         let genesis_tx_id = crate::types::hash::blake3_hash(b"genesis_funding_transaction");
@@ -1528,6 +1561,35 @@ impl Blockchain {
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
+        // If BlockExecutor is configured, use it as single source of truth
+        if let Some(ref executor) = self.executor {
+            // Use BlockExecutor for state mutations
+            // Note: executor.apply_block() handles begin_block/commit_block internally
+            match executor.apply_block(&block) {
+                Ok(_outcome) => {
+                    // Block applied successfully through executor
+                    // Update blockchain metadata
+                    self.blocks.push(block.clone());
+                    self.height += 1;
+                    self.adjust_difficulty()?;
+                    
+                    debug!("Block {} applied via BlockExecutor (single source of truth)", block.height());
+                    
+                    // Continue with post-processing (events, persistence)
+                    self.finish_block_processing(block).await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("BlockExecutor failed to apply block: {}", e));
+                }
+            }
+        }
+
+        // DEPRECATED: Legacy path without BlockExecutor
+        // This path will be removed in a future version
+        warn!("DEPRECATED: Using legacy block processing path without BlockExecutor. Please use Blockchain::new_with_executor() or set_executor().");
+
+        // Legacy path: direct state mutations (when no executor configured)
         // Verify the block
         let previous_block = self.blocks.last();
         if !self.verify_block(&block, previous_block)? {
@@ -1544,7 +1606,6 @@ impl Blockchain {
         }
 
         // Issue #1016: Deduct transaction fees from sender balances BEFORE updating UTXO set
-        // This ensures fees are collected at the consensus layer, not just declared
         let block_fees = self.deduct_transaction_fees(&block)?;
         if block_fees > 0 {
             debug!("Collected {} in fees from block {}", block_fees, block.height());
@@ -1557,32 +1618,10 @@ impl Blockchain {
         self.save_utxo_snapshot(self.height)?;
         self.adjust_difficulty()?;
 
-        // TODO(BFT-J-1015): Add consensus invariant enforcement here
-        // Once consensus coordinator is fully integrated, validate:
-        // - No fork detected at this height
-        // - Height progression is monotonic
-        // - Block has sufficient validator quorum (if applicable)
-        // - No reorg of finalized blocks
-        //
-        // Example integration (currently disabled pending full consensus integration):
-        // ```
-        // use lib_consensus::invariants::{ConsensusState, enforce_consensus_invariants};
-        // let state = ConsensusState {
-        //     current_height: self.height,
-        //     previous_height: if self.height > 0 { Some(self.height - 1) } else { None },
-        //     votes_received: validator_votes_count, // From consensus coordinator
-        //     total_validators: total_validator_count, // From consensus coordinator
-        //     fork_detected: false, // Check for conflicting blocks at this height
-        //     reorg_detected: false, // Check if any finalized blocks were reverted
-        // };
-        // enforce_consensus_invariants(&state);
-        // ```
-
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
 
-        // Begin sled transaction BEFORE processing identity/wallet transactions
-        // This ensures any sled writes during processing have an active transaction
+        // Begin sled transaction for remaining processing
         if let Some(ref store) = self.store {
             store.begin_block(block.header.height)
                 .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
@@ -1594,50 +1633,40 @@ impl Blockchain {
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
 
-        // Process approved governance proposals (e.g., difficulty parameter updates)
-        // This executes any proposals that have passed voting since the last block
+        // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
-            // Don't fail block processing, governance is non-critical
         }
 
-        // Process economic features (UBI claims and profit declarations)
+        // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
             warn!("Error processing UBI claims at height {}: {}", self.height, e);
-            // Don't fail block processing for UBI errors
         }
-
-        // Automatic UBI distribution is now minted via TokenMint transactions
-        // constructed during block creation (block-authoritative path).
 
         if let Err(e) = self.process_profit_declarations(&block) {
             warn!("Error processing profit declarations at height {}: {}", self.height, e);
-            // Don't fail block processing for profit declaration errors
         }
 
-        // Create transaction receipts for all transactions in block
+        // Create transaction receipts
         let block_hash = block.hash();
         for (tx_index, tx) in block.transactions.iter().enumerate() {
             if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
                 warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
-                // Continue processing even if receipt creation fails
             }
         }
 
-        // Persist block to SledStore (Phase 3 incremental storage)
+        // Persist block to SledStore
         if let Some(ref store) = self.store {
             if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
                 error!("Failed to persist block {} to SledStore: {}", block.height(), e);
-                // Don't fail block processing - log error but continue
             } else {
                 debug!("Block {} persisted to SledStore", block.height());
             }
         }
 
-        // Update persistence counter
         self.blocks_since_last_persist += 1;
 
-        // Emit BlockAdded event (Issue #11)
+        // Emit BlockAdded event
         let block_hash_bytes = block.hash();
         let block_hash_array: [u8; 32] = match block_hash_bytes.as_bytes().try_into() {
             Ok(arr) => arr,
@@ -1659,7 +1688,103 @@ impl Blockchain {
         };
         if let Err(e) = self.event_publisher.publish(event).await {
             warn!("Failed to publish BlockAdded event: {}", e);
-            // Don't fail block processing for event publishing errors
+        }
+
+        Ok(())
+    }
+
+    /// Finish block processing after state mutations are complete.
+    /// This handles post-processing steps that happen regardless of which path was used.
+    async fn finish_block_processing(&mut self, block: Block) -> Result<()> {
+        // Remove processed transactions from pending pool
+        self.remove_pending_transactions(&block.transactions);
+
+        // When the BlockExecutor is active it has already called begin_block/commit_block
+        // inside apply_block(). Starting a second begin_block() for the same height would
+        // fail with an InvalidBlockHeight error. Only open a new SledStore transaction on
+        // the legacy path (no executor).
+        let using_executor = self.executor.is_some();
+        if !using_executor {
+            if let Some(ref store) = self.store {
+                store.begin_block(block.header.height)
+                    .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
+            }
+        }
+
+        // Process identity transactions
+        self.process_identity_transactions(&block)?;
+        self.process_wallet_transactions(&block)?;
+
+        // Skip token/contract processing when using BlockExecutor - it handles these
+        if !self.has_executor() {
+            self.process_contract_transactions(&block)?;
+            self.process_token_transactions(&block)?;
+        } else {
+            debug!("Skipping legacy token/contract processing - BlockExecutor is single source of truth");
+        }
+
+        // Process approved governance proposals
+        if let Err(e) = self.process_approved_governance_proposals() {
+            warn!("Error processing governance proposals at height {}: {}", self.height, e);
+        }
+
+        // Process economic features
+        if let Err(e) = self.process_ubi_claim_transactions(&block) {
+            warn!("Error processing UBI claims at height {}: {}", self.height, e);
+        }
+
+        if let Err(e) = self.process_profit_declarations(&block) {
+            warn!("Error processing profit declarations at height {}: {}", self.height, e);
+        }
+
+        // Create transaction receipts
+        let block_hash = block.hash();
+        for (tx_index, tx) in block.transactions.iter().enumerate() {
+            if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
+                warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
+            }
+        }
+
+        // Persist block to SledStore — skip when using the BlockExecutor because
+        // apply_block() already committed the block (begin_block → append_block →
+        // commit_block). Calling persist_to_sled_store() again would open a second
+        // store transaction for the same block height, causing an InvalidBlockHeight error.
+        if !using_executor {
+            if let Some(ref store) = self.store {
+                if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
+                    error!("Failed to persist block {} to SledStore: {}", block.height(), e);
+                } else {
+                    debug!("Block {} persisted to SledStore", block.height());
+                }
+            }
+        } else {
+            debug!("Block {} already persisted by BlockExecutor", block.height());
+        }
+
+        self.blocks_since_last_persist += 1;
+
+        // Emit BlockAdded event
+        let block_hash_bytes = block.hash();
+        let block_hash_array: [u8; 32] = match block_hash_bytes.as_bytes().try_into() {
+            Ok(arr) => arr,
+            Err(e) => {
+                error!(
+                    "Invariant violation: block hash for height {} is not 32 bytes (len = {}, error = {:?})",
+                    block.header.height,
+                    block_hash_bytes.as_bytes().len(),
+                    e
+                );
+                [0u8; 32]
+            }
+        };
+        let event = crate::events::BlockchainEvent::BlockAdded {
+            height: block.header.height,
+            block_hash: block_hash_array,
+            timestamp: block.header.timestamp,
+            transaction_count: block.transactions.len() as u64,
+        };
+        if let Err(e) = self.event_publisher.publish(event).await {
+            warn!("Failed to publish BlockAdded event: {}", e);
         }
 
         Ok(())
@@ -1914,19 +2039,16 @@ impl Blockchain {
         tracing::info!("Verifying transaction with identity verification enabled");
         tracing::info!("System transaction: {}", is_system_transaction);
         tracing::info!("Transaction type: {:?}", transaction.transaction_type);
-        tracing::warn!(
+        tracing::debug!(
             "[FLOW] verify_transaction: tx_hash={}, size={}, memo_len={}, fee={}",
             hex::encode(transaction.hash().as_bytes()),
             transaction.size(),
             transaction.memo.len(),
             transaction.fee
         );
-        tracing::warn!("SIMPLE_TRACE_A");
-        tracing::warn!("SIMPLE_TRACE_B");
-        tracing::warn!("SIMPLE_TRACE_C");
 
         let result = validator.validate_transaction_with_state(transaction);
-        tracing::warn!("[FLOW] verify_transaction: validate_transaction_with_state done");
+        tracing::debug!("[FLOW] verify_transaction: validate_transaction_with_state done");
         
         if let Err(ref error) = result {
             tracing::warn!("Transaction validation failed: {:?}", error);
@@ -1998,9 +2120,7 @@ impl Blockchain {
         // self.primary_wallet_for_signer().
         let fee_payers: Vec<(usize, PublicKey)> = block.transactions.iter().enumerate()
             .filter_map(|(i, tx)| {
-                let is_token_contract = tx.transaction_type == TransactionType::ContractExecution
-                    && tx.memo.len() > 4
-                    && &tx.memo[0..4] == b"ZHTP";
+                let is_token_contract = crate::transaction::is_token_contract_execution(tx);
                 let is_system = tx.inputs.is_empty() && !is_token_contract;
                 if is_system || tx.fee == 0 { return None; }
                 let sender = &tx.signature.public_key;
@@ -2044,7 +2164,9 @@ impl Blockchain {
             }
 
             // Deduct fee from sender's balance
-            // Note: We use the internal balance mutation since this is at the blockchain level
+            // Note: Direct balance mutation for backward compatibility.
+            // SOV token operations go through TreasuryKernel for new transactions,
+            // but this historical fee deduction maintains existing behavior.
             let new_balance = sender_balance - tx.fee;
             sov_token.balances.insert(fee_payer.clone(), new_balance);
 
@@ -2059,6 +2181,8 @@ impl Blockchain {
         }
 
         // Credit collected fees to DAO treasury wallet (conservation invariant: total supply unchanged)
+        // Note: Direct balance mutation for backward compatibility.
+        // New token operations should route through TreasuryKernel.
         if total_fees > 0 {
             if let Some(ref treasury_wallet_id) = self.dao_treasury_wallet_id {
                 match hex::decode(treasury_wallet_id) {
@@ -2087,9 +2211,7 @@ impl Blockchain {
                 block.height(),
                 total_fees,
                 block.transactions.iter().filter(|tx| {
-                    let is_token_contract = tx.transaction_type == TransactionType::ContractExecution
-                        && tx.memo.len() > 4
-                        && &tx.memo[0..4] == b"ZHTP";
+                    let is_token_contract = crate::transaction::is_token_contract_execution(tx);
                     let is_system = tx.inputs.is_empty() && !is_token_contract;
                     !is_system && tx.fee > 0
                 }).count()
@@ -2402,7 +2524,7 @@ impl Blockchain {
 
     /// Add a transaction to the pending pool
     pub fn add_pending_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        tracing::warn!(
+        tracing::debug!(
             "[FLOW] add_pending_transaction: tx_hash={}, size={}, fee={}",
             hex::encode(transaction.hash().as_bytes()),
             transaction.size(),
@@ -2431,7 +2553,7 @@ impl Blockchain {
     /// Core transaction processing: verify and add to pending pool.
     /// Does NOT broadcast — callers decide whether to broadcast.
     fn verify_and_enqueue_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        tracing::warn!(
+        tracing::debug!(
             "[FLOW] verify_and_enqueue_transaction: tx_hash={}, type={:?}, inputs={}, outputs={}",
             hex::encode(transaction.hash().as_bytes()),
             transaction.transaction_type,
@@ -2443,7 +2565,7 @@ impl Blockchain {
         }
 
         self.pending_transactions.push(transaction);
-        tracing::warn!("[FLOW] verify_and_enqueue_transaction: enqueued");
+        tracing::debug!("[FLOW] verify_and_enqueue_transaction: enqueued");
         Ok(())
     }
 
@@ -3079,6 +3201,76 @@ impl Blockchain {
         }
     }
 
+    /// Initialize Treasury Kernel with SOV token authority.
+    /// Must be called after SOV token is created with kernel authority.
+    pub fn initialize_treasury_kernel(&mut self, kernel_authority: PublicKey) {
+        use crate::contracts::treasury_kernel::TreasuryKernel;
+        
+        let governance_authority = kernel_authority.clone();
+        self.treasury_kernel = Some(TreasuryKernel::new(
+            kernel_authority,
+            governance_authority,
+            100, // blocks per epoch
+        ));
+        info!("Treasury Kernel initialized");
+    }
+
+    /// Check if a token is controlled by Treasury Kernel.
+    /// Returns true if token has kernel_mint_authority set.
+    fn is_kernel_controlled_token(&self, token: &crate::contracts::TokenContract) -> bool {
+        token.kernel_mint_authority.is_some()
+    }
+
+    /// Credit tokens to an account - routes through Treasury Kernel for SOV/DAO tokens,
+    /// uses direct method for custom tokens.
+    ///
+    /// SECURITY: For kernel-controlled tokens, this REQUIRES the kernel to be initialized.
+    /// There is NO fallback to direct methods for security reasons.
+    fn credit_tokens(
+        &mut self,
+        token: &mut crate::contracts::TokenContract,
+        to: &PublicKey,
+        amount: u64,
+        reason: crate::contracts::treasury_kernel::CreditReason,
+    ) -> Result<(), String> {
+        // Check if token is kernel-controlled (SOV, DAO tokens)
+        if self.is_kernel_controlled_token(token) {
+            // Must route through Treasury Kernel - no fallback for security
+            let kernel = self.treasury_kernel.as_mut()
+                .ok_or_else(|| "Treasury Kernel not initialized - kernel-controlled token operations require kernel".to_string())?;
+            let caller = kernel.governance_authority().clone();
+            kernel.credit(token, &caller, to, amount, reason).map_err(|e| e.to_string())
+        } else {
+            // Custom token - use direct method (no kernel control)
+            token.credit_balance(to, amount)
+        }
+    }
+
+    /// Debit tokens from an account - routes through Treasury Kernel for SOV/DAO tokens,
+    /// uses direct method for custom tokens.
+    ///
+    /// SECURITY: For kernel-controlled tokens, this REQUIRES the kernel to be initialized.
+    /// There is NO fallback to direct methods for security reasons.
+    fn debit_tokens(
+        &mut self,
+        token: &mut crate::contracts::TokenContract,
+        from: &PublicKey,
+        amount: u64,
+        reason: crate::contracts::treasury_kernel::DebitReason,
+    ) -> Result<(), String> {
+        // Check if token is kernel-controlled (SOV, DAO tokens)
+        if self.is_kernel_controlled_token(token) {
+            // Must route through Treasury Kernel - no fallback for security
+            let kernel = self.treasury_kernel.as_mut()
+                .ok_or_else(|| "Treasury Kernel not initialized - kernel-controlled token operations require kernel".to_string())?;
+            let caller = kernel.governance_authority().clone();
+            kernel.debit(token, &caller, from, amount, reason).map_err(|e| e.to_string())
+        } else {
+            // Custom token - use direct method (no kernel control)
+            token.debit_balance(from, amount)
+        }
+    }
+
     /// Convert wallet_id hex string to a 32-byte array.
     fn wallet_id_bytes(wallet_id_hex: &str) -> Option<[u8; 32]> {
         let bytes = hex::decode(wallet_id_hex).ok()?;
@@ -3177,11 +3369,26 @@ impl Blockchain {
     /// Get the current expected nonce for a sender address and token.
     /// For SOV transfers, the address is the wallet_id bytes.
     /// For custom token transfers, the address is the key_id bytes.
+    ///
+    /// The in-memory HashMap is checked first; it is populated both during live
+    /// block processing and from the TokenStateSnapshot on restart.  The store
+    /// is only consulted when the key is absent from the HashMap (e.g. for
+    /// nonces written by the BlockExecutor path but not yet reflected in memory).
     pub fn get_token_nonce(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u64 {
-        self.token_nonces
-            .get(&(*token_id, *address))
-            .copied()
-            .unwrap_or(0)
+        // In-memory HashMap is the primary source (populated from snapshot on
+        // restart and incremented during process_token_transactions).
+        if let Some(&nonce) = self.token_nonces.get(&(*token_id, *address)) {
+            return nonce;
+        }
+        // Fallback to store for nonces not yet reflected in the HashMap.
+        if let Some(store) = self.get_store() {
+            let token = crate::storage::TokenId::new(*token_id);
+            let addr = crate::storage::Address::new(*address);
+            if let Ok(nonce) = store.get_token_nonce(&token, &addr) {
+                return nonce;
+            }
+        }
+        0
     }
 
     /// Collect SOV backfill entries from wallet_registry for wallets missing token balances.
@@ -3724,9 +3931,7 @@ impl Blockchain {
             }
             // Handle ContractExecution transactions (token create/mint/transfer/burn)
             else if transaction.transaction_type == TransactionType::ContractExecution {
-                if let Err(e) = self.process_contract_execution(transaction, block.height()) {
-                    warn!("Failed to process contract execution: {}", e);
-                }
+                self.process_contract_execution(transaction, block.height())?;
             }
         }
         Ok(())
@@ -3929,30 +4134,123 @@ impl Blockchain {
                         .map_or(false, |s| s.starts_with("UBI_DISTRIBUTION_V1:"));
                     let is_migration = migration_from.is_some();
 
-                    let token = self.token_contracts.get_mut(&token_id)
-                        .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                    let amount_u64: u64 = mint.amount.try_into()
+                        .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
 
-                    // Creator authorization: custom token mints require signer == creator
-                    if !is_sov && !is_ubi_mint && !is_migration {
+                    let is_kernel_controlled = self.token_contracts.get(&token_id)
+                        .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?
+                        .kernel_mint_authority
+                        .is_some();
+
+                    // Creator authorization: non-kernel custom token mints require signer == creator.
+                    if !is_sov && !is_ubi_mint && !is_migration && !is_kernel_controlled {
+                        let token = self.token_contracts.get(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         token.check_mint_authorization(&transaction.signature.public_key)
                             .map_err(|e| anyhow::anyhow!("{}", e))?;
                     }
 
-                    let amount_u64: u64 = mint.amount.try_into()
-                        .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
-
                     if let Some(from_pk) = migration_from {
-                        token.burn(&from_pk, amount_u64)
-                            .map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                        if is_kernel_controlled {
+                            let mut kernel = self.treasury_kernel.take()
+                                .ok_or_else(|| anyhow::anyhow!(
+                                    "Treasury Kernel not initialized - kernel-controlled token operations require kernel"
+                                ))?;
+                            let burn_result = {
+                                let token = self.token_contracts.get_mut(&token_id)
+                                    .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                                kernel.debit(
+                                    token,
+                                    &transaction.signature.public_key,
+                                    &from_pk,
+                                    amount_u64,
+                                    crate::contracts::treasury_kernel::DebitReason::Burn,
+                                )
+                            };
+                            self.treasury_kernel = Some(kernel);
+                            burn_result.map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                        } else {
+                            let token = self.token_contracts.get_mut(&token_id)
+                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            token.burn(&from_pk, amount_u64)
+                                .map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                        }
                     }
 
-                    token.mint(&recipient_pk, amount_u64)
-                        .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                    if is_kernel_controlled {
+                        let mut kernel = self.treasury_kernel.take()
+                            .ok_or_else(|| anyhow::anyhow!(
+                                "Treasury Kernel not initialized - kernel-controlled token operations require kernel"
+                            ))?;
+                        let mint_result = {
+                            let token = self.token_contracts.get_mut(&token_id)
+                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            kernel.credit(
+                                token,
+                                &transaction.signature.public_key,
+                                &recipient_pk,
+                                amount_u64,
+                                crate::contracts::treasury_kernel::CreditReason::Mint,
+                            )
+                        };
+                        self.treasury_kernel = Some(kernel);
+                        mint_result.map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                    } else {
+                        let token = self.token_contracts.get_mut(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                        token.mint(&recipient_pk, amount_u64)
+                            .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                    }
 
                     if let Some(store) = &self.store {
+                        let token = self.token_contracts.get(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                         if let Err(e) = store_ref.put_token_contract(token) {
                             warn!("Failed to persist token contract after mint: {}", e);
+                        }
+                    }
+                }
+                TransactionType::TokenCreation => {
+                    let payload = crate::transaction::TokenCreationPayloadV1::decode_memo(&transaction.memo)
+                        .map_err(|e| anyhow::anyhow!("Invalid TokenCreation memo: {}", e))?;
+
+                    let creator = transaction.signature.public_key.clone();
+
+                    // Enforce symbol uniqueness deterministically across existing contracts.
+                    let symbol_upper = payload.symbol.to_uppercase();
+                    for existing_token in self.token_contracts.values() {
+                        if existing_token.symbol.to_uppercase() == symbol_upper {
+                            return Err(anyhow::anyhow!(
+                                "Token symbol '{}' already exists",
+                                payload.symbol
+                            ));
+                        }
+                    }
+
+                    let mut token = crate::contracts::TokenContract::new_custom(
+                        payload.name.clone(),
+                        payload.symbol.clone(),
+                        payload.initial_supply,
+                        creator.clone(),
+                    );
+                    token.decimals = if payload.decimals == 0 { 8 } else { payload.decimals };
+                    token.max_supply = payload.initial_supply;
+
+                    let token_id = token.token_id;
+                    if self.token_contracts.contains_key(&token_id) {
+                        return Err(anyhow::anyhow!(
+                            "Token with same name and symbol already exists"
+                        ));
+                    }
+
+                    self.contract_blocks.insert(token_id, block.height());
+                    self.token_contracts.insert(token_id, token.clone());
+
+                    if let Some(store) = &self.store {
+                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                        if let Err(e) = store_ref.put_token_contract(&token) {
+                            warn!("Failed to persist token contract after creation: {}", e);
                         }
                     }
                 }
@@ -3965,15 +4263,25 @@ impl Blockchain {
 
     /// Process a ContractExecution transaction
     fn process_contract_execution(&mut self, transaction: &Transaction, block_height: u64) -> Result<()> {
-        // Parse ContractCall from memo: "ZHTP" + bincode(ContractCall, Signature)
-        if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
-            return Err(anyhow::anyhow!("Invalid contract execution memo format"));
-        }
-
-        let call_data = &transaction.memo[4..];
-        let (call, _sig): (crate::types::ContractCall, crate::integration::crypto_integration::Signature) =
-            bincode::deserialize(call_data)
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize contract call: {}", e))?;
+        let call = if transaction
+            .memo
+            .starts_with(crate::transaction::CONTRACT_EXECUTION_MEMO_PREFIX_V2)
+        {
+            let decoded =
+                crate::transaction::DecodedContractExecutionMemo::decode_compat(&transaction.memo)
+                    .map_err(|e| anyhow::anyhow!("Invalid contract execution memo format: {}", e))?;
+            decoded.call
+        } else {
+            // Legacy replay path: "ZHTP" + bincode((ContractCall, Signature)).
+            if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
+                return Err(anyhow::anyhow!("Invalid contract execution memo format"));
+            }
+            let call_data = &transaction.memo[4..];
+            let (call, _sig): (crate::types::ContractCall, crate::integration::crypto_integration::Signature) =
+                bincode::deserialize(call_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize contract call: {}", e))?;
+            call
+        };
 
         // Get caller identity from transaction signature public key
         let caller = transaction.signature.public_key.clone();
@@ -4046,12 +4354,16 @@ impl Blockchain {
                     name: String,
                     symbol: String,
                     initial_supply: u64,
-                    #[allow(dead_code)]
                     decimals: u8,
                 }
                 let params: CreateTokenParams = bincode::deserialize(&call.params)
                     .map_err(|e| anyhow::anyhow!("Invalid create_custom_token params: {}", e))?;
-                let CreateTokenParams { name, symbol, initial_supply, .. } = params;
+                let CreateTokenParams {
+                    name,
+                    symbol,
+                    initial_supply,
+                    decimals,
+                } = params;
 
                 // CRITICAL: Check for duplicate symbol across ALL existing tokens
                 // This prevents confusion where multiple tokens share the same symbol
@@ -4066,12 +4378,15 @@ impl Blockchain {
                     }
                 }
 
-                let token = crate::contracts::TokenContract::new_custom(
+                let mut token = crate::contracts::TokenContract::new_custom(
                     name.clone(),
                     symbol.clone(),
                     initial_supply,
                     caller.clone(),
                 );
+                // Preserve legacy create_custom_token replay semantics.
+                token.decimals = if decimals == 0 { 8 } else { decimals };
+                token.max_supply = initial_supply;
 
                 let token_id = token.token_id;
                 if self.token_contracts.contains_key(&token_id) {
@@ -4081,6 +4396,7 @@ impl Blockchain {
                 info!("Creating token contract: {} ({}) with supply {} at block {}",
                     name, symbol, initial_supply, block_height);
                 self.token_contracts.insert(token_id, token);
+                self.contract_blocks.insert(token_id, block_height);
                 info!("Token contract created: {} ({}), token_id: {}",
                     name, symbol, hex::encode(token_id));
             }
@@ -4121,6 +4437,12 @@ impl Blockchain {
                 let token = self.token_contracts.get_mut(&token_id)
                     .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
+                if token.kernel_mint_authority.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "Protected token mint must route through Treasury Kernel"
+                    ));
+                }
+
                 if token.creator != *caller {
                     return Err(anyhow::anyhow!("Only token creator can mint"));
                 }
@@ -4130,103 +4452,14 @@ impl Blockchain {
                 info!("Minted {} tokens to {:?}", amount, to.key_id);
             }
             "transfer" => {
-                warn!("DEPRECATED: ContractExecution/transfer is deprecated — use TokenTransfer transactions instead (issue #1132)");
-                // TransferParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
-                #[derive(serde::Deserialize)]
-                struct TransferParams {
-                    token_id: [u8; 32],
-                    to: Vec<u8>,  // PublicKey bytes (bincode serialized)
-                    amount: u64,
-                }
-                let params: TransferParams = bincode::deserialize(&call.params)
-                    .map_err(|e| anyhow::anyhow!("Invalid transfer params: {}", e))?;
-                let TransferParams { token_id, to: to_bytes, amount } = params;
-                if Self::is_sov_token_id(&token_id) {
-                    return Err(anyhow::anyhow!("SOV transfers must use TokenTransfer transactions"));
-                }
-
-                // Deserialize PublicKey from bytes, or create minimal key with key_id
-                let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
-                    // Just key_id was sent
-                    lib_crypto::types::keys::PublicKey {
-                        dilithium_pk: vec![],
-                        kyber_pk: vec![],
-                        key_id: to_bytes.try_into().unwrap_or([0u8; 32]),
-                    }
-                } else {
-                    // Full PublicKey was serialized
-                    bincode::deserialize(&to_bytes).unwrap_or_else(|_| {
-                        lib_crypto::types::keys::PublicKey {
-                            dilithium_pk: vec![],
-                            kyber_pk: vec![],
-                            key_id: [0u8; 32],
-                        }
-                    })
-                };
-
-                let token = self.token_contracts.get_mut(&token_id)
-                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-                // Debug: log caller key_id and all balance entries for diagnosis
-                warn!(
-                    "[TRANSFER-EXEC] caller key_id={}, token has {} balance entries, amount={}",
-                    hex::encode(&caller.key_id),
-                    token.balances.len(),
-                    amount
-                );
-                for (pk, bal) in token.balances.iter() {
-                    warn!(
-                        "[TRANSFER-EXEC] balance entry: key_id={} balance={} dilithium_pk_len={} kyber_pk_len={}",
-                        hex::encode(&pk.key_id), bal, pk.dilithium_pk.len(), pk.kyber_pk.len()
-                    );
-                }
-
-                // Look up balance by key_id to handle PublicKey shape mismatches.
-                // Balances may have been minted under PublicKey::new(dilithium_pk) which
-                // has kyber_pk=vec![], but the caller's tx signature has both keys populated.
-                // Find the existing balance entry by key_id instead of full PublicKey equality.
-                let (source_key, source_balance) = token.balances.iter()
-                    .find(|(pk, _)| pk.key_id == caller.key_id)
-                    .map(|(pk, bal)| (pk.clone(), *bal))
-                    .unwrap_or_else(|| (caller.clone(), 0));
-
-                warn!(
-                    "[TRANSFER-EXEC] source_balance={} (found_by_key_id={}) for caller key_id={}",
-                    source_balance,
-                    source_balance > 0,
-                    hex::encode(&caller.key_id)
-                );
-
-                if source_balance < amount {
-                    return Err(anyhow::anyhow!("Insufficient balance"));
-                }
-                token.balances.insert(source_key, source_balance - amount);
-
-                let (to_key, to_balance) = token.balances.iter()
-                    .find(|(pk, _)| pk.key_id == to.key_id)
-                    .map(|(pk, bal)| (pk.clone(), *bal))
-                    .unwrap_or_else(|| (to.clone(), 0));
-                token.balances.insert(to_key, to_balance + amount);
-
-                info!("Transferred {} tokens from {:?} to {:?}", amount, caller.key_id, to.key_id);
+                return Err(anyhow::anyhow!(
+                    "ContractExecution/transfer is prohibited — use TokenTransfer transactions instead"
+                ));
             }
             "burn" => {
-                // BurnParams struct: { token_id: [u8; 32], amount: u64 }
-                #[derive(serde::Deserialize)]
-                struct BurnParams {
-                    token_id: [u8; 32],
-                    amount: u64,
-                }
-                let params: BurnParams = bincode::deserialize(&call.params)
-                    .map_err(|e| anyhow::anyhow!("Invalid burn params: {}", e))?;
-                let BurnParams { token_id, amount } = params;
-
-                let token = self.token_contracts.get_mut(&token_id)
-                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-                crate::contracts::tokens::functions::burn_tokens(token, caller, amount)
-                    .map_err(|e| anyhow::anyhow!("Burn failed: {}", e))?;
-                info!("Burned {} tokens from {:?}", amount, caller.key_id);
+                return Err(anyhow::anyhow!(
+                    "ContractExecution/burn is prohibited — use TokenBurn transactions instead"
+                ));
             }
             _ => {
                 debug!("Unknown token method: {}", call.method);
@@ -4850,58 +5083,115 @@ impl Blockchain {
         recipient_identity: String,
         amount: u64,
     ) -> Result<Hash> {
+        if amount == 0 {
+            return Err(anyhow::anyhow!("Execution amount must be greater than zero"));
+        }
+
         // 1. Get the proposal
         let proposal = self.get_dao_proposal(&proposal_id)
             .ok_or_else(|| anyhow::anyhow!("Proposal not found"))?;
-        
+
+        // Ensure executor and recipient identities are known.
+        if !self.identity_exists(&executor_identity) {
+            return Err(anyhow::anyhow!(
+                "Executor identity {} not found",
+                executor_identity
+            ));
+        }
+        let recipient_pubkey = self.identity_registry.get(&recipient_identity)
+            .map(|recipient_data| crate::integration::crypto_integration::PublicKey::new(recipient_data.public_key.clone()))
+            .ok_or_else(|| anyhow::anyhow!("Recipient identity {} not found", recipient_identity))?;
+
+        // Basic proposal-type guard to prevent accidental execution of non-treasury proposals.
+        let proposal_type_normalized = proposal.proposal_type.to_ascii_lowercase();
+        if !matches!(
+            proposal_type_normalized.as_str(),
+            "treasury"
+                | "treasuryspending"
+                | "treasury_spending"
+                | "treasury_allocation"
+        ) {
+            return Err(anyhow::anyhow!(
+                "Proposal type '{}' is not treasury spending",
+                proposal.proposal_type
+            ));
+        }
+
         // 2. Verify proposal has passed
         if !self.has_proposal_passed(&proposal_id, 60)? {
             return Err(anyhow::anyhow!("Proposal has not passed"));
         }
-        
+
         // 3. Check if already executed
+        if self.executed_dao_proposals.contains(&proposal_id) {
+            return Err(anyhow::anyhow!("Proposal already executed"));
+        }
         let executions = self.get_dao_executions();
         if executions.iter().any(|exec| exec.proposal_id == proposal_id) {
             return Err(anyhow::anyhow!("Proposal already executed"));
         }
-        
-        // 4. Get treasury wallet UTXOs
+        if self.pending_transactions.iter().any(|tx| {
+            tx.transaction_type == TransactionType::DaoExecution
+                && tx.dao_execution_data.as_ref().map(|d| d.proposal_id) == Some(proposal_id)
+        }) {
+            return Err(anyhow::anyhow!(
+                "Proposal execution already pending in mempool"
+            ));
+        }
+
+        // 4. Check treasury can cover the requested amount + execution fee.
+        let execution_fee = 100u64;
+        let required_amount = amount
+            .checked_add(execution_fee)
+            .ok_or_else(|| anyhow::anyhow!("Amount overflow"))?;
+        let treasury_balance = self.get_dao_treasury_balance()?;
+        if treasury_balance < required_amount {
+            return Err(anyhow::anyhow!(
+                "Insufficient treasury balance: need {}, available {}",
+                required_amount,
+                treasury_balance
+            ));
+        }
+
+        // 5. Get treasury wallet UTXOs
         let treasury_utxos = self.get_dao_treasury_utxos()?;
         if treasury_utxos.is_empty() {
-            warn!("⚠️  No treasury UTXOs available, creating placeholder transaction");
+            return Err(anyhow::anyhow!(
+                "No treasury UTXOs available for DAO execution"
+            ));
         }
-        
-        // 5. Select UTXOs to spend (simplified - just take first few)
-        let needed_amount = amount + 100; // amount + fee
+
+        // 6. Select deterministic UTXO inputs (bounded set to limit tx size).
+        let mut selected = treasury_utxos.clone();
+        selected.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
         let mut inputs = Vec::new();
-        let mut total_input = 0u64;
-        
-        for (utxo_id, _output) in treasury_utxos.iter().take(3) {
+        for (utxo_id, _output) in selected {
             inputs.push(TransactionInput {
-                previous_output: *utxo_id,
+                previous_output: utxo_id,
                 output_index: 0,
                 nullifier: crate::types::hash::blake3_hash(&[utxo_id.as_bytes(), &[0u8]].concat()),
                 zk_proof: crate::integration::zk_integration::ZkTransactionProof::default(),
             });
-            total_input += 1000; // Placeholder amount per UTXO
-            if total_input >= needed_amount {
-                break;
-            }
         }
-        
-        // If no UTXOs, create placeholder input
-        if inputs.is_empty() {
-            let proposal_id_bytes = proposal_id.as_bytes();
-            let nullifier_input = format!("dao_exec_{}", hex::encode(&proposal_id_bytes[..8]));
-            inputs.push(TransactionInput {
-                previous_output: Hash::default(),
-                output_index: 0,
-                nullifier: crate::types::hash::blake3_hash(nullifier_input.as_bytes()),
-                zk_proof: crate::integration::zk_integration::ZkTransactionProof::default(),
-            });
+
+        // Require at least one affirmative vote and bind execution to those approvals.
+        let yes_voters: Vec<String> = self
+            .get_dao_votes_for_proposal(&proposal_id)
+            .into_iter()
+            .filter(|v| v.vote_choice == "Yes" && v.voting_power > 0)
+            .map(|v| v.voter)
+            .collect();
+        if yes_voters.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No affirmative DAO votes found for execution authorization"
+            ));
         }
-        
-        // 6. Create execution data
+        let multisig_signatures: Vec<Vec<u8>> = yes_voters
+            .iter()
+            .map(|voter| voter.as_bytes().to_vec())
+            .collect();
+
+        // 7. Create execution data
         let execution_data = crate::transaction::DaoExecutionData {
             proposal_id,
             executor: executor_identity,
@@ -4910,18 +5200,10 @@ impl Blockchain {
             amount: Some(amount),
             executed_at: crate::utils::time::current_timestamp(),
             executed_at_height: self.height,
-            multisig_signatures: vec![], // TODO: Collect from approving voters
+            multisig_signatures,
         };
-        
-        // 7. Get recipient identity public key
-        let recipient_pubkey = if let Some(recipient_data) = self.identity_registry.get(&recipient_identity) {
-            crate::integration::crypto_integration::PublicKey::new(recipient_data.public_key.clone())
-        } else {
-            warn!("⚠️  Recipient identity not found, using placeholder");
-            crate::integration::crypto_integration::PublicKey::new(vec![])
-        };
-        
-        // 8. Create outputs (recipient + change if needed)
+
+        // 8. Create recipient output plus deterministic treasury change output.
         let mut outputs = vec![
             TransactionOutput {
                 commitment: crate::types::hash::blake3_hash(&amount.to_le_bytes()),
@@ -4929,31 +5211,43 @@ impl Blockchain {
                 recipient: recipient_pubkey,
             }
         ];
-        
-        // Add change output if we have UTXOs
-        if total_input > needed_amount {
+        if treasury_balance > required_amount {
+            let change_amount = treasury_balance - required_amount;
             let treasury_wallet = self.get_dao_treasury_wallet()?;
-            let change = total_input - needed_amount;
             outputs.push(TransactionOutput {
-                commitment: crate::types::hash::blake3_hash(&change.to_le_bytes()),
+                commitment: crate::types::hash::blake3_hash(&change_amount.to_le_bytes()),
                 note: Hash::default(),
                 recipient: crate::integration::crypto_integration::PublicKey::new(
-                    treasury_wallet.public_key.clone()
+                    treasury_wallet.public_key.clone(),
                 ),
             });
         }
-        
+
         // 9. Create execution transaction
         let proposal_id_bytes = proposal_id.as_bytes();
         let memo_text = format!("DAO Proposal {} Execution", hex::encode(&proposal_id_bytes[..8]));
+        let executor_pubkey = self.identity_registry
+            .get(&execution_data.executor)
+            .map(|id| crate::integration::crypto_integration::PublicKey::new(id.public_key.clone()))
+            .ok_or_else(|| anyhow::anyhow!("Executor identity {} not found", execution_data.executor))?;
+        let execution_signature = crate::types::hash::blake3_hash(
+            &[
+                proposal_id.as_bytes(),
+                execution_data.executor.as_bytes(),
+                &execution_data.executed_at.to_le_bytes(),
+            ]
+            .concat(),
+        )
+        .as_bytes()
+        .to_vec();
         let execution_tx = Transaction::new_dao_execution(
             execution_data,
             inputs,
             outputs,
-            100, // Fee
+            execution_fee,
             crate::integration::crypto_integration::Signature {
-                signature: vec![],
-                public_key: crate::integration::crypto_integration::PublicKey::new(vec![]),
+                signature: execution_signature,
+                public_key: executor_pubkey,
                 algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                 timestamp: crate::utils::time::current_timestamp(),
             },
@@ -4963,6 +5257,7 @@ impl Blockchain {
         // 10. Add to pending transactions
         let tx_hash = execution_tx.hash();
         self.add_pending_transaction(execution_tx)?;
+        self.executed_dao_proposals.insert(proposal_id);
         
         info!("✅ DAO proposal {:?} executed, transaction: {:?}", proposal_id, tx_hash);
         Ok(tx_hash)
@@ -7486,11 +7781,24 @@ impl Blockchain {
     }
     
     /// Get a token contract from the blockchain
-    pub fn get_token_contract(&self, contract_id: &[u8; 32]) -> Option<&crate::contracts::TokenContract> {
-        self.token_contracts.get(contract_id)
+    /// 
+    /// Reads from BlockchainStore (sled) if available, otherwise falls back to HashMap.
+    /// This enables the single-source-of-truth pattern when using BlockExecutor.
+    pub fn get_token_contract(&self, contract_id: &[u8; 32]) -> Option<crate::contracts::TokenContract> {
+        // Try store first (single source of truth when using BlockExecutor)
+        if let Some(store) = self.get_store() {
+            let token_id = crate::storage::TokenId::new(*contract_id);
+            if let Ok(Some(contract)) = store.get_token_contract(&token_id) {
+                return Some(contract);
+            }
+        }
+        // Fallback to HashMap (legacy path)
+        self.token_contracts.get(contract_id).cloned()
     }
     
     /// Get a mutable reference to a token contract
+    /// 
+    /// WARNING: This modifies the HashMap. For BlockExecutor path, use store methods instead.
     pub fn get_token_contract_mut(&mut self, contract_id: &[u8; 32]) -> Option<&mut crate::contracts::TokenContract> {
         self.token_contracts.get_mut(contract_id)
     }
@@ -8653,6 +8961,30 @@ impl Blockchain {
         }
         Ok(())
     }
+
+    /// Mint SOV tokens for a POUW reward recipient.
+    ///
+    /// This is an out-of-block kernel operation that mirrors the UBI engine pattern.
+    /// The recipient is identified by a 32-byte key_id derived from their DID.
+    /// After minting, the caller must call `save_to_file()` to persist the updated balance.
+    pub fn mint_sov_for_pouw(
+        &mut self,
+        recipient_key_id: [u8; 32],
+        amount: u64,
+    ) -> anyhow::Result<()> {
+        self.ensure_sov_token_contract();
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self.token_contracts.get_mut(&sov_token_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found after ensure_sov_token_contract"))?;
+        let recipient = crate::integration::crypto_integration::PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: recipient_key_id,
+        };
+        token.mint(&recipient, amount)
+            .map_err(|e| anyhow::anyhow!("POUW SOV mint failed: {}", e))?;
+        Ok(())
+    }
 }
 
 /// Statistics about blockchain persistence state
@@ -8674,5 +9006,246 @@ impl Default for Blockchain {
         // Note: Consensus coordinator requires async initialization and external dependencies
         // so it's not initialized in Default. Call initialize_consensus_coordinator() separately.
         blockchain
+    }
+}
+
+#[cfg(test)]
+mod replay_contract_execution_tests {
+    use super::*;
+    use crate::types::ContractCall;
+    use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
+
+    fn test_pubkey(seed: u8) -> PublicKey {
+        PublicKey::new(vec![seed; 32])
+    }
+
+    fn test_signature(pubkey: &PublicKey) -> Signature {
+        Signature {
+            signature: vec![0u8; 64],
+            public_key: pubkey.clone(),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 1_700_000_000,
+        }
+    }
+
+    fn contract_execution_tx(
+        signer: &PublicKey,
+        method: &str,
+        params: Vec<u8>,
+    ) -> Transaction {
+        let call = ContractCall::token_call(method.to_string(), params);
+        let payload = bincode::serialize(&(call, test_signature(signer)))
+            .expect("contract call payload should serialize");
+        let mut memo = b"ZHTP".to_vec();
+        memo.extend_from_slice(&payload);
+
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::ContractExecution,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(signer),
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    #[test]
+    fn contract_execution_is_deterministic() {
+        #[derive(serde::Serialize)]
+        struct CreateTokenParams {
+            name: String,
+            symbol: String,
+            initial_supply: u64,
+            decimals: u8,
+        }
+
+        #[derive(serde::Serialize)]
+        struct MintParams {
+            token_id: [u8; 32],
+            to: Vec<u8>,
+            amount: u64,
+        }
+
+        let creator = test_pubkey(0x41);
+        let recipient = test_pubkey(0x42);
+        let token_name = "ReplayToken";
+        let token_symbol = "RPT";
+        let token_id = crate::contracts::utils::generate_custom_token_id(token_name, token_symbol);
+
+        let create_params = CreateTokenParams {
+            name: token_name.to_string(),
+            symbol: token_symbol.to_string(),
+            initial_supply: 1_000,
+            decimals: 8,
+        };
+        let mint_params = MintParams {
+            token_id,
+            to: recipient.key_id.to_vec(),
+            amount: 250,
+        };
+
+        let txs = vec![
+            contract_execution_tx(
+                &creator,
+                "create_custom_token",
+                bincode::serialize(&create_params).expect("create params should serialize"),
+            ),
+            contract_execution_tx(
+                &creator,
+                "mint",
+                bincode::serialize(&mint_params).expect("mint params should serialize"),
+            ),
+        ];
+
+        let mut direct = Blockchain::default();
+        for tx in &txs {
+            direct
+                .process_contract_execution(tx, 10)
+                .expect("direct contract execution should succeed");
+        }
+
+        let mut replayed = Blockchain::default();
+        for tx in &txs {
+            replayed
+                .process_contract_execution(tx, 10)
+                .expect("replayed contract execution should succeed");
+        }
+
+        let direct_token = direct
+            .token_contracts
+            .get(&token_id)
+            .expect("token should exist in direct path");
+        let replayed_token = replayed
+            .token_contracts
+            .get(&token_id)
+            .expect("token should exist in replay path");
+
+        assert_eq!(direct_token.total_supply, 1_250);
+        assert_eq!(direct_token.balance_of(&creator), 1_000);
+        assert_eq!(direct_token.balance_of(&recipient), 250);
+
+        assert_eq!(replayed_token.total_supply, direct_token.total_supply);
+        assert_eq!(replayed_token.balance_of(&creator), direct_token.balance_of(&creator));
+        assert_eq!(replayed_token.balance_of(&recipient), direct_token.balance_of(&recipient));
+    }
+
+    #[test]
+    fn contract_blocks_populated_during_replay() {
+        #[derive(serde::Serialize)]
+        struct CreateTokenParams {
+            name: String,
+            symbol: String,
+            initial_supply: u64,
+            decimals: u8,
+        }
+
+        let creator = test_pubkey(0x43);
+        let token_name = "BlockHeightToken";
+        let token_symbol = "BHT";
+        let token_id = crate::contracts::utils::generate_custom_token_id(token_name, token_symbol);
+
+        let create_params = CreateTokenParams {
+            name: token_name.to_string(),
+            symbol: token_symbol.to_string(),
+            initial_supply: 5_000,
+            decimals: 8,
+        };
+
+        let tx = contract_execution_tx(
+            &creator,
+            "create_custom_token",
+            bincode::serialize(&create_params).expect("create params should serialize"),
+        );
+
+        let mut blockchain = Blockchain::default();
+        blockchain
+            .process_contract_execution(&tx, 42)
+            .expect("contract execution should succeed");
+
+        // Verify contract_blocks is updated with the correct block height
+        assert!(blockchain.token_contracts.contains_key(&token_id), "Token contract should exist");
+        assert_eq!(
+            blockchain.get_contract_block_height(&token_id),
+            Some(42),
+            "Contract deployment height should be tracked"
+        );
+    }
+}
+
+// =========================================================================
+// Store-backed Blockchain integration tests (issue #1339)
+// =========================================================================
+#[cfg(test)]
+mod store_backed_blockchain_tests {
+    use super::*;
+    use crate::block::{Block, BlockHeader};
+    use crate::storage::SledStore;
+    use crate::types::{Difficulty, Hash};
+
+    fn make_header(height: u64, prev_hash: Hash) -> BlockHeader {
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes[0..8].copy_from_slice(&height.to_be_bytes());
+        BlockHeader {
+            version: 1,
+            previous_block_hash: prev_hash,
+            merkle_root: Hash::default(),
+            state_root: Hash::default(),
+            timestamp: 1_700_000_000 + height,
+            difficulty: Difficulty::minimum(),
+            nonce: 0,
+            cumulative_difficulty: Difficulty::minimum(),
+            height,
+            block_hash: Hash::new(hash_bytes),
+            transaction_count: 0,
+            block_size: 0,
+            fee_model_version: 2,
+        }
+    }
+
+    /// new_with_store() + add_block(genesis) + add_block(block 1) must succeed
+    /// end-to-end without hitting InvalidBlockHeight or double-commit errors.
+    #[tokio::test]
+    async fn test_store_backed_apply_genesis_and_block1() {
+        let temp = tempfile::tempdir().unwrap();
+        let store_path = temp.path().join("test_store");
+        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
+
+        let mut bc = Blockchain::new_with_store(store.clone()).unwrap();
+
+        // Genesis block (height 0, prev_hash = zeroed)
+        let genesis_header = make_header(0, Hash::default());
+        let genesis = Block::new(genesis_header.clone(), vec![]);
+        bc.add_block(genesis.clone())
+            .await
+            .expect("genesis should apply without error");
+        assert_eq!(bc.get_height(), 1, "blockchain height should be 1 after genesis");
+
+        // Block 1 — also verifies no double begin_block/commit_block regression
+        let block1_header = make_header(1, genesis_header.block_hash);
+        let block1 = Block::new(block1_header, vec![]);
+        bc.add_block(block1)
+            .await
+            .expect("block 1 should apply without error");
+        assert_eq!(bc.get_height(), 2, "blockchain height should be 2 after block 1");
+
+        // Verify the store sees the committed blocks
+        assert_eq!(
+            store.latest_height().unwrap(),
+            1,
+            "store latest_height should be 1 after two committed blocks"
+        );
     }
 }

@@ -46,6 +46,7 @@ pub use keypair::{
     CONSENSUS_SIGNATURE_SCHEME,
     validate_consensus_signature_scheme,
 };
+pub use keypair::operations::encrypt_with_public_key;
 
 // Re-export symmetric encryption
 pub use symmetric::{

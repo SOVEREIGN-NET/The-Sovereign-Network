@@ -35,10 +35,10 @@ async fn main() -> Result<()> {
     let mut consensus_coordinator = initialize_consensus_integration(
         blockchain.clone(),
         mempool.clone(),
-        ConsensusType::Hybrid, // Use hybrid PoS + PoStorage consensus
+        ConsensusType::ByzantineFaultTolerance,
     ).await?;
 
-    println!("Consensus coordinator initialized with Hybrid consensus");
+    println!("Consensus coordinator initialized with BFT consensus");
 
     // 3. Generate validator keypairs
     let validator_keypairs = vec![
@@ -58,12 +58,16 @@ async fn main() -> Result<()> {
     for (i, ((name, &stake), &storage_gb)) in validator_names.iter().zip(stakes.iter()).zip(storage_capacities.iter()).enumerate() {
         let identity = IdentityId::from_bytes(&validator_keypairs[i].public_key.dilithium_pk);
         let storage_bytes = storage_gb * 1024 * 1024 * 1024;
+        let networking_keypair = KeyPair::generate().unwrap();
+        let rewards_keypair = KeyPair::generate().unwrap();
 
         consensus_coordinator.register_as_validator(
             identity.clone(),
             stake,
             storage_bytes,
             &validator_keypairs[i],
+            &networking_keypair,
+            &rewards_keypair,
             5, // 5% commission rate
         ).await?;
 

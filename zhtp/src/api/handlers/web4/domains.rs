@@ -1179,7 +1179,9 @@ impl Web4Handler {
             ));
         }
 
-        let domain = path_parts[6];
+        // Extract domain and remove any query parameters
+        let domain_with_query = path_parts[6];
+        let domain = domain_with_query.split('?').next().unwrap_or(domain_with_query);
 
         // Parse optional limit from query string
         let limit = request.uri
@@ -1260,6 +1262,15 @@ impl Web4Handler {
             ));
         }
 
+        // SIGNATURE VERIFICATION
+        // The owner signs a message containing the DeployManifest CID (new_manifest_cid).
+        // This proves the owner authorized THIS SPECIFIC deployment content.
+        // 
+        // SECURITY MODEL:
+        // - DeployManifest CID = signed by owner, proves content authorization
+        // - Web4Manifest CID = derived deterministically from DeployManifest, used for resolution
+        // - The transform from DeployManifest → Web4Manifest is deterministic and auditable
+        // - Both CIDs are stored: DeployManifest for audit, Web4Manifest for runtime
         let signed_message = format!(
             "{}|{}|{}|{}",
             update_request.domain,
@@ -1271,10 +1282,8 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid update signature hex encoding: {}", e))?;
 
         let identity_mgr = self.identity_manager.read().await;
-        let owner_id = lib_identity::did::parse_did_to_identity_id(owner_did)
-            .map_err(|e| anyhow!("Invalid owner DID format: {}", e))?;
         let owner_identity = identity_mgr
-            .get_identity(&owner_id)
+            .get_identity_by_did(owner_did)
             .ok_or_else(|| anyhow!("Owner identity not found: {}", owner_did))?;
 
         let is_valid = lib_crypto::verify_signature(
@@ -1288,13 +1297,77 @@ impl Web4Handler {
             return Err(anyhow!("Invalid update signature"));
         }
 
-        let _manifest = self
+        let manifest = self
             .load_and_verify_manifest(&update_request.domain, &update_request.new_manifest_cid)
             .await
             .map_err(|e| anyhow!("Manifest verification failed: {}", e))?;
 
+        // CANONICALIZE: convert the CLI DeployManifest (provenance) into a canonical Web4Manifest
+        // and store its CID as the runtime-truth pointer.
+        // IMPORTANT: Using BTreeMap for deterministic iteration order to ensure stable CID computation.
+        let mut manifest_files = std::collections::BTreeMap::new();
+        for entry in &manifest.files {
+            manifest_files.insert(
+                entry.path.clone(),
+                lib_network::web4::ManifestFile {
+                    cid: entry.hash.clone(),
+                    size: entry.size,
+                    content_type: entry.mime_type.clone(),
+                    hash: entry.hash.clone(),
+                },
+            );
+        }
 
-        match self.domain_registry.update_domain(update_request).await {
+        let new_version = status.version.saturating_add(1);
+        let previous_manifest = if status.version == 0 {
+            None
+        } else {
+            Some(status.current_web4_manifest_cid.clone())
+        };
+
+        let web4_manifest = lib_network::web4::Web4Manifest {
+            domain: update_request.domain.clone(),
+            version: new_version,
+            previous_manifest,
+            build_hash: hex::encode(manifest.root_hash),
+            files: manifest_files,
+            created_at: current_time,
+            created_by: manifest.author_did.clone(),
+            message: Some(format!(
+                "Domain {} updated with {} files",
+                update_request.domain,
+                manifest.files.len()
+            )),
+        };
+
+        // Store the canonical Web4Manifest and get its CID.
+        // SECURITY: The owner signs new_manifest_cid (the DeployManifest CID) to prove
+        // content authorization. The server then derives a canonical Web4Manifest from that
+        // content and verifies the computed CID matches what the owner signed. This ensures
+        // the owner explicitly authorized the exact canonical representation that gets stored.
+        let canonical_web4_manifest_cid = self
+            .domain_registry
+            .store_manifest(web4_manifest)
+            .await
+            .map_err(|e| anyhow!("Failed to store canonical Web4Manifest: {}", e))?;
+
+        // Verify the canonicalized CID matches what the owner signed.
+        // If these differ it means the owner signed a different manifest than what we stored —
+        // either a replay of an old request or a server-side transform that was not authorized.
+        if canonical_web4_manifest_cid != update_request.new_manifest_cid {
+            return Err(anyhow!(
+                "CID mismatch: signed manifest CID {} does not match computed canonical CID {}. \
+                 The owner must sign the canonical Web4Manifest CID, not the DeployManifest CID.",
+                update_request.new_manifest_cid,
+                canonical_web4_manifest_cid
+            ));
+        }
+
+        // Update the request with the verified canonical Web4Manifest CID for domain record update
+        let mut canonical_update_request = update_request.clone();
+        canonical_update_request.new_manifest_cid = canonical_web4_manifest_cid;
+
+        match self.domain_registry.update_domain(canonical_update_request).await {
             Ok(response) => {
                 if response.success {
                     let version = response.new_version;
@@ -1362,9 +1435,8 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid manifest signature encoding: {}", e))?;
 
         let identity_mgr = self.identity_manager.read().await;
-        let author_id = lib_identity::did::parse_did_to_identity_id(&manifest.author_did)
-            .map_err(|e| anyhow!("Invalid author DID format: {}", e))?;
-        let author_identity = identity_mgr.get_identity(&author_id)
+        let author_identity = identity_mgr
+            .get_identity_by_did(&manifest.author_did)
             .ok_or_else(|| anyhow!("Author identity not found: {}", manifest.author_did))?;
 
         let is_valid = lib_crypto::verify_signature(
