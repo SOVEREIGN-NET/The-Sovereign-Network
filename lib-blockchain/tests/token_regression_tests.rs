@@ -393,6 +393,67 @@ fn test_mint_custom_token_unauthorized_rejected() {
     assert_eq!(token.total_supply, 1_000_000, "Supply should be unchanged");
 }
 
+/// Test 3b: Kernel-controlled tokens reject direct TokenMint bypass from non-kernel callers.
+#[test]
+fn test_kernel_controlled_tokenmint_bypass_rejected() {
+    let mut blockchain = Blockchain::default();
+    let kernel_authority = test_pubkey(77);
+    let attacker = test_pubkey(88);
+    let recipient = test_pubkey(2);
+
+    blockchain.initialize_treasury_kernel(kernel_authority.clone());
+    register_identity(&mut blockchain, "did:zhtp:recipient_02", &recipient);
+
+    let mut token = TokenContract::new_custom(
+        "KernelToken".to_string(),
+        "KRN".to_string(),
+        1_000_000,
+        test_pubkey(1),
+    );
+    token.kernel_mint_authority = Some(kernel_authority.clone());
+    let token_id = token.token_id;
+    blockchain.token_contracts.insert(token_id, token);
+
+    let tx = token_mint_tx(&attacker, token_id, recipient.key_id, 1_000);
+    let block = test_block(1, vec![tx]);
+
+    let result = blockchain.process_token_transactions(&block);
+    assert!(result.is_err(), "Non-kernel caller must be rejected");
+    assert!(
+        result.unwrap_err().to_string().contains("TokenMint failed"),
+        "Rejection should come from kernel-routed mint path"
+    );
+}
+
+/// Test 3c: Kernel-controlled token mint succeeds when signed by kernel authority.
+#[test]
+fn test_kernel_controlled_tokenmint_via_kernel_authority_succeeds() {
+    let mut blockchain = Blockchain::default();
+    let kernel_authority = test_pubkey(77);
+    let recipient = test_pubkey(2);
+
+    blockchain.initialize_treasury_kernel(kernel_authority.clone());
+    register_identity(&mut blockchain, "did:zhtp:recipient_02", &recipient);
+
+    let mut token = TokenContract::new_custom(
+        "KernelToken".to_string(),
+        "KRN".to_string(),
+        1_000_000,
+        test_pubkey(1),
+    );
+    token.kernel_mint_authority = Some(kernel_authority.clone());
+    let token_id = token.token_id;
+    blockchain.token_contracts.insert(token_id, token);
+
+    let tx = token_mint_tx(&kernel_authority, token_id, recipient.key_id, 1_000);
+    let block = test_block(1, vec![tx]);
+
+    blockchain.process_token_transactions(&block).unwrap();
+
+    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    assert_eq!(token.balance_of(&recipient), 1_000);
+}
+
 /// Test 4: SOV wallet-to-wallet transfer using wallet_id addressing.
 #[test]
 fn test_sov_wallet_transfer() {
@@ -515,6 +576,98 @@ fn test_contract_execution_burn_rejected() {
     let token = blockchain.token_contracts.get(&token_id).unwrap();
     assert_eq!(token.balance_of(&creator), 1_000_000, "Creator balance should be unchanged");
     assert_eq!(token.total_supply, initial_supply, "Total supply should be unchanged");
+}
+
+/// Test 6a: ContractExecution mint cannot bypass kernel authority on protected tokens.
+#[test]
+fn test_contract_execution_mint_rejected_for_kernel_controlled_token() {
+    #[derive(serde::Serialize)]
+    struct MintParams {
+        token_id: [u8; 32],
+        to: Vec<u8>,
+        amount: u64,
+    }
+
+    let mut blockchain = Blockchain::default();
+    let creator = test_pubkey(1);
+    let kernel_authority = test_pubkey(77);
+    let recipient = test_pubkey(2);
+    register_identity(&mut blockchain, "did:zhtp:recipient_02", &recipient);
+
+    let mut token = TokenContract::new_custom(
+        "KernelToken".to_string(),
+        "KRN".to_string(),
+        1_000_000,
+        creator.clone(),
+    );
+    token.kernel_mint_authority = Some(kernel_authority);
+    let token_id = token.token_id;
+    blockchain.token_contracts.insert(token_id, token);
+
+    let params = MintParams {
+        token_id,
+        to: recipient.key_id.to_vec(),
+        amount: 500,
+    };
+    let tx = contract_execution_tx(&creator, "mint", bincode::serialize(&params).unwrap());
+    let block = test_block(1, vec![tx]);
+
+    let result = blockchain.process_contract_transactions(&block);
+    assert!(
+        result.is_ok(),
+        "process_contract_transactions currently swallows contract-execution errors"
+    );
+
+    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    assert_eq!(
+        token.balance_of(&recipient),
+        0,
+        "Kernel-protected mint bypass must not mutate balances"
+    );
+}
+
+/// Test 6aa: ContractExecution burn cannot bypass kernel authority on protected tokens.
+#[test]
+fn test_contract_execution_burn_rejected_for_kernel_controlled_token() {
+    #[derive(serde::Serialize)]
+    struct BurnParams {
+        token_id: [u8; 32],
+        amount: u64,
+    }
+
+    let mut blockchain = Blockchain::default();
+    let creator = test_pubkey(1);
+    let kernel_authority = test_pubkey(77);
+
+    let mut token = TokenContract::new_custom(
+        "KernelToken".to_string(),
+        "KRN".to_string(),
+        1_000_000,
+        creator.clone(),
+    );
+    token.kernel_mint_authority = Some(kernel_authority);
+    let token_id = token.token_id;
+    blockchain.token_contracts.insert(token_id, token);
+
+    let params = BurnParams {
+        token_id,
+        amount: 500,
+    };
+    let tx = contract_execution_tx(&creator, "burn", bincode::serialize(&params).unwrap());
+    let block = test_block(1, vec![tx]);
+
+    let result = blockchain.process_contract_transactions(&block);
+    assert!(
+        result.is_ok(),
+        "process_contract_transactions currently swallows contract-execution errors"
+    );
+
+    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    assert_eq!(
+        token.total_supply,
+        1_000_000,
+        "Kernel-protected burn bypass must not mutate supply"
+    );
 }
 
 /// Test 6b: ContractExecution token transfer is rejected.
