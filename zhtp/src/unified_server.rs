@@ -901,6 +901,13 @@ impl ZhtpUnifiedServer {
         let web4_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(web4_handler);
         zhtp_router.register_handler("/api/v1/web4".to_string(), web4_handler);
 
+        // Web4 gateway handler — Host-based routing (.sov/.zhtp domains in browser)
+        // Auto-emits Web4ContentServed (×3) and Web4ManifestRoute (×2) POUW receipts
+        let gateway_handler = crate::api::handlers::web4::Web4GatewayHandler::new(domain_registry.clone())
+            .with_pouw_validator(pouw_validator_arc.clone(), node_did.clone());
+        zhtp_router.register_handler("/api/v1/web4/gateway".to_string(), Arc::new(gateway_handler));
+        info!("✓ Web4 gateway handler registered");
+
         // Validator management
         let validator_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::ValidatorHandler::new(blockchain.clone())
