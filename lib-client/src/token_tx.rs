@@ -14,7 +14,7 @@ use hex;
 // CRITICAL: These MUST be imported, not redefined locally, for bincode serialization to match
 use lib_blockchain::{Transaction, TransactionType};
 use lib_blockchain::contracts::utils::generate_lib_token_id;
-use lib_blockchain::transaction::{TokenMintData, TokenTransferData};
+use lib_blockchain::transaction::{TokenCreationPayloadV1, TokenMintData, TokenTransferData};
 use lib_blockchain::types::{ContractType, ContractCall, CallPermissions};
 use lib_crypto::types::SignatureAlgorithm;
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey};
@@ -611,16 +611,67 @@ pub fn build_create_token_tx(
     decimals: u8,
     chain_id: u8,
 ) -> Result<String, String> {
-    let params = CreateTokenParams {
+    let payload = TokenCreationPayloadV1 {
         name: name.to_string(),
         symbol: symbol.to_string(),
         initial_supply,
         decimals,
     };
-    let params_bytes = bincode::serialize(&params)
-        .map_err(|e| format!("Failed to serialize params: {}", e))?;
+    let memo = payload
+        .encode_memo()
+        .map_err(|e| format!("Invalid token creation payload: {}", e))?;
+    let signer_pk = create_public_key(identity.public_key.clone());
+    let mut tx = Transaction::new_token_creation_with_chain_id(
+        chain_id,
+        Signature {
+            signature: vec![],
+            public_key: signer_pk.clone(),
+            algorithm: SignatureAlgorithm::Dilithium2,
+            timestamp: 0,
+        },
+        memo,
+    );
 
-    build_contract_transaction(identity, ContractType::Token, "create_custom_token", params_bytes, chain_id)
+    tx.fee = 0;
+    let tx_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign: {}", e))?;
+
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: signer_pk,
+        algorithm: SignatureAlgorithm::Dilithium2,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize tx for fee estimation: {}", e))?;
+    tx.fee = calculate_min_fee_from_size(
+        tx_bytes.len(),
+        TX_FEE_BASE_FEE.load(Ordering::SeqCst),
+        TX_FEE_BYTES_PER_SOV.load(Ordering::SeqCst),
+        TX_FEE_WITNESS_CAP.load(Ordering::SeqCst),
+    );
+
+    let tx_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign: {}", e))?;
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: create_public_key(identity.public_key.clone()),
+        algorithm: SignatureAlgorithm::Dilithium2,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let final_tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
+    Ok(hex::encode(final_tx_bytes))
 }
 
 /// Build a signed token burn transaction

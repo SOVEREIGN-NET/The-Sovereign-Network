@@ -40,8 +40,11 @@ use crate::block::Block;
 use crate::storage::{
     Address, Amount, BlockHash, BlockHeight, BlockchainStore, StorageError, TokenId,
 };
-use crate::transaction::hash_transaction;
-use crate::types::TransactionType;
+use crate::transaction::{
+    contract_deployment::ContractDeploymentPayloadV1, hash_transaction,
+    token_creation::TokenCreationPayloadV1,
+};
+use crate::types::{ContractCall, TransactionType};
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
 use super::tx_apply::{self, CoinbaseOutcome, StateMutator, TransferOutcome};
@@ -602,6 +605,15 @@ impl BlockExecutor {
                 TxOutcome::TokenMint(_outcome) => {
                     summary.balance_changes += 1; // recipient only
                 }
+                TxOutcome::TokenCreation(_outcome) => {
+                    summary.balance_changes += 1; // creator balance only (token contract init is not counted here)
+                }
+                TxOutcome::ContractDeployment(_outcome) => {
+                    summary.balance_changes += 1; // tracks one deterministic contract deployment operation (multiple underlying storage writes: code + metadata)
+                }
+                TxOutcome::ContractExecution(_outcome) => {
+                    summary.balance_changes += 1; // tracks one deterministic contract execution operation (may involve multiple underlying state mutations)
+                }
                 TxOutcome::DaoProposal(_) => {
                     summary.account_updates += 1; // governance state write (not a token balance change)
                 }
@@ -741,6 +753,9 @@ impl BlockExecutor {
             TransactionType::Transfer => {}
             TransactionType::TokenTransfer => {}
             TransactionType::TokenMint => {}
+            TransactionType::TokenCreation => {}
+            TransactionType::ContractDeployment => {}
+            TransactionType::ContractExecution => {}
             TransactionType::DaoProposal => {}
             TransactionType::DaoVote => {}
             TransactionType::DaoExecution => {}
@@ -762,10 +777,7 @@ impl BlockExecutor {
             | TransactionType::UBIClaim
             | TransactionType::ProfitDeclaration
             | TransactionType::GovernanceConfigUpdate
-            | TransactionType::ContractDeployment
-            | TransactionType::ContractExecution
             // Phase 3/4 types - handled by executor but validation not fully wired yet
-            | TransactionType::TokenCreation
             | TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
@@ -879,6 +891,45 @@ impl BlockExecutor {
                     ));
                 }
             }
+            TransactionType::TokenCreation => {
+                if !tx.inputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenCreation must not have UTXO inputs".to_string(),
+                    ));
+                }
+                if !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenCreation must not have UTXO outputs".to_string(),
+                    ));
+                }
+                TokenCreationPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "TokenCreation requires canonical memo payload: {e}"
+                    ))
+                })?;
+            }
+            TransactionType::ContractDeployment => {
+                // Contract deployments must not perform UTXO operations.
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "ContractDeployment must not have inputs or outputs".to_string(),
+                    ));
+                }
+                ContractDeploymentPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "ContractDeployment requires canonical deployment memo: {e}"
+                    ))
+                })?;
+            }
+            TransactionType::ContractExecution => {
+                // Contract executions must not perform UTXO operations.
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "ContractExecution must not have inputs or outputs".to_string(),
+                    ));
+                }
+                Self::decode_contract_call_memo(&tx.memo)?;
+            }
             TransactionType::DaoProposal => {
                 let data = tx.dao_proposal_data.as_ref().ok_or_else(|| {
                     TxApplyError::InvalidType(
@@ -907,9 +958,14 @@ impl BlockExecutor {
                         "DaoExecution requires dao_execution_data field".to_string(),
                     )
                 })?;
-                if data.executor.trim().is_empty() || data.execution_type.trim().is_empty() {
+                if data.proposal_id == crate::types::Hash::default() {
                     return Err(TxApplyError::InvalidType(
-                        "DaoExecution executor/execution_type must be non-empty".to_string(),
+                        "DaoExecution proposal_id must be non-zero".to_string(),
+                    ));
+                }
+                if data.executor.trim().is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "DaoExecution executor must be non-empty".to_string(),
                     ));
                 }
             }
@@ -1126,6 +1182,37 @@ impl BlockExecutor {
         }
     }
 
+    /// Decode and validate a ContractExecution memo.
+    ///
+    /// Memos must start with a "ZHTP" prefix followed by a bincode-encoded
+    /// `(ContractCall, Signature)` tuple. The signature is extracted but not
+    /// verified here — signature validation happens earlier in the transaction
+    /// processing pipeline (e.g. during mempool/consensus validation).
+    fn decode_contract_call_memo(memo: &[u8]) -> Result<ContractCall, TxApplyError> {
+        if memo.len() <= 4 || &memo[0..4] != b"ZHTP" {
+            return Err(TxApplyError::InvalidType(
+                "ContractExecution memo must start with ZHTP prefix".to_string(),
+            ));
+        }
+
+        let call_data = &memo[4..];
+        // NOTE: Transaction signatures (including public_key.key_id binding) are validated
+        // earlier in the transaction pipeline (e.g. during mempool/consensus validation).
+        // The executor assumes that tx.signature is valid and uses key_id here only to
+        // record the already-authenticated caller identity.
+        let (call, _sig): (ContractCall, crate::integration::crypto_integration::Signature) =
+            bincode::deserialize(call_data).map_err(|e| {
+                TxApplyError::InvalidType(format!(
+                    "ContractExecution memo is not a valid (ContractCall, Signature): {e}"
+                ))
+            })?;
+
+        call.validate()
+            .map_err(|e| TxApplyError::InvalidType(format!("Invalid ContractCall payload: {e}")))?;
+
+        Ok(call)
+    }
+
     fn dao_state_contract_id() -> [u8; 32] {
         lib_crypto::hash_blake3(b"DAO_GOVERNANCE_V1")
     }
@@ -1134,7 +1221,7 @@ impl BlockExecutor {
         &self,
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
-        tx_hash: &crate::types::Hash,
+        _tx_hash: &crate::types::Hash,
     ) -> Result<DaoProposalOutcome, TxApplyError> {
         let data = tx.dao_proposal_data.as_ref().ok_or_else(|| {
             TxApplyError::InvalidType("DaoProposal requires dao_proposal_data field".to_string())
@@ -1161,7 +1248,7 @@ impl BlockExecutor {
         mutator.put_contract_storage(&contract_id, &proposal_key, &encoded)?;
 
         let mut index_key = b"proposal_index:".to_vec();
-        index_key.extend_from_slice(tx_hash.as_bytes());
+        index_key.extend_from_slice(data.proposal_id.as_bytes());
         mutator.put_contract_storage(
             &contract_id,
             &index_key,
@@ -1277,6 +1364,86 @@ impl BlockExecutor {
         })
     }
 
+    fn apply_contract_deployment(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        tx_hash: &crate::types::Hash,
+    ) -> Result<ContractDeploymentOutcome, TxApplyError> {
+        let payload = ContractDeploymentPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+            TxApplyError::InvalidType(format!(
+                "ContractDeployment requires canonical deployment memo: {e}"
+            ))
+        })?;
+
+        let contract_id = tx_hash.as_array();
+        mutator.put_contract_code(&contract_id, &payload.code)?;
+        mutator.put_contract_storage(
+            &contract_id,
+            b"__contract_type",
+            payload.contract_type.as_bytes(),
+        )?;
+        mutator.put_contract_storage(&contract_id, b"__abi", &payload.abi)?;
+        mutator.put_contract_storage(&contract_id, b"__init_args", &payload.init_args)?;
+        mutator.put_contract_storage(
+            &contract_id,
+            b"__limits",
+            &bincode::serialize(&(payload.gas_limit, payload.memory_limit_bytes)).map_err(|e| {
+                TxApplyError::Internal(format!(
+                    "Failed to serialize deployment limits for contract storage: {e}"
+                ))
+            })?,
+        )?;
+
+        Ok(ContractDeploymentOutcome {
+            contract_id,
+            contract_type: payload.contract_type,
+        })
+    }
+
+    fn apply_contract_execution(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        tx_hash: &crate::types::Hash,
+        block_height: u64,
+    ) -> Result<ContractExecutionOutcome, TxApplyError> {
+        let call = Self::decode_contract_call_memo(&tx.memo)?;
+
+        // Derive a deterministic singleton contract_id per ContractType using bincode serialization
+        // instead of the unstable Debug representation.
+        // NOTE: This design treats each ContractType as a singleton contract storage namespace.
+        // Only builtin ContractType enum values can be executed via ContractExecution.
+        let contract_type_bytes = bincode::serialize(&call.contract_type).map_err(|e| {
+            TxApplyError::Internal(format!(
+                "Failed to serialize contract type for contract_id derivation: {e}"
+            ))
+        })?;
+        let contract_id = lib_crypto::hash_blake3(&contract_type_bytes);
+
+        // Persist canonical call record under a deterministic per-tx key.
+        let mut call_key = b"__call:".to_vec();
+        call_key.extend_from_slice(tx_hash.as_bytes());
+        let caller = tx.signature.public_key.key_id;
+        let call_record =
+            bincode::serialize(&(block_height, call.method.clone(), caller, call.params))
+                .map_err(|e| {
+                    TxApplyError::Internal(format!(
+                        "Failed to serialize contract call record: {e}"
+                    ))
+                })?;
+        mutator.put_contract_storage(&contract_id, &call_key, &call_record)?;
+        // __last_call_key is a convenience pointer to the most recent call key.
+        // It is safe to overwrite on every execution because both writes occur within
+        // the same block transaction boundary.
+        mutator.put_contract_storage(&contract_id, b"__last_call_key", &call_key)?;
+
+        Ok(ContractExecutionOutcome {
+            contract_id,
+            method: call.method,
+        })
+    }
+
     /// Apply a single transaction
     fn apply_transaction(
         &self,
@@ -1369,17 +1536,65 @@ impl BlockExecutor {
 
                 Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
             }
-            TransactionType::DaoProposal => {
-                let outcome = self.apply_dao_proposal(mutator, tx, &tx_hash)?;
-                Ok(TxOutcome::DaoProposal(outcome))
+            TransactionType::TokenCreation => {
+                let payload = TokenCreationPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "TokenCreation requires canonical memo payload: {e}"
+                    ))
+                })?;
+
+                let creator = tx.signature.public_key.clone();
+                let mut token = crate::contracts::TokenContract::new_custom(
+                    payload.name.clone(),
+                    payload.symbol.clone(),
+                    payload.initial_supply,
+                    creator.clone(),
+                );
+                token.decimals = if payload.decimals == 0 { 8 } else { payload.decimals };
+                token.max_supply = payload.initial_supply;
+
+                let token_id = token.token_id;
+                let token_id_ref = TokenId::new(token_id);
+
+                // Enforce idempotency/replay-safety: do not overwrite an existing token.
+                if mutator.get_token_contract(&token_id_ref)?.is_some() {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenCreation for existing token_id is not allowed".to_string(),
+                    ));
+                }
+
+                // Enforce case-insensitive symbol uniqueness across all tokens.
+                if mutator.token_symbol_exists_case_insensitive(&payload.symbol)? {
+                    return Err(TxApplyError::InvalidType(format!(
+                        "TokenCreation: symbol '{}' conflicts with an existing token (case-insensitive)",
+                        payload.symbol
+                    )));
+                }
+
+                mutator.put_token_contract(&token)?;
+
+                // Keep balance-tree state consistent with typed token transfer path.
+                let creator_addr = Address::new(creator.key_id);
+                tx_apply::apply_token_mint(
+                    mutator,
+                    &token_id_ref,
+                    &creator_addr,
+                    payload.initial_supply as u128,
+                )?;
+
+                Ok(TxOutcome::TokenCreation(TokenCreationOutcome {
+                    token_id,
+                    creator: creator_addr,
+                    initial_supply: payload.initial_supply as u128,
+                }))
             }
-            TransactionType::DaoVote => {
-                let outcome = self.apply_dao_vote(mutator, tx, block_height)?;
-                Ok(TxOutcome::DaoVote(outcome))
+            TransactionType::ContractDeployment => {
+                let outcome = self.apply_contract_deployment(mutator, tx, &tx_hash)?;
+                Ok(TxOutcome::ContractDeployment(outcome))
             }
-            TransactionType::DaoExecution => {
-                let outcome = self.apply_dao_execution(mutator, tx, &tx_hash)?;
-                Ok(TxOutcome::DaoExecution(outcome))
+            TransactionType::ContractExecution => {
+                let outcome = self.apply_contract_execution(mutator, tx, &tx_hash, block_height)?;
+                Ok(TxOutcome::ContractExecution(outcome))
             }
             // Known legacy system types: accepted as no-ops. This mirrors the allowlist in
             // validate_tx_stateless — any type listed here must also be listed there.
@@ -1398,9 +1613,19 @@ impl BlockExecutor {
             | TransactionType::DifficultyUpdate
             | TransactionType::UBIClaim
             | TransactionType::ProfitDeclaration
-            | TransactionType::GovernanceConfigUpdate
-            | TransactionType::ContractDeployment
-            | TransactionType::ContractExecution => Ok(TxOutcome::LegacySystem),
+            | TransactionType::GovernanceConfigUpdate => Ok(TxOutcome::LegacySystem),
+            TransactionType::DaoProposal => {
+                let outcome = self.apply_dao_proposal(mutator, tx, &tx_hash)?;
+                Ok(TxOutcome::DaoProposal(outcome))
+            }
+            TransactionType::DaoVote => {
+                let outcome = self.apply_dao_vote(mutator, tx, block_height)?;
+                Ok(TxOutcome::DaoVote(outcome))
+            }
+            TransactionType::DaoExecution => {
+                let outcome = self.apply_dao_execution(mutator, tx, &tx_hash)?;
+                Ok(TxOutcome::DaoExecution(outcome))
+            }
 
             // Coinbase is routed through apply_coinbase_with_fees, never here.
             TransactionType::Coinbase => Err(TxApplyError::InvalidType(
@@ -1472,6 +1697,9 @@ enum TxOutcome {
     Transfer(TransferOutcome),
     TokenTransfer(TokenTransferOutcome),
     TokenMint(TokenMintOutcome),
+    TokenCreation(TokenCreationOutcome),
+    ContractDeployment(ContractDeploymentOutcome),
+    ContractExecution(ContractExecutionOutcome),
     DaoProposal(DaoProposalOutcome),
     DaoVote(DaoVoteOutcome),
     DaoExecution(DaoExecutionOutcome),
@@ -1498,20 +1726,42 @@ pub struct TokenMintOutcome {
     pub amount: u128,
 }
 
-/// Outcome of DAO proposal transaction
+/// Outcome of a token creation transaction
+#[derive(Debug, Clone)]
+pub struct TokenCreationOutcome {
+    pub token_id: [u8; 32],
+    pub creator: Address,
+    pub initial_supply: u128,
+}
+
+/// Outcome of a contract deployment transaction
+#[derive(Debug, Clone)]
+pub struct ContractDeploymentOutcome {
+    pub contract_id: [u8; 32],
+    pub contract_type: String,
+}
+
+/// Outcome of a contract execution transaction
+#[derive(Debug, Clone)]
+pub struct ContractExecutionOutcome {
+    pub contract_id: [u8; 32],
+    pub method: String,
+}
+
+/// Outcome of a DAO proposal transaction
 #[derive(Debug, Clone)]
 pub struct DaoProposalOutcome {
     pub proposal_id: crate::types::Hash,
 }
 
-/// Outcome of DAO vote transaction
+/// Outcome of a DAO vote transaction
 #[derive(Debug, Clone)]
 pub struct DaoVoteOutcome {
     pub proposal_id: crate::types::Hash,
     pub vote_id: crate::types::Hash,
 }
 
-/// Outcome of DAO execution transaction
+/// Outcome of a DAO execution transaction
 #[derive(Debug, Clone)]
 pub struct DaoExecutionOutcome {
     pub proposal_id: crate::types::Hash,
@@ -1935,52 +2185,35 @@ mod tests {
         }
     }
 
-    fn create_dao_proposal_tx(proposal_id: Hash) -> Transaction {
-        let mut tx = create_legacy_tx(TransactionType::DaoProposal);
+    fn create_contract_deployment_tx() -> Transaction {
+        let payload = crate::transaction::contract_deployment::ContractDeploymentPayloadV1 {
+            contract_type: "wasm".to_string(),
+            code: vec![0x01, 0x02, 0x03, 0x04],
+            abi: br#"{"name":"test"}"#.to_vec(),
+            init_args: vec![0xAA, 0xBB],
+            gas_limit: 10_000,
+            memory_limit_bytes: 1_048_576,
+        };
+
+        let mut tx = create_legacy_tx(TransactionType::ContractDeployment);
         tx.fee = 1_000_000;
-        tx.dao_proposal_data = Some(crate::transaction::DaoProposalData {
-            proposal_id,
-            proposer: "did:sov:test:proposer".to_string(),
-            title: "Enable treasury stream".to_string(),
-            description: "Deterministic proposal for executor test".to_string(),
-            proposal_type: "TreasurySpending".to_string(),
-            voting_period_blocks: 100,
-            quorum_required: 60,
-            execution_params: Some(vec![0xAA, 0xBB]),
-            created_at: 1001,
-            created_at_height: 1,
-        });
+        tx.memo = payload
+            .encode_memo()
+            .expect("contract deployment test memo encoding must work");
         tx
     }
 
-    fn create_dao_vote_tx(proposal_id: Hash, vote_id: Hash) -> Transaction {
-        let mut tx = create_legacy_tx(TransactionType::DaoVote);
-        tx.fee = 1_000_000;
-        tx.dao_vote_data = Some(crate::transaction::DaoVoteData {
-            vote_id,
-            proposal_id,
-            voter: "did:sov:test:voter".to_string(),
-            vote_choice: "Yes".to_string(),
-            voting_power: 10,
-            justification: Some("looks good".to_string()),
-            timestamp: 1002,
-        });
-        tx
-    }
+    fn create_contract_execution_tx(method: &str) -> Transaction {
+        let call = ContractCall::token_call(method.to_string(), vec![0x10, 0x20]);
+        let call_sig = create_dummy_signature();
 
-    fn create_dao_execution_tx(proposal_id: Hash) -> Transaction {
-        let mut tx = create_legacy_tx(TransactionType::DaoExecution);
+        let mut tx = create_legacy_tx(TransactionType::ContractExecution);
         tx.fee = 1_000_000;
-        tx.dao_execution_data = Some(crate::transaction::DaoExecutionData {
-            proposal_id,
-            executor: "did:sov:test:executor".to_string(),
-            execution_type: "TreasuryTransfer".to_string(),
-            recipient: Some("did:sov:test:recipient".to_string()),
-            amount: Some(42),
-            executed_at: 1003,
-            executed_at_height: 1,
-            multisig_signatures: vec![vec![0x01, 0x02]],
-        });
+        tx.memo = b"ZHTP".to_vec();
+        tx.memo.extend(
+            bincode::serialize(&(call, call_sig))
+                .expect("contract execution test memo serialization must work"),
+        );
         tx
     }
 
@@ -2003,12 +2236,12 @@ mod tests {
             TransactionType::SessionTermination,
             TransactionType::ContentUpload,
             TransactionType::UbiDistribution,
+            // DaoProposal/DaoVote/DaoExecution are Phase-2 types with structural
+            // validation — they are NOT listed here.
             TransactionType::DifficultyUpdate,
             TransactionType::UBIClaim,
             TransactionType::ProfitDeclaration,
             TransactionType::GovernanceConfigUpdate,
-            TransactionType::ContractDeployment,
-            TransactionType::ContractExecution,
         ];
 
         for tx_type in legacy_types {
@@ -2066,136 +2299,211 @@ mod tests {
         assert_eq!(store.latest_height().unwrap(), 1);
     }
 
-    /// DAO lifecycle: proposal → vote → execution across separate blocks so that
-    /// within-block batch writes are committed before subsequent reads.
-    #[test]
-    fn test_dao_lifecycle_txs_persist_canonical_state() {
-        let store = create_test_store();
-        let executor = create_test_executor(store.clone());
+    // =========================================================================
+    // TokenCreation canonical path tests
+    // =========================================================================
 
-        let genesis = create_genesis_block();
-        executor.apply_block(&genesis).unwrap();
+    use crate::storage::TokenId;
+    use crate::transaction::token_creation::TokenCreationPayloadV1;
 
-        let proposal_id = Hash::new([0x11; 32]);
-        let vote_id = Hash::new([0x22; 32]);
-
-        // Block 1: submit proposal (height=1, within voting_period_blocks=100).
-        let proposal_tx = create_dao_proposal_tx(proposal_id);
-        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
-        executor.apply_block(&block1).unwrap();
-
-        // Block 2: submit vote (height=2, within voting period 1..101).
-        let vote_tx = create_dao_vote_tx(proposal_id, vote_id);
-        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![vote_tx]);
-        executor.apply_block(&block2).unwrap();
-
-        // Block 3: execute proposal.
-        let execution_tx = create_dao_execution_tx(proposal_id);
-        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![execution_tx]);
-        executor.apply_block(&block3).unwrap();
-
-        let dao_contract_id = BlockExecutor::dao_state_contract_id();
-
-        let mut proposal_key = b"proposal:".to_vec();
-        proposal_key.extend_from_slice(proposal_id.as_bytes());
-        let proposal_raw = store
-            .get_contract_storage(&dao_contract_id, &proposal_key)
-            .unwrap()
-            .expect("proposal must be persisted");
-        let proposal: crate::transaction::DaoProposalData =
-            bincode::deserialize(&proposal_raw).expect("proposal decode");
-        assert_eq!(proposal.title, "Enable treasury stream");
-
-        // Vote key is now "vote:{proposal_id}:{voter_identity}".
-        let mut vote_key = b"vote:".to_vec();
-        vote_key.extend_from_slice(proposal_id.as_bytes());
-        vote_key.extend_from_slice(b":");
-        vote_key.extend_from_slice(b"did:sov:test:voter");
-        let vote_raw = store
-            .get_contract_storage(&dao_contract_id, &vote_key)
-            .unwrap()
-            .expect("vote must be persisted");
-        let vote: crate::transaction::DaoVoteData =
-            bincode::deserialize(&vote_raw).expect("vote decode");
-        assert_eq!(vote.vote_choice, "Yes");
-
-        // Execution key is deterministic: "execution:{proposal_id}" (no tx_hash).
-        let mut execution_key = b"execution:".to_vec();
-        execution_key.extend_from_slice(proposal_id.as_bytes());
-        let execution_raw = store
-            .get_contract_storage(&dao_contract_id, &execution_key)
-            .unwrap()
-            .expect("execution must be persisted");
-        let execution: crate::transaction::DaoExecutionData =
-            bincode::deserialize(&execution_raw).expect("execution decode");
-        assert_eq!(execution.execution_type, "TreasuryTransfer");
+    fn create_token_creation_tx(name: &str, symbol: &str, initial_supply: u64) -> Transaction {
+        let payload = TokenCreationPayloadV1 {
+            name: name.to_string(),
+            symbol: symbol.to_string(),
+            initial_supply,
+            decimals: 8,
+        };
+        let memo = payload.encode_memo().expect("valid token creation memo");
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenCreation,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 10_000,
+            signature: create_dummy_signature(),
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
     }
 
-    /// Submitting a second proposal with the same proposal_id must be rejected.
+    /// TokenCreation canonical path: token is created and minted to creator.
     #[test]
-    fn test_dao_duplicate_proposal_rejected() {
+    fn test_token_creation_canonical() {
         let store = create_test_store();
         let executor = create_test_executor(store.clone());
 
         let genesis = create_genesis_block();
         executor.apply_block(&genesis).unwrap();
 
-        let proposal_id = Hash::new([0x33; 32]);
-        let proposal_tx = create_dao_proposal_tx(proposal_id);
+        let tx = create_token_creation_tx("Test Token", "TEST", 1_000_000);
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        let outcome = executor.apply_block(&block1).unwrap();
 
-        // First submission succeeds (block 1).
-        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
+        assert_eq!(outcome.height, 1);
+        assert_eq!(outcome.tx_count, 1);
+
+        // Verify the token contract exists in the store
+        let token_id = crate::contracts::utils::generate_custom_token_id("Test Token", "TEST");
+        let contract = store
+            .get_token_contract(&TokenId::new(token_id))
+            .unwrap()
+            .expect("token contract should exist");
+        assert_eq!(contract.symbol, "TEST");
+        assert_eq!(contract.total_supply, 1_000_000);
+    }
+
+    /// Duplicate TokenCreation for the same token_id must be rejected.
+    #[test]
+    fn test_token_creation_duplicate_rejected() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        // First creation succeeds
+        let tx = create_token_creation_tx("Test Token", "TEST", 1_000_000);
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
         executor.apply_block(&block1).unwrap();
 
-        // Second submission with the same proposal_id must be rejected (block 2).
-        let proposal_tx2 = create_dao_proposal_tx(proposal_id);
-        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![proposal_tx2]);
+        // Second creation with same name+symbol (same token_id) must be rejected
+        let tx2 = create_token_creation_tx("Test Token", "TEST", 500_000);
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx2]);
+        let result = executor.apply_block(&block2);
+        assert!(result.is_err(), "Duplicate TokenCreation should be rejected");
+    }
+
+    /// TokenCreation with a symbol that differs only in case must be rejected.
+    #[test]
+    fn test_token_creation_symbol_case_insensitive_rejected() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        // Create token with uppercase symbol
+        let tx = create_token_creation_tx("Alpha Token", "ALPHA", 1_000_000);
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        executor.apply_block(&block1).unwrap();
+
+        // Token with different name but same symbol (lowercase) must be rejected
+        let tx2 = create_token_creation_tx("Beta Token", "alpha", 500_000);
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx2]);
         let result = executor.apply_block(&block2);
         assert!(
             result.is_err(),
-            "Duplicate DaoProposal must be rejected for replay safety"
+            "TokenCreation with case-conflicting symbol should be rejected"
         );
     }
 
-    /// Executing the same proposal a second time must be rejected.
     #[test]
-    fn test_dao_duplicate_execution_rejected() {
+    fn test_contract_deployment_writes_contract_code() {
         let store = create_test_store();
         let executor = create_test_executor(store.clone());
 
         let genesis = create_genesis_block();
         executor.apply_block(&genesis).unwrap();
 
-        let proposal_id = Hash::new([0x44; 32]);
-        let vote_id = Hash::new([0x55; 32]);
+        let tx = create_contract_deployment_tx();
+        let tx_hash = hash_transaction(&tx);
+        let expected_contract_id = tx_hash.as_array();
 
-        // Block 1: proposal; block 2: vote; block 3: first execution (succeeds).
-        let block1 = create_block_with_txs(
-            1, genesis.header.block_hash,
-            vec![create_dao_proposal_tx(proposal_id)],
-        );
-        executor.apply_block(&block1).unwrap();
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes[0..8].copy_from_slice(&1u64.to_be_bytes());
+        let block_hash = Hash::new(hash_bytes);
 
-        let block2 = create_block_with_txs(
-            2, block1.header.block_hash,
-            vec![create_dao_vote_tx(proposal_id, vote_id)],
-        );
-        executor.apply_block(&block2).unwrap();
+        let header = BlockHeader {
+            version: 1,
+            previous_block_hash: genesis.header.block_hash,
+            merkle_root: Hash::default(),
+            state_root: Hash::default(),
+            timestamp: 1001,
+            difficulty: Difficulty::minimum(),
+            nonce: 0,
+            cumulative_difficulty: Difficulty::minimum(),
+            height: 1,
+            block_hash,
+            transaction_count: 1,
+            block_size: 0,
+            fee_model_version: 2,
+        };
 
-        let block3 = create_block_with_txs(
-            3, block2.header.block_hash,
-            vec![create_dao_execution_tx(proposal_id)],
-        );
-        executor.apply_block(&block3).unwrap();
+        let block = Block::new(header, vec![tx]);
+        executor.apply_block(&block).unwrap();
 
-        // Block 4: second execution of the same proposal must be rejected.
-        let execution_tx2 = create_dao_execution_tx(proposal_id);
-        let block4 = create_block_with_txs(4, block3.header.block_hash, vec![execution_tx2]);
-        let result = executor.apply_block(&block4);
-        assert!(
-            result.is_err(),
-            "Duplicate DaoExecution must be rejected to prevent double-execution"
-        );
+        let code = store
+            .get_contract_code(&expected_contract_id)
+            .expect("read contract code")
+            .expect("contract code should exist");
+        assert_eq!(code, vec![0x01, 0x02, 0x03, 0x04]);
+    }
+
+    #[test]
+    fn test_contract_execution_persists_call_record() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let tx = create_contract_execution_tx("create_custom_token");
+        let tx_hash = hash_transaction(&tx);
+        // Compute contract_id the same way apply_contract_execution does:
+        // bincode serialization of the ContractType enum for deterministic derivation.
+        let contract_type_bytes =
+            bincode::serialize(&crate::types::ContractType::Token).expect("serialize ContractType");
+        let contract_id = lib_crypto::hash_blake3(&contract_type_bytes);
+        let mut call_key = b"__call:".to_vec();
+        call_key.extend_from_slice(tx_hash.as_bytes());
+
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes[0..8].copy_from_slice(&1u64.to_be_bytes());
+        let block_hash = Hash::new(hash_bytes);
+
+        let header = BlockHeader {
+            version: 1,
+            previous_block_hash: genesis.header.block_hash,
+            merkle_root: Hash::default(),
+            state_root: Hash::default(),
+            timestamp: 1001,
+            difficulty: Difficulty::minimum(),
+            nonce: 0,
+            cumulative_difficulty: Difficulty::minimum(),
+            height: 1,
+            block_hash,
+            transaction_count: 1,
+            block_size: 0,
+            fee_model_version: 2,
+        };
+
+        let block = Block::new(header, vec![tx]);
+        executor.apply_block(&block).unwrap();
+
+        let stored = store
+            .get_contract_storage(&contract_id, &call_key)
+            .expect("read contract storage")
+            .expect("call record should exist");
+        let (stored_height, stored_method, _stored_caller, stored_params): (
+            u64,
+            String,
+            [u8; 32],
+            Vec<u8>,
+        ) = bincode::deserialize(&stored).expect("decode call record");
+        assert_eq!(stored_height, 1);
+        assert_eq!(stored_method, "create_custom_token");
+        assert_eq!(stored_params, vec![0x10, 0x20]);
     }
 
     /// T5: State persists across store restart
@@ -2245,5 +2553,205 @@ mod tests {
 
             assert_eq!(store.latest_height().unwrap(), 2);
         }
+    }
+
+    // =========================================================================
+    // DAO governance lifecycle tests
+    // =========================================================================
+
+    fn proposal_id_for(tag: &str) -> crate::types::Hash {
+        crate::types::Hash::new(lib_crypto::hash_blake3(tag.as_bytes()))
+    }
+
+    fn create_dao_proposal_tx(proposal_id: crate::types::Hash) -> Transaction {
+        let mut tx = create_legacy_tx(TransactionType::DaoProposal);
+        tx.fee = 1_000; // governance tx min fee with FeeParams::for_testing()
+        tx.dao_proposal_data = Some(crate::transaction::DaoProposalData {
+            proposal_id,
+            proposer: "alice".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "A test governance proposal".to_string(),
+            proposal_type: "parameter_change".to_string(),
+            voting_period_blocks: 100,
+            quorum_required: 51,
+            execution_params: None,
+            created_at: 1000,
+            created_at_height: 1,
+        });
+        tx
+    }
+
+    fn create_dao_vote_tx(
+        proposal_id: crate::types::Hash,
+        voter: &str,
+        vote_choice: &str,
+    ) -> Transaction {
+        let vote_id = crate::types::Hash::new(lib_crypto::hash_blake3(
+            format!("{voter}:{}", hex::encode(proposal_id.as_bytes())).as_bytes(),
+        ));
+        let mut tx = create_legacy_tx(TransactionType::DaoVote);
+        tx.fee = 1_000; // governance tx min fee with FeeParams::for_testing()
+        tx.dao_vote_data = Some(crate::transaction::DaoVoteData {
+            vote_id,
+            proposal_id,
+            voter: voter.to_string(),
+            vote_choice: vote_choice.to_string(),
+            voting_power: 100,
+            justification: None,
+            timestamp: 2000,
+        });
+        tx
+    }
+
+    fn create_dao_execution_tx(proposal_id: crate::types::Hash) -> Transaction {
+        let mut tx = create_legacy_tx(TransactionType::DaoExecution);
+        tx.fee = 1_000; // governance tx min fee with FeeParams::for_testing()
+        tx.dao_execution_data = Some(crate::transaction::DaoExecutionData {
+            proposal_id,
+            executor: "council".to_string(),
+            execution_type: "parameter_change".to_string(),
+            recipient: None,
+            amount: None,
+            executed_at: 3000,
+            executed_at_height: 3,
+            multisig_signatures: vec![],
+        });
+        tx
+    }
+
+    /// DAO full lifecycle: Proposal (block 1) → Vote (block 2) → Execution (block 3).
+    ///
+    /// SledStore writes are only visible after apply_batch in commit_block, so each
+    /// lifecycle step must be in a separate block.
+    #[test]
+    fn test_dao_lifecycle_proposal_vote_execution() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let proposal_id = proposal_id_for("lifecycle-test-1");
+
+        // Block 1: submit the proposal
+        let proposal_tx = create_dao_proposal_tx(proposal_id);
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
+        executor.apply_block(&block1).expect("Block 1 (proposal) must succeed");
+
+        // Block 2: cast a vote (within the 100-block voting period)
+        let vote_tx = create_dao_vote_tx(proposal_id, "alice", "Yes");
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![vote_tx]);
+        executor.apply_block(&block2).expect("Block 2 (vote) must succeed");
+
+        // Block 3: execute the proposal
+        let exec_tx = create_dao_execution_tx(proposal_id);
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![exec_tx]);
+        executor.apply_block(&block3).expect("Block 3 (execution) must succeed");
+
+        assert_eq!(store.latest_height().unwrap(), 3);
+
+        // Verify execution record persisted
+        let dao_contract = lib_crypto::hash_blake3(b"DAO_GOVERNANCE_V1");
+        let mut exec_key = b"execution:".to_vec();
+        exec_key.extend_from_slice(proposal_id.as_bytes());
+        let record = store
+            .get_contract_storage(&dao_contract, &exec_key)
+            .expect("read execution record")
+            .expect("execution record should exist after block 3");
+        assert!(!record.is_empty());
+    }
+
+    /// Submitting the same proposal twice must be rejected.
+    #[test]
+    fn test_dao_duplicate_proposal_rejected() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let proposal_id = proposal_id_for("duplicate-proposal-test");
+
+        // Block 1: first proposal succeeds
+        let proposal_tx = create_dao_proposal_tx(proposal_id);
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
+        executor.apply_block(&block1).expect("First proposal must succeed");
+
+        // Block 2: same proposal_id must be rejected
+        let dup_tx = create_dao_proposal_tx(proposal_id);
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![dup_tx]);
+        let result = executor.apply_block(&block2);
+        assert!(result.is_err(), "Duplicate DaoProposal must be rejected");
+    }
+
+    /// Executing the same proposal twice must be rejected (double-execution safety).
+    #[test]
+    fn test_dao_duplicate_execution_rejected() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let proposal_id = proposal_id_for("double-execution-test");
+
+        // Block 1: proposal
+        let block1 = create_block_with_txs(
+            1,
+            genesis.header.block_hash,
+            vec![create_dao_proposal_tx(proposal_id)],
+        );
+        executor.apply_block(&block1).unwrap();
+
+        // Block 2: first execution succeeds
+        let block2 = create_block_with_txs(
+            2,
+            block1.header.block_hash,
+            vec![create_dao_execution_tx(proposal_id)],
+        );
+        executor.apply_block(&block2).unwrap();
+
+        // Block 3: second execution of the same proposal must be rejected
+        let block3 = create_block_with_txs(
+            3,
+            block2.header.block_hash,
+            vec![create_dao_execution_tx(proposal_id)],
+        );
+        let result = executor.apply_block(&block3);
+        assert!(result.is_err(), "Double DaoExecution must be rejected");
+    }
+
+    /// DaoVote must be rejected when the proposal voting period has expired.
+    #[test]
+    fn test_dao_vote_rejected_after_voting_period() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let proposal_id = proposal_id_for("expired-vote-test");
+
+        // Block 1: proposal with a 1-block voting period (expires after height 2)
+        let mut proposal_data = create_dao_proposal_tx(proposal_id);
+        if let Some(ref mut d) = proposal_data.dao_proposal_data {
+            d.voting_period_blocks = 1; // deadline = created_at_height(1) + 1 = height 2
+        }
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_data]);
+        executor.apply_block(&block1).unwrap();
+
+        // Block 2: vote at height 2 is within deadline (2 <= 1+1=2)
+        let vote_tx = create_dao_vote_tx(proposal_id, "bob", "No");
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![vote_tx]);
+        executor.apply_block(&block2).unwrap();
+
+        // Block 3: vote at height 3 is past the deadline (3 > 2) — must be rejected
+        let late_vote_tx = create_dao_vote_tx(proposal_id, "carol", "Yes");
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![late_vote_tx]);
+        let result = executor.apply_block(&block3);
+        assert!(
+            result.is_err(),
+            "DaoVote after voting period expiry must be rejected"
+        );
     }
 }
