@@ -27,7 +27,7 @@ pub use health::{PouwHealthChecker, HealthCheckResponse, HealthStatus, HealthChe
 pub use load_test::{SyntheticReceiptGenerator, LoadTestConfig, LoadTestResults, run_load_test};
 pub use metrics::{PouwMetrics, PouwMetricsSnapshot, RejectionType};
 pub use rate_limiter::{PouwRateLimiter, RateLimitConfig, RateLimitResult, RateLimitReason};
-pub use rewards::{RewardCalculator, Reward, PayoutStatus, EpochClientStats};
+pub use rewards::{RewardCalculator, Reward, RewardTransaction, PayoutStatus, EpochClientStats};
 pub use types::*;
 pub use validation::{ReceiptValidator, ReceiptValidationResult, SubmitResponse, RejectionReason, spawn_mesh_routing_listener};
 
