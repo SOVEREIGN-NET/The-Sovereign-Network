@@ -143,6 +143,21 @@ pub enum PayoutStatus {
     Failed,
 }
 
+/// A single paid reward transaction, as seen in a user's history.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RewardTransaction {
+    /// The reward that was paid out
+    pub reward_id: Vec<u8>,
+    /// Epoch this reward covers
+    pub epoch: u64,
+    /// Amount paid in atomic SOV units
+    pub amount: u64,
+    /// Unix timestamp when the payout was processed
+    pub paid_at: u64,
+    /// On-chain transaction hash (None for kernel-minted rewards)
+    pub tx_hash: Option<Vec<u8>>,
+}
+
 /// Aggregated stats for a client in an epoch
 #[derive(Debug, Clone)]
 pub struct EpochClientStats {
@@ -575,6 +590,21 @@ impl RewardCalculator {
             .iter()
             .filter(|r| r.client_did == client_did)
             .cloned()
+            .collect()
+    }
+
+    /// Get paid rewards as transaction records for a specific client.
+    pub async fn get_reward_transactions_for_did(&self, did: &str) -> Vec<RewardTransaction> {
+        self.rewards.read().await
+            .iter()
+            .filter(|r| r.client_did == did && r.payout_status == PayoutStatus::Paid)
+            .map(|r| RewardTransaction {
+                reward_id: r.reward_id.clone(),
+                epoch: r.epoch,
+                amount: r.final_amount,
+                paid_at: r.paid_at.unwrap_or(0),
+                tx_hash: r.tx_hash.clone(),
+            })
             .collect()
     }
 
