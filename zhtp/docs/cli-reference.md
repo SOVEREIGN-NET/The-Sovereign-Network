@@ -199,18 +199,32 @@ Options:
 zhtp dao vote --proposal-id prop_123 --choice yes
 ```
 
-#### Claim UBI
+#### DAO Registry and Factory
 ```bash
-zhtp dao claim-ubi
+zhtp dao registry-list
+zhtp dao registry-get --dao-id <DAO_ID_HEX>
+zhtp dao registry-register --token-id <TOKEN_ID_HEX> --class <np|fp> --metadata-hash <HASH_HEX>
+zhtp dao factory-create --token-id <TOKEN_ID_HEX> --class <np|fp> --metadata-hash <HASH_HEX>
 ```
 
-**Output:**
+**Factory/Register Notes:**
+- Uses canonical signed `DaoExecution` transaction broadcast to `/api/v1/blockchain/transaction/broadcast`
+- Derived `dao_id` is printed by CLI before/with broadcast result
+
+**Example:**
+```bash
+zhtp dao factory-create \
+  --token-id 4f2a... \
+  --class np \
+  --metadata-hash 7ac1...
 ```
-UBI Claim Result
-================
-Amount Claimed: 10 SOV
-Next Claim Available: 2025-10-11 12:00:00 UTC
-Total Claimed (All Time): 300 SOV
+
+**Typical Output:**
+```
+DAO Factory Create Broadcast
+============================
+Signed tx hash: ...
+Derived dao_id: ...
 ```
 
 ### Identity Management
@@ -367,6 +381,18 @@ Timestamp: 2025-10-10 11:30:00 UTC
 ```bash
 zhtp blockchain stats
 ```
+
+#### Canonical Contract Lifecycle
+```bash
+zhtp blockchain contract-deploy --contract-type <TYPE> --code-hex <HEX> --abi-json '<JSON>'
+zhtp blockchain contract-call --contract-id <ID_HEX> --contract-type <TYPE> --method <METHOD> [--params-hex <HEX>]
+zhtp blockchain contract-list [--contract-type all|token|web4] [--limit N] [--offset N]
+zhtp blockchain contract-info --contract-id <ID_HEX>
+zhtp blockchain contract-state --contract-id <ID_HEX>
+```
+
+**Call Path:**
+- `contract-call` targets canonical endpoint: `/api/v1/blockchain/contracts/{contract_id}/call`
 
 ### System Monitoring
 
