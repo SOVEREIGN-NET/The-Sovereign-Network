@@ -603,10 +603,10 @@ impl BlockExecutor {
                     summary.balance_changes += 1; // recipient only
                 }
                 TxOutcome::ContractDeployment(_outcome) => {
-                    summary.balance_changes += 1; // tracks one deterministic contract-state write group
+                    summary.balance_changes += 1; // tracks one deterministic contract deployment operation (multiple underlying storage writes: code + metadata)
                 }
                 TxOutcome::ContractExecution(_outcome) => {
-                    summary.balance_changes += 1; // tracks one deterministic contract call record write
+                    summary.balance_changes += 1; // tracks one deterministic contract execution operation (may involve multiple underlying state mutations)
                 }
                 TxOutcome::Coinbase(_) => {
                     // Should not happen - coinbase filtered out
@@ -738,6 +738,8 @@ impl BlockExecutor {
             TransactionType::Transfer => {}
             TransactionType::TokenTransfer => {}
             TransactionType::TokenMint => {}
+            TransactionType::ContractDeployment => {}
+            TransactionType::ContractExecution => {}
             TransactionType::Coinbase => {}
             // Known legacy system types: no structural validation, applied as no-ops.
             TransactionType::IdentityRegistration
@@ -875,6 +877,12 @@ impl BlockExecutor {
                 }
             }
             TransactionType::ContractDeployment => {
+                // Contract deployments must not perform UTXO operations.
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "ContractDeployment must not have inputs or outputs".to_string(),
+                    ));
+                }
                 ContractDeploymentPayloadV1::decode_memo(&tx.memo).map_err(|e| {
                     TxApplyError::InvalidType(format!(
                         "ContractDeployment requires canonical deployment memo: {e}"
@@ -882,6 +890,12 @@ impl BlockExecutor {
                 })?;
             }
             TransactionType::ContractExecution => {
+                // Contract executions must not perform UTXO operations.
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "ContractExecution must not have inputs or outputs".to_string(),
+                    ));
+                }
                 Self::decode_contract_call_memo(&tx.memo)?;
             }
             _ => {}
@@ -1097,6 +1111,12 @@ impl BlockExecutor {
         }
     }
 
+    /// Decode and validate a ContractExecution memo.
+    ///
+    /// Memos must start with a "ZHTP" prefix followed by a bincode-encoded
+    /// `(ContractCall, Signature)` tuple. The signature is extracted but not
+    /// verified here — signature validation happens earlier in the transaction
+    /// processing pipeline (e.g. during mempool/consensus validation).
     fn decode_contract_call_memo(memo: &[u8]) -> Result<ContractCall, TxApplyError> {
         if memo.len() <= 4 || &memo[0..4] != b"ZHTP" {
             return Err(TxApplyError::InvalidType(
@@ -1105,6 +1125,10 @@ impl BlockExecutor {
         }
 
         let call_data = &memo[4..];
+        // NOTE: Transaction signatures (including public_key.key_id binding) are validated
+        // earlier in the transaction pipeline (e.g. during mempool/consensus validation).
+        // The executor assumes that tx.signature is valid and uses key_id here only to
+        // record the already-authenticated caller identity.
         let (call, _sig): (ContractCall, crate::integration::crypto_integration::Signature) =
             bincode::deserialize(call_data).map_err(|e| {
                 TxApplyError::InvalidType(format!(
@@ -1163,15 +1187,33 @@ impl BlockExecutor {
         block_height: u64,
     ) -> Result<ContractExecutionOutcome, TxApplyError> {
         let call = Self::decode_contract_call_memo(&tx.memo)?;
-        let contract_id = lib_crypto::hash_blake3(format!("{:?}", call.contract_type).as_bytes());
 
-        // Persist canonical call record under deterministic per-tx key.
+        // Derive a deterministic singleton contract_id per ContractType using bincode serialization
+        // instead of the unstable Debug representation.
+        // NOTE: This design treats each ContractType as a singleton contract storage namespace.
+        // Only builtin ContractType enum values can be executed via ContractExecution.
+        let contract_type_bytes = bincode::serialize(&call.contract_type).map_err(|e| {
+            TxApplyError::Internal(format!(
+                "Failed to serialize contract type for contract_id derivation: {e}"
+            ))
+        })?;
+        let contract_id = lib_crypto::hash_blake3(&contract_type_bytes);
+
+        // Persist canonical call record under a deterministic per-tx key.
         let mut call_key = b"__call:".to_vec();
         call_key.extend_from_slice(tx_hash.as_bytes());
         let caller = tx.signature.public_key.key_id;
-        let call_record = bincode::serialize(&(block_height, call.method.clone(), caller, call.params))
-            .map_err(|e| TxApplyError::Internal(format!("Failed to serialize contract call record: {e}")))?;
+        let call_record =
+            bincode::serialize(&(block_height, call.method.clone(), caller, call.params))
+                .map_err(|e| {
+                    TxApplyError::Internal(format!(
+                        "Failed to serialize contract call record: {e}"
+                    ))
+                })?;
         mutator.put_contract_storage(&contract_id, &call_key, &call_record)?;
+        // __last_call_key is a convenience pointer to the most recent call key.
+        // It is safe to overwrite on every execution because both writes occur within
+        // the same block transaction boundary.
         mutator.put_contract_storage(&contract_id, b"__last_call_key", &call_key)?;
 
         Ok(ContractExecutionOutcome {
@@ -1996,8 +2038,11 @@ mod tests {
 
         let tx = create_contract_execution_tx("create_custom_token");
         let tx_hash = hash_transaction(&tx);
-        let contract_id =
-            lib_crypto::hash_blake3(format!("{:?}", crate::types::ContractType::Token).as_bytes());
+        // Compute contract_id the same way apply_contract_execution does:
+        // bincode serialization of the ContractType enum for deterministic derivation.
+        let contract_type_bytes =
+            bincode::serialize(&crate::types::ContractType::Token).expect("serialize ContractType");
+        let contract_id = lib_crypto::hash_blake3(&contract_type_bytes);
         let mut call_key = b"__call:".to_vec();
         call_key.extend_from_slice(tx_hash.as_bytes());
 
