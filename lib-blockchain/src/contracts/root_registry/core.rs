@@ -380,6 +380,8 @@ impl RootRegistry {
 
         // Store the record
         self.records.insert(name_hash, CoreStoredRecord::V2(record));
+        // `now` is reserved for future timestamp-based validation; suppress the
+        // unused-parameter warning until expiry enforcement is wired in.
         let _ = now;
 
         Ok(name_hash)
@@ -483,6 +485,8 @@ impl RootRegistry {
         }
 
         self.records.insert(name_hash, CoreStoredRecord::V2(record));
+        // `now` is reserved for future timestamp-based validation; suppress the
+        // unused-parameter warning until expiry enforcement is wired in.
         let _ = now;
         Ok(name_hash)
     }
