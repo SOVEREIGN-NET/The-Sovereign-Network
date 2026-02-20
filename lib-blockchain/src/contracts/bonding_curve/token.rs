@@ -445,7 +445,7 @@ mod tests {
             "Test Token".to_string(),
             "TEST".to_string(),
             CurveType::Linear {
-                base_price: 10_000_000,
+                base_price: 10_000_000, // $0.10
                 slope: 0, // Constant price for simplicity
             },
             Threshold::ReserveAmount(1_000_000_000),
@@ -457,10 +457,13 @@ mod tests {
         .unwrap();
 
         let buyer = test_pubkey(2);
+        // Buy with $1 (100_000_000 in stable atomic units with 6 decimals)
         let (tokens, event) = token.buy(buyer, 100_000_000, 101, 1_600_000_001).unwrap();
 
-        // At $0.10 price, $1 = 10 tokens
-        assert_eq!(tokens, 1_000 * 100_000_000); // 1000 tokens
+        // At $0.10 price, $1 buys 10 tokens
+        // tokens = stable_amount / price * token_decimals
+        // tokens = 100_000_000 / 10_000_000 * 100_000_000 = 1_000_000_000 (10 tokens)
+        assert_eq!(tokens, 1_000_000_000); // 10 tokens
         assert_eq!(token.total_supply, tokens);
         assert_eq!(token.reserve_balance, 100_000_000);
 

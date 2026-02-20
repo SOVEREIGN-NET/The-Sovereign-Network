@@ -103,7 +103,7 @@ impl CurveType {
     /// # Returns
     /// Price per token in stablecoin atomic units
     pub fn calculate_price(&self, supply: u64) -> u64 {
-        match self {
+        match *self {
             CurveType::Linear { base_price, slope } => {
                 // price = base_price + slope × supply
                 // Note: supply is in atomic units, need to normalize
@@ -134,16 +134,16 @@ impl CurveType {
                 // For supply << midpoint: price ≈ max_price × e^(steepness × (supply - midpoint))
                 // For supply ≈ midpoint: price ≈ max_price / 2
                 // For supply >> midpoint: price ≈ max_price
-                if supply <= *midpoint_supply {
+                if supply <= midpoint_supply {
                     let ratio = (supply as u128)
                         .saturating_mul(100_000_000)
-                        .saturating_div(*midpoint_supply as u128);
+                        .saturating_div(midpoint_supply as u128);
                     (max_price as u128)
                         .saturating_mul(ratio)
                         .saturating_div(2_000_000_00) as u64 // Half max at midpoint
                 } else {
-                    let excess = supply.saturating_sub(*midpoint_supply);
-                    let approach_factor = excess.saturating_mul(*steepness).min(100_000_000);
+                    let excess = supply.saturating_sub(midpoint_supply);
+                    let approach_factor = excess.saturating_mul(steepness).min(100_000_000);
                     let half_max = max_price.saturating_div(2);
                     let remaining = max_price.saturating_sub(half_max);
                     let additional = (remaining as u128)
