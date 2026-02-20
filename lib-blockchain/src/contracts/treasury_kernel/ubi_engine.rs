@@ -54,6 +54,18 @@ use crate::integration::crypto_integration::PublicKey;
 
 /// UBI Distribution Engine
 impl KernelState {
+    fn compute_ubi_kernel_txid(citizen_id: &[u8; 32], epoch: u64, amount: u64) -> [u8; 32] {
+        let mut bytes = Vec::with_capacity(b"ubi:distributed:v1".len() + 32 + 8 + 8);
+        bytes.extend_from_slice(b"ubi:distributed:v1");
+        bytes.extend_from_slice(citizen_id);
+        bytes.extend_from_slice(&epoch.to_le_bytes());
+        bytes.extend_from_slice(&amount.to_le_bytes());
+        let hash = lib_crypto::hash_blake3(&bytes);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&hash[..32]);
+        out
+    }
+
     /// Process all UBI distributions for current epoch
     ///
     /// Main orchestration loop that:
@@ -165,11 +177,49 @@ impl KernelState {
 
                             if mint_success {
                                 if let Ok(()) = self.add_distributed(current_epoch, claim.amount) {
+                                    let kernel_txid = Self::compute_ubi_kernel_txid(
+                                        &claim.citizen_id,
+                                        current_epoch,
+                                        claim.amount,
+                                    );
+                                    // Event emission failure should not be treated as a mint failure:
+                                    // by this point, the claim is marked, the pool is updated, and (if
+                                    // enabled) the mint has succeeded. Log the error but still count
+                                    // this as a success so no inconsistent state is created.
+                                    if let Err(e) = self.emit_distributed(
+                                        claim.citizen_id,
+                                        claim.amount,
+                                        current_epoch,
+                                        kernel_txid,
+                                    ) {
+                                        tracing::warn!(
+                                            "Failed to emit UBI distributed event for citizen {:?} in epoch {}: {}",
+                                            &claim.citizen_id[..4],
+                                            current_epoch,
+                                            e
+                                        );
+                                    }
                                     self.record_success();
                                     successes += 1;
+                                } else {
+                                    // Distribution accounting failed after mint — record as rejection.
+                                    let _ = self.emit_claim_rejected(
+                                        claim.citizen_id,
+                                        current_epoch,
+                                        crate::contracts::treasury_kernel::types::RejectionReason::MintFailed,
+                                        current_epoch,
+                                    );
+                                    self.record_rejection(crate::contracts::treasury_kernel::types::RejectionReason::MintFailed);
+                                    rejections += 1;
                                 }
                             } else {
                                 // Mint failed - record as rejection
+                                let _ = self.emit_claim_rejected(
+                                    claim.citizen_id,
+                                    current_epoch,
+                                    crate::contracts::treasury_kernel::types::RejectionReason::MintFailed,
+                                    current_epoch,
+                                );
                                 self.record_rejection(crate::contracts::treasury_kernel::types::RejectionReason::MintFailed);
                                 rejections += 1;
                             }
@@ -177,6 +227,12 @@ impl KernelState {
                         Err(_) => {
                             // Duplicate detected (shouldn't happen after validation passes)
                             // Treat as rejection rather than panic
+                            let _ = self.emit_claim_rejected(
+                                claim.citizen_id,
+                                current_epoch,
+                                crate::contracts::treasury_kernel::types::RejectionReason::AlreadyClaimedEpoch,
+                                current_epoch,
+                            );
                             self.record_rejection(crate::contracts::treasury_kernel::types::RejectionReason::AlreadyClaimedEpoch);
                             rejections += 1;
                         }
@@ -184,11 +240,21 @@ impl KernelState {
                 }
                 Err(reason) => {
                     // Claim failed validation
+                    let _ = self.emit_claim_rejected(claim.citizen_id, current_epoch, reason, current_epoch);
                     self.record_rejection(reason);
                     rejections += 1;
                 }
             }
         }
+
+        let total_distributed = self.get_distributed(current_epoch);
+        let remaining_capacity = 1_000_000u64.saturating_sub(total_distributed);
+        let _ = self.emit_pool_status(
+            current_epoch,
+            claims.len() as u64,
+            total_distributed,
+            remaining_capacity,
+        );
 
         (successes, rejections)
     }
@@ -467,6 +533,9 @@ mod tests {
             "Total supply should be {} after mint",
             ubi_amount
         );
+
+        // Distributed + pool status events are emitted deterministically.
+        assert_eq!(state.ubi_events().len(), 2);
     }
 
     #[test]
@@ -524,5 +593,40 @@ mod tests {
             0,
             "Citizen should have 0 balance (mint failed)"
         );
+
+        // Rejection + pool status events should be present.
+        assert_eq!(state.ubi_events().len(), 2);
+    }
+
+    #[test]
+    fn test_ubi_events_and_dedup_persist_across_state_recovery() {
+        let mut state = KernelState::new();
+        let mut registry = create_test_registry();
+        let kernel_authority = PublicKey::new(vec![99u8; 32]);
+        let mut token = TokenContract::new_sov_with_kernel_authority(kernel_authority.clone());
+
+        let citizen_id = [1u8; 32];
+        let citizen = CitizenRole::new(citizen_id, 100, 100);
+        registry.register(citizen).expect("register citizen");
+
+        let claims = vec![create_test_claim(citizen_id, 100, 1000)];
+        let (successes, rejections) = state.process_ubi_claims_with_minting(
+            &claims,
+            &registry,
+            100,
+            Some(&mut token),
+            Some(&kernel_authority),
+        );
+        assert_eq!(successes, 1);
+        assert_eq!(rejections, 0);
+        assert!(state.has_claimed(&citizen_id, 100));
+        assert_eq!(state.ubi_events().len(), 2);
+
+        let bytes = state.to_bytes().expect("serialize state");
+        let restored = KernelState::from_bytes(&bytes).expect("deserialize state");
+
+        assert!(restored.has_claimed(&citizen_id, 100));
+        assert_eq!(restored.ubi_events().len(), 2);
+        assert!(restored.is_valid());
     }
 }

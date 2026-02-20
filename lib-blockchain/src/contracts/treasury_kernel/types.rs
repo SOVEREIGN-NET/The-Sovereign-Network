@@ -47,6 +47,32 @@ impl std::fmt::Display for RejectionReason {
     }
 }
 
+/// Canonical UBI event stream persisted as part of KernelState.
+///
+/// Events are appended in deterministic processing order and serialized
+/// with the kernel state for crash-safe replay and auditability.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum KernelUbiEvent {
+    Distributed {
+        citizen_id: [u8; 32],
+        amount: u64,
+        epoch: u64,
+        kernel_txid: [u8; 32],
+    },
+    ClaimRejected {
+        citizen_id: [u8; 32],
+        epoch: u64,
+        reason: RejectionReason,
+        timestamp: u64,
+    },
+    PoolStatus {
+        epoch: u64,
+        eligible_count: u64,
+        total_distributed: u64,
+        remaining_capacity: u64,
+    },
+}
+
 /// Kernel state tracking for UBI distribution
 ///
 /// **Consensus-Critical**: All fields must be persisted for crash recovery.
@@ -75,6 +101,10 @@ pub struct KernelState {
 
     /// Monitoring statistics
     pub stats: KernelStats,
+
+    /// Canonical UBI event stream for deterministic replay and auditing.
+    #[serde(default)]
+    pub ubi_events: Vec<KernelUbiEvent>,
 }
 
 /// Statistics for monitoring Kernel health
@@ -101,6 +131,7 @@ impl KernelState {
             total_distributed: BTreeMap::new(),
             last_processed_epoch: None,
             stats: KernelStats::default(),
+            ubi_events: Vec::new(),
         }
     }
 
@@ -248,6 +279,7 @@ mod tests {
         assert_eq!(state.total_distributed.len(), 0);
         assert_eq!(state.last_processed_epoch, None);
         assert_eq!(state.stats.total_claims_processed, 0);
+        assert!(state.ubi_events.is_empty());
     }
 
     #[test]
