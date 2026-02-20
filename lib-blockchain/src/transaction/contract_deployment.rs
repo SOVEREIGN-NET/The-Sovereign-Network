@@ -9,6 +9,12 @@
 use serde::{Deserialize, Serialize};
 use bincode::Options;
 
+/// Shared bincode options used by both `encode_memo` and `decode_memo` to guarantee
+/// deterministic round-trip compatibility required for consensus serialization.
+fn memo_bincode_options() -> impl Options {
+    bincode::DefaultOptions::new().with_limit(MAX_DEPLOYMENT_MEMO_BYTES as u64)
+}
+
 /// Versioned memo prefix for contract deployment payloads.
 pub const CONTRACT_DEPLOYMENT_MEMO_PREFIX: &[u8] = b"ZHTP_DEPLOY_V1:";
 
@@ -101,10 +107,7 @@ impl ContractDeploymentPayloadV1 {
     /// Encode this payload into canonical memo bytes.
     pub fn encode_memo(&self) -> Result<Vec<u8>, String> {
         self.validate()?;
-        // Use the same bincode options as decode_memo() to guarantee round-trip
-        // compatibility and deterministic consensus serialization.
-        let encoded = bincode::DefaultOptions::new()
-            .with_limit(MAX_DEPLOYMENT_MEMO_BYTES as u64)
+        let encoded = memo_bincode_options()
             .serialize(self)
             .map_err(|e| format!("failed to serialize deployment payload: {e}"))?;
         let mut memo = CONTRACT_DEPLOYMENT_MEMO_PREFIX.to_vec();
@@ -132,8 +135,7 @@ impl ContractDeploymentPayloadV1 {
             ));
         }
         let payload_bytes = &memo[CONTRACT_DEPLOYMENT_MEMO_PREFIX.len()..];
-        let payload: Self = bincode::DefaultOptions::new()
-            .with_limit(MAX_DEPLOYMENT_MEMO_BYTES as u64)
+        let payload: Self = memo_bincode_options()
             .deserialize(payload_bytes)
             .map_err(|e| format!("invalid deployment payload encoding: {e}"))?;
         payload.validate()?;
@@ -180,5 +182,34 @@ mod tests {
         payload.gas_limit = 0; // invalid
         let result = payload.encode_memo();
         assert!(result.is_err());
+    }
+
+    /// Payloads with fields at or near their individual byte-length bounds must
+    /// round-trip without error, confirming the memo size limit is not hit for
+    /// valid near-maximum inputs.
+    #[test]
+    fn test_encode_decode_near_max_bounds() {
+        let payload = ContractDeploymentPayloadV1 {
+            contract_type: "a".repeat(MAX_DEPLOYMENT_CONTRACT_TYPE_BYTES),
+            code: vec![0x00; MAX_DEPLOYMENT_CODE_BYTES],
+            abi: vec![0x01; MAX_DEPLOYMENT_ABI_BYTES],
+            init_args: vec![0x02; MAX_DEPLOYMENT_INIT_ARGS_BYTES],
+            gas_limit: crate::execution_limits::MAX_TX_GAS,
+            memory_limit_bytes: MAX_DEPLOYMENT_MEMORY_BYTES,
+        };
+        let memo = payload.encode_memo().expect("near-bounds encode should succeed");
+        let decoded = ContractDeploymentPayloadV1::decode_memo(&memo)
+            .expect("near-bounds decode should succeed");
+        assert_eq!(payload, decoded);
+    }
+
+    /// A code field exceeding MAX_DEPLOYMENT_CODE_BYTES must be rejected.
+    #[test]
+    fn test_encode_rejects_code_too_large() {
+        let mut payload = valid_payload();
+        payload.code = vec![0x00; MAX_DEPLOYMENT_CODE_BYTES + 1];
+        let result = payload.encode_memo();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("code length"));
     }
 }
