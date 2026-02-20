@@ -218,6 +218,34 @@ impl<'a> StateMutator<'a> {
         Ok(new_nonce)
     }
 
+    /// Get a token contract by its ID.
+    pub fn get_token_contract(
+        &self,
+        token_id: &TokenId,
+    ) -> TxApplyResult<Option<crate::contracts::TokenContract>> {
+        Ok(self.store.get_token_contract(token_id)?)
+    }
+
+    /// Persist a token contract in canonical state storage.
+    pub fn put_token_contract(&self, contract: &crate::contracts::TokenContract) -> TxApplyResult<()> {
+        self.store.put_token_contract(contract)?;
+        Ok(())
+    }
+
+    /// Check whether any existing token contract uses the given symbol (case-insensitive).
+    ///
+    /// Used by TokenCreation to enforce symbol uniqueness across the token registry.
+    pub fn token_symbol_exists_case_insensitive(&self, symbol: &str) -> TxApplyResult<bool> {
+        let upper = symbol.to_ascii_uppercase();
+        let contracts = self.store.iter_token_contracts()?;
+        for (_id, contract) in contracts {
+            if contract.symbol.to_ascii_uppercase() == upper {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     // =========================================================================
     // Account Primitives
     // =========================================================================
