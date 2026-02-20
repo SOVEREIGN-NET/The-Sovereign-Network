@@ -5,6 +5,7 @@
 use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use crate::integration::zk_integration::is_valid_proof_structure;
 use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
+use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
 };
@@ -99,8 +100,11 @@ impl TransactionValidator {
     pub fn validate_transaction(&self, transaction: &Transaction) -> ValidationResult {
         // Check if this is a system transaction (empty inputs = coinbase-style)
         let mut is_system_transaction = transaction.inputs.is_empty();
-        // TokenTransfer must pay fees even with empty inputs
-        if matches!(transaction.transaction_type, TransactionType::TokenTransfer) {
+        // Typed token operations must pay fees even with empty inputs.
+        if matches!(
+            transaction.transaction_type,
+            TransactionType::TokenTransfer | TransactionType::TokenCreation
+        ) {
             is_system_transaction = false;
         }
 
@@ -208,7 +212,17 @@ impl TransactionValidator {
                 self.validate_token_mint(transaction)?;
             }
             TransactionType::TokenCreation
-            | TransactionType::TokenSwap
+            => {
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+                TokenCreationPayloadV1::decode_memo(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
             | TransactionType::RemoveLiquidity => {
@@ -223,7 +237,9 @@ impl TransactionValidator {
         let require_signature = !is_system_transaction
             || matches!(
                 transaction.transaction_type,
-                TransactionType::WalletUpdate | TransactionType::TokenMint
+                TransactionType::WalletUpdate
+                    | TransactionType::TokenMint
+                    | TransactionType::TokenCreation
             );
         if require_signature {
             self.validate_signature(transaction)?;
@@ -370,7 +386,17 @@ impl TransactionValidator {
                 }
             }
             TransactionType::TokenCreation
-            | TransactionType::TokenSwap
+            => {
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+                TokenCreationPayloadV1::decode_memo(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
             | TransactionType::RemoveLiquidity => {
@@ -384,7 +410,9 @@ impl TransactionValidator {
         let require_signature = !is_system_transaction
             || matches!(
                 transaction.transaction_type,
-                TransactionType::WalletUpdate | TransactionType::TokenMint
+                TransactionType::WalletUpdate
+                    | TransactionType::TokenMint
+                    | TransactionType::TokenCreation
             );
         if require_signature {
             self.validate_signature(transaction)?;
@@ -1264,7 +1292,7 @@ fn is_forbidden_token_contract_mutation(transaction: &Transaction) -> bool {
         return false;
     };
     call.contract_type == ContractType::Token
-        && matches!(call.method.as_str(), "mint" | "transfer" | "burn")
+        && matches!(call.method.as_str(), "create_custom_token" | "mint" | "transfer" | "burn")
 }
 
 impl Default for TransactionValidator {
@@ -1299,7 +1327,10 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         let mut is_system_transaction = transaction.inputs.is_empty() && !is_token;
         // TokenTransfer must pay fees even with empty inputs
-        if matches!(transaction.transaction_type, TransactionType::TokenTransfer) {
+        if matches!(
+            transaction.transaction_type,
+            TransactionType::TokenTransfer | TransactionType::TokenCreation
+        ) {
             is_system_transaction = false;
         }
         tracing::debug!(
@@ -1857,6 +1888,7 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bincode::Options;
     use crate::integration::zk_integration::ZkTransactionProof;
     use crate::transaction::{ContractDeploymentPayloadV1, CONTRACT_DEPLOYMENT_MEMO_PREFIX};
     use crate::types::ContractCall;
@@ -2291,7 +2323,14 @@ mod tests {
             memory_limit_bytes: 65_536,
         };
         let mut memo = CONTRACT_DEPLOYMENT_MEMO_PREFIX.to_vec();
-        memo.extend_from_slice(&bincode::serialize(&invalid_payload).unwrap());
+        memo.extend_from_slice(
+            &bincode::DefaultOptions::new()
+                .with_limit(
+                    crate::transaction::contract_deployment::MAX_DEPLOYMENT_MEMO_BYTES as u64,
+                )
+                .serialize(&invalid_payload)
+                .unwrap(),
+        );
         tx.memo = memo;
 
         let validator = TransactionValidator::new();
