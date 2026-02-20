@@ -1,6 +1,7 @@
 //! ZHTP Orchestrator CLI Commands
 
 pub mod common;
+pub mod transaction_utils;
 pub mod node;
 pub mod wallet;
 pub mod dao;

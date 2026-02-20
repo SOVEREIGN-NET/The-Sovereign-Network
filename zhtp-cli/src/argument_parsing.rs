@@ -258,6 +258,38 @@ pub enum DaoAction {
     Balance,
     /// Get treasury balance (alias for Balance)
     TreasuryBalance,
+    /// Register DAO metadata in canonical DAO registry via signed DaoExecution tx broadcast
+    RegistryRegister {
+        /// Token ID (32-byte hex)
+        #[arg(long)]
+        token_id: String,
+        /// DAO class (np/fp)
+        #[arg(long)]
+        class: String,
+        /// Metadata hash (32-byte hex)
+        #[arg(long)]
+        metadata_hash: String,
+    },
+    /// List registered DAOs
+    RegistryList,
+    /// Get DAO registry entry by DAO ID
+    RegistryGet {
+        /// DAO ID (32-byte hex)
+        #[arg(long)]
+        dao_id: String,
+    },
+    /// Create DAO via canonical factory DaoExecution tx broadcast
+    FactoryCreate {
+        /// Token ID (32-byte hex)
+        #[arg(long)]
+        token_id: String,
+        /// DAO class (np/fp)
+        #[arg(long)]
+        class: String,
+        /// Metadata hash (32-byte hex)
+        #[arg(long)]
+        metadata_hash: String,
+    },
 }
 
 /// Citizen management commands
@@ -423,6 +455,9 @@ pub enum BlockchainAction {
     },
     /// Call a contract method via canonical ContractExecution transaction broadcast
     ContractCall {
+        /// Deployed contract ID (32-byte hex)
+        #[arg(long)]
+        contract_id: String,
         /// Contract type (token, messaging, contact, group, file, governance, web4, ubi, devgrants)
         #[arg(long)]
         contract_type: String,
@@ -433,6 +468,30 @@ pub enum BlockchainAction {
         /// Omitted or empty values are both treated as "no params" (empty bytes).
         #[arg(long, default_value = "")]
         params_hex: String,
+    },
+    /// List deployed contracts from canonical contract registry
+    ContractList {
+        /// Contract type filter: all, token, or web4
+        #[arg(long, default_value = "all")]
+        contract_type: String,
+        /// Max number of items to return
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        /// Pagination offset
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
+    /// Get deployed contract metadata by contract ID
+    ContractInfo {
+        /// Contract ID (32-byte hex)
+        #[arg(long)]
+        contract_id: String,
+    },
+    /// Get deployed contract state by contract ID
+    ContractState {
+        /// Contract ID (32-byte hex)
+        #[arg(long)]
+        contract_id: String,
     },
     /// Broadcast a pre-signed transaction as hex-encoded bytes
     BroadcastRaw {
