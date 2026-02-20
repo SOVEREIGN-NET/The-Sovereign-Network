@@ -25,7 +25,7 @@ use crate::pouw::{
 pub struct PouwHandler {
     challenge_generator: Arc<ChallengeGenerator>,
     receipt_validator: Arc<RwLock<ReceiptValidator>>,
-    reward_calculator: Arc<RwLock<RewardCalculator>>,
+    reward_calculator: Arc<RewardCalculator>,
     metrics: Arc<PouwMetrics>,
     rate_limiter: Arc<PouwRateLimiter>,
     identity_manager: Arc<RwLock<IdentityManager>>,
@@ -44,7 +44,7 @@ impl PouwHandler {
         Self {
             challenge_generator,
             receipt_validator: Arc::new(RwLock::new(receipt_validator)),
-            reward_calculator: Arc::new(RwLock::new(reward_calculator)),
+            reward_calculator: Arc::new(reward_calculator),
             metrics: Arc::new(PouwMetrics::new()),
             rate_limiter: Arc::new(PouwRateLimiter::with_defaults()),
             identity_manager,
@@ -62,11 +62,33 @@ impl PouwHandler {
         Self {
             challenge_generator,
             receipt_validator,
-            reward_calculator: Arc::new(RwLock::new(reward_calculator)),
+            reward_calculator: Arc::new(reward_calculator),
             metrics: Arc::new(PouwMetrics::new()),
             rate_limiter: Arc::new(PouwRateLimiter::with_defaults()),
             identity_manager,
         }
+    }
+
+
+    pub fn new_with_calculator_arc(
+        challenge_generator: Arc<ChallengeGenerator>,
+        receipt_validator: Arc<RwLock<ReceiptValidator>>,
+        reward_calculator: Arc<RewardCalculator>,
+        identity_manager: Arc<RwLock<IdentityManager>>,
+    ) -> Self {
+        Self {
+            challenge_generator,
+            receipt_validator,
+            reward_calculator,
+            metrics: Arc::new(crate::pouw::PouwMetrics::new()),
+            rate_limiter: Arc::new(crate::pouw::PouwRateLimiter::with_defaults()),
+            identity_manager,
+        }
+    }
+
+    /// Get the shared RewardCalculator Arc (for the payout background task).
+    pub fn reward_calculator_arc(&self) -> Arc<RewardCalculator> {
+        Arc::clone(&self.reward_calculator)
     }
 
     fn parse_query_params(uri: &str) -> HashMap<String, String> {
@@ -421,7 +443,7 @@ impl PouwHandler {
                 .get_validated_receipts_for_nonces(&result.accepted)
                 .await;
             if !validated.is_empty() {
-                let calculator = self.reward_calculator.read().await;
+                let calculator = &*self.reward_calculator;
                 let current_epoch = calculator.current_epoch();
                 match calculator.calculate_epoch_rewards(&validated, current_epoch).await {
                     Ok(epoch_rewards) => {
@@ -466,7 +488,7 @@ impl PouwHandler {
     }
 
     async fn handle_health_check(&self) -> ZhtpResult<ZhtpResponse> {
-        let calculator = self.reward_calculator.read().await;
+        let calculator = &*self.reward_calculator;
         let suspicious_dids = calculator.get_suspicious_dids().await;
         let body = serde_json::json!({
             "status": "ok",
@@ -492,7 +514,7 @@ impl PouwHandler {
         }
 
         let (limit, offset) = Self::parse_pagination(&request.uri);
-        let calculator = self.reward_calculator.read().await;
+        let calculator = &*self.reward_calculator;
         let rewards = calculator.get_client_rewards(client_did).await;
 
         let total_earned: u64 = Self::checked_reward_sum(
@@ -569,7 +591,7 @@ impl PouwHandler {
         }
 
         let (limit, offset) = Self::parse_pagination(&request.uri);
-        let calculator = self.reward_calculator.read().await;
+        let calculator = &*self.reward_calculator;
         let rewards = calculator.get_epoch_rewards(epoch).await;
 
         let total_earned: u64 = Self::checked_reward_sum(
@@ -816,7 +838,7 @@ mod tests {
         let handler = PouwHandler::new(generator, validator, reward_calculator, identity_manager);
 
         {
-            let calc = handler.reward_calculator.read().await;
+            let calc = &*handler.reward_calculator;
             let validated = vec![ValidatedReceipt {
                 receipt_nonce: vec![1u8; 16],
                 client_did: client_did.to_string(),
@@ -871,7 +893,7 @@ mod tests {
         let handler = PouwHandler::new(generator, validator, reward_calculator, identity_manager);
 
         {
-            let calc = handler.reward_calculator.read().await;
+            let calc = &*handler.reward_calculator;
             let validated = vec![ValidatedReceipt {
                 receipt_nonce: vec![5u8; 16],
                 client_did: client_did.to_string(),
