@@ -1215,6 +1215,15 @@ fn parse_contract_call(transaction: &Transaction) -> Option<ContractCall> {
     if transaction.transaction_type != TransactionType::ContractExecution {
         return None;
     }
+    if transaction
+        .memo
+        .starts_with(crate::transaction::CONTRACT_EXECUTION_MEMO_PREFIX_V2)
+    {
+        let decoded =
+            crate::transaction::DecodedContractExecutionMemo::decode_compat(&transaction.memo)
+                .ok()?;
+        return Some(decoded.call);
+    }
     if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
         return None;
     }
@@ -1227,28 +1236,12 @@ fn parse_contract_call(transaction: &Transaction) -> Option<ContractCall> {
 ///
 /// Returns true if the transaction:
 /// 1. Has type ContractExecution
-/// 2. Has memo starting with "ZHTP"
+/// 2. Has a valid ContractExecution memo schema
 /// 3. Contains a valid ContractCall with contract_type Token
 /// 4. Has a valid token method (create_custom_token)
 pub fn is_token_contract_execution(transaction: &Transaction) -> bool {
     if transaction.transaction_type != TransactionType::ContractExecution {
         tracing::debug!("is_token_contract_execution: not ContractExecution type");
-        return false;
-    }
-
-    if transaction.memo.len() <= 4 {
-        tracing::warn!(
-            "is_token_contract_execution: memo too short (len={})",
-            transaction.memo.len()
-        );
-        return false;
-    }
-
-    if &transaction.memo[0..4] != b"ZHTP" {
-        tracing::warn!(
-            "is_token_contract_execution: memo doesn't start with ZHTP, starts with {:?}",
-            &transaction.memo[0..4]
-        );
         return false;
     }
 
