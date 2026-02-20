@@ -152,7 +152,7 @@ fn build_contract_call_endpoint(contract_id: [u8; 32]) -> String {
     format!("/api/v1/blockchain/contracts/{}/call", hex::encode(contract_id))
 }
 
-fn build_contract_list_endpoint(filter: &str, limit: u32, offset: u32) -> String {
+fn build_contract_list_endpoint(filter: &str, limit: usize, offset: usize) -> String {
     format!("/api/v1/blockchain/contracts?type={filter}&limit={limit}&offset={offset}")
 }
 
@@ -524,5 +524,41 @@ mod tests {
         assert_eq!(tx.transaction_type, TransactionType::ContractExecution);
         assert!(tx.memo.starts_with(b"ZHTP"));
         assert!(tx.fee > 0);
+    }
+
+    #[test]
+    fn test_build_contract_call_endpoint() {
+        let contract_id = [0xefu8; 32];
+        assert_eq!(
+            build_contract_call_endpoint(contract_id),
+            format!("/api/v1/blockchain/contracts/{}/call", "ef".repeat(32))
+        );
+    }
+
+    #[test]
+    fn test_parse_contract_filter_case_insensitive() {
+        assert_eq!(parse_contract_filter("ALL").unwrap(), "all");
+        assert_eq!(parse_contract_filter("Token").unwrap(), "token");
+        assert_eq!(parse_contract_filter("WEB4").unwrap(), "web4");
+    }
+
+    #[test]
+    fn test_parse_contract_filter_rejects_unknown() {
+        assert!(parse_contract_filter("dao").is_err());
+        assert!(parse_contract_filter("").is_err());
+    }
+
+    #[test]
+    fn test_parse_contract_type_all_variants() {
+        assert_eq!(parse_contract_type("web4").unwrap(), ContractType::Web4Website);
+        assert_eq!(parse_contract_type("messaging").unwrap(), ContractType::WhisperMessaging);
+        assert_eq!(parse_contract_type("governance").unwrap(), ContractType::Governance);
+        assert!(parse_contract_type("unknown").is_err());
+    }
+
+    #[test]
+    fn test_validate_tx_hash_too_short() {
+        assert!(validate_tx_hash("abc").is_err());
+        assert!(validate_tx_hash(&"0".repeat(32)).is_ok());
     }
 }

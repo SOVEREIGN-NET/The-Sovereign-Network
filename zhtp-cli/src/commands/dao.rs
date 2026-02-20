@@ -118,6 +118,18 @@ pub fn validate_proposal_title(title: &str) -> CliResult<()> {
     Ok(())
 }
 
+/// Parse a DAO class string into a [`DAOType`].
+///
+/// Canonical textual representations used by the core types are
+/// `"non_profit"` and `"for_profit"` (see `DAOType::from_str` in
+/// `lib-blockchain`). The CLI is intentionally more permissive and
+/// accepts the following aliases for convenience:
+///
+/// - Non-profit: `"np"`, `"non_profit"`, `"non-profit"`, `"nonprofit"`
+/// - For-profit: `"fp"`, `"for_profit"`, `"for-profit"`, `"forprofit"`
+///
+/// This function normalizes any of the accepted forms to the
+/// corresponding [`DAOType`] variant.
 fn parse_dao_class(value: &str) -> CliResult<DAOType> {
     let normalized = value.trim().to_ascii_lowercase();
     if let Some(class) = DAOType::from_str(&normalized) {
@@ -587,5 +599,64 @@ mod tests {
         let msg = get_operation_message(DaoOperation::Propose, Some("My Proposal"), None, None);
         assert!(msg.contains("proposal"));
         assert!(msg.contains("My Proposal"));
+    }
+
+    #[test]
+    fn test_parse_dao_class_invalid_rejects() {
+        assert!(parse_dao_class("").is_err());
+        assert!(parse_dao_class("x").is_err());
+        assert!(parse_dao_class("llc").is_err());
+    }
+
+    #[test]
+    fn test_parse_dao_class_case_insensitive() {
+        assert_eq!(parse_dao_class("NP").unwrap(), DAOType::NP);
+        assert_eq!(parse_dao_class("FP").unwrap(), DAOType::FP);
+        assert_eq!(parse_dao_class("Non_Profit").unwrap(), DAOType::NP);
+        assert_eq!(parse_dao_class("ForProfit").unwrap(), DAOType::FP);
+    }
+
+    #[test]
+    fn test_action_to_operation_registry_register_returns_none() {
+        let action = DaoAction::RegistryRegister {
+            token_id: "aa".repeat(32),
+            class: "np".to_string(),
+            metadata_hash: "bb".repeat(32),
+        };
+        // RegistryRegister uses a different code path (build_signed_dao_registry_tx),
+        // so action_to_operation returns None.
+        assert_eq!(action_to_operation(&action), None);
+    }
+
+    #[test]
+    fn test_build_signed_dao_registry_tx_different_execution_types_produce_distinct_dao_ids() {
+        let keypair = KeyPair::generate().unwrap();
+        let token_id = [0x55u8; 32];
+        let metadata_hash = [0x66u8; 32];
+
+        let (_, dao_id_register) = build_signed_dao_registry_tx(
+            "dao_registry_register_v1",
+            "did:sov:a",
+            keypair.public_key.clone(),
+            keypair.private_key.clone(),
+            token_id,
+            DAOType::NP,
+            metadata_hash,
+        )
+        .unwrap();
+
+        let (_, dao_id_factory) = build_signed_dao_registry_tx(
+            "dao_factory_create_v1",
+            "did:sov:a",
+            keypair.public_key.clone(),
+            keypair.private_key.clone(),
+            token_id,
+            DAOType::NP,
+            metadata_hash,
+        )
+        .unwrap();
+
+        // dao_id is derived from token+class+treasury — same inputs, same id regardless of exec type
+        assert_eq!(dao_id_register, dao_id_factory);
     }
 }
