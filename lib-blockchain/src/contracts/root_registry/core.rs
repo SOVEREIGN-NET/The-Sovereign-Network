@@ -3,6 +3,10 @@
 //! # Phase 6: Lifecycle Integration
 //! All read/write operations use `touch()` for lazy state transitions.
 //! Block height is authoritative for all lifecycle timestamps.
+//!
+//! [Phase 5] Implements verification requirements for .sov domain registration.
+//! Root-level issuance requires identity-anchored proofs with graduated access
+//! control based on domain classification.
 
 use std::collections::HashMap;
 
@@ -11,7 +15,7 @@ use super::namespace_policy::NamespacePolicy;
 use super::types::{
     hash_name, normalize_name, BlockHeight, CustodianId, DaoId, EffectiveStatus,
     LegacyDomainRecord, LifecycleFields, LifecycleParams, NameClass, NameClassification, NameHash,
-    NameStatus, PublicKey, ReasonCode, RevokedRecord, VerificationLevel,
+    NameStatus, PublicKey, ReasonCode, RevokedRecord, VerificationLevel, VerificationProof,
     WelfareSector, ZoneController, timing,
 };
 use crate::impl_lifecycle_fields_accessors;
@@ -161,11 +165,63 @@ impl RootRegistry {
         Some((record, effective))
     }
 
-    /// Register a commercial domain
+    /// Register a commercial .sov domain with verification
+    ///
+    /// [Phase 5] Root-level .sov issuance requires identity-anchored proofs.
+    /// Commercial roots require L2 (Verified Entity) minimum.
     ///
     /// # Phase 6: Block Height Authority
     /// Registration uses current_height and duration_blocks instead of timestamps.
+    ///
+    /// # Invariants (Phase 5)
+    /// * V1: .sov root issuance is impossible without verification
+    /// * V2: Verification requirements are name-class dependent
+    /// * V7: Missing verification fails loudly and deterministically
     pub fn register_commercial(
+        &mut self,
+        name: &str,
+        owner: PublicKey,
+        verification_level: VerificationLevel,
+        verification_proof: Option<&VerificationProof>,
+        current_height: BlockHeight,
+        duration_blocks: BlockHeight,
+    ) -> Result<NameHash, String> {
+        let normalized = normalize_name(name);
+        let classification = self.policy.classify_name(&normalized);
+
+        match classification {
+            NameClass::Reserved { .. } => {
+                return Err("Reserved namespaces cannot be registered via commercial path".to_string());
+            }
+            NameClass::WelfareChild { .. } => {
+                return Err("Welfare namespaces cannot be registered via commercial path".to_string());
+            }
+            NameClass::DaoPrefixed { .. } => {
+                // Phase 2 (Issue #657): dao.* names are VIRTUAL and cannot be registered
+                // They are resolved at query time from the parent's governance_pointer
+                return Err("dao.* names are virtual and cannot be registered. Use resolution to access governance.".to_string());
+            }
+            NameClass::Commercial { .. } => {}
+        }
+
+        // [Phase 5] Verify identity before registration — critical security gate
+        self.policy
+            .verify(&classification, verification_level, verification_proof, current_height, None)
+            .map_err(|e| e.to_string())?;
+
+        self.insert_record_verified(normalized, owner, classification, verification_level, current_height, duration_blocks, None)
+    }
+
+    /// Register a commercial domain without verification (for testing/migration only)
+    ///
+    /// # WARNING
+    /// Bypasses Phase 5 verification requirements. Only for:
+    /// - Unit tests that don't need to test verification
+    /// - Migration of legacy records
+    ///
+    /// Production code must use `register_commercial()`.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn register_commercial_unverified(
         &mut self,
         name: &str,
         owner: PublicKey,
@@ -183,8 +239,6 @@ impl RootRegistry {
                 return Err("Welfare namespaces cannot be registered via commercial path".to_string());
             }
             NameClass::DaoPrefixed { .. } => {
-                // Phase 2 (Issue #657): dao.* names are VIRTUAL and cannot be registered
-                // They are resolved at query time from the parent's governance_pointer
                 return Err("dao.* names are virtual and cannot be registered. Use resolution to access governance.".to_string());
             }
             NameClass::Commercial { .. } => {}
@@ -563,6 +617,62 @@ impl RootRegistry {
                 self.suspend_children(&child);
             }
         }
+    }
+
+    /// Insert a record with a specific verification level stored
+    ///
+    /// [Phase 5] Used by `register_commercial` after verification passes.
+    fn insert_record_verified(
+        &mut self,
+        normalized_name: String,
+        owner: PublicKey,
+        classification: NameClass,
+        verification_level: VerificationLevel,
+        current_height: BlockHeight,
+        duration_blocks: BlockHeight,
+        governance_pointer: Option<DaoId>,
+    ) -> Result<NameHash, String> {
+        let name_hash = hash_name(&normalized_name);
+        if self.records.contains_key(&name_hash) {
+            return Err("Name already registered".to_string());
+        }
+
+        let parent_hash = parent_hash(&normalized_name);
+        let depth = parent_hash.map(|_| 1u8).unwrap_or(0);
+
+        let expires_at_height = current_height.saturating_add(duration_blocks);
+        let renewal_window_start_height = expires_at_height
+            .saturating_sub(self.lifecycle_params.renewal_window_blocks);
+        let renew_grace_until_height = expires_at_height
+            .saturating_add(self.lifecycle_params.expiry_grace_blocks);
+
+        #[allow(deprecated)]
+        let record = CoreNameRecord {
+            name_hash,
+            owner,
+            controller: None,
+            zone_controller: None,
+            parent: parent_hash,
+            depth,
+            classification,
+            verification_level, // [Phase 5] Store the verified level
+            governance_pointer,
+            status: NameStatus::Active,
+            expires_at_height,
+            renewal_window_start_height,
+            renew_grace_until_height,
+            revoke_grace_until_height: None,
+            custodian: None,
+            expires_at: 0,
+            grace_ends_at: None,
+        };
+
+        if let Some(parent) = record.parent {
+            self.delegation_tree.add_child(parent, name_hash);
+        }
+
+        self.records.insert(name_hash, CoreStoredRecord::V2(record));
+        Ok(name_hash)
     }
 
     fn insert_record(
