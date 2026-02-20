@@ -55,7 +55,7 @@ use crate::integration::crypto_integration::PublicKey;
 /// UBI Distribution Engine
 impl KernelState {
     fn compute_ubi_kernel_txid(citizen_id: &[u8; 32], epoch: u64, amount: u64) -> [u8; 32] {
-        let mut bytes = Vec::with_capacity(32 + 8 + 8 + 16);
+        let mut bytes = Vec::with_capacity(b"ubi:distributed:v1".len() + 32 + 8 + 8);
         bytes.extend_from_slice(b"ubi:distributed:v1");
         bytes.extend_from_slice(citizen_id);
         bytes.extend_from_slice(&epoch.to_le_bytes());
@@ -182,18 +182,35 @@ impl KernelState {
                                         current_epoch,
                                         claim.amount,
                                     );
-                                    if self.emit_distributed(
+                                    // Event emission failure should not be treated as a mint failure:
+                                    // by this point, the claim is marked, the pool is updated, and (if
+                                    // enabled) the mint has succeeded. Log the error but still count
+                                    // this as a success so no inconsistent state is created.
+                                    if let Err(e) = self.emit_distributed(
                                         claim.citizen_id,
                                         claim.amount,
                                         current_epoch,
                                         kernel_txid,
-                                    ).is_err() {
-                                        self.record_rejection(crate::contracts::treasury_kernel::types::RejectionReason::MintFailed);
-                                        rejections += 1;
-                                        continue;
+                                    ) {
+                                        tracing::warn!(
+                                            "Failed to emit UBI distributed event for citizen {:?} in epoch {}: {}",
+                                            &claim.citizen_id[..4],
+                                            current_epoch,
+                                            e
+                                        );
                                     }
                                     self.record_success();
                                     successes += 1;
+                                } else {
+                                    // Distribution accounting failed after mint — record as rejection.
+                                    let _ = self.emit_claim_rejected(
+                                        claim.citizen_id,
+                                        current_epoch,
+                                        crate::contracts::treasury_kernel::types::RejectionReason::MintFailed,
+                                        current_epoch,
+                                    );
+                                    self.record_rejection(crate::contracts::treasury_kernel::types::RejectionReason::MintFailed);
+                                    rejections += 1;
                                 }
                             } else {
                                 // Mint failed - record as rejection
