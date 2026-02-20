@@ -219,14 +219,24 @@ Start the complete ZHTP orchestrator node with all services.
 
 **Usage**:
 ```bash
-./zhtp.exe dao proposal create <TITLE> <DESCRIPTION>
+./zhtp.exe dao propose --title <TITLE> --description <DESCRIPTION>
 ```
 
 ### Vote on Proposal
 
 **Usage**:
 ```bash
-./zhtp.exe dao proposal vote <PROPOSAL_ID> <VOTE>
+./zhtp.exe dao vote --proposal-id <PROPOSAL_ID> --choice <yes|no|abstain>
+```
+
+### DAO Registry and Factory
+
+**Usage**:
+```bash
+./zhtp.exe dao registry-list
+./zhtp.exe dao registry-get --dao-id <DAO_ID_HEX>
+./zhtp.exe dao registry-register --token-id <TOKEN_ID_HEX> --class <np|fp> --metadata-hash <HASH_HEX>
+./zhtp.exe dao factory-create --token-id <TOKEN_ID_HEX> --class <np|fp> --metadata-hash <HASH_HEX>
 ```
 
 ## Network Operations
@@ -273,6 +283,17 @@ Start the complete ZHTP orchestrator node with all services.
 **Usage**:
 ```bash
 ./zhtp.exe blockchain transaction <TX_HASH>
+```
+
+### Canonical Contract Lifecycle
+
+**Usage**:
+```bash
+./zhtp.exe blockchain contract-deploy --contract-type <TYPE> --code-hex <HEX> --abi-json '<JSON>'
+./zhtp.exe blockchain contract-call --contract-id <ID_HEX> --contract-type <TYPE> --method <METHOD> [--params-hex <HEX>]
+./zhtp.exe blockchain contract-list [--contract-type all|token|web4] [--limit N] [--offset N]
+./zhtp.exe blockchain contract-info --contract-id <ID_HEX>
+./zhtp.exe blockchain contract-state --contract-id <ID_HEX>
 ```
 
 ## Monitoring Commands
