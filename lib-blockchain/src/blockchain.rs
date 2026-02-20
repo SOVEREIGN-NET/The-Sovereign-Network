@@ -911,6 +911,12 @@ impl Blockchain {
     /// let blockchain = Blockchain::new_with_store(store)?;
     /// ```
     pub fn new_with_store(store: std::sync::Arc<dyn BlockchainStore>) -> Result<Self> {
+        // NOTE: This constructor creates a Blockchain backed by the provided store but does
+        // NOT commit genesis automatically. The store must either be empty (height not yet
+        // initialized) or already contain a committed genesis block. The first call to
+        // add_block() must supply a genesis block (height 0) so that the executor can
+        // initialize the store height. Supplying a non-genesis block first will fail with
+        // an InvalidBlockHeight error from the SledStore.
         let mut blockchain = Self::new()?;
         let executor = std::sync::Arc::new(
             crate::execution::executor::BlockExecutor::with_store(store.clone())
@@ -1680,10 +1686,16 @@ impl Blockchain {
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
 
-        // Begin sled transaction for remaining processing
-        if let Some(ref store) = self.store {
-            store.begin_block(block.header.height)
-                .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
+        // When the BlockExecutor is active it has already called begin_block/commit_block
+        // inside apply_block(). Starting a second begin_block() for the same height would
+        // fail with an InvalidBlockHeight error. Only open a new SledStore transaction on
+        // the legacy path (no executor).
+        let using_executor = self.executor.is_some();
+        if !using_executor {
+            if let Some(ref store) = self.store {
+                store.begin_block(block.header.height)
+                    .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
+            }
         }
 
         // Process identity transactions
@@ -1720,13 +1732,20 @@ impl Blockchain {
             }
         }
 
-        // Persist block to SledStore
-        if let Some(ref store) = self.store {
-            if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
-                error!("Failed to persist block {} to SledStore: {}", block.height(), e);
-            } else {
-                debug!("Block {} persisted to SledStore", block.height());
+        // Persist block to SledStore — skip when using the BlockExecutor because
+        // apply_block() already committed the block (begin_block → append_block →
+        // commit_block). Calling persist_to_sled_store() again would open a second
+        // store transaction for the same block height, causing an InvalidBlockHeight error.
+        if !using_executor {
+            if let Some(ref store) = self.store {
+                if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
+                    error!("Failed to persist block {} to SledStore: {}", block.height(), e);
+                } else {
+                    debug!("Block {} persisted to SledStore", block.height());
+                }
             }
+        } else {
+            debug!("Block {} already persisted by BlockExecutor", block.height());
         }
 
         self.blocks_since_last_persist += 1;
@@ -9150,6 +9169,71 @@ mod replay_contract_execution_tests {
             blockchain.get_contract_block_height(&token_id),
             Some(42),
             "Contract deployment height should be tracked"
+        );
+    }
+}
+
+// =========================================================================
+// Store-backed Blockchain integration tests (issue #1339)
+// =========================================================================
+#[cfg(test)]
+mod store_backed_blockchain_tests {
+    use super::*;
+    use crate::block::{Block, BlockHeader};
+    use crate::storage::SledStore;
+    use crate::types::{Difficulty, Hash};
+
+    fn make_header(height: u64, prev_hash: Hash) -> BlockHeader {
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes[0..8].copy_from_slice(&height.to_be_bytes());
+        BlockHeader {
+            version: 1,
+            previous_block_hash: prev_hash,
+            merkle_root: Hash::default(),
+            state_root: Hash::default(),
+            timestamp: 1_700_000_000 + height,
+            difficulty: Difficulty::minimum(),
+            nonce: 0,
+            cumulative_difficulty: Difficulty::minimum(),
+            height,
+            block_hash: Hash::new(hash_bytes),
+            transaction_count: 0,
+            block_size: 0,
+            fee_model_version: 2,
+        }
+    }
+
+    /// new_with_store() + add_block(genesis) + add_block(block 1) must succeed
+    /// end-to-end without hitting InvalidBlockHeight or double-commit errors.
+    #[tokio::test]
+    async fn test_store_backed_apply_genesis_and_block1() {
+        let temp = tempfile::tempdir().unwrap();
+        let store_path = temp.path().join("test_store");
+        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
+
+        let mut bc = Blockchain::new_with_store(store.clone()).unwrap();
+
+        // Genesis block (height 0, prev_hash = zeroed)
+        let genesis_header = make_header(0, Hash::default());
+        let genesis = Block::new(genesis_header.clone(), vec![]);
+        bc.add_block(genesis.clone())
+            .await
+            .expect("genesis should apply without error");
+        assert_eq!(bc.get_height(), 1, "blockchain height should be 1 after genesis");
+
+        // Block 1 — also verifies no double begin_block/commit_block regression
+        let block1_header = make_header(1, genesis_header.block_hash);
+        let block1 = Block::new(block1_header, vec![]);
+        bc.add_block(block1)
+            .await
+            .expect("block 1 should apply without error");
+        assert_eq!(bc.get_height(), 2, "blockchain height should be 2 after block 1");
+
+        // Verify the store sees the committed blocks
+        assert_eq!(
+            store.latest_height().unwrap(),
+            1,
+            "store latest_height should be 1 after two committed blocks"
         );
     }
 }
