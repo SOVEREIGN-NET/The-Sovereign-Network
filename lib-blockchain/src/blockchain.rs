@@ -1096,6 +1096,19 @@ impl Blockchain {
             }
         }
 
+        // Load committed TokenStateSnapshot from SledStore to restore token contracts and nonces.
+        // This is the primary source for token state on restart; the snapshot is only written
+        // on commit so uncommitted (crashed) blocks cannot leak state.
+        if let Ok(Some(snapshot)) = store.get_token_state_snapshot() {
+            for (id, contract) in snapshot.token_contracts {
+                blockchain.token_contracts.insert(id, contract);
+            }
+            for (key, nonce) in snapshot.token_nonces {
+                blockchain.token_nonces.insert(key, nonce);
+            }
+            info!("Loaded TokenStateSnapshot from SledStore");
+        }
+
         // CRITICAL: Load persisted SOV token contract from SledStore if not reconstructed from transactions
         // The genesis token contract (with user balances) may not be in ContractExecution transactions
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
@@ -3360,10 +3373,18 @@ impl Blockchain {
     /// Get the current expected nonce for a sender address and token.
     /// For SOV transfers, the address is the wallet_id bytes.
     /// For custom token transfers, the address is the key_id bytes.
-    /// 
-    /// Reads from BlockchainStore (sled) if available, otherwise falls back to HashMap.
+    ///
+    /// The in-memory HashMap is checked first; it is populated both during live
+    /// block processing and from the TokenStateSnapshot on restart.  The store
+    /// is only consulted when the key is absent from the HashMap (e.g. for
+    /// nonces written by the BlockExecutor path but not yet reflected in memory).
     pub fn get_token_nonce(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u64 {
-        // Try store first (single source of truth when using BlockExecutor)
+        // In-memory HashMap is the primary source (populated from snapshot on
+        // restart and incremented during process_token_transactions).
+        if let Some(&nonce) = self.token_nonces.get(&(*token_id, *address)) {
+            return nonce;
+        }
+        // Fallback to store for nonces not yet reflected in the HashMap.
         if let Some(store) = self.get_store() {
             let token = crate::storage::TokenId::new(*token_id);
             let addr = crate::storage::Address::new(*address);
@@ -3371,11 +3392,7 @@ impl Blockchain {
                 return nonce;
             }
         }
-        // Fallback to HashMap (legacy path)
-        self.token_nonces
-            .get(&(*token_id, *address))
-            .copied()
-            .unwrap_or(0)
+        0
     }
 
     /// Collect SOV backfill entries from wallet_registry for wallets missing token balances.
@@ -3918,9 +3935,7 @@ impl Blockchain {
             }
             // Handle ContractExecution transactions (token create/mint/transfer/burn)
             else if transaction.transaction_type == TransactionType::ContractExecution {
-                if let Err(e) = self.process_contract_execution(transaction, block.height()) {
-                    warn!("Failed to process contract execution: {}", e);
-                }
+                self.process_contract_execution(transaction, block.height())?;
             }
         }
         Ok(())
@@ -4375,103 +4390,14 @@ impl Blockchain {
                 info!("Minted {} tokens to {:?}", amount, to.key_id);
             }
             "transfer" => {
-                warn!("DEPRECATED: ContractExecution/transfer is deprecated — use TokenTransfer transactions instead (issue #1132)");
-                // TransferParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
-                #[derive(serde::Deserialize)]
-                struct TransferParams {
-                    token_id: [u8; 32],
-                    to: Vec<u8>,  // PublicKey bytes (bincode serialized)
-                    amount: u64,
-                }
-                let params: TransferParams = bincode::deserialize(&call.params)
-                    .map_err(|e| anyhow::anyhow!("Invalid transfer params: {}", e))?;
-                let TransferParams { token_id, to: to_bytes, amount } = params;
-                if Self::is_sov_token_id(&token_id) {
-                    return Err(anyhow::anyhow!("SOV transfers must use TokenTransfer transactions"));
-                }
-
-                // Deserialize PublicKey from bytes, or create minimal key with key_id
-                let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
-                    // Just key_id was sent
-                    lib_crypto::types::keys::PublicKey {
-                        dilithium_pk: vec![],
-                        kyber_pk: vec![],
-                        key_id: to_bytes.try_into().unwrap_or([0u8; 32]),
-                    }
-                } else {
-                    // Full PublicKey was serialized
-                    bincode::deserialize(&to_bytes).unwrap_or_else(|_| {
-                        lib_crypto::types::keys::PublicKey {
-                            dilithium_pk: vec![],
-                            kyber_pk: vec![],
-                            key_id: [0u8; 32],
-                        }
-                    })
-                };
-
-                let token = self.token_contracts.get_mut(&token_id)
-                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-                // Debug: log caller key_id and all balance entries for diagnosis
-                warn!(
-                    "[TRANSFER-EXEC] caller key_id={}, token has {} balance entries, amount={}",
-                    hex::encode(&caller.key_id),
-                    token.balances.len(),
-                    amount
-                );
-                for (pk, bal) in token.balances.iter() {
-                    warn!(
-                        "[TRANSFER-EXEC] balance entry: key_id={} balance={} dilithium_pk_len={} kyber_pk_len={}",
-                        hex::encode(&pk.key_id), bal, pk.dilithium_pk.len(), pk.kyber_pk.len()
-                    );
-                }
-
-                // Look up balance by key_id to handle PublicKey shape mismatches.
-                // Balances may have been minted under PublicKey::new(dilithium_pk) which
-                // has kyber_pk=vec![], but the caller's tx signature has both keys populated.
-                // Find the existing balance entry by key_id instead of full PublicKey equality.
-                let (source_key, source_balance) = token.balances.iter()
-                    .find(|(pk, _)| pk.key_id == caller.key_id)
-                    .map(|(pk, bal)| (pk.clone(), *bal))
-                    .unwrap_or_else(|| (caller.clone(), 0));
-
-                warn!(
-                    "[TRANSFER-EXEC] source_balance={} (found_by_key_id={}) for caller key_id={}",
-                    source_balance,
-                    source_balance > 0,
-                    hex::encode(&caller.key_id)
-                );
-
-                if source_balance < amount {
-                    return Err(anyhow::anyhow!("Insufficient balance"));
-                }
-                token.balances.insert(source_key, source_balance - amount);
-
-                let (to_key, to_balance) = token.balances.iter()
-                    .find(|(pk, _)| pk.key_id == to.key_id)
-                    .map(|(pk, bal)| (pk.clone(), *bal))
-                    .unwrap_or_else(|| (to.clone(), 0));
-                token.balances.insert(to_key, to_balance + amount);
-
-                info!("Transferred {} tokens from {:?} to {:?}", amount, caller.key_id, to.key_id);
+                return Err(anyhow::anyhow!(
+                    "ContractExecution/transfer is prohibited — use TokenTransfer transactions instead"
+                ));
             }
             "burn" => {
-                // BurnParams struct: { token_id: [u8; 32], amount: u64 }
-                #[derive(serde::Deserialize)]
-                struct BurnParams {
-                    token_id: [u8; 32],
-                    amount: u64,
-                }
-                let params: BurnParams = bincode::deserialize(&call.params)
-                    .map_err(|e| anyhow::anyhow!("Invalid burn params: {}", e))?;
-                let BurnParams { token_id, amount } = params;
-
-                let token = self.token_contracts.get_mut(&token_id)
-                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-                crate::contracts::tokens::functions::burn_tokens(token, caller, amount)
-                    .map_err(|e| anyhow::anyhow!("Burn failed: {}", e))?;
-                info!("Burned {} tokens from {:?}", amount, caller.key_id);
+                return Err(anyhow::anyhow!(
+                    "ContractExecution/burn is prohibited — use TokenBurn transactions instead"
+                ));
             }
             _ => {
                 debug!("Unknown token method: {}", call.method);
