@@ -4972,59 +4972,44 @@ impl Blockchain {
     }
 
     fn parse_dao_class(value: &str) -> Option<crate::types::dao::DAOType> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "np" => Some(crate::types::dao::DAOType::NP),
-            "fp" => Some(crate::types::dao::DAOType::FP),
-            _ => None,
-        }
+        crate::types::dao::DAOType::from_str(value)
     }
 
-    fn index_dao_registry_entry_from_tx(
-        &mut self,
+    const DAO_REGISTRY_REGISTER_EXEC: &'static str = "dao_registry_register_v1";
+    const DAO_FACTORY_CREATE_EXEC: &'static str = "dao_factory_create_v1";
+
+    fn dao_registry_entry_from_tx(
         tx: &Transaction,
         block_height: u64,
-    ) {
+    ) -> Option<DaoRegistryIndexEntry> {
         if tx.transaction_type != TransactionType::DaoExecution {
-            return;
+            return None;
         }
-        let Some(exec) = tx.dao_execution_data.as_ref() else {
-            return;
-        };
-        // Use the same canonical type strings as DaoHandler::DAO_REGISTRY_REGISTER_EXEC /
-        // DAO_FACTORY_CREATE_EXEC to stay in sync with the handler layer.
-        if exec.execution_type != "dao_registry_register_v1" && exec.execution_type != "dao_factory_create_v1" {
-            return;
+        let exec = tx.dao_execution_data.as_ref()?;
+        if exec.execution_type != Self::DAO_REGISTRY_REGISTER_EXEC
+            && exec.execution_type != Self::DAO_FACTORY_CREATE_EXEC
+        {
+            return None;
         }
-        let Some(event_bytes) = exec.multisig_signatures.first() else {
-            return;
-        };
-        let Ok(event) = serde_json::from_slice::<serde_json::Value>(event_bytes) else {
-            return;
-        };
+        let event_bytes = exec.multisig_signatures.first()?;
+        let event = serde_json::from_slice::<serde_json::Value>(event_bytes).ok()?;
         let token_key_id = event
             .get("token_id")
             .and_then(|v| v.as_str())
-            .and_then(Self::parse_hex_32);
+            .and_then(Self::parse_hex_32)?;
         let class_str = event
             .get("class")
             .and_then(|v| v.as_str())
-            .map(|v| v.to_ascii_lowercase());
+            .map(|v| v.to_ascii_lowercase())?;
         let metadata_hash = event
             .get("metadata_hash")
             .and_then(|v| v.as_str())
-            .and_then(Self::parse_hex_32);
+            .and_then(Self::parse_hex_32)?;
         let treasury_key_id = event
             .get("treasury_key_id")
             .and_then(|v| v.as_str())
-            .and_then(Self::parse_hex_32);
-        let (Some(token_key_id), Some(class_str), Some(metadata_hash), Some(treasury_key_id)) =
-            (token_key_id, class_str, metadata_hash, treasury_key_id)
-        else {
-            return;
-        };
-        let Some(class) = Self::parse_dao_class(&class_str) else {
-            return;
-        };
+            .and_then(Self::parse_hex_32)?;
+        let class = Self::parse_dao_class(&class_str)?;
         let token_addr = crate::integration::crypto_integration::PublicKey {
             dilithium_pk: Vec::new(),
             kyber_pk: Vec::new(),
@@ -5036,7 +5021,7 @@ impl Blockchain {
             key_id: treasury_key_id,
         };
         let dao_id = crate::contracts::dao_registry::derive_dao_id(&token_addr, class, &treasury);
-        self.dao_registry_index.entry(dao_id).or_insert(DaoRegistryIndexEntry {
+        Some(DaoRegistryIndexEntry {
             dao_id,
             token_key_id,
             class: class_str,
@@ -5044,19 +5029,29 @@ impl Blockchain {
             treasury_key_id,
             owner_key_id: tx.signature.public_key.key_id,
             created_at: block_height,
-        });
+        })
+    }
+
+    fn index_dao_registry_entry_from_tx(
+        &mut self,
+        tx: &Transaction,
+        block_height: u64,
+    ) {
+        if let Some(entry) = Self::dao_registry_entry_from_tx(tx, block_height) {
+            self.dao_registry_index.entry(entry.dao_id).or_insert(entry);
+        }
     }
 
     pub fn rebuild_dao_registry_index(&mut self) {
-        self.dao_registry_index.clear();
-        // Use std::mem::take to avoid cloning the entire block vector; restore afterwards.
-        let blocks = std::mem::take(&mut self.blocks);
-        for block in &blocks {
+        let mut rebuilt: HashMap<[u8; 32], DaoRegistryIndexEntry> = HashMap::new();
+        for block in &self.blocks {
             for tx in &block.transactions {
-                self.index_dao_registry_entry_from_tx(tx, block.header.height);
+                if let Some(entry) = Self::dao_registry_entry_from_tx(tx, block.header.height) {
+                    rebuilt.entry(entry.dao_id).or_insert(entry);
+                }
             }
         }
-        self.blocks = blocks;
+        self.dao_registry_index = rebuilt;
     }
 
     pub fn get_dao_registry_entry(&self, dao_id: &[u8; 32]) -> Option<&DaoRegistryIndexEntry> {
@@ -9170,6 +9165,8 @@ impl Default for Blockchain {
 #[cfg(test)]
 mod replay_contract_execution_tests {
     use super::*;
+    use crate::block::{Block, BlockHeader};
+    use crate::transaction::DaoExecutionData;
     use crate::types::ContractCall;
     use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
@@ -9340,6 +9337,107 @@ mod replay_contract_execution_tests {
             Some(42),
             "Contract deployment height should be tracked"
         );
+    }
+
+    fn dao_registry_tx(execution_type: &str, token_seed: u8, treasury_seed: u8) -> Transaction {
+        let token_key_id = [token_seed; 32];
+        let treasury_key_id = [treasury_seed; 32];
+        let metadata_hash = [0xabu8; 32];
+        let event = serde_json::json!({
+            "token_id": hex::encode(token_key_id),
+            "class": "np",
+            "metadata_hash": hex::encode(metadata_hash),
+            "treasury_key_id": hex::encode(treasury_key_id),
+        });
+        let dao_execution = DaoExecutionData {
+            proposal_id: Hash::default(),
+            executor: "did:sov:test".to_string(),
+            execution_type: execution_type.to_string(),
+            recipient: None,
+            amount: None,
+            executed_at: 1_700_000_000,
+            executed_at_height: 0,
+            multisig_signatures: vec![serde_json::to_vec(&event).unwrap()],
+        };
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::DaoExecution,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(&test_pubkey(0x70)),
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: Some(dao_execution),
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    #[test]
+    fn dao_registry_index_incremental_matches_rebuild() {
+        let block1 = Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 1_700_000_010,
+                difficulty: Difficulty::minimum(),
+                nonce: 0,
+                height: 10,
+                block_hash: Hash::default(),
+                cumulative_difficulty: Difficulty::minimum(),
+                transaction_count: 1,
+                block_size: 0,
+                state_root: Hash::default(),
+                fee_model_version: 2,
+            },
+            transactions: vec![dao_registry_tx(Blockchain::DAO_REGISTRY_REGISTER_EXEC, 0x11, 0x22)],
+        };
+        let block2 = Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 1_700_000_020,
+                difficulty: Difficulty::minimum(),
+                nonce: 0,
+                height: 11,
+                block_hash: Hash::default(),
+                cumulative_difficulty: Difficulty::minimum(),
+                transaction_count: 1,
+                block_size: 0,
+                state_root: Hash::default(),
+                fee_model_version: 2,
+            },
+            transactions: vec![dao_registry_tx(Blockchain::DAO_FACTORY_CREATE_EXEC, 0x33, 0x44)],
+        };
+
+        let mut incremental = Blockchain::default();
+        for tx in &block1.transactions {
+            incremental.index_dao_registry_entry_from_tx(tx, block1.header.height);
+        }
+        for tx in &block2.transactions {
+            incremental.index_dao_registry_entry_from_tx(tx, block2.header.height);
+        }
+
+        let mut rebuilt = Blockchain::default();
+        rebuilt.blocks.push(block1);
+        rebuilt.blocks.push(block2);
+        rebuilt.rebuild_dao_registry_index();
+
+        assert_eq!(incremental.dao_registry_index, rebuilt.dao_registry_index);
+        let entries = rebuilt.list_dao_registry_entries();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].created_at <= entries[1].created_at);
     }
 }
 
