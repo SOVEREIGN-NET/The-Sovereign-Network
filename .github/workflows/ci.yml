@@ -87,6 +87,9 @@ jobs:
       - name: Run zhtp-cli Handler Tests
         run: cargo test -p zhtp-cli --test handler_tests --locked
 
+      - name: Run TOKEN-DAO Readiness Gates
+        run: ./scripts/validate-token-dao-gates.sh
+
       - name: Clean up disk space after build
         if: always()
         run: |
