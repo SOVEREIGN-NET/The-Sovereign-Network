@@ -1614,6 +1614,7 @@ impl BlockExecutor {
             | TransactionType::UBIClaim
             | TransactionType::ProfitDeclaration
             | TransactionType::GovernanceConfigUpdate => Ok(TxOutcome::LegacySystem),
+
             TransactionType::DaoProposal => {
                 let outcome = self.apply_dao_proposal(mutator, tx, &tx_hash)?;
                 Ok(TxOutcome::DaoProposal(outcome))
