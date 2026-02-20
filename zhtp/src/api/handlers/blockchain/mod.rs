@@ -84,6 +84,10 @@ impl BlockchainHandler {
         (page, limit)
     }
 
+    fn contract_filter_matches(filter: &str, contract_kind: &str) -> bool {
+        filter == "all" || filter == contract_kind
+    }
+
     fn is_hex_64(value: &str) -> bool {
         value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
     }
@@ -482,6 +486,8 @@ struct ContractListItem {
     contract_id: String,
     contract_kind: String,
     block_height: Option<u64>,
+    metadata_hash: String,
+    metadata_version: u32,
 }
 
 #[derive(Serialize)]
@@ -500,6 +506,8 @@ struct ContractInfoResponse {
     contract_id: String,
     contract_kind: String,
     block_height: Option<u64>,
+    metadata_hash: String,
+    metadata_version: u32,
     metadata: serde_json::Value,
 }
 
@@ -509,6 +517,8 @@ struct ContractStateResponse {
     contract_id: String,
     contract_kind: String,
     block_height: Option<u64>,
+    metadata_hash: String,
+    metadata_version: u32,
     state: serde_json::Value,
 }
 
@@ -2102,31 +2112,22 @@ impl BlockchainHandler {
             .get("type")
             .map(|v| v.to_ascii_lowercase())
             .unwrap_or_else(|| "all".to_string());
-        if !matches!(contract_filter.as_str(), "all" | "token" | "web4") {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                "Invalid contract type. Must be 'all', 'token', or 'web4'.".to_string(),
-            ));
-        }
 
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let mut contracts = Vec::new();
-        if contract_filter == "all" || contract_filter == "token" {
-            contracts.extend(blockchain.token_contracts.keys().map(|id| ContractListItem {
-                contract_id: hex::encode(id),
-                contract_kind: "token".to_string(),
-                block_height: blockchain.contract_blocks.get(id).copied(),
-            }));
-        }
-        if contract_filter == "all" || contract_filter == "web4" {
-            contracts.extend(blockchain.web4_contracts.keys().map(|id| ContractListItem {
-                contract_id: hex::encode(id),
-                contract_kind: "web4".to_string(),
-                block_height: blockchain.contract_blocks.get(id).copied(),
-            }));
-        }
+        let mut contracts: Vec<ContractListItem> = blockchain
+            .list_deployed_contract_entries()
+            .into_iter()
+            .filter(|entry| Self::contract_filter_matches(&contract_filter, &entry.contract_kind))
+            .map(|entry| ContractListItem {
+                contract_id: hex::encode(entry.contract_id),
+                contract_kind: entry.contract_kind.clone(),
+                block_height: Some(entry.deploy_height),
+                metadata_hash: hex::encode(entry.metadata_hash),
+                metadata_version: entry.metadata_version,
+            })
+            .collect();
 
         contracts.sort_by(|a, b| {
             a.contract_kind
@@ -2175,7 +2176,15 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let block_height = blockchain.contract_blocks.get(&contract_id).copied();
+        let registry_entry = match blockchain.get_deployed_contract_entry(&contract_id) {
+            Some(entry) => entry,
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Contract {} not found", contract_id_hex),
+                ));
+            }
+        };
         let (contract_kind, state_json) = if let Some(token) = blockchain.token_contracts.get(&contract_id)
         {
             let raw_state = blockchain
@@ -2211,17 +2220,25 @@ impl BlockchainHandler {
                 }),
             )
         } else {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::NotFound,
-                format!("Contract {} not found", contract_id_hex),
-            ));
+            let raw_state = blockchain
+                .get_contract_state(&contract_id)
+                .map(hex::encode)
+                .unwrap_or_default();
+            (
+                registry_entry.contract_kind.clone(),
+                serde_json::json!({
+                    "raw_state_hex": raw_state,
+                }),
+            )
         };
 
         let response_data = ContractStateResponse {
             status: "success".to_string(),
             contract_id: contract_id_hex.to_string(),
             contract_kind,
-            block_height,
+            block_height: Some(registry_entry.deploy_height),
+            metadata_hash: hex::encode(registry_entry.metadata_hash),
+            metadata_version: registry_entry.metadata_version,
             state: state_json,
         };
         let json_response = serde_json::to_vec(&response_data)?;
@@ -2243,7 +2260,15 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let block_height = blockchain.contract_blocks.get(&contract_id).copied();
+        let registry_entry = match blockchain.get_deployed_contract_entry(&contract_id) {
+            Some(entry) => entry,
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Contract {} not found", contract_id_hex),
+                ));
+            }
+        };
         let (contract_kind, metadata) = if let Some(token) = blockchain.token_contracts.get(&contract_id) {
             (
                 "token".to_string(),
@@ -2270,17 +2295,21 @@ impl BlockchainHandler {
                 }),
             )
         } else {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::NotFound,
-                format!("Contract {} not found", contract_id_hex),
-            ));
+            (
+                registry_entry.contract_kind.clone(),
+                serde_json::json!({
+                    "contract_id": contract_id_hex,
+                }),
+            )
         };
 
         let response_data = ContractInfoResponse {
             status: "success".to_string(),
             contract_id: contract_id_hex.to_string(),
             contract_kind,
-            block_height,
+            block_height: Some(registry_entry.deploy_height),
+            metadata_hash: hex::encode(registry_entry.metadata_hash),
+            metadata_version: registry_entry.metadata_version,
             metadata,
         };
         let json_response = serde_json::to_vec(&response_data)?;
@@ -2807,5 +2836,13 @@ mod tests {
             result.is_err(),
             "deprecated token mutation method via ContractExecution must be rejected"
         );
+    }
+
+    #[test]
+    fn contract_filter_matches_allows_generic_types() {
+        assert!(BlockchainHandler::contract_filter_matches("all", "wasm"));
+        assert!(BlockchainHandler::contract_filter_matches("token", "token"));
+        assert!(BlockchainHandler::contract_filter_matches("wasm", "wasm"));
+        assert!(!BlockchainHandler::contract_filter_matches("token", "web4"));
     }
 }

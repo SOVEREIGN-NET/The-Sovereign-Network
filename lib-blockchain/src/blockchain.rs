@@ -42,6 +42,16 @@ pub struct ConsensusCheckpoint {
     pub block_hash: Hash,
 }
 
+/// Canonical deployed-contract registry entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeployedContractEntry {
+    pub contract_id: [u8; 32],
+    pub contract_kind: String,
+    pub deploy_height: u64,
+    pub metadata_hash: [u8; 32],
+    pub metadata_version: u32,
+}
+
 // Import lib-proofs for recursive proof aggregation
 // Import lib-proofs for recursive proof aggregation
 use lib_proofs::verifiers::transaction_verifier::{BatchedPrivateTransaction, BatchMetadata};
@@ -98,6 +108,9 @@ pub struct Blockchain {
     /// Contract deployment block heights (contract_id -> block_height)
     #[serde(default)]
     pub contract_blocks: HashMap<[u8; 32], u64>,
+    /// Canonical deployed-contract registry (contract_id -> registry entry)
+    #[serde(default)]
+    pub deployed_contract_registry: HashMap<[u8; 32], DeployedContractEntry>,
     /// On-chain validator registry (identity_id -> Validator info)
     #[serde(default)]
     pub validator_registry: HashMap<String, ValidatorInfo>,
@@ -464,6 +477,7 @@ impl BlockchainV1 {
             token_contracts: self.token_contracts,
             web4_contracts: self.web4_contracts,
             contract_blocks: self.contract_blocks,
+            deployed_contract_registry: HashMap::new(),
             validator_registry: self.validator_registry,
             validator_blocks: self.validator_blocks,
             dao_treasury_wallet_id: self.dao_treasury_wallet_id,
@@ -556,6 +570,8 @@ struct BlockchainStorageV3 {
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     #[serde(default)]
     pub contract_blocks: HashMap<[u8; 32], u64>,
+    #[serde(default)]
+    pub deployed_contract_registry: HashMap<[u8; 32], DeployedContractEntry>,
 
     // === Validator registry (fields 17-18) ===
     #[serde(default)]
@@ -665,6 +681,7 @@ impl BlockchainStorageV3 {
             token_contracts: bc.token_contracts.clone(),
             web4_contracts: bc.web4_contracts.clone(),
             contract_blocks: bc.contract_blocks.clone(),
+            deployed_contract_registry: bc.deployed_contract_registry.clone(),
 
             // Validators
             validator_registry: bc.validator_registry.clone(),
@@ -747,6 +764,7 @@ impl BlockchainStorageV3 {
             token_contracts: self.token_contracts,
             web4_contracts: self.web4_contracts,
             contract_blocks: self.contract_blocks,
+            deployed_contract_registry: self.deployed_contract_registry,
 
             // Validators
             validator_registry: self.validator_registry,
@@ -822,6 +840,8 @@ pub struct BlockchainImport {
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     pub contract_blocks: HashMap<[u8; 32], u64>,
+    #[serde(default)]
+    pub deployed_contract_registry: HashMap<[u8; 32], DeployedContractEntry>,
 }
 
 impl Blockchain {
@@ -849,6 +869,7 @@ impl Blockchain {
             token_contracts: HashMap::new(),
             web4_contracts: HashMap::new(),
             contract_blocks: HashMap::new(),
+            deployed_contract_registry: HashMap::new(),
             validator_registry: HashMap::new(),
             validator_blocks: HashMap::new(),
             dao_treasury_wallet_id: None,
@@ -1126,6 +1147,7 @@ impl Blockchain {
         if backfilled_blocks > 0 {
             info!("📦 Backfilled {} contract deployment heights to genesis (block 0)", backfilled_blocks);
         }
+        blockchain.rebuild_deployed_contract_registry();
 
         // Migrate legacy initial_balance values from human SOV to atomic units.
         // Old code stored raw 5000 instead of 5000 * 10^8. Any initial_balance that is
@@ -1691,6 +1713,10 @@ impl Blockchain {
         // fail with an InvalidBlockHeight error. Only open a new SledStore transaction on
         // the legacy path (no executor).
         let using_executor = self.executor.is_some();
+        if using_executor {
+            self.index_canonical_contract_deployments_from_block(&block);
+            self.backfill_deployed_registry_from_legacy_maps();
+        }
         if !using_executor {
             if let Some(ref store) = self.store {
                 store.begin_block(block.header.height)
@@ -3897,6 +3923,20 @@ impl Blockchain {
     pub fn process_contract_transactions(&mut self, block: &Block) -> Result<()> {
         for transaction in &block.transactions {
             if transaction.transaction_type == TransactionType::ContractDeployment {
+                if let Ok(payload) =
+                    crate::transaction::ContractDeploymentPayloadV1::decode_memo(&transaction.memo)
+                {
+                    let contract_id = transaction.hash().as_array();
+                    let metadata_hash = Self::deployment_metadata_hash(&payload);
+                    self.contract_blocks.insert(contract_id, block.height());
+                    self.upsert_deployed_contract_entry(
+                        contract_id,
+                        payload.contract_type,
+                        block.height(),
+                        metadata_hash,
+                        1,
+                    );
+                }
                 // Contract data is serialized in the first output's commitment
                 if let Some(output) = transaction.outputs.first() {
                     // Try to deserialize as Web4Contract first (JSON format)
@@ -4183,8 +4223,7 @@ impl Blockchain {
                         ));
                     }
 
-                    self.contract_blocks.insert(token_id, block.height());
-                    self.token_contracts.insert(token_id, token.clone());
+                    self.register_token_contract(token_id, token.clone(), block.height());
 
                     if let Some(store) = &self.store {
                         let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
@@ -4324,8 +4363,7 @@ impl Blockchain {
 
                 info!("Creating token contract: {} ({}) with supply {} at block {}",
                     name, symbol, initial_supply, block_height);
-                self.token_contracts.insert(token_id, token);
-                self.contract_blocks.insert(token_id, block_height);
+                self.register_token_contract(token_id, token, block_height);
                 info!("Token contract created: {} ({}), token_id: {}",
                     name, symbol, hex::encode(token_id));
             }
@@ -6749,6 +6787,7 @@ impl Blockchain {
             token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
             web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
             contract_blocks: HashMap<[u8; 32], u64>,
+            deployed_contract_registry: HashMap<[u8; 32], DeployedContractEntry>,
         }
 
         // Convert full wallet data to minimal references for sync
@@ -6776,6 +6815,7 @@ impl Blockchain {
             token_contracts: self.token_contracts.clone(),
             web4_contracts: self.web4_contracts.clone(),
             contract_blocks: self.contract_blocks.clone(),
+            deployed_contract_registry: self.deployed_contract_registry.clone(),
         };
 
         info!(" Exporting blockchain: {} blocks, {} validators, {} token contracts, {} web4 contracts", 
@@ -6819,6 +6859,8 @@ impl Blockchain {
             self.token_contracts = import.token_contracts;
             self.web4_contracts = import.web4_contracts;
             self.contract_blocks = import.contract_blocks;
+            self.deployed_contract_registry = import.deployed_contract_registry;
+            self.rebuild_deployed_contract_registry();
             info!("Successfully adopted imported chain during bootstrap");
             return Ok(lib_consensus::ChainMergeResult::ImportedAdopted);
         }
@@ -6929,6 +6971,8 @@ impl Blockchain {
                             self.token_contracts = import.token_contracts;
                             self.web4_contracts = import.web4_contracts;
                             self.contract_blocks = import.contract_blocks;
+                            self.deployed_contract_registry = import.deployed_contract_registry;
+                            self.rebuild_deployed_contract_registry();
                             Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
                         }
                     }
@@ -6945,6 +6989,8 @@ impl Blockchain {
                     self.token_contracts = import.token_contracts;
                     self.web4_contracts = import.web4_contracts;
                     self.contract_blocks = import.contract_blocks;
+                    self.deployed_contract_registry = import.deployed_contract_registry;
+                    self.rebuild_deployed_contract_registry();
                     
                     // Clear nullifier set and rebuild from new chain
                     self.nullifier_set.clear();
@@ -7356,6 +7402,7 @@ impl Blockchain {
         self.token_contracts = import.token_contracts.clone();
         self.web4_contracts = import.web4_contracts.clone();
         self.contract_blocks = import.contract_blocks.clone();
+        self.deployed_contract_registry = import.deployed_contract_registry.clone();
         
         // Step 7: Merge unique local data into adopted chain
         for (did, identity_data) in local_identities_to_preserve {
@@ -7437,6 +7484,7 @@ impl Blockchain {
               self.validator_registry.len(), self.utxo_set.len());
         info!("   Security improvement: Combined validator set and hash rate");
         info!("   Economic state: All citizens' holdings preserved");
+        self.rebuild_deployed_contract_registry();
         
         if merge_report.is_empty() {
             Ok("adopted imported chain (no unique local data to merge)".to_string())
@@ -7569,6 +7617,7 @@ impl Blockchain {
               self.blocks.len(), self.identity_registry.len(), 
               self.validator_registry.len(), self.utxo_set.len());
         info!("   Local chain history preserved, imported users migrated successfully");
+        self.rebuild_deployed_contract_registry();
         
         if merge_report.is_empty() {
             Ok("kept local chain (no unique imported data to merge)".to_string())
@@ -7670,6 +7719,7 @@ impl Blockchain {
                 new_contract_blocks += 1;
             }
         }
+        self.rebuild_deployed_contract_registry();
         
         if merged_items.is_empty() {
             Ok("no unique content found in shorter chain".to_string())
@@ -7787,8 +7837,16 @@ impl Blockchain {
     
     /// Register a token contract in the blockchain
     pub fn register_token_contract(&mut self, contract_id: [u8; 32], contract: crate::contracts::TokenContract, block_height: u64) {
+        let metadata_hash = Self::token_contract_metadata_hash(&contract);
         self.token_contracts.insert(contract_id, contract);
         self.contract_blocks.insert(contract_id, block_height);
+        self.upsert_deployed_contract_entry(
+            contract_id,
+            "token".to_string(),
+            block_height,
+            metadata_hash,
+            0,
+        );
         info!(" Registered token contract {} at block {}", hex::encode(contract_id), block_height);
     }
     
@@ -7817,8 +7875,16 @@ impl Blockchain {
     
     /// Register a Web4 contract in the blockchain
     pub fn register_web4_contract(&mut self, contract_id: [u8; 32], contract: crate::contracts::web4::Web4Contract, block_height: u64) {
+        let metadata_hash = Self::web4_contract_metadata_hash(&contract);
         self.web4_contracts.insert(contract_id, contract);
         self.contract_blocks.insert(contract_id, block_height);
+        self.upsert_deployed_contract_entry(
+            contract_id,
+            "web4".to_string(),
+            block_height,
+            metadata_hash,
+            0,
+        );
         info!(" Registered Web4 contract {} at block {}", hex::encode(contract_id), block_height);
     }
     
@@ -7845,12 +7911,147 @@ impl Blockchain {
     /// Check if a contract exists
     pub fn contract_exists(&self, contract_id: &[u8; 32]) -> bool {
         self.token_contracts.contains_key(contract_id) || 
-        self.web4_contracts.contains_key(contract_id)
+        self.web4_contracts.contains_key(contract_id) ||
+        self.deployed_contract_registry.contains_key(contract_id)
     }
     
     /// Get the block height where a contract was deployed
     pub fn get_contract_block_height(&self, contract_id: &[u8; 32]) -> Option<u64> {
         self.contract_blocks.get(contract_id).copied()
+    }
+
+    fn deployment_metadata_hash(payload: &crate::transaction::ContractDeploymentPayloadV1) -> [u8; 32] {
+        match bincode::serialize(payload) {
+            Ok(bytes) => lib_crypto::hash_blake3(&bytes),
+            Err(_) => [0u8; 32],
+        }
+    }
+
+    fn token_contract_metadata_hash(contract: &crate::contracts::TokenContract) -> [u8; 32] {
+        match bincode::serialize(contract) {
+            Ok(bytes) => lib_crypto::hash_blake3(&bytes),
+            Err(_) => [0u8; 32],
+        }
+    }
+
+    fn web4_contract_metadata_hash(contract: &crate::contracts::web4::Web4Contract) -> [u8; 32] {
+        match serde_json::to_vec(contract) {
+            Ok(bytes) => lib_crypto::hash_blake3(&bytes),
+            Err(_) => [0u8; 32],
+        }
+    }
+
+    fn upsert_deployed_contract_entry(
+        &mut self,
+        contract_id: [u8; 32],
+        contract_kind: String,
+        deploy_height: u64,
+        metadata_hash: [u8; 32],
+        metadata_version: u32,
+    ) {
+        self.deployed_contract_registry.insert(
+            contract_id,
+            DeployedContractEntry {
+                contract_id,
+                contract_kind,
+                deploy_height,
+                metadata_hash,
+                metadata_version,
+            },
+        );
+    }
+
+    fn index_canonical_contract_deployments_from_block(&mut self, block: &Block) {
+        for transaction in &block.transactions {
+            if transaction.transaction_type != TransactionType::ContractDeployment {
+                continue;
+            }
+            if let Ok(payload) =
+                crate::transaction::ContractDeploymentPayloadV1::decode_memo(&transaction.memo)
+            {
+                let contract_id = transaction.hash().as_array();
+                let metadata_hash = Self::deployment_metadata_hash(&payload);
+                self.contract_blocks.insert(contract_id, block.height());
+                self.upsert_deployed_contract_entry(
+                    contract_id,
+                    payload.contract_type,
+                    block.height(),
+                    metadata_hash,
+                    1,
+                );
+            }
+        }
+    }
+
+    fn backfill_deployed_registry_from_legacy_maps(&mut self) {
+        let token_entries: Vec<([u8; 32], [u8; 32], u64)> = self
+            .token_contracts
+            .iter()
+            .filter(|(contract_id, _)| !self.deployed_contract_registry.contains_key(*contract_id))
+            .map(|(contract_id, contract)| {
+                (
+                    *contract_id,
+                    Self::token_contract_metadata_hash(contract),
+                    self.contract_blocks.get(contract_id).copied().unwrap_or(0),
+                )
+            })
+            .collect();
+        for (contract_id, metadata_hash, deploy_height) in token_entries {
+            self.upsert_deployed_contract_entry(
+                contract_id,
+                "token".to_string(),
+                deploy_height,
+                metadata_hash,
+                0,
+            );
+        }
+
+        let web4_entries: Vec<([u8; 32], [u8; 32], u64)> = self
+            .web4_contracts
+            .iter()
+            .filter(|(contract_id, _)| !self.deployed_contract_registry.contains_key(*contract_id))
+            .map(|(contract_id, contract)| {
+                (
+                    *contract_id,
+                    Self::web4_contract_metadata_hash(contract),
+                    self.contract_blocks.get(contract_id).copied().unwrap_or(0),
+                )
+            })
+            .collect();
+        for (contract_id, metadata_hash, deploy_height) in web4_entries {
+            self.upsert_deployed_contract_entry(
+                contract_id,
+                "web4".to_string(),
+                deploy_height,
+                metadata_hash,
+                0,
+            );
+        }
+    }
+
+    pub fn rebuild_deployed_contract_registry(&mut self) {
+        self.deployed_contract_registry.clear();
+        for block in self.blocks.clone() {
+            self.index_canonical_contract_deployments_from_block(&block);
+        }
+        self.backfill_deployed_registry_from_legacy_maps();
+    }
+
+    pub fn get_deployed_contract_entry(
+        &self,
+        contract_id: &[u8; 32],
+    ) -> Option<&DeployedContractEntry> {
+        self.deployed_contract_registry.get(contract_id)
+    }
+
+    pub fn list_deployed_contract_entries(&self) -> Vec<&DeployedContractEntry> {
+        let mut entries: Vec<&DeployedContractEntry> = self.deployed_contract_registry.values().collect();
+        entries.sort_by(|a, b| {
+            a.contract_kind
+                .cmp(&b.contract_kind)
+                .then_with(|| a.contract_id.cmp(&b.contract_id))
+        });
+        entries
     }
 
     // ========================================================================
@@ -8046,6 +8247,7 @@ impl Blockchain {
         if let Err(e) = blockchain.reprocess_contract_executions() {
             warn!("Failed to reprocess contract executions: {}", e);
         }
+        blockchain.rebuild_deployed_contract_registry();
 
         let elapsed = start.elapsed();
 
@@ -9024,6 +9226,7 @@ impl Default for Blockchain {
 #[cfg(test)]
 mod replay_contract_execution_tests {
     use super::*;
+    use crate::block::{Block, BlockHeader};
     use crate::types::ContractCall;
     use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
@@ -9055,6 +9258,41 @@ mod replay_contract_execution_tests {
             version: 2,
             chain_id: 0x03,
             transaction_type: TransactionType::ContractExecution,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(signer),
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    fn contract_deployment_tx(signer: &PublicKey, contract_type: &str, code: Vec<u8>) -> Transaction {
+        let payload = crate::transaction::ContractDeploymentPayloadV1 {
+            contract_type: contract_type.to_string(),
+            code,
+            abi: br#"{"name":"demo"}"#.to_vec(),
+            init_args: vec![],
+            gas_limit: 100_000,
+            memory_limit_bytes: 64 * 1024,
+        };
+        let memo = payload
+            .encode_memo()
+            .expect("deployment payload should encode");
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::ContractDeployment,
             inputs: vec![],
             outputs: vec![],
             fee: 0,
@@ -9194,6 +9432,52 @@ mod replay_contract_execution_tests {
             Some(42),
             "Contract deployment height should be tracked"
         );
+    }
+
+    #[test]
+    fn deployed_contract_registry_rebuild_is_deterministic_for_canonical_deployments() {
+        let signer = test_pubkey(0x51);
+        let tx = contract_deployment_tx(&signer, "wasm", vec![0, 97, 115, 109]);
+        let contract_id = tx.hash().as_array();
+        let block = Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 1_700_000_042,
+                difficulty: Difficulty::minimum(),
+                nonce: 0,
+                height: 42,
+                block_hash: Hash::default(),
+                cumulative_difficulty: Difficulty::minimum(),
+                transaction_count: 1,
+                block_size: 0,
+                state_root: Hash::default(),
+                fee_model_version: 2,
+            },
+            transactions: vec![tx],
+        };
+
+        let mut first = Blockchain::default();
+        first.blocks.push(block.clone());
+        first.rebuild_deployed_contract_registry();
+        let first_entry = first
+            .get_deployed_contract_entry(&contract_id)
+            .cloned()
+            .expect("first rebuild should include deployed contract");
+
+        let mut second = Blockchain::default();
+        second.blocks.push(block);
+        second.rebuild_deployed_contract_registry();
+        let second_entry = second
+            .get_deployed_contract_entry(&contract_id)
+            .cloned()
+            .expect("second rebuild should include deployed contract");
+
+        assert_eq!(first_entry, second_entry);
+        assert_eq!(first_entry.contract_kind, "wasm");
+        assert_eq!(first_entry.deploy_height, 42);
+        assert_eq!(first_entry.metadata_version, 1);
     }
 }
 
