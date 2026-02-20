@@ -520,10 +520,10 @@ impl TransactionValidator {
         Ok(())
     }
 
-    /// Validate TokenMint transaction: authority and supply cap
+    /// Validate TokenMint transaction shape and basic mint constraints.
     ///
-    /// - Validates the signer is an authorized minter (must be in minter list)
-    /// - Validates the mint amount won't exceed supply cap
+    /// Authorization and token existence require chain state and are validated
+    /// by [`StatefulTransactionValidator`] in `validate_transaction_with_state`.
     fn validate_token_mint(&self, transaction: &Transaction) -> ValidationResult {
         // Extract TokenMintData
         let mint_data = transaction
@@ -539,9 +539,6 @@ impl TransactionValidator {
             tracing::warn!("TokenMint amount is zero");
             return Err(ValidationError::InvalidInputs);
         }
-
-        // TODO: Add actual minter authorization check when we have access to token registry
-        // For now, the consensus layer handles minter authorization
 
         // Check for excessive mint (sanity check - max 1 billion tokens per mint)
         const MAX_MINT_AMOUNT: u128 = 1_000_000_000_u128 * 1_000_000_000_u128; // 1B * 10^9
@@ -1467,6 +1464,8 @@ impl<'a> StatefulTransactionValidator<'a> {
                 if !transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidOutputs);
                 }
+
+                self.validate_token_mint_stateful_authorization(transaction)?;
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validate governance_config_data exists
@@ -1755,6 +1754,50 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         Ok(())
     }
+
+    /// Stateful TokenMint authorization parity with execution path.
+    ///
+    /// This enforces token existence and signer authorization at mempool/precheck time
+    /// so admission behavior matches block execution behavior.
+    fn validate_token_mint_stateful_authorization(
+        &self,
+        transaction: &Transaction,
+    ) -> ValidationResult {
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+        let mint_data = transaction
+            .token_mint_data
+            .as_ref()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        // SOV mints currently use dedicated consensus paths and are handled separately.
+        let is_sov = mint_data.token_id == [0u8; 32]
+            || mint_data.token_id == crate::contracts::utils::generate_lib_token_id();
+        if is_sov {
+            return Ok(());
+        }
+
+        // Preserve existing execution semantics for UBI and migration flows.
+        let memo_str = std::str::from_utf8(&transaction.memo).ok();
+        let is_ubi_mint = memo_str
+            .map(|memo| memo.starts_with("UBI_DISTRIBUTION_V1:"))
+            .unwrap_or(false);
+        let is_migration = memo_str
+            .map(|memo| memo.starts_with("TOKEN_MIGRATE_V1:"))
+            .unwrap_or(false);
+
+        let token = blockchain
+            .token_contracts
+            .get(&mint_data.token_id)
+            .ok_or(ValidationError::InvalidTransaction)?;
+
+        if is_ubi_mint || is_migration {
+            return Ok(());
+        }
+
+        token
+            .check_mint_authorization(&transaction.signature.public_key)
+            .map_err(|_| ValidationError::InvalidTransaction)
+    }
 }
 
 /// Calculate minimum fee based on transaction size
@@ -1973,6 +2016,45 @@ mod tests {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    fn create_token_mint_transaction_for_stateful_test(
+        signer: &PublicKey,
+        token_id: [u8; 32],
+        to: [u8; 32],
+        amount: u128,
+    ) -> Transaction {
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenMint,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            // Empty signature bytes are allowed at genesis in stateful validator.
+            signature: Signature {
+                signature: vec![],
+                public_key: signer.clone(),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: 0,
+            },
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: Some(crate::transaction::TokenMintData {
+                token_id,
+                to,
+                amount,
+            }),
             governance_config_data: None,
         }
     }
@@ -2251,6 +2333,89 @@ mod tests {
             result,
             Err(ValidationError::InvalidTransactionType)
         ));
+    }
+
+    #[test]
+    fn test_stateful_token_mint_rejects_unauthorized_signer_at_precheck() {
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        let creator = test_public_key(11);
+        let attacker = test_public_key(12);
+        let recipient = test_public_key(13);
+
+        let token = crate::contracts::TokenContract::new_custom(
+            "ParityToken".to_string(),
+            "PAR".to_string(),
+            1_000,
+            creator,
+        );
+        let token_id = token.token_id;
+        blockchain.token_contracts.insert(token_id, token);
+
+        let tx = create_token_mint_transaction_for_stateful_test(
+            &attacker,
+            token_id,
+            recipient.key_id,
+            100,
+        );
+
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        let result = validator.validate_token_mint_stateful_authorization(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidTransaction)),
+            "Unauthorized mint must be rejected during stateful precheck"
+        );
+    }
+
+    #[test]
+    fn test_stateful_token_mint_accepts_creator_at_precheck() {
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        let creator = test_public_key(21);
+        let recipient = test_public_key(22);
+
+        let token = crate::contracts::TokenContract::new_custom(
+            "ParityToken".to_string(),
+            "PAR".to_string(),
+            1_000,
+            creator.clone(),
+        );
+        let token_id = token.token_id;
+        blockchain.token_contracts.insert(token_id, token);
+
+        let tx = create_token_mint_transaction_for_stateful_test(
+            &creator,
+            token_id,
+            recipient.key_id,
+            100,
+        );
+
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        let result = validator.validate_token_mint_stateful_authorization(&tx);
+        assert!(
+            result.is_ok(),
+            "Creator mint should pass stateful mint authorization precheck"
+        );
+    }
+
+    #[test]
+    fn test_stateful_token_mint_rejects_unknown_token_at_precheck() {
+        let blockchain = crate::blockchain::Blockchain::default();
+        let signer = test_public_key(31);
+        let recipient = test_public_key(32);
+        let unknown_token_id = [0xAB; 32];
+
+        let tx = create_token_mint_transaction_for_stateful_test(
+            &signer,
+            unknown_token_id,
+            recipient.key_id,
+            100,
+        );
+
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        let result = validator.validate_token_mint_stateful_authorization(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidTransaction)),
+            "Unknown token mint must be rejected during stateful precheck"
+        );
     }
 
     #[test]
