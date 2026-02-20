@@ -380,33 +380,19 @@ impl ReceiptValidator {
     }
 
     /// Step 2: Verify signature
+    ///
+    /// The ZHTP identity system is pure post-quantum (Dilithium5 only).
+    /// Classical Ed25519 keys are not stored in identities, so only "dilithium5"
+    /// is a valid sig_scheme. Any other value is rejected with BadSig.
     async fn verify_signature(&self, signed_receipt: &SignedReceipt) -> Result<(), RejectionReason> {
         let receipt_bytes = self.serialize_receipt(&signed_receipt.receipt)
             .map_err(|_| RejectionReason::BadProof)?;
 
         match signed_receipt.sig_scheme.to_lowercase().as_str() {
-            "ed25519" => {
-                // Extract public key from client_did
-                let pubkey = self.get_client_pubkey(&signed_receipt.receipt.client_did).await
-                    .map_err(|_| RejectionReason::ClientInvalid)?;
-
-                // Verify Ed25519 signature
-                let valid = lib_crypto::classical::ed25519::ed25519_verify(
-                    &receipt_bytes,
-                    &signed_receipt.signature,
-                    &pubkey,
-                ).map_err(|_| RejectionReason::BadSig)?;
-
-                if !valid {
-                    return Err(RejectionReason::BadSig);
-                }
-            }
             "dilithium5" => {
-                // Extract public key from client_did
                 let pubkey = self.get_client_pubkey_dilithium(&signed_receipt.receipt.client_did).await
                     .map_err(|_| RejectionReason::ClientInvalid)?;
 
-                // Verify Dilithium signature
                 let valid = lib_crypto::post_quantum::dilithium::dilithium_verify(
                     &receipt_bytes,
                     &signed_receipt.signature,
@@ -418,6 +404,12 @@ impl ReceiptValidator {
                 }
             }
             _ => {
+                // Unsupported or unknown signature scheme
+                warn!(
+                    scheme = %signed_receipt.sig_scheme,
+                    client = %signed_receipt.receipt.client_did,
+                    "Receipt rejected: unsupported sig_scheme (only dilithium5 accepted)"
+                );
                 return Err(RejectionReason::BadSig);
             }
         }
@@ -552,14 +544,6 @@ impl ReceiptValidator {
     /// Serialize receipt for signature verification
     fn serialize_receipt(&self, receipt: &Receipt) -> Result<Vec<u8>> {
         bincode::serialize(receipt).context("Failed to serialize receipt")
-    }
-
-    /// Get client's Ed25519-compatible public key from DID (key_id bytes)
-    async fn get_client_pubkey(&self, client_did: &str) -> Result<Vec<u8>> {
-        let mgr = self.identity_manager.read().await;
-        let identity = mgr.get_identity_by_did(client_did)
-            .ok_or_else(|| anyhow::anyhow!("DID not registered: {}", client_did))?;
-        Ok(identity.public_key.key_id.to_vec())
     }
 
     /// Get client's Dilithium5 public key from DID
