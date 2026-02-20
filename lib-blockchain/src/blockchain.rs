@@ -2120,9 +2120,7 @@ impl Blockchain {
         // self.primary_wallet_for_signer().
         let fee_payers: Vec<(usize, PublicKey)> = block.transactions.iter().enumerate()
             .filter_map(|(i, tx)| {
-                let is_token_contract = tx.transaction_type == TransactionType::ContractExecution
-                    && tx.memo.len() > 4
-                    && &tx.memo[0..4] == b"ZHTP";
+                let is_token_contract = crate::transaction::is_token_contract_execution(tx);
                 let is_system = tx.inputs.is_empty() && !is_token_contract;
                 if is_system || tx.fee == 0 { return None; }
                 let sender = &tx.signature.public_key;
@@ -2213,9 +2211,7 @@ impl Blockchain {
                 block.height(),
                 total_fees,
                 block.transactions.iter().filter(|tx| {
-                    let is_token_contract = tx.transaction_type == TransactionType::ContractExecution
-                        && tx.memo.len() > 4
-                        && &tx.memo[0..4] == b"ZHTP";
+                    let is_token_contract = crate::transaction::is_token_contract_execution(tx);
                     let is_system = tx.inputs.is_empty() && !is_token_contract;
                     !is_system && tx.fee > 0
                 }).count()
@@ -4217,15 +4213,25 @@ impl Blockchain {
 
     /// Process a ContractExecution transaction
     fn process_contract_execution(&mut self, transaction: &Transaction, block_height: u64) -> Result<()> {
-        // Parse ContractCall from memo: "ZHTP" + bincode(ContractCall, Signature)
-        if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
-            return Err(anyhow::anyhow!("Invalid contract execution memo format"));
-        }
-
-        let call_data = &transaction.memo[4..];
-        let (call, _sig): (crate::types::ContractCall, crate::integration::crypto_integration::Signature) =
-            bincode::deserialize(call_data)
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize contract call: {}", e))?;
+        let call = if transaction
+            .memo
+            .starts_with(crate::transaction::CONTRACT_EXECUTION_MEMO_PREFIX_V2)
+        {
+            let decoded =
+                crate::transaction::DecodedContractExecutionMemo::decode_compat(&transaction.memo)
+                    .map_err(|e| anyhow::anyhow!("Invalid contract execution memo format: {}", e))?;
+            decoded.call
+        } else {
+            // Legacy replay path: "ZHTP" + bincode((ContractCall, Signature)).
+            if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
+                return Err(anyhow::anyhow!("Invalid contract execution memo format"));
+            }
+            let call_data = &transaction.memo[4..];
+            let (call, _sig): (crate::types::ContractCall, crate::integration::crypto_integration::Signature) =
+                bincode::deserialize(call_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize contract call: {}", e))?;
+            call
+        };
 
         // Get caller identity from transaction signature public key
         let caller = transaction.signature.public_key.clone();
