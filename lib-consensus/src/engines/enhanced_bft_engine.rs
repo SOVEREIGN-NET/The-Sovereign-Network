@@ -117,6 +117,26 @@ impl EnhancedBftEngine {
 
     /// Initialize validator with keypair
     pub fn initialize_validator(&mut self, keypair: KeyPair) -> Result<()> {
+        let identity = self
+            .validator_identity
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(
+                "Cannot load validator signing keypair: local validator identity is not configured"
+            ))?;
+
+        let validator = self
+            .validator_manager
+            .get_validator(identity)
+            .ok_or_else(|| anyhow::anyhow!(
+                "Cannot load validator signing keypair: local validator is not registered"
+            ))?;
+
+        if validator.consensus_key != keypair.public_key.dilithium_pk {
+            return Err(anyhow::anyhow!(
+                "Validator keypair does not match registered consensus key"
+            ));
+        }
+
         self.validator_keypair = Some(keypair);
         Ok(())
     }

@@ -131,6 +131,8 @@ pub struct BlockchainConsensusCoordinator {
     mempool: Arc<RwLock<Mempool>>,
     /// Local validator identity (if this node is a validator)
     local_validator_id: Option<IdentityId>,
+    /// Local validator signing keypair (loaded only for validator runtime)
+    local_validator_keypair: Option<KeyPair>,
     /// Event channel for consensus events
     event_sender: mpsc::UnboundedSender<ConsensusEvent>,
     event_receiver: Arc<RwLock<mpsc::UnboundedReceiver<ConsensusEvent>>>,
@@ -180,6 +182,7 @@ impl BlockchainConsensusCoordinator {
             blockchain,
             mempool,
             local_validator_id: None,
+            local_validator_keypair: None,
             event_sender,
             event_receiver: Arc::new(RwLock::new(event_receiver)),
             is_producing_blocks: false,
@@ -211,6 +214,7 @@ impl BlockchainConsensusCoordinator {
             blockchain,
             mempool,
             local_validator_id: None,
+            local_validator_keypair: None,
             event_sender,
             event_receiver: Arc::new(RwLock::new(event_receiver)),
             is_producing_blocks: false,
@@ -242,8 +246,13 @@ impl BlockchainConsensusCoordinator {
             false, // Not genesis validator
         ).await.map_err(|e| anyhow::anyhow!("Consensus registration failed: {}", e))?;
 
+        consensus_engine
+            .set_validator_keypair(consensus_keypair.clone())
+            .map_err(|e| anyhow::anyhow!("Consensus keypair setup failed: {}", e))?;
+
         // Store local validator identity
         self.local_validator_id = Some(identity.clone());
+        self.local_validator_keypair = Some(consensus_keypair.clone());
 
         // Create validator registration transaction
         let mut blockchain = self.blockchain.write().await;
@@ -305,6 +314,7 @@ impl BlockchainConsensusCoordinator {
             blockchain: self.blockchain.clone(),
             mempool: self.mempool.clone(),
             local_validator_id: self.local_validator_id.clone(),
+            local_validator_keypair: self.local_validator_keypair.clone(),
             event_sender: self.event_sender.clone(),
             event_receiver: self.event_receiver.clone(),
             is_producing_blocks: self.is_producing_blocks,
@@ -1734,20 +1744,26 @@ impl BlockchainConsensusCoordinator {
 
     /// Get the validator's keypair (placeholder for secure key management)
     async fn get_validator_keypair(&self) -> Result<ValidatorKeypair> {
-        // In production, this would retrieve the keypair from secure storage
-        // Note: Current implementation generates a new keypair each time
-        // For deterministic keypairs, would need to implement seed-based generation
         let validator_id = self.local_validator_id.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No validator ID configured"))?;
+            .ok_or_else(|| anyhow::anyhow!("Consensus signing rejected: local validator identity is not configured"))?;
+        let keypair = self.local_validator_keypair.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Consensus signing rejected: local validator keypair is not loaded"))?;
 
-        debug!("Generating consensus keypair for validator: {}", validator_id);
+        let consensus_engine = self.consensus_engine.read().await;
+        let validator = consensus_engine
+            .validator_manager()
+            .get_validator(validator_id)
+            .ok_or_else(|| anyhow::anyhow!("Consensus signing rejected: local validator is not registered"))?;
 
-        // Generate new keypair (in production, this would be persistent)
-        let keypair = lib_crypto::generate_keypair()?;
+        if validator.consensus_key != keypair.public_key.dilithium_pk {
+            return Err(anyhow::anyhow!(
+                "Consensus signing rejected: loaded keypair does not match validator consensus key"
+            ));
+        }
 
         Ok(ValidatorKeypair {
-            public_key: keypair.public_key,
-            private_key: keypair.private_key,
+            public_key: keypair.public_key.clone(),
+            private_key: keypair.private_key.clone(),
         })
     }
 
