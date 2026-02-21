@@ -10,8 +10,8 @@
 // mode at connection time. This allows the server to handle different client
 // types appropriately:
 //
-// - zhtp-uhp/1: Control plane with UHP handshake (CLI, Web4 deploy, admin)
-// - zhtp-http/1: HTTP-only mode (mobile apps, browsers)
+// - zhtp-uhp/1|2: Control plane with UHP handshake (CLI, Web4 deploy, admin)
+// - zhtp-public/1: Public read-only API mode
 // - zhtp-mesh/1: Mesh peer-to-peer protocol
 //
 // Security: ALPN selection determines the initial protocol flow, but actual
@@ -34,20 +34,18 @@ pub const ALPN_CONTROL_PLANE_V2: &[u8] = b"zhtp-uhp/2";
 /// Rejects: deploy, domain registration, admin operations, any mutations.
 pub const ALPN_PUBLIC: &[u8] = b"zhtp-public/1";
 
-/// ALPN for HTTP-compatible connections (legacy mobile apps, browsers)
-/// These connections send HTTP requests directly without UHP handshake.
-/// Mutations require session tokens or other auth mechanisms.
+/// ALPN marker for legacy HTTP-compat clients.
+/// Not advertised by server; retained for explicit compatibility routing/rejection.
 pub const ALPN_HTTP_COMPAT: &[u8] = b"zhtp-http/1";
 
 /// ALPN for mesh peer-to-peer connections (node-to-node)
 /// These connections perform UHP handshake for peer authentication.
 pub const ALPN_MESH: &[u8] = b"zhtp-mesh/1";
 
-/// Legacy ALPN for backward compatibility
-/// Treated as HTTP-compat mode for mobile app compatibility.
+/// Legacy ALPN marker retained for explicit compatibility routing/rejection.
 pub const ALPN_LEGACY: &[u8] = b"zhtp/1.0";
 
-/// HTTP/3 ALPN for browser compatibility
+/// HTTP/3 ALPN marker retained for explicit compatibility routing/rejection.
 pub const ALPN_H3: &[u8] = b"h3";
 
 /// All supported server ALPNs (ordered by preference)
@@ -57,9 +55,6 @@ pub fn server_alpns() -> Vec<Vec<u8>> {
         ALPN_PUBLIC.to_vec(),           // Public read-only (mobile apps, browsers)
         ALPN_CONTROL_PLANE.to_vec(),    // Control plane v1 (CLI, deploy)
         ALPN_MESH.to_vec(),             // Mesh protocol
-        ALPN_HTTP_COMPAT.to_vec(),      // HTTP-compat mode (legacy)
-        ALPN_LEGACY.to_vec(),           // Legacy (treated as HTTP-compat)
-        ALPN_H3.to_vec(),               // HTTP/3 browsers
     ]
 }
 
@@ -83,6 +78,29 @@ pub fn client_public_alpns() -> Vec<Vec<u8>> {
         ALPN_PUBLIC.to_vec(),          // Public read-only (preferred)
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_alpns_only_advertise_supported_server_protocols() {
+        let alpns = server_alpns();
+        let expected = vec![
+            ALPN_CONTROL_PLANE_V2.to_vec(),
+            ALPN_PUBLIC.to_vec(),
+            ALPN_CONTROL_PLANE.to_vec(),
+            ALPN_MESH.to_vec(),
+        ];
+
+        assert_eq!(alpns, expected);
+
+        assert!(!alpns.iter().any(|v| v.as_slice() == ALPN_HTTP_COMPAT));
+        assert!(!alpns.iter().any(|v| v.as_slice() == ALPN_LEGACY));
+        assert!(!alpns.iter().any(|v| v.as_slice() == ALPN_H3));
+    }
+}
+
 
 // =============================================================================
 // Handshake Constants
