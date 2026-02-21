@@ -79,15 +79,6 @@ pub fn client_public_alpns() -> Vec<Vec<u8>> {
     ]
 }
 
-/// Client ALPNs for HTTP-only operations (legacy mobile apps)
-pub fn client_http_alpns() -> Vec<Vec<u8>> {
-    vec![
-        ALPN_HTTP_COMPAT.to_vec(),     // HTTP-compat mode
-        ALPN_LEGACY.to_vec(),          // Legacy fallback
-        ALPN_H3.to_vec(),              // HTTP/3 fallback
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
