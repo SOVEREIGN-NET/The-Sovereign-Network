@@ -69,12 +69,18 @@ pub struct Transaction {
     pub bonding_curve_graduate_data: Option<BondingCurveGraduateData>,
 }
 
+/// Version constants for the `Transaction` wire format.
+/// Never renumber — each constant is embedded in serialized blocks on-chain.
+/// When adding fields, append a new V(N+1) constant and gate on it everywhere.
+pub const TX_VERSION_V1: u32 = 1; // Base: 18 fields
+pub const TX_VERSION_V2: u32 = 2; // +token_mint_data → 19 fields
+pub const TX_VERSION_V3: u32 = 3; // +bonding_curve_*_data → 23 fields
+
 /// V1 has 18 fields (no token_mint_data). V2 has 19 (token_mint_data between
 /// token_transfer_data and governance_config_data). Serialization writes the
 /// field count matching the version so old V1 blocks stay byte-identical.
-/// Deserialization requests 19 slots (V2 max); for V1 data we read only 18,
-/// leaving one unused slot in bincode's SeqAccess — harmless because bincode
-/// does not enforce post-return consumption.
+/// Deserialization requests V3 slots (the max); for older versions we read
+/// only as many fields as the version declares.
 const TX_FIELD_COUNT_V1: usize = 18;
 const TX_FIELD_COUNT_V2: usize = 19;
 const TX_FIELD_COUNT_V3: usize = 23; // Added bonding curve data fields
@@ -83,9 +89,9 @@ impl Serialize for Transaction {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeTuple;
 
-        let field_count = if self.version >= 3 {
+        let field_count = if self.version >= TX_VERSION_V3 {
             TX_FIELD_COUNT_V3
-        } else if self.version >= 2 {
+        } else if self.version >= TX_VERSION_V2 {
             TX_FIELD_COUNT_V2
         } else {
             TX_FIELD_COUNT_V1
@@ -109,11 +115,11 @@ impl Serialize for Transaction {
         tup.serialize_element(&self.ubi_claim_data)?;
         tup.serialize_element(&self.profit_declaration_data)?;
         tup.serialize_element(&self.token_transfer_data)?;
-        if self.version >= 2 {
+        if self.version >= TX_VERSION_V2 {
             tup.serialize_element(&self.token_mint_data)?;
         }
         tup.serialize_element(&self.governance_config_data)?;
-        if self.version >= 3 {
+        if self.version >= TX_VERSION_V3 {
             tup.serialize_element(&self.bonding_curve_deploy_data)?;
             tup.serialize_element(&self.bonding_curve_buy_data)?;
             tup.serialize_element(&self.bonding_curve_sell_data)?;
@@ -168,8 +174,8 @@ impl<'de> Deserialize<'de> for Transaction {
                 let token_transfer_data: Option<TokenTransferData> = next!("token_transfer_data");
 
                 // V2 added token_mint_data between token_transfer_data and governance_config_data.
-                // V1 data (version < 2) does not contain it; skip reading and default to None.
-                let token_mint_data: Option<TokenMintData> = if version >= 2 {
+                // V1 data (version < TX_VERSION_V2) does not contain it; default to None.
+                let token_mint_data: Option<TokenMintData> = if version >= TX_VERSION_V2 {
                     next!("token_mint_data")
                 } else {
                     None
@@ -180,7 +186,7 @@ impl<'de> Deserialize<'de> for Transaction {
 
                 // V3 added bonding curve data fields
                 let (bonding_curve_deploy_data, bonding_curve_buy_data,
-                     bonding_curve_sell_data, bonding_curve_graduate_data) = if version >= 3 {
+                     bonding_curve_sell_data, bonding_curve_graduate_data) = if version >= TX_VERSION_V3 {
                     (next!("bonding_curve_deploy_data"),
                      next!("bonding_curve_buy_data"),
                      next!("bonding_curve_sell_data"),
@@ -1568,7 +1574,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 2,
+            version: TX_VERSION_V3,
             chain_id,
             transaction_type: TransactionType::BondingCurveDeploy,
             inputs: Vec::new(),
@@ -1602,7 +1608,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 2,
+            version: TX_VERSION_V3,
             chain_id,
             transaction_type: TransactionType::BondingCurveBuy,
             inputs: Vec::new(),
@@ -1636,7 +1642,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 2,
+            version: TX_VERSION_V3,
             chain_id,
             transaction_type: TransactionType::BondingCurveSell,
             inputs: Vec::new(),
@@ -1670,7 +1676,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 2,
+            version: TX_VERSION_V3,
             chain_id,
             transaction_type: TransactionType::BondingCurveGraduate,
             inputs: Vec::new(),

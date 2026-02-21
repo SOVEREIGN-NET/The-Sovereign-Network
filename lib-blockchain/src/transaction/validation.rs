@@ -222,11 +222,37 @@ impl TransactionValidator {
                 TokenCreationPayloadV1::decode_memo(&transaction.memo)
                     .map_err(|_| ValidationError::InvalidMemo)?;
             }
-            TransactionType::BondingCurveDeploy
-            | TransactionType::BondingCurveBuy
-            | TransactionType::BondingCurveSell
-            | TransactionType::BondingCurveGraduate => {
-                // Bonding curve operations
+            TransactionType::BondingCurveDeploy => {
+                let data = transaction.bonding_curve_deploy_data.as_ref()
+                    .ok_or(ValidationError::InvalidInputs)?;
+                // Signer must be the declared creator
+                if transaction.signature.public_key.key_id != data.creator {
+                    return Err(ValidationError::InvalidSignature);
+                }
+            }
+            TransactionType::BondingCurveBuy => {
+                let data = transaction.bonding_curve_buy_data.as_ref()
+                    .ok_or(ValidationError::InvalidInputs)?;
+                // Signer must be the declared buyer
+                if transaction.signature.public_key.key_id != data.buyer {
+                    return Err(ValidationError::InvalidSignature);
+                }
+            }
+            TransactionType::BondingCurveSell => {
+                let data = transaction.bonding_curve_sell_data.as_ref()
+                    .ok_or(ValidationError::InvalidInputs)?;
+                // Signer must be the declared seller
+                if transaction.signature.public_key.key_id != data.seller {
+                    return Err(ValidationError::InvalidSignature);
+                }
+            }
+            TransactionType::BondingCurveGraduate => {
+                let data = transaction.bonding_curve_graduate_data.as_ref()
+                    .ok_or(ValidationError::InvalidInputs)?;
+                // Signer must be the declared graduator
+                if transaction.signature.public_key.key_id != data.graduator {
+                    return Err(ValidationError::InvalidSignature);
+                }
             }
             TransactionType::TokenSwap
             | TransactionType::CreatePool
@@ -234,30 +260,6 @@ impl TransactionValidator {
             | TransactionType::RemoveLiquidity => {
                 // AMM/Token operations - not yet fully implemented
                 // TODO: Add validation for these transaction types
-            }
-            TransactionType::BondingCurveDeploy => {
-                // Bonding curve token deployment
-                if transaction.bonding_curve_deploy_data.is_none() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::BondingCurveBuy => {
-                // Bonding curve token purchase
-                if transaction.bonding_curve_buy_data.is_none() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::BondingCurveSell => {
-                // Bonding curve token sale
-                if transaction.bonding_curve_sell_data.is_none() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::BondingCurveGraduate => {
-                // Bonding curve graduation
-                if transaction.bonding_curve_graduate_data.is_none() {
-                    return Err(ValidationError::InvalidInputs);
-                }
             }
         }
 
@@ -1522,7 +1524,8 @@ impl<'a> StatefulTransactionValidator<'a> {
             | TransactionType::BondingCurveBuy
             | TransactionType::BondingCurveSell
             | TransactionType::BondingCurveGraduate => {
-                // Bonding curve operations - no additional validation needed here
+                // Actor-vs-signer checks are enforced in stateless validation above.
+                // No additional state-dependent checks required at this stage.
             }
             TransactionType::TokenSwap
             | TransactionType::CreatePool

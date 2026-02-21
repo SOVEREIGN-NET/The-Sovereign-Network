@@ -61,35 +61,46 @@ SRV_0 = 0.0218 USD
 
 ## Implementable Form
 
+All values use integer arithmetic to guarantee determinism across nodes.
+Units: `committed_value` in cents (USD × 100), `circulating_supply` in atomic
+SOV units (10⁻⁸), `stability_multiplier` in basis points (10,000 = 1.00×),
+`srv` output in atomic SOV units per cent of committed value.
+
 ### Rust Structure
 
 ```rust
-/// Inputs required for SRV calculation
+/// Inputs required for SRV calculation (all integer, no floating point).
 pub struct SRVInputs {
-    /// Total USD-equivalent committed value
-    pub committed_value_usd: f64,
-    /// Current circulating supply of SOV
-    pub circulating_supply_sov: f64,
-    /// Governance-defined stability multiplier
-    pub stability_multiplier: f64,
+    /// Total committed value in USD cents (e.g. $1 000 000 → 100_000_000)
+    pub committed_value_cents: u128,
+    /// Circulating SOV supply in atomic units (10⁻⁸ SOV per unit)
+    pub circulating_supply_atomic: u128,
+    /// Governance-defined stability multiplier in basis points
+    /// (10_000 = 1.00×, 9_000 = 0.90×, max 10_000)
+    pub stability_multiplier_bps: u32,
 }
 
 impl SRVInputs {
-    /// Calculate SRV according to the protocol formula
-    pub fn calculate_srv(&self) -> Result<f64, SRVError> {
-        // Validate inputs
-        if self.circulating_supply_sov <= 0.0 {
+    /// Calculate SRV in atomic units per cent of committed value.
+    ///
+    /// Formula (integer):
+    ///   raw_srv = committed_value_cents * stability_multiplier_bps
+    ///             / (circulating_supply_atomic * 10_000)
+    pub fn calculate_srv(&self) -> Result<u128, SRVError> {
+        if self.circulating_supply_atomic == 0 {
             return Err(SRVError::InvalidCirculatingSupply);
         }
-        if self.stability_multiplier <= 0.0 || self.stability_multiplier > 1.0 {
+        if self.stability_multiplier_bps == 0 || self.stability_multiplier_bps > 10_000 {
             return Err(SRVError::InvalidStabilityMultiplier);
         }
-        
-        // Core formula: SRV = (Committed_Value / Circulating_SOV) × Multiplier
-        let raw_srv = (self.committed_value_usd / self.circulating_supply_sov) 
-                      * self.stability_multiplier;
-        
-        Ok(raw_srv)
+
+        // Core formula — multiply before divide to preserve precision.
+        let numerator = self.committed_value_cents
+            .saturating_mul(self.stability_multiplier_bps as u128);
+        let denominator = self.circulating_supply_atomic
+            .saturating_mul(10_000);
+
+        Ok(numerator / denominator)
     }
 }
 ```
@@ -98,28 +109,30 @@ impl SRVInputs {
 
 ## Smoothing Rule (Recommended)
 
-To prevent abrupt jumps in SRV, apply rate limiting:
+To prevent abrupt jumps in SRV, apply rate limiting using integer basis points:
 
 ```
-SRV_t = SRV_(t-1) × (1 + clamp(delta, -ε, +ε))
+SRV_t = SRV_(t-1) × (10_000 + clamp(delta_bps, -ε_bps, +ε_bps)) / 10_000
 
 Where:
-  delta = (raw_SRV_t - SRV_(t-1)) / SRV_(t-1)
-  ε = 0.01 (max 1% change per adjustment period)
+  delta_bps = (raw_SRV_t - SRV_(t-1)) * 10_000 / SRV_(t-1)
+  ε_bps     = 100 (max 1% change per adjustment period)
 ```
 
 ### Rust Implementation
 
 ```rust
-/// Apply smoothing to prevent SRV jumps
-pub fn apply_smoothing(
-    previous_srv: f64,
-    raw_srv: f64,
-    max_change_pct: f64, // ε (e.g., 0.01 for 1%)
-) -> f64 {
-    let delta = (raw_srv - previous_srv) / previous_srv;
-    let clamped_delta = delta.clamp(-max_change_pct, max_change_pct);
-    previous_srv * (1.0 + clamped_delta)
+/// Apply smoothing to prevent SRV jumps (integer, basis-point arithmetic).
+/// `max_change_bps`: ε expressed in basis points (e.g. 100 = 1%).
+pub fn apply_smoothing(previous_srv: u128, raw_srv: u128, max_change_bps: i64) -> u128 {
+    if previous_srv == 0 {
+        return raw_srv;
+    }
+    let delta_bps = (raw_srv as i128 - previous_srv as i128)
+        .saturating_mul(10_000)
+        / previous_srv as i128;
+    let clamped = delta_bps.clamp(-max_change_bps as i128, max_change_bps as i128);
+    ((previous_srv as i128).saturating_mul(10_000 + clamped) / 10_000) as u128
 }
 ```
 

@@ -1139,12 +1139,28 @@ impl BlockchainStore for SledStore {
     ) -> StorageResult<Box<dyn Iterator<Item = (TokenId, crate::contracts::bonding_curve::BondingCurveToken)> + '_>>
     {
         let iter = self.bonding_curves.iter().filter_map(|item| {
-            item.ok().and_then(|(k, v)| {
-                let token_id_bytes: [u8; 32] = k.as_ref().try_into().ok()?;
-                let token: crate::contracts::bonding_curve::BondingCurveToken =
-                    Self::deserialize(&v).ok()?;
-                Some((TokenId(token_id_bytes), token))
-            })
+            let (k, v) = item.ok()?;
+            let token_id_bytes: [u8; 32] = match k.as_ref().try_into() {
+                Ok(b) => b,
+                Err(_) => {
+                    tracing::warn!(
+                        "iter_bonding_curve_tokens: corrupt key (len={}), skipping entry",
+                        k.len()
+                    );
+                    return None;
+                }
+            };
+            match Self::deserialize(&v) {
+                Ok(token) => Some((TokenId(token_id_bytes), token)),
+                Err(e) => {
+                    tracing::warn!(
+                        "iter_bonding_curve_tokens: failed to deserialize token {:?}: {}",
+                        token_id_bytes,
+                        e
+                    );
+                    None
+                }
+            }
         });
 
         Ok(Box::new(iter))
