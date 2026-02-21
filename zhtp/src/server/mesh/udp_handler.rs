@@ -19,17 +19,6 @@ use super::core::{MeshNamespace, MeshRouter};
 use crate::server::monitoring::{PeerReputation, PeerRateLimit};
 
 impl MeshRouter {
-    fn classify_mesh_namespace(mesh_message: &ZhtpMeshMessage) -> MeshNamespace {
-        match mesh_message {
-            ZhtpMeshMessage::BlockchainRequest { .. }
-            | ZhtpMeshMessage::BlockchainData { .. } => MeshNamespace::ConsensusRead,
-            ZhtpMeshMessage::NewBlock { .. }
-            | ZhtpMeshMessage::NewTransaction { .. } => MeshNamespace::ConsensusMutation,
-            ZhtpMeshMessage::ZhtpRequest(_) => MeshNamespace::Runtime,
-            _ => MeshNamespace::Runtime,
-        }
-    }
-
     /// Main UDP mesh message handler - processes all incoming mesh protocol messages
     pub async fn handle_udp_mesh(&self, data: &[u8], addr: SocketAddr) -> Result<Option<Vec<u8>>> {
         debug!("Processing UDP mesh packet from: {} ({} bytes)", addr, data.len());

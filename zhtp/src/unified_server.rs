@@ -471,6 +471,9 @@ impl ZhtpUnifiedServer {
             quic_arc.clone(),                    // QuicMeshProtocol for transport
             identity_manager.clone(),            // Identity manager for auto-registration
         ));
+        quic_handler
+            .configure_authorization_context(is_edge_node, validator_enabled)
+            .await;
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP

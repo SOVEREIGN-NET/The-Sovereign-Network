@@ -474,6 +474,44 @@ impl MeshRouter {
         );
     }
 
+    pub(crate) fn classify_mesh_namespace(
+        mesh_message: &lib_network::types::mesh_message::ZhtpMeshMessage,
+    ) -> MeshNamespace {
+        use lib_network::types::mesh_message::ZhtpMeshMessage;
+
+        match mesh_message {
+            ZhtpMeshMessage::BlockchainRequest { .. }
+            | ZhtpMeshMessage::BlockchainData { .. }
+            | ZhtpMeshMessage::BootstrapProofRequest { .. }
+            | ZhtpMeshMessage::BootstrapProofResponse { .. }
+            | ZhtpMeshMessage::HeadersRequest { .. }
+            | ZhtpMeshMessage::HeadersResponse { .. }
+            | ZhtpMeshMessage::ValidatorMessage(_) => MeshNamespace::ConsensusRead,
+            ZhtpMeshMessage::NewBlock { .. }
+            | ZhtpMeshMessage::NewTransaction { .. } => MeshNamespace::ConsensusMutation,
+            ZhtpMeshMessage::ZhtpRequest(_)
+            | ZhtpMeshMessage::ZhtpResponse(_) => MeshNamespace::Service,
+            ZhtpMeshMessage::PeerDiscovery { .. }
+            | ZhtpMeshMessage::PeerAnnouncement { .. }
+            | ZhtpMeshMessage::ConnectivityRequest { .. }
+            | ZhtpMeshMessage::ConnectivityResponse { .. }
+            | ZhtpMeshMessage::LongRangeRoute { .. }
+            | ZhtpMeshMessage::UbiDistribution { .. }
+            | ZhtpMeshMessage::HealthReport { .. }
+            | ZhtpMeshMessage::RouteProbe { .. }
+            | ZhtpMeshMessage::RouteResponse { .. }
+            | ZhtpMeshMessage::DhtStore { .. }
+            | ZhtpMeshMessage::DhtStoreAck { .. }
+            | ZhtpMeshMessage::DhtFindValue { .. }
+            | ZhtpMeshMessage::DhtFindValueResponse { .. }
+            | ZhtpMeshMessage::DhtFindNode { .. }
+            | ZhtpMeshMessage::DhtFindNodeResponse { .. }
+            | ZhtpMeshMessage::DhtPing { .. }
+            | ZhtpMeshMessage::DhtPong { .. }
+            | ZhtpMeshMessage::DhtGenericPayload { .. } => MeshNamespace::Runtime,
+        }
+    }
+
     pub async fn authorize_namespace(&self, namespace: MeshNamespace) -> bool {
         let runtime_role = *self.runtime_role.read().await;
         let consensus_role = *self.consensus_role.read().await;
@@ -544,6 +582,8 @@ impl Clone for MeshRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_network::types::mesh_message::{BlockchainRequestType, ZhtpMeshMessage};
+    use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpStatus, ZhtpResponse};
 
     #[tokio::test]
     async fn test_namespace_authorization_non_validator_rejects_consensus_mutation() {
@@ -576,5 +616,46 @@ mod tests {
 
         assert!(!router.authorize_namespace(MeshNamespace::Service).await);
         assert!(router.authorize_namespace(MeshNamespace::Runtime).await);
+    }
+
+    #[test]
+    fn test_namespace_classification_maps_zhtp_to_service() {
+        let request = ZhtpMeshMessage::ZhtpRequest(ZhtpRequest {
+            method: ZhtpMethod::Get,
+            uri: "/v1/health".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers: ZhtpHeaders::new(),
+            body: Vec::new(),
+            timestamp: 0,
+            requester: None,
+            auth_proof: None,
+        });
+        let response = ZhtpMeshMessage::ZhtpResponse(ZhtpResponse {
+            version: "ZHTP/1.0".to_string(),
+            status: ZhtpStatus::Ok,
+            status_message: "OK".to_string(),
+            headers: ZhtpHeaders::new(),
+            body: Vec::new(),
+            timestamp: 0,
+            server: None,
+            validity_proof: None,
+        });
+
+        assert_eq!(MeshRouter::classify_mesh_namespace(&request), MeshNamespace::Service);
+        assert_eq!(MeshRouter::classify_mesh_namespace(&response), MeshNamespace::Service);
+    }
+
+    #[test]
+    fn test_namespace_classification_maps_consensus_sync_to_read() {
+        let message = ZhtpMeshMessage::BlockchainRequest {
+            requester: PublicKey::new(vec![7; 32]),
+            request_id: 1,
+            request_type: BlockchainRequestType::HeadersOnly { start_height: 1, count: 10 },
+        };
+
+        assert_eq!(
+            MeshRouter::classify_mesh_namespace(&message),
+            MeshNamespace::ConsensusRead
+        );
     }
 }

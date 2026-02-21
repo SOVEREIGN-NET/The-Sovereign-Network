@@ -54,7 +54,9 @@ use lib_network::handshake::{HandshakeContext, NonceCache, ClientHello};
 use lib_network::messaging::message_handler::MeshMessageHandler;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
 use lib_crypto::PublicKey;
+use tokio::sync::RwLock as TokioRwLock;
 
+use super::mesh::core::{MeshConsensusRole, MeshNamespace, MeshRouter, MeshRuntimeRole};
 use super::zhtp::ZhtpRouter;
 use super::zhtp::serialization::ZHTP_MAGIC;
 
@@ -220,6 +222,11 @@ pub struct QuicHandler {
 
     /// Identity manager for auto-registration of authenticated peers
     identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
+
+    /// Runtime role for namespace authorization on QUIC mesh path
+    runtime_role: Arc<TokioRwLock<MeshRuntimeRole>>,
+    /// Consensus role for namespace authorization on QUIC mesh path
+    consensus_role: Arc<TokioRwLock<MeshConsensusRole>>,
 }
 
 impl QuicHandler {
@@ -236,6 +243,48 @@ impl QuicHandler {
             pqc_connections: Arc::new(RwLock::new(HashMap::new())),
             handshake_rate_limits: Arc::new(RwLock::new(HashMap::new())),
             identity_manager,
+            runtime_role: Arc::new(TokioRwLock::new(MeshRuntimeRole::Full)),
+            consensus_role: Arc::new(TokioRwLock::new(MeshConsensusRole::NonValidator)),
+        }
+    }
+
+    pub async fn configure_authorization_context(
+        &self,
+        is_edge_node: bool,
+        validator_enabled: bool,
+    ) {
+        let runtime_role = if validator_enabled {
+            MeshRuntimeRole::Validator
+        } else if is_edge_node {
+            MeshRuntimeRole::Edge
+        } else {
+            MeshRuntimeRole::Full
+        };
+        let consensus_role = if validator_enabled {
+            MeshConsensusRole::Validator
+        } else {
+            MeshConsensusRole::NonValidator
+        };
+
+        *self.runtime_role.write().await = runtime_role;
+        *self.consensus_role.write().await = consensus_role;
+    }
+
+    async fn authorize_namespace(&self, namespace: MeshNamespace) -> bool {
+        let runtime_role = *self.runtime_role.read().await;
+        let consensus_role = *self.consensus_role.read().await;
+
+        match namespace {
+            MeshNamespace::ConsensusMutation => {
+                runtime_role == MeshRuntimeRole::Validator
+                    && consensus_role == MeshConsensusRole::Validator
+            }
+            MeshNamespace::ConsensusRead => matches!(
+                runtime_role,
+                MeshRuntimeRole::Validator | MeshRuntimeRole::Full | MeshRuntimeRole::Relay
+            ),
+            MeshNamespace::Runtime => true,
+            MeshNamespace::Service => runtime_role == MeshRuntimeRole::Service,
         }
     }
 
@@ -1082,7 +1131,17 @@ impl QuicHandler {
         // Handle via mesh handler
         if let Some(ref handler) = self.mesh_handler {
             let peer_pk = PublicKey::new(peer_node_id.to_vec());
-            handler.read().await.handle_mesh_message(message, peer_pk).await?;
+            let namespace = MeshRouter::classify_mesh_namespace(&message);
+            if !self.authorize_namespace(namespace).await {
+                warn!(
+                    "Rejected QUIC mesh message before dispatch from peer {}: namespace={:?}",
+                    hex::encode(&peer_node_id[..8]),
+                    namespace
+                );
+                return Ok(());
+            }
+            let mesh_handler = handler.read().await;
+            mesh_handler.handle_mesh_message(message, peer_pk).await?;
         } else {
             warn!("No mesh handler configured");
         }
@@ -1187,6 +1246,8 @@ impl Clone for QuicHandler {
             pqc_connections: self.pqc_connections.clone(),
             handshake_rate_limits: self.handshake_rate_limits.clone(),
             identity_manager: self.identity_manager.clone(),
+            runtime_role: self.runtime_role.clone(),
+            consensus_role: self.consensus_role.clone(),
         }
     }
 }
