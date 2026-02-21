@@ -699,14 +699,24 @@ impl ConsensusEngine {
 
     /// Set the local validator signing keypair (required for proposal/vote signing)
     pub fn set_validator_keypair(&mut self, keypair: KeyPair) -> ConsensusResult<()> {
-        if let Some(identity) = &self.validator_identity {
-            if let Some(validator) = self.validator_manager.get_validator(identity) {
-                if validator.consensus_key != keypair.public_key.dilithium_pk {
-                    return Err(ConsensusError::ValidatorError(
-                        "Validator keypair does not match registered consensus key".to_string(),
-                    ));
-                }
-            }
+        let identity = self.validator_identity.as_ref().ok_or_else(|| {
+            ConsensusError::ValidatorError(
+                "Cannot load validator signing keypair: local validator identity is not configured"
+                    .to_string(),
+            )
+        })?;
+
+        let validator = self.validator_manager.get_validator(identity).ok_or_else(|| {
+            ConsensusError::ValidatorError(
+                "Cannot load validator signing keypair: local validator is not registered"
+                    .to_string(),
+            )
+        })?;
+
+        if validator.consensus_key != keypair.public_key.dilithium_pk {
+            return Err(ConsensusError::ValidatorError(
+                "Validator keypair does not match registered consensus key".to_string(),
+            ));
         }
 
         self.validator_keypair = Some(keypair);

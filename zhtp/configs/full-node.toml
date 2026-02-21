@@ -3,9 +3,9 @@
 # Suitable for: API servers, blockchain explorers, dApps, production nodes
 
 # Core Node Settings
-mesh_mode = "Hybrid"  # Support both mesh and TCP/IP
+mesh_mode = "Hybrid"  # Support both mesh and QUIC connectivity
 security_level = "High"
-environment = "Mainnet"
+runtime_role = "FULL"
 data_directory = "./data/mainnet-full"  # Mainnet-specific directory
 
 [crypto_config]
@@ -44,7 +44,7 @@ pricing_tier = "hot"
 [network_config]
 mesh_port = 33444
 max_peers = 150  # Higher peer count for full nodes
-protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
+protocols = ["quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = ["100.94.204.6:9333", "bootstrap.sovereign.net:9333"]
 long_range_relays = false
 
