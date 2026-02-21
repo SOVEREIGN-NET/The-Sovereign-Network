@@ -620,6 +620,133 @@ impl SovSwapPool {
         // Safe to cast since amount_out <= reserve_out which is u64
         Ok(amount_out as u64)
     }
+
+    /// Simulate SOV to token swap (read-only, no state changes)
+    ///
+    /// # Returns
+    /// SimulationResult with expected output and price impact
+    pub fn simulate_sov_to_token(
+        &self,
+        sov_amount: u64,
+        min_token_out: Option<u64>,
+    ) -> Result<SimulationResult, SwapError> {
+        self.require_initialized()?;
+
+        if sov_amount == 0 {
+            return Err(SwapError::ZeroInputAmount);
+        }
+
+        // Calculate fee (taken from input)
+        let fee_amount = self.calculate_fee(sov_amount)?;
+        let sov_amount_after_fee = sov_amount
+            .checked_sub(fee_amount)
+            .ok_or(SwapError::Overflow)?;
+
+        // Calculate output using constant product formula
+        let token_out = self.calculate_output(
+            sov_amount_after_fee,
+            self.sov_reserve,
+            self.token_reserve,
+        )?;
+
+        if token_out == 0 {
+            return Err(SwapError::ZeroOutputAmount);
+        }
+
+        // Slippage check
+        if let Some(min_out) = min_token_out {
+            if token_out < min_out {
+                return Err(SwapError::SlippageExceeded);
+            }
+        }
+
+        // Check sufficient liquidity
+        if token_out >= self.token_reserve {
+            return Err(SwapError::InsufficientLiquidity);
+        }
+
+        // Calculate price impact: (token_out / token_reserve) * 10000 bps
+        let price_impact_bps = ((token_out as u128)
+            .checked_mul(10000)
+            .ok_or(SwapError::Overflow)?
+            .checked_div(self.token_reserve as u128)
+            .ok_or(SwapError::Overflow)?) as u64;
+
+        Ok(SimulationResult {
+            amount_out: token_out,
+            fee_amount,
+            price_impact_bps,
+        })
+    }
+
+    /// Simulate token to SOV swap (read-only, no state changes)
+    ///
+    /// # Returns
+    /// SimulationResult with expected output and price impact
+    pub fn simulate_token_to_sov(
+        &self,
+        token_amount: u64,
+        min_sov_out: Option<u64>,
+    ) -> Result<SimulationResult, SwapError> {
+        self.require_initialized()?;
+
+        if token_amount == 0 {
+            return Err(SwapError::ZeroInputAmount);
+        }
+
+        // Calculate fee (taken from input)
+        let fee_amount = self.calculate_fee(token_amount)?;
+        let token_amount_after_fee = token_amount
+            .checked_sub(fee_amount)
+            .ok_or(SwapError::Overflow)?;
+
+        // Calculate output using constant product formula
+        let sov_out = self.calculate_output(
+            token_amount_after_fee,
+            self.token_reserve,
+            self.sov_reserve,
+        )?;
+
+        if sov_out == 0 {
+            return Err(SwapError::ZeroOutputAmount);
+        }
+
+        // Slippage check
+        if let Some(min_out) = min_sov_out {
+            if sov_out < min_out {
+                return Err(SwapError::SlippageExceeded);
+            }
+        }
+
+        // Check sufficient liquidity
+        if sov_out >= self.sov_reserve {
+            return Err(SwapError::InsufficientLiquidity);
+        }
+
+        // Calculate price impact: (sov_out / sov_reserve) * 10000 bps
+        let price_impact_bps = ((sov_out as u128)
+            .checked_mul(10000)
+            .ok_or(SwapError::Overflow)?
+            .checked_div(self.sov_reserve as u128)
+            .ok_or(SwapError::Overflow)?) as u64;
+
+        Ok(SimulationResult {
+            amount_out: sov_out,
+            fee_amount,
+            price_impact_bps,
+        })
+    }
+}
+
+/// Result of a swap simulation (read-only)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimulationResult {
+    /// Amount of output tokens expected
+    pub amount_out: u64,
+    /// Fee amount that would be deducted
+    pub fee_amount: u64,
+    /// Price impact in basis points (100 = 1%)
+    pub price_impact_bps: u64,
 }
 
 /// Derive a deterministic pool ID from token ID

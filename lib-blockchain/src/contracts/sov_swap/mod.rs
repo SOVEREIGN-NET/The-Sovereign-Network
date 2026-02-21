@@ -39,6 +39,7 @@ pub use core::{
     SwapResult,
     PoolState,
     SwapError,
+    SimulationResult,
 };
 
 // Re-export LP types

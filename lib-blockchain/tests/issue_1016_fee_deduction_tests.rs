@@ -64,6 +64,10 @@ fn create_transfer_tx(sender: &PublicKey, fee: u64, nullifier_id: u8) -> Transac
         token_transfer_data: None,
             token_mint_data: None,
                     governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
     }
 }
 
