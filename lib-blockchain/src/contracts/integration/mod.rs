@@ -271,6 +271,10 @@ impl ContractTransactionBuilder {
             token_transfer_data: None,
             token_mint_data: None,
                         governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         };
 
         let tx_hash = temp_tx.signing_hash();
@@ -296,7 +300,11 @@ impl ContractTransactionBuilder {
             token_transfer_data: None,
             token_mint_data: None,
                         governance_config_data: None,
-        };
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+};
 
         Ok(tx)
     }

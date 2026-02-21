@@ -222,12 +222,42 @@ impl TransactionValidator {
                 TokenCreationPayloadV1::decode_memo(&transaction.memo)
                     .map_err(|_| ValidationError::InvalidMemo)?;
             }
+            TransactionType::BondingCurveDeploy
+            | TransactionType::BondingCurveBuy
+            | TransactionType::BondingCurveSell
+            | TransactionType::BondingCurveGraduate => {
+                // Bonding curve operations
+            }
             TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
             | TransactionType::RemoveLiquidity => {
                 // AMM/Token operations - not yet fully implemented
                 // TODO: Add validation for these transaction types
+            }
+            TransactionType::BondingCurveDeploy => {
+                // Bonding curve token deployment
+                if transaction.bonding_curve_deploy_data.is_none() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::BondingCurveBuy => {
+                // Bonding curve token purchase
+                if transaction.bonding_curve_buy_data.is_none() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::BondingCurveSell => {
+                // Bonding curve token sale
+                if transaction.bonding_curve_sell_data.is_none() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::BondingCurveGraduate => {
+                // Bonding curve graduation
+                if transaction.bonding_curve_graduate_data.is_none() {
+                    return Err(ValidationError::InvalidInputs);
+                }
             }
         }
 
@@ -395,6 +425,12 @@ impl TransactionValidator {
                 }
                 TokenCreationPayloadV1::decode_memo(&transaction.memo)
                     .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::BondingCurveDeploy
+            | TransactionType::BondingCurveBuy
+            | TransactionType::BondingCurveSell
+            | TransactionType::BondingCurveGraduate => {
+                // Bonding curve operations
             }
             TransactionType::TokenSwap
             | TransactionType::CreatePool
@@ -1482,7 +1518,13 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
             }
             TransactionType::TokenCreation
-            | TransactionType::TokenSwap
+            | TransactionType::BondingCurveDeploy
+            | TransactionType::BondingCurveBuy
+            | TransactionType::BondingCurveSell
+            | TransactionType::BondingCurveGraduate => {
+                // Bonding curve operations - no additional validation needed here
+            }
+            TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
             | TransactionType::RemoveLiquidity => {
@@ -1850,7 +1892,14 @@ pub mod utils {
                 transaction.governance_config_data.is_some()
             }
             TransactionType::TokenCreation
-            | TransactionType::TokenSwap
+            | TransactionType::BondingCurveDeploy
+            | TransactionType::BondingCurveBuy
+            | TransactionType::BondingCurveSell
+            | TransactionType::BondingCurveGraduate => {
+                // Bonding curve operations
+                true
+            }
+            TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
             | TransactionType::RemoveLiquidity => {
@@ -1949,6 +1998,10 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 
@@ -1981,6 +2034,10 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 
@@ -2045,7 +2102,11 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
-        };
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+};
 
         assert!(!is_token_contract_execution(&mint_tx));
     }
@@ -2141,7 +2202,11 @@ mod tests {
                 token_transfer_data: None,
                 token_mint_data: None,
                 governance_config_data: None,
-            };
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+};
 
             assert!(
                 is_token_contract_execution(&tx),
@@ -2177,7 +2242,11 @@ mod tests {
                 token_transfer_data: None,
                 token_mint_data: None,
                 governance_config_data: None,
-            };
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+};
 
             assert!(
                 !is_token_contract_execution(&tx),
@@ -2213,7 +2282,11 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
-        };
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+};
 
         assert!(
             !is_token_contract_execution(&non_token_tx),
@@ -2250,7 +2323,11 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
-        };
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+};
 
         let validator = TransactionValidator::new();
         let result = validator.validate_contract_transaction(&tx);

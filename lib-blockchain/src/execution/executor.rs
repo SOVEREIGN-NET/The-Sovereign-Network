@@ -781,7 +781,12 @@ impl BlockExecutor {
             | TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
-            | TransactionType::RemoveLiquidity => {
+            | TransactionType::RemoveLiquidity
+            // Bonding curve types - handled by executor but validation not fully wired yet
+            | TransactionType::BondingCurveDeploy
+            | TransactionType::BondingCurveBuy
+            | TransactionType::BondingCurveSell
+            | TransactionType::BondingCurveGraduate => {
                 return Ok(());
             }
         }
@@ -1613,7 +1618,12 @@ impl BlockExecutor {
             | TransactionType::DifficultyUpdate
             | TransactionType::UBIClaim
             | TransactionType::ProfitDeclaration
-            | TransactionType::GovernanceConfigUpdate => Ok(TxOutcome::LegacySystem),
+            | TransactionType::GovernanceConfigUpdate
+            // Bonding curve types - TODO: implement full state transition
+            | TransactionType::BondingCurveDeploy
+            | TransactionType::BondingCurveBuy
+            | TransactionType::BondingCurveSell
+            | TransactionType::BondingCurveGraduate => Ok(TxOutcome::LegacySystem),
 
             TransactionType::DaoProposal => {
                 let outcome = self.apply_dao_proposal(mutator, tx, &tx_hash)?;
@@ -1971,6 +1981,10 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 
@@ -1999,6 +2013,10 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 
@@ -2183,7 +2201,11 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     fn create_contract_deployment_tx() -> Transaction {
@@ -2335,7 +2357,11 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// TokenCreation canonical path: token is created and minted to creator.

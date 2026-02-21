@@ -29,6 +29,8 @@ pub use types::{
 };
 pub use events::{
     BondingCurveEvent, ReserveUpdateReason, EventIndexer, InMemoryEventIndexer,
+    // AMM events
+    // LiquidityAdded, LiquidityRemoved, SwapExecuted - these are variants of BondingCurveEvent
 };
 pub use token::BondingCurveToken;
 pub use registry::{BondingCurveRegistry, RegistryStats};

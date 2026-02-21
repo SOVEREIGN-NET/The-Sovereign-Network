@@ -109,6 +109,74 @@ pub enum BondingCurveEvent {
         /// Timestamp
         timestamp: u64,
     },
+
+    // ============================================================================
+    // AMM Events (Phase 2 - Post-Graduation)
+    // ============================================================================
+
+    /// Liquidity added to AMM pool
+    LiquidityAdded {
+        /// Token identifier
+        token_id: [u8; 32],
+        /// AMM pool identifier
+        pool_id: [u8; 32],
+        /// Provider address
+        provider: [u8; 32],
+        /// Token amount added
+        token_amount: u64,
+        /// SOV amount added
+        sov_amount: u64,
+        /// LP tokens minted
+        lp_tokens_minted: u64,
+        /// Block height
+        block_height: u64,
+        /// Timestamp
+        timestamp: u64,
+    },
+
+    /// Liquidity removed from AMM pool
+    LiquidityRemoved {
+        /// Token identifier
+        token_id: [u8; 32],
+        /// AMM pool identifier
+        pool_id: [u8; 32],
+        /// Provider address
+        provider: [u8; 32],
+        /// LP tokens burned
+        lp_tokens_burned: u64,
+        /// Token amount received
+        token_amount: u64,
+        /// SOV amount received
+        sov_amount: u64,
+        /// Block height
+        block_height: u64,
+        /// Timestamp
+        timestamp: u64,
+    },
+
+    /// Swap executed in AMM pool
+    SwapExecuted {
+        /// Token identifier
+        token_id: [u8; 32],
+        /// AMM pool identifier
+        pool_id: [u8; 32],
+        /// Swapper address
+        swapper: [u8; 32],
+        /// True if token -> SOV, false if SOV -> token
+        token_to_sov: bool,
+        /// Amount in
+        amount_in: u64,
+        /// Amount out
+        amount_out: u64,
+        /// Fee paid (in output token)
+        fee: u64,
+        /// Price impact in basis points
+        price_impact_bps: u64,
+        /// Block height
+        block_height: u64,
+        /// Timestamp
+        timestamp: u64,
+    },
 }
 
 /// Reason for reserve update
@@ -145,6 +213,9 @@ impl BondingCurveEvent {
             BondingCurveEvent::ReserveUpdated { token_id, .. } => token_id,
             BondingCurveEvent::AMMSeeded { token_id, .. } => token_id,
             BondingCurveEvent::ParametersUpdated { token_id, .. } => token_id,
+            BondingCurveEvent::LiquidityAdded { token_id, .. } => token_id,
+            BondingCurveEvent::LiquidityRemoved { token_id, .. } => token_id,
+            BondingCurveEvent::SwapExecuted { token_id, .. } => token_id,
         }
     }
 
@@ -157,6 +228,9 @@ impl BondingCurveEvent {
             BondingCurveEvent::ReserveUpdated { block_height, .. } => *block_height,
             BondingCurveEvent::AMMSeeded { block_height, .. } => *block_height,
             BondingCurveEvent::ParametersUpdated { block_height, .. } => *block_height,
+            BondingCurveEvent::LiquidityAdded { block_height, .. } => *block_height,
+            BondingCurveEvent::LiquidityRemoved { block_height, .. } => *block_height,
+            BondingCurveEvent::SwapExecuted { block_height, .. } => *block_height,
         }
     }
 
@@ -169,6 +243,9 @@ impl BondingCurveEvent {
             BondingCurveEvent::ReserveUpdated { .. } => "reserve_updated",
             BondingCurveEvent::AMMSeeded { .. } => "amm_seeded",
             BondingCurveEvent::ParametersUpdated { .. } => "parameters_updated",
+            BondingCurveEvent::LiquidityAdded { .. } => "liquidity_added",
+            BondingCurveEvent::LiquidityRemoved { .. } => "liquidity_removed",
+            BondingCurveEvent::SwapExecuted { .. } => "swap_executed",
         }
     }
 }
@@ -185,6 +262,15 @@ pub trait EventIndexer {
 
     /// Get purchase events for a token
     fn get_purchase_events(&self, token_id: [u8; 32]) -> Vec<&BondingCurveEvent>;
+
+    /// Get sale events for a token
+    fn get_sale_events(&self, token_id: [u8; 32]) -> Vec<&BondingCurveEvent>;
+
+    /// Get swap events for a token
+    fn get_swap_events(&self, token_id: [u8; 32]) -> Vec<&BondingCurveEvent>;
+
+    /// Get liquidity events for a token (add/remove)
+    fn get_liquidity_events(&self, token_id: [u8; 32]) -> Vec<&BondingCurveEvent>;
 
     /// Get events in a block range
     fn get_events_in_range(&self, start_block: u64, end_block: u64) -> Vec<&BondingCurveEvent>;
@@ -231,6 +317,37 @@ impl EventIndexer for InMemoryEventIndexer {
             .filter(|e| {
                 e.token_id() == &token_id
                     && matches!(e, BondingCurveEvent::TokenPurchased { .. })
+            })
+            .collect()
+    }
+
+    fn get_sale_events(&self, token_id: [u8; 32]) -> Vec<&BondingCurveEvent> {
+        self.events
+            .iter()
+            .filter(|e| {
+                e.token_id() == &token_id
+                    && matches!(e, BondingCurveEvent::TokenSold { .. })
+            })
+            .collect()
+    }
+
+    fn get_swap_events(&self, token_id: [u8; 32]) -> Vec<&BondingCurveEvent> {
+        self.events
+            .iter()
+            .filter(|e| {
+                e.token_id() == &token_id
+                    && matches!(e, BondingCurveEvent::SwapExecuted { .. })
+            })
+            .collect()
+    }
+
+    fn get_liquidity_events(&self, token_id: [u8; 32]) -> Vec<&BondingCurveEvent> {
+        self.events
+            .iter()
+            .filter(|e| {
+                e.token_id() == &token_id
+                    && (matches!(e, BondingCurveEvent::LiquidityAdded { .. })
+                        || matches!(e, BondingCurveEvent::LiquidityRemoved { .. }))
             })
             .collect()
     }

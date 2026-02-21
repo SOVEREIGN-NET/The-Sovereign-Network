@@ -201,6 +201,10 @@ impl TransactionBuilder {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         };
 
         // Sign the transaction
@@ -666,6 +670,18 @@ pub mod utils {
             | TransactionType::AddLiquidity
             | TransactionType::RemoveLiquidity => {
                 // AMM/Token operations - validation handled at consensus layer
+            }
+            TransactionType::BondingCurveDeploy => {
+                // Bonding curve token deployment - validation handled at consensus layer
+            }
+            TransactionType::BondingCurveBuy => {
+                // Bonding curve token purchase - validation handled at consensus layer
+            }
+            TransactionType::BondingCurveSell => {
+                // Bonding curve token sale - validation handled at consensus layer
+            }
+            TransactionType::BondingCurveGraduate => {
+                // Bonding curve graduation - validation handled at consensus layer
             }
         }
 

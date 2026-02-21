@@ -133,6 +133,10 @@ fn build_signed_contract_deploy_tx(
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
     };
     tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
     tx.signature = keypair

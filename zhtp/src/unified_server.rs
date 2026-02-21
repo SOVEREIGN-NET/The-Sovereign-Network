@@ -809,6 +809,25 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/v1/token".to_string(), token_handler);
 
+        // Bonding curve operations (CurveHandler - deploy, buy, sell, graduation)
+        let curve_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::CurveHandler::new()
+        );
+        zhtp_router.register_handler("/api/v1/curve".to_string(), curve_handler);
+
+        // AMM swap operations (SwapHandler - post-graduation swaps, liquidity)
+        let swap_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::SwapHandler::new()
+        );
+        zhtp_router.register_handler("/api/v1/swap".to_string(), swap_handler);
+
+        // Valuation operations (ValuationHandler - read-only price queries)
+        let valuation_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::ValuationHandler::new()
+        );
+        zhtp_router.register_handler("/api/v1/price".to_string(), valuation_handler.clone());
+        zhtp_router.register_handler("/api/v1/valuation".to_string(), valuation_handler);
+
         // DAO operations
         let dao_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             DaoHandler::new(identity_manager.clone(), _session_manager.clone())
