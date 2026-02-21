@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use super::{NodeConfig, ConfigError};
+use super::{NodeConfig, ConfigError, RuntimeRole};
 use tracing::{info, warn, error};
 
 /// Validate complete configuration across all packages
@@ -31,6 +31,7 @@ pub async fn validate_complete_configuration(config: &NodeConfig) -> Result<()> 
     
     // Validate cross-package integration
     validate_integration_settings(config)?;
+    validate_role_transport_gateway_invariants(config)?;
 
     // Validate bootstrap peer SPKI pins (fail-fast on malformed hex)
     validate_bootstrap_peer_pins(config)?;
@@ -39,6 +40,90 @@ pub async fn validate_complete_configuration(config: &NodeConfig) -> Result<()> 
     Ok(())
 }
 
+fn validate_role_transport_gateway_invariants(config: &NodeConfig) -> Result<()> {
+    // Transport invariants: QUIC mandatory, disallow legacy TCP/HTTP/WebSocket/gRPC/UDP in mesh protocol list.
+    if !config.protocols_config.enable_quic {
+        return Err(ConfigError::ResourceConflict {
+            details: "QUIC transport must be enabled".to_string(),
+        }
+        .into());
+    }
+
+    let disallowed_protocols = ["tcp", "http", "https", "websocket", "ws", "grpc", "udp"];
+    let present_disallowed: Vec<String> = config
+        .network_config
+        .protocols
+        .iter()
+        .map(|p| p.to_lowercase())
+        .filter(|p| disallowed_protocols.contains(&p.as_str()))
+        .collect();
+
+    if !present_disallowed.is_empty() {
+        return Err(ConfigError::InvalidMeshMode {
+            reason: format!(
+                "Forbidden transport protocols configured: {}. Allowed mesh transports are QUIC + mesh-native links.",
+                present_disallowed.join(", ")
+            ),
+        }
+        .into());
+    }
+
+    if !config
+        .network_config
+        .protocols
+        .iter()
+        .any(|p| p.eq_ignore_ascii_case("quic"))
+    {
+        return Err(ConfigError::InvalidMeshMode {
+            reason: "QUIC must be present in network_config.protocols".to_string(),
+        }
+        .into());
+    }
+
+    // Role and consensus invariants.
+    match config.runtime_role {
+        RuntimeRole::Validator => {
+            if !config.consensus_config.validator_enabled {
+                return Err(ConfigError::ResourceConflict {
+                    details: "runtime_role=VALIDATOR requires consensus_config.validator_enabled=true".to_string(),
+                }
+                .into());
+            }
+        }
+        RuntimeRole::Edge
+        | RuntimeRole::Relay
+        | RuntimeRole::Bootstrap
+        | RuntimeRole::Service => {
+            if config.consensus_config.validator_enabled {
+                return Err(ConfigError::ResourceConflict {
+                    details: format!(
+                        "runtime_role={:?} cannot enable validator consensus role",
+                        config.runtime_role
+                    ),
+                }
+                .into());
+            }
+        }
+        RuntimeRole::Full => {}
+    }
+
+    // Gateway invariant: RPC gateway only for SERVICE runtime role.
+    if config.protocols_config.gateway_enabled && config.runtime_role != RuntimeRole::Service {
+        return Err(ConfigError::ResourceConflict {
+            details: "protocols_config.gateway_enabled=true is only allowed for runtime_role=SERVICE".to_string(),
+        }
+        .into());
+    }
+
+    if config.runtime_role == RuntimeRole::Service && !config.protocols_config.gateway_enabled {
+        return Err(ConfigError::ResourceConflict {
+            details: "runtime_role=SERVICE requires protocols_config.gateway_enabled=true".to_string(),
+        }
+        .into());
+    }
+
+    Ok(())
+}
 /// Validate that no packages are using conflicting ports
 fn validate_port_assignments(config: &NodeConfig) -> Result<()> {
     let mut used_ports = HashMap::new();
@@ -419,5 +504,62 @@ impl ConfigHealthReport {
         if self.critical_issues.is_empty() && self.warnings.is_empty() {
             info!("Configuration health check passed");
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_forbidden_tcp_transport() {
+        let mut config = NodeConfig::default();
+        config.network_config.protocols.push("tcp".to_string());
+        let result = validate_role_transport_gateway_invariants(&config);
+        assert!(result.is_err(), "tcp transport must be rejected");
+    }
+
+    #[test]
+    fn rejects_validator_enabled_for_edge_role() {
+        let mut config = NodeConfig::default();
+        config.runtime_role = crate::config::aggregation::RuntimeRole::Edge;
+        config.consensus_config.validator_enabled = true;
+        let result = validate_role_transport_gateway_invariants(&config);
+        assert!(
+            result.is_err(),
+            "edge runtime must reject validator consensus role"
+        );
+    }
+
+    #[test]
+    fn service_role_requires_gateway() {
+        let mut config = NodeConfig::default();
+        config.runtime_role = crate::config::aggregation::RuntimeRole::Service;
+        config.protocols_config.gateway_enabled = false;
+        let result = validate_role_transport_gateway_invariants(&config);
+        assert!(result.is_err(), "service runtime must require gateway");
+    }
+
+    #[test]
+    fn service_role_with_gateway_enabled_passes() {
+        let mut config = NodeConfig::default();
+        config.runtime_role = crate::config::aggregation::RuntimeRole::Service;
+        config.protocols_config.gateway_enabled = true;
+        let result = validate_role_transport_gateway_invariants(&config);
+        assert!(
+            result.is_ok(),
+            "service role with gateway_enabled should pass"
+        );
+    }
+
+    #[test]
+    fn validator_role_requires_validator_enabled() {
+        let mut config = NodeConfig::default();
+        config.runtime_role = crate::config::aggregation::RuntimeRole::Validator;
+        config.consensus_config.validator_enabled = false;
+        let result = validate_role_transport_gateway_invariants(&config);
+        assert!(
+            result.is_err(),
+            "VALIDATOR role must require validator_enabled=true"
+        );
     }
 }

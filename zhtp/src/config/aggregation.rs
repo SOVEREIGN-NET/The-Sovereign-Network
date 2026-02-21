@@ -23,6 +23,8 @@ pub struct PartialConfig {
     #[serde(default)]
     pub environment: Option<super::Environment>,
     #[serde(default)]
+    pub runtime_role: Option<RuntimeRole>,
+    #[serde(default)]
     pub network: Option<PartialNetworkConfig>,
     #[serde(default)]
     pub network_config: Option<PartialNetworkConfig>,
@@ -99,6 +101,24 @@ pub struct PartialValidatorConfig {
     pub stake: Option<u64>,
 }
 
+/// Runtime node typology used for invariant enforcement.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RuntimeRole {
+    Full,
+    Edge,
+    Validator,
+    Relay,
+    Bootstrap,
+    Service,
+}
+
+impl Default for RuntimeRole {
+    fn default() -> Self {
+        RuntimeRole::Full
+    }
+}
+
 /// Complete node configuration aggregating all packages
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeConfig {
@@ -117,6 +137,9 @@ pub struct NodeConfig {
     // - **Important**: Relay nodes MUST be explicitly configured (cannot be auto-derived).
     #[serde(default)]
     pub node_type: Option<NodeType>,
+
+    #[serde(default)]
+    pub runtime_role: RuntimeRole,
 
     // Node role determines what operations this node can perform
     // This is derived from validator_enabled and other config settings during aggregation
@@ -568,6 +591,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             node_id: [0u8; 32], // Will be generated during initialization
+            runtime_role: RuntimeRole::Full,
             mesh_mode: MeshMode::Hybrid,
             security_level: SecurityLevel::High,
             environment: Environment::Development,
@@ -940,6 +964,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                     if let Some(env) = partial.environment {
                         tracing::info!("Loaded environment = {:?} from config file", env);
                         config.environment = env;
+                    }
+                    if let Some(role) = partial.runtime_role {
+                        tracing::info!("Loaded runtime_role = {:?} from config file", role);
+                        config.runtime_role = role;
                     }
                     
                     // Merge [network] section (legacy support)
