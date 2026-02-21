@@ -298,6 +298,58 @@ impl GovernanceExecutor {
         Ok(result)
     }
 
+    /// Execute SRV update proposal
+    ///
+    /// This is called to validate and prepare an SRV update for execution.
+    /// The actual update is applied through the Treasury Kernel.
+    ///
+    /// # Arguments
+    /// * `proposal_id` - Proposal to execute
+    /// * `current_height` - Current block height
+    /// * `current_epoch` - Current epoch
+    ///
+    /// # Returns
+    /// SRV update parameters if validation succeeds
+    pub fn prepare_srv_update(
+        &self,
+        proposal_id: &ProposalId,
+        current_epoch: u64,
+    ) -> Result<(u64, Option<u16>, String), GovernanceError> {
+        let proposal = self.proposals.get(proposal_id)
+            .ok_or_else(|| GovernanceError::ProposalNotFound(*proposal_id))?;
+
+        // Check status
+        if proposal.status != ProposalStatus::Approved {
+            return Err(GovernanceError::InvalidProposalStatus {
+                proposal_id: *proposal_id,
+                expected: ProposalStatus::Approved,
+                actual: proposal.status,
+            });
+        }
+
+        // Check timelock
+        if let Some(expires) = proposal.timelock_expires_epoch {
+            if current_epoch < expires {
+                return Err(GovernanceError::TimelockNotExpired {
+                    proposal_id: *proposal_id,
+                    expires_epoch: expires,
+                    current_epoch,
+                });
+            }
+        }
+
+        // Extract SRV update parameters
+        if let TreasuryAction::UpdateSRV {
+            new_committed_value_usd,
+            new_stability_multiplier_bps,
+            rationale,
+        } = &proposal.action {
+            Ok((*new_committed_value_usd, *new_stability_multiplier_bps, rationale.clone()))
+        } else {
+            Err(GovernanceError::InvalidActionType)
+        }
+    }
+
     /// Process epoch changes - expire old proposals
     pub fn process_epoch(&mut self, current_epoch: u64) {
         let expired_ids: Vec<ProposalId> = self.proposals.iter()

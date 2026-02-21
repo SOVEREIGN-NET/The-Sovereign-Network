@@ -100,6 +100,14 @@ pub enum TransactionType {
     AddLiquidity = 28,
     /// Remove liquidity from AMM pool
     RemoveLiquidity = 29,
+    /// Bonding curve token deployment
+    BondingCurveDeploy = 30,
+    /// Buy tokens from bonding curve
+    BondingCurveBuy = 31,
+    /// Sell tokens back to bonding curve
+    BondingCurveSell = 32,
+    /// Graduate bonding curve token to AMM
+    BondingCurveGraduate = 33,
 }
 
 impl TransactionType {
@@ -200,6 +208,10 @@ impl TransactionType {
             TransactionType::CreatePool => "Create AMM liquidity pool",
             TransactionType::AddLiquidity => "Add liquidity to AMM pool",
             TransactionType::RemoveLiquidity => "Remove liquidity from AMM pool",
+            TransactionType::BondingCurveDeploy => "Bonding curve token deployment",
+            TransactionType::BondingCurveBuy => "Buy tokens from bonding curve",
+            TransactionType::BondingCurveSell => "Sell tokens back to bonding curve",
+            TransactionType::BondingCurveGraduate => "Graduate bonding curve token to AMM",
         }
     }
 
@@ -236,6 +248,10 @@ impl TransactionType {
             TransactionType::CreatePool => "create_pool",
             TransactionType::AddLiquidity => "add_liquidity",
             TransactionType::RemoveLiquidity => "remove_liquidity",
+            TransactionType::BondingCurveDeploy => "bonding_curve_deploy",
+            TransactionType::BondingCurveBuy => "bonding_curve_buy",
+            TransactionType::BondingCurveSell => "bonding_curve_sell",
+            TransactionType::BondingCurveGraduate => "bonding_curve_graduate",
         }
     }
 
@@ -272,6 +288,10 @@ impl TransactionType {
             "create_pool" => Some(TransactionType::CreatePool),
             "add_liquidity" => Some(TransactionType::AddLiquidity),
             "remove_liquidity" => Some(TransactionType::RemoveLiquidity),
+            "bonding_curve_deploy" => Some(TransactionType::BondingCurveDeploy),
+            "bonding_curve_buy" => Some(TransactionType::BondingCurveBuy),
+            "bonding_curve_sell" => Some(TransactionType::BondingCurveSell),
+            "bonding_curve_graduate" => Some(TransactionType::BondingCurveGraduate),
             _ => None,
         }
     }
