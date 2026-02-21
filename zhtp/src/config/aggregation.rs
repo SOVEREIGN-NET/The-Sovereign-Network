@@ -336,6 +336,11 @@ pub struct ProtocolsConfig {
     /// Currently not used - future implementation for dynamic protocol selection
     #[serde(default = "default_quic_priority")]
     pub quic_priority: u8,
+
+    /// Enable RPC gateway mode (SERVICE runtime role only, default: false)
+    /// When true, node acts as an RPC gateway. Only valid when runtime_role=SERVICE.
+    #[serde(default)]
+    pub gateway_enabled: bool,
 }
 
 fn default_quic_port() -> u16 {
@@ -702,6 +707,7 @@ impl Default for NodeConfig {
                 enable_bluetooth: false,    // Bluetooth disabled by default
                 enable_mdns: true,          // mDNS enabled for peer discovery
                 quic_priority: 1,           // Default priority weight
+                gateway_enabled: false,     // Gateway disabled by default
             },
             
             rewards_config: RewardsConfig::default(),
