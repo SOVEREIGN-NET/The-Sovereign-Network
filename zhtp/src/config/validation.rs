@@ -40,6 +40,17 @@ pub async fn validate_complete_configuration(config: &NodeConfig) -> Result<()> 
     Ok(())
 }
 
+fn runtime_role_label(role: RuntimeRole) -> &'static str {
+    match role {
+        RuntimeRole::Full => "FULL",
+        RuntimeRole::Edge => "EDGE",
+        RuntimeRole::Validator => "VALIDATOR",
+        RuntimeRole::Relay => "RELAY",
+        RuntimeRole::Bootstrap => "BOOTSTRAP",
+        RuntimeRole::Service => "SERVICE",
+    }
+}
+
 fn validate_role_transport_gateway_invariants(config: &NodeConfig) -> Result<()> {
     // Transport invariants: QUIC mandatory, disallow legacy TCP/HTTP/WebSocket/gRPC/UDP in mesh protocol list.
     if !config.protocols_config.enable_quic {
@@ -97,8 +108,8 @@ fn validate_role_transport_gateway_invariants(config: &NodeConfig) -> Result<()>
             if config.consensus_config.validator_enabled {
                 return Err(ConfigError::ResourceConflict {
                     details: format!(
-                        "runtime_role={:?} cannot enable validator consensus role",
-                        config.runtime_role
+                        "runtime_role={} cannot enable validator consensus role",
+                        runtime_role_label(config.runtime_role)
                     ),
                 }
                 .into());
