@@ -123,6 +123,9 @@ pub enum ZhtpCommand {
 
     /// Token operations (create, mint, transfer)
     Token(TokenArgs),
+
+    /// Bonding curve operations (deploy, buy, sell, price)
+    Curve(CurveArgs),
 }
 
 /// Node management commands
@@ -1163,6 +1166,85 @@ pub enum TokenAction {
     List,
 }
 
+/// Bonding curve operation commands
+#[derive(Args, Debug, Clone)]
+pub struct CurveArgs {
+    #[command(subcommand)]
+    pub action: CurveAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CurveAction {
+    /// Deploy a new bonding curve token
+    Deploy {
+        /// Token name (e.g., "MyCurveToken")
+        #[arg(short, long)]
+        name: String,
+        /// Token symbol (e.g., "MCT")
+        #[arg(short, long)]
+        symbol: String,
+        /// Curve type: linear, exponential, sigmoid
+        #[arg(short, long, default_value = "linear")]
+        curve_type: String,
+        /// Threshold: standard ($69K), low ($34.5K), high ($138K), or custom amount
+        #[arg(short, long, default_value = "standard")]
+        threshold: String,
+        /// Enable selling (default: true)
+        #[arg(long, default_value = "true")]
+        sell_enabled: bool,
+    },
+    /// Buy tokens via bonding curve
+    Buy {
+        /// Token ID to buy
+        #[arg(short, long)]
+        token_id: String,
+        /// Amount of stablecoins to spend
+        #[arg(short, long)]
+        stable_amount: u64,
+        /// Minimum tokens to receive (slippage protection, optional)
+        #[arg(long)]
+        min_tokens_out: Option<u64>,
+    },
+    /// Sell tokens via bonding curve
+    Sell {
+        /// Token ID to sell
+        #[arg(short, long)]
+        token_id: String,
+        /// Amount of tokens to sell
+        #[arg(short, long)]
+        token_amount: u64,
+        /// Minimum stablecoins to receive (slippage protection, optional)
+        #[arg(long)]
+        min_stable_out: Option<u64>,
+    },
+    /// Get bonding curve information for a token
+    Info {
+        /// Token ID
+        #[arg(short, long)]
+        token_id: String,
+    },
+    /// Get current price for a token
+    Price {
+        /// Token ID
+        #[arg(short, long)]
+        token_id: String,
+    },
+    /// Check if token can graduate to AMM
+    CanGraduate {
+        /// Token ID
+        #[arg(short, long)]
+        token_id: String,
+    },
+    /// Get full valuation for a token
+    Valuation {
+        /// Token ID
+        #[arg(short, long)]
+        token_id: String,
+    },
+    /// List all bonding curve tokens
+    List,
+}
+
 /// Main CLI runner
 pub async fn run_cli() -> Result<()> {
     // Initialize network genesis for replay protection
@@ -1206,6 +1288,7 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Update(args) => commands::update::handle_update_command(args.clone()).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Service(args) => commands::service::handle_service_command(args.clone()).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Token(args) => commands::token::handle_token_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Curve(args) => commands::curve::handle_curve_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
     }
 }
 

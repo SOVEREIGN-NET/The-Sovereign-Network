@@ -1093,9 +1093,10 @@ impl ValuationHandler {
 
         for token_id_hex in req.token_ids {
             let valuation = if token_id_hex == "sov" || token_id_hex == "SOV" {
+                let srv = self.get_srv_from_treasury().await;
                 json!({
                     "token_id": "sov",
-                    "price_usd_cents": 2180000u64, // $0.0218
+                    "price_usd_cents": srv,
                     "source": "srv",
                     "confidence_level": "deterministic_curve",
                 })
@@ -1139,8 +1140,8 @@ impl ValuationHandler {
 
     // Helper methods
     async fn get_sov_price(&self, price_type: &str) -> Result<ZhtpResponse> {
-        // In production, this would query the Treasury Kernel for SRV
-        let srv = 2180000u64; // $0.0218 mock
+        // Query Treasury Kernel for SRV
+        let srv = self.get_srv_from_treasury().await;
 
         create_json_response(json!({
             "token_id": "sov",
@@ -1152,11 +1153,11 @@ impl ValuationHandler {
     }
 
     async fn get_sov_valuation(&self) -> Result<ZhtpResponse> {
-        let srv = 2180000u64;
+        let srv = self.get_srv_from_treasury().await;
         
-        // Get circulating supply from blockchain
+        // Get supply from Treasury Kernel
         let blockchain = self.blockchain.read().await;
-        let supply = 50_000_000_000_000_000u64; // 50M SOV mock
+        let supply = self.get_circulating_supply_from_treasury(&blockchain).await;
         drop(blockchain);
 
         create_json_response(json!({
@@ -1170,6 +1171,33 @@ impl ValuationHandler {
             "confidence_level": "deterministic_curve",
             "phase": "sov",
         }))
+    }
+
+    /// Get SRV from Treasury Kernel
+    /// Returns SRV in cents (8 decimal precision stored, converted to cents for API)
+    async fn get_srv_from_treasury(&self) -> u64 {
+        let blockchain = self.blockchain.read().await;
+        
+        if let Some(kernel) = blockchain.treasury_kernel.as_ref() {
+            // SRV is stored with 8 decimals, convert to cents (2 decimals)
+            // SRVState.current_srv has 8 decimal precision
+            let srv_8dec = kernel.srv_state().current_srv;
+            // Convert: value * 100 / 100_000_000 = value / 1_000_000
+            srv_8dec / 1_000_000
+        } else {
+            // Fallback to genesis SRV if kernel not initialized
+            2180000u64 // $0.0218
+        }
+    }
+
+    /// Get circulating supply from Treasury Kernel
+    async fn get_circulating_supply_from_treasury(&self, blockchain: &Blockchain) -> u64 {
+        if let Some(kernel) = blockchain.treasury_kernel.as_ref() {
+            kernel.srv_state().circulating_supply_sov
+        } else {
+            // Fallback to genesis supply
+            50_000_000_000_000_000u64 // 50M SOV with 8 decimals
+        }
     }
 
     fn get_curve_valuation(&self, token: &BondingCurveToken, price_type: &str) -> Result<Valuation> {

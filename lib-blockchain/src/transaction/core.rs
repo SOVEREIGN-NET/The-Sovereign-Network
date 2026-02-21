@@ -1559,6 +1559,142 @@ impl Transaction {
     pub fn is_empty(&self) -> bool {
         self.inputs.is_empty() && self.outputs.is_empty()
     }
+
+    /// Create a new bonding curve deploy transaction with an explicit chain id.
+    pub fn new_bonding_curve_deploy_with_chain_id(
+        chain_id: u8,
+        bonding_curve_deploy_data: BondingCurveDeployData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 2,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveDeploy,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: Some(bonding_curve_deploy_data),
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+        }
+    }
+
+    /// Create a new bonding curve buy transaction with an explicit chain id.
+    pub fn new_bonding_curve_buy_with_chain_id(
+        chain_id: u8,
+        bonding_curve_buy_data: BondingCurveBuyData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 2,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveBuy,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: Some(bonding_curve_buy_data),
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+        }
+    }
+
+    /// Create a new bonding curve sell transaction with an explicit chain id.
+    pub fn new_bonding_curve_sell_with_chain_id(
+        chain_id: u8,
+        bonding_curve_sell_data: BondingCurveSellData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 2,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveSell,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: Some(bonding_curve_sell_data),
+            bonding_curve_graduate_data: None,
+        }
+    }
+
+    /// Create a new bonding curve graduate transaction with an explicit chain id.
+    pub fn new_bonding_curve_graduate_with_chain_id(
+        chain_id: u8,
+        bonding_curve_graduate_data: BondingCurveGraduateData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 2,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveGraduate,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: Some(bonding_curve_graduate_data),
+        }
+    }
 }
 
 impl TransactionInput {
