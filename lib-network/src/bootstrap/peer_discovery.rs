@@ -97,12 +97,14 @@ pub async fn discover_bootstrap_peers(
     tracing::info!("Attempting to discover {} bootstrap peers", bootstrap_addresses.len());
 
     for address in bootstrap_addresses {
+        let normalized_address = normalize_bootstrap_address(address);
+
         // Extract IP address for rate limiting
-        let ip_address = if let Ok(addr) = address.parse::<std::net::SocketAddr>() {
+        let ip_address = if let Ok(addr) = normalized_address.parse::<std::net::SocketAddr>() {
             addr.ip().to_string()
         } else {
             // If we can't parse the address yet, use the full address string
-            address.clone()
+            normalized_address.to_string()
         };
         
         // SECURITY FIX: Check rate limit before attempting connection
@@ -115,7 +117,7 @@ pub async fn discover_bootstrap_peers(
             }
         }
         
-        match connect_to_bootstrap_peer(address, local_identity).await {
+        match build_bootstrap_peer_info(address, local_identity).await {
             Ok(peer_info) => {
                 tracing::info!(
                     "✅ Successfully connected to bootstrap peer {} - NodeId: {}",
@@ -284,23 +286,23 @@ mod tests {
         let identity = create_test_identity("test-device");
         
         // Test empty address
-        let result = connect_to_bootstrap_peer("", &identity).await;
+        let result = build_bootstrap_peer_info("", &identity).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be empty"));
         
         // Test address with null byte
-        let result = connect_to_bootstrap_peer("127.0.0.1\0:9333", &identity).await;
+        let result = build_bootstrap_peer_info("127.0.0.1\0:9333", &identity).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("null byte"));
         
         // Test address with invalid characters
-        let result = connect_to_bootstrap_peer("127.0.0.1;rm -rf /:9333", &identity).await;
+        let result = build_bootstrap_peer_info("127.0.0.1;rm -rf /:9333", &identity).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("invalid characters"));
         
         // Test address too long
         let long_address = "a".repeat(300);
-        let result = connect_to_bootstrap_peer(&long_address, &identity).await;
+        let result = build_bootstrap_peer_info(&long_address, &identity).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("too long"));
     }
@@ -345,7 +347,7 @@ mod tests {
             protocols: vec![crate::protocols::NetworkProtocol::QUIC],
             addresses: [(
                 crate::protocols::NetworkProtocol::QUIC,
-                "127.0.0.1:9333".to_string(),
+                "127.0.0.1:9334".to_string(),
             )]
             .iter()
             .cloned()
@@ -386,20 +388,20 @@ mod tests {
     }
 }
 
-/// Connect to a bootstrap peer
+/// Build conservative bootstrap peer metadata from a configured address.
 /// 
 /// # Arguments
 /// * `address` - Bootstrap peer address to connect to
 /// * `local_identity` - Local identity for deriving NodeId
 /// 
 /// # Returns
-/// PeerInfo with identity-derived NodeId
+/// `PeerInfo` entry suitable for registry insertion
 /// 
 /// # Security
 /// - Validates address format before parsing
 /// - Rejects addresses with null bytes or dangerous characters
 /// - Validates IP/port format
-async fn connect_to_bootstrap_peer(address: &str, _local_identity: &ZhtpIdentity) -> Result<PeerInfo> {
+async fn build_bootstrap_peer_info(address: &str, _local_identity: &ZhtpIdentity) -> Result<PeerInfo> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // SECURITY FIX: Input validation for bootstrap address
@@ -424,12 +426,14 @@ async fn connect_to_bootstrap_peer(address: &str, _local_identity: &ZhtpIdentity
         return Err(anyhow!("Bootstrap address too long (max 256 chars)"));
     }
 
-    let normalized_address = address
-        .trim_start_matches("zhtp://")
-        .trim_start_matches("quic://");
+    let normalized_address = normalize_bootstrap_address(address);
     let addr: std::net::SocketAddr = normalized_address.parse()
         .map_err(|e| anyhow!("Invalid bootstrap address '{}': {}", address, e))?;
-    let synthetic_pubkey = PublicKey::new(lib_crypto::hash_blake3(normalized_address.as_bytes()).to_vec());
+    let synthetic_pubkey = PublicKey {
+        dilithium_pk: Vec::new(),
+        kyber_pk: Vec::new(),
+        key_id: lib_crypto::hash_blake3(normalized_address.as_bytes()),
+    };
 
     let mut addresses = HashMap::new();
     addresses.insert(crate::protocols::NetworkProtocol::QUIC, addr.to_string());
@@ -453,6 +457,13 @@ async fn connect_to_bootstrap_peer(address: &str, _local_identity: &ZhtpIdentity
         compute_capacity: 100,
         connection_type: crate::protocols::NetworkProtocol::QUIC,
     })
+}
+
+fn normalize_bootstrap_address(address: &str) -> &str {
+    address
+        .strip_prefix("zhtp://")
+        .or_else(|| address.strip_prefix("quic://"))
+        .unwrap_or(address)
 }
 
 /// Peer information structure with identity-based NodeId

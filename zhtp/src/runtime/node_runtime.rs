@@ -427,7 +427,9 @@ impl NodeRuntime for DefaultNodeRuntime {
                 let has_quic = peer
                     .addresses
                     .iter()
-                    .any(|addr| addr.contains("quic://"));
+                    .any(|addr| {
+                        addr.contains("quic://") || addr.parse::<std::net::SocketAddr>().is_ok()
+                    });
 
                 if has_quic {
                     vec![NetworkProtocol::QUIC, NetworkProtocol::BluetoothLE]
