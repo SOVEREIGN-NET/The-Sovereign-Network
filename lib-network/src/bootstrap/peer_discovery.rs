@@ -15,8 +15,6 @@ use crate::peer_registry::{
 };
 use crate::identity::unified_peer::UnifiedPeerId;
 
-// SECURITY FIX: Add dirs crate for secure data directory
-use dirs;
 
 // SECURITY FIX: Bootstrap connection rate limiter
 // Prevents DoS attacks via rapid connection attempts
@@ -344,9 +342,9 @@ mod tests {
             node_id: Some(peer_node_id),
             did: "did:zhtp:test123".to_string(),
             device_name: "test-device".to_string(),
-            protocols: vec![crate::protocols::NetworkProtocol::TCP],
+            protocols: vec![crate::protocols::NetworkProtocol::QUIC],
             addresses: [(
-                crate::protocols::NetworkProtocol::TCP,
+                crate::protocols::NetworkProtocol::QUIC,
                 "127.0.0.1:9333".to_string(),
             )]
             .iter()
@@ -357,7 +355,7 @@ mod tests {
             bandwidth_capacity: 1_000_000,
             storage_capacity: 1_000_000_000,
             compute_capacity: 100,
-            connection_type: crate::protocols::NetworkProtocol::TCP,
+            connection_type: crate::protocols::NetworkProtocol::QUIC,
         };
         
         // Add peer to registry
@@ -401,8 +399,7 @@ mod tests {
 /// - Validates address format before parsing
 /// - Rejects addresses with null bytes or dangerous characters
 /// - Validates IP/port format
-async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity) -> Result<PeerInfo> {
-    use tokio::net::TcpStream;
+async fn connect_to_bootstrap_peer(address: &str, _local_identity: &ZhtpIdentity) -> Result<PeerInfo> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // SECURITY FIX: Input validation for bootstrap address
@@ -427,131 +424,34 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
         return Err(anyhow!("Bootstrap address too long (max 256 chars)"));
     }
 
-    let addr: std::net::SocketAddr = address.parse()
+    let normalized_address = address
+        .trim_start_matches("zhtp://")
+        .trim_start_matches("quic://");
+    let addr: std::net::SocketAddr = normalized_address.parse()
         .map_err(|e| anyhow!("Invalid bootstrap address '{}': {}", address, e))?;
-
-    let mut stream = TcpStream::connect(addr).await
-        .map_err(|e| {
-            tracing::warn!("Failed to connect to bootstrap peer {}: {}", address, e);
-            anyhow!("Connection failed to {}: {}", address, e)
-        })?;
-
-    // SECURITY FIX: Use secure data directory for nonce cache
-    // Prevents world-writable /tmp vulnerabilities
-    let cache_dir = if let Some(data_dir) = dirs::data_dir() {
-        data_dir.join("zhtp").join("bootstrap")
-    } else {
-        // Fallback to secure location if no standard data dir
-        std::path::PathBuf::from("/var/lib/zhtp/bootstrap")
-    };
-    
-    // Create directory if it doesn't exist
-    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-        tracing::warn!("Failed to create secure cache directory: {}", e);
-    } else {
-        // Set secure permissions (read/write for owner only)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Err(e) = std::fs::set_permissions(&cache_dir, std::fs::Permissions::from_mode(0o700)) {
-                tracing::warn!("Failed to set secure permissions on cache directory: {}", e);
-            }
-        }
-    }
-    
-    let cache_path = cache_dir.join("nonce_cache.db");
-    
-    // Use the standard open_default method for secure nonce cache
-    // Derive network epoch from genesis hash (uses environment-appropriate fallback)
-    let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
-    let nonce_cache = crate::handshake::NonceCache::open_default(&cache_path, 300, network_epoch)
-        .map_err(|e| {
-            tracing::warn!("Failed to open secure nonce cache, bootstrap may be vulnerable to replay attacks: {}", e);
-            anyhow!("Nonce cache initialization failed: {}", e)
-        })?;
-    
-    let binding = crate::handshake::derive_channel_binding_from_addrs(
-        stream.local_addr()?,
-        stream.peer_addr()?,
-    );
-    let ctx = crate::handshake::HandshakeContext::new(nonce_cache)
-        .with_roles(crate::handshake::HandshakeRole::Client, crate::handshake::HandshakeRole::Server)
-        .with_channel_binding(binding)
-        .with_required_capabilities(vec!["tcp".to_string()])
-        .with_channel_binding_required(true);
-
-    // Set up capabilities for bootstrap handshake
-    // SECURITY: PQC enabled for post-quantum security (P1-2 fix)
-    let capabilities = crate::handshake::HandshakeCapabilities {
-        protocols: vec!["tcp".to_string(), "quic".to_string()],
-        max_throughput: 10_000_000, // 10 MB/s
-        max_message_size: 1024 * 1024, // 1 MB
-        encryption_methods: vec!["chacha20-poly1305".to_string()],
-        pqc_capability: crate::handshake::PqcCapability::HybridEd25519Dilithium5, // Hybrid mode for quantum resistance
-        dht_capable: true,
-        relay_capable: false,
-        storage_capacity: 0,
-        web4_capable: false,
-        custom_features: vec![],
-    };
-
-    // Perform UHP authenticated handshake with bootstrap peer
-    tracing::info!("Initiating UHP handshake with bootstrap peer {} (PQC enabled)", address);
-
-    let result = crate::handshake::handshake_as_initiator(
-        &mut stream,
-        &ctx,
-        local_identity,
-        capabilities,
-    ).await.map_err(|e| {
-        tracing::error!("UHP handshake failed with bootstrap peer {}: {}", address, e);
-        anyhow!("UHP handshake failed with {}: {}", address, e)
-    })?;
-
-    // Extract authenticated peer information from handshake result
-    let peer_identity = &result.peer_identity;
-    let peer_node_id = peer_identity.node_id.clone();
-    let peer_did = peer_identity.did.clone();
-    let peer_device = peer_identity.device_id.clone();
-    let peer_public_key = peer_identity.public_key.clone();
-
-    // Verify NodeId matches DID + device derivation
-    let expected_node_id = NodeId::from_did_device(&peer_did, &peer_device)?;
-    if peer_node_id.as_bytes() != expected_node_id.as_bytes() {
-        return Err(anyhow!(
-            "Bootstrap peer {} NodeId verification failed: claimed {} but expected {} from DID {} + device {}",
-            address,
-            peer_node_id.to_hex(),
-            expected_node_id.to_hex(),
-            peer_did,
-            peer_device
-        ));
-    }
+    let synthetic_pubkey = PublicKey::new(lib_crypto::hash_blake3(normalized_address.as_bytes()).to_vec());
 
     let mut addresses = HashMap::new();
-    addresses.insert(crate::protocols::NetworkProtocol::TCP, address.to_string());
+    addresses.insert(crate::protocols::NetworkProtocol::QUIC, addr.to_string());
 
     tracing::info!(
-        "✅ Authenticated bootstrap peer {} - NodeId: {} (DID: {}, device: {})",
-        address,
-        peer_node_id.to_hex(),
-        peer_did,
-        peer_device
+        "✅ Registered bootstrap peer {} for QUIC bootstrap discovery",
+        address
     );
 
     Ok(PeerInfo {
-        id: peer_public_key,
-        node_id: Some(peer_node_id),
-        did: peer_did,
-        device_name: peer_device,
-        protocols: vec![crate::protocols::NetworkProtocol::TCP],
+        id: synthetic_pubkey,
+        node_id: None,
+        did: String::new(),
+        device_name: "bootstrap".to_string(),
+        protocols: vec![crate::protocols::NetworkProtocol::QUIC],
         addresses,
         last_seen: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-        reputation: 1.0,
+        reputation: 0.5,
         bandwidth_capacity: 1_000_000,
         storage_capacity: 1_000_000_000,
         compute_capacity: 100,
-        connection_type: crate::protocols::NetworkProtocol::TCP,
+        connection_type: crate::protocols::NetworkProtocol::QUIC,
     })
 }
 

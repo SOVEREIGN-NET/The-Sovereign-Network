@@ -302,7 +302,7 @@ async fn send_immediate_announcement(
         mesh_port,
         quic_port: 9334, // QUIC-only nodes use port 9334
         local_ip,
-        protocols: vec!["quic".to_string(), "tcp".to_string(), "bluetooth".to_string(), "wifi_direct".to_string()],
+        protocols: vec!["quic".to_string(), "bluetooth".to_string(), "wifi_direct".to_string()],
         announced_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -371,7 +371,7 @@ async fn broadcast_announcements(
             mesh_port,
             quic_port: 9334, // QUIC-only nodes use port 9334
             local_ip,
-            protocols: vec!["quic".to_string(), "tcp".to_string(), "bluetooth".to_string(), "wifi_direct".to_string()],
+            protocols: vec!["quic".to_string(), "bluetooth".to_string(), "wifi_direct".to_string()],
             announced_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
