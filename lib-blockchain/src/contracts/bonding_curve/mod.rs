@@ -21,6 +21,7 @@ pub mod types;
 pub mod events;
 pub mod token;
 pub mod registry;
+pub mod event_indexer;
 
 // Re-export core types
 pub use types::{
@@ -29,9 +30,8 @@ pub use types::{
 };
 pub use events::{
     BondingCurveEvent, ReserveUpdateReason, EventIndexer, InMemoryEventIndexer,
-    // AMM events
-    // LiquidityAdded, LiquidityRemoved, SwapExecuted - these are variants of BondingCurveEvent
 };
+pub use event_indexer::SledEventIndexer;
 pub use token::BondingCurveToken;
 pub use registry::{BondingCurveRegistry, RegistryStats};
 
