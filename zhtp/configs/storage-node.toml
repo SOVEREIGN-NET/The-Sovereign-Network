@@ -5,7 +5,7 @@
 # Core Node Settings
 mesh_mode = "Hybrid"
 security_level = "High"
-environment = "Mainnet"
+runtime_role = "RELAY"
 data_directory = "./data/mainnet-storage"  # Mainnet-specific directory
 
 [crypto_config]
@@ -44,7 +44,7 @@ pricing_tier = "cold"  # Optimized for bulk storage
 [network_config]
 mesh_port = 33444
 max_peers = 100  # Moderate peer count, focus on storage
-protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
+protocols = ["quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = ["100.94.204.6:9333", "storage.sovereign.net:9333"]
 long_range_relays = false
 

@@ -34,11 +34,31 @@ pub struct PartialNetworkConfig {
     pub network_id: Option<String>,
 }
 
+/// Runtime node typology used for invariant enforcement.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RuntimeRole {
+    FULL,
+    EDGE,
+    VALIDATOR,
+    RELAY,
+    BOOTSTRAP,
+    SERVICE,
+}
+
+impl Default for RuntimeRole {
+    fn default() -> Self {
+        RuntimeRole::FULL
+    }
+}
+
 /// Complete node configuration aggregating all packages
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeConfig {
     // Core node settings
     pub node_id: [u8; 32],
+    #[serde(default)]
+    pub runtime_role: RuntimeRole,
     pub mesh_mode: MeshMode,
     pub security_level: SecurityLevel,
     pub environment: Environment,
@@ -131,7 +151,7 @@ fn default_blockchain_storage() -> u64 {
 pub struct NetworkConfig {
     pub mesh_port: u16,
     pub max_peers: usize,
-    pub protocols: Vec<String>, // bluetooth, wifi_direct, lorawan, tcp
+    pub protocols: Vec<String>, // quic, bluetooth, wifi_direct, lorawan
     pub bootstrap_peers: Vec<String>,
     pub long_range_relays: bool,
     
@@ -222,6 +242,10 @@ pub struct ProtocolsConfig {
     /// Currently not used - future implementation for dynamic protocol selection
     #[serde(default = "default_quic_priority")]
     pub quic_priority: u8,
+
+    /// Enable RPC gateway plane (SERVICE runtime only).
+    #[serde(default)]
+    pub gateway_enabled: bool,
 }
 
 fn default_quic_port() -> u16 {
@@ -477,6 +501,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             node_id: [0u8; 32], // Will be generated during initialization
+            runtime_role: RuntimeRole::FULL,
             mesh_mode: MeshMode::Hybrid,
             security_level: SecurityLevel::High,
             environment: Environment::Development,
@@ -526,7 +551,6 @@ impl Default for NodeConfig {
                     "wifi_direct".to_string(),
                     "lorawan".to_string(),
                     "quic".to_string(),
-                    "tcp".to_string()
                 ],
                 bootstrap_peers: vec![
                     "127.0.0.1:9333".to_string(),
@@ -579,6 +603,7 @@ impl Default for NodeConfig {
                 enable_bluetooth: false,    // Bluetooth disabled by default
                 enable_mdns: true,          // mDNS enabled for peer discovery
                 quic_priority: 1,           // Default priority weight
+                gateway_enabled: false,
             },
             
             rewards_config: RewardsConfig::default(),
@@ -845,6 +870,7 @@ mod tests {
             enable_bluetooth: false,  // POLICY: Bluetooth disabled
             enable_mdns: true,
             quic_priority: 1,
+            gateway_enabled: false,
         };
 
         let requested = vec![
@@ -890,6 +916,7 @@ mod tests {
             enable_bluetooth: true,  // POLICY: Bluetooth enabled
             enable_mdns: true,
             quic_priority: 1,
+            gateway_enabled: false,
         };
 
         let requested = vec![
@@ -922,6 +949,7 @@ mod tests {
             enable_bluetooth: true,
             enable_mdns: true,
             quic_priority: 1,
+            gateway_enabled: false,
         };
 
         let requested = vec![
@@ -960,6 +988,7 @@ mod tests {
             enable_bluetooth: false,
             enable_mdns: true,
             quic_priority: 1,
+            gateway_enabled: false,
         };
 
         let requested = vec![];

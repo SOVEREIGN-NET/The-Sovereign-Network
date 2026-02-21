@@ -5,7 +5,7 @@
 # Core Node Settings
 mesh_mode = "Hybrid"
 security_level = "High"
-environment = "Testnet"
+runtime_role = "RELAY"
 data_directory = "./data/testnet-storage"
 
 [crypto_config]
@@ -39,7 +39,7 @@ pricing_tier = "cold"  # Low-cost storage for testing
 [network_config]
 mesh_port = 33445  # Testnet mesh port
 max_peers = 80
-protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
+protocols = ["quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = [
     "testnet-seed1.sovereign.net:9334",
     "testnet-seed2.sovereign.net:9334"

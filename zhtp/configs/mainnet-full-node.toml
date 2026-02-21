@@ -6,9 +6,9 @@
 # CORE NODE SETTINGS - MAINNET
 # ============================================================================
 
-mesh_mode = "Hybrid"         # Support both mesh and TCP/IP
+mesh_mode = "Hybrid"         # Support both mesh and QUIC connectivity
 security_level = "Maximum"   # Maximum security for production
-environment = "Mainnet"      # Production environment
+runtime_role = "FULL"
 data_directory = "./data/mainnet"  # Mainnet-specific data isolation
 
 # ============================================================================
@@ -62,7 +62,7 @@ pricing_tier = "warm"        # Balanced storage tier
 [network_config]
 mesh_port = 33444            # Standard mainnet mesh port
 max_peers = 200              # High peer count for production
-protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
+protocols = ["quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = [
     "mainnet-seed1.sovereign.net:9333",
     "mainnet-seed2.sovereign.net:9333",
