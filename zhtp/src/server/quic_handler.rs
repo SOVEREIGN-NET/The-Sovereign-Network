@@ -86,6 +86,8 @@ const MAX_MESSAGE_SIZE: u64 = 1024 * 1024;
 /// Per-IP rate limit for PQC handshakes
 const MAX_HANDSHAKES_PER_IP: usize = 10;
 const HANDSHAKE_RATE_WINDOW: Duration = Duration::from_secs(60);
+const LEGACY_HTTP_OVER_QUIC_REJECTION: &str =
+    "HTTP-over-QUIC compatibility is not supported. Use native ZHTP framing.";
 
 /// DEPRECATED: ControlPlaneSession replaced by V2Session in PR #816
 /// V2Session provides HMAC-SHA3-256 MAC verification with monotonic counter replay protection.
@@ -134,6 +136,8 @@ enum ProtocolType {
     PqcHandshake(Vec<u8>),
     /// Native ZHTP protocol (API request)
     NativeZhtp(Vec<u8>),
+    /// Legacy HTTP request-line payload over QUIC (unsupported compatibility mode)
+    LegacyHttp(Vec<u8>),
     /// Encrypted mesh message (post-handshake)
     MeshMessage(Vec<u8>),
     /// Unknown/unsupported protocol
@@ -1025,6 +1029,10 @@ impl QuicHandler {
                 // Parse ZHTP request and validate it's a read operation
                 self.handle_public_zhtp_stream(initial_data, recv, send).await
             }
+            ProtocolType::LegacyHttp(_) => {
+                self.send_error_response(send, LEGACY_HTTP_OVER_QUIC_REJECTION)
+                    .await
+            }
             _ => {
                 // Reject non-ZHTP protocols on public connection
                 self.send_error_response(send, "Public connections only support native ZHTP read requests").await
@@ -1063,6 +1071,11 @@ impl QuicHandler {
                 self.handle_zhtp_stream_with_prefix(initial_data, recv, send).await?;
                 // Continue accepting more streams on this connection
                 self.accept_additional_streams(connection, None);
+            }
+            ProtocolType::LegacyHttp(_) => {
+                warn!("❌ Legacy HTTP request-line payload rejected from {}", peer_addr);
+                self.send_error_response(send, LEGACY_HTTP_OVER_QUIC_REJECTION)
+                    .await?;
             }
             ProtocolType::MeshMessage(_initial_data) => {
                 warn!("📨 Mesh message on first stream from {} - should be after handshake", peer_addr);
@@ -1147,6 +1160,7 @@ impl QuicHandler {
                     Err(anyhow!("Mesh messages only valid on peer connections"))
                 }
             }
+            ProtocolType::LegacyHttp(_) => Err(anyhow!(LEGACY_HTTP_OVER_QUIC_REJECTION)),
             ProtocolType::PqcHandshake(_) => {
                 warn!("PQC handshake on non-first stream - ignoring");
                 Err(anyhow!("PQC handshake only valid on first stream"))
@@ -1346,6 +1360,12 @@ impl QuicHandler {
                     }
                 }
 
+                // 3. Explicit HTTP request-line detection for deterministic rejection.
+                if Self::is_http_request_line(&buffer) {
+                    debug!("❌ Legacy HTTP request-line payload detected on QUIC stream");
+                    return Ok(ProtocolType::LegacyHttp(buffer));
+                }
+
                 // 4. Check for encrypted mesh message (typically starts with encryption header)
                 // After handshake, mesh messages are ChaCha20 encrypted
                 // No reliable way to detect without trying to decrypt, so treat as mesh if all else fails
@@ -1368,6 +1388,18 @@ impl QuicHandler {
             }
             }
         }
+    }
+
+    fn is_http_request_line(buffer: &[u8]) -> bool {
+        buffer.starts_with(b"GET ")
+            || buffer.starts_with(b"POST ")
+            || buffer.starts_with(b"PUT ")
+            || buffer.starts_with(b"DELETE ")
+            || buffer.starts_with(b"HEAD ")
+            || buffer.starts_with(b"OPTIONS ")
+            || buffer.starts_with(b"PATCH ")
+            || buffer.starts_with(b"CONNECT ")
+            || buffer.starts_with(b"TRACE ")
     }
 }
 
@@ -1419,21 +1451,15 @@ mod tests {
         ];
 
         for (method_name, method_bytes) in http_methods {
-            let magic_str = String::from_utf8_lossy(&method_bytes[0..method_bytes.len().min(8)]);
-
-            let detected =
-                magic_str.starts_with("GET ") ||
-                magic_str.starts_with("POST ") ||
-                magic_str.starts_with("PUT ") ||
-                magic_str.starts_with("DELETE ") ||
-                magic_str.starts_with("HEAD ") ||
-                magic_str.starts_with("OPTIONS ") ||
-                magic_str.starts_with("PATCH ") ||
-                magic_str.starts_with("CONNECT ") ||
-                magic_str.starts_with("TRACE ");
+            let detected = QuicHandler::is_http_request_line(method_bytes);
 
             assert!(detected, "Failed to detect HTTP method: {}", method_name);
         }
+    }
+
+    #[test]
+    fn test_http_request_line_detection_false_for_native_zhtp() {
+        assert!(!QuicHandler::is_http_request_line(b"ZHTP\x01\x00\x00\x00\x10test data"));
     }
 
     // TODO: Fix this test - BufferedStream uses Quinn's RecvStream, not tokio::io::DuplexStream
