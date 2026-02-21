@@ -124,6 +124,8 @@ impl ConnectionMode {
             // Both v1 and v2 ALPN use the v2 protocol (v1 is deprecated but accepted for compatibility)
             Some(b"zhtp-uhp/1") | Some(b"zhtp-uhp/2") => ConnectionMode::ControlPlane,
             Some(b"zhtp-mesh/1") => ConnectionMode::Mesh,
+            // Legacy HTTP-compat ALPN identifiers explicitly map to public read-only mode.
+            Some(b"zhtp-http/1") | Some(b"zhtp/1.0") | Some(b"h3") => ConnectionMode::Public,
             _ => ConnectionMode::Public, // Default to public read-only for unknown (safe default)
         }
     }
@@ -1460,6 +1462,44 @@ mod tests {
     #[test]
     fn test_http_request_line_detection_false_for_native_zhtp() {
         assert!(!QuicHandler::is_http_request_line(b"ZHTP\x01\x00\x00\x00\x10test data"));
+    }
+
+    #[test]
+    fn test_connection_mode_from_alpn_explicit_mappings() {
+        assert_eq!(
+            ConnectionMode::from_alpn(Some(b"zhtp-public/1")),
+            ConnectionMode::Public
+        );
+        assert_eq!(
+            ConnectionMode::from_alpn(Some(b"zhtp-uhp/1")),
+            ConnectionMode::ControlPlane
+        );
+        assert_eq!(
+            ConnectionMode::from_alpn(Some(b"zhtp-uhp/2")),
+            ConnectionMode::ControlPlane
+        );
+        assert_eq!(
+            ConnectionMode::from_alpn(Some(b"zhtp-mesh/1")),
+            ConnectionMode::Mesh
+        );
+        assert_eq!(
+            ConnectionMode::from_alpn(Some(b"zhtp-http/1")),
+            ConnectionMode::Public
+        );
+        assert_eq!(
+            ConnectionMode::from_alpn(Some(b"zhtp/1.0")),
+            ConnectionMode::Public
+        );
+        assert_eq!(ConnectionMode::from_alpn(Some(b"h3")), ConnectionMode::Public);
+
+        // No ALPN negotiated — must default to least-privileged (Public), never elevate.
+        assert_eq!(ConnectionMode::from_alpn(None), ConnectionMode::Public);
+
+        // Unknown ALPN — must fall to Public, not ControlPlane or Mesh.
+        assert_eq!(
+            ConnectionMode::from_alpn(Some(b"unknown-protocol/99")),
+            ConnectionMode::Public
+        );
     }
 
     // TODO: Fix this test - BufferedStream uses Quinn's RecvStream, not tokio::io::DuplexStream
