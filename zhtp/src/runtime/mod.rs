@@ -59,7 +59,13 @@ pub use node_runtime::{
 pub use node_runtime_orchestrator::NodeRuntimeOrchestrator;
 pub use shared_blockchain::*;
 pub use shared_dht::*;
-pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_blockchain, is_global_blockchain_available};
+pub use blockchain_provider::{
+    initialize_global_blockchain_provider,
+    set_global_blockchain,
+    set_global_blockchain_access_mode,
+    is_global_blockchain_available,
+    BlockchainAccessMode,
+};
 pub use identity_manager_provider::{initialize_global_identity_manager_provider, set_global_identity_manager, get_global_identity_manager};
 pub use network_blockchain_provider::ZhtpBlockchainProvider;
 pub use mesh_router_provider::{initialize_global_mesh_router_provider, set_global_mesh_router, get_broadcast_metrics};
@@ -571,6 +577,7 @@ impl RuntimeOrchestrator {
             // Set the blockchain as global immediately since we loaded it
             let blockchain_arc = Arc::new(RwLock::new(blockchain));
             set_global_blockchain(blockchain_arc.clone()).await?;
+            self.configure_global_blockchain_access_mode().await?;
             info!(" Global blockchain provider initialized with loaded blockchain");
 
             // Push wallet to BlockchainComponent if already registered
@@ -643,6 +650,7 @@ impl RuntimeOrchestrator {
         
         // Set in global provider BEFORE BlockchainComponent starts
         set_global_blockchain(blockchain_arc.clone()).await?;
+        self.configure_global_blockchain_access_mode().await?;
         info!(" Global blockchain provider initialized with user wallet funding");
         
         // CRITICAL: Also push wallet to BlockchainComponent if already registered
@@ -713,6 +721,7 @@ impl RuntimeOrchestrator {
         
         // Set in global provider so sync handlers can access it
         crate::runtime::blockchain_provider::set_global_blockchain(blockchain_arc.clone()).await?;
+        self.configure_global_blockchain_access_mode().await?;
         info!("✓ Temporary blockchain initialized for sync reception");
         
         // FIX: Store bootstrap peers in global provider so UnifiedServer can access them
@@ -725,6 +734,17 @@ impl RuntimeOrchestrator {
         info!("✓ Blockchain ready to receive sync from network peers");
         Ok(())
     }
+
+    async fn configure_global_blockchain_access_mode(&self) -> Result<()> {
+        let is_edge_node = *self.is_edge_node.read().await;
+        let access_mode = if is_edge_node {
+            BlockchainAccessMode::ReadOnly
+        } else {
+            BlockchainAccessMode::ReadWrite
+        };
+
+        set_global_blockchain_access_mode(access_mode).await
+    }
     
     /// Check if this node is configured as an edge node
     pub async fn is_edge_node(&self) -> bool {
@@ -734,6 +754,9 @@ impl RuntimeOrchestrator {
     /// Set edge node mode (overrides auto-detection)
     pub async fn set_edge_node(&self, is_edge: bool) {
         *self.is_edge_node.write().await = is_edge;
+        if let Err(e) = self.configure_global_blockchain_access_mode().await {
+            warn!("Failed to update global blockchain access mode after edge toggle: {}", e);
+        }
     }
 
     /// Set edge node max headers configuration
@@ -838,6 +861,7 @@ impl RuntimeOrchestrator {
             let blockchain = lib_blockchain::Blockchain::new()?;
             let blockchain_arc = Arc::new(RwLock::new(blockchain));
             set_global_blockchain(blockchain_arc.clone()).await?;
+            self.configure_global_blockchain_access_mode().await?;
             info!("✓ Blockchain provider initialized for network sync");
 
             // Store bootstrap peers for mesh sync
@@ -1059,6 +1083,7 @@ impl RuntimeOrchestrator {
             
             // Set in global provider so BlockchainComponent can access it
             set_global_blockchain(blockchain_arc.clone()).await?;
+            self.configure_global_blockchain_access_mode().await?;
             info!(" Global blockchain provider initialized");
         } else {
             info!(" Using existing global blockchain instance (genesis already set)");
@@ -1646,6 +1671,9 @@ impl RuntimeOrchestrator {
                     if let Err(e) = set_global_blockchain(blockchain_arc).await {
                         warn!("Failed to set global blockchain: {}", e);
                     } else {
+                        if let Err(e) = self.configure_global_blockchain_access_mode().await {
+                            warn!("Failed to configure global blockchain access mode: {}", e);
+                        }
                         info!("Global blockchain provider updated");
                     }
                     
