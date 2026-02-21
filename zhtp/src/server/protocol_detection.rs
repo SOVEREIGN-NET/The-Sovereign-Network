@@ -110,4 +110,13 @@ mod tests {
         let buffer = b"legacy-tcp-bootstrap-payload";
         assert_eq!(IncomingProtocol::detect_quic(buffer), IncomingProtocol::Unknown);
     }
+
+    #[test]
+    fn bootstrap_marker_is_detected_explicitly() {
+        let buffer = b"ZHTP/1.0 BOOTSTRAP DISCOVERY";
+        assert_eq!(
+            IncomingProtocol::detect_quic(buffer),
+            IncomingProtocol::Bootstrap
+        );
+    }
 }
