@@ -31,3 +31,15 @@ async fn rejects_gateway_on_non_service_runtime() {
     let result = validate_complete_configuration(&config).await;
     assert!(result.is_err(), "gateway must be service-only");
 }
+
+#[tokio::test]
+async fn accepts_validator_runtime_with_validator_enabled() {
+    let mut config = NodeConfig::default();
+    config.runtime_role = RuntimeRole::Validator;
+    config.consensus_config.validator_enabled = true;
+    let result = validate_complete_configuration(&config).await;
+    assert!(
+        result.is_ok(),
+        "validator_enabled=true should be accepted for RuntimeRole::Validator"
+    );
+}

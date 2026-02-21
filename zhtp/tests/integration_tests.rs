@@ -23,12 +23,18 @@ async fn validator_and_non_validator_configs_pass_gate_validation() {
     bootstrap_config.runtime_role = RuntimeRole::Bootstrap;
     bootstrap_config.consensus_config.validator_enabled = false;
 
+    let mut service_config = NodeConfig::default();
+    service_config.runtime_role = RuntimeRole::Service;
+    service_config.consensus_config.validator_enabled = false;
+    service_config.protocols_config.gateway_enabled = true;
+
     for (name, config) in [
         ("validator", validator_config),
         ("full", full_config),
         ("edge", edge_config),
         ("relay", relay_config),
         ("bootstrap", bootstrap_config),
+        ("service", service_config),
     ] {
         let result = validate_complete_configuration(&config).await;
         assert!(result.is_ok(), "{} config must pass readiness validation", name);
