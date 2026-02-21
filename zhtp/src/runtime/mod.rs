@@ -2,14 +2,14 @@
 //! 
 //! Coordinates the lifecycle and interactions of all ZHTP components
 
-use anyhow::{Result, Context};
+use anyhow::{Result, Context, bail};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, Mutex};
 use tokio::time::{Duration, Instant};
 use tracing::{info, warn, error, debug};
 
-use super::config::NodeConfig;
+use super::config::{NodeConfig, RuntimeRole};
 use crate::runtime::node_identity::{
     derive_node_id,
     log_runtime_node_identity,
@@ -63,6 +63,47 @@ pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_
 pub use identity_manager_provider::{initialize_global_identity_manager_provider, set_global_identity_manager, get_global_identity_manager};
 pub use network_blockchain_provider::ZhtpBlockchainProvider;
 pub use mesh_router_provider::{initialize_global_mesh_router_provider, set_global_mesh_router, get_broadcast_metrics};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupProfile {
+    Full,
+    Edge,
+    Validator,
+    Relay,
+    Bootstrap,
+    Service,
+}
+
+fn startup_profile_for_role(role: RuntimeRole) -> StartupProfile {
+    match role {
+        RuntimeRole::Full => StartupProfile::Full,
+        RuntimeRole::Edge => StartupProfile::Edge,
+        RuntimeRole::Validator => StartupProfile::Validator,
+        RuntimeRole::Relay => StartupProfile::Relay,
+        RuntimeRole::Bootstrap => StartupProfile::Bootstrap,
+        RuntimeRole::Service => StartupProfile::Service,
+    }
+}
+
+fn validate_runtime_startup_invariants(config: &NodeConfig) -> Result<()> {
+    match config.runtime_role {
+        RuntimeRole::Validator if !config.consensus_config.validator_enabled => {
+            bail!("runtime_role=VALIDATOR requires consensus_config.validator_enabled=true")
+        }
+        RuntimeRole::Edge
+        | RuntimeRole::Relay
+        | RuntimeRole::Bootstrap
+        | RuntimeRole::Service if config.consensus_config.validator_enabled => {
+            bail!(
+                "runtime_role={:?} cannot enable validator consensus role",
+                config.runtime_role
+            )
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
 
 /// Component status information
 #[derive(Debug, Clone, PartialEq)]
@@ -241,24 +282,9 @@ impl RuntimeOrchestrator {
         
         // Store shutdown monitor handle for cleanup
         let _shutdown_handle = shutdown_monitor;
-        // Detect node type from config
-        // Edge nodes are constrained devices that:
-        // 1. Don't validate blocks (validator_enabled = false)
-        // 2. Don't run smart contracts (resource constrained)
-        // 3. Don't host storage for others (hosted_storage_gb = 0 or very small)
-        //
-        // Note: blockchain_storage_gb is NOT counted - it grows dynamically
-        // Note: personal_storage_gb is NOT counted - user's own data
-        let hosted_storage = if config.storage_config.hosted_storage_gb > 0 {
-            config.storage_config.hosted_storage_gb
-        } else {
-            // Backward compatibility: use old storage_capacity_gb field
-            config.storage_config.storage_capacity_gb
-        };
-        
-        let is_edge_node = !config.consensus_config.validator_enabled 
-            && !config.blockchain_config.smart_contracts
-            && hosted_storage < 100;  // Less than 100 GB hosted storage = edge node
+        validate_runtime_startup_invariants(&config)?;
+        let is_edge_node = matches!(config.runtime_role, RuntimeRole::Edge);
+        let edge_max_headers = config.blockchain_config.edge_max_headers;
         
         let orchestrator = Self {
             config,
@@ -273,7 +299,7 @@ impl RuntimeOrchestrator {
             joined_existing_network: Arc::new(RwLock::new(false)),
             reward_orchestrator: Arc::new(RwLock::new(None)),
             is_edge_node: Arc::new(RwLock::new(is_edge_node)),
-            edge_max_headers: Arc::new(RwLock::new(500)),  // Default 500 headers (~100 KB)
+            edge_max_headers: Arc::new(RwLock::new(edge_max_headers)),
             pending_identity: Arc::new(RwLock::new(None)),
             startup_order: vec![
                 ComponentId::Crypto,      // Foundation layer
@@ -760,6 +786,17 @@ impl RuntimeOrchestrator {
     /// - lib-blockchain: Registers them on-chain (permanent storage)
     /// - RuntimeOrchestrator: Coordinates the flow
     pub async fn start_node(&self) -> Result<()> {
+        validate_runtime_startup_invariants(&self.config)?;
+        let startup_profile = startup_profile_for_role(self.config.runtime_role);
+        match startup_profile {
+            StartupProfile::Bootstrap => return self.start_bootstrap_node().await,
+            StartupProfile::Service => info!("🧩 Startup profile: SERVICE"),
+            StartupProfile::Validator => info!("🧩 Startup profile: VALIDATOR"),
+            StartupProfile::Full => info!("🧩 Startup profile: FULL"),
+            StartupProfile::Edge => info!("🧩 Startup profile: EDGE"),
+            StartupProfile::Relay => info!("🧩 Startup profile: RELAY"),
+        }
+
         info!("🚀 Starting ZHTP node with full startup sequence");
         
         // ========================================================================
@@ -1022,6 +1059,35 @@ impl RuntimeOrchestrator {
         info!("✅ ZHTP node started successfully");
         info!("🌐 ZHTP server active on port {}", self.config.protocols_config.api_port);
         
+        Ok(())
+    }
+
+    async fn start_bootstrap_node(&self) -> Result<()> {
+        info!("🚀 Starting bootstrap node runtime sequence");
+        use crate::runtime::components::{CryptoComponent, NetworkComponent, ProtocolsComponent};
+
+        self.register_component(Arc::new(CryptoComponent::new())).await?;
+        self.start_component(ComponentId::Crypto).await?;
+
+        self.register_component(Arc::new(NetworkComponent::new())).await?;
+        self.start_component(ComponentId::Network).await?;
+
+        if !is_global_blockchain_available().await {
+            let blockchain = lib_blockchain::Blockchain::new()?;
+            let blockchain_arc = Arc::new(RwLock::new(blockchain));
+            set_global_blockchain(blockchain_arc).await?;
+        }
+
+        self.register_component(Arc::new(ProtocolsComponent::new_with_ports(
+            self.config.environment,
+            self.config.protocols_config.api_port,
+            self.config.protocols_config.quic_port,
+            self.config.protocols_config.discovery_port,
+        )))
+        .await?;
+        self.start_component(ComponentId::Protocols).await?;
+
+        info!("✅ Bootstrap node started (discovery + mesh transport ready)");
         Ok(())
     }
     
@@ -2380,6 +2446,33 @@ impl RuntimeOrchestrator {
     /// Check if node joined an existing network
     pub async fn get_joined_existing_network(&self) -> bool {
         *self.joined_existing_network.read().await
+    }
+}
+
+#[cfg(test)]
+mod runtime_role_tests {
+    use super::*;
+
+    #[test]
+    fn startup_profile_covers_all_runtime_roles() {
+        assert_eq!(startup_profile_for_role(RuntimeRole::Full), StartupProfile::Full);
+        assert_eq!(startup_profile_for_role(RuntimeRole::Edge), StartupProfile::Edge);
+        assert_eq!(startup_profile_for_role(RuntimeRole::Validator), StartupProfile::Validator);
+        assert_eq!(startup_profile_for_role(RuntimeRole::Relay), StartupProfile::Relay);
+        assert_eq!(startup_profile_for_role(RuntimeRole::Bootstrap), StartupProfile::Bootstrap);
+        assert_eq!(startup_profile_for_role(RuntimeRole::Service), StartupProfile::Service);
+    }
+
+    #[test]
+    fn startup_invariants_enforce_validator_runtime_constraints() {
+        let mut cfg = NodeConfig::default();
+        cfg.runtime_role = RuntimeRole::Validator;
+        cfg.consensus_config.validator_enabled = false;
+        assert!(validate_runtime_startup_invariants(&cfg).is_err());
+
+        cfg.runtime_role = RuntimeRole::Relay;
+        cfg.consensus_config.validator_enabled = true;
+        assert!(validate_runtime_startup_invariants(&cfg).is_err());
     }
 }
 
