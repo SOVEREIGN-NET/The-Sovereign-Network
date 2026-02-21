@@ -5,7 +5,7 @@
 # Core Node Settings
 mesh_mode = "Hybrid"
 security_level = "High"  # High but not maximum for testing
-environment = "Testnet"
+runtime_role = "VALIDATOR"
 data_directory = "./data/testnet-validator"
 
 [crypto_config]
@@ -39,7 +39,7 @@ pricing_tier = "warm"
 [network_config]
 mesh_port = 33445  # Testnet mesh port
 max_peers = 100    # Moderate peer count for testnet
-protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
+protocols = ["quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = [
     "testnet-seed1.sovereign.net:9334",
     "testnet-seed2.sovereign.net:9334"

@@ -14,7 +14,7 @@ This directory contains pre-configured templates for different types of ZHTP nod
 - API endpoints for serving data
 - Moderate storage provision (500GB)
 - High peer connectivity (150 peers)
-- Hybrid mesh + TCP/IP networking
+- Hybrid mesh with QUIC transport
 
 **Resources**: 4GB RAM, 12 CPU threads, 1TB storage
 
@@ -69,12 +69,18 @@ This directory contains pre-configured templates for different types of ZHTP nod
 - Fast block times (2 seconds)
 - Lower resource requirements
 - Simplified configuration
-- TCP-only networking
+- QUIC-only networking
 - Local bootstrap peers
 
 **Resources**: 512MB RAM, 2 CPU threads, 50GB storage
 
 ## Usage
+
+## Migration Notes (VALIDATORS)
+
+- `runtime_role` is now required in node templates (`FULL`, `EDGE`, `VALIDATOR`, `RELAY`, `BOOTSTRAP`, `SERVICE`).
+- `network_config.protocols` must be QUIC/mesh-native only; TCP/HTTP/WebSocket/gRPC/UDP entries are rejected.
+- `protocols_config.gateway_enabled = true` is only valid for `runtime_role = "SERVICE"`.
 
 ### Quick Start Commands
 

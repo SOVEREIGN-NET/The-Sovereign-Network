@@ -5,7 +5,7 @@
 # Core Node Settings
 mesh_mode = "Hybrid"
 security_level = "Medium"  # Relaxed for development
-environment = "Development"
+runtime_role = "FULL"
 data_directory = "./data/dev-node"
 
 [crypto_config]
@@ -39,7 +39,7 @@ pricing_tier = "hot"
 [network_config]
 mesh_port = 33444
 max_peers = 20  # Small network for development
-protocols = ["tcp", "quic"]  # TCP and QUIC (required for mesh mode)
+protocols = ["quic"]  # QUIC-only transport for mesh mode
 bootstrap_peers = ["127.0.0.1:9333"]  # Localhost bootstrap
 long_range_relays = false
 
