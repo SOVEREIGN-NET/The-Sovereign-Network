@@ -32,6 +32,10 @@ pub use core::{
     WalletPrivateData,
     ValidatorTransactionData,
     ValidatorOperation,
+    BondingCurveDeployData,
+    BondingCurveBuyData,
+    BondingCurveSellData,
+    BondingCurveGraduateData,
 };
 
 // Explicit re-exports from creation module
