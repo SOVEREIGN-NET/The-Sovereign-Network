@@ -211,6 +211,10 @@ pub struct Blockchain {
     /// Tracks all bonding curve tokens from deployment through AMM graduation
     #[serde(default)]
     pub bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry,
+    /// AMM liquidity pools for graduated bonding curve tokens
+    /// Pool ID -> SovSwapPool mapping
+    #[serde(default)]
+    pub amm_pools: HashMap<[u8; 32], crate::contracts::sov_swap::SovSwapPool>,
 }
 
 /// Validator information stored on-chain.
@@ -505,6 +509,7 @@ impl BlockchainV1 {
             executor: None,
             treasury_kernel: None,
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
+            amm_pools: HashMap::new(),
         }
     }
 }
@@ -637,6 +642,10 @@ struct BlockchainStorageV3 {
     /// Per-token, per-address nonce for token transfer replay protection
     #[serde(default)]
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
+    
+    /// AMM liquidity pools for graduated bonding curve tokens
+    #[serde(default)]
+    pub amm_pools: HashMap<[u8; 32], crate::contracts::sov_swap::SovSwapPool>,
 }
 
 impl BlockchainStorageV3 {
@@ -719,6 +728,7 @@ impl BlockchainStorageV3 {
 
             // Token nonces
             token_nonces: bc.token_nonces.clone(),
+            amm_pools: HashMap::new(), // Initialize empty, pools are created on graduation
         }
     }
 
@@ -819,6 +829,9 @@ impl BlockchainStorageV3 {
 
             // Bonding curve registry
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
+            
+            // AMM pools - initialize empty, will be populated from storage
+            amm_pools: HashMap::new(),
         }
     }
 }
@@ -894,6 +907,7 @@ impl Blockchain {
             executor: None,
             treasury_kernel: None,
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
+            amm_pools: HashMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;

@@ -37,6 +37,7 @@ use lib_blockchain::contracts::bonding_curve::{
     Phase, CurveType, Threshold, CurveStats, Valuation, PriceSource, ConfidenceLevel,
     CurveError, ReserveUpdateReason,
 };
+use lib_blockchain::contracts::sov_swap::{SovSwapPool, SwapResult, SwapError, SimulationResult};
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_crypto::Hash;
 
@@ -767,16 +768,33 @@ impl SwapHandler {
             }
         }
 
+        // Get the AMM pool for real quote
+        let pool_id = token.amm_pool_id.unwrap();
+        let pool = blockchain.amm_pools.get(&pool_id)
+            .ok_or_else(|| anyhow::anyhow!("AMM pool not found in storage"))?;
+        
+        // Get quote from actual AMM pool (read-only, doesn't modify state)
+        // Convert min_amount_out: 0 means no slippage protection
+        let min_out = if swap_req.min_amount_out > 0 {
+            Some(swap_req.min_amount_out)
+        } else {
+            None
+        };
+        
+        let (amount_out, price_impact_bps) = if swap_req.token_to_sov {
+            // Token -> SOV
+            let result = pool.simulate_token_to_sov(swap_req.amount_in, min_out)?;
+            (result.amount_out, result.price_impact_bps)
+        } else {
+            // SOV -> Token
+            let result = pool.simulate_sov_to_token(swap_req.amount_in, min_out)?;
+            (result.amount_out, result.price_impact_bps)
+        };
+
         drop(blockchain);
 
-        // In production, this would execute the swap through the AMM contract
-        // For now, return a mock response indicating the operation would proceed
-        info!("Swap requested: token={}, amount_in={}, token_to_sov={}",
-            swap_req.token_id, swap_req.amount_in, swap_req.token_to_sov);
-
-        // Calculate mock output (would be AMM quote in production)
-        let amount_out = swap_req.amount_in * 95 / 100; // 5% mock slippage
-        let price_impact = 50u64; // 0.5% mock impact
+        info!("Swap quote: token={}, amount_in={}, amount_out={}, token_to_sov={}",
+            swap_req.token_id, swap_req.amount_in, amount_out, swap_req.token_to_sov);
 
         create_json_response(json!({
             "success": true,
@@ -785,8 +803,8 @@ impl SwapHandler {
             "amount_in": swap_req.amount_in,
             "amount_out": amount_out,
             "min_amount_out": swap_req.min_amount_out,
-            "price_impact_bps": price_impact,
-            "tx_status": "submitted_to_mempool"
+            "price_impact_bps": price_impact_bps,
+            "tx_status": "ready_for_execution"
         }))
     }
 
@@ -888,18 +906,34 @@ impl SwapHandler {
 
         let pool_info = match token.amm_pool_id {
             Some(pool_id) => {
-                json!({
-                    "exists": true,
-                    "pool_id": hex::encode(pool_id),
-                    "token_id": token_id_hex,
-                    "token_symbol": token.symbol,
-                    "phase": token.phase.to_string(),
-                    // In production, these would come from actual pool state
-                    "total_liquidity_token": 0,
-                    "total_liquidity_sov": 0,
-                    "lp_token_supply": 0,
-                    "fee_bps": 30, // 0.3% standard
-                })
+                // Get real pool data from storage
+                match blockchain.amm_pools.get(&pool_id) {
+                    Some(pool) => {
+                        let state = pool.state();
+                        json!({
+                            "exists": true,
+                            "pool_id": hex::encode(pool_id),
+                            "token_id": token_id_hex,
+                            "token_symbol": token.symbol,
+                            "phase": token.phase.to_string(),
+                            "total_liquidity_token": state.token_reserve,
+                            "total_liquidity_sov": state.sov_reserve,
+                            "lp_token_supply": 0, // LP tracking not yet implemented
+                            "fee_bps": state.fee_bps,
+                            "k": state.k.to_string(),
+                            "initialized": state.initialized,
+                        })
+                    }
+                    None => {
+                        json!({
+                            "exists": false,
+                            "pool_id": hex::encode(pool_id),
+                            "token_id": token_id_hex,
+                            "phase": token.phase.to_string(),
+                            "message": "Pool ID registered but pool data not found in storage",
+                        })
+                    }
+                }
             }
             None => {
                 json!({
