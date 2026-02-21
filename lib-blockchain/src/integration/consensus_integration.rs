@@ -246,9 +246,12 @@ impl BlockchainConsensusCoordinator {
             false, // Not genesis validator
         ).await.map_err(|e| anyhow::anyhow!("Consensus registration failed: {}", e))?;
 
-        consensus_engine
-            .set_validator_keypair(consensus_keypair.clone())
-            .map_err(|e| anyhow::anyhow!("Consensus keypair setup failed: {}", e))?;
+        if let Err(error) = consensus_engine.set_validator_keypair(consensus_keypair.clone()) {
+            warn!(
+                "Consensus keypair setup deferred until validator activation: {}",
+                error
+            );
+        }
 
         // Store local validator identity
         self.local_validator_id = Some(identity.clone());
