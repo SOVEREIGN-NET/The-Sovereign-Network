@@ -82,7 +82,7 @@ fn validate_role_transport_gateway_invariants(config: &NodeConfig) -> Result<()>
 
     // Role and consensus invariants.
     match config.runtime_role {
-        RuntimeRole::VALIDATOR => {
+        RuntimeRole::Validator => {
             if !config.consensus_config.validator_enabled {
                 return Err(ConfigError::ResourceConflict {
                     details: "runtime_role=VALIDATOR requires consensus_config.validator_enabled=true".to_string(),
@@ -90,10 +90,10 @@ fn validate_role_transport_gateway_invariants(config: &NodeConfig) -> Result<()>
                 .into());
             }
         }
-        RuntimeRole::EDGE
-        | RuntimeRole::RELAY
-        | RuntimeRole::BOOTSTRAP
-        | RuntimeRole::SERVICE => {
+        RuntimeRole::Edge
+        | RuntimeRole::Relay
+        | RuntimeRole::Bootstrap
+        | RuntimeRole::Service => {
             if config.consensus_config.validator_enabled {
                 return Err(ConfigError::ResourceConflict {
                     details: format!(
@@ -104,18 +104,18 @@ fn validate_role_transport_gateway_invariants(config: &NodeConfig) -> Result<()>
                 .into());
             }
         }
-        RuntimeRole::FULL => {}
+        RuntimeRole::Full => {}
     }
 
     // Gateway invariant: RPC gateway only for SERVICE runtime role.
-    if config.protocols_config.gateway_enabled && config.runtime_role != RuntimeRole::SERVICE {
+    if config.protocols_config.gateway_enabled && config.runtime_role != RuntimeRole::Service {
         return Err(ConfigError::ResourceConflict {
             details: "protocols_config.gateway_enabled=true is only allowed for runtime_role=SERVICE".to_string(),
         }
         .into());
     }
 
-    if config.runtime_role == RuntimeRole::SERVICE && !config.protocols_config.gateway_enabled {
+    if config.runtime_role == RuntimeRole::Service && !config.protocols_config.gateway_enabled {
         return Err(ConfigError::ResourceConflict {
             details: "runtime_role=SERVICE requires protocols_config.gateway_enabled=true".to_string(),
         }
@@ -491,7 +491,7 @@ mod tests {
     #[test]
     fn rejects_validator_enabled_for_edge_role() {
         let mut config = NodeConfig::default();
-        config.runtime_role = crate::config::aggregation::RuntimeRole::EDGE;
+        config.runtime_role = crate::config::aggregation::RuntimeRole::Edge;
         config.consensus_config.validator_enabled = true;
         let result = validate_role_transport_gateway_invariants(&config);
         assert!(
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn service_role_requires_gateway() {
         let mut config = NodeConfig::default();
-        config.runtime_role = crate::config::aggregation::RuntimeRole::SERVICE;
+        config.runtime_role = crate::config::aggregation::RuntimeRole::Service;
         config.protocols_config.gateway_enabled = false;
         let result = validate_role_transport_gateway_invariants(&config);
         assert!(result.is_err(), "service runtime must require gateway");

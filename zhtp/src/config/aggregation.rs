@@ -38,17 +38,17 @@ pub struct PartialNetworkConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RuntimeRole {
-    FULL,
-    EDGE,
-    VALIDATOR,
-    RELAY,
-    BOOTSTRAP,
-    SERVICE,
+    Full,
+    Edge,
+    Validator,
+    Relay,
+    Bootstrap,
+    Service,
 }
 
 impl Default for RuntimeRole {
     fn default() -> Self {
-        RuntimeRole::FULL
+        RuntimeRole::Full
     }
 }
 
@@ -501,7 +501,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             node_id: [0u8; 32], // Will be generated during initialization
-            runtime_role: RuntimeRole::FULL,
+            runtime_role: RuntimeRole::Full,
             mesh_mode: MeshMode::Hybrid,
             security_level: SecurityLevel::High,
             environment: Environment::Development,
