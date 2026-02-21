@@ -141,6 +141,10 @@ fn create_token_transfer_tx(
         }),
         token_mint_data: None,
         governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
     }
 }
 

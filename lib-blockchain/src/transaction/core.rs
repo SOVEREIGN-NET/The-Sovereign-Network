@@ -59,22 +59,39 @@ pub struct Transaction {
     /// Governance config update data (Phase 3D - restricted config changes)
     /// Required for TransactionType::GovernanceConfigUpdate
     pub governance_config_data: Option<GovernanceConfigUpdateData>,
+    /// Bonding curve deploy data
+    pub bonding_curve_deploy_data: Option<BondingCurveDeployData>,
+    /// Bonding curve buy data
+    pub bonding_curve_buy_data: Option<BondingCurveBuyData>,
+    /// Bonding curve sell data
+    pub bonding_curve_sell_data: Option<BondingCurveSellData>,
+    /// Bonding curve graduate data
+    pub bonding_curve_graduate_data: Option<BondingCurveGraduateData>,
 }
+
+/// Version constants for the `Transaction` wire format.
+/// Never renumber — each constant is embedded in serialized blocks on-chain.
+/// When adding fields, append a new V(N+1) constant and gate on it everywhere.
+pub const TX_VERSION_V1: u32 = 1; // Base: 18 fields
+pub const TX_VERSION_V2: u32 = 2; // +token_mint_data → 19 fields
+pub const TX_VERSION_V3: u32 = 3; // +bonding_curve_*_data → 23 fields
 
 /// V1 has 18 fields (no token_mint_data). V2 has 19 (token_mint_data between
 /// token_transfer_data and governance_config_data). Serialization writes the
 /// field count matching the version so old V1 blocks stay byte-identical.
-/// Deserialization requests 19 slots (V2 max); for V1 data we read only 18,
-/// leaving one unused slot in bincode's SeqAccess — harmless because bincode
-/// does not enforce post-return consumption.
+/// Deserialization requests V3 slots (the max); for older versions we read
+/// only as many fields as the version declares.
 const TX_FIELD_COUNT_V1: usize = 18;
 const TX_FIELD_COUNT_V2: usize = 19;
+const TX_FIELD_COUNT_V3: usize = 23; // Added bonding curve data fields
 
 impl Serialize for Transaction {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeTuple;
 
-        let field_count = if self.version >= 2 {
+        let field_count = if self.version >= TX_VERSION_V3 {
+            TX_FIELD_COUNT_V3
+        } else if self.version >= TX_VERSION_V2 {
             TX_FIELD_COUNT_V2
         } else {
             TX_FIELD_COUNT_V1
@@ -98,10 +115,16 @@ impl Serialize for Transaction {
         tup.serialize_element(&self.ubi_claim_data)?;
         tup.serialize_element(&self.profit_declaration_data)?;
         tup.serialize_element(&self.token_transfer_data)?;
-        if self.version >= 2 {
+        if self.version >= TX_VERSION_V2 {
             tup.serialize_element(&self.token_mint_data)?;
         }
         tup.serialize_element(&self.governance_config_data)?;
+        if self.version >= TX_VERSION_V3 {
+            tup.serialize_element(&self.bonding_curve_deploy_data)?;
+            tup.serialize_element(&self.bonding_curve_buy_data)?;
+            tup.serialize_element(&self.bonding_curve_sell_data)?;
+            tup.serialize_element(&self.bonding_curve_graduate_data)?;
+        }
 
         tup.end()
     }
@@ -151,8 +174,8 @@ impl<'de> Deserialize<'de> for Transaction {
                 let token_transfer_data: Option<TokenTransferData> = next!("token_transfer_data");
 
                 // V2 added token_mint_data between token_transfer_data and governance_config_data.
-                // V1 data (version < 2) does not contain it; skip reading and default to None.
-                let token_mint_data: Option<TokenMintData> = if version >= 2 {
+                // V1 data (version < TX_VERSION_V2) does not contain it; default to None.
+                let token_mint_data: Option<TokenMintData> = if version >= TX_VERSION_V2 {
                     next!("token_mint_data")
                 } else {
                     None
@@ -160,6 +183,17 @@ impl<'de> Deserialize<'de> for Transaction {
 
                 let governance_config_data: Option<GovernanceConfigUpdateData> =
                     next!("governance_config_data");
+
+                // V3 added bonding curve data fields
+                let (bonding_curve_deploy_data, bonding_curve_buy_data,
+                     bonding_curve_sell_data, bonding_curve_graduate_data) = if version >= TX_VERSION_V3 {
+                    (next!("bonding_curve_deploy_data"),
+                     next!("bonding_curve_buy_data"),
+                     next!("bonding_curve_sell_data"),
+                     next!("bonding_curve_graduate_data"))
+                } else {
+                    (None, None, None, None)
+                };
 
                 Ok(Transaction {
                     version,
@@ -181,14 +215,17 @@ impl<'de> Deserialize<'de> for Transaction {
                     token_transfer_data,
                     token_mint_data,
                     governance_config_data,
+                    bonding_curve_deploy_data,
+                    bonding_curve_buy_data,
+                    bonding_curve_sell_data,
+                    bonding_curve_graduate_data,
                 })
             }
         }
 
-        // Request V2 field count (the maximum). For V1 data the visitor reads
-        // one fewer element; the leftover slot is never consumed and bincode
-        // does not enforce that all requested slots are read.
-        deserializer.deserialize_tuple(TX_FIELD_COUNT_V2, TxVisitor)
+        // Request V3 field count (the maximum). For older versions the visitor reads
+        // fewer elements; leftover slots are never consumed.
+        deserializer.deserialize_tuple(TX_FIELD_COUNT_V3, TxVisitor)
     }
 }
 
@@ -748,7 +785,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new identity registration transaction
@@ -779,7 +820,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new identity update transaction
@@ -812,7 +857,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new identity revocation transaction
@@ -861,7 +910,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new wallet registration transaction
@@ -892,7 +945,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a wallet update transaction.
@@ -940,7 +997,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new token transfer transaction (balance model).
@@ -980,7 +1041,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new token mint transaction (balance model).
@@ -1019,7 +1084,11 @@ impl Transaction {
             token_transfer_data: None,
             token_mint_data: Some(token_mint_data),
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new token creation transaction.
@@ -1053,7 +1122,11 @@ impl Transaction {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new validator registration transaction
@@ -1084,7 +1157,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new validator update transaction
@@ -1117,7 +1194,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new validator unregister transaction
@@ -1150,7 +1231,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new DAO proposal transaction
@@ -1183,7 +1268,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new DAO vote transaction
@@ -1216,7 +1305,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new DAO execution transaction
@@ -1249,7 +1342,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new UBI claim transaction
@@ -1294,7 +1391,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new profit declaration transaction
@@ -1346,7 +1447,11 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// Create a new governance config update transaction (Phase 3D)
@@ -1396,6 +1501,10 @@ impl Transaction {
             token_mint_data: None,
 
             governance_config_data: Some(config_data),
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 
@@ -1455,6 +1564,142 @@ impl Transaction {
     /// Check if transaction is empty (no inputs or outputs)
     pub fn is_empty(&self) -> bool {
         self.inputs.is_empty() && self.outputs.is_empty()
+    }
+
+    /// Create a new bonding curve deploy transaction with an explicit chain id.
+    pub fn new_bonding_curve_deploy_with_chain_id(
+        chain_id: u8,
+        bonding_curve_deploy_data: BondingCurveDeployData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V3,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveDeploy,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: Some(bonding_curve_deploy_data),
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+        }
+    }
+
+    /// Create a new bonding curve buy transaction with an explicit chain id.
+    pub fn new_bonding_curve_buy_with_chain_id(
+        chain_id: u8,
+        bonding_curve_buy_data: BondingCurveBuyData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V3,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveBuy,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: Some(bonding_curve_buy_data),
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+        }
+    }
+
+    /// Create a new bonding curve sell transaction with an explicit chain id.
+    pub fn new_bonding_curve_sell_with_chain_id(
+        chain_id: u8,
+        bonding_curve_sell_data: BondingCurveSellData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V3,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveSell,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: Some(bonding_curve_sell_data),
+            bonding_curve_graduate_data: None,
+        }
+    }
+
+    /// Create a new bonding curve graduate transaction with an explicit chain id.
+    pub fn new_bonding_curve_graduate_with_chain_id(
+        chain_id: u8,
+        bonding_curve_graduate_data: BondingCurveGraduateData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V3,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveGraduate,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: Some(bonding_curve_graduate_data),
+        }
     }
 }
 
@@ -1785,4 +2030,84 @@ impl ProfitDeclarationData {
 
         true
     }
+}
+
+// ============================================================================
+// Bonding Curve Transaction Data
+// ============================================================================
+
+/// Bonding curve token deployment data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BondingCurveDeployData {
+    /// Token name
+    pub name: String,
+    /// Token symbol (max 10 chars)
+    pub symbol: String,
+    /// Curve type: 0=Linear, 1=Exponential, 2=Sigmoid
+    pub curve_type: u8,
+    /// Base price in stablecoin atomic units
+    pub base_price: u64,
+    /// Slope for linear, growth rate bps for exponential, steepness for sigmoid
+    pub curve_param: u64,
+    /// Midpoint supply for sigmoid (ignored for other types)
+    pub midpoint_supply: Option<u64>,
+    /// Graduation threshold type: 0=ReserveAmount, 1=SupplyAmount, 2=TimeAndReserve, 3=TimeAndSupply
+    pub threshold_type: u8,
+    /// Threshold value (reserve or supply amount)
+    pub threshold_value: u64,
+    /// Minimum time in seconds (for TimeAnd* thresholds)
+    pub threshold_time_seconds: Option<u64>,
+    /// Whether selling is enabled during curve phase
+    pub sell_enabled: bool,
+    /// Creator's public key
+    pub creator: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Bonding curve buy transaction data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BondingCurveBuyData {
+    /// Token ID being purchased
+    pub token_id: [u8; 32],
+    /// Amount of stablecoin to spend
+    pub stable_amount: u64,
+    /// Minimum tokens expected (slippage protection)
+    pub min_tokens_out: u64,
+    /// Buyer's address
+    pub buyer: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Bonding curve sell transaction data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BondingCurveSellData {
+    /// Token ID being sold
+    pub token_id: [u8; 32],
+    /// Amount of tokens to sell
+    pub token_amount: u64,
+    /// Minimum stablecoin expected (slippage protection)
+    pub min_stable_out: u64,
+    /// Seller's address
+    pub seller: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Bonding curve graduation transaction data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BondingCurveGraduateData {
+    /// Token ID being graduated
+    pub token_id: [u8; 32],
+    /// AMM pool ID to create/use
+    pub pool_id: [u8; 32],
+    /// SOV amount to seed into AMM pool
+    pub sov_seed_amount: u64,
+    /// Token amount to seed into AMM pool
+    pub token_seed_amount: u64,
+    /// Graduator's address (must be creator or governance)
+    pub graduator: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
 }

@@ -29,6 +29,7 @@ pub mod web4_utils;
 pub mod citizen;
 pub mod ubi;
 pub mod token;
+pub mod curve;
 
 pub use node::handle_node_command;
 pub use wallet::handle_wallet_command;
@@ -56,3 +57,4 @@ pub use service::handle_service_command;
 pub use citizen::handle_citizen_command;
 pub use ubi::handle_ubi_command;
 pub use token::handle_token_command;
+pub use curve::handle_curve_command;

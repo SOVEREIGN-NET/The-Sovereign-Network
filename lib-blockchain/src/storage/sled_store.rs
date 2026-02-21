@@ -36,6 +36,8 @@ const TREE_CONTRACT_STORAGE: &str = "contract_storage"; // Contract key-value st
 const TREE_IDENTITIES: &str = "identities"; // Consensus state (participates in state hash)
 const TREE_IDENTITY_METADATA: &str = "identity_meta"; // Non-consensus (for DID resolution)
 const TREE_IDENTITY_BY_OWNER: &str = "identity_owner"; // Index: owner → did_hash
+const TREE_BONDING_CURVES: &str = "bonding_curves"; // Bonding curve tokens
+const TREE_BONDING_CURVE_SYMBOLS: &str = "bonding_curve_symbols"; // Index: symbol → token_id
 const TREE_META: &str = "meta";
 
 /// Sled-based implementation of BlockchainStore
@@ -56,6 +58,8 @@ pub struct SledStore {
     identities: Tree,        // Consensus: did_hash → IdentityConsensus
     identity_metadata: Tree, // Non-consensus: did_hash → IdentityMetadata
     identity_by_owner: Tree, // Index: owner_addr → did_hash
+    bonding_curves: Tree,    // Bonding curve tokens: token_id → BondingCurveToken
+    bonding_curve_symbols: Tree, // Index: symbol → token_id
     meta: Tree,
 
     // Transaction state
@@ -79,6 +83,8 @@ struct PendingBatch {
     identities: Batch,
     identity_metadata: Batch,
     identity_by_owner: Batch,
+    bonding_curves: Batch,
+    bonding_curve_symbols: Batch,
     meta: Batch,
     block_data: Option<(u64, BlockHash, Vec<u8>)>, // (height, hash, serialized block)
 }
@@ -99,6 +105,8 @@ impl PendingBatch {
             identities: Batch::default(),
             identity_metadata: Batch::default(),
             identity_by_owner: Batch::default(),
+            bonding_curves: Batch::default(),
+            bonding_curve_symbols: Batch::default(),
             meta: Batch::default(),
             block_data: None,
         }
@@ -146,6 +154,12 @@ impl SledStore {
         let identity_by_owner = db
             .open_tree(TREE_IDENTITY_BY_OWNER)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let bonding_curves = db
+            .open_tree(TREE_BONDING_CURVES)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let bonding_curve_symbols = db
+            .open_tree(TREE_BONDING_CURVE_SYMBOLS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -177,6 +191,8 @@ impl SledStore {
             identities,
             identity_metadata,
             identity_by_owner,
+            bonding_curves,
+            bonding_curve_symbols,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -219,6 +235,12 @@ impl SledStore {
         let identity_by_owner = db
             .open_tree(TREE_IDENTITY_BY_OWNER)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let bonding_curves = db
+            .open_tree(TREE_BONDING_CURVES)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let bonding_curve_symbols = db
+            .open_tree(TREE_BONDING_CURVE_SYMBOLS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -250,6 +272,8 @@ impl SledStore {
             identities,
             identity_metadata,
             identity_by_owner,
+            bonding_curves,
+            bonding_curve_symbols,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -1025,6 +1049,14 @@ impl BlockchainStore for SledStore {
             .apply_batch(batch.contract_storage)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
+        self.bonding_curves
+            .apply_batch(batch.bonding_curves)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.bonding_curve_symbols
+            .apply_batch(batch.bonding_curve_symbols)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
         // Update latest height
         self.meta
             .insert(keys::meta::LATEST_HEIGHT, &height.to_be_bytes())
@@ -1050,6 +1082,128 @@ impl BlockchainStore for SledStore {
 
         // Clear transaction state
         self.tx_active.store(false, Ordering::SeqCst);
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Bonding Curve Operations
+    // =========================================================================
+
+    fn get_bonding_curve_token(
+        &self,
+        token_id: &TokenId,
+    ) -> StorageResult<Option<crate::contracts::bonding_curve::BondingCurveToken>> {
+        match self.bonding_curves.get(token_id.as_ref()) {
+            Ok(Some(bytes)) => {
+                let token: crate::contracts::bonding_curve::BondingCurveToken =
+                    Self::deserialize(&bytes)?;
+                Ok(Some(token))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_bonding_curve_token(
+        &self,
+        token_id: &TokenId,
+        token: &crate::contracts::bonding_curve::BondingCurveToken,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let key = token_id.as_ref();
+        let value = Self::serialize(token)?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.bonding_curves.insert(key, value);
+        }
+
+        Ok(())
+    }
+
+    fn delete_bonding_curve_token(&self, token_id: &TokenId) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.bonding_curves.remove(token_id.as_ref());
+        }
+
+        Ok(())
+    }
+
+    fn iter_bonding_curve_tokens(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = (TokenId, crate::contracts::bonding_curve::BondingCurveToken)> + '_>>
+    {
+        let iter = self.bonding_curves.iter().filter_map(|item| {
+            let (k, v) = item.ok()?;
+            let token_id_bytes: [u8; 32] = match k.as_ref().try_into() {
+                Ok(b) => b,
+                Err(_) => {
+                    tracing::warn!(
+                        "iter_bonding_curve_tokens: corrupt key (len={}), skipping entry",
+                        k.len()
+                    );
+                    return None;
+                }
+            };
+            match Self::deserialize(&v) {
+                Ok(token) => Some((TokenId(token_id_bytes), token)),
+                Err(e) => {
+                    tracing::warn!(
+                        "iter_bonding_curve_tokens: failed to deserialize token {:?}: {}",
+                        token_id_bytes,
+                        e
+                    );
+                    None
+                }
+            }
+        });
+
+        Ok(Box::new(iter))
+    }
+
+    fn get_bonding_curve_by_symbol(&self, symbol: &str) -> StorageResult<Option<TokenId>> {
+        match self.bonding_curve_symbols.get(symbol.as_bytes()) {
+            Ok(Some(bytes)) => {
+                if bytes.len() == 32 {
+                    let mut token_id = [0u8; 32];
+                    token_id.copy_from_slice(&bytes);
+                    Ok(Some(TokenId(token_id)))
+                } else {
+                    Err(StorageError::CorruptedData(
+                        "Invalid token_id length in symbol index".to_string(),
+                    ))
+                }
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_bonding_curve_symbol_index(&self, symbol: &str, token_id: &TokenId) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch
+                .bonding_curve_symbols
+                .insert(symbol.as_bytes(), token_id.as_ref());
+        }
+
+        Ok(())
+    }
+
+    fn delete_bonding_curve_symbol_index(&self, symbol: &str) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.bonding_curve_symbols.remove(symbol.as_bytes());
+        }
 
         Ok(())
     }

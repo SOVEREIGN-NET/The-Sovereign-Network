@@ -39,6 +39,8 @@ pub mod ubi_distribution;
 #[cfg(feature = "contracts")]
 pub mod sov_swap;
 #[cfg(feature = "contracts")]
+pub mod bonding_curve;
+#[cfg(feature = "contracts")]
 pub mod staking;
 #[cfg(feature = "contracts")]
 pub mod governance;

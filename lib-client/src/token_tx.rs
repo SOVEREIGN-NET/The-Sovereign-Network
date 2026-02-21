@@ -294,6 +294,10 @@ pub fn build_contract_transaction(
         token_transfer_data: None,
             token_mint_data: None,
                     governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
     };
 
     eprintln!("[contract_tx] Chain ID: {}", chain_id);
