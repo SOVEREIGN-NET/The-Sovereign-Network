@@ -2,7 +2,7 @@
 //! 
 //! Coordinates the lifecycle and interactions of all ZHTP components
 
-use anyhow::{Result, Context, bail};
+use anyhow::{Result, Context};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, Mutex};
@@ -64,6 +64,10 @@ pub use identity_manager_provider::{initialize_global_identity_manager_provider,
 pub use network_blockchain_provider::ZhtpBlockchainProvider;
 pub use mesh_router_provider::{initialize_global_mesh_router_provider, set_global_mesh_router, get_broadcast_metrics};
 
+/// Startup profile used by runtime dispatch.
+///
+/// This stays distinct from `RuntimeRole` so multiple roles can share the same
+/// startup sequence without changing persisted role semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StartupProfile {
     Full,
@@ -86,22 +90,11 @@ fn startup_profile_for_role(role: RuntimeRole) -> StartupProfile {
 }
 
 fn validate_runtime_startup_invariants(config: &NodeConfig) -> Result<()> {
-    match config.runtime_role {
-        RuntimeRole::Validator if !config.consensus_config.validator_enabled => {
-            bail!("runtime_role=VALIDATOR requires consensus_config.validator_enabled=true")
-        }
-        RuntimeRole::Edge
-        | RuntimeRole::Relay
-        | RuntimeRole::Bootstrap
-        | RuntimeRole::Service if config.consensus_config.validator_enabled => {
-            bail!(
-                "runtime_role={:?} cannot enable validator consensus role",
-                config.runtime_role
-            )
-        }
-        _ => {}
-    }
-
+    let _ = config;
+    // Role/consensus/gateway transport invariants are enforced in
+    // `config::validation::validate_complete_configuration` before runtime init.
+    // Keep this hook for runtime-only checks that cannot be represented at
+    // configuration validation time.
     Ok(())
 }
 
@@ -786,7 +779,6 @@ impl RuntimeOrchestrator {
     /// - lib-blockchain: Registers them on-chain (permanent storage)
     /// - RuntimeOrchestrator: Coordinates the flow
     pub async fn start_node(&self) -> Result<()> {
-        validate_runtime_startup_invariants(&self.config)?;
         let startup_profile = startup_profile_for_role(self.config.runtime_role);
         match startup_profile {
             StartupProfile::Bootstrap => return self.start_bootstrap_node().await,
@@ -1072,6 +1064,9 @@ impl RuntimeOrchestrator {
         self.register_component(Arc::new(NetworkComponent::new())).await?;
         self.start_component(ComponentId::Network).await?;
 
+        // Bootstrap profile keeps only the minimal blockchain context required by
+        // networking/sync handlers and intentionally does not start the full
+        // BlockchainComponent lifecycle.
         if !is_global_blockchain_available().await {
             let blockchain = lib_blockchain::Blockchain::new()?;
             let blockchain_arc = Arc::new(RwLock::new(blockchain));
@@ -2463,16 +2458,68 @@ mod runtime_role_tests {
         assert_eq!(startup_profile_for_role(RuntimeRole::Service), StartupProfile::Service);
     }
 
-    #[test]
-    fn startup_invariants_enforce_validator_runtime_constraints() {
+    #[tokio::test]
+    async fn startup_invariants_enforce_validator_runtime_constraints() {
         let mut cfg = NodeConfig::default();
+
         cfg.runtime_role = RuntimeRole::Validator;
         cfg.consensus_config.validator_enabled = false;
-        assert!(validate_runtime_startup_invariants(&cfg).is_err());
+        cfg.protocols_config.gateway_enabled = false;
+        assert!(
+            crate::config::validation::validate_complete_configuration(&cfg)
+                .await
+                .is_err()
+        );
 
         cfg.runtime_role = RuntimeRole::Relay;
         cfg.consensus_config.validator_enabled = true;
-        assert!(validate_runtime_startup_invariants(&cfg).is_err());
+        assert!(
+            crate::config::validation::validate_complete_configuration(&cfg)
+                .await
+                .is_err()
+        );
+
+        cfg.runtime_role = RuntimeRole::Edge;
+        cfg.consensus_config.validator_enabled = true;
+        assert!(
+            crate::config::validation::validate_complete_configuration(&cfg)
+                .await
+                .is_err()
+        );
+
+        cfg.runtime_role = RuntimeRole::Bootstrap;
+        cfg.consensus_config.validator_enabled = true;
+        assert!(
+            crate::config::validation::validate_complete_configuration(&cfg)
+                .await
+                .is_err()
+        );
+
+        cfg.runtime_role = RuntimeRole::Service;
+        cfg.consensus_config.validator_enabled = true;
+        cfg.protocols_config.gateway_enabled = true;
+        assert!(
+            crate::config::validation::validate_complete_configuration(&cfg)
+                .await
+                .is_err()
+        );
+
+        cfg.runtime_role = RuntimeRole::Full;
+        cfg.consensus_config.validator_enabled = true;
+        cfg.protocols_config.gateway_enabled = false;
+        assert!(
+            crate::config::validation::validate_complete_configuration(&cfg)
+                .await
+                .is_ok()
+        );
+
+        cfg.runtime_role = RuntimeRole::Full;
+        cfg.consensus_config.validator_enabled = false;
+        assert!(
+            crate::config::validation::validate_complete_configuration(&cfg)
+                .await
+                .is_ok()
+        );
     }
 }
 
