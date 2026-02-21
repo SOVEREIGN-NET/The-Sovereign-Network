@@ -10,6 +10,7 @@ privateDocs/
 target/
 .cargo-temp/
 Cargo.lock
+*.rlib
 
 # Backup files
 *.bak
