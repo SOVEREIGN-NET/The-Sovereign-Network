@@ -12,12 +12,16 @@ This is the first alpha release of The Sovereign Network. This release establish
 
 ## What's New
 
-### Identity System (ADR-0001)
+### Identity System (ADR-0001, ADR-0004)
 
-- **Seed-Anchored Identity**: All identity components derive from a single seed
-- **NodeId Derivation**: `Blake3("ZHTP_NODE_V2:" + DID + ":" + device)` → 32 bytes
-- **Unified Constructor**: `ZhtpIdentity::new_unified(type, age, jurisdiction, device, seed?)`
-- **Multi-Device Support**: Same seed = same DID, different NodeIds per device
+- **Seed-Anchored Identity**: All identity components derive from a single seed via a deterministic root signing key
+- **Deterministic Root Key (ADR-0004)**: DID is anchored to the deterministic root signing public key derived from the seed
+- **NodeId Derivation**:
+  - **Legacy deterministic method** (`NodeId::from_did_device()`): Uses format `Blake3("ZHTP_NODE_V2:network={network}:version={version}:{DID}:{normalized_device}")` where device is normalized (trimmed, lowercase, validated). This method is kept for backward compatibility but is vulnerable to rainbow table attacks.
+  - **Recommended secure method** (`NodeId::from_identity_components()`): Uses domain separation prefix `"ZHTP_NODE_ID_V2"` with additional entropy sources including network genesis binding, cryptographic random nonce (256 bits), and timestamp binding. This non-deterministic approach prevents rainbow table attacks and cross-chain replay while enforcing minimum device ID entropy (8+ chars, 4+ unique characters).
+  - **Security tradeoff**: Legacy method provides deterministic reconstruction (same inputs = same NodeId) but is less secure. New method provides strong security guarantees but requires storing the generated NodeId and its metadata (nonce, network genesis) for verification.
+- **Unified Constructor**: `ZhtpIdentity::new_unified(type, age, jurisdiction, device, seed?)` derives the root key, DID, and per-device keys
+- **Multi-Device Support**: Same seed = same root signing key and DID; per-device NodeIds and operational keys are distinct and rotatable
 
 ### Network Layer
 
@@ -51,11 +55,14 @@ If you have existing code using the old `[u8; 32]` NodeId type:
 
 ```rust
 // OLD
-let node_id: [u8; 32] = hash_blake3(b"some-input");
+let legacy_node_id: [u8; 32] = hash_blake3(b"some-input");
 
-// NEW
+// NEW (wrap existing bytes without changing the underlying value)
 use lib_identity::types::NodeId;
-let node_id = NodeId::from_did_device("did:zhtp:...", "device-name");
+let node_id = NodeId::from_bytes(legacy_node_id);
+
+// For NEW code deriving from DID + device (recommended going forward):
+let node_id_from_did = NodeId::from_did_device("did:zhtp:...", "device-name");
 ```
 
 ### For Node Operators
@@ -82,7 +89,7 @@ let node_id = NodeId::from_did_device("did:zhtp:...", "device-name");
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines.
+See [README.md](./README.md) for development guidelines and contribution workflow.
 
 ## Support
 

@@ -10,6 +10,7 @@ pub mod hashing;
 pub mod signing;
 pub mod fee;
 pub mod contract_deployment;
+pub mod contract_execution;
 pub mod token_creation;
 
 // Explicit re-exports from core module
@@ -56,6 +57,14 @@ pub use contract_deployment::{
     MAX_DEPLOYMENT_ABI_BYTES,
     MAX_DEPLOYMENT_INIT_ARGS_BYTES,
     MAX_DEPLOYMENT_MEMORY_BYTES,
+};
+pub use contract_execution::{
+    ContractExecutionMemoVersion,
+    DecodedContractExecutionMemo,
+    CONTRACT_EXECUTION_MEMO_PREFIX_V1,
+    CONTRACT_EXECUTION_MEMO_PREFIX_V2,
+    MAX_CONTRACT_EXECUTION_MEMO_BYTES,
+    encode_contract_execution_memo_v2,
 };
 pub use token_creation::{
     TokenCreationPayloadV1,

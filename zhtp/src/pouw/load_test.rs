@@ -184,8 +184,8 @@ impl SyntheticReceiptGenerator {
 
         SignedReceipt {
             receipt,
-            sig_scheme: "ed25519".to_string(),
-            signature: generate_random_vec(64), // Would be real signature in production
+            sig_scheme: "dilithium5".to_string(),
+            signature: generate_random_vec(4595), // Dilithium5 signature size
         }
     }
 

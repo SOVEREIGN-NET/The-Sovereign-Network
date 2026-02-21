@@ -51,6 +51,18 @@ fn default_finality_depth() -> u64 {
     6
 }
 
+/// Indexed DAO registry entry derived from canonical DaoExecution events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DaoRegistryIndexEntry {
+    pub dao_id: [u8; 32],
+    pub token_key_id: [u8; 32],
+    pub class: String,
+    pub metadata_hash: [u8; 32],
+    pub treasury_key_id: [u8; 32],
+    pub owner_key_id: [u8; 32],
+    pub created_at: u64,
+}
+
 /// Blockchain state with identity registry and UTXO management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -98,6 +110,9 @@ pub struct Blockchain {
     /// Contract deployment block heights (contract_id -> block_height)
     #[serde(default)]
     pub contract_blocks: HashMap<[u8; 32], u64>,
+    /// Indexed DAO registry (dao_id -> entry), updated incrementally per block.
+    #[serde(default)]
+    pub dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
     /// On-chain validator registry (identity_id -> Validator info)
     #[serde(default)]
     pub validator_registry: HashMap<String, ValidatorInfo>,
@@ -476,6 +491,7 @@ impl BlockchainV1 {
             token_contracts: self.token_contracts,
             web4_contracts: self.web4_contracts,
             contract_blocks: self.contract_blocks,
+            dao_registry_index: HashMap::new(),
             validator_registry: self.validator_registry,
             validator_blocks: self.validator_blocks,
             dao_treasury_wallet_id: self.dao_treasury_wallet_id,
@@ -570,6 +586,8 @@ struct BlockchainStorageV3 {
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     #[serde(default)]
     pub contract_blocks: HashMap<[u8; 32], u64>,
+    #[serde(default)]
+    pub dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
 
     // === Validator registry (fields 17-18) ===
     #[serde(default)]
@@ -683,6 +701,7 @@ impl BlockchainStorageV3 {
             token_contracts: bc.token_contracts.clone(),
             web4_contracts: bc.web4_contracts.clone(),
             contract_blocks: bc.contract_blocks.clone(),
+            dao_registry_index: bc.dao_registry_index.clone(),
 
             // Validators
             validator_registry: bc.validator_registry.clone(),
@@ -766,6 +785,7 @@ impl BlockchainStorageV3 {
             token_contracts: self.token_contracts,
             web4_contracts: self.web4_contracts,
             contract_blocks: self.contract_blocks,
+            dao_registry_index: self.dao_registry_index,
 
             // Validators
             validator_registry: self.validator_registry,
@@ -847,6 +867,8 @@ pub struct BlockchainImport {
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     pub contract_blocks: HashMap<[u8; 32], u64>,
+    #[serde(default)]
+    pub dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
 }
 
 impl Blockchain {
@@ -874,6 +896,7 @@ impl Blockchain {
             token_contracts: HashMap::new(),
             web4_contracts: HashMap::new(),
             contract_blocks: HashMap::new(),
+            dao_registry_index: HashMap::new(),
             validator_registry: HashMap::new(),
             validator_blocks: HashMap::new(),
             dao_treasury_wallet_id: None,
@@ -1123,6 +1146,19 @@ impl Blockchain {
             }
         }
 
+        // Load committed TokenStateSnapshot from SledStore to restore token contracts and nonces.
+        // This is the primary source for token state on restart; the snapshot is only written
+        // on commit so uncommitted (crashed) blocks cannot leak state.
+        if let Ok(Some(snapshot)) = store.get_token_state_snapshot() {
+            for (id, contract) in snapshot.token_contracts {
+                blockchain.token_contracts.insert(id, contract);
+            }
+            for (key, nonce) in snapshot.token_nonces {
+                blockchain.token_nonces.insert(key, nonce);
+            }
+            info!("Loaded TokenStateSnapshot from SledStore");
+        }
+
         // CRITICAL: Load persisted SOV token contract from SledStore if not reconstructed from transactions
         // The genesis token contract (with user balances) may not be in ContractExecution transactions
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
@@ -1153,6 +1189,7 @@ impl Blockchain {
         if backfilled_blocks > 0 {
             info!("📦 Backfilled {} contract deployment heights to genesis (block 0)", backfilled_blocks);
         }
+        blockchain.rebuild_dao_registry_index();
 
         // Migrate legacy initial_balance values from human SOV to atomic units.
         // Old code stored raw 5000 instead of 5000 * 10^8. Any initial_balance that is
@@ -1589,6 +1626,9 @@ impl Blockchain {
                     // Update blockchain metadata
                     self.blocks.push(block.clone());
                     self.height += 1;
+                    for tx in &block.transactions {
+                        self.index_dao_registry_entry_from_tx(tx, block.header.height);
+                    }
                     self.adjust_difficulty()?;
                     
                     debug!("Block {} applied via BlockExecutor (single source of truth)", block.height());
@@ -1650,6 +1690,9 @@ impl Blockchain {
         self.process_wallet_transactions(&block)?;
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
+        for tx in &block.transactions {
+            self.index_dao_registry_entry_from_tx(tx, block.header.height);
+        }
 
         // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
@@ -2138,9 +2181,7 @@ impl Blockchain {
         // self.primary_wallet_for_signer().
         let fee_payers: Vec<(usize, PublicKey)> = block.transactions.iter().enumerate()
             .filter_map(|(i, tx)| {
-                let is_token_contract = tx.transaction_type == TransactionType::ContractExecution
-                    && tx.memo.len() > 4
-                    && &tx.memo[0..4] == b"ZHTP";
+                let is_token_contract = crate::transaction::is_token_contract_execution(tx);
                 let is_system = tx.inputs.is_empty() && !is_token_contract;
                 if is_system || tx.fee == 0 { return None; }
                 let sender = &tx.signature.public_key;
@@ -2231,9 +2272,7 @@ impl Blockchain {
                 block.height(),
                 total_fees,
                 block.transactions.iter().filter(|tx| {
-                    let is_token_contract = tx.transaction_type == TransactionType::ContractExecution
-                        && tx.memo.len() > 4
-                        && &tx.memo[0..4] == b"ZHTP";
+                    let is_token_contract = crate::transaction::is_token_contract_execution(tx);
                     let is_system = tx.inputs.is_empty() && !is_token_contract;
                     !is_system && tx.fee > 0
                 }).count()
@@ -3391,10 +3430,18 @@ impl Blockchain {
     /// Get the current expected nonce for a sender address and token.
     /// For SOV transfers, the address is the wallet_id bytes.
     /// For custom token transfers, the address is the key_id bytes.
-    /// 
-    /// Reads from BlockchainStore (sled) if available, otherwise falls back to HashMap.
+    ///
+    /// The in-memory HashMap is checked first; it is populated both during live
+    /// block processing and from the TokenStateSnapshot on restart.  The store
+    /// is only consulted when the key is absent from the HashMap (e.g. for
+    /// nonces written by the BlockExecutor path but not yet reflected in memory).
     pub fn get_token_nonce(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u64 {
-        // Try store first (single source of truth when using BlockExecutor)
+        // In-memory HashMap is the primary source (populated from snapshot on
+        // restart and incremented during process_token_transactions).
+        if let Some(&nonce) = self.token_nonces.get(&(*token_id, *address)) {
+            return nonce;
+        }
+        // Fallback to store for nonces not yet reflected in the HashMap.
         if let Some(store) = self.get_store() {
             let token = crate::storage::TokenId::new(*token_id);
             let addr = crate::storage::Address::new(*address);
@@ -3402,11 +3449,7 @@ impl Blockchain {
                 return nonce;
             }
         }
-        // Fallback to HashMap (legacy path)
-        self.token_nonces
-            .get(&(*token_id, *address))
-            .copied()
-            .unwrap_or(0)
+        0
     }
 
     /// Collect SOV backfill entries from wallet_registry for wallets missing token balances.
@@ -3949,9 +3992,7 @@ impl Blockchain {
             }
             // Handle ContractExecution transactions (token create/mint/transfer/burn)
             else if transaction.transaction_type == TransactionType::ContractExecution {
-                if let Err(e) = self.process_contract_execution(transaction, block.height()) {
-                    warn!("Failed to process contract execution: {}", e);
-                }
+                self.process_contract_execution(transaction, block.height())?;
             }
         }
         Ok(())
@@ -4154,27 +4195,77 @@ impl Blockchain {
                         .map_or(false, |s| s.starts_with("UBI_DISTRIBUTION_V1:"));
                     let is_migration = migration_from.is_some();
 
-                    let token = self.token_contracts.get_mut(&token_id)
-                        .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                    let amount_u64: u64 = mint.amount.try_into()
+                        .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
 
-                    // Creator authorization: custom token mints require signer == creator
-                    if !is_sov && !is_ubi_mint && !is_migration {
+                    let is_kernel_controlled = self.token_contracts.get(&token_id)
+                        .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?
+                        .kernel_mint_authority
+                        .is_some();
+
+                    // Creator authorization: non-kernel custom token mints require signer == creator.
+                    if !is_sov && !is_ubi_mint && !is_migration && !is_kernel_controlled {
+                        let token = self.token_contracts.get(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         token.check_mint_authorization(&transaction.signature.public_key)
                             .map_err(|e| anyhow::anyhow!("{}", e))?;
                     }
 
-                    let amount_u64: u64 = mint.amount.try_into()
-                        .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
-
                     if let Some(from_pk) = migration_from {
-                        token.burn(&from_pk, amount_u64)
-                            .map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                        if is_kernel_controlled {
+                            let mut kernel = self.treasury_kernel.take()
+                                .ok_or_else(|| anyhow::anyhow!(
+                                    "Treasury Kernel not initialized - kernel-controlled token operations require kernel"
+                                ))?;
+                            let burn_result = {
+                                let token = self.token_contracts.get_mut(&token_id)
+                                    .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                                kernel.debit(
+                                    token,
+                                    &transaction.signature.public_key,
+                                    &from_pk,
+                                    amount_u64,
+                                    crate::contracts::treasury_kernel::DebitReason::Burn,
+                                )
+                            };
+                            self.treasury_kernel = Some(kernel);
+                            burn_result.map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                        } else {
+                            let token = self.token_contracts.get_mut(&token_id)
+                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            token.burn(&from_pk, amount_u64)
+                                .map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                        }
                     }
 
-                    token.mint(&recipient_pk, amount_u64)
-                        .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                    if is_kernel_controlled {
+                        let mut kernel = self.treasury_kernel.take()
+                            .ok_or_else(|| anyhow::anyhow!(
+                                "Treasury Kernel not initialized - kernel-controlled token operations require kernel"
+                            ))?;
+                        let mint_result = {
+                            let token = self.token_contracts.get_mut(&token_id)
+                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            kernel.credit(
+                                token,
+                                &transaction.signature.public_key,
+                                &recipient_pk,
+                                amount_u64,
+                                crate::contracts::treasury_kernel::CreditReason::Mint,
+                            )
+                        };
+                        self.treasury_kernel = Some(kernel);
+                        mint_result.map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                    } else {
+                        let token = self.token_contracts.get_mut(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                        token.mint(&recipient_pk, amount_u64)
+                            .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                    }
 
                     if let Some(store) = &self.store {
+                        let token = self.token_contracts.get(&token_id)
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                         if let Err(e) = store_ref.put_token_contract(token) {
                             warn!("Failed to persist token contract after mint: {}", e);
@@ -4233,15 +4324,25 @@ impl Blockchain {
 
     /// Process a ContractExecution transaction
     fn process_contract_execution(&mut self, transaction: &Transaction, block_height: u64) -> Result<()> {
-        // Parse ContractCall from memo: "ZHTP" + bincode(ContractCall, Signature)
-        if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
-            return Err(anyhow::anyhow!("Invalid contract execution memo format"));
-        }
-
-        let call_data = &transaction.memo[4..];
-        let (call, _sig): (crate::types::ContractCall, crate::integration::crypto_integration::Signature) =
-            bincode::deserialize(call_data)
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize contract call: {}", e))?;
+        let call = if transaction
+            .memo
+            .starts_with(crate::transaction::CONTRACT_EXECUTION_MEMO_PREFIX_V2)
+        {
+            let decoded =
+                crate::transaction::DecodedContractExecutionMemo::decode_compat(&transaction.memo)
+                    .map_err(|e| anyhow::anyhow!("Invalid contract execution memo format: {}", e))?;
+            decoded.call
+        } else {
+            // Legacy replay path: "ZHTP" + bincode((ContractCall, Signature)).
+            if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
+                return Err(anyhow::anyhow!("Invalid contract execution memo format"));
+            }
+            let call_data = &transaction.memo[4..];
+            let (call, _sig): (crate::types::ContractCall, crate::integration::crypto_integration::Signature) =
+                bincode::deserialize(call_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize contract call: {}", e))?;
+            call
+        };
 
         // Get caller identity from transaction signature public key
         let caller = transaction.signature.public_key.clone();
@@ -4397,6 +4498,12 @@ impl Blockchain {
                 let token = self.token_contracts.get_mut(&token_id)
                     .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
+                if token.kernel_mint_authority.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "Protected token mint must route through Treasury Kernel"
+                    ));
+                }
+
                 if token.creator != *caller {
                     return Err(anyhow::anyhow!("Only token creator can mint"));
                 }
@@ -4406,103 +4513,14 @@ impl Blockchain {
                 info!("Minted {} tokens to {:?}", amount, to.key_id);
             }
             "transfer" => {
-                warn!("DEPRECATED: ContractExecution/transfer is deprecated — use TokenTransfer transactions instead (issue #1132)");
-                // TransferParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
-                #[derive(serde::Deserialize)]
-                struct TransferParams {
-                    token_id: [u8; 32],
-                    to: Vec<u8>,  // PublicKey bytes (bincode serialized)
-                    amount: u64,
-                }
-                let params: TransferParams = bincode::deserialize(&call.params)
-                    .map_err(|e| anyhow::anyhow!("Invalid transfer params: {}", e))?;
-                let TransferParams { token_id, to: to_bytes, amount } = params;
-                if Self::is_sov_token_id(&token_id) {
-                    return Err(anyhow::anyhow!("SOV transfers must use TokenTransfer transactions"));
-                }
-
-                // Deserialize PublicKey from bytes, or create minimal key with key_id
-                let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
-                    // Just key_id was sent
-                    lib_crypto::types::keys::PublicKey {
-                        dilithium_pk: vec![],
-                        kyber_pk: vec![],
-                        key_id: to_bytes.try_into().unwrap_or([0u8; 32]),
-                    }
-                } else {
-                    // Full PublicKey was serialized
-                    bincode::deserialize(&to_bytes).unwrap_or_else(|_| {
-                        lib_crypto::types::keys::PublicKey {
-                            dilithium_pk: vec![],
-                            kyber_pk: vec![],
-                            key_id: [0u8; 32],
-                        }
-                    })
-                };
-
-                let token = self.token_contracts.get_mut(&token_id)
-                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-                // Debug: log caller key_id and all balance entries for diagnosis
-                warn!(
-                    "[TRANSFER-EXEC] caller key_id={}, token has {} balance entries, amount={}",
-                    hex::encode(&caller.key_id),
-                    token.balances.len(),
-                    amount
-                );
-                for (pk, bal) in token.balances.iter() {
-                    warn!(
-                        "[TRANSFER-EXEC] balance entry: key_id={} balance={} dilithium_pk_len={} kyber_pk_len={}",
-                        hex::encode(&pk.key_id), bal, pk.dilithium_pk.len(), pk.kyber_pk.len()
-                    );
-                }
-
-                // Look up balance by key_id to handle PublicKey shape mismatches.
-                // Balances may have been minted under PublicKey::new(dilithium_pk) which
-                // has kyber_pk=vec![], but the caller's tx signature has both keys populated.
-                // Find the existing balance entry by key_id instead of full PublicKey equality.
-                let (source_key, source_balance) = token.balances.iter()
-                    .find(|(pk, _)| pk.key_id == caller.key_id)
-                    .map(|(pk, bal)| (pk.clone(), *bal))
-                    .unwrap_or_else(|| (caller.clone(), 0));
-
-                warn!(
-                    "[TRANSFER-EXEC] source_balance={} (found_by_key_id={}) for caller key_id={}",
-                    source_balance,
-                    source_balance > 0,
-                    hex::encode(&caller.key_id)
-                );
-
-                if source_balance < amount {
-                    return Err(anyhow::anyhow!("Insufficient balance"));
-                }
-                token.balances.insert(source_key, source_balance - amount);
-
-                let (to_key, to_balance) = token.balances.iter()
-                    .find(|(pk, _)| pk.key_id == to.key_id)
-                    .map(|(pk, bal)| (pk.clone(), *bal))
-                    .unwrap_or_else(|| (to.clone(), 0));
-                token.balances.insert(to_key, to_balance + amount);
-
-                info!("Transferred {} tokens from {:?} to {:?}", amount, caller.key_id, to.key_id);
+                return Err(anyhow::anyhow!(
+                    "ContractExecution/transfer is prohibited — use TokenTransfer transactions instead"
+                ));
             }
             "burn" => {
-                // BurnParams struct: { token_id: [u8; 32], amount: u64 }
-                #[derive(serde::Deserialize)]
-                struct BurnParams {
-                    token_id: [u8; 32],
-                    amount: u64,
-                }
-                let params: BurnParams = bincode::deserialize(&call.params)
-                    .map_err(|e| anyhow::anyhow!("Invalid burn params: {}", e))?;
-                let BurnParams { token_id, amount } = params;
-
-                let token = self.token_contracts.get_mut(&token_id)
-                    .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
-                crate::contracts::tokens::functions::burn_tokens(token, caller, amount)
-                    .map_err(|e| anyhow::anyhow!("Burn failed: {}", e))?;
-                info!("Burned {} tokens from {:?}", amount, caller.key_id);
+                return Err(anyhow::anyhow!(
+                    "ContractExecution/burn is prohibited — use TokenBurn transactions instead"
+                ));
             }
             _ => {
                 debug!("Unknown token method: {}", call.method);
@@ -4971,6 +4989,116 @@ impl Blockchain {
             .filter_map(|tx| tx.dao_execution_data.as_ref())
             .cloned()
             .collect()
+    }
+
+    fn parse_hex_32(value: &str) -> Option<[u8; 32]> {
+        let trimmed = value.strip_prefix("0x").unwrap_or(value);
+        let decoded = hex::decode(trimmed).ok()?;
+        if decoded.len() != 32 {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&decoded);
+        Some(out)
+    }
+
+    fn parse_dao_class(value: &str) -> Option<crate::types::dao::DAOType> {
+        crate::types::dao::DAOType::from_str(value)
+    }
+
+    const DAO_REGISTRY_REGISTER_EXEC: &'static str = "dao_registry_register_v1";
+    const DAO_FACTORY_CREATE_EXEC: &'static str = "dao_factory_create_v1";
+
+    fn dao_registry_entry_from_tx(
+        tx: &Transaction,
+        block_height: u64,
+    ) -> Option<DaoRegistryIndexEntry> {
+        if tx.transaction_type != TransactionType::DaoExecution {
+            return None;
+        }
+        let exec = tx.dao_execution_data.as_ref()?;
+        if exec.execution_type != Self::DAO_REGISTRY_REGISTER_EXEC
+            && exec.execution_type != Self::DAO_FACTORY_CREATE_EXEC
+        {
+            return None;
+        }
+        let event_bytes = exec.multisig_signatures.first()?;
+        let event = serde_json::from_slice::<serde_json::Value>(event_bytes).ok()?;
+        let token_key_id = event
+            .get("token_id")
+            .and_then(|v| v.as_str())
+            .and_then(Self::parse_hex_32)?;
+        let class_str = event
+            .get("class")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_ascii_lowercase())?;
+        let metadata_hash = event
+            .get("metadata_hash")
+            .and_then(|v| v.as_str())
+            .and_then(Self::parse_hex_32)?;
+        let treasury_key_id = event
+            .get("treasury_key_id")
+            .and_then(|v| v.as_str())
+            .and_then(Self::parse_hex_32)?;
+        let class = Self::parse_dao_class(&class_str)?;
+        let token_addr = crate::integration::crypto_integration::PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: token_key_id,
+        };
+        let treasury = crate::integration::crypto_integration::PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: treasury_key_id,
+        };
+        let dao_id = crate::contracts::dao_registry::derive_dao_id(&token_addr, class, &treasury);
+        Some(DaoRegistryIndexEntry {
+            dao_id,
+            token_key_id,
+            class: class_str,
+            metadata_hash,
+            treasury_key_id,
+            owner_key_id: tx.signature.public_key.key_id,
+            created_at: block_height,
+        })
+    }
+
+    fn index_dao_registry_entry_from_tx(
+        &mut self,
+        tx: &Transaction,
+        block_height: u64,
+    ) {
+        if let Some(entry) = Self::dao_registry_entry_from_tx(tx, block_height) {
+            self.dao_registry_index.entry(entry.dao_id).or_insert(entry);
+        }
+    }
+
+    pub fn rebuild_dao_registry_index(&mut self) {
+        let mut rebuilt: HashMap<[u8; 32], DaoRegistryIndexEntry> = HashMap::new();
+        for block in &self.blocks {
+            for tx in &block.transactions {
+                if let Some(entry) = Self::dao_registry_entry_from_tx(tx, block.header.height) {
+                    rebuilt.entry(entry.dao_id).or_insert(entry);
+                }
+            }
+        }
+        self.dao_registry_index = rebuilt;
+    }
+
+    pub fn get_dao_registry_entry(&self, dao_id: &[u8; 32]) -> Option<&DaoRegistryIndexEntry> {
+        self.dao_registry_index.get(dao_id)
+    }
+
+    pub fn list_dao_registry_entries(&self) -> Vec<&DaoRegistryIndexEntry> {
+        let mut entries: Vec<&DaoRegistryIndexEntry> = self.dao_registry_index.values().collect();
+        // Sort by registration order (created_at) for stable API behavior, with dao_id as
+        // tiebreaker for deterministic ordering within the same block.
+        entries.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.dao_id.cmp(&b.dao_id))
+        });
+        entries
     }
 
     /// Tally votes for a proposal
@@ -6780,6 +6908,7 @@ impl Blockchain {
             token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
             web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
             contract_blocks: HashMap<[u8; 32], u64>,
+            dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
         }
 
         // Convert full wallet data to minimal references for sync
@@ -6807,6 +6936,7 @@ impl Blockchain {
             token_contracts: self.token_contracts.clone(),
             web4_contracts: self.web4_contracts.clone(),
             contract_blocks: self.contract_blocks.clone(),
+            dao_registry_index: self.dao_registry_index.clone(),
         };
 
         info!(" Exporting blockchain: {} blocks, {} validators, {} token contracts, {} web4 contracts", 
@@ -6850,6 +6980,8 @@ impl Blockchain {
             self.token_contracts = import.token_contracts;
             self.web4_contracts = import.web4_contracts;
             self.contract_blocks = import.contract_blocks;
+            self.dao_registry_index = import.dao_registry_index;
+            self.rebuild_dao_registry_index();
             info!("Successfully adopted imported chain during bootstrap");
             return Ok(lib_consensus::ChainMergeResult::ImportedAdopted);
         }
@@ -6960,6 +7092,8 @@ impl Blockchain {
                             self.token_contracts = import.token_contracts;
                             self.web4_contracts = import.web4_contracts;
                             self.contract_blocks = import.contract_blocks;
+                            self.dao_registry_index = import.dao_registry_index;
+                            self.rebuild_dao_registry_index();
                             Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
                         }
                     }
@@ -6976,6 +7110,8 @@ impl Blockchain {
                     self.token_contracts = import.token_contracts;
                     self.web4_contracts = import.web4_contracts;
                     self.contract_blocks = import.contract_blocks;
+                    self.dao_registry_index = import.dao_registry_index;
+                    self.rebuild_dao_registry_index();
                     
                     // Clear nullifier set and rebuild from new chain
                     self.nullifier_set.clear();
@@ -7387,6 +7523,7 @@ impl Blockchain {
         self.token_contracts = import.token_contracts.clone();
         self.web4_contracts = import.web4_contracts.clone();
         self.contract_blocks = import.contract_blocks.clone();
+        self.dao_registry_index = import.dao_registry_index.clone();
         
         // Step 7: Merge unique local data into adopted chain
         for (did, identity_data) in local_identities_to_preserve {
@@ -7468,6 +7605,7 @@ impl Blockchain {
               self.validator_registry.len(), self.utxo_set.len());
         info!("   Security improvement: Combined validator set and hash rate");
         info!("   Economic state: All citizens' holdings preserved");
+        self.rebuild_dao_registry_index();
         
         if merge_report.is_empty() {
             Ok("adopted imported chain (no unique local data to merge)".to_string())
@@ -7600,6 +7738,7 @@ impl Blockchain {
               self.blocks.len(), self.identity_registry.len(), 
               self.validator_registry.len(), self.utxo_set.len());
         info!("   Local chain history preserved, imported users migrated successfully");
+        self.rebuild_dao_registry_index();
         
         if merge_report.is_empty() {
             Ok("kept local chain (no unique imported data to merge)".to_string())
@@ -7701,6 +7840,7 @@ impl Blockchain {
                 new_contract_blocks += 1;
             }
         }
+        self.rebuild_dao_registry_index();
         
         if merged_items.is_empty() {
             Ok("no unique content found in shorter chain".to_string())
@@ -8077,6 +8217,7 @@ impl Blockchain {
         if let Err(e) = blockchain.reprocess_contract_executions() {
             warn!("Failed to reprocess contract executions: {}", e);
         }
+        blockchain.rebuild_dao_registry_index();
 
         let elapsed = start.elapsed();
 
@@ -9055,6 +9196,8 @@ impl Default for Blockchain {
 #[cfg(test)]
 mod replay_contract_execution_tests {
     use super::*;
+    use crate::block::{Block, BlockHeader};
+    use crate::transaction::DaoExecutionData;
     use crate::types::ContractCall;
     use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
@@ -9229,6 +9372,107 @@ mod replay_contract_execution_tests {
             Some(42),
             "Contract deployment height should be tracked"
         );
+    }
+
+    fn dao_registry_tx(execution_type: &str, token_seed: u8, treasury_seed: u8) -> Transaction {
+        let token_key_id = [token_seed; 32];
+        let treasury_key_id = [treasury_seed; 32];
+        let metadata_hash = [0xabu8; 32];
+        let event = serde_json::json!({
+            "token_id": hex::encode(token_key_id),
+            "class": "np",
+            "metadata_hash": hex::encode(metadata_hash),
+            "treasury_key_id": hex::encode(treasury_key_id),
+        });
+        let dao_execution = DaoExecutionData {
+            proposal_id: Hash::default(),
+            executor: "did:sov:test".to_string(),
+            execution_type: execution_type.to_string(),
+            recipient: None,
+            amount: None,
+            executed_at: 1_700_000_000,
+            executed_at_height: 0,
+            multisig_signatures: vec![serde_json::to_vec(&event).unwrap()],
+        };
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::DaoExecution,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(&test_pubkey(0x70)),
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: Some(dao_execution),
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+        }
+    }
+
+    #[test]
+    fn dao_registry_index_incremental_matches_rebuild() {
+        let block1 = Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 1_700_000_010,
+                difficulty: Difficulty::minimum(),
+                nonce: 0,
+                height: 10,
+                block_hash: Hash::default(),
+                cumulative_difficulty: Difficulty::minimum(),
+                transaction_count: 1,
+                block_size: 0,
+                state_root: Hash::default(),
+                fee_model_version: 2,
+            },
+            transactions: vec![dao_registry_tx(Blockchain::DAO_REGISTRY_REGISTER_EXEC, 0x11, 0x22)],
+        };
+        let block2 = Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 1_700_000_020,
+                difficulty: Difficulty::minimum(),
+                nonce: 0,
+                height: 11,
+                block_hash: Hash::default(),
+                cumulative_difficulty: Difficulty::minimum(),
+                transaction_count: 1,
+                block_size: 0,
+                state_root: Hash::default(),
+                fee_model_version: 2,
+            },
+            transactions: vec![dao_registry_tx(Blockchain::DAO_FACTORY_CREATE_EXEC, 0x33, 0x44)],
+        };
+
+        let mut incremental = Blockchain::default();
+        for tx in &block1.transactions {
+            incremental.index_dao_registry_entry_from_tx(tx, block1.header.height);
+        }
+        for tx in &block2.transactions {
+            incremental.index_dao_registry_entry_from_tx(tx, block2.header.height);
+        }
+
+        let mut rebuilt = Blockchain::default();
+        rebuilt.blocks.push(block1);
+        rebuilt.blocks.push(block2);
+        rebuilt.rebuild_dao_registry_index();
+
+        assert_eq!(incremental.dao_registry_index, rebuilt.dao_registry_index);
+        let entries = rebuilt.list_dao_registry_entries();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].created_at <= entries[1].created_at);
     }
 }
 

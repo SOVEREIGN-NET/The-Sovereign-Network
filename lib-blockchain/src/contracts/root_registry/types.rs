@@ -80,6 +80,91 @@ impl Default for VerificationLevel {
 }
 
 // ============================================================================
+// Phase 5: Verification Proof Types
+// ============================================================================
+
+/// ZK proof data (minimal representation; actual format provided by lib-proofs)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZkProofData {
+    pub proof_data: Vec<u8>,
+    pub public_inputs: Vec<u8>,
+}
+
+/// Verification proof for .sov domain registration operations
+///
+/// [Phase 5] Required for all .sov root issuance. Proves possession of
+/// identity credentials meeting the required verification level.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationProof {
+    pub credential_ref: [u8; 32],
+    pub zk_proof: ZkProofData,
+    /// Context hash: hash(domain_name || operation || nonce) — prevents replay
+    pub context: [u8; 32],
+    pub nonce: u64,
+}
+
+impl VerificationProof {
+    pub fn new(
+        credential_ref: [u8; 32],
+        proof_data: Vec<u8>,
+        public_inputs: Vec<u8>,
+        context: [u8; 32],
+        nonce: u64,
+    ) -> Self {
+        Self {
+            credential_ref,
+            zk_proof: ZkProofData { proof_data, public_inputs },
+            context,
+            nonce,
+        }
+    }
+
+    pub fn has_proof_data(&self) -> bool {
+        !self.zk_proof.proof_data.is_empty()
+    }
+}
+
+/// Errors related to domain verification
+///
+/// [Phase 5] Explicit, typed errors for verification failures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VerificationError {
+    InsufficientLevel { required: VerificationLevel, provided: VerificationLevel },
+    MissingProof,
+    InvalidProof { reason: String },
+    CredentialExpired { expired_at: Timestamp },
+    ContextMismatch,
+    L0NotAllowedForSov,
+}
+
+impl std::fmt::Display for VerificationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VerificationError::InsufficientLevel { required, provided } => {
+                write!(f, "Insufficient verification level: required {:?}, provided {:?}", required, provided)
+            }
+            VerificationError::MissingProof => {
+                write!(f, "Verification proof required for .sov domain registration")
+            }
+            VerificationError::InvalidProof { reason } => {
+                write!(f, "Invalid verification proof: {}", reason)
+            }
+            VerificationError::CredentialExpired { expired_at } => {
+                write!(f, "Credential expired at timestamp {}", expired_at)
+            }
+            VerificationError::ContextMismatch => {
+                write!(f, "Verification proof context mismatch (possible replay)")
+            }
+            VerificationError::L0NotAllowedForSov => {
+                write!(f, "L0 (unverified) identities cannot register .sov domains")
+            }
+        }
+    }
+}
+
+impl std::error::Error for VerificationError {}
+
+// ============================================================================
 // Name Classification
 // ============================================================================
 
