@@ -132,8 +132,8 @@ impl MeshMode {
 pub enum BootstrapStrategy {
     /// Discover peers through mesh protocols only
     MeshDiscovery,
-    /// Use both TCP bootstrap servers and mesh discovery
-    TcpAndMesh,
+    /// Use QUIC bootstrap peers plus mesh discovery
+    QuicAndMesh,
 }
 
 impl BootstrapStrategy {
@@ -146,8 +146,8 @@ impl BootstrapStrategy {
                 DiscoveryMethod::LoRaWANScan,
                 DiscoveryMethod::SatelliteUplink,
             ],
-            BootstrapStrategy::TcpAndMesh => vec![
-                DiscoveryMethod::TcpBootstrap,
+            BootstrapStrategy::QuicAndMesh => vec![
+                DiscoveryMethod::QuicBootstrap,
                 DiscoveryMethod::BluetoothScan,
                 DiscoveryMethod::WiFiDirectScan,
                 DiscoveryMethod::DnsDiscovery,
@@ -159,7 +159,7 @@ impl BootstrapStrategy {
 /// Peer discovery methods
 #[derive(Debug, Clone)]
 pub enum DiscoveryMethod {
-    TcpBootstrap,
+    QuicBootstrap,
     BluetoothScan,
     WiFiDirectScan,
     LoRaWANScan,

@@ -5,7 +5,7 @@
 //! - QUIC ZHTP Mesh (native protocol)
 //! - WiFi Direct P2P
 //! - Bluetooth (BLE/Classic)
-//! - Bootstrap discovery
+//! - Bootstrap discovery markers over QUIC (no TCP fallback)
 //!
 //! NOTE: TCP/UDP mesh protocols removed - using QUIC only
 
@@ -54,8 +54,12 @@ impl IncomingProtocol {
             return IncomingProtocol::Bluetooth;
         }
         
-        // Default to bootstrap for unknown connections
-        IncomingProtocol::Bootstrap
+        // Explicit bootstrap marker over QUIC only
+        if data.starts_with("ZHTP/1.0 BOOTSTRAP") {
+            return IncomingProtocol::Bootstrap;
+        }
+
+        IncomingProtocol::Unknown
     }
     
     /// Check if protocol is mesh-related
@@ -99,5 +103,11 @@ mod tests {
 
         assert!(IncomingProtocol::WiFiDirect.is_wireless());
         assert!(IncomingProtocol::Bluetooth.is_wireless());
+    }
+
+    #[test]
+    fn unknown_payloads_do_not_fall_back_to_bootstrap() {
+        let buffer = b"legacy-tcp-bootstrap-payload";
+        assert_eq!(IncomingProtocol::detect_quic(buffer), IncomingProtocol::Unknown);
     }
 }

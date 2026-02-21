@@ -326,7 +326,7 @@ impl ZhtpUnifiedServer {
         }
 
         info!("Creating ZHTP Unified Server (ID: {})", server_id);
-        info!("Port: {} (HTTP + UDP + WiFi + Bootstrap)", port);
+        info!("Port: {} (QUIC mesh + discovery services)", port);
         info!("Discovery port: {}, QUIC port: {}", discovery_port, quic_port);
         
         // Initialize session manager first
@@ -1274,7 +1274,7 @@ impl ZhtpUnifiedServer {
         Ok(())
     }
     
-    /// Start TCP connection handler (HTTP + TCP mesh + WiFi + Bootstrap)
+    /// Legacy TCP connection handler removed; QUIC is the mesh data plane.
 
 
 
