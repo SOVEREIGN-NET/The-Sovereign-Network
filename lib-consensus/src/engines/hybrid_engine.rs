@@ -110,8 +110,29 @@ impl HybridEngine {
     }
 
     /// Set validator keypair for signing storage attestations
-    pub fn set_validator_keypair(&mut self, keypair: KeyPair) {
+    pub fn set_validator_keypair(&mut self, keypair: KeyPair) -> ConsensusResult<()> {
+        let identity = self.validator_identity.as_ref().ok_or_else(|| {
+            ConsensusError::ValidatorError(
+                "Cannot load validator signing keypair: local validator identity is not configured"
+                    .to_string(),
+            )
+        })?;
+
+        let validator = self.validator_manager.get_validator(identity).ok_or_else(|| {
+            ConsensusError::ValidatorError(
+                "Cannot load validator signing keypair: local validator is not registered"
+                    .to_string(),
+            )
+        })?;
+
+        if validator.consensus_key != keypair.public_key.dilithium_pk {
+            return Err(ConsensusError::ValidatorError(
+                "Validator keypair does not match registered consensus key".to_string(),
+            ));
+        }
+
         self.validator_keypair = Some(keypair);
+        Ok(())
     }
 
     /// Handle consensus event (pure component method)
