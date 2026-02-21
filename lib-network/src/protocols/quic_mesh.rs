@@ -1310,11 +1310,9 @@ impl QuicMeshProtocol {
 
         // Configure ALPN protocols for protocol-based routing
         // Different ALPNs trigger different connection handling:
-        // - zhtp-uhp/1: Control plane with UHP handshake (CLI, Web4)
-        // - zhtp-http/1: HTTP-only mode (mobile apps)
+        // - zhtp-uhp/1|2: Control plane with UHP handshake (CLI, Web4)
+        // - zhtp-public/1: Public read-only requests
         // - zhtp-mesh/1: Mesh peer-to-peer protocol
-        // - zhtp/1.0: Legacy (treated as HTTP-compat)
-        // - h3: HTTP/3 browsers
         rustls_config.alpn_protocols = crate::constants::server_alpns();
 
         // Create Quinn server config from rustls config
