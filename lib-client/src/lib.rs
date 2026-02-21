@@ -46,6 +46,7 @@ pub mod identity;
 pub mod request;
 pub mod session;
 pub mod token_tx;
+pub mod bonding_curve_tx;
 mod bip39_wordlist;
 
 #[cfg(feature = "wasm")]
@@ -1332,6 +1333,294 @@ pub extern "C" fn zhtp_client_build_domain_transfer(
     let to_pubkey_slice = unsafe { std::slice::from_raw_parts(to_pubkey, 1312) };
 
     match token_tx::build_domain_transfer_tx(identity, domain_str, to_pubkey_slice, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+// ============================================================================
+// Bonding Curve FFI Functions
+// ============================================================================
+
+/// Build a signed bonding curve deploy transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/curve/deploy
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (becomes token creator)
+/// - name: Token name (null-terminated C string)
+/// - symbol: Token symbol, max 10 chars (null-terminated C string)
+/// - curve_type: 0=Linear, 1=Exponential, 2=Sigmoid
+/// - base_price: Base price in stablecoin atomic units
+/// - curve_param: Slope/growth rate/steepness depending on curve type
+/// - midpoint_supply: Midpoint supply for sigmoid (0 for other types)
+/// - threshold_type: 0=ReserveAmount, 1=SupplyAmount, 2=TimeAndReserve, 3=TimeAndSupply
+/// - threshold_value: Threshold amount (reserve or supply)
+/// - threshold_time_seconds: Time threshold for TimeAnd* types (0 if not used)
+/// - sell_enabled: 1 to enable selling, 0 to disable
+/// - chain_id: Network chain ID
+/// - nonce: Nonce for replay protection
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_bonding_curve_deploy(
+    handle: *const IdentityHandle,
+    name: *const std::ffi::c_char,
+    symbol: *const std::ffi::c_char,
+    curve_type: u8,
+    base_price: u64,
+    curve_param: u64,
+    midpoint_supply: u64,
+    threshold_type: u8,
+    threshold_value: u64,
+    threshold_time_seconds: u64,
+    sell_enabled: u8,
+    chain_id: u8,
+    nonce: u64,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || name.is_null() || symbol.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let name_str = unsafe {
+        match std::ffi::CStr::from_ptr(name).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let symbol_str = unsafe {
+        match std::ffi::CStr::from_ptr(symbol).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    let midpoint = if midpoint_supply > 0 { Some(midpoint_supply) } else { None };
+    let threshold_time = if threshold_time_seconds > 0 { Some(threshold_time_seconds) } else { None };
+    let sell = sell_enabled != 0;
+
+    match bonding_curve_tx::build_bonding_curve_deploy_tx(
+        identity, name_str, symbol_str, curve_type, base_price, curve_param,
+        midpoint, threshold_type, threshold_value, threshold_time, sell, chain_id, nonce
+    ) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed bonding curve buy transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/curve/buy
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (becomes buyer)
+/// - token_id: Token ID bytes (32 bytes)
+/// - stable_amount: Amount of stablecoin to spend
+/// - min_tokens_out: Minimum tokens expected (slippage protection)
+/// - chain_id: Network chain ID
+/// - nonce: Nonce for replay protection
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_bonding_curve_buy(
+    handle: *const IdentityHandle,
+    token_id: *const u8,
+    stable_amount: u64,
+    min_tokens_out: u64,
+    chain_id: u8,
+    nonce: u64,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || token_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let token_id_slice = unsafe { std::slice::from_raw_parts(token_id, 32) };
+    let mut token_id_arr = [0u8; 32];
+    token_id_arr.copy_from_slice(token_id_slice);
+
+    match bonding_curve_tx::build_bonding_curve_buy_tx(
+        identity, &token_id_arr, stable_amount, min_tokens_out, chain_id, nonce
+    ) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed bonding curve sell transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/curve/sell
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (becomes seller)
+/// - token_id: Token ID bytes (32 bytes)
+/// - token_amount: Amount of tokens to sell
+/// - min_stable_out: Minimum stablecoin expected (slippage protection)
+/// - chain_id: Network chain ID
+/// - nonce: Nonce for replay protection
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_bonding_curve_sell(
+    handle: *const IdentityHandle,
+    token_id: *const u8,
+    token_amount: u64,
+    min_stable_out: u64,
+    chain_id: u8,
+    nonce: u64,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || token_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let token_id_slice = unsafe { std::slice::from_raw_parts(token_id, 32) };
+    let mut token_id_arr = [0u8; 32];
+    token_id_arr.copy_from_slice(token_id_slice);
+
+    match bonding_curve_tx::build_bonding_curve_sell_tx(
+        identity, &token_id_arr, token_amount, min_stable_out, chain_id, nonce
+    ) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed AMM swap transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/swap
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (swapper)
+/// - token_id: Token ID bytes (32 bytes)
+/// - pool_id: AMM Pool ID bytes (32 bytes)
+/// - amount_in: Input amount
+/// - min_amount_out: Minimum output (slippage protection)
+/// - token_to_sov: 1 for token->SOV, 0 for SOV->token
+/// - chain_id: Network chain ID
+/// - nonce: Nonce for replay protection
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_swap(
+    handle: *const IdentityHandle,
+    token_id: *const u8,
+    pool_id: *const u8,
+    amount_in: u64,
+    min_amount_out: u64,
+    token_to_sov: u8,
+    chain_id: u8,
+    nonce: u64,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || token_id.is_null() || pool_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let token_id_slice = unsafe { std::slice::from_raw_parts(token_id, 32) };
+    let pool_id_slice = unsafe { std::slice::from_raw_parts(pool_id, 32) };
+    let mut token_id_arr = [0u8; 32];
+    let mut pool_id_arr = [0u8; 32];
+    token_id_arr.copy_from_slice(token_id_slice);
+    pool_id_arr.copy_from_slice(pool_id_slice);
+
+    match bonding_curve_tx::build_swap_tx(
+        identity, &token_id_arr, &pool_id_arr, amount_in, min_amount_out,
+        token_to_sov != 0, chain_id, nonce
+    ) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed add liquidity transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/swap/liquidity/add
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (liquidity provider)
+/// - token_id: Token ID bytes (32 bytes)
+/// - pool_id: AMM Pool ID bytes (32 bytes)
+/// - token_amount: Token amount to add
+/// - sov_amount: SOV amount to add
+/// - chain_id: Network chain ID
+/// - nonce: Nonce for replay protection
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_add_liquidity(
+    handle: *const IdentityHandle,
+    token_id: *const u8,
+    pool_id: *const u8,
+    token_amount: u64,
+    sov_amount: u64,
+    chain_id: u8,
+    nonce: u64,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || token_id.is_null() || pool_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let token_id_slice = unsafe { std::slice::from_raw_parts(token_id, 32) };
+    let pool_id_slice = unsafe { std::slice::from_raw_parts(pool_id, 32) };
+    let mut token_id_arr = [0u8; 32];
+    let mut pool_id_arr = [0u8; 32];
+    token_id_arr.copy_from_slice(token_id_slice);
+    pool_id_arr.copy_from_slice(pool_id_slice);
+
+    match bonding_curve_tx::build_add_liquidity_tx(
+        identity, &token_id_arr, &pool_id_arr, token_amount, sov_amount, chain_id, nonce
+    ) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed remove liquidity transaction.
+/// Returns hex-encoded transaction ready to POST to /api/v1/swap/liquidity/remove
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (liquidity provider)
+/// - token_id: Token ID bytes (32 bytes)
+/// - pool_id: AMM Pool ID bytes (32 bytes)
+/// - lp_amount: LP tokens to burn
+/// - chain_id: Network chain ID
+/// - nonce: Nonce for replay protection
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_remove_liquidity(
+    handle: *const IdentityHandle,
+    token_id: *const u8,
+    pool_id: *const u8,
+    lp_amount: u64,
+    chain_id: u8,
+    nonce: u64,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || token_id.is_null() || pool_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let token_id_slice = unsafe { std::slice::from_raw_parts(token_id, 32) };
+    let pool_id_slice = unsafe { std::slice::from_raw_parts(pool_id, 32) };
+    let mut token_id_arr = [0u8; 32];
+    let mut pool_id_arr = [0u8; 32];
+    token_id_arr.copy_from_slice(token_id_slice);
+    pool_id_arr.copy_from_slice(pool_id_slice);
+
+    match bonding_curve_tx::build_remove_liquidity_tx(
+        identity, &token_id_arr, &pool_id_arr, lp_amount, chain_id, nonce
+    ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
