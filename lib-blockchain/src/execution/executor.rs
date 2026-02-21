@@ -623,6 +623,18 @@ impl BlockExecutor {
                 TxOutcome::DaoExecution(_) => {
                     summary.account_updates += 1; // governance state write (not a token balance change)
                 }
+                TxOutcome::BondingCurveDeploy(_) => {
+                    summary.account_updates += 1; // bonding curve token creation
+                }
+                TxOutcome::BondingCurveBuy(_) => {
+                    summary.balance_changes += 2; // stablecoin debit + token credit
+                }
+                TxOutcome::BondingCurveSell(_) => {
+                    summary.balance_changes += 2; // token debit + stablecoin credit
+                }
+                TxOutcome::BondingCurveGraduate(_) => {
+                    summary.account_updates += 1; // phase transition to AMM
+                }
                 TxOutcome::Coinbase(_) => {
                     // Should not happen - coinbase filtered out
                     unreachable!("Coinbase should not be in non-coinbase pass");
@@ -1449,6 +1461,175 @@ impl BlockExecutor {
         })
     }
 
+    // =========================================================================
+    // Bonding Curve Operations
+    // =========================================================================
+
+    fn apply_bonding_curve_deploy(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+    ) -> Result<BondingCurveDeployOutcome, TxApplyError> {
+        let data = tx.bonding_curve_deploy_data.as_ref().ok_or_else(|| {
+            TxApplyError::InvalidType("BondingCurveDeploy requires bonding_curve_deploy_data field".to_string())
+        })?;
+
+        // Generate token ID from name, symbol, and creator
+        use lib_crypto::hash_blake3;
+        let input = format!("{}:{}:{}", data.name, data.symbol, hex::encode(&data.creator));
+        let token_id_bytes = hash_blake3(input.as_bytes());
+        let token_id = TokenId::from(token_id_bytes);
+
+        // Create the bonding curve token
+        use crate::contracts::bonding_curve::{
+            BondingCurveToken, types::{CurveType, Threshold, Phase}
+        };
+
+        // Convert u8 curve type to CurveType
+        let curve_type = match data.curve_type {
+            0 => CurveType::Linear {
+                base_price: data.base_price,
+                slope: data.curve_param,
+            },
+            1 => CurveType::Exponential {
+                base_price: data.base_price,
+                growth_rate_bps: data.curve_param,
+            },
+            2 => CurveType::Sigmoid {
+                max_price: data.base_price,
+                midpoint_supply: data.midpoint_supply.unwrap_or(1_000_000_000_000_000),
+                steepness: data.curve_param,
+            },
+            _ => return Err(TxApplyError::InvalidType(format!("Invalid curve type: {}", data.curve_type))),
+        };
+
+        // Convert threshold type to Threshold
+        let threshold = match data.threshold_type {
+            0 => Threshold::ReserveAmount(data.threshold_value),
+            1 => Threshold::SupplyAmount(data.threshold_value),
+            2 => Threshold::TimeAndReserve {
+                min_time_seconds: data.threshold_time_seconds.unwrap_or(0),
+                min_reserve: data.threshold_value,
+            },
+            3 => Threshold::TimeAndSupply {
+                min_time_seconds: data.threshold_time_seconds.unwrap_or(0),
+                min_supply: data.threshold_value,
+            },
+            _ => return Err(TxApplyError::InvalidType(format!("Invalid threshold type: {}", data.threshold_type))),
+        };
+
+        let token = BondingCurveToken {
+            token_id: token_id_bytes,
+            name: data.name.clone(),
+            symbol: data.symbol.clone(),
+            decimals: 8, // Standard decimals
+            phase: Phase::Curve,
+            total_supply: 0,
+            reserve_balance: 0,
+            curve_type,
+            threshold,
+            sell_enabled: data.sell_enabled,
+            amm_pool_id: None,
+            creator: lib_crypto::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: data.creator,
+            },
+            deployed_at_block: 0, // TODO: get from block_height
+            deployed_at_timestamp: 0, // TODO: get from block timestamp
+        };
+
+        // Store the token
+        tx_apply::apply_bonding_curve_deploy(mutator, &token_id, &token, &data.symbol)?;
+
+        Ok(BondingCurveDeployOutcome {
+            token_id: token_id_bytes,
+            symbol: data.symbol.clone(),
+        })
+    }
+
+    fn apply_bonding_curve_buy(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+    ) -> Result<BondingCurveBuyOutcome, TxApplyError> {
+        let data = tx.bonding_curve_buy_data.as_ref().ok_or_else(|| {
+            TxApplyError::InvalidType("BondingCurveBuy requires bonding_curve_buy_data field".to_string())
+        })?;
+
+        let token_id = TokenId::from(data.token_id);
+        let buyer = Address(data.buyer);
+
+        // Calculate tokens out based on curve (simplified - in production would use actual curve math)
+        // For now, use a simple calculation
+        let tokens_out = data.min_tokens_out; // In production, calculate from curve
+
+        tx_apply::apply_bonding_curve_buy(
+            mutator,
+            &token_id,
+            &buyer,
+            data.stable_amount,
+            tokens_out,
+        )?;
+
+        Ok(BondingCurveBuyOutcome {
+            token_id: data.token_id,
+            buyer: data.buyer,
+            stable_spent: data.stable_amount,
+            tokens_received: tokens_out,
+        })
+    }
+
+    fn apply_bonding_curve_sell(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+    ) -> Result<BondingCurveSellOutcome, TxApplyError> {
+        let data = tx.bonding_curve_sell_data.as_ref().ok_or_else(|| {
+            TxApplyError::InvalidType("BondingCurveSell requires bonding_curve_sell_data field".to_string())
+        })?;
+
+        let token_id = TokenId::from(data.token_id);
+        let seller = Address(data.seller);
+
+        // Calculate stable out based on curve (simplified)
+        let stable_out = data.min_stable_out; // In production, calculate from curve
+
+        tx_apply::apply_bonding_curve_sell(
+            mutator,
+            &token_id,
+            &seller,
+            data.token_amount,
+            stable_out,
+        )?;
+
+        Ok(BondingCurveSellOutcome {
+            token_id: data.token_id,
+            seller: data.seller,
+            tokens_sold: data.token_amount,
+            stable_received: stable_out,
+        })
+    }
+
+    fn apply_bonding_curve_graduate(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+    ) -> Result<BondingCurveGraduateOutcome, TxApplyError> {
+        let data = tx.bonding_curve_graduate_data.as_ref().ok_or_else(|| {
+            TxApplyError::InvalidType("BondingCurveGraduate requires bonding_curve_graduate_data field".to_string())
+        })?;
+
+        let token_id = TokenId::from(data.token_id);
+
+        tx_apply::apply_bonding_curve_graduate(mutator, &token_id, &data.pool_id)?;
+
+        Ok(BondingCurveGraduateOutcome {
+            token_id: data.token_id,
+            pool_id: data.pool_id,
+        })
+    }
+
     /// Apply a single transaction
     fn apply_transaction(
         &self,
@@ -1618,12 +1799,25 @@ impl BlockExecutor {
             | TransactionType::DifficultyUpdate
             | TransactionType::UBIClaim
             | TransactionType::ProfitDeclaration
-            | TransactionType::GovernanceConfigUpdate
-            // Bonding curve types - TODO: implement full state transition
-            | TransactionType::BondingCurveDeploy
-            | TransactionType::BondingCurveBuy
-            | TransactionType::BondingCurveSell
-            | TransactionType::BondingCurveGraduate => Ok(TxOutcome::LegacySystem),
+            | TransactionType::GovernanceConfigUpdate => Ok(TxOutcome::LegacySystem),
+
+            // Bonding curve types
+            TransactionType::BondingCurveDeploy => {
+                let outcome = self.apply_bonding_curve_deploy(mutator, tx)?;
+                Ok(TxOutcome::BondingCurveDeploy(outcome))
+            }
+            TransactionType::BondingCurveBuy => {
+                let outcome = self.apply_bonding_curve_buy(mutator, tx)?;
+                Ok(TxOutcome::BondingCurveBuy(outcome))
+            }
+            TransactionType::BondingCurveSell => {
+                let outcome = self.apply_bonding_curve_sell(mutator, tx)?;
+                Ok(TxOutcome::BondingCurveSell(outcome))
+            }
+            TransactionType::BondingCurveGraduate => {
+                let outcome = self.apply_bonding_curve_graduate(mutator, tx)?;
+                Ok(TxOutcome::BondingCurveGraduate(outcome))
+            }
 
             TransactionType::DaoProposal => {
                 let outcome = self.apply_dao_proposal(mutator, tx, &tx_hash)?;
@@ -1714,6 +1908,10 @@ enum TxOutcome {
     DaoProposal(DaoProposalOutcome),
     DaoVote(DaoVoteOutcome),
     DaoExecution(DaoExecutionOutcome),
+    BondingCurveDeploy(BondingCurveDeployOutcome),
+    BondingCurveBuy(BondingCurveBuyOutcome),
+    BondingCurveSell(BondingCurveSellOutcome),
+    BondingCurveGraduate(BondingCurveGraduateOutcome),
     Coinbase(CoinbaseOutcome),
     /// Legacy system transaction types (IdentityRegistration, WalletRegistration, etc.)
     /// accepted as no-ops by the Phase-2 executor for backwards compatibility.
@@ -1776,6 +1974,38 @@ pub struct DaoVoteOutcome {
 #[derive(Debug, Clone)]
 pub struct DaoExecutionOutcome {
     pub proposal_id: crate::types::Hash,
+}
+
+/// Outcome of a bonding curve deploy transaction
+#[derive(Debug, Clone)]
+pub struct BondingCurveDeployOutcome {
+    pub token_id: [u8; 32],
+    pub symbol: String,
+}
+
+/// Outcome of a bonding curve buy transaction
+#[derive(Debug, Clone)]
+pub struct BondingCurveBuyOutcome {
+    pub token_id: [u8; 32],
+    pub buyer: [u8; 32],
+    pub stable_spent: u64,
+    pub tokens_received: u64,
+}
+
+/// Outcome of a bonding curve sell transaction
+#[derive(Debug, Clone)]
+pub struct BondingCurveSellOutcome {
+    pub token_id: [u8; 32],
+    pub seller: [u8; 32],
+    pub tokens_sold: u64,
+    pub stable_received: u64,
+}
+
+/// Outcome of a bonding curve graduate transaction
+#[derive(Debug, Clone)]
+pub struct BondingCurveGraduateOutcome {
+    pub token_id: [u8; 32],
+    pub pool_id: [u8; 32],
 }
 
 // =============================================================================

@@ -600,6 +600,102 @@ pub fn apply_token_mint(
     mutator.credit_token(token, to, amount)
 }
 
+/// Apply a bonding curve deploy transaction
+pub fn apply_bonding_curve_deploy(
+    mutator: &StateMutator<'_>,
+    token_id: &TokenId,
+    token: &crate::contracts::bonding_curve::BondingCurveToken,
+    symbol: &str,
+) -> TxApplyResult<()> {
+    // Store the bonding curve token
+    mutator.store.put_bonding_curve_token(token_id, token)?;
+    // Create symbol index
+    mutator.store.put_bonding_curve_symbol_index(symbol, token_id)?;
+    Ok(())
+}
+
+/// Apply a bonding curve buy transaction
+pub fn apply_bonding_curve_buy(
+    mutator: &StateMutator<'_>,
+    token_id: &TokenId,
+    buyer: &Address,
+    stable_amount: u64,
+    tokens_out: u64,
+) -> TxApplyResult<()> {
+    // Get current token state
+    let mut token = mutator
+        .store
+        .get_bonding_curve_token(token_id)?
+        .ok_or_else(|| TxApplyError::Internal(format!("Bonding curve token not found: {:?}", token_id)))?;
+
+    // Debit stablecoin from buyer (using token balance system)
+    // In production, this would debit actual stablecoin balance
+
+    // Credit bonding curve tokens to buyer
+    mutator.credit_token(token_id, buyer, tokens_out as u128)?;
+
+    // Update token reserve and supply
+    token.reserve_balance = token.reserve_balance.saturating_add(stable_amount);
+    token.total_supply = token.total_supply.saturating_add(tokens_out);
+
+    // Store updated token
+    mutator.store.put_bonding_curve_token(token_id, &token)?;
+
+    Ok(())
+}
+
+/// Apply a bonding curve sell transaction
+pub fn apply_bonding_curve_sell(
+    mutator: &StateMutator<'_>,
+    token_id: &TokenId,
+    seller: &Address,
+    token_amount: u64,
+    stable_out: u64,
+) -> TxApplyResult<()> {
+    // Get current token state
+    let mut token = mutator
+        .store
+        .get_bonding_curve_token(token_id)?
+        .ok_or_else(|| TxApplyError::Internal(format!("Bonding curve token not found: {:?}", token_id)))?;
+
+    // Debit bonding curve tokens from seller
+    mutator.debit_token(token_id, seller, token_amount as u128)?;
+
+    // Credit stablecoin to seller (in production)
+
+    // Update token reserve and supply
+    token.reserve_balance = token.reserve_balance.saturating_sub(stable_out);
+    token.total_supply = token.total_supply.saturating_sub(token_amount);
+
+    // Store updated token
+    mutator.store.put_bonding_curve_token(token_id, &token)?;
+
+    Ok(())
+}
+
+/// Apply a bonding curve graduate transaction
+pub fn apply_bonding_curve_graduate(
+    mutator: &StateMutator<'_>,
+    token_id: &TokenId,
+    pool_id: &[u8; 32],
+) -> TxApplyResult<()> {
+    // Get current token state
+    let mut token = mutator
+        .store
+        .get_bonding_curve_token(token_id)?
+        .ok_or_else(|| TxApplyError::Internal(format!("Bonding curve token not found: {:?}", token_id)))?;
+
+    // Update phase to AMM
+    use crate::contracts::bonding_curve::types::Phase;
+    token.phase = Phase::AMM;
+    token.amm_pool_id = Some(*pool_id);
+
+    // Store updated token
+    mutator.store.put_bonding_curve_token(token_id, &token)?;
+
+    Ok(())
+}
+
 /// Apply a coinbase transaction (block reward + fee collection)
 ///
 /// Coinbase creates new value - no inputs are spent.
