@@ -37,6 +37,10 @@ GATEWAY_ENABLED=$(grep '^gateway_enabled' "$CONFIG_FILE" | cut -d'=' -f2 | cut -
 STORAGE_CAPACITY=$(grep '^storage_capacity_gb' "$CONFIG_FILE" | cut -d'=' -f2 | cut -d'#' -f1 | tr -d ' ' 2>/dev/null || echo "")
 MAX_PEERS=$(grep '^max_peers' "$CONFIG_FILE" | cut -d'=' -f2 | cut -d'#' -f1 | tr -d ' ' 2>/dev/null || echo "")
 
+if [ -z "$RUNTIME_ROLE" ]; then
+    echo " WARNING: runtime_role not specified in config (defaults to FULL)"
+fi
+
 if [ -z "$GATEWAY_ENABLED" ]; then
     GATEWAY_ENABLED="false"
 fi

@@ -3,6 +3,7 @@
 # Suitable for: Production validators, stakers, block producers
 
 # Core Node Settings
+environment = "Mainnet"
 mesh_mode = "Hybrid"
 security_level = "Maximum"  # Highest security for validators
 runtime_role = "VALIDATOR"

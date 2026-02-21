@@ -6,7 +6,7 @@
 # CORE NODE SETTINGS - MAINNET
 # ============================================================================
 
-mesh_mode = "Hybrid"         # Support both mesh and QUIC connectivity
+mesh_mode = "Hybrid"         # Hybrid mesh mode with QUIC transport
 security_level = "Maximum"   # Maximum security for production
 runtime_role = "FULL"
 data_directory = "./data/mainnet"  # Mainnet-specific data isolation

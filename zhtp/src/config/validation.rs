@@ -508,4 +508,28 @@ mod tests {
         let result = validate_role_transport_gateway_invariants(&config);
         assert!(result.is_err(), "service runtime must require gateway");
     }
+
+    #[test]
+    fn service_role_with_gateway_enabled_passes() {
+        let mut config = NodeConfig::default();
+        config.runtime_role = crate::config::aggregation::RuntimeRole::SERVICE;
+        config.protocols_config.gateway_enabled = true;
+        let result = validate_role_transport_gateway_invariants(&config);
+        assert!(
+            result.is_ok(),
+            "service role with gateway_enabled should pass"
+        );
+    }
+
+    #[test]
+    fn validator_role_requires_validator_enabled() {
+        let mut config = NodeConfig::default();
+        config.runtime_role = crate::config::aggregation::RuntimeRole::VALIDATOR;
+        config.consensus_config.validator_enabled = false;
+        let result = validate_role_transport_gateway_invariants(&config);
+        assert!(
+            result.is_err(),
+            "VALIDATOR role must require validator_enabled=true"
+        );
+    }
 }
