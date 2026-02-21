@@ -5,7 +5,7 @@
 # Core Node Settings
 mesh_mode = "Mesh"  # Primarily mesh-based
 security_level = "High"  # Higher than testnet but not maximum
-environment = "Production"
+runtime_role = "EDGE"
 data_directory = "./data/mainnet-edge"
 
 [crypto_config]

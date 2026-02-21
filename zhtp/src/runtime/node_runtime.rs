@@ -463,19 +463,21 @@ impl NodeRuntime for DefaultNodeRuntime {
         match peer.discovered_via {
             DiscoveryProtocol::BluetoothLE => {
                 // For BLE-discovered peers, check if they have better protocols available
-                let has_quic_or_tcp = peer
+                let has_quic = peer
                     .addresses
                     .iter()
-                    .any(|addr| addr.contains("tcp://") || addr.contains("quic://"));
+                    .any(|addr| {
+                        addr.contains("quic://") || addr.parse::<std::net::SocketAddr>().is_ok()
+                    });
 
-                if has_quic_or_tcp {
+                if has_quic {
                     vec![NetworkProtocol::QUIC, NetworkProtocol::BluetoothLE]
                 } else {
                     vec![NetworkProtocol::BluetoothLE]
                 }
             }
             DiscoveryProtocol::UdpMulticast | DiscoveryProtocol::WiFiDirect => {
-                vec![NetworkProtocol::QUIC, NetworkProtocol::UDP]
+                vec![NetworkProtocol::QUIC]
             }
             DiscoveryProtocol::BluetoothClassic => {
                 vec![NetworkProtocol::BluetoothClassic]
@@ -484,7 +486,7 @@ impl NodeRuntime for DefaultNodeRuntime {
                 vec![NetworkProtocol::LoRaWAN]
             }
             DiscoveryProtocol::Bootstrap => {
-                vec![NetworkProtocol::QUIC, NetworkProtocol::UDP]
+                vec![NetworkProtocol::QUIC]
             }
         }
     }

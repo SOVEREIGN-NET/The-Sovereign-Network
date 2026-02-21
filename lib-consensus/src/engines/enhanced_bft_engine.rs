@@ -14,6 +14,7 @@ use lib_crypto::{
 use lib_identity::IdentityId;
 use lib_proofs::{initialize_zk_system, ZkProof, ZkProofSystem};
 
+use crate::ConsensusError;
 use crate::byzantine::ByzantineFaultDetector;
 use crate::types::{
     ConsensusConfig, ConsensusProof, ConsensusProposal, ConsensusRound, ConsensusStep,
@@ -117,6 +118,33 @@ impl EnhancedBftEngine {
 
     /// Initialize validator with keypair
     pub fn initialize_validator(&mut self, keypair: KeyPair) -> Result<()> {
+        let identity = self
+            .validator_identity
+            .as_ref()
+            .ok_or_else(|| {
+                ConsensusError::ValidatorError(
+                    "Cannot load validator signing keypair: local validator identity is not configured"
+                        .to_string(),
+                )
+            })?;
+
+        let validator = self
+            .validator_manager
+            .get_validator(identity)
+            .ok_or_else(|| {
+                ConsensusError::ValidatorError(
+                    "Cannot load validator signing keypair: local validator is not registered"
+                        .to_string(),
+                )
+            })?;
+
+        if validator.consensus_key != keypair.public_key.dilithium_pk {
+            return Err(ConsensusError::ValidatorError(
+                "Validator keypair does not match registered consensus key".to_string(),
+            )
+            .into());
+        }
+
         self.validator_keypair = Some(keypair);
         Ok(())
     }

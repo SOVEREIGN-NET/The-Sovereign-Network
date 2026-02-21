@@ -1820,4 +1820,37 @@
         tracing::info!("   - Both nodes rejected equivocating vote");
         tracing::info!("   - Both nodes finalized with 3 valid votes");
         tracing::info!("   - Deterministic finality maintained: CONFIRMED");
+
+    #[tokio::test]
+    async fn test_validator_keypair_rejected_without_local_validator_identity() {
+        let config = ConsensusConfig::default();
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        let keypair = create_test_keypair();
+        let result = engine.set_validator_keypair(keypair);
+
+        assert!(
+            result.is_err(),
+            "Non-validator engine must reject validator key loading"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validator_keypair_allowed_for_registered_local_validator() {
+        let config = ConsensusConfig::default();
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        let validator_id = test_validator_id(9);
+        let keypair = create_test_keypair();
+        register_validator_with_keypair(&mut engine, validator_id, &keypair, true).await;
+
+        let result = engine.set_validator_keypair(keypair);
+        assert!(
+            result.is_ok(),
+            "Registered local validator should be allowed to load signing key"
+        );
     }
