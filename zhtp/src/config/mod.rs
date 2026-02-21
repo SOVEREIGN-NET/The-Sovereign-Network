@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 // Re-export configuration types
 pub use aggregation::NodeConfig;
+pub use aggregation::RuntimeRole;
 pub use mesh_modes::MeshMode;
 pub use security::SecurityLevel;
 pub use environment::Environment;
