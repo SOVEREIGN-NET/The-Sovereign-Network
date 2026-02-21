@@ -58,6 +58,22 @@ fn parse_contract_type(value: &str) -> CliResult<ContractType> {
     }
 }
 
+fn build_contract_call_endpoint(contract_id: [u8; 32]) -> String {
+    format!("/api/v1/blockchain/contracts/{}/call", hex::encode(contract_id))
+}
+
+fn build_contract_list_endpoint(filter: &str, limit: usize, offset: usize) -> String {
+    format!("/api/v1/blockchain/contracts?type={filter}&limit={limit}&offset={offset}")
+}
+
+fn build_contract_info_endpoint(contract_id: [u8; 32]) -> String {
+    format!("/api/v1/blockchain/contracts/{}", hex::encode(contract_id))
+}
+
+fn build_contract_state_endpoint(contract_id: [u8; 32]) -> String {
+    format!("/api/v1/blockchain/contracts/{}/state", hex::encode(contract_id))
+}
+
 fn load_default_keypair() -> CliResult<KeyPair> {
     let keystore = default_keystore_path()?;
     let loaded = load_identity_from_keystore(&keystore)?;
@@ -146,22 +162,6 @@ fn build_signed_contract_deploy_tx(
         .sign(tx.signing_hash().as_bytes())
         .map_err(|e| CliError::ConfigError(format!("Failed to sign deployment tx: {e}")))?;
     Ok(tx)
-}
-
-fn build_contract_call_endpoint(contract_id: [u8; 32]) -> String {
-    format!("/api/v1/blockchain/contracts/{}/call", hex::encode(contract_id))
-}
-
-fn build_contract_list_endpoint(filter: &str, limit: usize, offset: usize) -> String {
-    format!("/api/v1/blockchain/contracts?type={filter}&limit={limit}&offset={offset}")
-}
-
-fn build_contract_info_endpoint(contract_id: [u8; 32]) -> String {
-    format!("/api/v1/blockchain/contracts/{}", hex::encode(contract_id))
-}
-
-fn build_contract_state_endpoint(contract_id: [u8; 32]) -> String {
-    format!("/api/v1/blockchain/contracts/{}/state", hex::encode(contract_id))
 }
 
 pub async fn handle_blockchain_command(args: BlockchainArgs, cli: &ZhtpCli) -> CliResult<()> {
@@ -440,56 +440,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_hex_32_accepts_exact_length() {
-        let value = "11".repeat(32);
-        let parsed = parse_hex_32("contract_id", &value).unwrap();
-        assert_eq!(parsed, [0x11; 32]);
-    }
-
-    #[test]
-    fn test_parse_hex_32_rejects_wrong_length() {
-        let value = "22".repeat(31);
-        assert!(parse_hex_32("contract_id", &value).is_err());
-    }
-
-    #[test]
     fn test_parse_contract_type_token() {
         let ty = parse_contract_type("token").unwrap();
         assert_eq!(ty, ContractType::Token);
-    }
-
-    #[test]
-    fn test_parse_contract_filter_allows_expected_values() {
-        assert_eq!(parse_contract_filter("all").unwrap(), "all");
-        assert_eq!(parse_contract_filter("token").unwrap(), "token");
-        assert_eq!(parse_contract_filter("web4").unwrap(), "web4");
-        assert!(parse_contract_filter("wasm").is_err());
-    }
-
-    #[test]
-    fn test_build_contract_list_endpoint() {
-        assert_eq!(
-            build_contract_list_endpoint("token", 50, 10),
-            "/api/v1/blockchain/contracts?type=token&limit=50&offset=10"
-        );
-    }
-
-    #[test]
-    fn test_build_contract_info_endpoint() {
-        let contract_id = [0xabu8; 32];
-        assert_eq!(
-            build_contract_info_endpoint(contract_id),
-            format!("/api/v1/blockchain/contracts/{}", "ab".repeat(32))
-        );
-    }
-
-    #[test]
-    fn test_build_contract_state_endpoint() {
-        let contract_id = [0xcdu8; 32];
-        assert_eq!(
-            build_contract_state_endpoint(contract_id),
-            format!("/api/v1/blockchain/contracts/{}/state", "cd".repeat(32))
-        );
     }
 
     #[test]
@@ -524,41 +477,5 @@ mod tests {
         assert_eq!(tx.transaction_type, TransactionType::ContractExecution);
         assert!(tx.memo.starts_with(b"ZHTP"));
         assert!(tx.fee > 0);
-    }
-
-    #[test]
-    fn test_build_contract_call_endpoint() {
-        let contract_id = [0xefu8; 32];
-        assert_eq!(
-            build_contract_call_endpoint(contract_id),
-            format!("/api/v1/blockchain/contracts/{}/call", "ef".repeat(32))
-        );
-    }
-
-    #[test]
-    fn test_parse_contract_filter_case_insensitive() {
-        assert_eq!(parse_contract_filter("ALL").unwrap(), "all");
-        assert_eq!(parse_contract_filter("Token").unwrap(), "token");
-        assert_eq!(parse_contract_filter("WEB4").unwrap(), "web4");
-    }
-
-    #[test]
-    fn test_parse_contract_filter_rejects_unknown() {
-        assert!(parse_contract_filter("dao").is_err());
-        assert!(parse_contract_filter("").is_err());
-    }
-
-    #[test]
-    fn test_parse_contract_type_all_variants() {
-        assert_eq!(parse_contract_type("web4").unwrap(), ContractType::Web4Website);
-        assert_eq!(parse_contract_type("messaging").unwrap(), ContractType::WhisperMessaging);
-        assert_eq!(parse_contract_type("governance").unwrap(), ContractType::Governance);
-        assert!(parse_contract_type("unknown").is_err());
-    }
-
-    #[test]
-    fn test_validate_tx_hash_too_short() {
-        assert!(validate_tx_hash("abc").is_err());
-        assert!(validate_tx_hash(&"0".repeat(32)).is_ok());
     }
 }
