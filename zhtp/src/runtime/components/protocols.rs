@@ -31,6 +31,7 @@ pub struct ProtocolsComponent {
     /// Note: multicast peer discovery uses fixed port 37775/UDP (see NETWORK_RULES.md).
     discovery_port: u16,
     is_edge_node: bool,
+    validator_enabled: bool,
     /// Enable ZDNS transport server (UDP/TCP DNS on port 53)
     enable_zdns_transport: bool,
     /// Gateway IP for ZDNS transport responses
@@ -79,6 +80,7 @@ impl ProtocolsComponent {
             quic_port,
             discovery_port,
             is_edge_node: false,
+            validator_enabled: false,
             enable_zdns_transport: false, // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -89,7 +91,7 @@ impl ProtocolsComponent {
     }
 
     pub fn new_with_node_type(environment: crate::config::environment::Environment, api_port: u16, is_edge_node: bool) -> Self {
-        Self::new_with_node_type_and_ports(environment, api_port, 9334, 9333, is_edge_node)
+        Self::new_with_node_type_and_ports(environment, api_port, 9334, 9333, is_edge_node, false)
     }
 
     pub fn new_with_node_type_and_ports(
@@ -98,6 +100,7 @@ impl ProtocolsComponent {
         quic_port: u16,
         discovery_port: u16,
         is_edge_node: bool,
+        validator_enabled: bool,
     ) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
@@ -112,6 +115,7 @@ impl ProtocolsComponent {
             quic_port,
             discovery_port,
             is_edge_node,
+            validator_enabled,
             enable_zdns_transport: false, // Disabled by default
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -141,6 +145,7 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
+            validator_enabled: false,
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
             // SECURITY: Default to localhost even when enabled
@@ -171,6 +176,7 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
+            validator_enabled: false,
             enable_zdns_transport: false,
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -200,6 +206,7 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
+            validator_enabled: false,
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -340,6 +347,8 @@ impl Component for ProtocolsComponent {
             Some(self.quic_port),       // quic_port from config
             None,  // protocols_config - will use defaults (Bluetooth disabled by default)
             None,  // bootstrap_peers - will use defaults
+            self.is_edge_node,
+            self.validator_enabled,
         ).await
             .map_err(|e| anyhow::anyhow!("Failed to create unified server: {}", e))?;
         

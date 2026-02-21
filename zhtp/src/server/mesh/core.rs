@@ -56,6 +56,30 @@ impl ZhtpRateLimitState {
         true // Within limit
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeshRuntimeRole {
+    Validator,
+    Full,
+    Edge,
+    Relay,
+    Bootstrap,
+    Service,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeshConsensusRole {
+    Validator,
+    NonValidator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeshNamespace {
+    ConsensusRead,
+    ConsensusMutation,
+    Runtime,
+    Service,
+}
 use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
 use lib_network::protocols::quic_mesh::QuicMeshProtocol;
 use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptionSession};
@@ -155,6 +179,8 @@ pub struct MeshRouter {
 
     // MEDIUM-3 FIX: Identity verification cache for routing
     pub identity_verification_cache: Arc<IdentityVerificationCache>,
+    pub runtime_role: Arc<RwLock<MeshRuntimeRole>>,
+    pub consensus_role: Arc<RwLock<MeshConsensusRole>>,
 }
 
 impl MeshRouter {
@@ -283,6 +309,8 @@ impl MeshRouter {
 
             // MEDIUM-3 FIX: Initialize identity verification cache
             identity_verification_cache: Arc::new(IdentityVerificationCache::new()),
+            runtime_role: Arc::new(RwLock::new(MeshRuntimeRole::Full)),
+            consensus_role: Arc::new(RwLock::new(MeshConsensusRole::NonValidator)),
         }
     }
 
@@ -417,6 +445,52 @@ impl MeshRouter {
         
         info!("📱 Edge node mode configured with {} headers capacity", max_headers);
     }
+
+    pub async fn configure_authorization_context(
+        &self,
+        is_edge_node: bool,
+        validator_enabled: bool,
+    ) {
+        let runtime_role = if validator_enabled {
+            MeshRuntimeRole::Validator
+        } else if is_edge_node {
+            MeshRuntimeRole::Edge
+        } else {
+            MeshRuntimeRole::Full
+        };
+        let consensus_role = if validator_enabled {
+            MeshConsensusRole::Validator
+        } else {
+            MeshConsensusRole::NonValidator
+        };
+
+        *self.runtime_role.write().await = runtime_role;
+        *self.consensus_role.write().await = consensus_role;
+
+        tracing::info!(
+            "✅ Mesh authorization context: runtime_role={:?}, consensus_role={:?}",
+            runtime_role,
+            consensus_role
+        );
+    }
+
+    pub async fn authorize_namespace(&self, namespace: MeshNamespace) -> bool {
+        let runtime_role = *self.runtime_role.read().await;
+        let consensus_role = *self.consensus_role.read().await;
+
+        match namespace {
+            MeshNamespace::ConsensusMutation => {
+                runtime_role == MeshRuntimeRole::Validator
+                    && consensus_role == MeshConsensusRole::Validator
+            }
+            MeshNamespace::ConsensusRead => matches!(
+                runtime_role,
+                MeshRuntimeRole::Validator | MeshRuntimeRole::Full | MeshRuntimeRole::Relay
+            ),
+            MeshNamespace::Runtime => true,
+            MeshNamespace::Service => runtime_role == MeshRuntimeRole::Service,
+        }
+    }
 }
 
 impl Clone for MeshRouter {
@@ -461,6 +535,46 @@ impl Clone for MeshRouter {
             zhtp_rate_limits: self.zhtp_rate_limits.clone(),
             connection_rate_limiter: self.connection_rate_limiter.clone(),
             identity_verification_cache: self.identity_verification_cache.clone(),
+            runtime_role: self.runtime_role.clone(),
+            consensus_role: self.consensus_role.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_namespace_authorization_non_validator_rejects_consensus_mutation() {
+        let router = MeshRouter::new(Uuid::new_v4(), Arc::new(crate::session_manager::SessionManager::new()));
+        router
+            .configure_authorization_context(true, false)
+            .await;
+
+        assert!(!router.authorize_namespace(MeshNamespace::ConsensusMutation).await);
+        assert!(router.authorize_namespace(MeshNamespace::Runtime).await);
+    }
+
+    #[tokio::test]
+    async fn test_namespace_authorization_validator_allows_consensus_mutation() {
+        let router = MeshRouter::new(Uuid::new_v4(), Arc::new(crate::session_manager::SessionManager::new()));
+        router
+            .configure_authorization_context(false, true)
+            .await;
+
+        assert!(router.authorize_namespace(MeshNamespace::ConsensusMutation).await);
+        assert!(router.authorize_namespace(MeshNamespace::ConsensusRead).await);
+    }
+
+    #[tokio::test]
+    async fn test_namespace_authorization_service_only_service_namespace() {
+        let router = MeshRouter::new(Uuid::new_v4(), Arc::new(crate::session_manager::SessionManager::new()));
+        router
+            .configure_authorization_context(false, false)
+            .await;
+
+        assert!(!router.authorize_namespace(MeshNamespace::Service).await);
+        assert!(router.authorize_namespace(MeshNamespace::Runtime).await);
     }
 }

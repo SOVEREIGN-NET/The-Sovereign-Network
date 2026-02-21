@@ -445,8 +445,14 @@ impl RuntimeOrchestrator {
             let quic_port = self.config.protocols_config.quic_port;
             let discovery_port = self.config.protocols_config.discovery_port;
             let is_edge_node = *self.is_edge_node.read().await;
+            let validator_enabled = self.config.consensus_config.validator_enabled;
             self.register_component(Arc::new(ProtocolsComponent::new_with_node_type_and_ports(
-                environment, api_port, quic_port, discovery_port, is_edge_node
+                environment,
+                api_port,
+                quic_port,
+                discovery_port,
+                is_edge_node,
+                validator_enabled,
             ))).await?;
         }
         

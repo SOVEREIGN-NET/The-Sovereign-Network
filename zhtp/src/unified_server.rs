@@ -294,7 +294,20 @@ impl ZhtpUnifiedServer {
         economic_model: Arc<RwLock<EconomicModel>>,
         port: u16, // Port from configuration
     ) -> Result<Self> {
-        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None, None, None, None, None).await
+        Self::new_with_peer_notification(
+            blockchain,
+            storage,
+            identity_manager,
+            economic_model,
+            port,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+        ).await
     }
     
     /// Create new unified server with peer discovery notification channel
@@ -309,6 +322,8 @@ impl ZhtpUnifiedServer {
         quic_port: Option<u16>,
         protocols_config: Option<crate::config::aggregation::ProtocolsConfig>,
         bootstrap_peers: Option<Vec<String>>,
+        is_edge_node: bool,
+        validator_enabled: bool,
     ) -> Result<Self> {
         let server_id = Uuid::new_v4();
         let monitoring_system = Some(MonitoringSystem::new().await?);
@@ -354,6 +369,9 @@ impl ZhtpUnifiedServer {
         let wifi_router = WiFiRouter::new_with_peer_notification(peer_discovery_tx);
         let bluetooth_router = BluetoothRouter::new();
         let bluetooth_classic_router = BluetoothClassicRouter::new();
+        mesh_router
+            .configure_authorization_context(is_edge_node, validator_enabled)
+            .await;
         
         // Set identity manager on mesh router for direct UDP access
         // This is used by send_with_routing() and broadcast_to_peers() to get sender identity

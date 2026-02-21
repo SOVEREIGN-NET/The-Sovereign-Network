@@ -15,16 +15,36 @@ use lib_network::dht::protocol::ZhtpRelayQuery;
 use lib_network::MeshConnection;
 use lib_economy::EconomicModel;
 
-use super::core::MeshRouter;
+use super::core::{MeshNamespace, MeshRouter};
 use crate::server::monitoring::{PeerReputation, PeerRateLimit};
 
 impl MeshRouter {
+    fn classify_mesh_namespace(mesh_message: &ZhtpMeshMessage) -> MeshNamespace {
+        match mesh_message {
+            ZhtpMeshMessage::BlockchainRequest { .. }
+            | ZhtpMeshMessage::BlockchainData { .. } => MeshNamespace::ConsensusRead,
+            ZhtpMeshMessage::NewBlock { .. }
+            | ZhtpMeshMessage::NewTransaction { .. } => MeshNamespace::ConsensusMutation,
+            ZhtpMeshMessage::ZhtpRequest(_) => MeshNamespace::Runtime,
+            _ => MeshNamespace::Runtime,
+        }
+    }
+
     /// Main UDP mesh message handler - processes all incoming mesh protocol messages
     pub async fn handle_udp_mesh(&self, data: &[u8], addr: SocketAddr) -> Result<Option<Vec<u8>>> {
         debug!("Processing UDP mesh packet from: {} ({} bytes)", addr, data.len());
         
         // First, try to parse as ZhtpMeshMessage (includes blockchain sync messages)
         if let Ok(mesh_message) = bincode::deserialize::<ZhtpMeshMessage>(data) {
+            let namespace = Self::classify_mesh_namespace(&mesh_message);
+            if !self.authorize_namespace(namespace).await {
+                warn!(
+                    "Rejected mesh message before dispatch from {}: namespace={:?}",
+                    addr,
+                    namespace
+                );
+                return Ok(None);
+            }
             info!("📨 Received ZhtpMeshMessage from: {}", addr);
             
             // Handle blockchain-specific messages
@@ -88,6 +108,10 @@ impl MeshRouter {
         
         // Second, try to parse as ZHTP relay query (encrypted DHT request)
         if let Ok(relay_query) = bincode::deserialize::<ZhtpRelayQuery>(data) {
+            if !self.authorize_namespace(MeshNamespace::Runtime).await {
+                warn!("Rejected relay query before dispatch from {}", addr);
+                return Ok(None);
+            }
             return self.handle_relay_query(&relay_query, addr).await;
         }
         
@@ -96,6 +120,15 @@ impl MeshRouter {
             debug!("Attempting JSON parse: {} bytes", text.len());
             match serde_json::from_str::<ZhtpMeshMessage>(text) {
                 Ok(mesh_message) => {
+                    let namespace = Self::classify_mesh_namespace(&mesh_message);
+                    if !self.authorize_namespace(namespace).await {
+                        warn!(
+                            "Rejected JSON mesh message before dispatch from {}: namespace={:?}",
+                            addr,
+                            namespace
+                        );
+                        return Ok(None);
+                    }
                     info!("📨 Received JSON ZhtpMeshMessage from: {}", addr);
                     
                 // Handle ZhtpRequest specifically
