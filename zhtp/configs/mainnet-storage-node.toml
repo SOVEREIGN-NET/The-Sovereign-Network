@@ -5,7 +5,7 @@
 # Core Node Settings
 mesh_mode = "Hybrid"
 security_level = "Maximum"
-environment = "Production"
+runtime_role = "RELAY"
 data_directory = "./data/mainnet-storage"
 
 [crypto_config]
@@ -39,7 +39,7 @@ pricing_tier = "cold"  # Cost-effective storage
 [network_config]
 mesh_port = 33446  # Mainnet mesh port
 max_peers = 150
-protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
+protocols = ["quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = [
     "mainnet-seed1.sovereign.net:9333",
     "mainnet-seed2.sovereign.net:9333"

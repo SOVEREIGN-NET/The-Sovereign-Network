@@ -5,7 +5,7 @@
 
 mesh_mode = "Hybrid"
 security_level = "Maximum"
-environment = "Mainnet"
+runtime_role = "BOOTSTRAP"
 data_directory = "./data/mainnet-bootstrap"
 
 [node]
@@ -57,7 +57,7 @@ advertise_address = "mainnet-seed1.sovereign.net:9333"
 external_ip = "0.0.0.0"  # Bind to all interfaces
 
 # Network protocols
-protocols = ["tcp", "quic"]  # Production protocols only
+protocols = ["quic"]  # Production protocols only
 mesh_port = 33444
 max_peers = 500
 min_peers = 10
@@ -187,7 +187,7 @@ _gateway_enabled = false
 
 [mesh]
 mesh_mode = "Hybrid"
-mesh_protocols = ["tcp", "quic"]
+mesh_protocols = ["quic"]
 mesh_encryption = true
 
 # Bluetooth and WiFi Direct disabled for server node
