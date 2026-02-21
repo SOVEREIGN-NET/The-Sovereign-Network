@@ -247,6 +247,34 @@ impl<'a> StateMutator<'a> {
     }
 
     // =========================================================================
+    // Bonding Curve Primitives
+    // =========================================================================
+
+    /// Get a bonding curve token by its ID.
+    pub fn get_bonding_curve_token(
+        &self,
+        token_id: &TokenId,
+    ) -> TxApplyResult<Option<crate::contracts::bonding_curve::BondingCurveToken>> {
+        Ok(self.store.get_bonding_curve_token(token_id)?)
+    }
+
+    /// Store a bonding curve token.
+    pub fn put_bonding_curve_token(
+        &self,
+        token_id: &TokenId,
+        token: &crate::contracts::bonding_curve::BondingCurveToken,
+    ) -> TxApplyResult<()> {
+        self.store.put_bonding_curve_token(token_id, token)?;
+        Ok(())
+    }
+
+    /// Delete a bonding curve token (used on graduation to AMM).
+    pub fn delete_bonding_curve_token(&self, token_id: &TokenId) -> TxApplyResult<()> {
+        self.store.delete_bonding_curve_token(token_id)?;
+        Ok(())
+    }
+
+    // =========================================================================
     // Contract State Primitives
     // =========================================================================
 
@@ -608,7 +636,7 @@ pub fn apply_bonding_curve_deploy(
     symbol: &str,
 ) -> TxApplyResult<()> {
     // Store the bonding curve token
-    mutator.store.put_bonding_curve_token(token_id, token)?;
+    mutator.put_bonding_curve_token(token_id, token)?;
     // Create symbol index
     mutator.store.put_bonding_curve_symbol_index(symbol, token_id)?;
     Ok(())
@@ -624,7 +652,6 @@ pub fn apply_bonding_curve_buy(
 ) -> TxApplyResult<()> {
     // Get current token state
     let mut token = mutator
-        .store
         .get_bonding_curve_token(token_id)?
         .ok_or_else(|| TxApplyError::Internal(format!("Bonding curve token not found: {:?}", token_id)))?;
 
@@ -639,7 +666,7 @@ pub fn apply_bonding_curve_buy(
     token.total_supply = token.total_supply.saturating_add(tokens_out);
 
     // Store updated token
-    mutator.store.put_bonding_curve_token(token_id, &token)?;
+    mutator.put_bonding_curve_token(token_id, &token)?;
 
     Ok(())
 }
@@ -654,7 +681,6 @@ pub fn apply_bonding_curve_sell(
 ) -> TxApplyResult<()> {
     // Get current token state
     let mut token = mutator
-        .store
         .get_bonding_curve_token(token_id)?
         .ok_or_else(|| TxApplyError::Internal(format!("Bonding curve token not found: {:?}", token_id)))?;
 
@@ -668,7 +694,7 @@ pub fn apply_bonding_curve_sell(
     token.total_supply = token.total_supply.saturating_sub(token_amount);
 
     // Store updated token
-    mutator.store.put_bonding_curve_token(token_id, &token)?;
+    mutator.put_bonding_curve_token(token_id, &token)?;
 
     Ok(())
 }
@@ -681,7 +707,6 @@ pub fn apply_bonding_curve_graduate(
 ) -> TxApplyResult<()> {
     // Get current token state
     let mut token = mutator
-        .store
         .get_bonding_curve_token(token_id)?
         .ok_or_else(|| TxApplyError::Internal(format!("Bonding curve token not found: {:?}", token_id)))?;
 
@@ -691,7 +716,7 @@ pub fn apply_bonding_curve_graduate(
     token.amm_pool_id = Some(*pool_id);
 
     // Store updated token
-    mutator.store.put_bonding_curve_token(token_id, &token)?;
+    mutator.put_bonding_curve_token(token_id, &token)?;
 
     Ok(())
 }

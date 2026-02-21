@@ -1560,9 +1560,27 @@ impl BlockExecutor {
         let token_id = TokenId::from(data.token_id);
         let buyer = Address(data.buyer);
 
-        // Calculate tokens out based on curve (simplified - in production would use actual curve math)
-        // For now, use a simple calculation
-        let tokens_out = data.min_tokens_out; // In production, calculate from curve
+        // Get current token state to calculate tokens out
+        let token = mutator
+            .get_bonding_curve_token(&token_id)?
+            .ok_or_else(|| TxApplyError::InvalidType(format!("Bonding curve token not found: {:?}", token_id)))?;
+
+        // Check token is in Curve phase
+        if !token.phase.is_curve_active() {
+            return Err(TxApplyError::InvalidType(
+                format!("Token is not in curve phase (current phase: {:?})", token.phase)
+            ));
+        }
+
+        // Calculate tokens out using curve math
+        let tokens_out = token.curve_type.calculate_buy_tokens(token.total_supply, data.stable_amount);
+
+        // Validate slippage protection
+        if tokens_out < data.min_tokens_out {
+            return Err(TxApplyError::InvalidType(
+                format!("Slippage exceeded: expected at least {} tokens, got {}", data.min_tokens_out, tokens_out)
+            ));
+        }
 
         tx_apply::apply_bonding_curve_buy(
             mutator,
@@ -1592,8 +1610,34 @@ impl BlockExecutor {
         let token_id = TokenId::from(data.token_id);
         let seller = Address(data.seller);
 
-        // Calculate stable out based on curve (simplified)
-        let stable_out = data.min_stable_out; // In production, calculate from curve
+        // Get current token state
+        let token = mutator
+            .get_bonding_curve_token(&token_id)?
+            .ok_or_else(|| TxApplyError::InvalidType(format!("Bonding curve token not found: {:?}", token_id)))?;
+
+        // Check token is in Curve phase
+        if !token.phase.is_curve_active() {
+            return Err(TxApplyError::InvalidType(
+                format!("Token is not in curve phase (current phase: {:?})", token.phase)
+            ));
+        }
+
+        // Check selling is enabled
+        if !token.sell_enabled {
+            return Err(TxApplyError::InvalidType(
+                "Selling is disabled for this bonding curve token".to_string()
+            ));
+        }
+
+        // Calculate stable out using curve math
+        let stable_out = token.curve_type.calculate_sell_stable(token.total_supply, data.token_amount);
+
+        // Validate slippage protection
+        if stable_out < data.min_stable_out {
+            return Err(TxApplyError::InvalidType(
+                format!("Slippage exceeded: expected at least {} stable, got {}", data.min_stable_out, stable_out)
+            ));
+        }
 
         tx_apply::apply_bonding_curve_sell(
             mutator,
