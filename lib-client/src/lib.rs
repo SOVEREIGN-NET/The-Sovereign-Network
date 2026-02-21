@@ -74,10 +74,8 @@ pub use token_tx::{
     build_burn_tx, build_create_token_tx, build_mint_tx, build_transfer_tx,
     build_sov_wallet_transfer_tx,
     // Domain-specific (new JSON-based API)
-    build_domain_register_request, build_domain_register_request_with_fee_payment,
+    build_domain_register_request_with_fee_payment,
     build_domain_update_request, build_domain_transfer_request,
-    // Domain-specific (deprecated, use *_request functions instead)
-    build_domain_register_tx, build_domain_update_tx, build_domain_transfer_tx,
     // Param types for serialization
     CreateTokenParams, MintParams, TransferParams, BurnParams,
     DomainRegisterParams, DomainUpdateParams, DomainTransferParams, ContentMapping,
@@ -250,18 +248,6 @@ pub extern "C" fn zhtp_client_buffer_free(buf: ByteBuffer) {
     }
 }
 
-/// Alias for zhtp_client_string_free (alternative naming convention)
-#[no_mangle]
-pub extern "C" fn zhtp_client_free_string(s: *mut std::ffi::c_char) {
-    zhtp_client_string_free(s);
-}
-
-/// Alias for zhtp_client_buffer_free (alternative naming convention)
-#[no_mangle]
-pub extern "C" fn zhtp_client_free_bytes(buf: ByteBuffer) {
-    zhtp_client_buffer_free(buf);
-}
-
 /// Get public key from identity
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_get_public_key(handle: *const IdentityHandle) -> ByteBuffer {
@@ -318,64 +304,6 @@ pub extern "C" fn zhtp_client_identity_get_created_at(handle: *const IdentityHan
     }
     let identity = unsafe { &(*handle).inner };
     identity.created_at
-}
-
-/// Get Dilithium secret key from identity (for UHP handshake)
-/// SECURITY: This key should only be used for signing operations on-device.
-/// It should NEVER be transmitted over any network.
-#[deprecated(note = "Use zhtp_client_handshake_new() instead — keeps secret keys inside Rust")]
-#[no_mangle]
-pub extern "C" fn zhtp_client_identity_get_dilithium_secret_key(handle: *const IdentityHandle) -> ByteBuffer {
-    if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
-    }
-    let identity = unsafe { &(*handle).inner };
-    let mut bytes = identity.private_key.clone();
-    let buf = ByteBuffer {
-        data: bytes.as_mut_ptr(),
-        len: bytes.len(),
-    };
-    std::mem::forget(bytes);
-    buf
-}
-
-/// Get Kyber secret key from identity (for UHP handshake key exchange)
-/// SECURITY: This key should only be used for decapsulation on-device.
-/// It should NEVER be transmitted over any network.
-#[deprecated(note = "Use zhtp_client_handshake_new() instead — keeps secret keys inside Rust")]
-#[no_mangle]
-pub extern "C" fn zhtp_client_identity_get_kyber_secret_key(handle: *const IdentityHandle) -> ByteBuffer {
-    if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
-    }
-    let identity = unsafe { &(*handle).inner };
-    let mut bytes = identity.kyber_secret_key.clone();
-    let buf = ByteBuffer {
-        data: bytes.as_mut_ptr(),
-        len: bytes.len(),
-    };
-    std::mem::forget(bytes);
-    buf
-}
-
-/// Get master seed from identity (for key derivation)
-/// SECURITY: This seed should only be used for local key derivation.
-/// It should NEVER be transmitted over any network.
-#[deprecated(note = "Use zhtp_client_handshake_new() instead — keeps secret keys inside Rust")]
-#[no_mangle]
-pub extern "C" fn zhtp_client_identity_get_master_seed(handle: *const IdentityHandle) -> ByteBuffer {
-    if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
-    }
-    let identity = unsafe { &(*handle).inner };
-    // Legacy API name: returns 32-byte recovery entropy (mnemonic-encodable).
-    let mut bytes = identity.recovery_entropy.clone();
-    let buf = ByteBuffer {
-        data: bytes.as_mut_ptr(),
-        len: bytes.len(),
-    };
-    std::mem::forget(bytes);
-    buf
 }
 
 /// Sign registration proof. Returns signature bytes.
@@ -1214,23 +1142,21 @@ pub extern "C" fn zhtp_client_build_token_burn(
     }
 }
 
-/// Build a signed domain registration transaction.
-/// Returns hex-encoded transaction ready to POST to /api/v1/web4/domains/register
+/// Build a signed domain registration request.
+/// Returns JSON payload ready to POST to /api/v1/web4/domains/register
 /// Caller must free with `zhtp_client_string_free`.
 ///
 /// # Parameters
 /// - handle: Identity handle (becomes domain owner)
 /// - domain: Domain name (e.g., "example.sov") (null-terminated C string)
-/// - content_cid: Optional content CID (null-terminated C string, can be NULL)
-/// - chain_id: Network chain ID
+/// - fee_payment_tx: required signed canonical fee transaction (hex, null-terminated C string)
 #[no_mangle]
 pub extern "C" fn zhtp_client_build_domain_register(
     handle: *const IdentityHandle,
     domain: *const std::ffi::c_char,
-    content_cid: *const std::ffi::c_char,
-    chain_id: u8,
+    fee_payment_tx: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if handle.is_null() || domain.is_null() {
+    if handle.is_null() || domain.is_null() || fee_payment_tx.is_null() {
         return std::ptr::null_mut();
     }
 
@@ -1242,17 +1168,20 @@ pub extern "C" fn zhtp_client_build_domain_register(
         }
     };
 
-    let content_cid_opt = if content_cid.is_null() {
-        None
-    } else {
-        match unsafe { std::ffi::CStr::from_ptr(content_cid).to_str() } {
-            Ok(s) => Some(s),
+    let fee_payment_tx_str = unsafe {
+        match std::ffi::CStr::from_ptr(fee_payment_tx).to_str() {
+            Ok(s) => s.to_string(),
             Err(_) => return std::ptr::null_mut(),
         }
     };
 
-    match token_tx::build_domain_register_tx(identity, domain_str, content_cid_opt, chain_id) {
-        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+    match token_tx::build_domain_register_request_with_fee_payment(
+        identity,
+        domain_str,
+        None,
+        Some(fee_payment_tx_str),
+    ) {
+        Ok(req) => match std::ffi::CString::new(req) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
         },
@@ -1260,21 +1189,21 @@ pub extern "C" fn zhtp_client_build_domain_register(
     }
 }
 
-/// Build a signed domain update transaction.
-/// Returns hex-encoded transaction ready to POST to /api/v1/web4/domains/update
+/// Build a signed domain update request.
+/// Returns JSON payload ready to POST to /api/v1/web4/domains/update
 /// Caller must free with `zhtp_client_string_free`.
 ///
 /// # Parameters
 /// - handle: Identity handle (domain owner)
 /// - domain: Domain name (e.g., "example.sov") (null-terminated C string)
 /// - content_cid: Content CID (null-terminated C string)
-/// - chain_id: Network chain ID
+/// - _chain_id: Deprecated/ignored (kept for ABI compatibility)
 #[no_mangle]
 pub extern "C" fn zhtp_client_build_domain_update(
     handle: *const IdentityHandle,
     domain: *const std::ffi::c_char,
     content_cid: *const std::ffi::c_char,
-    chain_id: u8,
+    _chain_id: u8,
 ) -> *mut std::ffi::c_char {
     if handle.is_null() || domain.is_null() || content_cid.is_null() {
         return std::ptr::null_mut();
@@ -1294,8 +1223,8 @@ pub extern "C" fn zhtp_client_build_domain_update(
         }
     };
 
-    match token_tx::build_domain_update_tx(identity, domain_str, content_cid_str, chain_id) {
-        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+    match token_tx::build_domain_update_request(identity, domain_str, content_cid_str, "") {
+        Ok(req) => match std::ffi::CString::new(req) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
         },
@@ -1303,21 +1232,21 @@ pub extern "C" fn zhtp_client_build_domain_update(
     }
 }
 
-/// Build a signed domain transfer transaction.
-/// Returns hex-encoded transaction ready to POST to /api/v1/web4/domains/transfer
+/// Build a signed domain transfer request.
+/// Returns JSON payload ready to POST to /api/v1/web4/domains/transfer
 /// Caller must free with `zhtp_client_string_free`.
 ///
 /// # Parameters
 /// - handle: Identity handle (current domain owner)
 /// - domain: Domain name (e.g., "example.sov") (null-terminated C string)
 /// - to_pubkey: New owner's public key bytes (32 bytes)
-/// - chain_id: Network chain ID
+/// - _chain_id: Deprecated/ignored (kept for ABI compatibility)
 #[no_mangle]
 pub extern "C" fn zhtp_client_build_domain_transfer(
     handle: *const IdentityHandle,
     domain: *const std::ffi::c_char,
     to_pubkey: *const u8,
-    chain_id: u8,
+    _chain_id: u8,
 ) -> *mut std::ffi::c_char {
     if handle.is_null() || domain.is_null() || to_pubkey.is_null() {
         return std::ptr::null_mut();
@@ -1332,8 +1261,9 @@ pub extern "C" fn zhtp_client_build_domain_transfer(
     };
     let to_pubkey_slice = unsafe { std::slice::from_raw_parts(to_pubkey, 1312) };
 
-    match token_tx::build_domain_transfer_tx(identity, domain_str, to_pubkey_slice, chain_id) {
-        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+    let to_did = format!("did:zhtp:{}", hex::encode(to_pubkey_slice));
+    match token_tx::build_domain_transfer_request(identity, domain_str, &to_did) {
+        Ok(req) => match std::ffi::CString::new(req) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
         },

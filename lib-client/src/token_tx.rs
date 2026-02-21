@@ -698,34 +698,6 @@ use crate::crypto::Dilithium5;
 /// Domain registration fee in SOV tokens
 const DOMAIN_REGISTRATION_FEE: u64 = 10;
 
-/// Build a signed domain registration request (JSON format matching server's SimpleDomainRegistrationRequest)
-///
-/// # Arguments
-/// * `identity` - The identity registering the domain (becomes owner)
-/// * `domain` - Domain name (e.g., "example.sov")
-/// * `content_mappings` - Optional content mappings (path -> content)
-///
-/// # Returns
-/// Returns an error unless a canonical `fee_payment_tx` is provided.
-///
-/// Use `build_domain_register_request_with_fee_payment` for valid requests.
-#[deprecated(
-    since = "0.3.0",
-    note = "Domain registration requires fee_payment_tx; use build_domain_register_request_with_fee_payment"
-)]
-pub fn build_domain_register_request(
-    identity: &Identity,
-    domain: &str,
-    content_mappings: Option<std::collections::HashMap<String, ContentMapping>>,
-) -> Result<String, String> {
-    let _ = (identity, domain, content_mappings);
-    Err(
-        "build_domain_register_request is deprecated: fee_payment_tx is required. \
-         Use build_domain_register_request_with_fee_payment(...) with a signed canonical fee transaction."
-            .to_string(),
-    )
-}
-
 /// Build a signed domain registration request and attach a signed canonical fee tx.
 ///
 /// `fee_payment_tx` must be a hex-encoded signed TokenTransfer transaction that pays
@@ -839,43 +811,4 @@ pub fn build_domain_transfer_request(
 
     serde_json::to_string(&request)
         .map_err(|e| format!("Failed to serialize request: {}", e))
-}
-
-// Legacy function names for backward compatibility - these now call the new JSON-based functions
-#[deprecated(since = "0.2.0", note = "Use build_domain_register_request instead")]
-pub fn build_domain_register_tx(
-    identity: &Identity,
-    domain: &str,
-    _content_cid: Option<&str>,
-    _chain_id: u8,
-) -> Result<String, String> {
-    let _ = (identity, domain);
-    Err(
-        "build_domain_register_tx is deprecated: fee_payment_tx is required. \
-         Use build_domain_register_request_with_fee_payment(...) instead."
-            .to_string(),
-    )
-}
-
-#[deprecated(since = "0.2.0", note = "Use build_domain_update_request instead")]
-pub fn build_domain_update_tx(
-    identity: &Identity,
-    domain: &str,
-    content_cid: &str,
-    _chain_id: u8,
-) -> Result<String, String> {
-    // For legacy calls, use content_cid as both new and expected (not ideal but maintains compat)
-    build_domain_update_request(identity, domain, content_cid, "")
-}
-
-#[deprecated(since = "0.2.0", note = "Use build_domain_transfer_request instead")]
-pub fn build_domain_transfer_tx(
-    identity: &Identity,
-    domain: &str,
-    to_pubkey: &[u8],
-    _chain_id: u8,
-) -> Result<String, String> {
-    // Convert pubkey bytes to DID format for legacy callers
-    let to_did = format!("did:zhtp:{}", hex::encode(to_pubkey));
-    build_domain_transfer_request(identity, domain, &to_did)
 }
