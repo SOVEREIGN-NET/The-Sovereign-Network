@@ -247,6 +247,34 @@ impl<'a> StateMutator<'a> {
     }
 
     // =========================================================================
+    // Bonding Curve Primitives
+    // =========================================================================
+
+    /// Get a bonding curve token by its ID.
+    pub fn get_bonding_curve_token(
+        &self,
+        token_id: &TokenId,
+    ) -> TxApplyResult<Option<crate::contracts::bonding_curve::BondingCurveToken>> {
+        Ok(self.store.get_bonding_curve_token(token_id)?)
+    }
+
+    /// Store a bonding curve token.
+    pub fn put_bonding_curve_token(
+        &self,
+        token_id: &TokenId,
+        token: &crate::contracts::bonding_curve::BondingCurveToken,
+    ) -> TxApplyResult<()> {
+        self.store.put_bonding_curve_token(token_id, token)?;
+        Ok(())
+    }
+
+    /// Delete a bonding curve token (used on graduation to AMM).
+    pub fn delete_bonding_curve_token(&self, token_id: &TokenId) -> TxApplyResult<()> {
+        self.store.delete_bonding_curve_token(token_id)?;
+        Ok(())
+    }
+
+    // =========================================================================
     // Contract State Primitives
     // =========================================================================
 
@@ -598,6 +626,101 @@ pub fn apply_token_mint(
     amount: u128,
 ) -> TxApplyResult<()> {
     mutator.credit_token(token, to, amount)
+}
+
+/// Apply a bonding curve deploy transaction
+pub fn apply_bonding_curve_deploy(
+    mutator: &StateMutator<'_>,
+    token_id: &TokenId,
+    token: &crate::contracts::bonding_curve::BondingCurveToken,
+    symbol: &str,
+) -> TxApplyResult<()> {
+    // Reject duplicate symbols deterministically before any state mutation.
+    if mutator.store.get_bonding_curve_by_symbol(symbol)
+        .map_err(|e| TxApplyError::Internal(e.to_string()))?
+        .is_some()
+    {
+        return Err(TxApplyError::InvalidType(format!(
+            "Bonding curve token with symbol '{}' already exists",
+            symbol
+        )));
+    }
+
+    // Store the bonding curve token
+    mutator.put_bonding_curve_token(token_id, token)?;
+    // Create symbol index
+    mutator.store.put_bonding_curve_symbol_index(symbol, token_id)?;
+    Ok(())
+}
+
+/// Apply a bonding curve buy transaction
+pub fn apply_bonding_curve_buy(
+    _mutator: &StateMutator<'_>,
+    _token_id: &TokenId,
+    _buyer: &Address,
+    _stable_amount: u64,
+    _tokens_out: u64,
+) -> TxApplyResult<()> {
+    // BondingCurveBuy is disabled: the reserve asset (stablecoin) is not yet
+    // modeled as consensus state, so we cannot atomically debit the buyer's
+    // balance. Enabling this without the debit would allow free token minting.
+    // Re-enable once the reserve asset ledger is integrated.
+    Err(TxApplyError::InvalidType(
+        "BondingCurveBuy is not yet enabled: reserve asset debit is not modeled in consensus state".to_string(),
+    ))
+}
+
+/// Apply a bonding curve sell transaction
+pub fn apply_bonding_curve_sell(
+    _mutator: &StateMutator<'_>,
+    _token_id: &TokenId,
+    _seller: &Address,
+    _token_amount: u64,
+    _stable_out: u64,
+) -> TxApplyResult<()> {
+    // BondingCurveSell is disabled: the reserve asset (stablecoin) is not yet
+    // modeled as consensus state, so we cannot atomically credit the seller's
+    // balance. Enabling this without the credit would burn user tokens without
+    // returning value. Re-enable once the reserve asset ledger is integrated.
+    Err(TxApplyError::InvalidType(
+        "BondingCurveSell is not yet enabled: reserve asset credit is not modeled in consensus state".to_string(),
+    ))
+}
+
+/// Apply a bonding curve graduate transaction
+///
+/// Enforces the phase state machine:
+///   - Token must be in `Phase::Curve` (cannot graduate twice).
+///   - Graduation threshold (reserve/supply/time) must be met.
+///   - Transitions to `Phase::Graduated`; the transition to `Phase::AMM` only
+///     occurs when the AMM pool creation/seed transaction is confirmed later.
+pub fn apply_bonding_curve_graduate(
+    mutator: &StateMutator<'_>,
+    token_id: &TokenId,
+    pool_id: &[u8; 32],
+    block_height: u64,
+    block_timestamp: u64,
+) -> TxApplyResult<()> {
+    // Get current token state
+    let mut token = mutator
+        .get_bonding_curve_token(token_id)?
+        .ok_or_else(|| TxApplyError::Internal(format!("Bonding curve token not found: {:?}", token_id)))?;
+
+    // Delegate to BondingCurveToken::graduate(), which checks:
+    //   1. Token is in Phase::Curve (not already graduated)
+    //   2. Graduation threshold is met for the current timestamp
+    // On success it transitions to Phase::Graduated.
+    token
+        .graduate(block_timestamp, block_height)
+        .map_err(|e| TxApplyError::InvalidType(format!("Graduation rejected: {:?}", e)))?;
+
+    // Record the intended AMM pool for the follow-up pool-seeding transaction.
+    token.amm_pool_id = Some(*pool_id);
+
+    // Store updated token
+    mutator.put_bonding_curve_token(token_id, &token)?;
+
+    Ok(())
 }
 
 /// Apply a coinbase transaction (block reward + fee collection)

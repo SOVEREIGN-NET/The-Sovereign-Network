@@ -194,7 +194,11 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
                         governance_config_data: None,
-        };
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+};
 
         let serialized = serialize_transaction_for_network(&transaction)?;
         let deserialized = deserialize_transaction_from_network(&serialized)?;
