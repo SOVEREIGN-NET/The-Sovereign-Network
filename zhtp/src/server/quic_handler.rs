@@ -86,6 +86,8 @@ const MAX_MESSAGE_SIZE: u64 = 1024 * 1024;
 /// Per-IP rate limit for PQC handshakes
 const MAX_HANDSHAKES_PER_IP: usize = 10;
 const HANDSHAKE_RATE_WINDOW: Duration = Duration::from_secs(60);
+const LEGACY_HTTP_OVER_QUIC_REJECTION: &str =
+    "HTTP-over-QUIC compatibility is not supported. Use native ZHTP framing.";
 
 /// DEPRECATED: ControlPlaneSession replaced by V2Session in PR #816
 /// V2Session provides HMAC-SHA3-256 MAC verification with monotonic counter replay protection.
@@ -1028,11 +1030,8 @@ impl QuicHandler {
                 self.handle_public_zhtp_stream(initial_data, recv, send).await
             }
             ProtocolType::LegacyHttp(_) => {
-                self.send_error_response(
-                    send,
-                    "HTTP-over-QUIC compatibility is not supported. Use native ZHTP framing.",
-                )
-                .await
+                self.send_error_response(send, LEGACY_HTTP_OVER_QUIC_REJECTION)
+                    .await
             }
             _ => {
                 // Reject non-ZHTP protocols on public connection
@@ -1075,11 +1074,8 @@ impl QuicHandler {
             }
             ProtocolType::LegacyHttp(_) => {
                 warn!("❌ Legacy HTTP request-line payload rejected from {}", peer_addr);
-                self.send_error_response(
-                    send,
-                    "HTTP-over-QUIC compatibility is not supported. Use native ZHTP framing.",
-                )
-                .await?;
+                self.send_error_response(send, LEGACY_HTTP_OVER_QUIC_REJECTION)
+                    .await?;
             }
             ProtocolType::MeshMessage(_initial_data) => {
                 warn!("📨 Mesh message on first stream from {} - should be after handshake", peer_addr);
@@ -1164,9 +1160,7 @@ impl QuicHandler {
                     Err(anyhow!("Mesh messages only valid on peer connections"))
                 }
             }
-            ProtocolType::LegacyHttp(_) => Err(anyhow!(
-                "HTTP-over-QUIC compatibility is not supported. Use native ZHTP framing."
-            )),
+            ProtocolType::LegacyHttp(_) => Err(anyhow!(LEGACY_HTTP_OVER_QUIC_REJECTION)),
             ProtocolType::PqcHandshake(_) => {
                 warn!("PQC handshake on non-first stream - ignoring");
                 Err(anyhow!("PQC handshake only valid on first stream"))
@@ -1397,16 +1391,15 @@ impl QuicHandler {
     }
 
     fn is_http_request_line(buffer: &[u8]) -> bool {
-        let prefix = String::from_utf8_lossy(&buffer[..buffer.len().min(12)]);
-        prefix.starts_with("GET ")
-            || prefix.starts_with("POST ")
-            || prefix.starts_with("PUT ")
-            || prefix.starts_with("DELETE ")
-            || prefix.starts_with("HEAD ")
-            || prefix.starts_with("OPTIONS ")
-            || prefix.starts_with("PATCH ")
-            || prefix.starts_with("CONNECT ")
-            || prefix.starts_with("TRACE ")
+        buffer.starts_with(b"GET ")
+            || buffer.starts_with(b"POST ")
+            || buffer.starts_with(b"PUT ")
+            || buffer.starts_with(b"DELETE ")
+            || buffer.starts_with(b"HEAD ")
+            || buffer.starts_with(b"OPTIONS ")
+            || buffer.starts_with(b"PATCH ")
+            || buffer.starts_with(b"CONNECT ")
+            || buffer.starts_with(b"TRACE ")
     }
 }
 
