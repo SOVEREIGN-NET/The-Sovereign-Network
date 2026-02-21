@@ -653,7 +653,6 @@ impl Default for NodeConfig {
                     "wifi_direct".to_string(),
                     "lorawan".to_string(),
                     "quic".to_string(),
-                    "tcp".to_string()
                 ],
                 bootstrap_peers: vec![
                     "127.0.0.1:9333".to_string(),
