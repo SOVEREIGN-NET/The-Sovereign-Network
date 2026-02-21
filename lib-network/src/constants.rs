@@ -95,15 +95,18 @@ mod tests {
     #[test]
     fn server_alpns_only_advertise_supported_server_protocols() {
         let alpns = server_alpns();
+        let expected = vec![
+            ALPN_CONTROL_PLANE_V2.to_vec(),
+            ALPN_PUBLIC.to_vec(),
+            ALPN_CONTROL_PLANE.to_vec(),
+            ALPN_MESH.to_vec(),
+        ];
 
-        assert!(alpns.contains(&ALPN_CONTROL_PLANE_V2.to_vec()));
-        assert!(alpns.contains(&ALPN_CONTROL_PLANE.to_vec()));
-        assert!(alpns.contains(&ALPN_PUBLIC.to_vec()));
-        assert!(alpns.contains(&ALPN_MESH.to_vec()));
+        assert_eq!(alpns, expected);
 
-        assert!(!alpns.contains(&ALPN_HTTP_COMPAT.to_vec()));
-        assert!(!alpns.contains(&ALPN_LEGACY.to_vec()));
-        assert!(!alpns.contains(&ALPN_H3.to_vec()));
+        assert!(!alpns.iter().any(|v| v.as_slice() == ALPN_HTTP_COMPAT));
+        assert!(!alpns.iter().any(|v| v.as_slice() == ALPN_LEGACY));
+        assert!(!alpns.iter().any(|v| v.as_slice() == ALPN_H3));
     }
 }
 
