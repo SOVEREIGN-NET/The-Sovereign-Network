@@ -628,13 +628,23 @@ impl ConsensusComponent {
                     .sync_validators_from_list(adapters_for_engine)
                     .map_err(|e| anyhow::anyhow!("Consensus engine validator sync failed: {}", e))?;
 
-                // If this node is a validator, set local identity so it can propose/vote.
+                // If this node is a validator, set local identity and keypair so it can propose/vote.
+                // Both must be set AFTER sync_validators_from_list because the engine checks
+                // that the identity/keypair is registered in the validator set.
                 if self.node_role.can_validate() {
                     let local_id = self.local_validator_identity.read().await.clone();
                     if let Some(id) = local_id {
                         engine
                             .set_local_validator_identity(id)
                             .map_err(|e| anyhow::anyhow!("Failed to set local validator identity: {}", e))?;
+
+                        // Set keypair after identity — set_validator_keypair requires identity first.
+                        let local_kp = self.local_validator_keypair.read().await.clone();
+                        if let Some(kp) = local_kp {
+                            if let Err(e) = engine.set_validator_keypair(kp) {
+                                warn!("Could not set validator keypair (node will not propose/vote): {}", e);
+                            }
+                        }
                     } else {
                         warn!("Local validator identity not loaded; consensus will not propose/vote");
                     }
@@ -888,11 +898,10 @@ impl Component for ConsensusComponent {
         consensus_engine.set_message_receiver(consensus_msg_rx);
 
         // Load the persistent local validator signing keypair from the keystore.
-        // Without this, the node cannot produce verifiable proposals/votes.
+        // The keypair is stored on self; it will be passed to the consensus engine later in
+        // sync_validators_from_blockchain(), after the validator set is populated, because
+        // set_validator_keypair() requires the identity to be registered in the validator set.
         let (local_validator_id, local_validator_keypair) = load_local_validator_from_keystore().await?;
-        consensus_engine
-            .set_validator_keypair(local_validator_keypair.clone())
-            .map_err(|e| anyhow::anyhow!("Failed to set local consensus validator keypair: {}", e))?;
 
         // Clone for ValidatorProtocol middleware before moving into self
         let vp_keypair = local_validator_keypair.clone();
