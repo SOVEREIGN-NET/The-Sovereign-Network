@@ -59,6 +59,10 @@ fn mk_contract_deploy_tx() -> Transaction {
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
     }
 }
 
@@ -93,6 +97,10 @@ fn mk_contract_call_tx() -> Transaction {
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
     }
 }
 
@@ -271,6 +279,10 @@ fn test_contract_deployment_rejection_path_invalid_memo_payload() -> Result<()> 
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
     };
 
     assert!(

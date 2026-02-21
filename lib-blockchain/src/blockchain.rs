@@ -222,6 +222,14 @@ pub struct Blockchain {
     #[serde(skip)]
     #[allow(clippy::redundant_closure_call)]
     pub executor: Option<std::sync::Arc<crate::execution::executor::BlockExecutor>>,
+    /// Bonding curve token registry
+    /// Tracks all bonding curve tokens from deployment through AMM graduation
+    #[serde(default)]
+    pub bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry,
+    /// AMM liquidity pools for graduated bonding curve tokens
+    /// Pool ID -> SovSwapPool mapping
+    #[serde(default)]
+    pub amm_pools: HashMap<[u8; 32], crate::contracts::sov_swap::SovSwapPool>,
 }
 
 /// Validator information stored on-chain.
@@ -395,7 +403,11 @@ impl TransactionV1 {
             token_transfer_data: None,
             token_mint_data: None,
                         governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 }
 
@@ -512,6 +524,8 @@ impl BlockchainV1 {
             token_nonces: HashMap::new(),
             executor: None,
             treasury_kernel: None,
+            bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
+            amm_pools: HashMap::new(),
         }
     }
 }
@@ -646,6 +660,10 @@ struct BlockchainStorageV3 {
     /// Per-token, per-address nonce for token transfer replay protection
     #[serde(default)]
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
+    
+    /// AMM liquidity pools for graduated bonding curve tokens
+    #[serde(default)]
+    pub amm_pools: HashMap<[u8; 32], crate::contracts::sov_swap::SovSwapPool>,
 }
 
 impl BlockchainStorageV3 {
@@ -729,6 +747,7 @@ impl BlockchainStorageV3 {
 
             // Token nonces
             token_nonces: bc.token_nonces.clone(),
+            amm_pools: HashMap::new(), // Initialize empty, pools are created on graduation
         }
     }
 
@@ -827,6 +846,12 @@ impl BlockchainStorageV3 {
 
             // Treasury Kernel - initialized separately
             treasury_kernel: None,
+
+            // Bonding curve registry
+            bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
+            
+            // AMM pools - initialize empty, will be populated from storage
+            amm_pools: HashMap::new(),
         }
     }
 }
@@ -904,6 +929,8 @@ impl Blockchain {
             token_nonces: HashMap::new(),
             executor: None,
             treasury_kernel: None,
+            bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
+            amm_pools: HashMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -1326,7 +1353,11 @@ impl Blockchain {
             token_transfer_data: None,
             token_mint_data: None,
                         governance_config_data: None,
-        };
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+};
 
         // Add genesis transaction to genesis block
         genesis_block.transactions.push(genesis_tx.clone());
@@ -9214,7 +9245,11 @@ mod replay_contract_execution_tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     #[test]

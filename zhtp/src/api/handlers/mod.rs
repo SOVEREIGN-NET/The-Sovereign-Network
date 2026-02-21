@@ -22,6 +22,7 @@ pub mod mesh;
 pub mod validator;
 pub mod crypto;
 pub mod token;
+pub mod bonding_curve;
 
 pub use identity::IdentityHandler;
 pub use guardian::GuardianHandler;
@@ -41,3 +42,4 @@ pub use mesh::MeshHandler;
 pub use validator::ValidatorHandler;
 pub use crypto::CryptoHandler;
 pub use token::TokenHandler;
+pub use bonding_curve::{CurveHandler, SwapHandler, ValuationHandler};

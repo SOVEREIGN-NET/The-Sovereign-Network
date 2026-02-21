@@ -1224,4 +1224,73 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     ///
     /// DEPRECATED: Use typed accessors (set_token_balance, etc.) instead.
     fn put_account(&self, addr: &Address, acct: &AccountState) -> StorageResult<()>;
+
+    // =========================================================================
+    // Bonding Curve Storage (SOV Tokenomics)
+    // =========================================================================
+    // Bonding curve tokens are stored separately from regular tokens.
+    // Each token has a lifecycle: Curve -> Graduated -> AMM
+    // =========================================================================
+
+    /// Get a bonding curve token by its ID.
+    ///
+    /// Returns None if no bonding curve token exists with that ID.
+    fn get_bonding_curve_token(
+        &self,
+        token_id: &TokenId,
+    ) -> StorageResult<Option<crate::contracts::bonding_curve::BondingCurveToken>>;
+
+    /// Store a bonding curve token.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_bonding_curve_token(
+        &self,
+        token_id: &TokenId,
+        token: &crate::contracts::bonding_curve::BondingCurveToken,
+    ) -> StorageResult<()>;
+
+    /// Delete a bonding curve token.
+    ///
+    /// Called when token graduates to AMM (migrated to AMM pool).
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn delete_bonding_curve_token(&self, token_id: &TokenId) -> StorageResult<()>;
+
+    /// Iterate over all bonding curve tokens.
+    ///
+    /// Returns an iterator of (TokenId, BondingCurveToken) pairs.
+    fn iter_bonding_curve_tokens(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = (TokenId, crate::contracts::bonding_curve::BondingCurveToken)> + '_>>;
+
+    /// Get bonding curve token ID by symbol (secondary index).
+    ///
+    /// Returns the token ID for the token with this symbol.
+    fn get_bonding_curve_by_symbol(&self, symbol: &str) -> StorageResult<Option<TokenId>> {
+        // Default implementation returns None (requires secondary index)
+        let _ = symbol;
+        Ok(None)
+    }
+
+    /// Store symbol → token_id index entry.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_bonding_curve_symbol_index(&self, symbol: &str, token_id: &TokenId) -> StorageResult<()> {
+        // Default implementation is a no-op
+        let _ = (symbol, token_id);
+        Ok(())
+    }
+
+    /// Delete symbol → token_id index entry.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn delete_bonding_curve_symbol_index(&self, symbol: &str) -> StorageResult<()> {
+        // Default implementation is a no-op
+        let _ = symbol;
+        Ok(())
+    }
 }

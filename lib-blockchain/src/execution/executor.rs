@@ -483,6 +483,7 @@ impl BlockExecutor {
     /// Called after begin_block. Guard ensures rollback on error.
     fn apply_block_inner(&self, block: &Block) -> BlockApplyResult<ApplyOutcome> {
         let block_height = block.header.height;
+        let block_timestamp = block.header.timestamp;
         let block_hash = BlockHash::new(block.header.block_hash.as_array());
 
         let mutator = StateMutator::new(self.store.as_ref());
@@ -590,7 +591,7 @@ impl BlockExecutor {
 
             // apply_tx (writes)
             let tx_result = self
-                .apply_tx(&mutator, tx, block_height)
+                .apply_tx(&mutator, tx, block_height, block_timestamp)
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
 
             // Accumulate results
@@ -623,6 +624,18 @@ impl BlockExecutor {
                 }
                 TxOutcome::DaoExecution(_) => {
                     summary.account_updates += 1; // governance state write (not a token balance change)
+                }
+                TxOutcome::BondingCurveDeploy(_) => {
+                    summary.account_updates += 1; // bonding curve token creation
+                }
+                TxOutcome::BondingCurveBuy(_) => {
+                    summary.balance_changes += 2; // stablecoin debit + token credit
+                }
+                TxOutcome::BondingCurveSell(_) => {
+                    summary.balance_changes += 2; // token debit + stablecoin credit
+                }
+                TxOutcome::BondingCurveGraduate(_) => {
+                    summary.account_updates += 1; // phase transition to AMM
                 }
                 TxOutcome::Coinbase(_) => {
                     // Should not happen - coinbase filtered out
@@ -782,7 +795,12 @@ impl BlockExecutor {
             | TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
-            | TransactionType::RemoveLiquidity => {
+            | TransactionType::RemoveLiquidity
+            // Bonding curve types - handled by executor but validation not fully wired yet
+            | TransactionType::BondingCurveDeploy
+            | TransactionType::BondingCurveBuy
+            | TransactionType::BondingCurveSell
+            | TransactionType::BondingCurveGraduate => {
                 return Ok(());
             }
         }
@@ -1450,12 +1468,259 @@ impl BlockExecutor {
         })
     }
 
+    // =========================================================================
+    // Bonding Curve Operations
+    // =========================================================================
+
+    fn apply_bonding_curve_deploy(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+        block_timestamp: u64,
+    ) -> Result<BondingCurveDeployOutcome, TxApplyError> {
+        let data = tx.bonding_curve_deploy_data.as_ref().ok_or_else(|| {
+            TxApplyError::InvalidType("BondingCurveDeploy requires bonding_curve_deploy_data field".to_string())
+        })?;
+
+        // Executor-level actor check: signer must be the declared creator.
+        // (Also enforced in stateless validation, but defense-in-depth here.)
+        if tx.signature.public_key.key_id != data.creator {
+            return Err(TxApplyError::InvalidType(
+                "BondingCurveDeploy: transaction signer does not match creator field".to_string(),
+            ));
+        }
+
+        // Generate token ID from name, symbol, and creator
+        use lib_crypto::hash_blake3;
+        let input = format!("{}:{}:{}", data.name, data.symbol, hex::encode(&data.creator));
+        let token_id_bytes = hash_blake3(input.as_bytes());
+        let token_id = TokenId::from(token_id_bytes);
+
+        // Create the bonding curve token
+        use crate::contracts::bonding_curve::{
+            BondingCurveToken, types::{CurveType, Threshold, Phase}
+        };
+
+        // Convert u8 curve type to CurveType
+        let curve_type = match data.curve_type {
+            0 => CurveType::Linear {
+                base_price: data.base_price,
+                slope: data.curve_param,
+            },
+            1 => CurveType::Exponential {
+                base_price: data.base_price,
+                growth_rate_bps: data.curve_param,
+            },
+            2 => CurveType::Sigmoid {
+                max_price: data.base_price,
+                midpoint_supply: data.midpoint_supply.unwrap_or(1_000_000_000_000_000),
+                steepness: data.curve_param,
+            },
+            _ => return Err(TxApplyError::InvalidType(format!("Invalid curve type: {}", data.curve_type))),
+        };
+
+        // Convert threshold type to Threshold
+        let threshold = match data.threshold_type {
+            0 => Threshold::ReserveAmount(data.threshold_value),
+            1 => Threshold::SupplyAmount(data.threshold_value),
+            2 => Threshold::TimeAndReserve {
+                min_time_seconds: data.threshold_time_seconds.unwrap_or(0),
+                min_reserve: data.threshold_value,
+            },
+            3 => Threshold::TimeAndSupply {
+                min_time_seconds: data.threshold_time_seconds.unwrap_or(0),
+                min_supply: data.threshold_value,
+            },
+            _ => return Err(TxApplyError::InvalidType(format!("Invalid threshold type: {}", data.threshold_type))),
+        };
+
+        let token = BondingCurveToken {
+            token_id: token_id_bytes,
+            name: data.name.clone(),
+            symbol: data.symbol.clone(),
+            decimals: 8, // Standard decimals
+            phase: Phase::Curve,
+            total_supply: 0,
+            reserve_balance: 0,
+            curve_type,
+            threshold,
+            sell_enabled: data.sell_enabled,
+            amm_pool_id: None,
+            creator: lib_crypto::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: data.creator,
+            },
+            deployed_at_block: block_height,
+            deployed_at_timestamp: block_timestamp,
+        };
+
+        // Store the token
+        tx_apply::apply_bonding_curve_deploy(mutator, &token_id, &token, &data.symbol)?;
+
+        Ok(BondingCurveDeployOutcome {
+            token_id: token_id_bytes,
+            symbol: data.symbol.clone(),
+        })
+    }
+
+    fn apply_bonding_curve_buy(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+    ) -> Result<BondingCurveBuyOutcome, TxApplyError> {
+        let data = tx.bonding_curve_buy_data.as_ref().ok_or_else(|| {
+            TxApplyError::InvalidType("BondingCurveBuy requires bonding_curve_buy_data field".to_string())
+        })?;
+
+        // Executor-level actor check: signer must be the declared buyer.
+        if tx.signature.public_key.key_id != data.buyer {
+            return Err(TxApplyError::InvalidType(
+                "BondingCurveBuy: transaction signer does not match buyer field".to_string(),
+            ));
+        }
+
+        let token_id = TokenId::from(data.token_id);
+        let buyer = Address(data.buyer);
+
+        // Get current token state to calculate tokens out
+        let token = mutator
+            .get_bonding_curve_token(&token_id)?
+            .ok_or_else(|| TxApplyError::InvalidType(format!("Bonding curve token not found: {:?}", token_id)))?;
+
+        // Check token is in Curve phase
+        if !token.phase.is_curve_active() {
+            return Err(TxApplyError::InvalidType(
+                format!("Token is not in curve phase (current phase: {:?})", token.phase)
+            ));
+        }
+
+        // Calculate tokens out using curve math
+        let tokens_out = token.curve_type.calculate_buy_tokens(token.total_supply, data.stable_amount);
+
+        // Validate slippage protection
+        if tokens_out < data.min_tokens_out {
+            return Err(TxApplyError::InvalidType(
+                format!("Slippage exceeded: expected at least {} tokens, got {}", data.min_tokens_out, tokens_out)
+            ));
+        }
+
+        tx_apply::apply_bonding_curve_buy(
+            mutator,
+            &token_id,
+            &buyer,
+            data.stable_amount,
+            tokens_out,
+        )?;
+
+        Ok(BondingCurveBuyOutcome {
+            token_id: data.token_id,
+            buyer: data.buyer,
+            stable_spent: data.stable_amount,
+            tokens_received: tokens_out,
+        })
+    }
+
+    fn apply_bonding_curve_sell(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+    ) -> Result<BondingCurveSellOutcome, TxApplyError> {
+        let data = tx.bonding_curve_sell_data.as_ref().ok_or_else(|| {
+            TxApplyError::InvalidType("BondingCurveSell requires bonding_curve_sell_data field".to_string())
+        })?;
+
+        // Executor-level actor check: signer must be the declared seller.
+        if tx.signature.public_key.key_id != data.seller {
+            return Err(TxApplyError::InvalidType(
+                "BondingCurveSell: transaction signer does not match seller field".to_string(),
+            ));
+        }
+
+        let token_id = TokenId::from(data.token_id);
+        let seller = Address(data.seller);
+
+        // Get current token state
+        let token = mutator
+            .get_bonding_curve_token(&token_id)?
+            .ok_or_else(|| TxApplyError::InvalidType(format!("Bonding curve token not found: {:?}", token_id)))?;
+
+        // Check token is in Curve phase
+        if !token.phase.is_curve_active() {
+            return Err(TxApplyError::InvalidType(
+                format!("Token is not in curve phase (current phase: {:?})", token.phase)
+            ));
+        }
+
+        // Check selling is enabled
+        if !token.sell_enabled {
+            return Err(TxApplyError::InvalidType(
+                "Selling is disabled for this bonding curve token".to_string()
+            ));
+        }
+
+        // Calculate stable out using curve math
+        let stable_out = token.curve_type.calculate_sell_stable(token.total_supply, data.token_amount);
+
+        // Validate slippage protection
+        if stable_out < data.min_stable_out {
+            return Err(TxApplyError::InvalidType(
+                format!("Slippage exceeded: expected at least {} stable, got {}", data.min_stable_out, stable_out)
+            ));
+        }
+
+        tx_apply::apply_bonding_curve_sell(
+            mutator,
+            &token_id,
+            &seller,
+            data.token_amount,
+            stable_out,
+        )?;
+
+        Ok(BondingCurveSellOutcome {
+            token_id: data.token_id,
+            seller: data.seller,
+            tokens_sold: data.token_amount,
+            stable_received: stable_out,
+        })
+    }
+
+    fn apply_bonding_curve_graduate(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+        block_timestamp: u64,
+    ) -> Result<BondingCurveGraduateOutcome, TxApplyError> {
+        let data = tx.bonding_curve_graduate_data.as_ref().ok_or_else(|| {
+            TxApplyError::InvalidType("BondingCurveGraduate requires bonding_curve_graduate_data field".to_string())
+        })?;
+
+        // Executor-level actor check: signer must be the declared graduator.
+        if tx.signature.public_key.key_id != data.graduator {
+            return Err(TxApplyError::InvalidType(
+                "BondingCurveGraduate: transaction signer does not match graduator field".to_string(),
+            ));
+        }
+
+        let token_id = TokenId::from(data.token_id);
+
+        tx_apply::apply_bonding_curve_graduate(mutator, &token_id, &data.pool_id, block_height, block_timestamp)?;
+
+        Ok(BondingCurveGraduateOutcome {
+            token_id: data.token_id,
+            pool_id: data.pool_id,
+        })
+    }
+
     /// Apply a single transaction
     fn apply_transaction(
         &self,
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
+        block_timestamp: u64,
     ) -> Result<TxOutcome, TxApplyError> {
         let tx_hash = hash_transaction(tx);
 
@@ -1621,6 +1886,24 @@ impl BlockExecutor {
             | TransactionType::ProfitDeclaration
             | TransactionType::GovernanceConfigUpdate => Ok(TxOutcome::LegacySystem),
 
+            // Bonding curve types
+            TransactionType::BondingCurveDeploy => {
+                let outcome = self.apply_bonding_curve_deploy(mutator, tx, block_height, block_timestamp)?;
+                Ok(TxOutcome::BondingCurveDeploy(outcome))
+            }
+            TransactionType::BondingCurveBuy => {
+                let outcome = self.apply_bonding_curve_buy(mutator, tx)?;
+                Ok(TxOutcome::BondingCurveBuy(outcome))
+            }
+            TransactionType::BondingCurveSell => {
+                let outcome = self.apply_bonding_curve_sell(mutator, tx)?;
+                Ok(TxOutcome::BondingCurveSell(outcome))
+            }
+            TransactionType::BondingCurveGraduate => {
+                let outcome = self.apply_bonding_curve_graduate(mutator, tx, block_height, block_timestamp)?;
+                Ok(TxOutcome::BondingCurveGraduate(outcome))
+            }
+
             TransactionType::DaoProposal => {
                 let outcome = self.apply_dao_proposal(mutator, tx, &tx_hash)?;
                 Ok(TxOutcome::DaoProposal(outcome))
@@ -1655,6 +1938,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
+        block_timestamp: u64,
     ) -> Result<TxOutcome, TxApplyError> {
         // Coinbase should not be passed to this method
         if tx.transaction_type == TransactionType::Coinbase {
@@ -1664,7 +1948,7 @@ impl BlockExecutor {
         }
 
         // Delegate to existing apply_transaction for non-coinbase types
-        self.apply_transaction(mutator, tx, block_height)
+        self.apply_transaction(mutator, tx, block_height, block_timestamp)
     }
 
     /// Apply coinbase transaction with collected fees (Phase 3C)
@@ -1710,6 +1994,10 @@ enum TxOutcome {
     DaoProposal(DaoProposalOutcome),
     DaoVote(DaoVoteOutcome),
     DaoExecution(DaoExecutionOutcome),
+    BondingCurveDeploy(BondingCurveDeployOutcome),
+    BondingCurveBuy(BondingCurveBuyOutcome),
+    BondingCurveSell(BondingCurveSellOutcome),
+    BondingCurveGraduate(BondingCurveGraduateOutcome),
     Coinbase(CoinbaseOutcome),
     /// Legacy system transaction types (IdentityRegistration, WalletRegistration, etc.)
     /// accepted as no-ops by the Phase-2 executor for backwards compatibility.
@@ -1772,6 +2060,38 @@ pub struct DaoVoteOutcome {
 #[derive(Debug, Clone)]
 pub struct DaoExecutionOutcome {
     pub proposal_id: crate::types::Hash,
+}
+
+/// Outcome of a bonding curve deploy transaction
+#[derive(Debug, Clone)]
+pub struct BondingCurveDeployOutcome {
+    pub token_id: [u8; 32],
+    pub symbol: String,
+}
+
+/// Outcome of a bonding curve buy transaction
+#[derive(Debug, Clone)]
+pub struct BondingCurveBuyOutcome {
+    pub token_id: [u8; 32],
+    pub buyer: [u8; 32],
+    pub stable_spent: u64,
+    pub tokens_received: u64,
+}
+
+/// Outcome of a bonding curve sell transaction
+#[derive(Debug, Clone)]
+pub struct BondingCurveSellOutcome {
+    pub token_id: [u8; 32],
+    pub seller: [u8; 32],
+    pub tokens_sold: u64,
+    pub stable_received: u64,
+}
+
+/// Outcome of a bonding curve graduate transaction
+#[derive(Debug, Clone)]
+pub struct BondingCurveGraduateOutcome {
+    pub token_id: [u8; 32],
+    pub pool_id: [u8; 32],
 }
 
 // =============================================================================
@@ -1979,6 +2299,10 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 
@@ -2007,6 +2331,10 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 
@@ -2191,7 +2519,11 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     fn create_contract_deployment_tx() -> Transaction {
@@ -2340,7 +2672,11 @@ mod tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
-        }
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+}
     }
 
     /// TokenCreation canonical path: token is created and minted to creator.
@@ -2852,5 +3188,198 @@ mod tests {
             result.is_err(),
             "DaoVote after voting period expiry must be rejected"
         );
+    }
+
+    // =========================================================================
+    // Bonding Curve tests
+    // =========================================================================
+
+    #[test]
+    fn test_bonding_curve_tx_constructors_use_version_v3() {
+        use crate::transaction::core::{
+            TX_VERSION_V3, BondingCurveDeployData, BondingCurveBuyData,
+            BondingCurveSellData, BondingCurveGraduateData,
+        };
+
+        let sig = create_dummy_signature();
+        let creator = [1u8; 32];
+
+        let deploy_tx = Transaction::new_bonding_curve_deploy_with_chain_id(
+            1,
+            BondingCurveDeployData {
+                name: "Test".into(), symbol: "TST".into(), curve_type: 0,
+                base_price: 1000, curve_param: 100, midpoint_supply: None,
+                threshold_type: 0, threshold_value: 1_000_000, threshold_time_seconds: None,
+                sell_enabled: false, creator, nonce: 1,
+            },
+            sig.clone(), vec![],
+        );
+        assert_eq!(deploy_tx.version, TX_VERSION_V3, "deploy tx must be version V3");
+        assert!(deploy_tx.bonding_curve_deploy_data.is_some(), "deploy data must survive serialization gate");
+
+        let buy_tx = Transaction::new_bonding_curve_buy_with_chain_id(
+            1,
+            BondingCurveBuyData { token_id: [0u8; 32], stable_amount: 1000, min_tokens_out: 0, buyer: creator, nonce: 2 },
+            sig.clone(), vec![],
+        );
+        assert_eq!(buy_tx.version, TX_VERSION_V3);
+
+        let sell_tx = Transaction::new_bonding_curve_sell_with_chain_id(
+            1,
+            BondingCurveSellData { token_id: [0u8; 32], token_amount: 100, min_stable_out: 0, seller: creator, nonce: 3 },
+            sig.clone(), vec![],
+        );
+        assert_eq!(sell_tx.version, TX_VERSION_V3);
+
+        let grad_tx = Transaction::new_bonding_curve_graduate_with_chain_id(
+            1,
+            BondingCurveGraduateData { token_id: [0u8; 32], pool_id: [0u8; 32], sov_seed_amount: 0, token_seed_amount: 0, graduator: creator, nonce: 4 },
+            sig, vec![],
+        );
+        assert_eq!(grad_tx.version, TX_VERSION_V3);
+    }
+
+    #[test]
+    fn test_bonding_curve_tx_v3_roundtrips_data_fields() {
+        use crate::transaction::core::{TX_VERSION_V3, BondingCurveDeployData};
+
+        let creator = [7u8; 32];
+        let sig = create_dummy_signature();
+        let tx = Transaction::new_bonding_curve_deploy_with_chain_id(
+            1,
+            BondingCurveDeployData {
+                name: "RoundTrip".into(), symbol: "RT".into(), curve_type: 1,
+                base_price: 500, curve_param: 200, midpoint_supply: None,
+                threshold_type: 1, threshold_value: 500_000, threshold_time_seconds: None,
+                sell_enabled: true, creator, nonce: 99,
+            },
+            sig, vec![],
+        );
+        assert_eq!(tx.version, TX_VERSION_V3);
+
+        // Roundtrip through bincode — bonding curve data must survive
+        let bytes = bincode::serialize(&tx).expect("serialize");
+        let decoded: Transaction = bincode::deserialize(&bytes).expect("deserialize");
+        assert_eq!(decoded.version, TX_VERSION_V3);
+        let data = decoded.bonding_curve_deploy_data.expect("deploy_data must be Some after roundtrip");
+        assert_eq!(data.symbol, "RT");
+        assert_eq!(data.creator, creator);
+    }
+
+    #[test]
+    fn test_bonding_curve_buy_is_disabled() {
+        use crate::execution::tx_apply::{self, StateMutator};
+        use crate::storage::{Address, TokenId};
+
+        let store = create_test_store();
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+
+        let result = tx_apply::apply_bonding_curve_buy(
+            &mutator,
+            &TokenId([0u8; 32]),
+            &Address([0u8; 32]),
+            1000,
+            500,
+        );
+        assert!(result.is_err(), "BondingCurveBuy must be disabled until reserve asset is implemented");
+        let msg = format!("{:?}", result.unwrap_err());
+        assert!(msg.contains("not yet enabled"), "error must explain why buy is disabled: {msg}");
+    }
+
+    #[test]
+    fn test_bonding_curve_sell_is_disabled() {
+        use crate::execution::tx_apply::{self, StateMutator};
+        use crate::storage::{Address, TokenId};
+
+        let store = create_test_store();
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+
+        let result = tx_apply::apply_bonding_curve_sell(
+            &mutator,
+            &TokenId([0u8; 32]),
+            &Address([0u8; 32]),
+            100,
+            500,
+        );
+        assert!(result.is_err(), "BondingCurveSell must be disabled until reserve asset is implemented");
+        let msg = format!("{:?}", result.unwrap_err());
+        assert!(msg.contains("not yet enabled"), "error must explain why sell is disabled: {msg}");
+    }
+
+    #[test]
+    fn test_bonding_curve_deploy_stores_token_and_symbol_index() {
+        use crate::contracts::bonding_curve::{BondingCurveToken, types::{CurveType, Threshold, Phase}};
+        use crate::execution::tx_apply::{self, StateMutator};
+        use crate::storage::TokenId;
+        use lib_crypto::hash_blake3;
+
+        let store = create_test_store();
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+
+        let creator_key = [9u8; 32];
+        let token_id_bytes = hash_blake3(b"TestToken:TT:creator");
+        let token_id = TokenId::from(token_id_bytes);
+        let token = BondingCurveToken {
+            token_id: token_id_bytes,
+            name: "TestToken".into(), symbol: "TT".into(), decimals: 8,
+            phase: Phase::Curve, total_supply: 0, reserve_balance: 0,
+            curve_type: CurveType::Linear { base_price: 1000, slope: 10 },
+            threshold: Threshold::ReserveAmount(1_000_000),
+            sell_enabled: false, amm_pool_id: None,
+            creator: lib_crypto::PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: creator_key },
+            deployed_at_block: 0, deployed_at_timestamp: 12345,
+        };
+
+        let result = tx_apply::apply_bonding_curve_deploy(&mutator, &token_id, &token, "TT");
+        assert!(result.is_ok(), "deploy should succeed: {:?}", result);
+
+        // Writes are batched; commit before reading back.
+        store.commit_block().unwrap();
+
+        let by_symbol = store.get_bonding_curve_by_symbol("TT").unwrap();
+        assert_eq!(by_symbol, Some(token_id), "symbol index must point to deployed token");
+    }
+
+    #[test]
+    fn test_bonding_curve_deploy_duplicate_symbol_rejected() {
+        use crate::contracts::bonding_curve::{BondingCurveToken, types::{CurveType, Threshold, Phase}};
+        use crate::execution::tx_apply::{self, StateMutator};
+        use crate::storage::TokenId;
+        use lib_crypto::hash_blake3;
+
+        let store = create_test_store();
+
+        // First deploy succeeds
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let token_id_bytes1 = hash_blake3(b"Alpha:ALP:creator1");
+        let make_token = |id_bytes: [u8; 32], key: [u8; 32], block: u64| BondingCurveToken {
+            token_id: id_bytes,
+            name: "Alpha".into(), symbol: "ALP".into(), decimals: 8,
+            phase: Phase::Curve, total_supply: 0, reserve_balance: 0,
+            curve_type: CurveType::Linear { base_price: 1000, slope: 10 },
+            threshold: Threshold::ReserveAmount(1_000_000),
+            sell_enabled: false, amm_pool_id: None,
+            creator: lib_crypto::PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: key },
+            deployed_at_block: block, deployed_at_timestamp: block * 1000,
+        };
+        tx_apply::apply_bonding_curve_deploy(
+            &mutator, &TokenId::from(token_id_bytes1), &make_token(token_id_bytes1, [1u8; 32], 0), "ALP",
+        ).expect("first deploy must succeed");
+        store.commit_block().unwrap();
+
+        // Second deploy with same symbol must be rejected
+        store.begin_block(1).unwrap();
+        let mutator2 = StateMutator::new(store.as_ref());
+        let token_id_bytes2 = hash_blake3(b"Beta:ALP:creator2");
+        let result = tx_apply::apply_bonding_curve_deploy(
+            &mutator2, &TokenId::from(token_id_bytes2), &make_token(token_id_bytes2, [2u8; 32], 1), "ALP",
+        );
+        assert!(result.is_err(), "duplicate symbol must be rejected");
+        let msg = format!("{:?}", result.unwrap_err());
+        assert!(msg.contains("already exists"), "error must mention duplicate: {msg}");
     }
 }
