@@ -541,9 +541,12 @@ impl ReceiptValidator {
         Ok(())
     }
 
-    /// Serialize receipt for signature verification
+    /// Serialize receipt for signature verification.
+    ///
+    /// Uses compact JSON so clients on any platform can reproduce the exact bytes to sign:
+    /// serialize the Receipt struct to compact JSON in struct-definition field order.
     fn serialize_receipt(&self, receipt: &Receipt) -> Result<Vec<u8>> {
-        bincode::serialize(receipt).context("Failed to serialize receipt")
+        serde_json::to_vec(receipt).context("Failed to serialize receipt")
     }
 
     /// Get client's Dilithium5 public key from DID
