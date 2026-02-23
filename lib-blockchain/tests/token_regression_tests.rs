@@ -587,11 +587,11 @@ fn test_contract_execution_burn_rejected() {
     let block = test_block(1, vec![tx]);
 
     let result = blockchain.process_contract_transactions(&block);
-    assert!(result.is_err(), "ContractExecution burn must be rejected");
+    assert!(result.is_ok(), "process_contract_transactions must not abort on a rejected ContractExecution");
 
     let token = blockchain.token_contracts.get(&token_id).unwrap();
-    assert_eq!(token.balance_of(&creator), 1_000_000, "Creator balance should be unchanged");
-    assert_eq!(token.total_supply, initial_supply, "Total supply should be unchanged");
+    assert_eq!(token.balance_of(&creator), 1_000_000, "Creator balance must be unchanged after rejected burn");
+    assert_eq!(token.total_supply, initial_supply, "Total supply must be unchanged after rejected burn");
 }
 
 /// Test 6a: ContractExecution mint cannot bypass kernel authority on protected tokens.
