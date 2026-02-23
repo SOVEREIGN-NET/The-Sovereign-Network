@@ -4277,8 +4277,14 @@ impl Blockchain {
                 TransactionType::TokenCreation => {
                     let payload = crate::transaction::TokenCreationPayloadV1::decode_memo(&transaction.memo)
                         .map_err(|e| anyhow::anyhow!("Invalid TokenCreation memo: {}", e))?;
+                    let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
 
                     let creator = transaction.signature.public_key.clone();
+                    if payload.treasury_recipient == creator.key_id {
+                        return Err(anyhow::anyhow!(
+                            "TokenCreation treasury_recipient must differ from creator"
+                        ));
+                    }
 
                     // Enforce symbol uniqueness deterministically across existing contracts.
                     let symbol_upper = payload.symbol.to_uppercase();
@@ -4294,11 +4300,22 @@ impl Blockchain {
                     let mut token = crate::contracts::TokenContract::new_custom(
                         payload.name.clone(),
                         payload.symbol.clone(),
-                        payload.initial_supply,
+                        0,
                         creator.clone(),
                     );
                     token.decimals = if payload.decimals == 0 { 8 } else { payload.decimals };
                     token.max_supply = payload.initial_supply;
+                    token
+                        .mint(&creator, creator_allocation)
+                        .map_err(|e| anyhow::anyhow!("TokenCreation mint failed: {}", e))?;
+                    let treasury_pk = lib_crypto::types::keys::PublicKey {
+                        dilithium_pk: vec![],
+                        kyber_pk: vec![],
+                        key_id: payload.treasury_recipient,
+                    };
+                    token
+                        .mint(&treasury_pk, treasury_allocation)
+                        .map_err(|e| anyhow::anyhow!("TokenCreation treasury mint failed: {}", e))?;
 
                     let token_id = token.token_id;
                     if self.token_contracts.contains_key(&token_id) {
@@ -9416,6 +9433,10 @@ mod replay_contract_execution_tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 

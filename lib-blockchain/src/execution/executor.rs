@@ -608,7 +608,7 @@ impl BlockExecutor {
                     summary.balance_changes += 1; // recipient only
                 }
                 TxOutcome::TokenCreation(_outcome) => {
-                    summary.balance_changes += 1; // creator balance only (token contract init is not counted here)
+                    summary.balance_changes += 2; // creator + treasury balance credits
                 }
                 TxOutcome::ContractDeployment(_outcome) => {
                     summary.balance_changes += 1; // tracks one deterministic contract deployment operation (multiple underlying storage writes: code + metadata)
@@ -1813,16 +1813,33 @@ impl BlockExecutor {
                         "TokenCreation requires canonical memo payload: {e}"
                     ))
                 })?;
+                let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
 
                 let creator = tx.signature.public_key.clone();
+                if payload.treasury_recipient == creator.key_id {
+                    return Err(TxApplyError::InvalidType(
+                        "TokenCreation treasury_recipient must differ from creator".to_string(),
+                    ));
+                }
                 let mut token = crate::contracts::TokenContract::new_custom(
                     payload.name.clone(),
                     payload.symbol.clone(),
-                    payload.initial_supply,
+                    0,
                     creator.clone(),
                 );
                 token.decimals = if payload.decimals == 0 { 8 } else { payload.decimals };
                 token.max_supply = payload.initial_supply;
+                token
+                    .mint(&creator, creator_allocation)
+                    .map_err(|e| TxApplyError::Internal(format!("TokenCreation mint failed: {e}")))?;
+                let treasury_pk = lib_crypto::PublicKey {
+                    dilithium_pk: vec![],
+                    kyber_pk: vec![],
+                    key_id: payload.treasury_recipient,
+                };
+                token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
+                    TxApplyError::Internal(format!("TokenCreation treasury mint failed: {e}"))
+                })?;
 
                 let token_id = token.token_id;
                 let token_id_ref = TokenId::new(token_id);
@@ -1846,16 +1863,26 @@ impl BlockExecutor {
 
                 // Keep balance-tree state consistent with typed token transfer path.
                 let creator_addr = Address::new(creator.key_id);
+                let treasury_addr = Address::new(payload.treasury_recipient);
                 tx_apply::apply_token_mint(
                     mutator,
                     &token_id_ref,
                     &creator_addr,
-                    payload.initial_supply as u128,
+                    creator_allocation as u128,
+                )?;
+                tx_apply::apply_token_mint(
+                    mutator,
+                    &token_id_ref,
+                    &treasury_addr,
+                    treasury_allocation as u128,
                 )?;
 
                 Ok(TxOutcome::TokenCreation(TokenCreationOutcome {
                     token_id,
                     creator: creator_addr,
+                    treasury: treasury_addr,
+                    creator_allocation: creator_allocation as u128,
+                    treasury_allocation: treasury_allocation as u128,
                     initial_supply: payload.initial_supply as u128,
                 }))
             }
@@ -2026,6 +2053,9 @@ pub struct TokenMintOutcome {
 pub struct TokenCreationOutcome {
     pub token_id: [u8; 32],
     pub creator: Address,
+    pub treasury: Address,
+    pub creator_allocation: u128,
+    pub treasury_allocation: u128,
     pub initial_supply: u128,
 }
 
@@ -2644,12 +2674,19 @@ mod tests {
     use crate::storage::TokenId;
     use crate::transaction::token_creation::TokenCreationPayloadV1;
 
-    fn create_token_creation_tx(name: &str, symbol: &str, initial_supply: u64) -> Transaction {
+    fn create_token_creation_tx(
+        name: &str,
+        symbol: &str,
+        initial_supply: u64,
+        treasury_recipient: [u8; 32],
+    ) -> Transaction {
         let payload = TokenCreationPayloadV1 {
             name: name.to_string(),
             symbol: symbol.to_string(),
             initial_supply,
             decimals: 8,
+            treasury_allocation_bps: 2_000,
+            treasury_recipient,
         };
         let memo = payload.encode_memo().expect("valid token creation memo");
         Transaction {
@@ -2688,7 +2725,8 @@ mod tests {
         let genesis = create_genesis_block();
         executor.apply_block(&genesis).unwrap();
 
-        let tx = create_token_creation_tx("Test Token", "TEST", 1_000_000);
+        let treasury = [0xAA; 32];
+        let tx = create_token_creation_tx("Test Token", "TEST", 1_000_000, treasury);
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
         let outcome = executor.apply_block(&block1).unwrap();
 
@@ -2703,6 +2741,16 @@ mod tests {
             .expect("token contract should exist");
         assert_eq!(contract.symbol, "TEST");
         assert_eq!(contract.total_supply, 1_000_000);
+        let creator_addr = Address::new(create_dummy_signature().public_key.key_id);
+        let treasury_addr = Address::new(treasury);
+        let creator_balance = store
+            .get_token_balance(&TokenId::new(token_id), &creator_addr)
+            .expect("creator balance read should succeed");
+        let treasury_balance = store
+            .get_token_balance(&TokenId::new(token_id), &treasury_addr)
+            .expect("treasury balance read should succeed");
+        assert_eq!(creator_balance, 800_000);
+        assert_eq!(treasury_balance, 200_000);
     }
 
     /// Duplicate TokenCreation for the same token_id must be rejected.
@@ -2715,12 +2763,12 @@ mod tests {
         executor.apply_block(&genesis).unwrap();
 
         // First creation succeeds
-        let tx = create_token_creation_tx("Test Token", "TEST", 1_000_000);
+        let tx = create_token_creation_tx("Test Token", "TEST", 1_000_000, [0xAA; 32]);
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
         executor.apply_block(&block1).unwrap();
 
         // Second creation with same name+symbol (same token_id) must be rejected
-        let tx2 = create_token_creation_tx("Test Token", "TEST", 500_000);
+        let tx2 = create_token_creation_tx("Test Token", "TEST", 500_000, [0xAA; 32]);
         let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx2]);
         let result = executor.apply_block(&block2);
         assert!(result.is_err(), "Duplicate TokenCreation should be rejected");
@@ -2736,12 +2784,12 @@ mod tests {
         executor.apply_block(&genesis).unwrap();
 
         // Create token with uppercase symbol
-        let tx = create_token_creation_tx("Alpha Token", "ALPHA", 1_000_000);
+        let tx = create_token_creation_tx("Alpha Token", "ALPHA", 1_000_000, [0xAA; 32]);
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
         executor.apply_block(&block1).unwrap();
 
         // Token with different name but same symbol (lowercase) must be rejected
-        let tx2 = create_token_creation_tx("Beta Token", "alpha", 500_000);
+        let tx2 = create_token_creation_tx("Beta Token", "alpha", 500_000, [0xBB; 32]);
         let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx2]);
         let result = executor.apply_block(&block2);
         assert!(

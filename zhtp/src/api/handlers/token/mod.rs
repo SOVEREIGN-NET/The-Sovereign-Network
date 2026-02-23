@@ -169,13 +169,20 @@ impl TokenHandler {
             symbol,
             initial_supply,
             decimals,
+            treasury_allocation_bps,
+            treasury_recipient,
         } = payload;
+        let treasury_recipient_hex = hex::encode(treasury_recipient);
+        let treasury_allocation = ((initial_supply as u128 * treasury_allocation_bps as u128) / 10_000) as u64;
+        let creator_allocation = initial_supply.saturating_sub(treasury_allocation);
         tracing::warn!(
-            "[FLOW] token/create params: name='{}' symbol='{}' supply={} decimals={}",
+            "[FLOW] token/create params: name='{}' symbol='{}' supply={} decimals={} treasury_bps={} treasury={}",
             name,
             symbol,
             initial_supply,
-            decimals
+            decimals,
+            treasury_allocation_bps,
+            treasury_recipient_hex
         );
 
         if name.is_empty() || symbol.is_empty() {
@@ -227,6 +234,10 @@ impl TokenHandler {
             "symbol": symbol,
             "initial_supply": initial_supply,
             "decimals": decimals,
+            "treasury_allocation_bps": treasury_allocation_bps,
+            "treasury_recipient": treasury_recipient_hex,
+            "creator_allocation": creator_allocation,
+            "treasury_allocation": treasury_allocation,
             "tx_status": "submitted_to_mempool"
         }))
     }

@@ -14,6 +14,8 @@ pub const MAX_TOKEN_NAME_BYTES: usize = 64;
 pub const MAX_TOKEN_SYMBOL_BYTES: usize = 10;
 /// Maximum memo bytes accepted for token creation payload.
 pub const MAX_TOKEN_CREATION_MEMO_BYTES: usize = 4096;
+/// Canonical treasury allocation for non-SOV token deployments (20%).
+pub const TOKEN_CREATION_TREASURY_ALLOCATION_BPS: u16 = 2_000;
 
 /// Canonical token creation payload for `TransactionType::TokenCreation`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -26,6 +28,12 @@ pub struct TokenCreationPayloadV1 {
     pub initial_supply: u64,
     /// Display decimals for client formatting.
     pub decimals: u8,
+    /// Treasury allocation in basis points. Canonical value is fixed at 2_000 (20%).
+    #[serde(default = "default_token_creation_treasury_allocation_bps")]
+    pub treasury_allocation_bps: u16,
+    /// Treasury recipient key id for the deployment allocation.
+    #[serde(default)]
+    pub treasury_recipient: [u8; 32],
 }
 
 impl TokenCreationPayloadV1 {
@@ -54,7 +62,25 @@ impl TokenCreationPayloadV1 {
         if self.initial_supply == 0 {
             return Err("initial_supply must be greater than 0".to_string());
         }
+        if self.treasury_allocation_bps != TOKEN_CREATION_TREASURY_ALLOCATION_BPS {
+            return Err(format!(
+                "treasury_allocation_bps must be {}",
+                TOKEN_CREATION_TREASURY_ALLOCATION_BPS
+            ));
+        }
+        if self.treasury_recipient == [0u8; 32] {
+            return Err("treasury_recipient must be non-zero".to_string());
+        }
         Ok(())
+    }
+
+    /// Deterministically split initial supply into (creator, treasury) allocation.
+    pub fn split_initial_supply(&self) -> (u64, u64) {
+        let treasury =
+            ((self.initial_supply as u128 * self.treasury_allocation_bps as u128) / 10_000u128)
+                as u64;
+        let creator = self.initial_supply.saturating_sub(treasury);
+        (creator, treasury)
     }
 
     /// Encode this payload into canonical memo bytes.
@@ -95,5 +121,44 @@ impl TokenCreationPayloadV1 {
             .map_err(|e| format!("invalid token creation payload encoding: {e}"))?;
         payload.validate()?;
         Ok(payload)
+    }
+}
+
+fn default_token_creation_treasury_allocation_bps() -> u16 {
+    TOKEN_CREATION_TREASURY_ALLOCATION_BPS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TokenCreationPayloadV1, TOKEN_CREATION_TREASURY_ALLOCATION_BPS};
+
+    #[test]
+    fn split_initial_supply_uses_canonical_twenty_percent() {
+        let payload = TokenCreationPayloadV1 {
+            name: "CarbonBlue".to_string(),
+            symbol: "CBE".to_string(),
+            initial_supply: 100,
+            decimals: 8,
+            treasury_allocation_bps: TOKEN_CREATION_TREASURY_ALLOCATION_BPS,
+            treasury_recipient: [1u8; 32],
+        };
+
+        let (creator, treasury) = payload.split_initial_supply();
+        assert_eq!(creator, 80);
+        assert_eq!(treasury, 20);
+    }
+
+    #[test]
+    fn reject_zero_treasury_recipient() {
+        let payload = TokenCreationPayloadV1 {
+            name: "Token".to_string(),
+            symbol: "TOK".to_string(),
+            initial_supply: 1,
+            decimals: 8,
+            treasury_allocation_bps: TOKEN_CREATION_TREASURY_ALLOCATION_BPS,
+            treasury_recipient: [0u8; 32],
+        };
+
+        assert!(payload.validate().is_err());
     }
 }
