@@ -1345,7 +1345,35 @@ impl ZhtpUnifiedServer {
         self.start_bluetooth_classic_handler().await?;
         // WiFi Direct already initialized above with mDNS
         self.start_lorawan_handler().await?;
-        
+
+        // Periodic POUW rewards persistence (every 60 seconds)
+        {
+            let calc = self.pouw_calculator_arc.clone();
+            let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(
+                std::path::Path::new(&crate::config::environment::Environment::default().blockchain_data_path())
+            );
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                interval.tick().await; // skip the immediate first tick
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = calc.save_rewards_to_file(&rewards_path).await {
+                        tracing::warn!("Failed to save POUW rewards to disk: {}", e);
+                    }
+                }
+            });
+        }
+
+        // Spawn POUW reward payout task -- processes Pending rewards once per epoch
+        crate::pouw::spawn_pouw_payout_task(
+            self.pouw_calculator_arc.clone(),
+            self.blockchain.clone(),
+            std::path::PathBuf::from(crate::config::environment::Environment::default().blockchain_data_path()),
+            crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
+        );
+        info!("✓ POUW reward payout task spawned (epoch interval: {}s)",
+              crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS);
+
         info!("🔒 ZHTP Unified Server ONLINE (QUIC-ONLY architecture)");
         info!("   Entry point: QUIC (required and primary)");
         info!("   Discovery: BLE, BT Classic, WiFi Direct, LoRaWAN");
@@ -1448,35 +1476,6 @@ impl ZhtpUnifiedServer {
         
         info!(" Bluetooth Classic periodic discovery task started (60s interval)");
 
-        // Periodic POUW rewards persistence (every 60 seconds)
-        {
-            let calc = self.pouw_calculator_arc.clone();
-            // Derive rewards.dat path alongside blockchain.dat
-            let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(
-                std::path::Path::new(&crate::config::environment::Environment::default().blockchain_data_path())
-            );
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-                interval.tick().await; // skip the immediate first tick
-                loop {
-                    interval.tick().await;
-                    if let Err(e) = calc.save_rewards_to_file(&rewards_path).await {
-                        tracing::warn!("Failed to save POUW rewards to disk: {}", e);
-                    }
-                }
-            });
-        }
-
-        // Spawn POUW reward payout task -- processes Pending rewards once per epoch
-        crate::pouw::spawn_pouw_payout_task(
-            self.pouw_calculator_arc.clone(),
-            self.blockchain.clone(),
-            std::path::PathBuf::from(crate::config::environment::Environment::default().blockchain_data_path()),
-            crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
-        );
-        info!("POUW reward payout task spawned (epoch interval: {}s)",
-              crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS);
-        
         Ok(())
     }
 
