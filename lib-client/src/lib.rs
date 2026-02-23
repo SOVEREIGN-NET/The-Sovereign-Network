@@ -471,11 +471,14 @@ pub extern "C" fn zhtp_client_sign_message(
 
 /// Canonical proof-type variants — must stay in the same declaration order as
 /// `zhtp::pouw::types::ProofType` so bincode emits matching discriminants.
+/// The `rename_all = "lowercase"` mirrors the server serde attribute so JSON
+/// values like `"hash"`, `"signature"`, `"web4manifestroute"` round-trip correctly.
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 enum PouwProofType {
     Hash,
     Merkle,
-    ContentAddress,
+    Signature,
     Web4ManifestRoute,
     Web4ContentServed,
 }
@@ -528,7 +531,7 @@ mod pouw_hex {
 ///   3. Signs those bytes with the identity's Dilithium5 key.
 ///   4. Returns raw signature bytes in a `ByteBuffer`.
 ///
-/// Returns an empty buffer on any error (bad JSON, unknown fields, sign fail).
+/// Returns an empty buffer on any error (bad JSON, invalid fields, or sign failure).
 /// Caller must free the returned buffer with `zhtp_client_buffer_free`.
 #[no_mangle]
 pub extern "C" fn zhtp_client_sign_pouw_receipt_json(
