@@ -3992,7 +3992,9 @@ impl Blockchain {
             }
             // Handle ContractExecution transactions (token create/mint/transfer/burn)
             else if transaction.transaction_type == TransactionType::ContractExecution {
-                self.process_contract_execution(transaction, block.height())?;
+                if let Err(e) = self.process_contract_execution(transaction, block.height()) {
+                    warn!("ContractExecution rejected (tx {}): {}", transaction.hash(), e);
+                }
             }
         }
         Ok(())
