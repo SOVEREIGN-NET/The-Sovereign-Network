@@ -24,7 +24,7 @@ pub struct TokenCreationPayloadV1 {
     pub name: String,
     /// Token ticker symbol.
     pub symbol: String,
-    /// Initial mint amount assigned to creator.
+    /// Total initial supply minted at deployment (split across creator/treasury per policy).
     pub initial_supply: u64,
     /// Display decimals for client formatting.
     pub decimals: u8,
@@ -76,9 +76,10 @@ impl TokenCreationPayloadV1 {
 
     /// Deterministically split initial supply into (creator, treasury) allocation.
     pub fn split_initial_supply(&self) -> (u64, u64) {
-        let treasury =
-            ((self.initial_supply as u128 * self.treasury_allocation_bps as u128) / 10_000u128)
-                as u64;
+        let treasury_u128 =
+            (self.initial_supply as u128 * self.treasury_allocation_bps as u128) / 10_000u128;
+        let treasury = u64::try_from(treasury_u128)
+            .expect("treasury split must fit in u64 because initial_supply is u64");
         let creator = self.initial_supply.saturating_sub(treasury);
         (creator, treasury)
     }
@@ -157,6 +158,20 @@ mod tests {
             decimals: 8,
             treasury_allocation_bps: TOKEN_CREATION_TREASURY_ALLOCATION_BPS,
             treasury_recipient: [0u8; 32],
+        };
+
+        assert!(payload.validate().is_err());
+    }
+
+    #[test]
+    fn reject_non_canonical_treasury_bps() {
+        let payload = TokenCreationPayloadV1 {
+            name: "Token".to_string(),
+            symbol: "TOK".to_string(),
+            initial_supply: 1,
+            decimals: 8,
+            treasury_allocation_bps: 1_000,
+            treasury_recipient: [1u8; 32],
         };
 
         assert!(payload.validate().is_err());

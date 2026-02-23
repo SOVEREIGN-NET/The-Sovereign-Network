@@ -9216,7 +9216,7 @@ impl Default for Blockchain {
 mod replay_contract_execution_tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
-    use crate::transaction::DaoExecutionData;
+    use crate::transaction::{token_creation::TokenCreationPayloadV1, DaoExecutionData};
     use crate::types::ContractCall;
     use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
@@ -9438,6 +9438,82 @@ mod replay_contract_execution_tests {
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
         }
+    }
+
+    fn token_creation_tx(
+        signer: &PublicKey,
+        name: &str,
+        symbol: &str,
+        supply: u64,
+        treasury_recipient: [u8; 32],
+    ) -> Transaction {
+        let payload = TokenCreationPayloadV1 {
+            name: name.to_string(),
+            symbol: symbol.to_string(),
+            initial_supply: supply,
+            decimals: 8,
+            treasury_allocation_bps: 2_000,
+            treasury_recipient,
+        };
+
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenCreation,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(signer),
+            memo: payload
+                .encode_memo()
+                .expect("token creation payload should encode"),
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+        }
+    }
+
+    #[test]
+    fn token_creation_self_treasury_rejected_in_legacy_flow() {
+        let creator = test_pubkey(0x51);
+        let tx = token_creation_tx(&creator, "LegacySelf", "LSELF", 1000, creator.key_id);
+        let block = Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 1_700_000_100,
+                difficulty: Difficulty::minimum(),
+                nonce: 0,
+                height: 12,
+                block_hash: Hash::default(),
+                cumulative_difficulty: Difficulty::minimum(),
+                transaction_count: 1,
+                block_size: 0,
+                state_root: Hash::default(),
+                fee_model_version: 2,
+            },
+            transactions: vec![tx],
+        };
+
+        let mut blockchain = Blockchain::default();
+        let result = blockchain.process_token_transactions(&block);
+        assert!(
+            result.is_err(),
+            "Legacy token flow must reject treasury recipient equal to creator"
+        );
     }
 
     #[test]

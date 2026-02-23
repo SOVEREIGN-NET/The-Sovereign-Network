@@ -2753,6 +2753,26 @@ mod tests {
         assert_eq!(treasury_balance, 200_000);
     }
 
+    /// TokenCreation must reject when treasury recipient equals creator.
+    #[test]
+    fn test_token_creation_self_treasury_rejected() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let creator_key_id = create_dummy_signature().public_key.key_id;
+        let tx = create_token_creation_tx("Self Treasury", "SELF", 1_000_000, creator_key_id);
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        let result = executor.apply_block(&block1);
+
+        assert!(
+            result.is_err(),
+            "TokenCreation with treasury == creator should be rejected"
+        );
+    }
+
     /// Duplicate TokenCreation for the same token_id must be rejected.
     #[test]
     fn test_token_creation_duplicate_rejected() {

@@ -164,6 +164,7 @@ impl TokenHandler {
                 ));
             }
         };
+        let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
         let TokenCreationPayloadV1 {
             name,
             symbol,
@@ -173,8 +174,6 @@ impl TokenHandler {
             treasury_recipient,
         } = payload;
         let treasury_recipient_hex = hex::encode(treasury_recipient);
-        let treasury_allocation = ((initial_supply as u128 * treasury_allocation_bps as u128) / 10_000) as u64;
-        let creator_allocation = initial_supply.saturating_sub(treasury_allocation);
         tracing::warn!(
             "[FLOW] token/create params: name='{}' symbol='{}' supply={} decimals={} treasury_bps={} treasury={}",
             name,
