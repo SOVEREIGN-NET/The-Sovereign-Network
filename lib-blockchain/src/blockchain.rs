@@ -4555,7 +4555,6 @@ impl Blockchain {
                 );
                 // Preserve legacy create_custom_token replay semantics.
                 token.decimals = if decimals == 0 { 8 } else { decimals };
-                token.max_supply = initial_supply;
 
                 let token_id = token.token_id;
                 if self.token_contracts.contains_key(&token_id) {
@@ -9441,7 +9440,7 @@ mod replay_contract_execution_tests {
         };
         let mint_params = MintParams {
             token_id,
-            to: recipient.key_id.to_vec(),
+            to: bincode::serialize(&recipient).expect("recipient should serialize"),
             amount: 250,
         };
 
