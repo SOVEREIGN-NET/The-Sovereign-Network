@@ -75,6 +75,35 @@ impl MiningService {
     pub async fn mine_block(blockchain: &mut Blockchain) -> Result<()> {
         let next_height = blockchain.height + 1;
 
+        // Prune pending transactions that no longer pass validation (e.g. fee rule changes).
+        // This prevents a single stuck transaction from permanently blocking block production.
+        {
+            use lib_blockchain::transaction::validation::StatefulTransactionValidator;
+            // Collect invalid tx hashes first (validator borrows blockchain immutably).
+            let invalid_hashes: Vec<lib_blockchain::Hash> = {
+                let validator = StatefulTransactionValidator::new(blockchain);
+                blockchain.pending_transactions.iter()
+                    .filter_map(|tx| {
+                        match validator.validate_transaction_with_state(tx) {
+                            Ok(()) => None,
+                            Err(e) => {
+                                warn!(
+                                    "⚠️ Pruning invalid pending tx {} from mempool: {}",
+                                    hex::encode(&tx.hash().as_bytes()[..8]),
+                                    e
+                                );
+                                Some(tx.hash())
+                            }
+                        }
+                    })
+                    .collect()
+            };
+            if !invalid_hashes.is_empty() {
+                blockchain.pending_transactions.retain(|tx| !invalid_hashes.contains(&tx.hash()));
+                warn!("Pruned {} invalid transaction(s) from mempool before mining", invalid_hashes.len());
+            }
+        }
+
         // Build UBI TokenMint transactions for this block (block-authoritative)
         let mut ubi_txs: Vec<lib_blockchain::Transaction> = Vec::new();
         for entry in blockchain.collect_ubi_mint_entries(next_height) {
