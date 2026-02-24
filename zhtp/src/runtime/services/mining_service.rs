@@ -76,31 +76,7 @@ impl MiningService {
         let next_height = blockchain.height + 1;
 
         // Phase 2 invariant: TokenTransfer and TokenMint must have fee == 0.
-        {
-            use lib_blockchain::TransactionType;
-            let before = blockchain.pending_transactions.len();
-            blockchain.pending_transactions.retain(|tx| {
-                let is_phase2_zero_fee = matches!(
-                    tx.transaction_type,
-                    TransactionType::TokenTransfer | TransactionType::TokenMint
-                );
-                if is_phase2_zero_fee && tx.fee != 0 {
-                    warn!(
-                        "⚠️ Evicting {} (type={:?}, fee={}) from mempool — Phase 2 requires fee==0",
-                        hex::encode(&tx.hash().as_bytes()[..8]),
-                        tx.transaction_type,
-                        tx.fee
-                    );
-                    false
-                } else {
-                    true
-                }
-            });
-            let evicted = before - blockchain.pending_transactions.len();
-            if evicted > 0 {
-                warn!("Evicted {} Phase-2-invalid transaction(s) from mempool before mining", evicted);
-            }
-        }
+        blockchain.evict_phase2_invalid_transactions("mine_block");
 
         // Build UBI TokenMint transactions for this block (block-authoritative)
         let mut ubi_txs: Vec<lib_blockchain::Transaction> = Vec::new();

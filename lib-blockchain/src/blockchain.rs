@@ -3292,6 +3292,38 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Evict Phase-2-invalid transactions (TokenTransfer/TokenMint with fee != 0) from the mempool.
+    ///
+    /// Phase 2 requires TokenTransfer and TokenMint to have fee == 0. This helper removes
+    /// any such transactions from the pending pool. Used at block load time and before mining.
+    pub fn evict_phase2_invalid_transactions(&mut self, context: &str) -> usize {
+        use crate::types::transaction_type::TransactionType;
+        let before = self.pending_transactions.len();
+        self.pending_transactions.retain(|tx| {
+            let is_phase2_zero_fee = matches!(
+                tx.transaction_type,
+                TransactionType::TokenTransfer | TransactionType::TokenMint
+            );
+            if is_phase2_zero_fee && tx.fee != 0 {
+                warn!(
+                    "{}: evicting Phase-2-invalid pending tx hash={} type={:?} fee={}",
+                    context,
+                    hex::encode(&tx.hash().as_bytes()[..8]),
+                    tx.transaction_type,
+                    tx.fee,
+                );
+                false
+            } else {
+                true
+            }
+        });
+        let evicted = before - self.pending_transactions.len();
+        if evicted > 0 {
+            warn!("{}: evicted {} Phase-2-invalid pending transaction(s)", context, evicted);
+        }
+        evicted
+    }
+
     fn resolve_credit_pubkey_from_parts(
         &self,
         public_key: Vec<u8>,
@@ -8473,35 +8505,7 @@ impl Blockchain {
         // indefinitely.  Purging them here at load time ensures they are gone from
         // disk after the next successful block save, even if no other valid transaction
         // arrives in the same session.
-        {
-            use crate::types::transaction_type::TransactionType;
-            let before = blockchain.pending_transactions.len();
-            blockchain.pending_transactions.retain(|tx| {
-                let is_phase2_zero_fee = matches!(
-                    tx.transaction_type,
-                    TransactionType::TokenTransfer | TransactionType::TokenMint
-                );
-                if is_phase2_zero_fee && tx.fee != 0 {
-                    warn!(
-                        "load_from_file: evicting Phase-2-invalid pending tx \
-                         hash={} type={:?} fee={}",
-                        hex::encode(&tx.hash().as_bytes()[..8]),
-                        tx.transaction_type,
-                        tx.fee,
-                    );
-                    false
-                } else {
-                    true
-                }
-            });
-            let evicted = before - blockchain.pending_transactions.len();
-            if evicted > 0 {
-                warn!(
-                    "load_from_file: evicted {} Phase-2-invalid pending transaction(s)",
-                    evicted
-                );
-            }
-        }
+        blockchain.evict_phase2_invalid_transactions("load_from_file");
 
         info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, tokens: {}, UTXOs: {}, {:?})",
               blockchain.height, blockchain.identity_registry.len(),

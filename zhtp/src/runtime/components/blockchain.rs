@@ -247,31 +247,7 @@ impl BlockchainComponent {
         // The BlockExecutor enforces this at execution time; enforce the same rule here
         // so that any bad transaction (admitted before the rule existed, or persisted
         // across a restart) is evicted from the pool before it can block block production.
-        {
-            use lib_blockchain::TransactionType;
-            let before = blockchain.pending_transactions.len();
-            blockchain.pending_transactions.retain(|tx| {
-                let is_phase2_zero_fee = matches!(
-                    tx.transaction_type,
-                    TransactionType::TokenTransfer | TransactionType::TokenMint
-                );
-                if is_phase2_zero_fee && tx.fee != 0 {
-                    warn!(
-                        "⚠️ Evicting {} (type={:?}, fee={}) from mempool — Phase 2 requires fee==0",
-                        hex::encode(&tx.hash().as_bytes()[..8]),
-                        tx.transaction_type,
-                        tx.fee
-                    );
-                    false
-                } else {
-                    true
-                }
-            });
-            let evicted = before - blockchain.pending_transactions.len();
-            if evicted > 0 {
-                warn!("Evicted {} Phase-2-invalid transaction(s) from mempool before mining", evicted);
-            }
-        }
+        blockchain.evict_phase2_invalid_transactions("mine_real_block");
 
         let mut ubi_txs: Vec<lib_blockchain::Transaction> = Vec::new();
         for entry in blockchain.collect_ubi_mint_entries(next_height) {
