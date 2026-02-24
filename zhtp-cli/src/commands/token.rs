@@ -229,8 +229,13 @@ pub async fn handle_token_command_with_output<O: Output>(
     output: &O,
 ) -> CliResult<()> {
     match args.action {
-        TokenAction::Create { name, symbol, supply } => {
-            handle_create(cli, output, &name, &symbol, supply).await
+        TokenAction::Create {
+            name,
+            symbol,
+            supply,
+            treasury_recipient,
+        } => {
+            handle_create(cli, output, &name, &symbol, supply, &treasury_recipient).await
         }
         TokenAction::Mint { token_id, amount, to } => {
             handle_mint(cli, output, &token_id, amount, &to).await
@@ -261,18 +266,27 @@ async fn handle_create<O: Output>(
     name: &str,
     symbol: &str,
     supply: u64,
+    treasury_recipient: &str,
 ) -> CliResult<()> {
     output.info(&format!("Creating token: {} ({})", name, symbol))?;
     output.info(&format!("Initial supply: {}", supply))?;
     output.info("Signing token creation transaction with local keypair")?;
 
     let keypair = load_default_keypair()?;
+    let treasury_key = parse_public_key(treasury_recipient)?;
+    if treasury_key.key_id == keypair.public_key.key_id {
+        return Err(CliError::ConfigError(
+            "treasury_recipient must differ from creator".to_string(),
+        ));
+    }
 
     let payload = TokenCreationPayloadV1 {
         name: name.to_string(),
         symbol: symbol.to_string(),
         initial_supply: supply,
         decimals: 8,
+        treasury_allocation_bps: 2_000,
+        treasury_recipient: treasury_key.key_id,
     };
     let memo = payload
         .encode_memo()

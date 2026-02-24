@@ -119,18 +119,16 @@ impl Session {
     pub fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>> {
         if ciphertext.len() < 12 + 16 {
             // Minimum: nonce (12) + tag (16)
-            return Err(ClientError::InvalidFormat(
-                "Ciphertext too short".into(),
-            ));
+            return Err(ClientError::InvalidFormat("Ciphertext too short".into()));
         }
 
         let nonce = Nonce::from_slice(&ciphertext[..12]);
         let ct = &ciphertext[12..];
 
         // Decrypt
-        self.cipher
-            .decrypt(nonce, ct)
-            .map_err(|_| ClientError::CryptoError("Decryption failed (invalid ciphertext or tag)".into()))
+        self.cipher.decrypt(nonce, ct).map_err(|_| {
+            ClientError::CryptoError("Decryption failed (invalid ciphertext or tag)".into())
+        })
     }
 
     /// Encrypt with explicit nonce (for advanced use cases)

@@ -1169,6 +1169,9 @@ pub enum TokenAction {
         /// Initial supply
         #[arg(long)]
         supply: u64,
+        /// Treasury recipient DID or key (receives canonical 20% allocation)
+        #[arg(long)]
+        treasury_recipient: String,
         // NOTE: creator removed - now derived from authenticated session
     },
     /// Mint additional tokens (creator only)
