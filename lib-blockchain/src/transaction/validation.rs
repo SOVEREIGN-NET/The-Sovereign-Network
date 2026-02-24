@@ -283,7 +283,10 @@ impl TransactionValidator {
         }
 
         // Economic validation (modified for system transactions)
-        self.validate_economics_with_system_check(transaction, is_system_transaction)?;
+        // Phase 2: TokenTransfer must have fee == 0 (see validate_transaction_with_state).
+        let economics_is_system = is_system_transaction
+            || transaction.transaction_type == TransactionType::TokenTransfer;
+        self.validate_economics_with_system_check(transaction, economics_is_system)?;
 
         Ok(())
     }
@@ -1576,9 +1579,15 @@ impl<'a> StatefulTransactionValidator<'a> {
         }
 
         // Economic validation (modified for system transactions)
+        // Phase 2: TokenTransfer must have fee == 0 (BlockExecutor enforces this at execution
+        // time; the mempool must enforce the same rule to prevent stuck transactions).
+        // We keep is_system_transaction=false above so signature/ZK validation still fires,
+        // but pass true for the economics check so the fee==0 rule is applied.
+        let economics_is_system = is_system_transaction
+            || transaction.transaction_type == TransactionType::TokenTransfer;
         tracing::debug!("[BREADCRUMB] validate_economics_with_system_check CALL");
         stateless_validator
-            .validate_economics_with_system_check(transaction, is_system_transaction)?;
+            .validate_economics_with_system_check(transaction, economics_is_system)?;
         tracing::debug!("[BREADCRUMB] validate_economics_with_system_check OK");
 
         Ok(())
