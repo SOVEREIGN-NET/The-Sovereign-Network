@@ -3993,11 +3993,47 @@ impl Blockchain {
             // Handle ContractExecution transactions (token create/mint/transfer/burn)
             else if transaction.transaction_type == TransactionType::ContractExecution {
                 if let Err(e) = self.process_contract_execution(transaction, block.height()) {
+                    if Self::is_forbidden_contract_execution_transfer(transaction) {
+                        return Err(anyhow::anyhow!(
+                            "ContractExecution/transfer is prohibited — use TokenTransfer transactions instead"
+                        ));
+                    }
                     warn!("ContractExecution rejected (tx {}): {}", transaction.hash(), e);
                 }
             }
         }
         Ok(())
+    }
+
+    fn is_forbidden_contract_execution_transfer(transaction: &Transaction) -> bool {
+        if transaction.transaction_type != TransactionType::ContractExecution {
+            return false;
+        }
+
+        let call = if transaction
+            .memo
+            .starts_with(crate::transaction::CONTRACT_EXECUTION_MEMO_PREFIX_V2)
+        {
+            match crate::transaction::DecodedContractExecutionMemo::decode_compat(&transaction.memo) {
+                Ok(decoded) => decoded.call,
+                Err(_) => return false,
+            }
+        } else {
+            if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
+                return false;
+            }
+            let call_data = &transaction.memo[4..];
+            let deserialized: Result<
+                (crate::types::ContractCall, crate::integration::crypto_integration::Signature),
+                _
+            > = bincode::deserialize(call_data);
+            match deserialized {
+                Ok((call, _sig)) => call,
+                Err(_) => return false,
+            }
+        };
+
+        call.contract_type == crate::types::ContractType::Token && call.method == "transfer"
     }
 
     /// Process token transfer and mint transactions from a block
@@ -4277,8 +4313,14 @@ impl Blockchain {
                 TransactionType::TokenCreation => {
                     let payload = crate::transaction::TokenCreationPayloadV1::decode_memo(&transaction.memo)
                         .map_err(|e| anyhow::anyhow!("Invalid TokenCreation memo: {}", e))?;
+                    let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
 
                     let creator = transaction.signature.public_key.clone();
+                    if payload.treasury_recipient == creator.key_id {
+                        return Err(anyhow::anyhow!(
+                            "TokenCreation treasury_recipient must differ from creator"
+                        ));
+                    }
 
                     // Enforce symbol uniqueness deterministically across existing contracts.
                     let symbol_upper = payload.symbol.to_uppercase();
@@ -4294,11 +4336,22 @@ impl Blockchain {
                     let mut token = crate::contracts::TokenContract::new_custom(
                         payload.name.clone(),
                         payload.symbol.clone(),
-                        payload.initial_supply,
+                        0,
                         creator.clone(),
                     );
                     token.decimals = if payload.decimals == 0 { 8 } else { payload.decimals };
                     token.max_supply = payload.initial_supply;
+                    token
+                        .mint(&creator, creator_allocation)
+                        .map_err(|e| anyhow::anyhow!("TokenCreation mint failed: {}", e))?;
+                    let treasury_pk = lib_crypto::types::keys::PublicKey {
+                        dilithium_pk: vec![],
+                        kyber_pk: vec![],
+                        key_id: payload.treasury_recipient,
+                    };
+                    token
+                        .mint(&treasury_pk, treasury_allocation)
+                        .map_err(|e| anyhow::anyhow!("TokenCreation treasury mint failed: {}", e))?;
 
                     let token_id = token.token_id;
                     if self.token_contracts.contains_key(&token_id) {
@@ -9199,7 +9252,7 @@ impl Default for Blockchain {
 mod replay_contract_execution_tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
-    use crate::transaction::DaoExecutionData;
+    use crate::transaction::{token_creation::TokenCreationPayloadV1, DaoExecutionData};
     use crate::types::ContractCall;
     use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
@@ -9416,7 +9469,87 @@ mod replay_contract_execution_tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
+    }
+
+    fn token_creation_tx(
+        signer: &PublicKey,
+        name: &str,
+        symbol: &str,
+        supply: u64,
+        treasury_recipient: [u8; 32],
+    ) -> Transaction {
+        let payload = TokenCreationPayloadV1 {
+            name: name.to_string(),
+            symbol: symbol.to_string(),
+            initial_supply: supply,
+            decimals: 8,
+            treasury_allocation_bps: 2_000,
+            treasury_recipient,
+        };
+
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenCreation,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(signer),
+            memo: payload
+                .encode_memo()
+                .expect("token creation payload should encode"),
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+        }
+    }
+
+    #[test]
+    fn token_creation_self_treasury_rejected_in_legacy_flow() {
+        let creator = test_pubkey(0x51);
+        let tx = token_creation_tx(&creator, "LegacySelf", "LSELF", 1000, creator.key_id);
+        let block = Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 1_700_000_100,
+                difficulty: Difficulty::minimum(),
+                nonce: 0,
+                height: 12,
+                block_hash: Hash::default(),
+                cumulative_difficulty: Difficulty::minimum(),
+                transaction_count: 1,
+                block_size: 0,
+                state_root: Hash::default(),
+                fee_model_version: 2,
+            },
+            transactions: vec![tx],
+        };
+
+        let mut blockchain = Blockchain::default();
+        let result = blockchain.process_token_transactions(&block);
+        assert!(
+            result.is_err(),
+            "Legacy token flow must reject treasury recipient equal to creator"
+        );
     }
 
     #[test]

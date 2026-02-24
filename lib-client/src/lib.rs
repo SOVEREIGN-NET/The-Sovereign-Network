@@ -1255,6 +1255,7 @@ pub extern "C" fn zhtp_client_build_token_mint(
 /// - symbol: Token symbol (null-terminated C string)
 /// - initial_supply: Initial supply to mint to creator
 /// - decimals: Decimal places (e.g., 8 for 8 decimal places)
+/// - treasury_recipient: 32-byte key_id of treasury allocation recipient (must differ from creator)
 /// - chain_id: Network chain ID
 #[no_mangle]
 pub extern "C" fn zhtp_client_build_token_create(
@@ -1263,9 +1264,10 @@ pub extern "C" fn zhtp_client_build_token_create(
     symbol: *const std::ffi::c_char,
     initial_supply: u64,
     decimals: u8,
+    treasury_recipient: *const u8,
     chain_id: u8,
 ) -> *mut std::ffi::c_char {
-    if handle.is_null() || name.is_null() || symbol.is_null() {
+    if handle.is_null() || name.is_null() || symbol.is_null() || treasury_recipient.is_null() {
         return std::ptr::null_mut();
     }
 
@@ -1282,8 +1284,19 @@ pub extern "C" fn zhtp_client_build_token_create(
             Err(_) => return std::ptr::null_mut(),
         }
     };
+    let treasury_recipient_slice = unsafe { std::slice::from_raw_parts(treasury_recipient, 32) };
+    let mut treasury_recipient_arr = [0u8; 32];
+    treasury_recipient_arr.copy_from_slice(treasury_recipient_slice);
 
-    match token_tx::build_create_token_tx(identity, name_str, symbol_str, initial_supply, decimals, chain_id) {
+    match token_tx::build_create_token_tx(
+        identity,
+        name_str,
+        symbol_str,
+        initial_supply,
+        decimals,
+        treasury_recipient_arr,
+        chain_id,
+    ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
