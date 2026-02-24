@@ -2116,6 +2116,10 @@ mod tests {
                 amount,
             }),
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 

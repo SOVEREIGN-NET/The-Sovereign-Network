@@ -613,18 +613,25 @@ pub fn build_create_token_tx(
     symbol: &str,
     initial_supply: u64,
     decimals: u8,
+    treasury_recipient: [u8; 32],
     chain_id: u8,
 ) -> Result<String, String> {
+    let signer_pk = create_public_key(identity.public_key.clone());
+    if treasury_recipient == signer_pk.key_id {
+        return Err("treasury_recipient must differ from creator".to_string());
+    }
+
     let payload = TokenCreationPayloadV1 {
         name: name.to_string(),
         symbol: symbol.to_string(),
         initial_supply,
         decimals,
+        treasury_allocation_bps: 2_000,
+        treasury_recipient,
     };
     let memo = payload
         .encode_memo()
         .map_err(|e| format!("Invalid token creation payload: {}", e))?;
-    let signer_pk = create_public_key(identity.public_key.clone());
     let mut tx = Transaction::new_token_creation_with_chain_id(
         chain_id,
         Signature {
