@@ -935,6 +935,7 @@ impl Blockchain {
 
         blockchain.update_utxo_set(&genesis_block)?;
         blockchain.save_utxo_snapshot(0)?; // Save snapshot for genesis block
+        blockchain.ensure_treasury_wallet();
         Ok(blockchain)
     }
 
@@ -1218,6 +1219,7 @@ impl Blockchain {
         // an active block transaction. Missing or underfunded balances are
         // repaired via TokenMint backfill after startup.
         blockchain.ensure_sov_token_contract();
+        blockchain.ensure_treasury_wallet();
         blockchain.migrate_sov_key_balances_to_wallets();
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
@@ -3212,6 +3214,41 @@ impl Blockchain {
         }
     }
 
+    /// Ensure the deterministic DAO treasury wallet exists in the registry.
+    ///
+    /// Uses `blake3(b"SOV_DAO_TREASURY_V1")` as the wallet ID so every node
+    /// derives the same identity independently.  Idempotent: a second call is a
+    /// no-op when the wallet is already present and linked.
+    fn ensure_treasury_wallet(&mut self) {
+        // Deterministic ID — identical on every node.
+        let wallet_id_bytes = crate::types::hash::blake3_hash(b"SOV_DAO_TREASURY_V1").as_array();
+        let wallet_id_hex = hex::encode(wallet_id_bytes);
+
+        // Insert into registry if not present.
+        if !self.wallet_registry.contains_key(&wallet_id_hex) {
+            let wallet_data = crate::transaction::WalletTransactionData {
+                wallet_id: crate::types::Hash::new(wallet_id_bytes),
+                wallet_type: "treasury".to_string(),
+                wallet_name: "DAO Treasury".to_string(),
+                alias: None,
+                public_key: vec![],
+                owner_identity_id: None,
+                seed_commitment: crate::types::Hash::zero(),
+                created_at: 0,
+                registration_fee: 0,
+                capabilities: 0,
+                initial_balance: 0,
+            };
+            self.wallet_registry.insert(wallet_id_hex.clone(), wallet_data);
+        }
+
+        // Link as the active treasury wallet if not already set.
+        if self.dao_treasury_wallet_id.is_none() {
+            self.dao_treasury_wallet_id = Some(wallet_id_hex);
+            info!("🏦 DAO treasury wallet initialized (deterministic bootstrap)");
+        }
+    }
+
     fn resolve_credit_pubkey_from_parts(
         &self,
         public_key: Vec<u8>,
@@ -5173,20 +5210,32 @@ impl Blockchain {
     /// - Efficient O(1) lookup
     /// - Consistency with other balance queries in the system
     pub fn get_dao_treasury_balance(&self) -> Result<u64> {
-        let treasury_wallet = self.get_dao_treasury_wallet()?;
-        let treasury_pubkey = crate::integration::crypto_integration::PublicKey::new(
-            treasury_wallet.public_key.clone()
-        );
+        let treasury_wallet_id = self.dao_treasury_wallet_id.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
 
-        // Issue #1018: Use TokenContract as source of truth for treasury balance
-        // This replaces the UTXO scanning approach that used `balance += 1` placeholder
+        // Build the lookup key consistent with how fee crediting inserts balances
+        // (wallet_key_for_sov uses the wallet ID bytes as key_id directly).
+        // Fall back to PublicKey::new(public_key) for legacy/test wallet IDs that
+        // are not 32-byte hex strings.
+        let treasury_key = match hex::decode(treasury_wallet_id) {
+            Ok(bytes) if bytes.len() == 32 => {
+                let mut id = [0u8; 32];
+                id.copy_from_slice(&bytes);
+                Self::wallet_key_for_sov(&id)
+            }
+            _ => {
+                let treasury_wallet = self.get_dao_treasury_wallet()?;
+                crate::integration::crypto_integration::PublicKey::new(
+                    treasury_wallet.public_key.clone()
+                )
+            }
+        };
+
+        // Issue #1018: Use TokenContract as source of truth for treasury balance.
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-
         if let Some(token) = self.token_contracts.get(&sov_token_id) {
-            Ok(token.balance_of(&treasury_pubkey))
+            Ok(token.balance_of(&treasury_key))
         } else {
-            // Token contract not initialized yet (early bootstrap)
-            // Fall back to counting UTXOs (legacy behavior, but returns 0 not placeholder)
             tracing::debug!(
                 "SOV token contract not found, treasury balance query returning 0 during bootstrap"
             );
@@ -8248,6 +8297,7 @@ impl Blockchain {
 
         // Backfill SOV balances for wallets registered before the in-memory credit was added.
         blockchain.ensure_sov_token_contract();
+        blockchain.ensure_treasury_wallet();
         blockchain.migrate_sov_key_balances_to_wallets();
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
