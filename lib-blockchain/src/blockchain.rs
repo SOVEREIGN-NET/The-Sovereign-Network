@@ -3253,6 +3253,45 @@ impl Blockchain {
         }
     }
 
+    /// Apply a token transfer with protocol fee deduction and treasury routing.
+    ///
+    /// This is a helper that consolidates the duplicated fee logic from the two
+    /// TokenTransfer code paths (wallet-addressed and key-id addressed).
+    fn apply_token_transfer_with_fee(
+        token: &mut crate::contracts::TokenContract,
+        sender: &PublicKey,
+        recipient: &PublicKey,
+        amount: u64,
+        fee_amount: u64,
+        treasury_key: &Option<PublicKey>,
+        height: u64,
+    ) -> Result<(), anyhow::Error> {
+        if fee_amount == 0 {
+            return Ok(());
+        }
+        let sender_bal = token.balance_of(sender);
+        if sender_bal < amount {
+            return Err(anyhow::anyhow!(
+                "TokenTransfer insufficient balance: have {}, need {}",
+                sender_bal, amount
+            ));
+        }
+        let sender_bal_post = token.balance_of(sender);
+        token.balances.insert(
+            sender.clone(),
+            sender_bal_post.saturating_sub(fee_amount),
+        );
+        if let Some(ref tpk) = treasury_key {
+            let tbal = token.balance_of(tpk);
+            token.balances.insert(tpk.clone(), tbal.saturating_add(fee_amount));
+            debug!(
+                "TokenTransfer: {} SOV fee → DAO treasury (height {})",
+                fee_amount, height
+            );
+        }
+        Ok(())
+    }
+
     fn resolve_credit_pubkey_from_parts(
         &self,
         public_key: Vec<u8>,
@@ -4142,23 +4181,17 @@ impl Blockchain {
                                 from_bal, amount_u64
                             ));
                         }
-                        // Transfer net amount (full amount minus protocol fee) to recipient.
                         token.transfer(&ctx, &to_wallet_addr, net_amount)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
-                        // Debit fee from sender and route to DAO treasury.
-                        if fee_amount > 0 {
-                            let from_bal_post = token.balance_of(&from_wallet_addr);
-                            token.balances.insert(
-                                from_wallet_addr.clone(),
-                                from_bal_post.saturating_sub(fee_amount),
-                            );
-                            if let Some(ref tpk) = treasury_pk_opt {
-                                let tbal = token.balance_of(tpk);
-                                token.balances.insert(tpk.clone(), tbal.saturating_add(fee_amount));
-                                debug!("TokenTransfer: {} SOV fee → DAO treasury (height {})",
-                                    fee_amount, block.height());
-                            }
-                        }
+                        Self::apply_token_transfer_with_fee(
+                            token,
+                            &from_wallet_addr,
+                            &to_wallet_addr,
+                            amount_u64,
+                            fee_amount,
+                            &treasury_pk_opt,
+                            block.height(),
+                        )?;
                     } else {
                         if sender_pk.key_id != transfer.from {
                             return Err(anyhow::anyhow!("TokenTransfer sender key_id mismatch"));
@@ -4187,23 +4220,17 @@ impl Blockchain {
                                 sender_bal, amount_u64
                             ));
                         }
-                        // Transfer net amount (full amount minus protocol fee) to recipient.
                         token.transfer(&ctx, &recipient_pk, net_amount)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
-                        // Debit fee from sender and route to DAO treasury.
-                        if fee_amount > 0 {
-                            let sender_bal_post = token.balance_of(&sender_pk);
-                            token.balances.insert(
-                                sender_pk.clone(),
-                                sender_bal_post.saturating_sub(fee_amount),
-                            );
-                            if let Some(ref tpk) = treasury_pk_opt {
-                                let tbal = token.balance_of(tpk);
-                                token.balances.insert(tpk.clone(), tbal.saturating_add(fee_amount));
-                                debug!("TokenTransfer: {} token fee → DAO treasury (height {})",
-                                    fee_amount, block.height());
-                            }
-                        }
+                        Self::apply_token_transfer_with_fee(
+                            token,
+                            &sender_pk,
+                            &recipient_pk,
+                            amount_u64,
+                            fee_amount,
+                            &treasury_pk_opt,
+                            block.height(),
+                        )?;
                     };
 
                     // Increment nonce after successful transfer
