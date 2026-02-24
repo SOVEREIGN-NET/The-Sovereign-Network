@@ -40,7 +40,7 @@ fn test_treasury_wallet_initialized_on_new_blockchain() {
     let wallet_id = blockchain
         .dao_treasury_wallet_id
         .as_ref()
-        .expect("dao_treasury_wallet_id must be set after Blockchain::new()");
+        .expect("dao_treasury_wallet_id must be set after Blockchain::default()");
 
     assert_eq!(
         *wallet_id,
@@ -82,24 +82,48 @@ fn test_treasury_wallet_deterministic_id() {
 
 #[test]
 fn test_treasury_wallet_idempotent() {
-    // Calling the bootstrapping path twice (via Default + reset + Default) must
-    // not create duplicate entries.
+    // Initial bootstrap: exactly one entry.
     let blockchain = Blockchain::default();
 
     let wallet_id = blockchain.dao_treasury_wallet_id.as_ref().unwrap().clone();
 
-    // Only one entry in the registry for this wallet ID.
     let count = blockchain
         .wallet_registry
         .keys()
         .filter(|k| *k == &wallet_id)
         .count();
-    assert_eq!(count, 1, "There must be exactly one treasury wallet registry entry");
+    assert_eq!(count, 1, "There must be exactly one treasury wallet registry entry after initial bootstrap");
 
-    // dao_treasury_wallet_id is still Some and unchanged.
     assert_eq!(
         blockchain.dao_treasury_wallet_id.as_deref(),
         Some(wallet_id.as_str())
+    );
+
+    // Persist and reload — load_from_file calls ensure_treasury_wallet() again.
+    // Must not create a duplicate entry.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("blockchain_idempotent.dat");
+
+    #[allow(deprecated)]
+    blockchain.save_to_file(&path).expect("save_to_file");
+
+    #[allow(deprecated)]
+    let loaded = Blockchain::load_from_file(&path).expect("load_from_file");
+
+    let reloaded_count = loaded
+        .wallet_registry
+        .keys()
+        .filter(|k| *k == &wallet_id)
+        .count();
+    assert_eq!(
+        reloaded_count, 1,
+        "load_from_file must not create duplicate treasury wallet registry entries"
+    );
+
+    assert_eq!(
+        loaded.dao_treasury_wallet_id.as_deref(),
+        Some(wallet_id.as_str()),
+        "dao_treasury_wallet_id must remain unchanged after reconstruction"
     );
 }
 

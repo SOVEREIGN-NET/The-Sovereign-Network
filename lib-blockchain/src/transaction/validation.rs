@@ -464,8 +464,11 @@ impl TransactionValidator {
             self.validate_zk_proofs(transaction)?;
         }
 
-        // Economic validation (modified for system transactions)
-        self.validate_economics_with_system_check(transaction, is_system_transaction)?;
+        // Economic validation — Phase 2: TokenTransfer fee must be 0 regardless of
+        // whether the caller passes is_system_transaction=true/false.
+        let economics_is_system = is_system_transaction
+            || transaction.transaction_type == TransactionType::TokenTransfer;
+        self.validate_economics_with_system_check(transaction, economics_is_system)?;
 
         Ok(())
     }
@@ -2133,6 +2136,10 @@ mod tests {
                 amount,
             }),
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 
@@ -2591,5 +2598,92 @@ mod tests {
         let validator = TransactionValidator::new();
         let result = validator.validate_contract_transaction(&tx);
         assert!(matches!(result, Err(ValidationError::InvalidMemo)));
+    }
+
+    /// Helper: build a minimal valid-structure TokenTransfer with a given fee.
+    fn token_transfer_tx_with_fee(fee: u64) -> Transaction {
+        let sender_key = test_public_key(1);
+        let from_id = sender_key.key_id;
+        let to_id = test_public_key(2).key_id;
+        Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenTransfer,
+            inputs: vec![],
+            outputs: vec![],
+            fee,
+            signature: test_signature(&sender_key),
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: Some(crate::transaction::TokenTransferData {
+                token_id: [0u8; 32],
+                from: from_id,
+                to: to_id,
+                amount: 1_000,
+                nonce: 0,
+            }),
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+        }
+    }
+
+    #[test]
+    fn test_token_transfer_nonzero_fee_rejected_with_system_flag_true() {
+        // When is_system_transaction=true, signature validation is skipped, so the
+        // fee check is the first gate to fire.  Phase 2 rule: TokenTransfer fee must
+        // be 0 even when the caller sets is_system=true.
+        let tx = token_transfer_tx_with_fee(107);
+        let validator = TransactionValidator::new();
+        let result = validator.validate_transaction_with_system_flag(&tx, true);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidFee)),
+            "Expected InvalidFee for TokenTransfer(fee=107, is_system=true), got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_token_transfer_nonzero_fee_rejected_with_system_flag_false() {
+        // When is_system_transaction=false, signature validation runs first.
+        // A TokenTransfer with fee > 0 must NOT be accepted regardless of which
+        // error fires first — this guards against future reordering.
+        let tx = token_transfer_tx_with_fee(107);
+        let validator = TransactionValidator::new();
+        let result = validator.validate_transaction_with_system_flag(&tx, false);
+        assert!(
+            result.is_err(),
+            "TokenTransfer with fee=107 (is_system=false) must be rejected, got Ok"
+        );
+        assert!(
+            !matches!(result, Ok(())),
+            "TokenTransfer with fee=107 must never pass validation"
+        );
+    }
+
+    #[test]
+    fn test_token_transfer_zero_fee_not_rejected_by_economics() {
+        // Zero fee must NOT trigger InvalidFee.  Other checks (signature, outputs)
+        // may still reject the placeholder tx, but the fee rule must not fire.
+        let tx = token_transfer_tx_with_fee(0);
+        let validator = TransactionValidator::new();
+
+        // With is_system=true, signature is skipped.  The fee check must not fire.
+        let result = validator.validate_transaction_with_system_flag(&tx, true);
+        assert!(
+            !matches!(result, Err(ValidationError::InvalidFee)),
+            "TokenTransfer with fee=0 must not fail with InvalidFee (is_system=true), got: {:?}",
+            result
+        );
     }
 }

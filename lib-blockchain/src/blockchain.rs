@@ -3231,6 +3231,10 @@ impl Blockchain {
                 wallet_type: "treasury".to_string(),
                 wallet_name: "DAO Treasury".to_string(),
                 alias: None,
+                // public_key is intentionally empty: the DAO treasury wallet uses the
+                // balance model (token.balances keyed by wallet_key_for_sov(wallet_id)),
+                // not the UTXO model. UTXO-based treasury paths (get_dao_treasury_utxos,
+                // execute_dao_proposal) are legacy and do not apply to this wallet.
                 public_key: vec![],
                 owner_identity_id: None,
                 seed_commitment: crate::types::Hash::zero(),
@@ -9568,6 +9572,10 @@ mod replay_contract_execution_tests {
             token_transfer_data: None,
             token_mint_data: None,
             governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
         }
     }
 
