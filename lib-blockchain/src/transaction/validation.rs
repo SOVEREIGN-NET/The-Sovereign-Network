@@ -5,10 +5,10 @@
 use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use crate::integration::zk_integration::is_valid_proof_structure;
 use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
-use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
 };
+use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::types::{transaction_type::TransactionType, ContractCall, ContractType, Hash};
 
 /// Transaction validation error types
@@ -94,6 +94,15 @@ impl TransactionValidator {
     /// Create a transaction validator with explicit fee configuration
     pub fn with_fee_config(fee_config: crate::transaction::TxFeeConfig) -> Self {
         Self { fee_config }
+    }
+
+    /// Compute whether economics validation should treat this as a system transaction.
+    ///
+    /// Phase 2: TokenTransfer must have fee == 0 even when the caller passes
+    /// is_system_transaction=false (to force signature validation). This ensures
+    /// the mempool and BlockExecutor have consistent fee rules.
+    fn compute_economics_is_system(transaction: &Transaction, is_system_transaction: bool) -> bool {
+        is_system_transaction || transaction.transaction_type == TransactionType::TokenTransfer
     }
 
     /// Validate a transaction completely
@@ -211,8 +220,7 @@ impl TransactionValidator {
                 // Validate minting authority and supply cap
                 self.validate_token_mint(transaction)?;
             }
-            TransactionType::TokenCreation
-            => {
+            TransactionType::TokenCreation => {
                 if !transaction.inputs.is_empty() {
                     return Err(ValidationError::InvalidInputs);
                 }
@@ -223,7 +231,9 @@ impl TransactionValidator {
                     .map_err(|_| ValidationError::InvalidMemo)?;
             }
             TransactionType::BondingCurveDeploy => {
-                let data = transaction.bonding_curve_deploy_data.as_ref()
+                let data = transaction
+                    .bonding_curve_deploy_data
+                    .as_ref()
                     .ok_or(ValidationError::InvalidInputs)?;
                 // Signer must be the declared creator
                 if transaction.signature.public_key.key_id != data.creator {
@@ -231,7 +241,9 @@ impl TransactionValidator {
                 }
             }
             TransactionType::BondingCurveBuy => {
-                let data = transaction.bonding_curve_buy_data.as_ref()
+                let data = transaction
+                    .bonding_curve_buy_data
+                    .as_ref()
                     .ok_or(ValidationError::InvalidInputs)?;
                 // Signer must be the declared buyer
                 if transaction.signature.public_key.key_id != data.buyer {
@@ -239,7 +251,9 @@ impl TransactionValidator {
                 }
             }
             TransactionType::BondingCurveSell => {
-                let data = transaction.bonding_curve_sell_data.as_ref()
+                let data = transaction
+                    .bonding_curve_sell_data
+                    .as_ref()
                     .ok_or(ValidationError::InvalidInputs)?;
                 // Signer must be the declared seller
                 if transaction.signature.public_key.key_id != data.seller {
@@ -247,7 +261,9 @@ impl TransactionValidator {
                 }
             }
             TransactionType::BondingCurveGraduate => {
-                let data = transaction.bonding_curve_graduate_data.as_ref()
+                let data = transaction
+                    .bonding_curve_graduate_data
+                    .as_ref()
                     .ok_or(ValidationError::InvalidInputs)?;
                 // Signer must be the declared graduator
                 if transaction.signature.public_key.key_id != data.graduator {
@@ -284,8 +300,8 @@ impl TransactionValidator {
 
         // Economic validation (modified for system transactions)
         // Phase 2: TokenTransfer must have fee == 0 (see validate_transaction_with_state).
-        let economics_is_system = is_system_transaction
-            || transaction.transaction_type == TransactionType::TokenTransfer;
+        let economics_is_system =
+            Self::compute_economics_is_system(transaction, is_system_transaction);
         self.validate_economics_with_system_check(transaction, economics_is_system)?;
 
         Ok(())
@@ -420,8 +436,7 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidInputs);
                 }
             }
-            TransactionType::TokenCreation
-            => {
+            TransactionType::TokenCreation => {
                 if !transaction.inputs.is_empty() {
                     return Err(ValidationError::InvalidInputs);
                 }
@@ -466,8 +481,8 @@ impl TransactionValidator {
 
         // Economic validation — Phase 2: TokenTransfer fee must be 0 regardless of
         // whether the caller passes is_system_transaction=true/false.
-        let economics_is_system = is_system_transaction
-            || transaction.transaction_type == TransactionType::TokenTransfer;
+        let economics_is_system =
+            Self::compute_economics_is_system(transaction, is_system_transaction);
         self.validate_economics_with_system_check(transaction, economics_is_system)?;
 
         Ok(())
@@ -1326,7 +1341,10 @@ fn is_forbidden_token_contract_mutation(transaction: &Transaction) -> bool {
         return false;
     };
     call.contract_type == ContractType::Token
-        && matches!(call.method.as_str(), "create_custom_token" | "mint" | "transfer" | "burn")
+        && matches!(
+            call.method.as_str(),
+            "create_custom_token" | "mint" | "transfer" | "burn"
+        )
 }
 
 impl Default for TransactionValidator {
@@ -1594,8 +1612,8 @@ impl<'a> StatefulTransactionValidator<'a> {
         // time; the mempool must enforce the same rule to prevent stuck transactions).
         // We keep is_system_transaction=false above so signature/ZK validation still fires,
         // but pass true for the economics check so the fee==0 rule is applied.
-        let economics_is_system = is_system_transaction
-            || transaction.transaction_type == TransactionType::TokenTransfer;
+        let economics_is_system =
+            is_system_transaction || transaction.transaction_type == TransactionType::TokenTransfer;
         tracing::debug!("[BREADCRUMB] validate_economics_with_system_check CALL");
         stateless_validator
             .validate_economics_with_system_check(transaction, economics_is_system)?;
@@ -1996,10 +2014,10 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bincode::Options;
     use crate::integration::zk_integration::ZkTransactionProof;
     use crate::transaction::{ContractDeploymentPayloadV1, CONTRACT_DEPLOYMENT_MEMO_PREFIX};
     use crate::types::ContractCall;
+    use bincode::Options;
 
     /// Helper: create a test PublicKey with deterministic content
     fn test_public_key(id: u8) -> PublicKey {
@@ -2208,7 +2226,7 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
-};
+        };
 
         assert!(!is_token_contract_execution(&mint_tx));
     }
@@ -2304,11 +2322,11 @@ mod tests {
                 token_transfer_data: None,
                 token_mint_data: None,
                 governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-};
+                bonding_curve_deploy_data: None,
+                bonding_curve_buy_data: None,
+                bonding_curve_sell_data: None,
+                bonding_curve_graduate_data: None,
+            };
 
             assert!(
                 is_token_contract_execution(&tx),
@@ -2344,11 +2362,11 @@ mod tests {
                 token_transfer_data: None,
                 token_mint_data: None,
                 governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-};
+                bonding_curve_deploy_data: None,
+                bonding_curve_buy_data: None,
+                bonding_curve_sell_data: None,
+                bonding_curve_graduate_data: None,
+            };
 
             assert!(
                 !is_token_contract_execution(&tx),
@@ -2388,7 +2406,7 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
-};
+        };
 
         assert!(
             !is_token_contract_execution(&non_token_tx),
@@ -2429,7 +2447,7 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
-};
+        };
 
         let validator = TransactionValidator::new();
         let result = validator.validate_contract_transaction(&tx);
