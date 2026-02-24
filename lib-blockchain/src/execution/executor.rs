@@ -1768,8 +1768,17 @@ impl BlockExecutor {
                     ));
                 }
 
-                // Apply the token transfer (debit from, credit to)
-                tx_apply::apply_token_transfer(mutator, &token, &from, &to, amount)?;
+                // Apply the token transfer with 1% protocol fee routed to fee sink.
+                let fee_destination = *self.fee_model.protocol_params.fee_sink_address();
+                let _fee_collected = tx_apply::apply_token_transfer(
+                    mutator,
+                    &token,
+                    &from,
+                    &to,
+                    amount,
+                    crate::contracts::tokens::constants::SOV_FEE_RATE_BPS,
+                    &fee_destination,
+                )?;
 
                 // Increment nonce for replay protection
                 mutator.increment_token_nonce(&token, &from)?;

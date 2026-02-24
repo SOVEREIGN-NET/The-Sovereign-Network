@@ -36,14 +36,14 @@
 //! ```
 
 use crate::bip39_wordlist::BIP39_WORDLIST;
-use crate::crypto::{Blake3, Dilithium5, Kyber1024, random_bytes};
+use crate::crypto::{random_bytes, Blake3, Dilithium5, Kyber1024};
 use crate::error::{ClientError, Result};
 use lib_identity_core::{
     derive_root_secret64_from_recovery_entropy, did_from_root_signing_public_key,
     RecoveryEntropy32, RootSigningKeypair,
 };
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Complete ZHTP identity with both public and private keys
@@ -156,8 +156,9 @@ pub fn generate_identity(device_id: String) -> Result<Identity> {
         .map_err(|e| ClientError::CryptoError(format!("RootSecret derivation failed: {}", e)))?;
 
     // 3. Deterministically derive Root Signing Key (Dilithium5, crystals-dilithium encoding)
-    let rsk = RootSigningKeypair::from_root_secret(&rs)
-        .map_err(|e| ClientError::CryptoError(format!("Root signing key derivation failed: {}", e)))?;
+    let rsk = RootSigningKeypair::from_root_secret(&rs).map_err(|e| {
+        ClientError::CryptoError(format!("Root signing key derivation failed: {}", e))
+    })?;
 
     // 4. DID is anchored to the root signing public key
     let did = did_from_root_signing_public_key(&rsk.public_key);
@@ -197,7 +198,10 @@ pub fn generate_identity(device_id: String) -> Result<Identity> {
 ///
 /// Currently generates new random keys because pqcrypto doesn't support
 /// seeded generation. TODO: Implement proper deterministic derivation.
-pub fn restore_identity_from_seed(recovery_entropy: Vec<u8>, device_id: String) -> Result<Identity> {
+pub fn restore_identity_from_seed(
+    recovery_entropy: Vec<u8>,
+    device_id: String,
+) -> Result<Identity> {
     if recovery_entropy.len() != 32 {
         return Err(ClientError::CryptoError(
             "Recovery entropy must be 32 bytes".into(),
@@ -212,8 +216,9 @@ pub fn restore_identity_from_seed(recovery_entropy: Vec<u8>, device_id: String) 
     let rs = derive_root_secret64_from_recovery_entropy(&RecoveryEntropy32(entropy32))
         .map_err(|e| ClientError::CryptoError(format!("RootSecret derivation failed: {}", e)))?;
 
-    let rsk = RootSigningKeypair::from_root_secret(&rs)
-        .map_err(|e| ClientError::CryptoError(format!("Root signing key derivation failed: {}", e)))?;
+    let rsk = RootSigningKeypair::from_root_secret(&rs).map_err(|e| {
+        ClientError::CryptoError(format!("Root signing key derivation failed: {}", e))
+    })?;
 
     let did = did_from_root_signing_public_key(&rsk.public_key);
 
@@ -253,7 +258,10 @@ pub fn restore_identity_from_phrase(phrase: &str, device_id: String) -> Result<I
 ///
 /// The server verifies the signature using the **new** public key, proving the user controls the
 /// recovery phrase that produces the new root signing key.
-pub fn build_migrate_identity_request(identity: &Identity, display_name: String) -> Result<MigrateIdentityRequestPayload> {
+pub fn build_migrate_identity_request(
+    identity: &Identity,
+    display_name: String,
+) -> Result<MigrateIdentityRequestPayload> {
     // Migration endpoint verifies using crystals-dilithium detached signatures.
     // Enforce we have the expected seed-derived key encoding.
     if identity.public_key.len() != Dilithium5::PUBLIC_KEY_SIZE {
@@ -277,7 +285,10 @@ pub fn build_migrate_identity_request(identity: &Identity, display_name: String)
         .unwrap_or(0);
 
     let new_public_key = hex::encode(&identity.public_key);
-    let signed_message = format!("SEED_MIGRATE:{}:{}:{}", display_name, new_public_key, timestamp);
+    let signed_message = format!(
+        "SEED_MIGRATE:{}:{}:{}",
+        display_name, new_public_key, timestamp
+    );
     let signature_bytes = Dilithium5::sign(signed_message.as_bytes(), &identity.private_key)?;
 
     Ok(MigrateIdentityRequestPayload {
@@ -290,7 +301,10 @@ pub fn build_migrate_identity_request(identity: &Identity, display_name: String)
 }
 
 /// Same as `build_migrate_identity_request` but returns JSON ready for HTTP transport.
-pub fn build_migrate_identity_request_json(identity: &Identity, display_name: String) -> Result<String> {
+pub fn build_migrate_identity_request_json(
+    identity: &Identity,
+    display_name: String,
+) -> Result<String> {
     let payload = build_migrate_identity_request(identity, display_name)?;
     serde_json::to_string(&payload).map_err(|e| ClientError::SerializationError(e.to_string()))
 }
@@ -332,7 +346,8 @@ fn entropy_from_mnemonic(phrase: &str) -> Result<Vec<u8>> {
         let index = BIP39_WORDLIST
             .iter()
             .position(|w| *w == word)
-            .ok_or_else(|| ClientError::CryptoError("Invalid BIP39 word".into()))? as u16;
+            .ok_or_else(|| ClientError::CryptoError("Invalid BIP39 word".into()))?
+            as u16;
 
         for i in (0..11).rev() {
             bits.push(((index >> i) & 1) as u8);
@@ -340,9 +355,7 @@ fn entropy_from_mnemonic(phrase: &str) -> Result<Vec<u8>> {
     }
 
     if bits.len() != 264 {
-        return Err(ClientError::CryptoError(
-            "Invalid mnemonic length".into(),
-        ));
+        return Err(ClientError::CryptoError("Invalid mnemonic length".into()));
     }
 
     let mut entropy = vec![0u8; 32];
@@ -495,34 +508,40 @@ pub fn export_keystore_base64(identity: &Identity) -> Result<String> {
         // Add keystore/user_identity.json
         let identity_bytes = user_identity_json.as_bytes();
         let mut header = Header::new_gnu();
-        header.set_path("keystore/user_identity.json")
+        header
+            .set_path("keystore/user_identity.json")
             .map_err(|e| ClientError::SerializationError(format!("Failed to set path: {}", e)))?;
         header.set_size(identity_bytes.len() as u64);
         header.set_mode(0o644);
         header.set_cksum();
-        archive.append(&header, identity_bytes)
-            .map_err(|e| ClientError::SerializationError(format!("Failed to add identity: {}", e)))?;
+        archive.append(&header, identity_bytes).map_err(|e| {
+            ClientError::SerializationError(format!("Failed to add identity: {}", e))
+        })?;
 
         // Add keystore/user_private_key.json
         let private_key_bytes = user_private_key_json.as_bytes();
         let mut header = Header::new_gnu();
-        header.set_path("keystore/user_private_key.json")
+        header
+            .set_path("keystore/user_private_key.json")
             .map_err(|e| ClientError::SerializationError(format!("Failed to set path: {}", e)))?;
         header.set_size(private_key_bytes.len() as u64);
         header.set_mode(0o600); // Restrictive permissions for private key
         header.set_cksum();
-        archive.append(&header, private_key_bytes)
-            .map_err(|e| ClientError::SerializationError(format!("Failed to add private key: {}", e)))?;
+        archive.append(&header, private_key_bytes).map_err(|e| {
+            ClientError::SerializationError(format!("Failed to add private key: {}", e))
+        })?;
 
         // Finalize archive
-        let encoder = archive.into_inner()
-            .map_err(|e| ClientError::SerializationError(format!("Failed to finalize archive: {}", e)))?;
-        encoder.finish()
-            .map_err(|e| ClientError::SerializationError(format!("Failed to finish compression: {}", e)))?;
+        let encoder = archive.into_inner().map_err(|e| {
+            ClientError::SerializationError(format!("Failed to finalize archive: {}", e))
+        })?;
+        encoder.finish().map_err(|e| {
+            ClientError::SerializationError(format!("Failed to finish compression: {}", e))
+        })?;
     }
 
     // 4. Base64 encode
-    use base64::{Engine, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine};
     Ok(STANDARD.encode(&archive_data))
 }
 
@@ -534,7 +553,10 @@ fn create_zhtp_identity_json(identity: &Identity) -> Result<String> {
     let key_id = Blake3::hash(&identity.public_key);
 
     // Extract identity ID from DID (format: "did:zhtp:{id_hex}")
-    let id_hex = identity.did.strip_prefix("did:zhtp:").unwrap_or(&identity.did);
+    let id_hex = identity
+        .did
+        .strip_prefix("did:zhtp:")
+        .unwrap_or(&identity.did);
     let id_bytes: Vec<u8> = hex::decode(id_hex).unwrap_or_else(|_| key_id.to_vec());
 
     // Generate dao_member_id from DID (deterministic)
@@ -638,7 +660,10 @@ mod tests {
         assert!(identity.did.starts_with("did:zhtp:"));
         assert_eq!(identity.public_key.len(), Dilithium5::PUBLIC_KEY_SIZE);
         // Seeded keys use crystals-dilithium (4864 bytes)
-        assert_eq!(identity.private_key.len(), Dilithium5::SECRET_KEY_SIZE_SEEDED);
+        assert_eq!(
+            identity.private_key.len(),
+            Dilithium5::SECRET_KEY_SIZE_SEEDED
+        );
         assert_eq!(identity.kyber_public_key.len(), Kyber1024::PUBLIC_KEY_SIZE);
         assert_eq!(identity.kyber_secret_key.len(), Kyber1024::SECRET_KEY_SIZE);
         assert_eq!(identity.node_id.len(), 32);
@@ -705,8 +730,14 @@ mod tests {
         let restored = restore_identity_from_phrase(&phrase, "new-device".into()).unwrap();
 
         // DIDs MUST match (this is the critical test)
-        assert_eq!(restored.did, original_did, "Restored DID must match original");
-        assert_eq!(restored.public_key, original_public_key, "Restored public key must match");
+        assert_eq!(
+            restored.did, original_did,
+            "Restored DID must match original"
+        );
+        assert_eq!(
+            restored.public_key, original_public_key,
+            "Restored public key must match"
+        );
     }
 
     #[test]
@@ -731,8 +762,10 @@ mod tests {
         let keystore_b64 = export_keystore_base64(&identity).unwrap();
 
         // Should be valid base64
-        use base64::{Engine, engine::general_purpose::STANDARD};
-        let decoded = STANDARD.decode(&keystore_b64).expect("Should be valid base64");
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let decoded = STANDARD
+            .decode(&keystore_b64)
+            .expect("Should be valid base64");
 
         // Should be a valid gzip (starts with 0x1f 0x8b)
         assert!(decoded.len() > 2, "Archive should have content");
@@ -744,19 +777,29 @@ mod tests {
         use std::io::Read;
         let mut decoder = GzDecoder::new(&decoded[..]);
         let mut tar_data = Vec::new();
-        decoder.read_to_end(&mut tar_data).expect("Should decompress");
+        decoder
+            .read_to_end(&mut tar_data)
+            .expect("Should decompress");
 
         // Check that tar contains expected files
         use tar::Archive;
         let mut archive = Archive::new(&tar_data[..]);
-        let entries: Vec<_> = archive.entries().unwrap()
+        let entries: Vec<_> = archive
+            .entries()
+            .unwrap()
             .map(|e| e.unwrap().path().unwrap().to_string_lossy().to_string())
             .collect();
 
-        assert!(entries.contains(&"keystore/user_identity.json".to_string()),
-            "Should contain user_identity.json, got: {:?}", entries);
-        assert!(entries.contains(&"keystore/user_private_key.json".to_string()),
-            "Should contain user_private_key.json, got: {:?}", entries);
+        assert!(
+            entries.contains(&"keystore/user_identity.json".to_string()),
+            "Should contain user_identity.json, got: {:?}",
+            entries
+        );
+        assert!(
+            entries.contains(&"keystore/user_private_key.json".to_string()),
+            "Should contain user_private_key.json, got: {:?}",
+            entries
+        );
     }
 
     #[test]

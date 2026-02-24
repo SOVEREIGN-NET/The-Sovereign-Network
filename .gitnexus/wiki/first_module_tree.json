@@ -1,0 +1,2988 @@
+[
+  {
+    "name": "Sovereign Code Reviewer",
+    "slug": "sovereign-code-reviewer",
+    "files": [
+      "agents/sovereign-code-reviewer/AGENT_DEFINITION.md",
+      "agents/sovereign-code-reviewer/ARCHITECTURE.md",
+      "agents/sovereign-code-reviewer/QUICKSTART.md",
+      "agents/sovereign-code-reviewer/README.md",
+      "agents/sovereign-code-reviewer/examples/basic_usage.py",
+      "agents/sovereign-code-reviewer/src/__init__.py",
+      "agents/sovereign-code-reviewer/src/agent.py",
+      "agents/sovereign-code-reviewer/src/context/project_context.py",
+      "agents/sovereign-code-reviewer/src/main.py",
+      "agents/sovereign-code-reviewer/src/models/issue.py",
+      "agents/sovereign-code-reviewer/src/models/review.py",
+      "agents/sovereign-code-reviewer/src/tools/github_integration.py"
+    ]
+  },
+  {
+    "name": "Documentation",
+    "slug": "documentation",
+    "files": [
+      "AGENTS.md",
+      "AGENT_TASKS.md",
+      "ALPHA_RELEASE_NOTES.md",
+      "COGNITIVE_COMPLEXITY_REFACTORING.md",
+      "GOLDEN_RULES.md",
+      "HTTP1_REMOVAL_PLAN.md",
+      "ISSUE-938-CHANGES.md",
+      "NONDETERMINISM_DETECTION.md",
+      "README.md"
+    ]
+  },
+  {
+    "name": "Deployment",
+    "slug": "deployment",
+    "files": [
+      "deploy/ansible/README.md",
+      "deploy/ansible/ansible.cfg",
+      "deploy/ansible/inventory.ini",
+      "deploy/ansible/playbook.yml",
+      "deploy/ansible/templates/zhtp.openrc.j2",
+      "deploy/ansible/templates/zhtp.service.j2",
+      "deploy/zhtp-dev.service",
+      "deploy/zhtp.service"
+    ]
+  },
+  {
+    "name": "Blockchain",
+    "slug": "blockchain",
+    "files": [],
+    "children": [
+      {
+        "name": "Blockchain — docs",
+        "slug": "blockchain-docs",
+        "files": [
+          "lib-blockchain/docs/README.md",
+          "lib-blockchain/docs/api-reference.md",
+          "lib-blockchain/docs/architecture.md",
+          "lib-blockchain/docs/contract-deployment-transaction-schema.md",
+          "lib-blockchain/docs/integration-guide.md",
+          "lib-blockchain/docs/smart-contracts.md",
+          "lib-blockchain/docs/web4-guide.md"
+        ]
+      },
+      {
+        "name": "Blockchain — src",
+        "slug": "blockchain-src",
+        "files": [
+          "lib-blockchain/src/block/core.rs",
+          "lib-blockchain/src/block/creation.rs",
+          "lib-blockchain/src/blockchain.rs",
+          "lib-blockchain/src/contracts/approval_verifier/delegated.rs",
+          "lib-blockchain/src/contracts/approval_verifier/governance_vote.rs",
+          "lib-blockchain/src/contracts/approval_verifier/mod.rs",
+          "lib-blockchain/src/contracts/approval_verifier/multisig.rs",
+          "lib-blockchain/src/contracts/base/contract.rs",
+          "lib-blockchain/src/contracts/base/mod.rs",
+          "lib-blockchain/src/contracts/brokerage/dao_brokerage.rs",
+          "lib-blockchain/src/contracts/dev_grants/core.rs",
+          "lib-blockchain/src/contracts/dev_grants/mod.rs",
+          "lib-blockchain/src/contracts/dev_grants/types.rs",
+          "lib-blockchain/src/contracts/economics/fee_router.rs",
+          "lib-blockchain/src/contracts/emergency_reserve/core.rs",
+          "lib-blockchain/src/contracts/emergency_reserve/mod.rs",
+          "lib-blockchain/src/contracts/governance/governance.rs",
+          "lib-blockchain/src/contracts/launch/mod.rs",
+          "lib-blockchain/src/contracts/messaging/core.rs",
+          "lib-blockchain/src/contracts/root_registry/mod.rs",
+          "lib-blockchain/src/contracts/runtime/mod.rs",
+          "lib-blockchain/src/contracts/sov_swap/core.rs",
+          "lib-blockchain/src/contracts/staking/mod.rs",
+          "lib-blockchain/src/contracts/tokens/mod.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/mod.rs",
+          "lib-blockchain/src/lib.rs"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Identity",
+    "slug": "identity",
+    "files": [
+      "lib-identity/IMPLEMENTATION_SUMMARY.md",
+      "lib-identity/QUICK_REFERENCE.md",
+      "lib-identity/README.md",
+      "lib-identity/docs/MIGRATION_NODEID.md",
+      "lib-identity/docs/PASSWORD_SECURITY_GUIDE.md",
+      "lib-identity/docs/README.md",
+      "lib-identity/src/auth/mod.rs",
+      "lib-identity/src/auth/password.rs",
+      "lib-identity/src/auth/session.rs",
+      "lib-identity/src/citizenship/mod.rs",
+      "lib-identity/src/citizenship/onboarding.rs",
+      "lib-identity/src/credentials/mod.rs",
+      "lib-identity/src/credentials/verification.rs",
+      "lib-identity/src/did/mod.rs",
+      "lib-identity/src/economics/mod.rs",
+      "lib-identity/src/identity/mod.rs",
+      "lib-identity/src/integration/mod.rs",
+      "lib-identity/src/privacy/mod.rs",
+      "lib-identity/src/recovery/mod.rs",
+      "lib-identity/src/reputation/mod.rs",
+      "lib-identity/src/types/mod.rs",
+      "lib-identity/src/wallets/mod.rs"
+    ]
+  },
+  {
+    "name": "Network",
+    "slug": "network",
+    "files": [],
+    "children": [
+      {
+        "name": "Network — docs",
+        "slug": "network-docs",
+        "files": [
+          "lib-network/docs/API.md",
+          "lib-network/docs/ARCHITECTURE.md",
+          "lib-network/docs/CONFIGURATION.md",
+          "lib-network/docs/README.md"
+        ]
+      },
+      {
+        "name": "Network — src",
+        "slug": "network-src",
+        "files": [
+          "lib-network/src/blockchain_sync/mod.rs",
+          "lib-network/src/bootstrap/mod.rs",
+          "lib-network/src/client/mod.rs",
+          "lib-network/src/dht/mod.rs",
+          "lib-network/src/discovery/mod.rs",
+          "lib-network/src/handshake/mod.rs",
+          "lib-network/src/mesh/mod.rs",
+          "lib-network/src/monitoring/mod.rs",
+          "lib-network/src/types/mod.rs",
+          "lib-network/src/web4/mod.rs"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Proofs",
+    "slug": "proofs",
+    "files": [],
+    "children": [
+      {
+        "name": "Proofs — docs",
+        "slug": "proofs-docs",
+        "files": [
+          "lib-proofs/docs/api_reference.md",
+          "lib-proofs/docs/circuits.md",
+          "lib-proofs/docs/examples.md"
+        ]
+      },
+      {
+        "name": "Proofs — src",
+        "slug": "proofs-src",
+        "files": [
+          "lib-proofs/src/circuits/mod.rs",
+          "lib-proofs/src/identity/mod.rs",
+          "lib-proofs/src/merkle/mod.rs",
+          "lib-proofs/src/plonky2/mod.rs",
+          "lib-proofs/src/provers/mod.rs",
+          "lib-proofs/src/range/mod.rs",
+          "lib-proofs/src/types/mod.rs",
+          "lib-proofs/src/verifiers/mod.rs"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Economy",
+    "slug": "economy",
+    "files": [
+      "lib-economy/docs/API_REFERENCE.md",
+      "lib-economy/docs/OVERVIEW.md",
+      "lib-economy/src/distribution/mod.rs",
+      "lib-economy/src/integration/mod.rs",
+      "lib-economy/src/models/mod.rs",
+      "lib-economy/src/rewards/mod.rs",
+      "lib-economy/src/transactions/mod.rs",
+      "lib-economy/src/types/mod.rs",
+      "lib-economy/src/wallets/mod.rs"
+    ]
+  },
+  {
+    "name": "Protocols",
+    "slug": "protocols",
+    "files": [],
+    "children": [
+      {
+        "name": "Protocols — docs",
+        "slug": "protocols-docs",
+        "files": [
+          "lib-protocols/docs/API_REFERENCE.md",
+          "lib-protocols/docs/README.md"
+        ]
+      },
+      {
+        "name": "Protocols — src",
+        "slug": "protocols-src",
+        "files": [
+          "lib-protocols/src/crypto.rs",
+          "lib-protocols/src/identity.rs",
+          "lib-protocols/src/integration.rs",
+          "lib-protocols/src/lib.rs",
+          "lib-protocols/src/storage.rs",
+          "lib-protocols/src/types/mod.rs"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Storage",
+    "slug": "storage",
+    "files": [
+      "lib-storage/docs/README.md",
+      "lib-storage/src/backend/mod.rs",
+      "lib-storage/src/consistency/mod.rs",
+      "lib-storage/src/dht/mod.rs",
+      "lib-storage/src/economic/mod.rs",
+      "lib-storage/src/lib.rs",
+      "lib-storage/src/types/mod.rs"
+    ]
+  },
+  {
+    "name": "Testing",
+    "slug": "testing",
+    "files": [
+      "tests/e2e/README.md",
+      "tests/integration/test_orchestrator_restart_determinism.rs",
+      "tests/integration_zhtp_mesh_serialization.rs",
+      "tests/test_suite.rs"
+    ]
+  },
+  {
+    "name": "Other",
+    "slug": "other",
+    "files": [],
+    "children": [
+      {
+        "name": "Other — Cargo.toml",
+        "slug": "other-cargo-toml",
+        "files": [
+          "Cargo.toml"
+        ]
+      },
+      {
+        "name": "Other — sovereign-code-reviewer",
+        "slug": "other-sovereign-code-reviewer",
+        "files": [
+          "agents/sovereign-code-reviewer/requirements.txt",
+          "agents/sovereign-code-reviewer/src/config/architecture.yaml",
+          "agents/sovereign-code-reviewer/src/context/__init__.py",
+          "agents/sovereign-code-reviewer/src/models/__init__.py",
+          "agents/sovereign-code-reviewer/src/tools/__init__.py"
+        ]
+      },
+      {
+        "name": "Other — build.ps1",
+        "slug": "other-build-ps1",
+        "files": [
+          "build.ps1"
+        ]
+      },
+      {
+        "name": "Other — build.sh",
+        "slug": "other-build-sh",
+        "files": [
+          "build.sh"
+        ]
+      },
+      {
+        "name": "Other — dev",
+        "slug": "other-dev",
+        "files": [
+          "data/dev/sled/conf",
+          "data/dev/sled/db"
+        ]
+      },
+      {
+        "name": "Other — testnet",
+        "slug": "other-testnet",
+        "files": [
+          "data/testnet/node_identity.json"
+        ]
+      },
+      {
+        "name": "Other — tls",
+        "slug": "other-tls",
+        "files": [
+          "data/tls/control_plane_nonce_cache/000093.log",
+          "data/tls/control_plane_nonce_cache/000097.sst",
+          "data/tls/control_plane_nonce_cache/000100.log",
+          "data/tls/control_plane_nonce_cache/000104.log",
+          "data/tls/control_plane_nonce_cache/000108.log",
+          "data/tls/control_plane_nonce_cache/000112.log",
+          "data/tls/control_plane_nonce_cache/000116.log",
+          "data/tls/control_plane_nonce_cache/000120.log",
+          "data/tls/control_plane_nonce_cache/000124.log",
+          "data/tls/control_plane_nonce_cache/000128.log",
+          "data/tls/control_plane_nonce_cache/000132.log",
+          "data/tls/control_plane_nonce_cache/000136.log",
+          "data/tls/control_plane_nonce_cache/000140.log",
+          "data/tls/control_plane_nonce_cache/000144.log",
+          "data/tls/control_plane_nonce_cache/000148.log",
+          "data/tls/control_plane_nonce_cache/000152.log",
+          "data/tls/control_plane_nonce_cache/000156.log",
+          "data/tls/control_plane_nonce_cache/000160.log",
+          "data/tls/control_plane_nonce_cache/000164.log",
+          "data/tls/control_plane_nonce_cache/000168.log",
+          "data/tls/control_plane_nonce_cache/000172.log",
+          "data/tls/control_plane_nonce_cache/CURRENT",
+          "data/tls/control_plane_nonce_cache/IDENTITY",
+          "data/tls/control_plane_nonce_cache/LOCK",
+          "data/tls/control_plane_nonce_cache/LOG",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765676957067455",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765705116954804",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765705654204625",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765710687716128",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765712475943305",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765714399267017",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765714412914695",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765745996482666",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765746869405066",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765748228152084",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765750064719396",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765752116623572",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765753971296723",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765754194800849",
+          "data/tls/control_plane_nonce_cache/LOG.old.1765754811551196",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766851035937459",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766851236796064",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766851607562262",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766852195956316",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766852402094474",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766853066988561",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766853133190892",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766853350450731",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766853766635095",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766854074631274",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766854138739686",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766854256280350",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766854473916857",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766854765631133",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766856019840921",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766856105657048",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766856575761820",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766857118161609",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766857521787385",
+          "data/tls/control_plane_nonce_cache/LOG.old.1766859033342706",
+          "data/tls/control_plane_nonce_cache/MANIFEST-000173",
+          "data/tls/control_plane_nonce_cache/OPTIONS-000171",
+          "data/tls/control_plane_nonce_cache/OPTIONS-000175",
+          "data/tls/quic_nonce_cache/000119.sst",
+          "data/tls/quic_nonce_cache/000122.sst",
+          "data/tls/quic_nonce_cache/000127.sst",
+          "data/tls/quic_nonce_cache/000132.sst",
+          "data/tls/quic_nonce_cache/000133.log",
+          "data/tls/quic_nonce_cache/000137.log",
+          "data/tls/quic_nonce_cache/000141.log",
+          "data/tls/quic_nonce_cache/000145.log",
+          "data/tls/quic_nonce_cache/000149.log",
+          "data/tls/quic_nonce_cache/000153.log",
+          "data/tls/quic_nonce_cache/000157.log",
+          "data/tls/quic_nonce_cache/000161.log",
+          "data/tls/quic_nonce_cache/000165.log",
+          "data/tls/quic_nonce_cache/000169.log",
+          "data/tls/quic_nonce_cache/000173.log",
+          "data/tls/quic_nonce_cache/000177.log",
+          "data/tls/quic_nonce_cache/000181.log",
+          "data/tls/quic_nonce_cache/000185.log",
+          "data/tls/quic_nonce_cache/000189.log",
+          "data/tls/quic_nonce_cache/000193.log",
+          "data/tls/quic_nonce_cache/000197.log",
+          "data/tls/quic_nonce_cache/000201.log",
+          "data/tls/quic_nonce_cache/000205.log",
+          "data/tls/quic_nonce_cache/000209.log",
+          "data/tls/quic_nonce_cache/000213.log",
+          "data/tls/quic_nonce_cache/000217.log",
+          "data/tls/quic_nonce_cache/000221.log",
+          "data/tls/quic_nonce_cache/000225.log",
+          "data/tls/quic_nonce_cache/000229.log",
+          "data/tls/quic_nonce_cache/000233.log",
+          "data/tls/quic_nonce_cache/000237.log",
+          "data/tls/quic_nonce_cache/000241.log",
+          "data/tls/quic_nonce_cache/000245.log",
+          "data/tls/quic_nonce_cache/000249.log",
+          "data/tls/quic_nonce_cache/000253.log",
+          "data/tls/quic_nonce_cache/000257.log",
+          "data/tls/quic_nonce_cache/000261.log",
+          "data/tls/quic_nonce_cache/000265.log",
+          "data/tls/quic_nonce_cache/000269.log",
+          "data/tls/quic_nonce_cache/000273.log",
+          "data/tls/quic_nonce_cache/000277.log",
+          "data/tls/quic_nonce_cache/000281.log",
+          "data/tls/quic_nonce_cache/000285.log",
+          "data/tls/quic_nonce_cache/000289.log",
+          "data/tls/quic_nonce_cache/000293.log",
+          "data/tls/quic_nonce_cache/000297.log",
+          "data/tls/quic_nonce_cache/000301.log",
+          "data/tls/quic_nonce_cache/000305.log",
+          "data/tls/quic_nonce_cache/000309.log",
+          "data/tls/quic_nonce_cache/000313.log",
+          "data/tls/quic_nonce_cache/000317.log",
+          "data/tls/quic_nonce_cache/000321.log",
+          "data/tls/quic_nonce_cache/000325.log",
+          "data/tls/quic_nonce_cache/000329.log",
+          "data/tls/quic_nonce_cache/000333.log",
+          "data/tls/quic_nonce_cache/000337.log",
+          "data/tls/quic_nonce_cache/000341.log",
+          "data/tls/quic_nonce_cache/000345.log",
+          "data/tls/quic_nonce_cache/000349.log",
+          "data/tls/quic_nonce_cache/000353.log",
+          "data/tls/quic_nonce_cache/000357.log",
+          "data/tls/quic_nonce_cache/CURRENT",
+          "data/tls/quic_nonce_cache/IDENTITY",
+          "data/tls/quic_nonce_cache/LOCK",
+          "data/tls/quic_nonce_cache/LOG",
+          "data/tls/quic_nonce_cache/LOG.old.1765676641241443",
+          "data/tls/quic_nonce_cache/LOG.old.1765705034210575",
+          "data/tls/quic_nonce_cache/LOG.old.1765705570876780",
+          "data/tls/quic_nonce_cache/LOG.old.1765710618842373",
+          "data/tls/quic_nonce_cache/LOG.old.1765712412763752",
+          "data/tls/quic_nonce_cache/LOG.old.1765714383871531",
+          "data/tls/quic_nonce_cache/LOG.old.1765744330252635",
+          "data/tls/quic_nonce_cache/LOG.old.1765744567370369",
+          "data/tls/quic_nonce_cache/LOG.old.1765744752394157",
+          "data/tls/quic_nonce_cache/LOG.old.1765744921958527",
+          "data/tls/quic_nonce_cache/LOG.old.1765745053312731",
+          "data/tls/quic_nonce_cache/LOG.old.1765745968132996",
+          "data/tls/quic_nonce_cache/LOG.old.1765746848747478",
+          "data/tls/quic_nonce_cache/LOG.old.1765748162145165",
+          "data/tls/quic_nonce_cache/LOG.old.1765750015973209",
+          "data/tls/quic_nonce_cache/LOG.old.1765752097887293",
+          "data/tls/quic_nonce_cache/LOG.old.1765753939774613",
+          "data/tls/quic_nonce_cache/LOG.old.1765754169119271",
+          "data/tls/quic_nonce_cache/LOG.old.1765754781262111",
+          "data/tls/quic_nonce_cache/LOG.old.1765894931855529",
+          "data/tls/quic_nonce_cache/LOG.old.1765895103352193",
+          "data/tls/quic_nonce_cache/LOG.old.1765895593799295",
+          "data/tls/quic_nonce_cache/LOG.old.1766158198300999",
+          "data/tls/quic_nonce_cache/LOG.old.1766159842880610",
+          "data/tls/quic_nonce_cache/LOG.old.1766161083794785",
+          "data/tls/quic_nonce_cache/LOG.old.1766532330229776",
+          "data/tls/quic_nonce_cache/LOG.old.1766532800934122",
+          "data/tls/quic_nonce_cache/LOG.old.1766850937674204",
+          "data/tls/quic_nonce_cache/LOG.old.1766851549686629",
+          "data/tls/quic_nonce_cache/LOG.old.1766851864119603",
+          "data/tls/quic_nonce_cache/LOG.old.1766851929914333",
+          "data/tls/quic_nonce_cache/LOG.old.1766852014288100",
+          "data/tls/quic_nonce_cache/LOG.old.1766852119254928",
+          "data/tls/quic_nonce_cache/LOG.old.1766852378030495",
+          "data/tls/quic_nonce_cache/LOG.old.1766852587211821",
+          "data/tls/quic_nonce_cache/LOG.old.1766853061432950",
+          "data/tls/quic_nonce_cache/LOG.old.1766853132114457",
+          "data/tls/quic_nonce_cache/LOG.old.1766853763166259",
+          "data/tls/quic_nonce_cache/LOG.old.1766855983059514",
+          "data/tls/quic_nonce_cache/LOG.old.1766856104058765",
+          "data/tls/quic_nonce_cache/LOG.old.1766856562801520",
+          "data/tls/quic_nonce_cache/LOG.old.1766857116220247",
+          "data/tls/quic_nonce_cache/LOG.old.1766857521424217",
+          "data/tls/quic_nonce_cache/LOG.old.1766859027079586",
+          "data/tls/quic_nonce_cache/LOG.old.1766859633947676",
+          "data/tls/quic_nonce_cache/LOG.old.1766860100114393",
+          "data/tls/quic_nonce_cache/LOG.old.1766860208923357",
+          "data/tls/quic_nonce_cache/LOG.old.1766868242483431",
+          "data/tls/quic_nonce_cache/LOG.old.1766868309304476",
+          "data/tls/quic_nonce_cache/LOG.old.1766868766044080",
+          "data/tls/quic_nonce_cache/LOG.old.1766868804274300",
+          "data/tls/quic_nonce_cache/LOG.old.1766869096278127",
+          "data/tls/quic_nonce_cache/LOG.old.1766869183686450",
+          "data/tls/quic_nonce_cache/LOG.old.1766869272783682",
+          "data/tls/quic_nonce_cache/LOG.old.1766869697739390",
+          "data/tls/quic_nonce_cache/LOG.old.1766869811281264",
+          "data/tls/quic_nonce_cache/LOG.old.1766870057045068",
+          "data/tls/quic_nonce_cache/LOG.old.1766870214050673",
+          "data/tls/quic_nonce_cache/LOG.old.1766870428881110",
+          "data/tls/quic_nonce_cache/LOG.old.1766870492629562",
+          "data/tls/quic_nonce_cache/LOG.old.1766870557800860",
+          "data/tls/quic_nonce_cache/LOG.old.1766871106667940",
+          "data/tls/quic_nonce_cache/LOG.old.1766871196716285",
+          "data/tls/quic_nonce_cache/LOG.old.1766873707872806",
+          "data/tls/quic_nonce_cache/LOG.old.1766874752012701",
+          "data/tls/quic_nonce_cache/LOG.old.1766874775172149",
+          "data/tls/quic_nonce_cache/LOG.old.1766875033197040",
+          "data/tls/quic_nonce_cache/LOG.old.1766875315558806",
+          "data/tls/quic_nonce_cache/LOG.old.1766875742084866",
+          "data/tls/quic_nonce_cache/LOG.old.1766876130648406",
+          "data/tls/quic_nonce_cache/LOG.old.1766876306880437",
+          "data/tls/quic_nonce_cache/LOG.old.1766876335394033",
+          "data/tls/quic_nonce_cache/LOG.old.1766876883427424",
+          "data/tls/quic_nonce_cache/LOG.old.1766877135220603",
+          "data/tls/quic_nonce_cache/LOG.old.1766878573270564",
+          "data/tls/quic_nonce_cache/LOG.old.1766929108850090",
+          "data/tls/quic_nonce_cache/LOG.old.1766929635880464",
+          "data/tls/quic_nonce_cache/LOG.old.1766929891882240",
+          "data/tls/quic_nonce_cache/LOG.old.1766961173454807",
+          "data/tls/quic_nonce_cache/MANIFEST-000358",
+          "data/tls/quic_nonce_cache/OPTIONS-000356",
+          "data/tls/quic_nonce_cache/OPTIONS-000360"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "docs/BLOCKCHAIN_TECHNICAL_OVERVIEW.md",
+          "docs/BLUETOOTH_DEVICE_TO_DEVICE_TEST_GUIDE.md",
+          "docs/CI_MACOS_RUNBOOK.md",
+          "docs/CLAUDE.md",
+          "docs/COMMUNITY_TESTING_v0.2.0.md",
+          "docs/CONSENSUS_BLOCKCHAIN_INTEGRATION.md",
+          "docs/CONSENSUS_NETWORK_COMMUNICATION.md",
+          "docs/CONSENSUS_PERSISTENT_STORAGE.md",
+          "docs/CORRECTED_SOV_TICKETS.md",
+          "docs/CROSS_CONTRACT_CALL_GUIDE.md",
+          "docs/DEPLOY_TOKEN_SPEC.md",
+          "docs/DOMAIN_MANAGEMENT.md",
+          "docs/GOVERNMENT_BACKDOOR_ANALYSIS.md",
+          "docs/LOCAL_STORAGE_PATHS.md",
+          "docs/NETWORK_RULES.md",
+          "docs/NODE_CONNECTION_GUIDE.md",
+          "docs/OBSERVABILITY_IMPLEMENTATION_PLAN.md",
+          "docs/PROOF_OF_PERSONHOOD_ROADMAP.md",
+          "docs/SOV_REFERENCE_VALUE_SPEC.md",
+          "docs/SOV_TICKET_AUDIT.md",
+          "docs/SOV_TOKENOMICS_ANALYSIS.md",
+          "docs/SRV_DEPLOYMENT_INVESTIGATION.md",
+          "docs/TECHNICAL_REFERENCE.md",
+          "docs/TRANSACTION_TYPES.md",
+          "docs/TREASURY_KERNEL_INTEGRATION_GUIDE.md",
+          "docs/TREASURY_KERNEL_SECURITY_AUDIT.md",
+          "docs/UBI_ECONOMICS_SPECIFICATION.md",
+          "docs/UBI_KERNEL_CLIENT_ARCHITECTURE.md",
+          "docs/UBI_ROLE_GATING_DESIGN.md",
+          "docs/WEB4_DEPLOYMENT_GUIDE.md",
+          "docs/WEB4_QUICK_START.md",
+          "docs/WIFI_DEVICE_TO_DEVICE_TEST_GUIDE.md",
+          "docs/bonding_curve_api_spec.md",
+          "docs/consensus_engine_review.md",
+          "docs/identity.md"
+        ]
+      },
+      {
+        "name": "Other — adr",
+        "slug": "other-adr",
+        "files": [
+          "docs/adr/ADR-0017-execution-boundary-treasury-primacy.md"
+        ]
+      },
+      {
+        "name": "Other — dapps_auth",
+        "slug": "other-dapps-auth",
+        "files": [
+          "docs/dapps_auth/dapps-did.md",
+          "docs/dapps_auth/pouw-android-spec.md",
+          "docs/dapps_auth/pouw-implementation-plan.md",
+          "docs/dapps_auth/pouw-protocol-spec.md"
+        ]
+      },
+      {
+        "name": "Other — encryption",
+        "slug": "other-encryption",
+        "files": [
+          "docs/encryption/ADR_QUIC_ENCRYPTION.md",
+          "docs/encryption/QUIC_ENCRYPTION_GUIDE.md",
+          "docs/encryption/QUIC_ENCRYPTION_PROTOCOL.md",
+          "docs/encryption/README.md"
+        ]
+      },
+      {
+        "name": "Other — fixes",
+        "slug": "other-fixes",
+        "files": [
+          "docs/fixes/token-validation-fix.md"
+        ]
+      },
+      {
+        "name": "Other — identity",
+        "slug": "other-identity",
+        "files": [
+          "docs/identity/CLIENT_IMPLEMENTATION.md"
+        ]
+      },
+      {
+        "name": "Other — investigations",
+        "slug": "other-investigations",
+        "files": [
+          "docs/investigations/bft-networking-integration-investigation.md"
+        ]
+      },
+      {
+        "name": "Other — mobile",
+        "slug": "other-mobile",
+        "files": [
+          "docs/mobile/zhtp-native-quic-migration.md"
+        ]
+      },
+      {
+        "name": "Other — mobile_rewards",
+        "slug": "other-mobile-rewards",
+        "files": [
+          "docs/mobile_rewards/Android_PoUW_Client_Specification_v0.1.md",
+          "docs/mobile_rewards/Phone_PoUW_Client_Specification_v0.1.md",
+          "docs/mobile_rewards/Phone_PoUW_Client_Specification_v0.1_Addendums.md"
+        ]
+      },
+      {
+        "name": "Other — option-b",
+        "slug": "other-option-b",
+        "files": [
+          "docs/option-b/PHASE_0_ISSUE.md",
+          "docs/option-b/PHASE_1_ISSUE.md",
+          "docs/option-b/PHASE_2_ISSUE.md",
+          "docs/option-b/PHASE_3_ISSUE.md",
+          "docs/option-b/PHASE_4_ISSUE.md",
+          "docs/option-b/PHASE_5_ISSUE.md",
+          "docs/option-b/README.md"
+        ]
+      },
+      {
+        "name": "Other — planning",
+        "slug": "other-planning",
+        "files": [
+          "docs/planning/EPIC-1222-LANE-E2E.md",
+          "docs/planning/EPIC-1222-LANE-EXEC-PIPELINE.md",
+          "docs/planning/ISSUE-842-CROSS-CONTRACT-CALLS.md",
+          "docs/planning/ISSUE-843-ABI-ALIGNMENT.md",
+          "docs/planning/ISSUE-843-COMPLETE-ABI-SYSTEM.md",
+          "docs/planning/ISSUE-844-UBI-PREP-ONLY.md"
+        ]
+      },
+      {
+        "name": "Other — plans",
+        "slug": "other-plans",
+        "files": [
+          "docs/plans/SOV_TOKEN_COMPLETION_PLAN.md",
+          "docs/plans/identity-device-model-implementation-plan.md",
+          "docs/plans/identity-device-model-phase1-design.md",
+          "docs/plans/identity-device-model-phase2-3-mvp.md"
+        ]
+      },
+      {
+        "name": "Other — pouw",
+        "slug": "other-pouw",
+        "files": [
+          "docs/pouw/FAILOVER_SCENARIOS.md",
+          "docs/pouw/PRODUCTION_CHECKLIST.md",
+          "docs/pouw/RUNBOOK.md",
+          "docs/pouw/THREAT_MODEL.md"
+        ]
+      },
+      {
+        "name": "Other — release",
+        "slug": "other-release",
+        "files": [
+          "docs/release/DAO_READY_RELEASE_CHECKLIST.md",
+          "docs/release/DAO_READY_RESIDUAL_RISKS.md"
+        ]
+      },
+      {
+        "name": "Other — sov_final",
+        "slug": "other-sov-final",
+        "files": [
+          "docs/sov_final/NEXT_STEPS.md",
+          "docs/sov_final/SOV_COMPREHENSIVE_REFERENCE.md",
+          "docs/sov_final/SOV_L0_IMPLEMENTATION_PLAN.md",
+          "docs/sov_final/SOV_QUICK_REFERENCE.md",
+          "docs/sov_final/SOV_TICKET_AUDIT.md",
+          "docs/sov_final/SOV_TOKENOMICS_CORRECTED.md",
+          "docs/sov_final/SOV_UNIFIED_IMPLEMENTATION_GUIDE.md"
+        ]
+      },
+      {
+        "name": "Other — specs",
+        "slug": "other-specs",
+        "files": [
+          "docs/specs/identity-device-model-v1.md"
+        ]
+      },
+      {
+        "name": "Other — testing",
+        "slug": "other-testing",
+        "files": [
+          "docs/testing/IDENTITY_E2E_RUNBOOK.md",
+          "docs/testing/smoke.md"
+        ]
+      },
+      {
+        "name": "Other — treasury-kernel",
+        "slug": "other-treasury-kernel",
+        "files": [
+          "docs/treasury-kernel/economic-call-graph.md"
+        ]
+      },
+      {
+        "name": "Other — treasuryKernel",
+        "slug": "other-treasurykernel",
+        "files": [
+          "docs/treasuryKernel/02_CBE_Comp_DAO_Schemas_and_Treasury_Flow.md"
+        ]
+      },
+      {
+        "name": "Other — web4_deployment",
+        "slug": "other-web4-deployment",
+        "files": [
+          "docs/web4_deployment/domain_management.md",
+          "docs/web4_deployment/web_4_deployment_guide.md",
+          "docs/web4_deployment/web_4_github_actions_and_boilerplate.md",
+          "docs/web4_deployment/web_4_quick_start.md"
+        ]
+      },
+      {
+        "name": "Other — explorer",
+        "slug": "other-explorer",
+        "files": [
+          "explorer/Cargo.toml",
+          "explorer/README.md",
+          "explorer/Trunk.toml",
+          "explorer/index.html",
+          "explorer/style.css"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "explorer/src/main.rs"
+        ]
+      },
+      {
+        "name": "Other — firebase-debug.log",
+        "slug": "other-firebase-debug-log",
+        "files": [
+          "firebase-debug.log"
+        ]
+      },
+      {
+        "name": "Other — internal-docs",
+        "slug": "other-internal-docs",
+        "files": [
+          "internal-docs/README.md"
+        ]
+      },
+      {
+        "name": "Other — architecture",
+        "slug": "other-architecture",
+        "files": [
+          "internal-docs/architecture/QUIC_CONTROL_PLANE_MIGRATION.md",
+          "internal-docs/architecture/RADIO/Impaired Signal Spec",
+          "internal-docs/architecture/SOV/FORMAL_DEFINITIONS_INDEX.md",
+          "internal-docs/architecture/SOV/PHASE_0_IMPLEMENTATION_PLAN.md",
+          "internal-docs/architecture/SOV/PHASE_0_TOKEN_ARCHITECTURE.md",
+          "internal-docs/architecture/SOV/SOV_SWAP_DAO_SPEC.md",
+          "internal-docs/architecture/SOV/TOKEN_CREATION.md",
+          "internal-docs/architecture/SOV/formal-definitions/access-contracts.md",
+          "internal-docs/architecture/SOV/formal-definitions/amm-model-pricing.md",
+          "internal-docs/architecture/SOV/formal-definitions/brokerage-flows.md",
+          "internal-docs/architecture/SOV/formal-definitions/dao-registry-semantics.md",
+          "internal-docs/architecture/SOV/formal-definitions/fee-routing.md",
+          "internal-docs/architecture/SOV/formal-definitions/governance-controls.md",
+          "internal-docs/architecture/SOV/formal-definitions/launchpad-guarantees.md",
+          "internal-docs/architecture/SOV/formal-definitions/liquidity-provider-mechanics.md",
+          "internal-docs/architecture/SOV/formal-definitions/security-constraints.md",
+          "internal-docs/architecture/SOV/formal-definitions/token-class-rules.md",
+          "internal-docs/architecture/SOV/token-creation/INDEX.md",
+          "internal-docs/architecture/SOV/token-creation/class-enforcement.md",
+          "internal-docs/architecture/SOV/token-creation/fees.md",
+          "internal-docs/architecture/SOV/token-creation/governance-controls.md",
+          "internal-docs/architecture/SOV/token-creation/initial-liquidity.md",
+          "internal-docs/architecture/SOV/token-creation/inputs-validation.md",
+          "internal-docs/architecture/SOV/token-creation/minting-rules.md",
+          "internal-docs/architecture/SOV/token-creation/open-questions.md",
+          "internal-docs/architecture/SOV/token-creation/security-abuse.md",
+          "internal-docs/architecture/ZHTP/HOLD_ISSUES_SUMMARY.md",
+          "internal-docs/architecture/ZHTP/README.md",
+          "internal-docs/architecture/ZHTP/architectural-disconnects-analysis.md",
+          "internal-docs/architecture/ZHTP/handshake-fragmentation-analysis.md"
+        ]
+      },
+      {
+        "name": "Other — deployment",
+        "slug": "other-deployment",
+        "files": [
+          "internal-docs/deployment/DEPLOYMENT_INSTRUCTIONS.md",
+          "internal-docs/deployment/INFRASTRUCTURE_SUMMARY.md",
+          "internal-docs/deployment/SERVER_REQUIREMENTS.md"
+        ]
+      },
+      {
+        "name": "Other — releases",
+        "slug": "other-releases",
+        "files": [
+          "internal-docs/releases/ALPHA_RELEASE_CHECKLIST.md",
+          "internal-docs/releases/ALPHA_RELEASE_STRATEGY.md",
+          "internal-docs/releases/ALPHA_ROADMAP_DIAGRAM.drawio",
+          "internal-docs/releases/ALPHA_TESTING_STRATEGY.md",
+          "internal-docs/releases/ARCHITECTURAL_FIXES_IMPLEMENTATION_PLAN.md",
+          "internal-docs/releases/PHASE_0_SOV_ANNOUNCEMENT.md"
+        ]
+      },
+      {
+        "name": "Other — lib-blockchain",
+        "slug": "other-lib-blockchain",
+        "files": [
+          "lib-blockchain/Cargo.toml",
+          "lib-blockchain/PHASE2_CHECKLIST.md",
+          "lib-blockchain/bugs.md"
+        ]
+      },
+      {
+        "name": "Other — examples",
+        "slug": "other-examples",
+        "files": [
+          "lib-blockchain/examples/deploy_web4_site.rs",
+          "lib-blockchain/examples/full_consensus_integration.rs",
+          "lib-blockchain/examples/test_recursive_aggregation.rs",
+          "lib-blockchain/examples/wasm_sandboxing_demo.rs"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-blockchain/src/block/mod.rs",
+          "lib-blockchain/src/byzantine_evidence.rs",
+          "lib-blockchain/src/contracts/abi/codec.rs",
+          "lib-blockchain/src/contracts/abi/codegen.rs",
+          "lib-blockchain/src/contracts/abi/mod.rs",
+          "lib-blockchain/src/contracts/abi/privilege.rs",
+          "lib-blockchain/src/contracts/abi/red_tests.rs",
+          "lib-blockchain/src/contracts/abi/registry.rs",
+          "lib-blockchain/src/contracts/abi/schema.rs",
+          "lib-blockchain/src/contracts/abi/tests.rs",
+          "lib-blockchain/src/contracts/abi/validation.rs",
+          "lib-blockchain/src/contracts/approval_verifier/traits.rs",
+          "lib-blockchain/src/contracts/bonding_curve/event_indexer.rs",
+          "lib-blockchain/src/contracts/bonding_curve/events.rs",
+          "lib-blockchain/src/contracts/bonding_curve/mod.rs",
+          "lib-blockchain/src/contracts/bonding_curve/registry.rs",
+          "lib-blockchain/src/contracts/bonding_curve/token.rs",
+          "lib-blockchain/src/contracts/bonding_curve/types.rs",
+          "lib-blockchain/src/contracts/brokerage/mod.rs",
+          "lib-blockchain/src/contracts/calls/call.rs",
+          "lib-blockchain/src/contracts/calls/cycle_detector.rs",
+          "lib-blockchain/src/contracts/calls/errors.rs",
+          "lib-blockchain/src/contracts/calls/executor.rs",
+          "lib-blockchain/src/contracts/calls/mod.rs",
+          "lib-blockchain/src/contracts/calls/serialization_validator.rs",
+          "lib-blockchain/src/contracts/calls/stack.rs",
+          "lib-blockchain/src/contracts/calls/type_validator.rs",
+          "lib-blockchain/src/contracts/calls/validator.rs",
+          "lib-blockchain/src/contracts/contacts/core.rs",
+          "lib-blockchain/src/contracts/contacts/functions.rs",
+          "lib-blockchain/src/contracts/contacts/mod.rs",
+          "lib-blockchain/src/contracts/dao/dao_treasury.rs",
+          "lib-blockchain/src/contracts/dao/mod.rs",
+          "lib-blockchain/src/contracts/dao_registry/mod.rs",
+          "lib-blockchain/src/contracts/dao_registry/registry.rs",
+          "lib-blockchain/src/contracts/economics/mod.rs",
+          "lib-blockchain/src/contracts/economics/tribute_router.rs",
+          "lib-blockchain/src/contracts/employment/employment_registry.rs",
+          "lib-blockchain/src/contracts/employment/mod.rs",
+          "lib-blockchain/src/contracts/executor/CLAUDE.md",
+          "lib-blockchain/src/contracts/executor/mod.rs",
+          "lib-blockchain/src/contracts/executor/platform_isolation.rs",
+          "lib-blockchain/src/contracts/executor/platform_isolation_demo.rs",
+          "lib-blockchain/src/contracts/executor/platform_isolation_test.rs",
+          "lib-blockchain/src/contracts/executor/storage/API.md",
+          "lib-blockchain/src/contracts/executor/storage/MIGRATION.md",
+          "lib-blockchain/src/contracts/executor/storage/PERFORMANCE.md",
+          "lib-blockchain/src/contracts/executor/storage/README.md",
+          "lib-blockchain/src/contracts/executor/storage/benchmarks.rs",
+          "lib-blockchain/src/contracts/executor/storage/cache.rs",
+          "lib-blockchain/src/contracts/executor/storage/cached_persistent.rs",
+          "lib-blockchain/src/contracts/executor/storage/errors.rs",
+          "lib-blockchain/src/contracts/executor/storage/mod.rs",
+          "lib-blockchain/src/contracts/executor/storage/persistent.rs",
+          "lib-blockchain/src/contracts/executor/storage/recovery.rs",
+          "lib-blockchain/src/contracts/executor/storage/state_root.rs",
+          "lib-blockchain/src/contracts/executor/storage/tests.rs",
+          "lib-blockchain/src/contracts/executor/storage/versioning.rs",
+          "lib-blockchain/src/contracts/executor/wasm_engine.rs",
+          "lib-blockchain/src/contracts/executor/wasm_integration_test.rs",
+          "lib-blockchain/src/contracts/files/mod.rs",
+          "lib-blockchain/src/contracts/files/shared_file.rs",
+          "lib-blockchain/src/contracts/files/types.rs",
+          "lib-blockchain/src/contracts/governance/citizen_role.rs",
+          "lib-blockchain/src/contracts/governance/entity_registry.rs",
+          "lib-blockchain/src/contracts/governance/mod.rs",
+          "lib-blockchain/src/contracts/governance/sunset.rs",
+          "lib-blockchain/src/contracts/groups/core.rs",
+          "lib-blockchain/src/contracts/groups/mod.rs",
+          "lib-blockchain/src/contracts/integration/mod.rs",
+          "lib-blockchain/src/contracts/launch/dao_orchestrator.rs",
+          "lib-blockchain/src/contracts/messaging/functions.rs",
+          "lib-blockchain/src/contracts/messaging/mod.rs",
+          "lib-blockchain/src/contracts/mod.rs",
+          "lib-blockchain/src/contracts/root_registry/core.rs",
+          "lib-blockchain/src/contracts/root_registry/dao_prefix_router.rs",
+          "lib-blockchain/src/contracts/root_registry/delegation_tree.rs",
+          "lib-blockchain/src/contracts/root_registry/namespace_policy.rs",
+          "lib-blockchain/src/contracts/root_registry/operations.rs",
+          "lib-blockchain/src/contracts/root_registry/tests.rs",
+          "lib-blockchain/src/contracts/root_registry/types.rs",
+          "lib-blockchain/src/contracts/root_registry/validation.rs",
+          "lib-blockchain/src/contracts/root_registry/welfare_issuer_adapter.rs",
+          "lib-blockchain/src/contracts/runtime/host_functions.rs",
+          "lib-blockchain/src/contracts/runtime/sandbox.rs",
+          "lib-blockchain/src/contracts/runtime/tests.rs",
+          "lib-blockchain/src/contracts/runtime/wasm_engine.rs",
+          "lib-blockchain/src/contracts/sov_swap/lp_positions.rs",
+          "lib-blockchain/src/contracts/sov_swap/mod.rs",
+          "lib-blockchain/src/contracts/staking/sov_dao_staking.rs",
+          "lib-blockchain/src/contracts/testing/mod.rs",
+          "lib-blockchain/src/contracts/tokens/cbe_token.rs",
+          "lib-blockchain/src/contracts/tokens/constants.rs",
+          "lib-blockchain/src/contracts/tokens/core.rs",
+          "lib-blockchain/src/contracts/tokens/dao_token.rs",
+          "lib-blockchain/src/contracts/tokens/functions.rs",
+          "lib-blockchain/src/contracts/tokens/token_id.rs",
+          "lib-blockchain/src/contracts/treasuries/core.rs",
+          "lib-blockchain/src/contracts/treasuries/forprofit_treasury.rs",
+          "lib-blockchain/src/contracts/treasuries/mod.rs",
+          "lib-blockchain/src/contracts/treasuries/nonprofit_treasury.rs",
+          "lib-blockchain/src/contracts/treasuries/sov_dao_treasury.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/README.md",
+          "lib-blockchain/src/contracts/treasury_kernel/authority.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/cap_ledger.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/cap_types.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/compensation_engine.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/events.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/governance_executor.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/governance_types.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/interface.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/kernel_ops.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/metric_book.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/metric_types.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/paid_ledger.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/payout_types.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/role_registry.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/role_types.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/srv_ops.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/srv_types.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/state.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/types.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/ubi_engine.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/validation.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/vesting.rs",
+          "lib-blockchain/src/contracts/treasury_kernel/vesting_types.rs",
+          "lib-blockchain/src/contracts/types/call.rs",
+          "lib-blockchain/src/contracts/types/contract_type.rs",
+          "lib-blockchain/src/contracts/types/logs.rs",
+          "lib-blockchain/src/contracts/types/mod.rs",
+          "lib-blockchain/src/contracts/types/permissions.rs",
+          "lib-blockchain/src/contracts/types/result.rs",
+          "lib-blockchain/src/contracts/ubi_distribution/core.rs",
+          "lib-blockchain/src/contracts/ubi_distribution/mod.rs",
+          "lib-blockchain/src/contracts/ubi_distribution/red_tests.rs",
+          "lib-blockchain/src/contracts/ubi_distribution/types.rs",
+          "lib-blockchain/src/contracts/utils/id_generation.rs",
+          "lib-blockchain/src/contracts/utils/math.rs",
+          "lib-blockchain/src/contracts/utils/mod.rs",
+          "lib-blockchain/src/contracts/web4/core.rs",
+          "lib-blockchain/src/contracts/web4/functions.rs",
+          "lib-blockchain/src/contracts/web4/mod.rs",
+          "lib-blockchain/src/contracts/web4/types.rs",
+          "lib-blockchain/src/dht_index.rs",
+          "lib-blockchain/src/edge_node_state.rs",
+          "lib-blockchain/src/events/mod.rs",
+          "lib-blockchain/src/execution/errors.rs",
+          "lib-blockchain/src/execution/executor.rs",
+          "lib-blockchain/src/execution/mod.rs",
+          "lib-blockchain/src/execution/state_view.rs",
+          "lib-blockchain/src/execution/tx_apply.rs",
+          "lib-blockchain/src/execution_limits.rs",
+          "lib-blockchain/src/fees/classifiers.rs",
+          "lib-blockchain/src/fees/mod.rs",
+          "lib-blockchain/src/fees/model_v2.rs",
+          "lib-blockchain/src/fees/types.rs",
+          "lib-blockchain/src/fork_recovery.rs",
+          "lib-blockchain/src/identity_wallet_architecture.md",
+          "lib-blockchain/src/integration/consensus_integration.rs",
+          "lib-blockchain/src/integration/crypto_integration.rs",
+          "lib-blockchain/src/integration/economic_integration.rs",
+          "lib-blockchain/src/integration/enhanced_zk_crypto.rs",
+          "lib-blockchain/src/integration/identity_integration.rs",
+          "lib-blockchain/src/integration/mod.rs",
+          "lib-blockchain/src/integration/network_integration.rs",
+          "lib-blockchain/src/integration/network_integration_new.rs",
+          "lib-blockchain/src/integration/storage_integration.rs",
+          "lib-blockchain/src/integration/unified_zk_integration.rs",
+          "lib-blockchain/src/integration/zk_integration.rs",
+          "lib-blockchain/src/mempool.rs",
+          "lib-blockchain/src/protocol/mod.rs",
+          "lib-blockchain/src/receipts/mod.rs",
+          "lib-blockchain/src/receipts/types.rs",
+          "lib-blockchain/src/resources.rs",
+          "lib-blockchain/src/shared_provider.rs",
+          "lib-blockchain/src/snapshot.rs",
+          "lib-blockchain/src/storage/keys.rs",
+          "lib-blockchain/src/storage/mod.rs",
+          "lib-blockchain/src/storage/sled_store.rs",
+          "lib-blockchain/src/sync/mod.rs",
+          "lib-blockchain/src/sync/snapshot.rs",
+          "lib-blockchain/src/transaction/contract_deployment.rs",
+          "lib-blockchain/src/transaction/contract_execution.rs",
+          "lib-blockchain/src/transaction/core.rs",
+          "lib-blockchain/src/transaction/creation.rs",
+          "lib-blockchain/src/transaction/fee.rs",
+          "lib-blockchain/src/transaction/hashing.rs",
+          "lib-blockchain/src/transaction/mod.rs",
+          "lib-blockchain/src/transaction/signing.rs",
+          "lib-blockchain/src/transaction/token_creation.rs",
+          "lib-blockchain/src/transaction/validation.rs",
+          "lib-blockchain/src/types/contract_call.rs",
+          "lib-blockchain/src/types/contract_logs.rs",
+          "lib-blockchain/src/types/contract_permissions.rs",
+          "lib-blockchain/src/types/contract_result.rs",
+          "lib-blockchain/src/types/contract_type.rs",
+          "lib-blockchain/src/types/dao.rs",
+          "lib-blockchain/src/types/dao_tokens.rs",
+          "lib-blockchain/src/types/difficulty.rs",
+          "lib-blockchain/src/types/hash.rs",
+          "lib-blockchain/src/types/message_type.rs",
+          "lib-blockchain/src/types/mining.rs",
+          "lib-blockchain/src/types/mod.rs",
+          "lib-blockchain/src/types/sector.rs",
+          "lib-blockchain/src/types/sov.rs",
+          "lib-blockchain/src/types/transaction_type.rs",
+          "lib-blockchain/src/utils.rs",
+          "lib-blockchain/src/utils/nondeterminism_tests.rs",
+          "lib-blockchain/src/validation/block_validate.rs",
+          "lib-blockchain/src/validation/errors.rs",
+          "lib-blockchain/src/validation/mod.rs",
+          "lib-blockchain/src/validation/tx_validate.rs",
+          "lib-blockchain/src/vm/mod.rs"
+        ]
+      },
+      {
+        "name": "Other — tests",
+        "slug": "other-tests",
+        "files": [
+          "lib-blockchain/tests/XXFnxqPg",
+          "lib-blockchain/tests/blockchain_tests.rs",
+          "lib-blockchain/tests/bonding_curve_integration_tests.rs",
+          "lib-blockchain/tests/consensus_integration_tests.rs",
+          "lib-blockchain/tests/contract_dao_multinode_e2e.rs",
+          "lib-blockchain/tests/contract_depth_tests.rs",
+          "lib-blockchain/tests/dao_delegate_persistence_tests.rs",
+          "lib-blockchain/tests/difficulty_config_tests.rs",
+          "lib-blockchain/tests/integration_tests.rs",
+          "lib-blockchain/tests/issue_1016_fee_deduction_tests.rs",
+          "lib-blockchain/tests/issue_1018_treasury_balance_tests.rs",
+          "lib-blockchain/tests/issue_12_serialization_tests.rs",
+          "lib-blockchain/tests/issue_954_no_reorg_after_commit_tests.rs",
+          "lib-blockchain/tests/phase2_contract_state_tests.rs",
+          "lib-blockchain/tests/phase3_economic_features_tests.rs",
+          "lib-blockchain/tests/phase3a_sync_tests.rs",
+          "lib-blockchain/tests/phase3b_fee_model_version_tests.rs",
+          "lib-blockchain/tests/phase3c_fee_distribution_tests.rs",
+          "lib-blockchain/tests/phase3e_snapshot_tests.rs",
+          "lib-blockchain/tests/phase4_api_completeness_tests.rs",
+          "lib-blockchain/tests/pow_ignored_bft_tests.rs",
+          "lib-blockchain/tests/sov_unit_tests.rs",
+          "lib-blockchain/tests/sov_week10_integration_tests.rs",
+          "lib-blockchain/tests/sov_week11_fee_distribution_tests.rs",
+          "lib-blockchain/tests/sov_week2_tests.rs",
+          "lib-blockchain/tests/sov_week3_tests.rs",
+          "lib-blockchain/tests/sov_week4_tests.rs",
+          "lib-blockchain/tests/sov_week5_tests.rs",
+          "lib-blockchain/tests/sov_week6_integration_tests.rs",
+          "lib-blockchain/tests/sov_week7_integration_tests.rs",
+          "lib-blockchain/tests/token_persistence_tests.rs",
+          "lib-blockchain/tests/token_regression_tests.rs",
+          "lib-blockchain/tests/token_snapshot_restart_tests.rs",
+          "lib-blockchain/tests/transaction_tests.rs",
+          "lib-blockchain/tests/utxo_tests.rs",
+          "lib-blockchain/tests/wal_key_consistency_test.rs",
+          "lib-blockchain/tests/web4_deployment_tests.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-client",
+        "slug": "other-lib-client",
+        "files": [
+          "lib-client/Cargo.toml",
+          "lib-client/IMPLEMENTATION_PLAN.md",
+          "lib-client/build.rs"
+        ]
+      },
+      {
+        "name": "Other — react-native",
+        "slug": "other-react-native",
+        "files": [
+          "lib-client/react-native/INTEGRATION.md",
+          "lib-client/react-native/ios/NativeIdentityProvisioning.m",
+          "lib-client/react-native/ios/NativeIdentityProvisioning.swift",
+          "lib-client/react-native/js/NativeIdentityProvisioning.ts",
+          "lib-client/react-native/js/PoUWController.test.ts",
+          "lib-client/react-native/js/PoUWController.ts",
+          "lib-client/react-native/js/index.ts"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-client/src/bip39_wordlist.rs",
+          "lib-client/src/bonding_curve_tx.rs",
+          "lib-client/src/crypto.rs",
+          "lib-client/src/error.rs",
+          "lib-client/src/handshake.rs",
+          "lib-client/src/identity.rs",
+          "lib-client/src/lib.rs",
+          "lib-client/src/request.rs",
+          "lib-client/src/session.rs",
+          "lib-client/src/token_tx.rs",
+          "lib-client/src/wasm.rs"
+        ]
+      },
+      {
+        "name": "Other — uniffi",
+        "slug": "other-uniffi",
+        "files": [
+          "lib-client/uniffi/zhtp_client.udl"
+        ]
+      },
+      {
+        "name": "Other — lib-consensus",
+        "slug": "other-lib-consensus",
+        "files": [
+          "lib-consensus/Cargo.toml",
+          "lib-consensus/README.md"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "lib-consensus/docs/CONSENSUS_MECHANISM.md",
+          "lib-consensus/docs/README.md",
+          "lib-consensus/docs/api-reference.md",
+          "lib-consensus/docs/api/README.md",
+          "lib-consensus/docs/architecture/OVERVIEW.md",
+          "lib-consensus/docs/modules/dao/README.md",
+          "lib-consensus/docs/modules/engines/README.md",
+          "lib-consensus/docs/modules/proofs/README.md",
+          "lib-consensus/docs/modules/types/README.md",
+          "lib-consensus/docs/modules/validators/README.md"
+        ]
+      },
+      {
+        "name": "Other — examples",
+        "slug": "other-examples",
+        "files": [
+          "lib-consensus/examples/consensus_demo.rs"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-consensus/src/byzantine/evidence.rs",
+          "lib-consensus/src/byzantine/fault_detector.rs",
+          "lib-consensus/src/byzantine/lru_cache.rs",
+          "lib-consensus/src/byzantine/mod.rs",
+          "lib-consensus/src/chain_evaluation.rs",
+          "lib-consensus/src/dao/dao_engine.rs",
+          "lib-consensus/src/dao/dao_types.rs",
+          "lib-consensus/src/dao/mod.rs",
+          "lib-consensus/src/dao/proposals.rs",
+          "lib-consensus/src/dao/treasury.rs",
+          "lib-consensus/src/dao/voting.rs",
+          "lib-consensus/src/difficulty.rs",
+          "lib-consensus/src/engines/bft_engine.rs",
+          "lib-consensus/src/engines/consensus_engine/liveness.rs",
+          "lib-consensus/src/engines/consensus_engine/mod.rs",
+          "lib-consensus/src/engines/consensus_engine/network.rs",
+          "lib-consensus/src/engines/consensus_engine/nondeterminism_tests.rs",
+          "lib-consensus/src/engines/consensus_engine/proofs.rs",
+          "lib-consensus/src/engines/consensus_engine/state_machine.rs",
+          "lib-consensus/src/engines/consensus_engine/storage.rs",
+          "lib-consensus/src/engines/consensus_engine/tests.rs",
+          "lib-consensus/src/engines/consensus_engine/validation.rs",
+          "lib-consensus/src/engines/enhanced_bft_engine.rs",
+          "lib-consensus/src/engines/mod.rs",
+          "lib-consensus/src/engines/transaction_execution.rs",
+          "lib-consensus/src/engines/zk_integration.rs",
+          "lib-consensus/src/evidence.rs",
+          "lib-consensus/src/fault_model.rs",
+          "lib-consensus/src/finality_model.rs",
+          "lib-consensus/src/invariants.rs",
+          "lib-consensus/src/lib.rs",
+          "lib-consensus/src/mempool/mod.rs",
+          "lib-consensus/src/mining/mod.rs",
+          "lib-consensus/src/network/codec.rs",
+          "lib-consensus/src/network/heartbeat.rs",
+          "lib-consensus/src/network/liveness_monitor.rs",
+          "lib-consensus/src/network/mod.rs",
+          "lib-consensus/src/proofs/mod.rs",
+          "lib-consensus/src/proofs/stake_proof.rs",
+          "lib-consensus/src/proofs/work_proof.rs",
+          "lib-consensus/src/rewards/mod.rs",
+          "lib-consensus/src/rewards/reward_calculator.rs",
+          "lib-consensus/src/rewards/reward_types.rs",
+          "lib-consensus/src/slashing/mod.rs",
+          "lib-consensus/src/testing/mod.rs",
+          "lib-consensus/src/types/mod.rs",
+          "lib-consensus/src/validators/genesis.rs",
+          "lib-consensus/src/validators/mod.rs",
+          "lib-consensus/src/validators/validator.rs",
+          "lib-consensus/src/validators/validator_discovery.rs",
+          "lib-consensus/src/validators/validator_manager.rs",
+          "lib-consensus/src/validators/validator_protocol.rs"
+        ]
+      },
+      {
+        "name": "Other — tests",
+        "slug": "other-tests",
+        "files": [
+          "lib-consensus/tests/bft_safety_partition_tests.rs",
+          "lib-consensus/tests/byzantine_evidence_tests.rs",
+          "lib-consensus/tests/byzantine_tests.rs",
+          "lib-consensus/tests/consensus_engine_tests.rs",
+          "lib-consensus/tests/dao_tests.rs",
+          "lib-consensus/tests/heartbeat_tests.rs",
+          "lib-consensus/tests/integration_tests.rs",
+          "lib-consensus/tests/invariants_tests.rs",
+          "lib-consensus/tests/liveness_monitor_tests.rs",
+          "lib-consensus/tests/proof_tests.rs",
+          "lib-consensus/tests/reward_tests.rs",
+          "lib-consensus/tests/security_fixes_tests.rs",
+          "lib-consensus/tests/validator_manager_tests.rs",
+          "lib-consensus/tests/week9_transaction_executor_tests.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-crypto",
+        "slug": "other-lib-crypto",
+        "files": [
+          "lib-crypto/Cargo.toml",
+          "lib-crypto/README.md"
+        ]
+      },
+      {
+        "name": "Other — benches",
+        "slug": "other-benches",
+        "files": [
+          "lib-crypto/benches/crypto_benchmarks.rs"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "lib-crypto/docs/README.md",
+          "lib-crypto/docs/advanced.md",
+          "lib-crypto/docs/classical.md",
+          "lib-crypto/docs/examples.md",
+          "lib-crypto/docs/getting_started.md",
+          "lib-crypto/docs/hashing.md",
+          "lib-crypto/docs/index.md",
+          "lib-crypto/docs/integration.md",
+          "lib-crypto/docs/keypair.md",
+          "lib-crypto/docs/post_quantum.md",
+          "lib-crypto/docs/random.md",
+          "lib-crypto/docs/security.md",
+          "lib-crypto/docs/symmetric.md",
+          "lib-crypto/docs/types.md",
+          "lib-crypto/docs/verification.md"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-crypto/src/advanced/mod.rs",
+          "lib-crypto/src/advanced/multisig.rs",
+          "lib-crypto/src/advanced/ring_signature.rs",
+          "lib-crypto/src/classical/curve25519.rs",
+          "lib-crypto/src/classical/ed25519.rs",
+          "lib-crypto/src/classical/mod.rs",
+          "lib-crypto/src/hashing/blake3.rs",
+          "lib-crypto/src/hashing/mod.rs",
+          "lib-crypto/src/hashing/sha3.rs",
+          "lib-crypto/src/kdf/hkdf.rs",
+          "lib-crypto/src/kdf/mod.rs",
+          "lib-crypto/src/keypair/generation.rs",
+          "lib-crypto/src/keypair/mod.rs",
+          "lib-crypto/src/keypair/operations.rs",
+          "lib-crypto/src/lib.rs",
+          "lib-crypto/src/post_quantum/constants.rs",
+          "lib-crypto/src/post_quantum/dilithium.rs",
+          "lib-crypto/src/post_quantum/kyber.rs",
+          "lib-crypto/src/post_quantum/mod.rs",
+          "lib-crypto/src/random/mod.rs",
+          "lib-crypto/src/random/nonce.rs",
+          "lib-crypto/src/random/secure_rng.rs",
+          "lib-crypto/src/seed.rs",
+          "lib-crypto/src/symmetric/chacha20.rs",
+          "lib-crypto/src/symmetric/hybrid.rs",
+          "lib-crypto/src/symmetric/mod.rs",
+          "lib-crypto/src/traits.rs",
+          "lib-crypto/src/types/encapsulation.rs",
+          "lib-crypto/src/types/hash.rs",
+          "lib-crypto/src/types/keys.rs",
+          "lib-crypto/src/types/mod.rs",
+          "lib-crypto/src/types/signatures.rs",
+          "lib-crypto/src/utils/compatibility.rs",
+          "lib-crypto/src/utils/mod.rs",
+          "lib-crypto/src/verification/dev_mode.rs",
+          "lib-crypto/src/verification/mod.rs",
+          "lib-crypto/src/verification/signature_verify.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-dht",
+        "slug": "other-lib-dht",
+        "files": [
+          "lib-dht/Cargo.toml",
+          "lib-dht/README.md"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-dht/src/kad/kademlia_base.rs",
+          "lib-dht/src/kad/mod.rs",
+          "lib-dht/src/kad/server.rs",
+          "lib-dht/src/kademlia.rs",
+          "lib-dht/src/lib.rs",
+          "lib-dht/src/messages/error_response.rs",
+          "lib-dht/src/messages/find_node_request.rs",
+          "lib-dht/src/messages/find_node_response.rs",
+          "lib-dht/src/messages/inter/message_base.rs",
+          "lib-dht/src/messages/inter/message_exception.rs",
+          "lib-dht/src/messages/inter/message_key.rs",
+          "lib-dht/src/messages/inter/message_type.rs",
+          "lib-dht/src/messages/inter/method_message_base.rs",
+          "lib-dht/src/messages/inter/mod.rs",
+          "lib-dht/src/messages/mod.rs",
+          "lib-dht/src/messages/ping_request.rs",
+          "lib-dht/src/messages/ping_response.rs",
+          "lib-dht/src/refresh/mod.rs",
+          "lib-dht/src/refresh/refresh_handler.rs",
+          "lib-dht/src/refresh/tasks/bucket_refresh_task.rs",
+          "lib-dht/src/refresh/tasks/inter/mod.rs",
+          "lib-dht/src/refresh/tasks/inter/task.rs",
+          "lib-dht/src/refresh/tasks/mod.rs",
+          "lib-dht/src/refresh/tasks/stale_refresh_task.rs",
+          "lib-dht/src/routing/bucket_types.rs",
+          "lib-dht/src/routing/inter/mod.rs",
+          "lib-dht/src/routing/inter/routing_table.rs",
+          "lib-dht/src/routing/kb/k_bucket.rs",
+          "lib-dht/src/routing/kb/k_comparator.rs",
+          "lib-dht/src/routing/kb/k_routing_table.rs",
+          "lib-dht/src/routing/kb/ls_comparator.rs",
+          "lib-dht/src/routing/kb/mod.rs",
+          "lib-dht/src/routing/mainline/m_bucket.rs",
+          "lib-dht/src/routing/mainline/m_routing_table.rs",
+          "lib-dht/src/routing/mainline/mod.rs",
+          "lib-dht/src/routing/mod.rs",
+          "lib-dht/src/rpc/call.rs",
+          "lib-dht/src/rpc/events/error_response_event.rs",
+          "lib-dht/src/rpc/events/inter/event.rs",
+          "lib-dht/src/rpc/events/inter/message_event.rs",
+          "lib-dht/src/rpc/events/inter/mod.rs",
+          "lib-dht/src/rpc/events/inter/response_callback.rs",
+          "lib-dht/src/rpc/events/mod.rs",
+          "lib-dht/src/rpc/events/request_event.rs",
+          "lib-dht/src/rpc/events/response_event.rs",
+          "lib-dht/src/rpc/events/stalled_event.rs",
+          "lib-dht/src/rpc/join_node_response_listener.rs",
+          "lib-dht/src/rpc/mod.rs",
+          "lib-dht/src/rpc/ping_response_listener.rs",
+          "lib-dht/src/rpc/response_tracker.rs",
+          "lib-dht/src/utils/byte_wrapper.rs",
+          "lib-dht/src/utils/hash/crc32c.rs",
+          "lib-dht/src/utils/hash/mod.rs",
+          "lib-dht/src/utils/linked_hashmap.rs",
+          "lib-dht/src/utils/mod.rs",
+          "lib-dht/src/utils/net/address_types.rs",
+          "lib-dht/src/utils/net/address_utils.rs",
+          "lib-dht/src/utils/net/mod.rs",
+          "lib-dht/src/utils/net/net_mask.rs",
+          "lib-dht/src/utils/node.rs",
+          "lib-dht/src/utils/node_utils.rs",
+          "lib-dht/src/utils/random.rs",
+          "lib-dht/src/utils/spam_throttle.rs",
+          "lib-dht/src/utils/uid.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-dns",
+        "slug": "other-lib-dns",
+        "files": [
+          "lib-dns/ARCHITECTURE_FIT.md",
+          "lib-dns/Cargo.toml",
+          "lib-dns/IMPLEMENTATION_PLAN.md"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-dns/src/journal/inter/mod.rs",
+          "lib-dns/src/journal/inter/txn_op_codes.rs",
+          "lib-dns/src/journal/journal.rs",
+          "lib-dns/src/journal/journal_reader.rs",
+          "lib-dns/src/journal/mod.rs",
+          "lib-dns/src/journal/txn.rs",
+          "lib-dns/src/keyring/grant.rs",
+          "lib-dns/src/keyring/inter/algorithms.rs",
+          "lib-dns/src/keyring/inter/mod.rs",
+          "lib-dns/src/keyring/key.rs",
+          "lib-dns/src/keyring/keyring.rs",
+          "lib-dns/src/keyring/mod.rs",
+          "lib-dns/src/lib.rs",
+          "lib-dns/src/messages/edns.rs",
+          "lib-dns/src/messages/inter/mod.rs",
+          "lib-dns/src/messages/inter/op_codes.rs",
+          "lib-dns/src/messages/inter/response_codes.rs",
+          "lib-dns/src/messages/inter/rr_classes.rs",
+          "lib-dns/src/messages/inter/rr_types.rs",
+          "lib-dns/src/messages/message.rs",
+          "lib-dns/src/messages/mod.rs",
+          "lib-dns/src/messages/record.rs",
+          "lib-dns/src/messages/rr_query.rs",
+          "lib-dns/src/messages/tsig.rs",
+          "lib-dns/src/messages/wire.rs",
+          "lib-dns/src/rr_data/aaaa_rr_data.rs",
+          "lib-dns/src/rr_data/ch_a_rr_data.rs",
+          "lib-dns/src/rr_data/cname_rr_data.rs",
+          "lib-dns/src/rr_data/dnskey_rr_data.rs",
+          "lib-dns/src/rr_data/ds_rr_data.rs",
+          "lib-dns/src/rr_data/hinfo_rr_data.rs",
+          "lib-dns/src/rr_data/https_rr_data.rs",
+          "lib-dns/src/rr_data/in_a_rr_data.rs",
+          "lib-dns/src/rr_data/inter/mod.rs",
+          "lib-dns/src/rr_data/inter/naptr_flags.rs",
+          "lib-dns/src/rr_data/inter/opt_codes.rs",
+          "lib-dns/src/rr_data/inter/rr_data.rs",
+          "lib-dns/src/rr_data/inter/svc_param.rs",
+          "lib-dns/src/rr_data/inter/svc_param_keys.rs",
+          "lib-dns/src/rr_data/loc_rr_data.rs",
+          "lib-dns/src/rr_data/mod.rs",
+          "lib-dns/src/rr_data/mx_rr_data.rs",
+          "lib-dns/src/rr_data/naptr_rr_data.rs",
+          "lib-dns/src/rr_data/ns_rr_data.rs",
+          "lib-dns/src/rr_data/nsec3_rr_data.rs",
+          "lib-dns/src/rr_data/nsec3param_rr_data.rs",
+          "lib-dns/src/rr_data/nsec_rr_data.rs",
+          "lib-dns/src/rr_data/ptr_rr_data.rs",
+          "lib-dns/src/rr_data/rrsig_rr_data.rs",
+          "lib-dns/src/rr_data/smimea_rr_data.rs",
+          "lib-dns/src/rr_data/soa_rr_data.rs",
+          "lib-dns/src/rr_data/spf_rr_data.rs",
+          "lib-dns/src/rr_data/srv_rr_data.rs",
+          "lib-dns/src/rr_data/sshfp_rr_data.rs",
+          "lib-dns/src/rr_data/svcb_rr_data.rs",
+          "lib-dns/src/rr_data/tkey_rr_data.rs",
+          "lib-dns/src/rr_data/tsig_rr_data.rs",
+          "lib-dns/src/rr_data/txt_rr_data.rs",
+          "lib-dns/src/rr_data/uri_rr_data.rs",
+          "lib-dns/src/utils/base32.rs",
+          "lib-dns/src/utils/base64.rs",
+          "lib-dns/src/utils/coord_utils.rs",
+          "lib-dns/src/utils/fqdn_utils.rs",
+          "lib-dns/src/utils/hash/hmac.rs",
+          "lib-dns/src/utils/hash/inter/hash.rs",
+          "lib-dns/src/utils/hash/inter/mod.rs",
+          "lib-dns/src/utils/hash/mod.rs",
+          "lib-dns/src/utils/hash/sha256.rs",
+          "lib-dns/src/utils/hex.rs",
+          "lib-dns/src/utils/mod.rs",
+          "lib-dns/src/utils/octal.rs",
+          "lib-dns/src/utils/random.rs",
+          "lib-dns/src/utils/time_utils.rs",
+          "lib-dns/src/utils/trie/mod.rs",
+          "lib-dns/src/utils/trie/node.rs",
+          "lib-dns/src/utils/trie/trie.rs",
+          "lib-dns/src/zone/inter/mod.rs",
+          "lib-dns/src/zone/inter/zone_rr_data.rs",
+          "lib-dns/src/zone/inter/zone_types.rs",
+          "lib-dns/src/zone/mod.rs",
+          "lib-dns/src/zone/rr_set.rs",
+          "lib-dns/src/zone/rr_set_v2.rs",
+          "lib-dns/src/zone/zone.rs",
+          "lib-dns/src/zone/zone_reader.rs",
+          "lib-dns/src/zone/zone_store.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-economy",
+        "slug": "other-lib-economy",
+        "files": [
+          "lib-economy/Cargo.toml",
+          "lib-economy/README.md"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "lib-economy/docs/EXAMPLES.md",
+          "lib-economy/docs/IMPLEMENTATION_STATUS.md",
+          "lib-economy/docs/INDEX.md",
+          "lib-economy/docs/README.md",
+          "lib-economy/docs/SUMMARY.md",
+          "lib-economy/docs/distribution.md",
+          "lib-economy/docs/models.md",
+          "lib-economy/docs/rewards.md",
+          "lib-economy/docs/transactions.md",
+          "lib-economy/docs/treasury_economics.md",
+          "lib-economy/docs/wallets.md"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-economy/src/distribution/automated_payouts.rs",
+          "lib-economy/src/distribution/reward_distribution.rs",
+          "lib-economy/src/distribution/ubi_calculation.rs",
+          "lib-economy/src/distribution/ubi_distribution.rs",
+          "lib-economy/src/distribution/welfare_funding.rs",
+          "lib-economy/src/fee_distribution.rs",
+          "lib-economy/src/incentives/cost_savings.rs",
+          "lib-economy/src/incentives/infrastructure_rewards.rs",
+          "lib-economy/src/incentives/mod.rs",
+          "lib-economy/src/incentives/network_participation.rs",
+          "lib-economy/src/incentives/quality_bonuses.rs",
+          "lib-economy/src/integration/blockchain_integration.rs",
+          "lib-economy/src/integration/network_integration.rs",
+          "lib-economy/src/lib.rs",
+          "lib-economy/src/models/anti_speculation.rs",
+          "lib-economy/src/models/economic_model.rs",
+          "lib-economy/src/models/fee_calculation.rs",
+          "lib-economy/src/models/parameter_adjustment.rs",
+          "lib-economy/src/models/reward_adjustments.rs",
+          "lib-economy/src/models/token_reward.rs",
+          "lib-economy/src/models/token_reward_backup.rs",
+          "lib-economy/src/models/token_reward_new.rs",
+          "lib-economy/src/network_types.rs",
+          "lib-economy/src/network_types_new.rs",
+          "lib-economy/src/network_types_old.rs",
+          "lib-economy/src/pricing/dynamic_pricing.rs",
+          "lib-economy/src/pricing/market_pricing.rs",
+          "lib-economy/src/pricing/mod.rs",
+          "lib-economy/src/rewards/calculator.rs",
+          "lib-economy/src/rewards/consensus_stats.rs",
+          "lib-economy/src/rewards/reward_calculator.rs",
+          "lib-economy/src/rewards/reward_types.rs",
+          "lib-economy/src/rewards/types.rs",
+          "lib-economy/src/rewards/validator_rewards.rs",
+          "lib-economy/src/supply/management.rs",
+          "lib-economy/src/supply/mod.rs",
+          "lib-economy/src/supply/total_supply.rs",
+          "lib-economy/src/testing/mocks.rs",
+          "lib-economy/src/testing/mod.rs",
+          "lib-economy/src/testing/test_utils.rs",
+          "lib-economy/src/tokens/cbe_token.rs",
+          "lib-economy/src/tokens/mod.rs",
+          "lib-economy/src/transactions/blockchain_integration.rs",
+          "lib-economy/src/transactions/creation.rs",
+          "lib-economy/src/transactions/dao_fee_proofs.rs",
+          "lib-economy/src/transactions/fee_processing.rs",
+          "lib-economy/src/transactions/priority_fees.rs",
+          "lib-economy/src/transactions/transaction.rs",
+          "lib-economy/src/transactions/validation.rs",
+          "lib-economy/src/treasury_economics/fee_collection.rs",
+          "lib-economy/src/treasury_economics/mod.rs",
+          "lib-economy/src/treasury_economics/treasury_calculations.rs",
+          "lib-economy/src/treasury_economics/treasury_stats.rs",
+          "lib-economy/src/treasury_economics/ubi_economics.rs",
+          "lib-economy/src/treasury_economics/welfare_economics.rs",
+          "lib-economy/src/types/network_stats.rs",
+          "lib-economy/src/types/priority.rs",
+          "lib-economy/src/types/transaction_type.rs",
+          "lib-economy/src/types/work_metrics.rs",
+          "lib-economy/src/wallets/mesh_discovery_rewards.rs",
+          "lib-economy/src/wallets/multi_wallet.rs",
+          "lib-economy/src/wallets/reward_management.rs",
+          "lib-economy/src/wallets/staking_system.rs",
+          "lib-economy/src/wallets/transaction_history.rs",
+          "lib-economy/src/wallets/wallet_balance.rs",
+          "lib-economy/src/wasm/compatibility.rs",
+          "lib-economy/src/wasm/hash_blake3.rs",
+          "lib-economy/src/wasm/identity.rs",
+          "lib-economy/src/wasm/logging.rs",
+          "lib-economy/src/wasm/mod.rs"
+        ]
+      },
+      {
+        "name": "Other — tests",
+        "slug": "other-tests",
+        "files": [
+          "lib-economy/tests/edge_case_tests.rs",
+          "lib-economy/tests/integration_tests.rs",
+          "lib-economy/tests/performance_tests.rs",
+          "lib-economy/tests/stress_tests.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-fees",
+        "slug": "other-lib-fees",
+        "files": [
+          "lib-fees/Cargo.toml"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-fees/src/golden_vectors.rs",
+          "lib-fees/src/lib.rs",
+          "lib-fees/src/model_v2.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-governance",
+        "slug": "other-lib-governance",
+        "files": [
+          "lib-governance/Cargo.toml"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-governance/src/errors.rs",
+          "lib-governance/src/fields.rs",
+          "lib-governance/src/lib.rs",
+          "lib-governance/src/pending.rs",
+          "lib-governance/src/tx.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-identity-core",
+        "slug": "other-lib-identity-core",
+        "files": [
+          "lib-identity-core/Cargo.toml"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-identity-core/src/lib.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-identity",
+        "slug": "other-lib-identity",
+        "files": [
+          "lib-identity/Cargo.toml",
+          "lib-identity/create_draft_items.sh"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "lib-identity/docs/SECURITY_IMPROVEMENTS_PR207.md",
+          "lib-identity/docs/adr/0003-zhtp-proof-suite-v1.md",
+          "lib-identity/docs/adr/0004-root-key-anchored-did.md",
+          "lib-identity/docs/adr/README.md",
+          "lib-identity/docs/adr/archive/0001-seed-anchored-identity.md",
+          "lib-identity/docs/archive/did_legacy.md",
+          "lib-identity/docs/auth.md",
+          "lib-identity/docs/citizenship.md",
+          "lib-identity/docs/credentials.md",
+          "lib-identity/docs/cryptography.md",
+          "lib-identity/docs/device_integration.md",
+          "lib-identity/docs/did.md",
+          "lib-identity/docs/economics.md",
+          "lib-identity/docs/identity.md",
+          "lib-identity/docs/integration.md",
+          "lib-identity/docs/node_id.md",
+          "lib-identity/docs/privacy.md",
+          "lib-identity/docs/recovery.md",
+          "lib-identity/docs/reputation.md",
+          "lib-identity/docs/types.md",
+          "lib-identity/docs/verification.md",
+          "lib-identity/docs/wallets.md"
+        ]
+      },
+      {
+        "name": "Other — examples",
+        "slug": "other-examples",
+        "files": [
+          "lib-identity/examples/dao_hierarchy_demo.rs",
+          "lib-identity/examples/dao_wallet_demo.rs",
+          "lib-identity/examples/device_transfer_demo.rs",
+          "lib-identity/examples/did_with_seed_phrase.rs",
+          "lib-identity/examples/node_identity_demo.rs",
+          "lib-identity/examples/real_hardware_privacy_demo.rs",
+          "lib-identity/examples/simple_wallet_demo.rs",
+          "lib-identity/examples/standalone_wallet_demo.rs",
+          "lib-identity/examples/unified_identity_demo.rs",
+          "lib-identity/examples/zhtp_node_initialization.rs"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-identity/src/citizenship/citizenship_tests.rs",
+          "lib-identity/src/citizenship/dao_registration.rs",
+          "lib-identity/src/citizenship/ubi_registration.rs",
+          "lib-identity/src/citizenship/web4_access.rs",
+          "lib-identity/src/citizenship/welcome_bonus.rs",
+          "lib-identity/src/compat/mod.rs",
+          "lib-identity/src/compat/proofs_adapter.rs",
+          "lib-identity/src/constants.rs",
+          "lib-identity/src/credentials/attestation.rs",
+          "lib-identity/src/credentials/creation.rs",
+          "lib-identity/src/credentials/zk_credential.rs",
+          "lib-identity/src/cryptography/key_generation.rs",
+          "lib-identity/src/cryptography/mod.rs",
+          "lib-identity/src/cryptography/signatures.rs",
+          "lib-identity/src/did/document_generation.rs",
+          "lib-identity/src/did/storage.rs",
+          "lib-identity/src/economics/transaction.rs",
+          "lib-identity/src/guardian/mod.rs",
+          "lib-identity/src/identity/activity_tracking.rs",
+          "lib-identity/src/identity/integration_interface.rs",
+          "lib-identity/src/identity/lib_identity.rs",
+          "lib-identity/src/identity/manager.rs",
+          "lib-identity/src/identity/manager_tests.rs",
+          "lib-identity/src/identity/private_data.rs",
+          "lib-identity/src/integration/cross_package_integration.rs",
+          "lib-identity/src/integration/proof_generation.rs",
+          "lib-identity/src/integration/requirements_verification.rs",
+          "lib-identity/src/integration/trusted_issuers.rs",
+          "lib-identity/src/integration/verification_cache.rs",
+          "lib-identity/src/lib.rs",
+          "lib-identity/src/privacy/privacy_credentials.rs",
+          "lib-identity/src/privacy/requirements_verification.rs",
+          "lib-identity/src/privacy/zk_proofs.rs",
+          "lib-identity/src/recovery/biometric_recovery.rs",
+          "lib-identity/src/recovery/recovery_keys.rs",
+          "lib-identity/src/recovery/recovery_phrases.rs",
+          "lib-identity/src/recovery/recovery_tests.rs",
+          "lib-identity/src/recovery/social_recovery.rs",
+          "lib-identity/src/reputation/scoring.rs",
+          "lib-identity/src/types/credential_types.rs",
+          "lib-identity/src/types/identity_types.rs",
+          "lib-identity/src/types/node_id.rs",
+          "lib-identity/src/types/peer_identity.rs",
+          "lib-identity/src/types/proof_params.rs",
+          "lib-identity/src/types/verification_result.rs",
+          "lib-identity/src/verification/identity_verification.rs",
+          "lib-identity/src/verification/mod.rs",
+          "lib-identity/src/verification/verification_tests.rs",
+          "lib-identity/src/wallets/dao_hierarchy_demo.rs",
+          "lib-identity/src/wallets/hd_wallet_manager.rs",
+          "lib-identity/src/wallets/manager_integration.rs",
+          "lib-identity/src/wallets/multi_wallet.rs",
+          "lib-identity/src/wallets/wallet_operations.rs",
+          "lib-identity/src/wallets/wallet_password.rs",
+          "lib-identity/src/wallets/wallet_types.rs"
+        ]
+      },
+      {
+        "name": "Other — tests",
+        "slug": "other-tests",
+        "files": [
+          "lib-identity/tests/common/mod.rs",
+          "lib-identity/tests/common/test_helpers.rs",
+          "lib-identity/tests/integration_tests.rs",
+          "lib-identity/tests/new_unified_tests.rs",
+          "lib-identity/tests/zhtp_identity_fields.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-mempool",
+        "slug": "other-lib-mempool",
+        "files": [
+          "lib-mempool/Cargo.toml"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-mempool/src/admission.rs",
+          "lib-mempool/src/config.rs",
+          "lib-mempool/src/errors.rs",
+          "lib-mempool/src/lib.rs",
+          "lib-mempool/src/state.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-network",
+        "slug": "other-lib-network",
+        "files": [
+          "lib-network/Cargo.toml",
+          "lib-network/DEEP_WARNING_ANALYSIS.md",
+          "lib-network/build.rs",
+          "lib-network/test_output.log"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "lib-network/docs/MESSAGE_BROADCASTER_INDEX.md",
+          "lib-network/docs/STDENV_STDPROCESS_REFACTORING.md",
+          "lib-network/docs/TROUBLESHOOTING.md",
+          "lib-network/docs/bluetooth/BLUETOOTH_FIX_ZK_AUTH.md",
+          "lib-network/docs/guards_and_security.md",
+          "lib-network/docs/handshake/README.md",
+          "lib-network/docs/message_broadcaster.md",
+          "lib-network/docs/message_broadcaster_quick_ref.md"
+        ]
+      },
+      {
+        "name": "Other — examples",
+        "slug": "other-examples",
+        "files": [
+          "lib-network/examples/bluetooth_phone_test.rs",
+          "lib-network/examples/dht_storage_integration.rs"
+        ]
+      },
+      {
+        "name": "Other — scripts",
+        "slug": "other-scripts",
+        "files": [
+          "lib-network/scripts/run_mesh_integration_tests.sh"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-network/src/blockchain_sync/blockchain_provider.rs",
+          "lib-network/src/blockchain_sync/chunk_buffer.rs",
+          "lib-network/src/blockchain_sync/edge_node_strategy.rs",
+          "lib-network/src/blockchain_sync/full_node_strategy.rs",
+          "lib-network/src/blockchain_sync/rate_limiter.rs",
+          "lib-network/src/blockchain_sync/sync_coordinator.rs",
+          "lib-network/src/blockchain_sync/sync_manager.rs",
+          "lib-network/src/blockchain_sync_stub.rs",
+          "lib-network/src/bootstrap/handshake.rs",
+          "lib-network/src/bootstrap/peer_discovery.rs",
+          "lib-network/src/client/zhtp_client.rs",
+          "lib-network/src/consensus_encryption.rs",
+          "lib-network/src/consensus_receiver.rs",
+          "lib-network/src/constants.rs",
+          "lib-network/src/dht-client/zhtp-dht-api.js",
+          "lib-network/src/dht-client/zkdht-client.js",
+          "lib-network/src/dht/bootstrap.rs",
+          "lib-network/src/dht/cache.rs",
+          "lib-network/src/dht/monitoring.rs",
+          "lib-network/src/dht/peer_discovery.rs",
+          "lib-network/src/dht/protocol.rs",
+          "lib-network/src/dht/relay.rs",
+          "lib-network/src/dht/transport.rs",
+          "lib-network/src/dht_stub.rs",
+          "lib-network/src/discovery/geo_location.rs",
+          "lib-network/src/discovery/hardware.rs",
+          "lib-network/src/discovery/local_network.rs",
+          "lib-network/src/discovery/lorawan.rs",
+          "lib-network/src/discovery/lorawan_hardware.rs",
+          "lib-network/src/discovery/pin_cache.rs",
+          "lib-network/src/discovery/pinned_verifier.rs",
+          "lib-network/src/discovery/satellite.rs",
+          "lib-network/src/discovery/smart_routing.rs",
+          "lib-network/src/discovery/system_privileges.rs",
+          "lib-network/src/discovery/unified.rs",
+          "lib-network/src/discovery/wifi.rs",
+          "lib-network/src/discovery/wifi_direct.rs",
+          "lib-network/src/discovery/wifi_hotspot.rs",
+          "lib-network/src/discovery/wifi_mesh.rs",
+          "lib-network/src/encryption/mod.rs",
+          "lib-network/src/fragmentation_v2.rs",
+          "lib-network/src/handshake/blockchain.rs",
+          "lib-network/src/handshake/core.rs",
+          "lib-network/src/handshake/framing.rs",
+          "lib-network/src/handshake/mod.rs.bak",
+          "lib-network/src/handshake/nonce_cache.rs",
+          "lib-network/src/handshake/observability.rs",
+          "lib-network/src/handshake/orchestrator.rs",
+          "lib-network/src/handshake/pqc.rs",
+          "lib-network/src/handshake/rate_limiter.rs",
+          "lib-network/src/handshake/security.rs",
+          "lib-network/src/identity/mod.rs",
+          "lib-network/src/identity/proof_of_work.rs",
+          "lib-network/src/identity/sybil_resistance.rs",
+          "lib-network/src/identity/unified_peer.rs",
+          "lib-network/src/identity_store_forward.rs",
+          "lib-network/src/lib.rs",
+          "lib-network/src/mesh/config.rs",
+          "lib-network/src/mesh/connection.rs",
+          "lib-network/src/mesh/dos_limits.rs",
+          "lib-network/src/mesh/server.rs",
+          "lib-network/src/mesh/shared_resources.rs",
+          "lib-network/src/mesh/statistics.rs",
+          "lib-network/src/message_broadcaster.rs",
+          "lib-network/src/messaging/gossip.rs",
+          "lib-network/src/messaging/message_handler.rs",
+          "lib-network/src/messaging/mod.rs",
+          "lib-network/src/monitoring/health_monitoring.rs",
+          "lib-network/src/network_output.rs",
+          "lib-network/src/network_utils.rs",
+          "lib-network/src/peer_registry/mod.rs",
+          "lib-network/src/peer_registry/sync.rs",
+          "lib-network/src/peer_reputation.rs",
+          "lib-network/src/platform/linux.rs",
+          "lib-network/src/platform/macos.rs",
+          "lib-network/src/platform/mod.rs",
+          "lib-network/src/platform/windows.rs",
+          "lib-network/src/protocols/bluetooth/advertising.rs",
+          "lib-network/src/protocols/bluetooth/authentication.rs",
+          "lib-network/src/protocols/bluetooth/capabilities.rs",
+          "lib-network/src/protocols/bluetooth/classic.rs",
+          "lib-network/src/protocols/bluetooth/commands.rs",
+          "lib-network/src/protocols/bluetooth/common.rs",
+          "lib-network/src/protocols/bluetooth/config.rs",
+          "lib-network/src/protocols/bluetooth/connectivity.rs",
+          "lib-network/src/protocols/bluetooth/core.rs",
+          "lib-network/src/protocols/bluetooth/core_bluetooth_init.rs",
+          "lib-network/src/protocols/bluetooth/dbus_bluez.rs",
+          "lib-network/src/protocols/bluetooth/device.rs",
+          "lib-network/src/protocols/bluetooth/device_discovery.rs",
+          "lib-network/src/protocols/bluetooth/discovery.rs",
+          "lib-network/src/protocols/bluetooth/edge_node_sync.rs",
+          "lib-network/src/protocols/bluetooth/edge_sync.rs",
+          "lib-network/src/protocols/bluetooth/enhanced.rs",
+          "lib-network/src/protocols/bluetooth/events.rs",
+          "lib-network/src/protocols/bluetooth/gatt.rs",
+          "lib-network/src/protocols/bluetooth/gatt_adapter.rs",
+          "lib-network/src/protocols/bluetooth/gatt_backend.rs",
+          "lib-network/src/protocols/bluetooth/gatt_io.rs",
+          "lib-network/src/protocols/bluetooth/gatt_stream.rs",
+          "lib-network/src/protocols/bluetooth/handshake_io.rs",
+          "lib-network/src/protocols/bluetooth/handshake_send.rs",
+          "lib-network/src/protocols/bluetooth/identity.rs",
+          "lib-network/src/protocols/bluetooth/lifecycle.rs",
+          "lib-network/src/protocols/bluetooth/linux_ops.rs",
+          "lib-network/src/protocols/bluetooth/macos.rs",
+          "lib-network/src/protocols/bluetooth/macos_core.rs",
+          "lib-network/src/protocols/bluetooth/macos_delegate.rs",
+          "lib-network/src/protocols/bluetooth/macos_error.rs",
+          "lib-network/src/protocols/bluetooth/messaging.rs",
+          "lib-network/src/protocols/bluetooth/mock.rs",
+          "lib-network/src/protocols/bluetooth/mod.rs",
+          "lib-network/src/protocols/bluetooth/monitoring.rs",
+          "lib-network/src/protocols/bluetooth/parsing.rs",
+          "lib-network/src/protocols/bluetooth/platform_init.rs",
+          "lib-network/src/protocols/bluetooth/tests.rs",
+          "lib-network/src/protocols/bluetooth/windows_gatt.rs",
+          "lib-network/src/protocols/bluetooth_encryption.rs",
+          "lib-network/src/protocols/enhanced_wifi_direct.rs",
+          "lib-network/src/protocols/lorawan.rs",
+          "lib-network/src/protocols/lorawan/gateway_auth.rs",
+          "lib-network/src/protocols/lorawan_encryption.rs",
+          "lib-network/src/protocols/mod.rs",
+          "lib-network/src/protocols/quic_api_dispatcher.rs",
+          "lib-network/src/protocols/quic_encryption.rs",
+          "lib-network/src/protocols/quic_handshake.rs",
+          "lib-network/src/protocols/quic_mesh.rs",
+          "lib-network/src/protocols/satellite.rs",
+          "lib-network/src/protocols/types/capabilities.rs",
+          "lib-network/src/protocols/types/mod.rs",
+          "lib-network/src/protocols/types/network.rs",
+          "lib-network/src/protocols/types/peer.rs",
+          "lib-network/src/protocols/types/security.rs",
+          "lib-network/src/protocols/types/session.rs",
+          "lib-network/src/protocols/wifi_direct.rs",
+          "lib-network/src/protocols/wifi_direct_encryption.rs",
+          "lib-network/src/protocols/wifi_direct_handshake.rs",
+          "lib-network/src/protocols/zhtp_auth.rs",
+          "lib-network/src/protocols/zhtp_encryption.rs",
+          "lib-network/src/protocols/zhtp_mesh_encryption.rs",
+          "lib-network/src/relays/long_range_relay.rs",
+          "lib-network/src/relays/lorawan_gateway.rs",
+          "lib-network/src/relays/mod.rs",
+          "lib-network/src/relays/satellite_info.rs",
+          "lib-network/src/relays/wifi_network.rs",
+          "lib-network/src/routing/dht_router_adapter.rs",
+          "lib-network/src/routing/global_coverage.rs",
+          "lib-network/src/routing/long_range.rs",
+          "lib-network/src/routing/message_routing.rs",
+          "lib-network/src/routing/mod.rs",
+          "lib-network/src/routing/multi_hop.rs",
+          "lib-network/src/routing/unified_router.rs",
+          "lib-network/src/socket_utils.rs",
+          "lib-network/src/storage_stub.rs",
+          "lib-network/src/testing/integration_tests.rs",
+          "lib-network/src/testing/mock_hardware.rs",
+          "lib-network/src/testing/mod.rs",
+          "lib-network/src/testing/test_utils.rs",
+          "lib-network/src/transport/mod.rs",
+          "lib-network/src/types/api_response.rs",
+          "lib-network/src/types/connection_details.rs",
+          "lib-network/src/types/geographic.rs",
+          "lib-network/src/types/mesh_capability.rs",
+          "lib-network/src/types/mesh_message.rs",
+          "lib-network/src/types/network_protocol.rs",
+          "lib-network/src/types/network_statistics.rs",
+          "lib-network/src/types/node_address.rs",
+          "lib-network/src/types/relay_type.rs",
+          "lib-network/src/types/wifi_security.rs",
+          "lib-network/src/validator_discovery_transport.rs",
+          "lib-network/src/web4/client.rs",
+          "lib-network/src/web4/content_publisher.rs",
+          "lib-network/src/web4/content_service.rs",
+          "lib-network/src/web4/domain_registry.rs",
+          "lib-network/src/web4/name_resolver.rs",
+          "lib-network/src/web4/trust.rs",
+          "lib-network/src/web4/types.rs",
+          "lib-network/src/zdns/config.rs",
+          "lib-network/src/zdns/error.rs",
+          "lib-network/src/zdns/mod.rs",
+          "lib-network/src/zdns/packet.rs",
+          "lib-network/src/zdns/resolver.rs",
+          "lib-network/src/zdns/transport.rs",
+          "lib-network/src/zk_integration/identity_proofs.rs",
+          "lib-network/src/zk_integration/identity_proofs_test.rs",
+          "lib-network/src/zk_integration/mod.rs",
+          "lib-network/src/zk_integration/proof_verification.rs",
+          "lib-network/src/zk_integration/ubi_proofs.rs"
+        ]
+      },
+      {
+        "name": "Other — tests",
+        "slug": "other-tests",
+        "files": [
+          "lib-network/tests/ble_uhp_integration_test.rs",
+          "lib-network/tests/bluetooth_protocol_test.rs",
+          "lib-network/tests/common/mesh_test_utils.rs",
+          "lib-network/tests/common/mod.rs",
+          "lib-network/tests/common/test_helpers.rs",
+          "lib-network/tests/dht_integration_test.rs",
+          "lib-network/tests/dht_storage_integration_tests.rs",
+          "lib-network/tests/enhanced_dht_features_test.rs",
+          "lib-network/tests/handshake_verification_test.rs",
+          "lib-network/tests/identity_peer_discovery_test.rs",
+          "lib-network/tests/identity_store_forward_flow.rs",
+          "lib-network/tests/mesh_connectivity_test.rs",
+          "lib-network/tests/mesh_forwarding_integration_test.rs",
+          "lib-network/tests/mesh_integration.rs",
+          "lib-network/tests/mesh_network_integration.rs",
+          "lib-network/tests/noncecache_load_tests.rs",
+          "lib-network/tests/phase3_integration_tests.rs",
+          "lib-network/tests/unified_discovery_test.rs",
+          "lib-network/tests/wifi_direct_protocol_test.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-proofs",
+        "slug": "other-lib-proofs",
+        "files": [
+          "lib-proofs/Cargo.toml",
+          "lib-proofs/README.md"
+        ]
+      },
+      {
+        "name": "Other — benches",
+        "slug": "other-benches",
+        "files": [
+          "lib-proofs/benches/zk_benchmarks.rs"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "lib-proofs/docs/getting_started.md",
+          "lib-proofs/docs/integration.md",
+          "lib-proofs/docs/performance.md"
+        ]
+      },
+      {
+        "name": "Other — examples",
+        "slug": "other-examples",
+        "files": [
+          "lib-proofs/examples/instant_verification_demo.rs"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-proofs/src/circuits/identity_circuit.rs",
+          "lib-proofs/src/circuits/merkle_circuit.rs",
+          "lib-proofs/src/circuits/range_circuit.rs",
+          "lib-proofs/src/circuits/state_transition_circuit.rs",
+          "lib-proofs/src/circuits/transaction_circuit.rs",
+          "lib-proofs/src/identity/credential_proof.rs",
+          "lib-proofs/src/identity/identity_proof.rs",
+          "lib-proofs/src/identity/range_proof.rs",
+          "lib-proofs/src/identity/transaction_proof.rs",
+          "lib-proofs/src/identity/verification.rs",
+          "lib-proofs/src/lib.rs",
+          "lib-proofs/src/merkle/proof_generation.rs",
+          "lib-proofs/src/merkle/tree.rs",
+          "lib-proofs/src/merkle/verification.rs",
+          "lib-proofs/src/plonky2/circuit.rs",
+          "lib-proofs/src/plonky2/proof_system.rs",
+          "lib-proofs/src/plonky2/recursive.rs",
+          "lib-proofs/src/plonky2/verification.rs",
+          "lib-proofs/src/provers/identity_prover.rs",
+          "lib-proofs/src/provers/merkle_prover.rs",
+          "lib-proofs/src/provers/range_prover.rs",
+          "lib-proofs/src/provers/transaction_prover.rs",
+          "lib-proofs/src/range/bulletproofs.rs",
+          "lib-proofs/src/range/range_proof.rs",
+          "lib-proofs/src/range/verification.rs",
+          "lib-proofs/src/range/verification_fixed.rs",
+          "lib-proofs/src/range/verification_old.rs",
+          "lib-proofs/src/recursive/aggregated_circuit.rs",
+          "lib-proofs/src/recursive/mod.rs",
+          "lib-proofs/src/recursive/state_transition.rs",
+          "lib-proofs/src/state/aggregation.rs",
+          "lib-proofs/src/state/bootstrap.rs",
+          "lib-proofs/src/state/mod.rs",
+          "lib-proofs/src/state/state_proof.rs",
+          "lib-proofs/src/state/verification.rs",
+          "lib-proofs/src/transaction/mod.rs",
+          "lib-proofs/src/transaction/prover.rs",
+          "lib-proofs/src/transaction/transaction_proof.rs",
+          "lib-proofs/src/transaction/verification.rs",
+          "lib-proofs/src/types/merkle_proof.rs",
+          "lib-proofs/src/types/verification_result.rs",
+          "lib-proofs/src/types/zk_proof.rs",
+          "lib-proofs/src/verifiers/identity_verifier.rs",
+          "lib-proofs/src/verifiers/merkle_verifier.rs",
+          "lib-proofs/src/verifiers/range_verifier.rs",
+          "lib-proofs/src/verifiers/recursive_aggregator.rs",
+          "lib-proofs/src/verifiers/state_verifier.rs",
+          "lib-proofs/src/verifiers/transaction_verifier.rs",
+          "lib-proofs/src/zk_integration/mod.rs",
+          "lib-proofs/src/zk_integration/plonky2.rs"
+        ]
+      },
+      {
+        "name": "Other — tests",
+        "slug": "other-tests",
+        "files": [
+          "lib-proofs/tests/crypto_integration_test.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-protocols",
+        "slug": "other-lib-protocols",
+        "files": [
+          "lib-protocols/Cargo.toml"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "lib-protocols/docs/EXAMPLES.md",
+          "lib-protocols/docs/INDEX.md",
+          "lib-protocols/docs/OVERVIEW.md",
+          "lib-protocols/docs/SUMMARY.md",
+          "lib-protocols/docs/crypto.md",
+          "lib-protocols/docs/economics.md",
+          "lib-protocols/docs/handlers.md",
+          "lib-protocols/docs/identity.md",
+          "lib-protocols/docs/integration.md",
+          "lib-protocols/docs/secure_transfer.md",
+          "lib-protocols/docs/storage.md",
+          "lib-protocols/docs/testing.md",
+          "lib-protocols/docs/types.md",
+          "lib-protocols/docs/validation.md",
+          "lib-protocols/docs/zdns.md",
+          "lib-protocols/docs/zhtp.md"
+        ]
+      },
+      {
+        "name": "Other — examples",
+        "slug": "other-examples",
+        "files": [
+          "lib-protocols/examples/zhtp_messaging_demo.rs"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-protocols/src/economics.rs",
+          "lib-protocols/src/handlers.rs",
+          "lib-protocols/src/identity_messaging.rs",
+          "lib-protocols/src/secure_transfer.rs",
+          "lib-protocols/src/storage_stub.rs",
+          "lib-protocols/src/testing.rs",
+          "lib-protocols/src/types/access_policy.rs",
+          "lib-protocols/src/types/content.rs",
+          "lib-protocols/src/types/economic.rs",
+          "lib-protocols/src/types/group_message.rs",
+          "lib-protocols/src/types/headers.rs",
+          "lib-protocols/src/types/identity_message.rs",
+          "lib-protocols/src/types/identity_payload.rs",
+          "lib-protocols/src/types/method.rs",
+          "lib-protocols/src/types/pouw.rs",
+          "lib-protocols/src/types/request.rs",
+          "lib-protocols/src/types/response.rs",
+          "lib-protocols/src/types/status.rs",
+          "lib-protocols/src/validation.rs",
+          "lib-protocols/src/wire/mod.rs",
+          "lib-protocols/src/zdns.rs",
+          "lib-protocols/src/zhtp/access_control.rs",
+          "lib-protocols/src/zhtp/config.rs",
+          "lib-protocols/src/zhtp/content.rs",
+          "lib-protocols/src/zhtp/middleware.rs",
+          "lib-protocols/src/zhtp/mod.rs",
+          "lib-protocols/src/zhtp/routing.rs",
+          "lib-protocols/src/zhtp/server.rs",
+          "lib-protocols/src/zhtp/session.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-storage",
+        "slug": "other-lib-storage",
+        "files": [
+          "lib-storage/Cargo.toml"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "lib-storage/docs/api/README.md",
+          "lib-storage/docs/architecture/OVERVIEW.md",
+          "lib-storage/docs/examples/basic_usage.md",
+          "lib-storage/docs/examples/smart_contracts.md",
+          "lib-storage/docs/guides/GETTING_STARTED.md",
+          "lib-storage/docs/guides/INTEGRATION_GUIDE.md",
+          "lib-storage/docs/guides/PERFORMANCE_OPTIMIZATION.md",
+          "lib-storage/docs/guides/TROUBLESHOOTING.md",
+          "lib-storage/docs/modules/README.md",
+          "lib-storage/docs/modules/dht_node.md",
+          "lib-storage/docs/modules/dht_storage.md",
+          "lib-storage/docs/modules/economic/README.md",
+          "lib-storage/docs/modules/economic/economic_manager.md",
+          "lib-storage/docs/modules/types/README.md"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-storage/src/backend/sled_backend.rs",
+          "lib-storage/src/backend/sqlite_backend.rs",
+          "lib-storage/src/backend/traits.rs",
+          "lib-storage/src/consistency/conflict.rs",
+          "lib-storage/src/consistency/crdt.rs",
+          "lib-storage/src/consistency/quorum.rs",
+          "lib-storage/src/consistency/vector_clock.rs",
+          "lib-storage/src/content/mod.rs",
+          "lib-storage/src/dht/CLAUDE.md",
+          "lib-storage/src/dht/backend/memory.rs",
+          "lib-storage/src/dht/backend/mod.rs",
+          "lib-storage/src/dht/backend/sled_backend.rs",
+          "lib-storage/src/dht/backend/tests.rs",
+          "lib-storage/src/dht/messaging.rs",
+          "lib-storage/src/dht/network.rs",
+          "lib-storage/src/dht/node.rs",
+          "lib-storage/src/dht/peer_management.rs",
+          "lib-storage/src/dht/peer_registry.rs",
+          "lib-storage/src/dht/registry_trait.rs",
+          "lib-storage/src/dht/replication.rs",
+          "lib-storage/src/dht/routing.rs",
+          "lib-storage/src/dht/signing.rs",
+          "lib-storage/src/dht/storage.rs",
+          "lib-storage/src/dht/transport.rs",
+          "lib-storage/src/economic/contracts.rs",
+          "lib-storage/src/economic/incentives.rs",
+          "lib-storage/src/economic/manager.rs",
+          "lib-storage/src/economic/market.rs",
+          "lib-storage/src/economic/payments.rs",
+          "lib-storage/src/economic/penalties.rs",
+          "lib-storage/src/economic/pricing.rs",
+          "lib-storage/src/economic/quality.rs",
+          "lib-storage/src/economic/reputation.rs",
+          "lib-storage/src/economic/rewards.rs",
+          "lib-storage/src/erasure/mod.rs",
+          "lib-storage/src/integrity/checksum.rs",
+          "lib-storage/src/integrity/corruption.rs",
+          "lib-storage/src/integrity/healing.rs",
+          "lib-storage/src/integrity/mod.rs",
+          "lib-storage/src/integrity/verification.rs",
+          "lib-storage/src/optimization/chunking.rs",
+          "lib-storage/src/optimization/compression.rs",
+          "lib-storage/src/optimization/deduplication.rs",
+          "lib-storage/src/optimization/mod.rs",
+          "lib-storage/src/proofs/attestation.rs",
+          "lib-storage/src/proofs/challenge.rs",
+          "lib-storage/src/proofs/manager.rs",
+          "lib-storage/src/proofs/mod.rs",
+          "lib-storage/src/proofs/provider.rs",
+          "lib-storage/src/proofs/verification.rs",
+          "lib-storage/src/types/config_types.rs",
+          "lib-storage/src/types/dht_types.rs",
+          "lib-storage/src/types/economic_types.rs",
+          "lib-storage/src/types/node_address.rs",
+          "lib-storage/src/types/stats_types.rs",
+          "lib-storage/src/types/storage_types.rs",
+          "lib-storage/src/wallet_content_integration.rs"
+        ]
+      },
+      {
+        "name": "Other — tests",
+        "slug": "other-tests",
+        "files": [
+          "lib-storage/tests/backend_integration_tests.rs",
+          "lib-storage/tests/dht_nodeid_stability.rs",
+          "lib-storage/tests/storage_load_tests.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-tokens",
+        "slug": "other-lib-tokens",
+        "files": [
+          "lib-tokens/Cargo.toml"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-tokens/src/contract.rs",
+          "lib-tokens/src/errors.rs",
+          "lib-tokens/src/lib.rs",
+          "lib-tokens/src/transfer.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-types",
+        "slug": "other-lib-types",
+        "files": [
+          "lib-types/Cargo.toml",
+          "lib-types/README.md"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-types/src/chunk.rs",
+          "lib-types/src/dht/message.rs",
+          "lib-types/src/dht/mod.rs",
+          "lib-types/src/dht/transport.rs",
+          "lib-types/src/dht/types.rs",
+          "lib-types/src/errors.rs",
+          "lib-types/src/lib.rs",
+          "lib-types/src/node_id.rs",
+          "lib-types/src/primitives.rs"
+        ]
+      },
+      {
+        "name": "Other — lib-utxo",
+        "slug": "other-lib-utxo",
+        "files": [
+          "lib-utxo/Cargo.toml"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "lib-utxo/src/apply.rs",
+          "lib-utxo/src/errors.rs",
+          "lib-utxo/src/lib.rs",
+          "lib-utxo/src/types.rs"
+        ]
+      },
+      {
+        "name": "Other — run-node.log",
+        "slug": "other-run-node-log",
+        "files": [
+          "run-node.log"
+        ]
+      },
+      {
+        "name": "Other — run-node.ps1",
+        "slug": "other-run-node-ps1",
+        "files": [
+          "run-node.ps1"
+        ]
+      },
+      {
+        "name": "Other — run-node.sh",
+        "slug": "other-run-node-sh",
+        "files": [
+          "run-node.sh"
+        ]
+      },
+      {
+        "name": "Other — architecture",
+        "slug": "other-architecture",
+        "files": [
+          "scripts/architecture/check-forbidden-imports.sh",
+          "scripts/architecture/smart-validate.sh",
+          "scripts/architecture/validate-core-purity.sh",
+          "scripts/architecture/validate-dependencies.sh"
+        ]
+      },
+      {
+        "name": "Other — scripts",
+        "slug": "other-scripts",
+        "files": [
+          "scripts/run_ble_hw_test.sh",
+          "scripts/run_tests.sh",
+          "scripts/validate-all-builds.sh",
+          "scripts/validate-architecture.sh",
+          "scripts/validate-cli-extraction.sh",
+          "scripts/validate-dao-ready-gates.sh",
+          "scripts/validate-features-quick.sh",
+          "scripts/validate-features.sh",
+          "scripts/validate-token-dao-gates.sh"
+        ]
+      },
+      {
+        "name": "Other — sdk-ts",
+        "slug": "other-sdk-ts",
+        "files": [
+          "sdk-ts/COMPLETION_SUMMARY.md",
+          "sdk-ts/PHASE3.md",
+          "sdk-ts/README.md",
+          "sdk-ts/deploy-breakroom.ts",
+          "sdk-ts/package.json",
+          "sdk-ts/test-keystore.ts",
+          "sdk-ts/tsconfig.json",
+          "sdk-ts/tsup.config.ts",
+          "sdk-ts/vitest.config.ts"
+        ]
+      },
+      {
+        "name": "Other — examples",
+        "slug": "other-examples",
+        "files": [
+          "sdk-ts/examples/e2e-test.ts"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "sdk-ts/src/client.ts",
+          "sdk-ts/src/error.ts",
+          "sdk-ts/src/identity.ts",
+          "sdk-ts/src/index.ts",
+          "sdk-ts/src/managers/content.ts",
+          "sdk-ts/src/managers/deploy.ts",
+          "sdk-ts/src/managers/domain.ts",
+          "sdk-ts/src/managers/wallet.ts",
+          "sdk-ts/src/output.ts",
+          "sdk-ts/src/quic/client.ts",
+          "sdk-ts/src/quic/handshake.ts",
+          "sdk-ts/src/quic/types.ts",
+          "sdk-ts/src/quic/uhp_v2.ts",
+          "sdk-ts/src/quic/uhp_v2_handshake.ts",
+          "sdk-ts/src/quic/wire.ts",
+          "sdk-ts/src/types.ts",
+          "sdk-ts/src/validation.ts"
+        ]
+      },
+      {
+        "name": "Other — tests",
+        "slug": "other-tests",
+        "files": [
+          "sdk-ts/tests/integration/quic-connection.test.ts",
+          "sdk-ts/tests/unit/channel-binding.test.ts",
+          "sdk-ts/tests/unit/error.test.ts",
+          "sdk-ts/tests/unit/identity.test.ts",
+          "sdk-ts/tests/unit/output.test.ts",
+          "sdk-ts/tests/unit/types.test.ts",
+          "sdk-ts/tests/unit/validation.test.ts"
+        ]
+      },
+      {
+        "name": "Other — sonar-project.properties",
+        "slug": "other-sonar-project-properties",
+        "files": [
+          "sonar-project.properties"
+        ]
+      },
+      {
+        "name": "Other — start-node-auto.ps1",
+        "slug": "other-start-node-auto-ps1",
+        "files": [
+          "start-node-auto.ps1"
+        ]
+      },
+      {
+        "name": "Other — test-web4-deploy",
+        "slug": "other-test-web4-deploy",
+        "files": [
+          "test-web4-deploy/package.json"
+        ]
+      },
+      {
+        "name": "Other — test_key_size.rs",
+        "slug": "other-test-key-size-rs",
+        "files": [
+          "test_key_size.rs"
+        ]
+      },
+      {
+        "name": "Other — test_recovery_api.sh",
+        "slug": "other-test-recovery-api-sh",
+        "files": [
+          "test_recovery_api.sh"
+        ]
+      },
+      {
+        "name": "Other — test_recovery_phrases.sh",
+        "slug": "other-test-recovery-phrases-sh",
+        "files": [
+          "test_recovery_phrases.sh"
+        ]
+      },
+      {
+        "name": "Other — test_sig_compat.rs",
+        "slug": "other-test-sig-compat-rs",
+        "files": [
+          "test_sig_compat.rs"
+        ]
+      },
+      {
+        "name": "Other — e2e",
+        "slug": "other-e2e",
+        "files": [
+          "tests/e2e/BUG_REPORT_TEMPLATE.md",
+          "tests/e2e/lib/asserts.sh",
+          "tests/e2e/lib/cli.sh",
+          "tests/e2e/lib/node_ctrl.sh",
+          "tests/e2e/lib/site_generator.sh",
+          "tests/e2e/runner.sh"
+        ]
+      },
+      {
+        "name": "Other — integration",
+        "slug": "other-integration",
+        "files": [
+          "tests/integration/Cargo.toml"
+        ]
+      },
+      {
+        "name": "Other — lib-identity",
+        "slug": "other-lib-identity",
+        "files": [
+          "tests/lib-identity/test-lib-identity-imports/Cargo.toml",
+          "tests/lib-identity/test-lib-identity-imports/src/main.rs"
+        ]
+      },
+      {
+        "name": "Other — tools",
+        "slug": "other-tools",
+        "files": [
+          "tools/Cargo.toml",
+          "tools/identity_e2e_sim.rs"
+        ]
+      },
+      {
+        "name": "Other — zhtp-dilithium-signer",
+        "slug": "other-zhtp-dilithium-signer",
+        "files": [
+          "tools/zhtp-dilithium-signer/Cargo.toml",
+          "tools/zhtp-dilithium-signer/src/main.rs"
+        ]
+      },
+      {
+        "name": "Other — zhtp-cli",
+        "slug": "other-zhtp-cli",
+        "files": [
+          "zhtp-cli/Cargo.toml",
+          "zhtp-cli/build.rs"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "zhtp-cli/docs/environment-variables.md"
+        ]
+      },
+      {
+        "name": "Other — scripts",
+        "slug": "other-scripts",
+        "files": [
+          "zhtp-cli/scripts/run_web4_functional_tests.sh"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "zhtp-cli/src/argument_parsing.rs",
+          "zhtp-cli/src/banner.rs",
+          "zhtp-cli/src/cli_config.rs",
+          "zhtp-cli/src/commands/auth.rs",
+          "zhtp-cli/src/commands/backup.rs",
+          "zhtp-cli/src/commands/blockchain.rs",
+          "zhtp-cli/src/commands/citizen.rs",
+          "zhtp-cli/src/commands/common.rs",
+          "zhtp-cli/src/commands/completion.rs",
+          "zhtp-cli/src/commands/component.rs",
+          "zhtp-cli/src/commands/config.rs",
+          "zhtp-cli/src/commands/curve.rs",
+          "zhtp-cli/src/commands/dao.rs",
+          "zhtp-cli/src/commands/deploy.rs",
+          "zhtp-cli/src/commands/diagnostics.rs",
+          "zhtp-cli/src/commands/domain.rs",
+          "zhtp-cli/src/commands/identity.rs",
+          "zhtp-cli/src/commands/interactive.rs",
+          "zhtp-cli/src/commands/isolation.rs",
+          "zhtp-cli/src/commands/man.rs",
+          "zhtp-cli/src/commands/mod.rs",
+          "zhtp-cli/src/commands/monitor.rs",
+          "zhtp-cli/src/commands/network.rs",
+          "zhtp-cli/src/commands/node.rs",
+          "zhtp-cli/src/commands/profile.rs",
+          "zhtp-cli/src/commands/pubkey.rs",
+          "zhtp-cli/src/commands/rewards.rs",
+          "zhtp-cli/src/commands/server.rs",
+          "zhtp-cli/src/commands/service.rs",
+          "zhtp-cli/src/commands/token.rs",
+          "zhtp-cli/src/commands/transaction_utils.rs",
+          "zhtp-cli/src/commands/trust.rs",
+          "zhtp-cli/src/commands/ubi.rs",
+          "zhtp-cli/src/commands/update.rs",
+          "zhtp-cli/src/commands/version.rs",
+          "zhtp-cli/src/commands/wallet.rs",
+          "zhtp-cli/src/commands/web4_utils.rs",
+          "zhtp-cli/src/error.rs",
+          "zhtp-cli/src/execution.rs",
+          "zhtp-cli/src/interactive.rs",
+          "zhtp-cli/src/interactive_shell.rs",
+          "zhtp-cli/src/lib.rs",
+          "zhtp-cli/src/logic/config.rs",
+          "zhtp-cli/src/logic/deploy.rs",
+          "zhtp-cli/src/logic/identity.rs",
+          "zhtp-cli/src/logic/mod.rs",
+          "zhtp-cli/src/logic/network.rs",
+          "zhtp-cli/src/logic/paths.rs",
+          "zhtp-cli/src/logic/wallet.rs",
+          "zhtp-cli/src/main.rs",
+          "zhtp-cli/src/output.rs"
+        ]
+      },
+      {
+        "name": "Other — tests",
+        "slug": "other-tests",
+        "files": [
+          "zhtp-cli/tests/IMPLEMENTATION_SUMMARY.md",
+          "zhtp-cli/tests/TEST_FILES_INDEX.md",
+          "zhtp-cli/tests/WEB4_FUNCTIONAL_TESTING.md",
+          "zhtp-cli/tests/feature_tests.rs",
+          "zhtp-cli/tests/handler_tests.rs",
+          "zhtp-cli/tests/integration_tests.rs",
+          "zhtp-cli/tests/web4_functional.rs",
+          "zhtp-cli/tests/web4_functional/cli_executor.rs",
+          "zhtp-cli/tests/web4_functional/mod.rs",
+          "zhtp-cli/tests/web4_functional/site_generator.rs",
+          "zhtp-cli/tests/web4_functional/state_verifier.rs",
+          "zhtp-cli/tests/web4_functional/test_env.rs",
+          "zhtp-cli/tests/web4_functional_bug_report_template.md"
+        ]
+      },
+      {
+        "name": "Other — zhtp",
+        "slug": "other-zhtp",
+        "files": [
+          "zhtp/Cargo.toml",
+          "zhtp/Info.plist",
+          "zhtp/README.md",
+          "zhtp/build.rs",
+          "zhtp/build_log.txt",
+          "zhtp/create_app_bundle.sh"
+        ]
+      },
+      {
+        "name": "Other — configs",
+        "slug": "other-configs",
+        "files": [
+          "zhtp/configs/IMPLEMENTATION_SUMMARY.md",
+          "zhtp/configs/README.md",
+          "zhtp/configs/bootstrap-node.toml",
+          "zhtp/configs/dev-node.toml",
+          "zhtp/configs/edge-node.toml",
+          "zhtp/configs/full-node.toml",
+          "zhtp/configs/mac-bootstrap.toml",
+          "zhtp/configs/mainnet-bootstrap-node.toml",
+          "zhtp/configs/mainnet-edge-node.toml",
+          "zhtp/configs/mainnet-full-node.toml",
+          "zhtp/configs/mainnet-storage-node.toml",
+          "zhtp/configs/mainnet-validator-node.toml",
+          "zhtp/configs/relay-node.toml",
+          "zhtp/configs/storage-node.toml",
+          "zhtp/configs/test-node1.toml",
+          "zhtp/configs/test-node2.toml",
+          "zhtp/configs/test-node3.toml",
+          "zhtp/configs/test-node4.toml",
+          "zhtp/configs/testnet-bootstrap-node.toml",
+          "zhtp/configs/testnet-edge-node.toml",
+          "zhtp/configs/testnet-full-node.toml",
+          "zhtp/configs/testnet-storage-node.toml",
+          "zhtp/configs/testnet-validator-node.toml",
+          "zhtp/configs/validate-config.sh",
+          "zhtp/configs/validator-node.toml"
+        ]
+      },
+      {
+        "name": "Other — docs",
+        "slug": "other-docs",
+        "files": [
+          "zhtp/docs/README.md",
+          "zhtp/docs/api-reference.md",
+          "zhtp/docs/api.md",
+          "zhtp/docs/architecture.md",
+          "zhtp/docs/cli-reference.md",
+          "zhtp/docs/cli.md",
+          "zhtp/docs/configuration-guide.md",
+          "zhtp/docs/deployment-guide.md",
+          "zhtp/docs/module-analysis.md"
+        ]
+      },
+      {
+        "name": "Other — examples",
+        "slug": "other-examples",
+        "files": [
+          "zhtp/examples/device_privacy_integration_demo.rs",
+          "zhtp/examples/test_dht_api.rs"
+        ]
+      },
+      {
+        "name": "Other — proto",
+        "slug": "other-proto",
+        "files": [
+          "zhtp/proto/pouw.proto"
+        ]
+      },
+      {
+        "name": "Other — scripts",
+        "slug": "other-scripts",
+        "files": [
+          "zhtp/scripts/MOBILE_BUILD_SUMMARY.md",
+          "zhtp/scripts/README_MOBILE_BUILD.md",
+          "zhtp/scripts/build_android.sh",
+          "zhtp/scripts/build_ios.sh"
+        ]
+      },
+      {
+        "name": "Other — src",
+        "slug": "other-src",
+        "files": [
+          "zhtp/src/api/handlers/blockchain/mod.rs",
+          "zhtp/src/api/handlers/bonding_curve/mod.rs",
+          "zhtp/src/api/handlers/constants.rs",
+          "zhtp/src/api/handlers/crypto/mod.rs",
+          "zhtp/src/api/handlers/dao/mod.rs",
+          "zhtp/src/api/handlers/dht/mod.rs",
+          "zhtp/src/api/handlers/dns/mod.rs",
+          "zhtp/src/api/handlers/guardian.rs",
+          "zhtp/src/api/handlers/identity/backup_recovery.rs",
+          "zhtp/src/api/handlers/identity/bip39.rs",
+          "zhtp/src/api/handlers/identity/login_handlers.rs",
+          "zhtp/src/api/handlers/identity/mod.rs",
+          "zhtp/src/api/handlers/identity/password_reset.rs",
+          "zhtp/src/api/handlers/marketplace/mod.rs",
+          "zhtp/src/api/handlers/mesh/mod.rs",
+          "zhtp/src/api/handlers/mod.rs",
+          "zhtp/src/api/handlers/network/mod.rs",
+          "zhtp/src/api/handlers/pouw/mod.rs",
+          "zhtp/src/api/handlers/protocol/mod.rs",
+          "zhtp/src/api/handlers/storage/mod.rs",
+          "zhtp/src/api/handlers/token/mod.rs",
+          "zhtp/src/api/handlers/validator/mod.rs",
+          "zhtp/src/api/handlers/wallet/mod.rs",
+          "zhtp/src/api/handlers/wallet_content.rs",
+          "zhtp/src/api/handlers/web4/chunked_upload.rs",
+          "zhtp/src/api/handlers/web4/content.rs",
+          "zhtp/src/api/handlers/web4/domains.rs",
+          "zhtp/src/api/handlers/web4/gateway.rs",
+          "zhtp/src/api/handlers/web4/mod.rs",
+          "zhtp/src/api/handlers/zkp.rs",
+          "zhtp/src/api/middleware/csrf.rs",
+          "zhtp/src/api/middleware/mod.rs",
+          "zhtp/src/api/middleware/rate_limiter.rs",
+          "zhtp/src/api/mod.rs",
+          "zhtp/src/api/server.rs",
+          "zhtp/src/api/test_network_handler.rs",
+          "zhtp/src/config/aggregation.rs",
+          "zhtp/src/config/environment.rs",
+          "zhtp/src/config/mesh_modes.rs",
+          "zhtp/src/config/mod.rs",
+          "zhtp/src/config/network_isolation.rs",
+          "zhtp/src/config/node_type.rs",
+          "zhtp/src/config/security.rs",
+          "zhtp/src/config/spki_pin.rs",
+          "zhtp/src/config/validation.rs",
+          "zhtp/src/discovery_coordinator.rs",
+          "zhtp/src/integration/component_manager.rs",
+          "zhtp/src/integration/dependency_injection.rs",
+          "zhtp/src/integration/dht_dispatcher.rs",
+          "zhtp/src/integration/dht_integration.rs",
+          "zhtp/src/integration/dht_payload_handler.rs",
+          "zhtp/src/integration/event_bus.rs",
+          "zhtp/src/integration/mod.rs",
+          "zhtp/src/integration/service_container.rs",
+          "zhtp/src/keystore_names.rs",
+          "zhtp/src/lib.rs",
+          "zhtp/src/main.rs",
+          "zhtp/src/monitoring/alerting.rs",
+          "zhtp/src/monitoring/dashboard.rs",
+          "zhtp/src/monitoring/health_check.rs",
+          "zhtp/src/monitoring/metrics.rs",
+          "zhtp/src/monitoring/mod.rs",
+          "zhtp/src/network_output_dispatcher.rs",
+          "zhtp/src/pouw/challenge.rs",
+          "zhtp/src/pouw/disputes.rs",
+          "zhtp/src/pouw/health.rs",
+          "zhtp/src/pouw/load_test.rs",
+          "zhtp/src/pouw/metrics.rs",
+          "zhtp/src/pouw/mod.rs",
+          "zhtp/src/pouw/rate_limiter.rs",
+          "zhtp/src/pouw/rewards.rs",
+          "zhtp/src/pouw/session_log.rs",
+          "zhtp/src/pouw/types.rs",
+          "zhtp/src/pouw/validation.rs",
+          "zhtp/src/ren_ai/ollama.rs",
+          "zhtp/src/runtime/blockchain_factory.rs",
+          "zhtp/src/runtime/blockchain_provider.rs",
+          "zhtp/src/runtime/bootstrap_peers_provider.rs",
+          "zhtp/src/runtime/components/api.rs",
+          "zhtp/src/runtime/components/blockchain.rs",
+          "zhtp/src/runtime/components/consensus.rs",
+          "zhtp/src/runtime/components/crypto.rs",
+          "zhtp/src/runtime/components/economics.rs",
+          "zhtp/src/runtime/components/identity.rs",
+          "zhtp/src/runtime/components/mod.rs",
+          "zhtp/src/runtime/components/network.rs",
+          "zhtp/src/runtime/components/protocols.rs",
+          "zhtp/src/runtime/components/ren_ai.rs",
+          "zhtp/src/runtime/components/storage.rs",
+          "zhtp/src/runtime/components/zk.rs",
+          "zhtp/src/runtime/dht_indexing.rs",
+          "zhtp/src/runtime/did_startup.rs",
+          "zhtp/src/runtime/discovery_node_provider.rs",
+          "zhtp/src/runtime/edge_state_provider.rs",
+          "zhtp/src/runtime/identity_manager_provider.rs",
+          "zhtp/src/runtime/mesh_router_provider.rs",
+          "zhtp/src/runtime/mod.rs",
+          "zhtp/src/runtime/network_blockchain_event_receiver.rs",
+          "zhtp/src/runtime/network_blockchain_provider.rs",
+          "zhtp/src/runtime/node_identity.rs",
+          "zhtp/src/runtime/node_runtime.rs",
+          "zhtp/src/runtime/node_runtime_orchestrator.rs",
+          "zhtp/src/runtime/reward_orchestrator.rs",
+          "zhtp/src/runtime/routing_rewards.rs",
+          "zhtp/src/runtime/seed_storage.rs",
+          "zhtp/src/runtime/services/auto_graduation_service.rs",
+          "zhtp/src/runtime/services/bootstrap_service.rs",
+          "zhtp/src/runtime/services/genesis_funding.rs",
+          "zhtp/src/runtime/services/mining_service.rs",
+          "zhtp/src/runtime/services/mod.rs",
+          "zhtp/src/runtime/services/transaction_builder.rs",
+          "zhtp/src/runtime/shared_blockchain.rs",
+          "zhtp/src/runtime/shared_dht.rs",
+          "zhtp/src/runtime/storage_provider.rs",
+          "zhtp/src/runtime/storage_rewards.rs",
+          "zhtp/src/runtime/test_api_integration.rs",
+          "zhtp/src/runtime/token_utils.rs",
+          "zhtp/src/security/mod.rs",
+          "zhtp/src/security/protocol_filter.rs",
+          "zhtp/src/server/http/middleware.rs",
+          "zhtp/src/server/http/mod.rs",
+          "zhtp/src/server/https_gateway/config.rs",
+          "zhtp/src/server/https_gateway/handlers.rs",
+          "zhtp/src/server/https_gateway/mod.rs",
+          "zhtp/src/server/https_gateway/server.rs",
+          "zhtp/src/server/https_gateway/tests.rs",
+          "zhtp/src/server/mesh/authentication_wrapper.rs",
+          "zhtp/src/server/mesh/blockchain_sync.rs",
+          "zhtp/src/server/mesh/core.rs",
+          "zhtp/src/server/mesh/helpers.rs",
+          "zhtp/src/server/mesh/identity_api.rs",
+          "zhtp/src/server/mesh/identity_verification.rs",
+          "zhtp/src/server/mesh/mod.rs",
+          "zhtp/src/server/mesh/monitoring.rs",
+          "zhtp/src/server/mesh/rate_limiting.rs",
+          "zhtp/src/server/mesh/routing_errors.rs",
+          "zhtp/src/server/mesh/routing_integration.rs",
+          "zhtp/src/server/mesh/udp_handler.rs",
+          "zhtp/src/server/mesh_router/blockchain.rs",
+          "zhtp/src/server/mesh_router/identity.rs",
+          "zhtp/src/server/mesh_router/mod.rs",
+          "zhtp/src/server/mesh_router/peer_comms.rs",
+          "zhtp/src/server/mesh_router/performance.rs",
+          "zhtp/src/server/mesh_router/protocol_handlers.rs",
+          "zhtp/src/server/mesh_router/wallet.rs",
+          "zhtp/src/server/mod.rs",
+          "zhtp/src/server/monitoring/alerts.rs",
+          "zhtp/src/server/monitoring/metrics.rs",
+          "zhtp/src/server/monitoring/mod.rs",
+          "zhtp/src/server/monitoring/reputation.rs",
+          "zhtp/src/server/protocol_detection.rs",
+          "zhtp/src/server/protocols/bluetooth_classic.rs",
+          "zhtp/src/server/protocols/bluetooth_le.rs",
+          "zhtp/src/server/protocols/bootstrap.rs",
+          "zhtp/src/server/protocols/mod.rs",
+          "zhtp/src/server/protocols/wifi.rs",
+          "zhtp/src/server/quic_handler.rs",
+          "zhtp/src/server/zhtp/mod.rs",
+          "zhtp/src/server/zhtp/router.rs",
+          "zhtp/src/server/zhtp/serialization.rs",
+          "zhtp/src/session_manager.rs",
+          "zhtp/src/storage_network_integration.rs",
+          "zhtp/src/unified_server.rs",
+          "zhtp/src/unified_server.rs.tcp_udp_backup",
+          "zhtp/src/utils/logging.rs",
+          "zhtp/src/utils/mod.rs",
+          "zhtp/src/utils/ui/mod.rs",
+          "zhtp/src/web4_manifest.rs",
+          "zhtp/src/web4_stub.rs"
+        ]
+      },
+      {
+        "name": "Other — static",
+        "slug": "other-static",
+        "files": [
+          "zhtp/static/explorer/explorer-3bfc1d811e97da06.js",
+          "zhtp/static/explorer/index.html",
+          "zhtp/static/explorer/style-1c011d8f0c15ca86.css"
+        ]
+      },
+      {
+        "name": "Other — tests",
+        "slug": "other-tests",
+        "files": [
+          "zhtp/tests/VALIDATOR_READINESS_GATES.md",
+          "zhtp/tests/blockchain_api_tests.rs",
+          "zhtp/tests/cli_tests.rs",
+          "zhtp/tests/common_network_test.rs",
+          "zhtp/tests/config_test_utils.rs",
+          "zhtp/tests/config_tests.rs",
+          "zhtp/tests/config_tests_fixed.rs",
+          "zhtp/tests/dht_persistence_test.rs",
+          "zhtp/tests/integration_module_tests.rs",
+          "zhtp/tests/integration_tests.rs",
+          "zhtp/tests/mesh_formation_test.rs",
+          "zhtp/tests/monitoring_tests.rs",
+          "zhtp/tests/monitoring_tests_fixed.rs",
+          "zhtp/tests/multi_node_network_test.rs",
+          "zhtp/tests/pouw_web4_integration_tests.rs",
+          "zhtp/tests/quic_api_endpoints_test.rs",
+          "zhtp/tests/quic_integration_test.rs",
+          "zhtp/tests/recovery_phrase_validation_test.rs",
+          "zhtp/tests/reward_edge_case_tests.rs",
+          "zhtp/tests/reward_integration_tests.rs",
+          "zhtp/tests/reward_load_tests.rs",
+          "zhtp/tests/runtime_tests.rs"
+        ]
+      }
+    ]
+  }
+]

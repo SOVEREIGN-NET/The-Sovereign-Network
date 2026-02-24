@@ -75,6 +75,9 @@ impl MiningService {
     pub async fn mine_block(blockchain: &mut Blockchain) -> Result<()> {
         let next_height = blockchain.height + 1;
 
+        // Phase 2 invariant: TokenTransfer and TokenMint must have fee == 0.
+        blockchain.evict_phase2_invalid_transactions("mine_block");
+
         // Build UBI TokenMint transactions for this block (block-authoritative)
         let mut ubi_txs: Vec<lib_blockchain::Transaction> = Vec::new();
         for entry in blockchain.collect_ubi_mint_entries(next_height) {

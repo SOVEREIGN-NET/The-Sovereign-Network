@@ -607,15 +607,35 @@ pub fn apply_native_transfer(
     })
 }
 
-/// Apply a token transfer transaction (balance model)
+/// Apply a token transfer transaction (balance model) with protocol fee routing.
+///
+/// Debits `amount` from `from`, credits `net_amount` (amount minus fee) to `to`,
+/// and credits `fee_amount` to `fee_destination`.
+///
+/// `fee_bps` is the fee rate in basis points (100 = 1%). Pass 0 to skip fee.
+/// If `fee_destination` is the zero address, the fee is not collected.
 pub fn apply_token_transfer(
     mutator: &StateMutator<'_>,
     token: &TokenId,
     from: &Address,
     to: &Address,
     amount: u128,
-) -> TxApplyResult<()> {
-    mutator.transfer_token(token, from, to, amount)
+    fee_bps: u16,
+    fee_destination: &Address,
+) -> TxApplyResult<u128> {
+    let fee_amount = if fee_bps > 0 && *fee_destination != Address::ZERO {
+        (amount * fee_bps as u128) / 10_000
+    } else {
+        0
+    };
+    let net_amount = amount.saturating_sub(fee_amount);
+
+    mutator.debit_token(token, from, amount)?;
+    mutator.credit_token(token, to, net_amount)?;
+    if fee_amount > 0 {
+        mutator.credit_token(token, fee_destination, fee_amount)?;
+    }
+    Ok(fee_amount)
 }
 
 /// Apply a token mint transaction (balance model)
