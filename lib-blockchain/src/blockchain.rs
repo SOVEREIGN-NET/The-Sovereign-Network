@@ -4078,6 +4078,25 @@ impl Blockchain {
                     let amount_u64: u64 = transfer.amount.try_into()
                         .map_err(|_| anyhow::anyhow!("TokenTransfer amount exceeds u64"))?;
 
+                    // Compute 1% protocol fee and resolve DAO treasury key before
+                    // any mutable borrows are taken on token_contracts.
+                    let fee_rate_bps = crate::contracts::tokens::constants::SOV_FEE_RATE_BPS;
+                    let fee_amount: u64 = (amount_u64 as u128 * fee_rate_bps as u128 / 10_000) as u64;
+                    let net_amount: u64 = amount_u64.saturating_sub(fee_amount);
+
+                    let treasury_pk_opt: Option<PublicKey> = self.dao_treasury_wallet_id
+                        .as_ref()
+                        .and_then(|hex_id| hex::decode(hex_id).ok())
+                        .and_then(|bytes| {
+                            if bytes.len() == 32 {
+                                let mut arr = [0u8; 32];
+                                arr.copy_from_slice(&bytes);
+                                Some(Self::wallet_key_for_sov(&arr))
+                            } else {
+                                None
+                            }
+                        });
+
                     let tx_hash_obj = transaction.hash();
                     let tx_hash_bytes = tx_hash_obj.as_bytes();
                     let mut tx_hash = [0u8; 32];
@@ -4111,8 +4130,31 @@ impl Blockchain {
 
                         let token = self.token_contracts.get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        token.transfer(&ctx, &to_wallet_addr, amount_u64)
+                        // Pre-check: sender must hold the full amount (net + fee).
+                        let from_bal = token.balance_of(&from_wallet_addr);
+                        if from_bal < amount_u64 {
+                            return Err(anyhow::anyhow!(
+                                "TokenTransfer insufficient balance: have {}, need {}",
+                                from_bal, amount_u64
+                            ));
+                        }
+                        // Transfer net amount (full amount minus protocol fee) to recipient.
+                        token.transfer(&ctx, &to_wallet_addr, net_amount)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
+                        // Debit fee from sender and route to DAO treasury.
+                        if fee_amount > 0 {
+                            let from_bal_post = token.balance_of(&from_wallet_addr);
+                            token.balances.insert(
+                                from_wallet_addr.clone(),
+                                from_bal_post.saturating_sub(fee_amount),
+                            );
+                            if let Some(ref tpk) = treasury_pk_opt {
+                                let tbal = token.balance_of(tpk);
+                                token.balances.insert(tpk.clone(), tbal.saturating_add(fee_amount));
+                                debug!("TokenTransfer: {} SOV fee → DAO treasury (height {})",
+                                    fee_amount, block.height());
+                            }
+                        }
                     } else {
                         if sender_pk.key_id != transfer.from {
                             return Err(anyhow::anyhow!("TokenTransfer sender key_id mismatch"));
@@ -4133,8 +4175,31 @@ impl Blockchain {
 
                         let token = self.token_contracts.get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        token.transfer(&ctx, &recipient_pk, amount_u64)
+                        // Pre-check: sender must hold the full amount (net + fee).
+                        let sender_bal = token.balance_of(&sender_pk);
+                        if sender_bal < amount_u64 {
+                            return Err(anyhow::anyhow!(
+                                "TokenTransfer insufficient balance: have {}, need {}",
+                                sender_bal, amount_u64
+                            ));
+                        }
+                        // Transfer net amount (full amount minus protocol fee) to recipient.
+                        token.transfer(&ctx, &recipient_pk, net_amount)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
+                        // Debit fee from sender and route to DAO treasury.
+                        if fee_amount > 0 {
+                            let sender_bal_post = token.balance_of(&sender_pk);
+                            token.balances.insert(
+                                sender_pk.clone(),
+                                sender_bal_post.saturating_sub(fee_amount),
+                            );
+                            if let Some(ref tpk) = treasury_pk_opt {
+                                let tbal = token.balance_of(tpk);
+                                token.balances.insert(tpk.clone(), tbal.saturating_add(fee_amount));
+                                debug!("TokenTransfer: {} token fee → DAO treasury (height {})",
+                                    fee_amount, block.height());
+                            }
+                        }
                     };
 
                     // Increment nonce after successful transfer
@@ -8369,6 +8434,43 @@ impl Blockchain {
 
         if let Err(e) = blockchain.process_approved_governance_proposals() {
             warn!("Failed to apply governance parameter updates during load_from_file: {}", e);
+        }
+
+        // Phase 2 mempool cleanup: evict any TokenTransfer / TokenMint transactions
+        // that have a non-zero fee.  Such transactions were admitted by older node
+        // software before the Phase 2 fee==0 rule was enforced at the mempool layer.
+        // The BlockExecutor rejects them at execution time, causing mining to stall
+        // indefinitely.  Purging them here at load time ensures they are gone from
+        // disk after the next successful block save, even if no other valid transaction
+        // arrives in the same session.
+        {
+            use crate::types::transaction_type::TransactionType;
+            let before = blockchain.pending_transactions.len();
+            blockchain.pending_transactions.retain(|tx| {
+                let is_phase2_zero_fee = matches!(
+                    tx.transaction_type,
+                    TransactionType::TokenTransfer | TransactionType::TokenMint
+                );
+                if is_phase2_zero_fee && tx.fee != 0 {
+                    warn!(
+                        "load_from_file: evicting Phase-2-invalid pending tx \
+                         hash={} type={:?} fee={}",
+                        hex::encode(&tx.hash().as_bytes()[..8]),
+                        tx.transaction_type,
+                        tx.fee,
+                    );
+                    false
+                } else {
+                    true
+                }
+            });
+            let evicted = before - blockchain.pending_transactions.len();
+            if evicted > 0 {
+                warn!(
+                    "load_from_file: evicted {} Phase-2-invalid pending transaction(s)",
+                    evicted
+                );
+            }
         }
 
         info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, tokens: {}, UTXOs: {}, {:?})",

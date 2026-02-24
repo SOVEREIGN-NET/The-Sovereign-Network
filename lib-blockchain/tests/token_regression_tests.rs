@@ -513,7 +513,8 @@ fn test_sov_wallet_transfer() {
     let recipient_balance = token.balance_of(&wallet_key(&recipient_wallet_id));
 
     assert_eq!(sender_balance, 7_000, "Sender should have 10000 - 3000 = 7000");
-    assert_eq!(recipient_balance, 3_000, "Recipient should have 3000");
+    // Recipient receives net amount after 1% protocol fee (3000 * 99% = 2970)
+    assert_eq!(recipient_balance, 2_970, "Recipient should have 3000 minus 1% fee = 2970");
 }
 
 /// Test 5: Custom token transfer using key_id addressing.
@@ -552,7 +553,8 @@ fn test_custom_token_transfer() {
 
     let token = blockchain.token_contracts.get(&token_id).unwrap();
     assert_eq!(token.balance_of(&creator), 750_000, "Creator should have 1M - 250K");
-    assert_eq!(token.balance_of(&recipient), 250_000, "Recipient should have 250K");
+    // Recipient receives net amount after 1% protocol fee (250000 * 99% = 247500)
+    assert_eq!(token.balance_of(&recipient), 247_500, "Recipient should have 250K minus 1% fee = 247500");
 }
 
 /// Test 6: ContractExecution token burn is rejected.
@@ -760,7 +762,9 @@ fn test_balance_queries_after_operations() {
 
     let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
     assert_eq!(token.balance_of(&wallet_key(&wallet_a)), 25_000, "A: 50K - 20K - 5K = 25K");
-    assert_eq!(token.balance_of(&wallet_key(&wallet_b)), 25_000, "B: 20K + 5K = 25K");
+    // B receives net amounts after 1% protocol fee:
+    // 20K * 99% = 19800, 5K * 99% = 4950, total = 24750
+    assert_eq!(token.balance_of(&wallet_key(&wallet_b)), 24_750, "B: 20K * 99% + 5K * 99% = 24750");
 }
 
 /// Test 8: Created tokens appear in token_contracts listing.
@@ -980,7 +984,8 @@ fn test_sequential_nonces() {
     // Verify final balances
     let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
     assert_eq!(token.balance_of(&wallet_key(&sender_wid)), 1_000_000 - 30_000);
-    assert_eq!(token.balance_of(&wallet_key(&recipient_wid)), 30_000);
+    // Recipient receives net amount after 1% fee per transfer: 3 * (10000 * 99%) = 29700
+    assert_eq!(token.balance_of(&wallet_key(&recipient_wid)), 29_700);
 }
 
 /// Test 15: Nonces are independent per token for the same sender.

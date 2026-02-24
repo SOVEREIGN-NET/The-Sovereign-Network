@@ -278,6 +278,40 @@ pub extern "C" fn zhtp_client_identity_get_public_key(handle: *const IdentityHan
     buf
 }
 
+/// Derive wallet_id (32-byte blake3 hash) from a Dilithium public key.
+///
+/// Accepts either:
+/// - 32 bytes: returned as-is (already a wallet_id / key_id)
+/// - ≥1000 bytes: Dilithium2 (1312) or Dilithium5 (2592) public key — computes blake3(pk)
+///
+/// Returns empty buffer on invalid input. Caller must free with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_derive_wallet_id(
+    pubkey: *const u8,
+    pubkey_len: usize,
+) -> ByteBuffer {
+    if pubkey.is_null() || pubkey_len == 0 {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let pk_slice = unsafe { std::slice::from_raw_parts(pubkey, pubkey_len) };
+    let key_id: [u8; 32] = if pubkey_len == 32 {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(pk_slice);
+        arr
+    } else if pubkey_len >= 1000 {
+        token_tx::create_public_key(pk_slice.to_vec()).key_id
+    } else {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    };
+    let mut boxed = Box::new(key_id);
+    let buf = ByteBuffer {
+        data: boxed.as_mut_ptr(),
+        len: 32,
+    };
+    std::mem::forget(boxed);
+    buf
+}
+
 /// Get node ID from identity
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_get_node_id(handle: *const IdentityHandle) -> ByteBuffer {
@@ -1089,6 +1123,7 @@ pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeBuildSovWa
     to_wallet_id: jni::objects::JByteArray,
     amount: jni::sys::jlong,
     chain_id: jni::sys::jint,
+    nonce: jni::sys::jlong,
 ) -> jni::sys::jstring {
     if handle == 0 {
         return std::ptr::null_mut();
@@ -1112,6 +1147,7 @@ pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeBuildSovWa
         to_vec.as_ptr(),
         amount as u64,
         chain_id as u8,
+        nonce as u64,
     );
     if hex_ptr.is_null() {
         return std::ptr::null_mut();

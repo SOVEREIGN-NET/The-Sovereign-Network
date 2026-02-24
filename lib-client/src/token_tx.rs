@@ -240,7 +240,7 @@ pub fn build_contract_transaction(
     let memo_sig = Signature {
         signature: vec![],
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2, // Use Dilithium2 to match identity key type
+        algorithm: SignatureAlgorithm::Dilithium5, // Use Dilithium2 to match identity key type
         timestamp: 0,
     };
 
@@ -256,7 +256,7 @@ pub fn build_contract_transaction(
     // Server calculation: fee = ceil(transaction_size_bytes / 8.4)
     let estimated_tx_size = 200 // minimum fixed fields
         + memo.len() // memo variable size
-        + 3732; // Dilithium2 witness: 2420 byte sig + 1312 byte pk (from lib-blockchain)
+        + 7187; // Dilithium5 witness: 4595 byte sig + 2592 byte pk
 
     // Calculate fee using integer arithmetic: ceil(size / 8.4) = ceil(size * 10 / 84)
     // This ensures: 10083 bytes -> 1200 SOV (matches server requirement)
@@ -278,7 +278,7 @@ pub fn build_contract_transaction(
                 kyber_pk: vec![],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         memo: memo.clone(),
@@ -322,7 +322,7 @@ pub fn build_contract_transaction(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -361,14 +361,17 @@ pub fn build_transfer_tx(
     let sender_pk = create_public_key(identity.public_key.clone());
 
     let to_key_id = if to_pubkey.len() == 32 {
+        // 32 bytes: already a key_id (blake3 hash)
         let mut key_id = [0u8; 32];
         key_id.copy_from_slice(to_pubkey);
         key_id
-    } else if to_pubkey.len() >= 2000 {
+    } else if to_pubkey.len() >= 1000 {
+        // Full Dilithium public key: Dilithium2 (1312 bytes) or Dilithium5 (2592 bytes)
+        // Derive wallet_id as blake3(dilithium_pk)
         create_public_key(to_pubkey.to_vec()).key_id
     } else {
         return Err(format!(
-            "Invalid recipient public key length: {} (expected 32-byte key_id or full Dilithium key)",
+            "Invalid recipient public key length: {} (expected 32-byte key_id or full Dilithium2/5 key)",
             to_pubkey.len()
         ));
     };
@@ -387,7 +390,7 @@ pub fn build_transfer_tx(
         Signature {
             signature: vec![],
             public_key: sender_pk.clone(),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         Vec::new(),
@@ -403,7 +406,7 @@ pub fn build_transfer_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: sender_pk,
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -441,7 +444,7 @@ pub fn build_sov_wallet_transfer_tx(
         Signature {
             signature: vec![],
             public_key: sender_pk.clone(),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         Vec::new(),
@@ -457,7 +460,7 @@ pub fn build_sov_wallet_transfer_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: sender_pk,
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -479,7 +482,7 @@ fn calculate_transfer_fee(identity: &Identity, tx: &mut Transaction) -> Result<u
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: create_public_key(identity.public_key.clone()),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -514,7 +517,7 @@ fn calculate_min_fee_from_size(
 }
 
 /// Calculate the minimum fee for a hex-encoded bincode transaction.
-/// If the signature/public key is missing, a Dilithium2 witness is assumed.
+/// If the signature/public key is missing, a Dilithium5 witness is assumed.
 pub fn calculate_min_fee_for_tx_hex(tx_hex: &str) -> Result<u64, String> {
     let raw = hex::decode(tx_hex).map_err(|e| format!("Invalid hex: {}", e))?;
     let mut tx: Transaction = bincode::deserialize(&raw)
@@ -524,8 +527,8 @@ pub fn calculate_min_fee_for_tx_hex(tx_hex: &str) -> Result<u64, String> {
     let pk_len = tx.signature.public_key.dilithium_pk.len();
     if sig_len == 0 || pk_len == 0 {
         let (expected_sig, expected_pk) = match tx.signature.algorithm {
-            SignatureAlgorithm::Dilithium5 => (4627usize, 2592usize),
-            _ => (2420usize, 1312usize), // Default to Dilithium2
+            SignatureAlgorithm::Dilithium2 => (2420usize, 1312usize),
+            _ => (4595usize, 2592usize), // Dilithium5 (identity default)
         };
         tx.signature.signature = vec![0u8; expected_sig];
         tx.signature.public_key.dilithium_pk = vec![0u8; expected_pk];
@@ -580,7 +583,7 @@ pub fn build_mint_tx(
         Signature {
             signature: vec![],
             public_key: signer_pk.clone(),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         Vec::new(),
@@ -594,7 +597,7 @@ pub fn build_mint_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: signer_pk,
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -630,7 +633,7 @@ pub fn build_create_token_tx(
         Signature {
             signature: vec![],
             public_key: signer_pk.clone(),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         memo,
@@ -644,7 +647,7 @@ pub fn build_create_token_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: signer_pk,
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -666,7 +669,7 @@ pub fn build_create_token_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: create_public_key(identity.public_key.clone()),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
