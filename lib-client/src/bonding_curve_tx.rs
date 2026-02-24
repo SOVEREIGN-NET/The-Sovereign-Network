@@ -3,12 +3,12 @@
 //! Provides FFI-exportable functions for building signed bonding curve transactions.
 //! iOS/Android clients call these to get hex-encoded transactions ready for the API.
 
+use lib_blockchain::integration::crypto_integration::{PublicKey, Signature};
+use lib_blockchain::transaction::{
+    BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData,
+};
 use lib_blockchain::Transaction;
 use lib_blockchain::TransactionType;
-use lib_blockchain::transaction::{
-    BondingCurveDeployData, BondingCurveBuyData, BondingCurveSellData, BondingCurveGraduateData,
-};
-use lib_blockchain::integration::crypto_integration::{Signature, PublicKey};
 use lib_crypto::types::SignatureAlgorithm;
 
 /// Build a signed bonding curve deploy transaction.
@@ -17,11 +17,11 @@ pub fn build_bonding_curve_deploy_tx(
     identity: &crate::Identity,
     name: &str,
     symbol: &str,
-    curve_type: u8,           // 0=Linear, 1=Exponential, 2=Sigmoid
+    curve_type: u8, // 0=Linear, 1=Exponential, 2=Sigmoid
     base_price: u64,
     curve_param: u64,
     midpoint_supply: Option<u64>,
-    threshold_type: u8,       // 0=ReserveAmount, 1=SupplyAmount, 2=TimeAndReserve, 3=TimeAndSupply
+    threshold_type: u8, // 0=ReserveAmount, 1=SupplyAmount, 2=TimeAndReserve, 3=TimeAndSupply
     threshold_value: u64,
     threshold_time_seconds: Option<u64>,
     sell_enabled: bool,
@@ -61,7 +61,7 @@ pub fn build_bonding_curve_deploy_tx(
                 kyber_pk: vec![],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         b"ZHTP_BONDING_CURVE_DEPLOY".to_vec(),
@@ -83,8 +83,8 @@ pub fn build_bonding_curve_deploy_tx(
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
 
     Ok(hex::encode(final_tx_bytes))
 }
@@ -124,7 +124,7 @@ pub fn build_bonding_curve_buy_tx(
                 kyber_pk: vec![],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         b"ZHTP_BONDING_CURVE_BUY".to_vec(),
@@ -145,8 +145,8 @@ pub fn build_bonding_curve_buy_tx(
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
 
     Ok(hex::encode(final_tx_bytes))
 }
@@ -186,7 +186,7 @@ pub fn build_bonding_curve_sell_tx(
                 kyber_pk: vec![],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         b"ZHTP_BONDING_CURVE_SELL".to_vec(),
@@ -207,8 +207,8 @@ pub fn build_bonding_curve_sell_tx(
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
 
     Ok(hex::encode(final_tx_bytes))
 }
@@ -250,7 +250,7 @@ pub fn build_bonding_curve_graduate_tx(
                 kyber_pk: vec![],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         b"ZHTP_BONDING_CURVE_GRADUATE".to_vec(),
@@ -271,8 +271,8 @@ pub fn build_bonding_curve_graduate_tx(
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
 
     Ok(hex::encode(final_tx_bytes))
 }
@@ -291,15 +291,23 @@ pub fn build_swap_tx(
     nonce: u64,
 ) -> Result<String, String> {
     // For AMM swaps, we use ContractExecution with encoded call data
-    use lib_blockchain::types::{ContractType, ContractCall, CallPermissions};
+    use lib_blockchain::types::{CallPermissions, ContractCall, ContractType};
 
     let public_key = crate::token_tx::create_public_key(identity.public_key.clone());
     let mut swapper_key_id = [0u8; 32];
     swapper_key_id.copy_from_slice(&public_key.key_id[..32]);
 
     // Encode swap call data
-    let call_data = bincode::serialize(&("swap", token_id, pool_id, amount_in, min_amount_out, token_to_sov, nonce))
-        .map_err(|e| format!("Failed to encode swap data: {}", e))?;
+    let call_data = bincode::serialize(&(
+        "swap",
+        token_id,
+        pool_id,
+        amount_in,
+        min_amount_out,
+        token_to_sov,
+        nonce,
+    ))
+    .map_err(|e| format!("Failed to encode swap data: {}", e))?;
 
     let contract_call = ContractCall {
         contract_type: ContractType::Token,
@@ -329,7 +337,7 @@ pub fn build_swap_tx(
                 kyber_pk: vec![],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         memo,
@@ -364,8 +372,8 @@ pub fn build_swap_tx(
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
 
     Ok(hex::encode(final_tx_bytes))
 }
@@ -381,12 +389,19 @@ pub fn build_add_liquidity_tx(
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
-    use lib_blockchain::types::{ContractType, ContractCall, CallPermissions};
+    use lib_blockchain::types::{CallPermissions, ContractCall, ContractType};
 
     let public_key = crate::token_tx::create_public_key(identity.public_key.clone());
 
-    let call_data = bincode::serialize(&("add_liquidity", token_id, pool_id, token_amount, sov_amount, nonce))
-        .map_err(|e| format!("Failed to encode add liquidity data: {}", e))?;
+    let call_data = bincode::serialize(&(
+        "add_liquidity",
+        token_id,
+        pool_id,
+        token_amount,
+        sov_amount,
+        nonce,
+    ))
+    .map_err(|e| format!("Failed to encode add liquidity data: {}", e))?;
 
     let contract_call = ContractCall {
         contract_type: ContractType::Token,
@@ -415,7 +430,7 @@ pub fn build_add_liquidity_tx(
                 kyber_pk: vec![],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         memo,
@@ -450,8 +465,8 @@ pub fn build_add_liquidity_tx(
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
 
     Ok(hex::encode(final_tx_bytes))
 }
@@ -466,7 +481,7 @@ pub fn build_remove_liquidity_tx(
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
-    use lib_blockchain::types::{ContractType, ContractCall, CallPermissions};
+    use lib_blockchain::types::{CallPermissions, ContractCall, ContractType};
 
     let public_key = crate::token_tx::create_public_key(identity.public_key.clone());
 
@@ -500,7 +515,7 @@ pub fn build_remove_liquidity_tx(
                 kyber_pk: vec![],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         memo,
@@ -535,8 +550,8 @@ pub fn build_remove_liquidity_tx(
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
 
     Ok(hex::encode(final_tx_bytes))
 }

@@ -43,8 +43,8 @@ mod native {
 
     impl Dilithium5 {
         pub const PUBLIC_KEY_SIZE: usize = 2592;
-        pub const SECRET_KEY_SIZE: usize = 4896;  // pqcrypto-dilithium (random)
-        pub const SECRET_KEY_SIZE_SEEDED: usize = 4864;  // crystals-dilithium (from seed)
+        pub const SECRET_KEY_SIZE: usize = 4896; // pqcrypto-dilithium (random)
+        pub const SECRET_KEY_SIZE_SEEDED: usize = 4864; // crystals-dilithium (from seed)
         pub const SIGNATURE_SIZE: usize = 4595;
 
         pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>)> {
@@ -67,7 +67,10 @@ mod native {
                 )));
             }
             let keypair = DilithiumKeypair::generate(Some(seed));
-            Ok((keypair.public.to_bytes().to_vec(), keypair.secret.to_bytes().to_vec()))
+            Ok((
+                keypair.public.to_bytes().to_vec(),
+                keypair.secret.to_bytes().to_vec(),
+            ))
         }
 
         pub fn sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
@@ -82,8 +85,9 @@ mod native {
                 Ok(signature.to_vec())
             } else if secret_key.len() == 4896 {
                 // Use pqcrypto-dilithium for randomly generated keys
-                let sk = dilithium5::SecretKey::from_bytes(secret_key)
-                    .map_err(|_| ClientError::CryptoError("Invalid Dilithium5 secret key".into()))?;
+                let sk = dilithium5::SecretKey::from_bytes(secret_key).map_err(|_| {
+                    ClientError::CryptoError("Invalid Dilithium5 secret key".into())
+                })?;
                 let sig = dilithium5::detached_sign(message, &sk);
                 Ok(sig.as_bytes().to_vec())
             } else {
@@ -166,7 +170,9 @@ mod native {
 #[cfg(target_arch = "wasm32")]
 mod wasm_crypto {
     use super::*;
-    use crystals_dilithium::dilithium5::{Keypair as DilithiumKeypair, PublicKey, SecretKey, SIGNBYTES};
+    use crystals_dilithium::dilithium5::{
+        Keypair as DilithiumKeypair, PublicKey, SecretKey, SIGNBYTES,
+    };
     use pqc_kyber::*;
 
     /// Dilithium5 post-quantum digital signatures (pure Rust implementation)
@@ -181,12 +187,18 @@ mod wasm_crypto {
 
         pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>)> {
             let keypair = DilithiumKeypair::generate(None);
-            Ok((keypair.public.to_bytes().to_vec(), keypair.secret.to_bytes().to_vec()))
+            Ok((
+                keypair.public.to_bytes().to_vec(),
+                keypair.secret.to_bytes().to_vec(),
+            ))
         }
 
         pub fn generate_keypair_from_seed(seed: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
             let keypair = DilithiumKeypair::generate(Some(seed));
-            Ok((keypair.public.to_bytes().to_vec(), keypair.secret.to_bytes().to_vec()))
+            Ok((
+                keypair.public.to_bytes().to_vec(),
+                keypair.secret.to_bytes().to_vec(),
+            ))
         }
 
         pub fn sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
@@ -219,8 +231,9 @@ mod wasm_crypto {
         pub const SHARED_SECRET_SIZE: usize = KYBER_SSBYTES;
 
         pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>)> {
-            let keys = keypair(&mut rand::thread_rng())
-                .map_err(|e| ClientError::CryptoError(format!("Kyber keypair generation failed: {:?}", e)))?;
+            let keys = keypair(&mut rand::thread_rng()).map_err(|e| {
+                ClientError::CryptoError(format!("Kyber keypair generation failed: {:?}", e))
+            })?;
             Ok((keys.public.to_vec(), keys.secret.to_vec()))
         }
 
@@ -233,27 +246,30 @@ mod wasm_crypto {
         }
 
         pub fn encapsulate(public_key: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-            let pk: [u8; KYBER_PUBLICKEYBYTES] = public_key
-                .try_into()
-                .map_err(|_| ClientError::CryptoError("Invalid Kyber1024 public key length".into()))?;
+            let pk: [u8; KYBER_PUBLICKEYBYTES] = public_key.try_into().map_err(|_| {
+                ClientError::CryptoError("Invalid Kyber1024 public key length".into())
+            })?;
 
-            let (ciphertext, shared_secret) = encapsulate(&pk, &mut rand::thread_rng())
-                .map_err(|e| ClientError::CryptoError(format!("Kyber encapsulation failed: {:?}", e)))?;
+            let (ciphertext, shared_secret) =
+                encapsulate(&pk, &mut rand::thread_rng()).map_err(|e| {
+                    ClientError::CryptoError(format!("Kyber encapsulation failed: {:?}", e))
+                })?;
 
             Ok((shared_secret.to_vec(), ciphertext.to_vec()))
         }
 
         pub fn decapsulate(ciphertext: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
-            let ct: [u8; KYBER_CIPHERTEXTBYTES] = ciphertext
-                .try_into()
-                .map_err(|_| ClientError::CryptoError("Invalid Kyber1024 ciphertext length".into()))?;
+            let ct: [u8; KYBER_CIPHERTEXTBYTES] = ciphertext.try_into().map_err(|_| {
+                ClientError::CryptoError("Invalid Kyber1024 ciphertext length".into())
+            })?;
 
-            let sk: [u8; KYBER_SECRETKEYBYTES] = secret_key
-                .try_into()
-                .map_err(|_| ClientError::CryptoError("Invalid Kyber1024 secret key length".into()))?;
+            let sk: [u8; KYBER_SECRETKEYBYTES] = secret_key.try_into().map_err(|_| {
+                ClientError::CryptoError("Invalid Kyber1024 secret key length".into())
+            })?;
 
-            let shared_secret = decapsulate(&ct, &sk)
-                .map_err(|e| ClientError::CryptoError(format!("Kyber decapsulation failed: {:?}", e)))?;
+            let shared_secret = decapsulate(&ct, &sk).map_err(|e| {
+                ClientError::CryptoError(format!("Kyber decapsulation failed: {:?}", e))
+            })?;
 
             Ok(shared_secret.to_vec())
         }
@@ -422,25 +438,38 @@ mod tests {
         let seed = [42u8; 32];
         let (pk, sk) = Dilithium5::generate_keypair_from_seed(&seed).unwrap();
 
-        println!("Cross-library test: pk_len={}, sk_len={}", pk.len(), sk.len());
+        println!(
+            "Cross-library test: pk_len={}, sk_len={}",
+            pk.len(),
+            sk.len()
+        );
         assert_eq!(pk.len(), 2592, "Public key should be 2592 bytes");
-        assert_eq!(sk.len(), 4864, "Secret key from seed should be 4864 bytes (crystals-dilithium)");
+        assert_eq!(
+            sk.len(),
+            4864,
+            "Secret key from seed should be 4864 bytes (crystals-dilithium)"
+        );
 
         // Sign with lib-client (uses crystals-dilithium for 4864-byte keys)
         let message = b"SEED_MIGRATE:supertramp:abc123hex:1234567890";
         let signature = Dilithium5::sign(message, &sk).expect("Signing should succeed");
 
         println!("Signature length: {}", signature.len());
-        assert_eq!(signature.len(), 4595, "Dilithium5 signature should be 4595 bytes");
+        assert_eq!(
+            signature.len(),
+            4595,
+            "Dilithium5 signature should be 4595 bytes"
+        );
 
         // Verify with lib-crypto using crystals-dilithium (compatible!)
         let valid = lib_crypto::post_quantum::dilithium::dilithium5_verify_crystals(
-            message,
-            &signature,
-            &pk,
-        ).expect("Verification should not error");
+            message, &signature, &pk,
+        )
+        .expect("Verification should not error");
 
-        assert!(valid, "crystals-dilithium signature MUST verify with crystals-dilithium");
+        assert!(
+            valid,
+            "crystals-dilithium signature MUST verify with crystals-dilithium"
+        );
     }
-
 }

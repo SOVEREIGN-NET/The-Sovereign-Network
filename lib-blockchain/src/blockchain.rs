@@ -935,6 +935,7 @@ impl Blockchain {
 
         blockchain.update_utxo_set(&genesis_block)?;
         blockchain.save_utxo_snapshot(0)?; // Save snapshot for genesis block
+        blockchain.ensure_treasury_wallet();
         Ok(blockchain)
     }
 
@@ -1218,6 +1219,7 @@ impl Blockchain {
         // an active block transaction. Missing or underfunded balances are
         // repaired via TokenMint backfill after startup.
         blockchain.ensure_sov_token_contract();
+        blockchain.ensure_treasury_wallet();
         blockchain.migrate_sov_key_balances_to_wallets();
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
@@ -3212,6 +3214,116 @@ impl Blockchain {
         }
     }
 
+    /// Ensure the deterministic DAO treasury wallet exists in the registry.
+    ///
+    /// Uses `blake3(b"SOV_DAO_TREASURY_V1")` as the wallet ID so every node
+    /// derives the same identity independently.  Idempotent: a second call is a
+    /// no-op when the wallet is already present and linked.
+    fn ensure_treasury_wallet(&mut self) {
+        // Deterministic ID — identical on every node.
+        let wallet_id_bytes = crate::types::hash::blake3_hash(b"SOV_DAO_TREASURY_V1").as_array();
+        let wallet_id_hex = hex::encode(wallet_id_bytes);
+
+        // Insert into registry if not present.
+        if !self.wallet_registry.contains_key(&wallet_id_hex) {
+            let wallet_data = crate::transaction::WalletTransactionData {
+                wallet_id: crate::types::Hash::new(wallet_id_bytes),
+                wallet_type: "treasury".to_string(),
+                wallet_name: "DAO Treasury".to_string(),
+                alias: None,
+                // public_key is intentionally empty: the DAO treasury wallet uses the
+                // balance model (token.balances keyed by wallet_key_for_sov(wallet_id)),
+                // not the UTXO model. UTXO-based treasury paths (get_dao_treasury_utxos,
+                // execute_dao_proposal) are legacy and do not apply to this wallet.
+                public_key: vec![],
+                owner_identity_id: None,
+                seed_commitment: crate::types::Hash::zero(),
+                created_at: 0,
+                registration_fee: 0,
+                capabilities: 0,
+                initial_balance: 0,
+            };
+            self.wallet_registry.insert(wallet_id_hex.clone(), wallet_data);
+        }
+
+        // Link as the active treasury wallet if not already set.
+        if self.dao_treasury_wallet_id.is_none() {
+            self.dao_treasury_wallet_id = Some(wallet_id_hex);
+            info!("🏦 DAO treasury wallet initialized (deterministic bootstrap)");
+        }
+    }
+
+    /// Apply a token transfer with protocol fee deduction and treasury routing.
+    ///
+    /// This is a helper that consolidates the duplicated fee logic from the two
+    /// TokenTransfer code paths (wallet-addressed and key-id addressed).
+    #[allow(dead_code)]
+    fn apply_token_transfer_with_fee(
+        token: &mut crate::contracts::TokenContract,
+        sender: &PublicKey,
+        amount: u64,
+        fee_amount: u64,
+        treasury_key: &Option<PublicKey>,
+        height: u64,
+    ) -> Result<(), anyhow::Error> {
+        if fee_amount == 0 {
+            return Ok(());
+        }
+        let sender_bal = token.balance_of(sender);
+        if sender_bal < amount {
+            return Err(anyhow::anyhow!(
+                "TokenTransfer insufficient balance: have {}, need {}",
+                sender_bal, amount
+            ));
+        }
+        let sender_bal_post = token.balance_of(sender);
+        token.balances.insert(
+            sender.clone(),
+            sender_bal_post.saturating_sub(fee_amount),
+        );
+        if let Some(ref tpk) = treasury_key {
+            let tbal = token.balance_of(tpk);
+            token.balances.insert(tpk.clone(), tbal.saturating_add(fee_amount));
+            debug!(
+                "TokenTransfer: {} SOV fee → DAO treasury (height {})",
+                fee_amount, height
+            );
+        }
+        Ok(())
+    }
+
+    /// Evict Phase-2-invalid transactions (TokenTransfer/TokenMint with fee != 0) from the mempool.
+    ///
+    /// Phase 2 requires TokenTransfer and TokenMint to have fee == 0. This helper removes
+    /// any such transactions from the pending pool. Used at block load time and before mining.
+    pub fn evict_phase2_invalid_transactions(&mut self, context: &str) -> usize {
+        use crate::types::transaction_type::TransactionType;
+        let before = self.pending_transactions.len();
+        self.pending_transactions.retain(|tx| {
+            let is_phase2_zero_fee = matches!(
+                tx.transaction_type,
+                TransactionType::TokenTransfer | TransactionType::TokenMint
+            );
+            if is_phase2_zero_fee && tx.fee != 0 {
+                warn!(
+                    "{}: evicting Phase-2-invalid pending tx hash={} type={:?} fee={}",
+                    context,
+                    hex::encode(&tx.hash().as_bytes()[..8]),
+                    tx.transaction_type,
+                    tx.fee,
+                );
+                false
+            } else {
+                true
+            }
+        });
+        let evicted = before - self.pending_transactions.len();
+        if evicted > 0 {
+            warn!("{}: evicted {} Phase-2-invalid pending transaction(s)", context, evicted);
+        }
+        evicted
+    }
+
     fn resolve_credit_pubkey_from_parts(
         &self,
         public_key: Vec<u8>,
@@ -4077,6 +4189,25 @@ impl Blockchain {
                     let amount_u64: u64 = transfer.amount.try_into()
                         .map_err(|_| anyhow::anyhow!("TokenTransfer amount exceeds u64"))?;
 
+                    // Compute 1% protocol fee and resolve DAO treasury key before
+                    // any mutable borrows are taken on token_contracts.
+                    let fee_rate_bps = crate::contracts::tokens::constants::SOV_FEE_RATE_BPS;
+                    let fee_amount: u64 = (amount_u64 as u128 * fee_rate_bps as u128 / 10_000) as u64;
+                    let net_amount: u64 = amount_u64.saturating_sub(fee_amount);
+
+                    let treasury_pk_opt: Option<PublicKey> = self.dao_treasury_wallet_id
+                        .as_ref()
+                        .and_then(|hex_id| hex::decode(hex_id).ok())
+                        .and_then(|bytes| {
+                            if bytes.len() == 32 {
+                                let mut arr = [0u8; 32];
+                                arr.copy_from_slice(&bytes);
+                                Some(Self::wallet_key_for_sov(&arr))
+                            } else {
+                                None
+                            }
+                        });
+
                     let tx_hash_obj = transaction.hash();
                     let tx_hash_bytes = tx_hash_obj.as_bytes();
                     let mut tx_hash = [0u8; 32];
@@ -4110,8 +4241,24 @@ impl Blockchain {
 
                         let token = self.token_contracts.get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        token.transfer(&ctx, &to_wallet_addr, amount_u64)
+                        // Pre-check: sender must hold the full amount (net + fee).
+                        let from_bal = token.balance_of(&from_wallet_addr);
+                        if from_bal < amount_u64 {
+                            return Err(anyhow::anyhow!(
+                                "TokenTransfer insufficient balance: have {}, need {}",
+                                from_bal, amount_u64
+                            ));
+                        }
+                        token.transfer(&ctx, &to_wallet_addr, net_amount)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
+                        Self::apply_token_transfer_with_fee(
+                            token,
+                            &from_wallet_addr,
+                            amount_u64,
+                            fee_amount,
+                            &treasury_pk_opt,
+                            block.height(),
+                        )?;
                     } else {
                         if sender_pk.key_id != transfer.from {
                             return Err(anyhow::anyhow!("TokenTransfer sender key_id mismatch"));
@@ -4132,8 +4279,24 @@ impl Blockchain {
 
                         let token = self.token_contracts.get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        token.transfer(&ctx, &recipient_pk, amount_u64)
+                        // Pre-check: sender must hold the full amount (net + fee).
+                        let sender_bal = token.balance_of(&sender_pk);
+                        if sender_bal < amount_u64 {
+                            return Err(anyhow::anyhow!(
+                                "TokenTransfer insufficient balance: have {}, need {}",
+                                sender_bal, amount_u64
+                            ));
+                        }
+                        token.transfer(&ctx, &recipient_pk, net_amount)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
+                        Self::apply_token_transfer_with_fee(
+                            token,
+                            &sender_pk,
+                            amount_u64,
+                            fee_amount,
+                            &treasury_pk_opt,
+                            block.height(),
+                        )?;
                     };
 
                     // Increment nonce after successful transfer
@@ -4502,7 +4665,6 @@ impl Blockchain {
                 );
                 // Preserve legacy create_custom_token replay semantics.
                 token.decimals = if decimals == 0 { 8 } else { decimals };
-                token.max_supply = initial_supply;
 
                 let token_id = token.token_id;
                 if self.token_contracts.contains_key(&token_id) {
@@ -5226,20 +5388,32 @@ impl Blockchain {
     /// - Efficient O(1) lookup
     /// - Consistency with other balance queries in the system
     pub fn get_dao_treasury_balance(&self) -> Result<u64> {
-        let treasury_wallet = self.get_dao_treasury_wallet()?;
-        let treasury_pubkey = crate::integration::crypto_integration::PublicKey::new(
-            treasury_wallet.public_key.clone()
-        );
+        let treasury_wallet_id = self.dao_treasury_wallet_id.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
 
-        // Issue #1018: Use TokenContract as source of truth for treasury balance
-        // This replaces the UTXO scanning approach that used `balance += 1` placeholder
+        // Build the lookup key consistent with how fee crediting inserts balances
+        // (wallet_key_for_sov uses the wallet ID bytes as key_id directly).
+        // Fall back to PublicKey::new(public_key) for legacy/test wallet IDs that
+        // are not 32-byte hex strings.
+        let treasury_key = match hex::decode(treasury_wallet_id) {
+            Ok(bytes) if bytes.len() == 32 => {
+                let mut id = [0u8; 32];
+                id.copy_from_slice(&bytes);
+                Self::wallet_key_for_sov(&id)
+            }
+            _ => {
+                let treasury_wallet = self.get_dao_treasury_wallet()?;
+                crate::integration::crypto_integration::PublicKey::new(
+                    treasury_wallet.public_key.clone()
+                )
+            }
+        };
+
+        // Issue #1018: Use TokenContract as source of truth for treasury balance.
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-
         if let Some(token) = self.token_contracts.get(&sov_token_id) {
-            Ok(token.balance_of(&treasury_pubkey))
+            Ok(token.balance_of(&treasury_key))
         } else {
-            // Token contract not initialized yet (early bootstrap)
-            // Fall back to counting UTXOs (legacy behavior, but returns 0 not placeholder)
             tracing::debug!(
                 "SOV token contract not found, treasury balance query returning 0 during bootstrap"
             );
@@ -8301,6 +8475,7 @@ impl Blockchain {
 
         // Backfill SOV balances for wallets registered before the in-memory credit was added.
         blockchain.ensure_sov_token_contract();
+        blockchain.ensure_treasury_wallet();
         blockchain.migrate_sov_key_balances_to_wallets();
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
@@ -8373,6 +8548,15 @@ impl Blockchain {
         if let Err(e) = blockchain.process_approved_governance_proposals() {
             warn!("Failed to apply governance parameter updates during load_from_file: {}", e);
         }
+
+        // Phase 2 mempool cleanup: evict any TokenTransfer / TokenMint transactions
+        // that have a non-zero fee.  Such transactions were admitted by older node
+        // software before the Phase 2 fee==0 rule was enforced at the mempool layer.
+        // The BlockExecutor rejects them at execution time, causing mining to stall
+        // indefinitely.  Purging them here at load time ensures they are gone from
+        // disk after the next successful block save, even if no other valid transaction
+        // arrives in the same session.
+        blockchain.evict_phase2_invalid_transactions("load_from_file");
 
         info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, tokens: {}, UTXOs: {}, {:?})",
               blockchain.height, blockchain.identity_registry.len(),
@@ -9338,7 +9522,7 @@ mod replay_contract_execution_tests {
         };
         let mint_params = MintParams {
             token_id,
-            to: recipient.key_id.to_vec(),
+            to: bincode::serialize(&recipient).expect("recipient should serialize"),
             amount: 250,
         };
 

@@ -5,19 +5,19 @@
 //!
 //! Supports all contract types: Token, DomainRegistry, Identity, etc.
 
-use serde::{Deserialize, Serialize};
-use crate::identity::Identity;
 use crate::crypto;
+use crate::identity::Identity;
 use hex;
+use serde::{Deserialize, Serialize};
 
 // Use the canonical types from lib-blockchain and lib-crypto to ensure bincode compatibility
 // CRITICAL: These MUST be imported, not redefined locally, for bincode serialization to match
-use lib_blockchain::{Transaction, TransactionType};
 use lib_blockchain::contracts::utils::generate_lib_token_id;
+use lib_blockchain::integration::crypto_integration::{PublicKey, Signature};
 use lib_blockchain::transaction::{TokenCreationPayloadV1, TokenMintData, TokenTransferData};
-use lib_blockchain::types::{ContractType, ContractCall, CallPermissions};
+use lib_blockchain::types::{CallPermissions, ContractCall, ContractType};
+use lib_blockchain::{Transaction, TransactionType};
 use lib_crypto::types::SignatureAlgorithm;
-use lib_blockchain::integration::crypto_integration::{Signature, PublicKey};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 const DEFAULT_BASE_FEE: u64 = 100;
@@ -118,7 +118,7 @@ pub struct CreateTokenParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MintParams {
     pub token_id: [u8; 32],
-    pub to: Vec<u8>,  // PublicKey bytes
+    pub to: Vec<u8>, // PublicKey bytes
     pub amount: u64,
 }
 
@@ -126,7 +126,7 @@ pub struct MintParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferParams {
     pub token_id: [u8; 32],
-    pub to: Vec<u8>,  // PublicKey bytes or key_id (32 bytes)
+    pub to: Vec<u8>, // PublicKey bytes or key_id (32 bytes)
     pub amount: u64,
 }
 
@@ -240,7 +240,7 @@ pub fn build_contract_transaction(
     let memo_sig = Signature {
         signature: vec![],
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2, // Use Dilithium2 to match identity key type
+        algorithm: SignatureAlgorithm::Dilithium5, // Use Dilithium2 to match identity key type
         timestamp: 0,
     };
 
@@ -256,7 +256,7 @@ pub fn build_contract_transaction(
     // Server calculation: fee = ceil(transaction_size_bytes / 8.4)
     let estimated_tx_size = 200 // minimum fixed fields
         + memo.len() // memo variable size
-        + 3732; // Dilithium2 witness: 2420 byte sig + 1312 byte pk (from lib-blockchain)
+        + 7187; // Dilithium5 witness: 4595 byte sig + 2592 byte pk
 
     // Calculate fee using integer arithmetic: ceil(size / 8.4) = ceil(size * 10 / 84)
     // This ensures: 10083 bytes -> 1200 SOV (matches server requirement)
@@ -278,7 +278,7 @@ pub fn build_contract_transaction(
                 kyber_pk: vec![],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         memo: memo.clone(),
@@ -292,37 +292,49 @@ pub fn build_contract_transaction(
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-            token_mint_data: None,
-                    governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
+        token_mint_data: None,
+        governance_config_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
     };
 
     eprintln!("[contract_tx] Chain ID: {}", chain_id);
     eprintln!("[contract_tx] Memo length: {} bytes", memo.len());
-    eprintln!("[contract_tx] Public key size: {}", identity.public_key.len());
-    eprintln!("[contract_tx] Estimated tx size: {} bytes", estimated_tx_size);
+    eprintln!(
+        "[contract_tx] Public key size: {}",
+        identity.public_key.len()
+    );
+    eprintln!(
+        "[contract_tx] Estimated tx size: {} bytes",
+        estimated_tx_size
+    );
     eprintln!("[contract_tx] Calculated minimum fee: {} SOV", min_fee);
 
     // Step 3: Use signing_hash() - deterministic field-by-field hashing
     // This is the SAFE method that won't break when Transaction struct changes
     let tx_hash = tx.signing_hash();
 
-    eprintln!("[contract_tx] Signing hash: {}", hex::encode(tx_hash.as_bytes()));
+    eprintln!(
+        "[contract_tx] Signing hash: {}",
+        hex::encode(tx_hash.as_bytes())
+    );
 
     // Step 4: Sign the hash with Dilithium
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
 
-    eprintln!("[contract_tx] Signature size: {} bytes", signature_bytes.len());
+    eprintln!(
+        "[contract_tx] Signature size: {} bytes",
+        signature_bytes.len()
+    );
 
     // Step 5: Put real signature and public key back into transaction
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -330,13 +342,20 @@ pub fn build_contract_transaction(
     };
 
     // Step 6: Serialize final transaction with signature for transmission
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
-    eprintln!("[contract_tx] Final tx size: {} bytes (estimated was {})", final_tx_bytes.len(), estimated_tx_size);
-    eprintln!("[contract_tx] Fee verification: {} SOV for {} bytes = {:.3} SOV/byte",
-        min_fee, final_tx_bytes.len(),
-        min_fee as f64 / final_tx_bytes.len() as f64);
+    eprintln!(
+        "[contract_tx] Final tx size: {} bytes (estimated was {})",
+        final_tx_bytes.len(),
+        estimated_tx_size
+    );
+    eprintln!(
+        "[contract_tx] Fee verification: {} SOV for {} bytes = {:.3} SOV/byte",
+        min_fee,
+        final_tx_bytes.len(),
+        min_fee as f64 / final_tx_bytes.len() as f64
+    );
 
     // Hex encode for API
     Ok(hex::encode(final_tx_bytes))
@@ -356,19 +375,24 @@ pub fn build_transfer_tx(
     nonce: u64,
 ) -> Result<String, String> {
     if *token_id == generate_lib_token_id() || *token_id == [0u8; 32] {
-        return Err("SOV transfers require wallet_id; use build_sov_wallet_transfer_tx".to_string());
+        return Err(
+            "SOV transfers require wallet_id; use build_sov_wallet_transfer_tx".to_string(),
+        );
     }
     let sender_pk = create_public_key(identity.public_key.clone());
 
     let to_key_id = if to_pubkey.len() == 32 {
+        // 32 bytes: already a key_id (blake3 hash)
         let mut key_id = [0u8; 32];
         key_id.copy_from_slice(to_pubkey);
         key_id
-    } else if to_pubkey.len() >= 2000 {
+    } else if to_pubkey.len() >= 1000 {
+        // Full Dilithium public key: Dilithium2 (1312 bytes) or Dilithium5 (2592 bytes)
+        // Derive wallet_id as blake3(dilithium_pk)
         create_public_key(to_pubkey.to_vec()).key_id
     } else {
         return Err(format!(
-            "Invalid recipient public key length: {} (expected 32-byte key_id or full Dilithium key)",
+            "Invalid recipient public key length: {} (expected 32-byte key_id or full Dilithium2/5 key)",
             to_pubkey.len()
         ));
     };
@@ -387,7 +411,7 @@ pub fn build_transfer_tx(
         Signature {
             signature: vec![],
             public_key: sender_pk.clone(),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         Vec::new(),
@@ -403,15 +427,15 @@ pub fn build_transfer_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: sender_pk,
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
     Ok(hex::encode(final_tx_bytes))
 }
@@ -441,7 +465,7 @@ pub fn build_sov_wallet_transfer_tx(
         Signature {
             signature: vec![],
             public_key: sender_pk.clone(),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         Vec::new(),
@@ -457,15 +481,15 @@ pub fn build_sov_wallet_transfer_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: sender_pk,
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize final tx: {}", e))?;
 
     Ok(hex::encode(final_tx_bytes))
 }
@@ -479,7 +503,7 @@ fn calculate_transfer_fee(identity: &Identity, tx: &mut Transaction) -> Result<u
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: create_public_key(identity.public_key.clone()),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -514,25 +538,24 @@ fn calculate_min_fee_from_size(
 }
 
 /// Calculate the minimum fee for a hex-encoded bincode transaction.
-/// If the signature/public key is missing, a Dilithium2 witness is assumed.
+/// If the signature/public key is missing, a Dilithium5 witness is assumed.
 pub fn calculate_min_fee_for_tx_hex(tx_hex: &str) -> Result<u64, String> {
     let raw = hex::decode(tx_hex).map_err(|e| format!("Invalid hex: {}", e))?;
-    let mut tx: Transaction = bincode::deserialize(&raw)
-        .map_err(|e| format!("Failed to deserialize tx: {}", e))?;
+    let mut tx: Transaction =
+        bincode::deserialize(&raw).map_err(|e| format!("Failed to deserialize tx: {}", e))?;
 
     let sig_len = tx.signature.signature.len();
     let pk_len = tx.signature.public_key.dilithium_pk.len();
     if sig_len == 0 || pk_len == 0 {
         let (expected_sig, expected_pk) = match tx.signature.algorithm {
-            SignatureAlgorithm::Dilithium5 => (4627usize, 2592usize),
-            _ => (2420usize, 1312usize), // Default to Dilithium2
+            SignatureAlgorithm::Dilithium2 => (2420usize, 1312usize),
+            _ => (4595usize, 2592usize), // Dilithium5 (identity default)
         };
         tx.signature.signature = vec![0u8; expected_sig];
         tx.signature.public_key.dilithium_pk = vec![0u8; expected_pk];
     }
 
-    let tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize tx: {}", e))?;
+    let tx_bytes = bincode::serialize(&tx).map_err(|e| format!("Failed to serialize tx: {}", e))?;
 
     let base_fee = TX_FEE_BASE_FEE.load(Ordering::SeqCst);
     let bytes_per_sov = TX_FEE_BYTES_PER_SOV.load(Ordering::SeqCst);
@@ -580,7 +603,7 @@ pub fn build_mint_tx(
         Signature {
             signature: vec![],
             public_key: signer_pk.clone(),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         Vec::new(),
@@ -594,15 +617,15 @@ pub fn build_mint_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: signer_pk,
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize final tx: {}", e))?;
     Ok(hex::encode(final_tx_bytes))
 }
 
@@ -637,7 +660,7 @@ pub fn build_create_token_tx(
         Signature {
             signature: vec![],
             public_key: signer_pk.clone(),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
         memo,
@@ -651,7 +674,7 @@ pub fn build_create_token_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: signer_pk,
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -673,15 +696,15 @@ pub fn build_create_token_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: create_public_key(identity.public_key.clone()),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
     };
 
-    let final_tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize final tx: {}", e))?;
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize final tx: {}", e))?;
     Ok(hex::encode(final_tx_bytes))
 }
 
@@ -743,12 +766,14 @@ pub fn build_domain_register_request_with_fee_payment(
     content_mappings: Option<std::collections::HashMap<String, ContentMapping>>,
     fee_payment_tx: Option<String>,
 ) -> Result<String, String> {
-    if fee_payment_tx.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
-        return Err(
-            "fee_payment_tx is required for domain registration. \
+    if fee_payment_tx
+        .as_ref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
+        return Err("fee_payment_tx is required for domain registration. \
              Provide a hex-encoded signed canonical TokenTransfer paying the DAO treasury."
-                .to_string(),
-        );
+            .to_string());
     }
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -771,8 +796,7 @@ pub fn build_domain_register_request_with_fee_payment(
         fee_payment_tx,
     };
 
-    serde_json::to_string(&request)
-        .map_err(|e| format!("Failed to serialize request: {}", e))
+    serde_json::to_string(&request).map_err(|e| format!("Failed to serialize request: {}", e))
 }
 
 /// Build a signed domain update request (JSON format matching server's DomainUpdateRequest)
@@ -797,7 +821,10 @@ pub fn build_domain_update_request(
         .as_secs();
 
     // Sign: domain|expected_previous_manifest_cid|new_manifest_cid|timestamp
-    let message = format!("{}|{}|{}|{}", domain, expected_previous_manifest_cid, new_manifest_cid, timestamp);
+    let message = format!(
+        "{}|{}|{}|{}",
+        domain, expected_previous_manifest_cid, new_manifest_cid, timestamp
+    );
     let signature = Dilithium5::sign(message.as_bytes(), &identity.private_key)
         .map_err(|e| format!("Failed to sign: {}", e))?;
 
@@ -809,8 +836,7 @@ pub fn build_domain_update_request(
         timestamp,
     };
 
-    serde_json::to_string(&request)
-        .map_err(|e| format!("Failed to serialize request: {}", e))
+    serde_json::to_string(&request).map_err(|e| format!("Failed to serialize request: {}", e))
 }
 
 /// Build a signed domain transfer request (JSON format matching server's ApiDomainTransferRequest)
@@ -844,8 +870,7 @@ pub fn build_domain_transfer_request(
         transfer_proof: hex::encode(&signature),
     };
 
-    serde_json::to_string(&request)
-        .map_err(|e| format!("Failed to serialize request: {}", e))
+    serde_json::to_string(&request).map_err(|e| format!("Failed to serialize request: {}", e))
 }
 
 // Legacy function names for backward compatibility - these now call the new JSON-based functions

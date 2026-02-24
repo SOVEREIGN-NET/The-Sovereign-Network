@@ -39,6 +39,8 @@
 //! let encrypted = session.encrypt(&plaintext)?;
 //! ```
 
+mod bip39_wordlist;
+pub mod bonding_curve_tx;
 pub mod crypto;
 pub mod error;
 pub mod handshake;
@@ -46,8 +48,6 @@ pub mod identity;
 pub mod request;
 pub mod session;
 pub mod token_tx;
-pub mod bonding_curve_tx;
-mod bip39_wordlist;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;
@@ -57,10 +57,9 @@ pub use crypto::{Blake3, Dilithium5, Kyber1024};
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};
 pub use identity::{
-    build_migrate_identity_request, build_migrate_identity_request_json,
-    export_keystore_base64, generate_identity, get_public_identity, get_seed_phrase,
-    restore_identity_from_phrase, sign_registration_proof, Identity, MigrateIdentityRequestPayload,
-    PublicIdentity,
+    build_migrate_identity_request, build_migrate_identity_request_json, export_keystore_base64,
+    generate_identity, get_public_identity, get_seed_phrase, restore_identity_from_phrase,
+    sign_registration_proof, Identity, MigrateIdentityRequestPayload, PublicIdentity,
 };
 pub use request::{
     create_zhtp_frame, deserialize_response, parse_zhtp_frame, serialize_request, ZhtpHeaders,
@@ -68,19 +67,32 @@ pub use request::{
 };
 pub use session::Session;
 pub use token_tx::{
+    // Token-specific
+    build_burn_tx,
     // Generic contract transaction builder
     build_contract_transaction,
-    // Token-specific
-    build_burn_tx, build_create_token_tx, build_mint_tx, build_transfer_tx,
-    build_sov_wallet_transfer_tx,
+    build_create_token_tx,
     // Domain-specific (new JSON-based API)
-    build_domain_register_request, build_domain_register_request_with_fee_payment,
-    build_domain_update_request, build_domain_transfer_request,
+    build_domain_register_request,
+    build_domain_register_request_with_fee_payment,
     // Domain-specific (deprecated, use *_request functions instead)
-    build_domain_register_tx, build_domain_update_tx, build_domain_transfer_tx,
+    build_domain_register_tx,
+    build_domain_transfer_request,
+    build_domain_transfer_tx,
+    build_domain_update_request,
+    build_domain_update_tx,
+    build_mint_tx,
+    build_sov_wallet_transfer_tx,
+    build_transfer_tx,
+    BurnParams,
+    ContentMapping,
     // Param types for serialization
-    CreateTokenParams, MintParams, TransferParams, BurnParams,
-    DomainRegisterParams, DomainUpdateParams, DomainTransferParams, ContentMapping,
+    CreateTokenParams,
+    DomainRegisterParams,
+    DomainTransferParams,
+    DomainUpdateParams,
+    MintParams,
+    TransferParams,
 };
 // Re-export ContractType for FFI callers
 pub use lib_blockchain::types::ContractType;
@@ -185,7 +197,9 @@ pub extern "C" fn zhtp_client_identity_free(handle: *mut IdentityHandle) {
 
 /// Get the DID string from an identity. Caller must free with `zhtp_client_string_free`.
 #[no_mangle]
-pub extern "C" fn zhtp_client_identity_get_did(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+pub extern "C" fn zhtp_client_identity_get_did(
+    handle: *const IdentityHandle,
+) -> *mut std::ffi::c_char {
     if handle.is_null() {
         return std::ptr::null_mut();
     }
@@ -198,7 +212,9 @@ pub extern "C" fn zhtp_client_identity_get_did(handle: *const IdentityHandle) ->
 
 /// Get the device ID from an identity. Caller must free with `zhtp_client_string_free`.
 #[no_mangle]
-pub extern "C" fn zhtp_client_identity_get_device_id(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+pub extern "C" fn zhtp_client_identity_get_device_id(
+    handle: *const IdentityHandle,
+) -> *mut std::ffi::c_char {
     if handle.is_null() {
         return std::ptr::null_mut();
     }
@@ -211,7 +227,9 @@ pub extern "C" fn zhtp_client_identity_get_device_id(handle: *const IdentityHand
 
 /// Get the 24-word seed phrase from an identity. Caller must free with `zhtp_client_string_free`.
 #[no_mangle]
-pub extern "C" fn zhtp_client_identity_get_seed_phrase(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+pub extern "C" fn zhtp_client_identity_get_seed_phrase(
+    handle: *const IdentityHandle,
+) -> *mut std::ffi::c_char {
     if handle.is_null() {
         return std::ptr::null_mut();
     }
@@ -266,7 +284,10 @@ pub extern "C" fn zhtp_client_free_bytes(buf: ByteBuffer) {
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_get_public_key(handle: *const IdentityHandle) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let identity = unsafe { &(*handle).inner };
     let mut bytes = identity.public_key.clone();
@@ -278,11 +299,54 @@ pub extern "C" fn zhtp_client_identity_get_public_key(handle: *const IdentityHan
     buf
 }
 
+/// Derive wallet_id (32-byte blake3 hash) from a Dilithium public key.
+///
+/// Accepts either:
+/// - 32 bytes: returned as-is (already a wallet_id / key_id)
+/// - ≥1000 bytes: Dilithium2 (1312) or Dilithium5 (2592) public key — computes blake3(pk)
+///
+/// Returns empty buffer on invalid input. Caller must free with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn zhtp_client_derive_wallet_id(
+    pubkey: *const u8,
+    pubkey_len: usize,
+) -> ByteBuffer {
+    if pubkey.is_null() || pubkey_len == 0 {
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
+    }
+    let pk_slice = std::slice::from_raw_parts(pubkey, pubkey_len);
+    let key_id: [u8; 32] = if pubkey_len == 32 {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(pk_slice);
+        arr
+    } else if pubkey_len >= 1000 {
+        token_tx::create_public_key(pk_slice.to_vec()).key_id
+    } else {
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
+    };
+    let mut boxed = Box::new(key_id);
+    let buf = ByteBuffer {
+        data: boxed.as_mut_ptr(),
+        len: 32,
+    };
+    std::mem::forget(boxed);
+    buf
+}
+
 /// Get node ID from identity
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_get_node_id(handle: *const IdentityHandle) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let identity = unsafe { &(*handle).inner };
     let mut bytes = identity.node_id.clone();
@@ -296,9 +360,14 @@ pub extern "C" fn zhtp_client_identity_get_node_id(handle: *const IdentityHandle
 
 /// Get Kyber public key from identity
 #[no_mangle]
-pub extern "C" fn zhtp_client_identity_get_kyber_public_key(handle: *const IdentityHandle) -> ByteBuffer {
+pub extern "C" fn zhtp_client_identity_get_kyber_public_key(
+    handle: *const IdentityHandle,
+) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let identity = unsafe { &(*handle).inner };
     let mut bytes = identity.kyber_public_key.clone();
@@ -325,9 +394,14 @@ pub extern "C" fn zhtp_client_identity_get_created_at(handle: *const IdentityHan
 /// It should NEVER be transmitted over any network.
 #[deprecated(note = "Use zhtp_client_handshake_new() instead — keeps secret keys inside Rust")]
 #[no_mangle]
-pub extern "C" fn zhtp_client_identity_get_dilithium_secret_key(handle: *const IdentityHandle) -> ByteBuffer {
+pub extern "C" fn zhtp_client_identity_get_dilithium_secret_key(
+    handle: *const IdentityHandle,
+) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let identity = unsafe { &(*handle).inner };
     let mut bytes = identity.private_key.clone();
@@ -344,9 +418,14 @@ pub extern "C" fn zhtp_client_identity_get_dilithium_secret_key(handle: *const I
 /// It should NEVER be transmitted over any network.
 #[deprecated(note = "Use zhtp_client_handshake_new() instead — keeps secret keys inside Rust")]
 #[no_mangle]
-pub extern "C" fn zhtp_client_identity_get_kyber_secret_key(handle: *const IdentityHandle) -> ByteBuffer {
+pub extern "C" fn zhtp_client_identity_get_kyber_secret_key(
+    handle: *const IdentityHandle,
+) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let identity = unsafe { &(*handle).inner };
     let mut bytes = identity.kyber_secret_key.clone();
@@ -363,9 +442,14 @@ pub extern "C" fn zhtp_client_identity_get_kyber_secret_key(handle: *const Ident
 /// It should NEVER be transmitted over any network.
 #[deprecated(note = "Use zhtp_client_handshake_new() instead — keeps secret keys inside Rust")]
 #[no_mangle]
-pub extern "C" fn zhtp_client_identity_get_master_seed(handle: *const IdentityHandle) -> ByteBuffer {
+pub extern "C" fn zhtp_client_identity_get_master_seed(
+    handle: *const IdentityHandle,
+) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let identity = unsafe { &(*handle).inner };
     // Legacy API name: returns 32-byte recovery entropy (mnemonic-encodable).
@@ -385,7 +469,10 @@ pub extern "C" fn zhtp_client_sign_registration_proof(
     timestamp: u64,
 ) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let identity = unsafe { &(*handle).inner };
     match sign_registration_proof(identity, timestamp) {
@@ -397,7 +484,10 @@ pub extern "C" fn zhtp_client_sign_registration_proof(
             std::mem::forget(sig);
             buf
         }
-        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        },
     }
 }
 
@@ -410,7 +500,10 @@ pub extern "C" fn zhtp_client_sign_uhp_challenge(
     challenge_len: usize,
 ) -> ByteBuffer {
     if handle.is_null() || challenge.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
 
     let identity = unsafe { &(*handle).inner };
@@ -427,7 +520,10 @@ pub extern "C" fn zhtp_client_sign_uhp_challenge(
             std::mem::forget(sig);
             buf
         }
-        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        },
     }
 }
 
@@ -440,7 +536,10 @@ pub extern "C" fn zhtp_client_sign_message(
     message_len: usize,
 ) -> ByteBuffer {
     if handle.is_null() || message.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
 
     let identity = unsafe { &(*handle).inner };
@@ -455,7 +554,10 @@ pub extern "C" fn zhtp_client_sign_message(
             std::mem::forget(sig);
             buf
         }
-        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        },
     }
 }
 
@@ -540,7 +642,10 @@ pub extern "C" fn zhtp_client_sign_pouw_receipt_json(
     receipt_json_len: usize,
 ) -> ByteBuffer {
     if handle.is_null() || receipt_json_ptr.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
 
     let identity = unsafe { &(*handle).inner };
@@ -548,27 +653,45 @@ pub extern "C" fn zhtp_client_sign_pouw_receipt_json(
 
     let receipt: PouwReceipt = match serde_json::from_slice(json_bytes) {
         Ok(r) => r,
-        Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => {
+            return ByteBuffer {
+                data: std::ptr::null_mut(),
+                len: 0,
+            }
+        }
     };
 
     let canonical_bytes = match bincode::serialize(&receipt) {
         Ok(b) => b,
-        Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => {
+            return ByteBuffer {
+                data: std::ptr::null_mut(),
+                len: 0,
+            }
+        }
     };
 
     match identity::sign_message(identity, &canonical_bytes) {
         Ok(mut sig) => {
-            let buf = ByteBuffer { data: sig.as_mut_ptr(), len: sig.len() };
+            let buf = ByteBuffer {
+                data: sig.as_mut_ptr(),
+                len: sig.len(),
+            };
             std::mem::forget(sig);
             buf
         }
-        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        },
     }
 }
 
 /// Serialize identity to JSON. Caller must free with `zhtp_client_string_free`.
 #[no_mangle]
-pub extern "C" fn zhtp_client_identity_serialize(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+pub extern "C" fn zhtp_client_identity_serialize(
+    handle: *const IdentityHandle,
+) -> *mut std::ffi::c_char {
     if handle.is_null() {
         return std::ptr::null_mut();
     }
@@ -584,7 +707,9 @@ pub extern "C" fn zhtp_client_identity_serialize(handle: *const IdentityHandle) 
 
 /// Deserialize identity from JSON. Returns handle or null on error.
 #[no_mangle]
-pub extern "C" fn zhtp_client_identity_deserialize(json: *const std::ffi::c_char) -> *mut IdentityHandle {
+pub extern "C" fn zhtp_client_identity_deserialize(
+    json: *const std::ffi::c_char,
+) -> *mut IdentityHandle {
     let json = unsafe {
         if json.is_null() {
             return std::ptr::null_mut();
@@ -610,7 +735,9 @@ pub extern "C" fn zhtp_client_identity_deserialize(json: *const std::ffi::c_char
 ///
 /// Caller must free with `zhtp_client_string_free`.
 #[no_mangle]
-pub extern "C" fn zhtp_client_export_keystore_base64(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+pub extern "C" fn zhtp_client_export_keystore_base64(
+    handle: *const IdentityHandle,
+) -> *mut std::ffi::c_char {
     if handle.is_null() {
         return std::ptr::null_mut();
     }
@@ -631,7 +758,9 @@ pub extern "C" fn zhtp_client_export_keystore_base64(handle: *const IdentityHand
 ///
 /// Caller must free with `zhtp_client_string_free`.
 #[no_mangle]
-pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+pub extern "C" fn zhtp_client_identity_to_handshake_json(
+    handle: *const IdentityHandle,
+) -> *mut std::ffi::c_char {
     if handle.is_null() {
         return std::ptr::null_mut();
     }
@@ -641,7 +770,10 @@ pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const Identity
     let key_id = crypto::Blake3::hash(&identity.public_key);
 
     // Extract identity ID from DID (format: "did:zhtp:{id_hex}")
-    let id_hex = identity.did.strip_prefix("did:zhtp:").unwrap_or(&identity.did);
+    let id_hex = identity
+        .did
+        .strip_prefix("did:zhtp:")
+        .unwrap_or(&identity.did);
     let id_bytes: Vec<u8> = hex::decode(id_hex).unwrap_or_else(|_| key_id.to_vec());
 
     // Generate dao_member_id from DID (deterministic)
@@ -763,7 +895,10 @@ pub extern "C" fn zhtp_client_handshake_create_client_hello(
     handle: *mut HandshakeStateHandle,
 ) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let state = unsafe { &mut (*handle).inner };
     match state.create_client_hello() {
@@ -775,7 +910,10 @@ pub extern "C" fn zhtp_client_handshake_create_client_hello(
             std::mem::forget(bytes);
             buf
         }
-        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        },
     }
 }
 
@@ -789,7 +927,10 @@ pub extern "C" fn zhtp_client_handshake_process_server_hello(
     data_len: usize,
 ) -> ByteBuffer {
     if handle.is_null() || data.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let state = unsafe { &mut (*handle).inner };
     let data_slice = unsafe { std::slice::from_raw_parts(data, data_len) };
@@ -802,7 +943,10 @@ pub extern "C" fn zhtp_client_handshake_process_server_hello(
             std::mem::forget(bytes);
             buf
         }
-        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        },
     }
 }
 
@@ -846,7 +990,10 @@ pub extern "C" fn zhtp_client_handshake_result_get_session_key(
     handle: *const HandshakeResultHandle,
 ) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let result = unsafe { &(*handle).inner };
     let mut bytes = result.session_key.clone();
@@ -865,7 +1012,10 @@ pub extern "C" fn zhtp_client_handshake_result_get_session_id(
     handle: *const HandshakeResultHandle,
 ) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let result = unsafe { &(*handle).inner };
     let mut bytes = result.session_id.clone();
@@ -900,7 +1050,10 @@ pub extern "C" fn zhtp_client_handshake_result_get_peer_public_key(
     handle: *const HandshakeResultHandle,
 ) -> ByteBuffer {
     if handle.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let result = unsafe { &(*handle).inner };
     let mut bytes = result.peer_public_key.clone();
@@ -951,7 +1104,14 @@ pub extern "C" fn zhtp_client_build_token_transfer(
     let mut token_id_arr = [0u8; 32];
     token_id_arr.copy_from_slice(token_id_slice);
 
-    match token_tx::build_transfer_tx(identity, &token_id_arr, to_pubkey_slice, amount, chain_id, nonce) {
+    match token_tx::build_transfer_tx(
+        identity,
+        &token_id_arr,
+        to_pubkey_slice,
+        amount,
+        chain_id,
+        nonce,
+    ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
@@ -993,7 +1153,9 @@ pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
     from_arr.copy_from_slice(from_slice);
     to_arr.copy_from_slice(to_slice);
 
-    match token_tx::build_sov_wallet_transfer_tx(identity, &from_arr, &to_arr, amount, chain_id, nonce) {
+    match token_tx::build_sov_wallet_transfer_tx(
+        identity, &from_arr, &to_arr, amount, chain_id, nonce,
+    ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
@@ -1005,11 +1167,7 @@ pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
 /// Override fee parameters used by client-side fee calculation.
 /// This should be called after fetching the fee config from the node.
 #[no_mangle]
-pub extern "C" fn zhtp_client_set_fee_config(
-    base_fee: u64,
-    bytes_per_sov: u64,
-    witness_cap: u32,
-) {
+pub extern "C" fn zhtp_client_set_fee_config(base_fee: u64, bytes_per_sov: u64, witness_cap: u32) {
     token_tx::set_fee_config(base_fee, bytes_per_sov, witness_cap);
 }
 
@@ -1022,7 +1180,9 @@ pub extern "C" fn zhtp_client_set_fee_config_json(json: *const std::ffi::c_char)
     }
     let c_str = unsafe { std::ffi::CStr::from_ptr(json) };
     match c_str.to_str() {
-        Ok(s) => token_tx::set_fee_config_from_json(s).map(|_| 1).unwrap_or(0),
+        Ok(s) => token_tx::set_fee_config_from_json(s)
+            .map(|_| 1)
+            .unwrap_or(0),
         Err(_) => 0,
     }
 }
@@ -1062,9 +1222,7 @@ pub extern "C" fn zhtp_client_set_fee_config_json_ex(
 /// Quote minimum fee for a hex-encoded bincode transaction using cached fee config.
 /// Returns 0 on failure.
 #[no_mangle]
-pub extern "C" fn zhtp_client_quote_fee_for_tx_hex(
-    tx_hex: *const std::ffi::c_char,
-) -> u64 {
+pub extern "C" fn zhtp_client_quote_fee_for_tx_hex(tx_hex: *const std::ffi::c_char) -> u64 {
     if tx_hex.is_null() {
         return 0;
     }
@@ -1089,6 +1247,7 @@ pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeBuildSovWa
     to_wallet_id: jni::objects::JByteArray,
     amount: jni::sys::jlong,
     chain_id: jni::sys::jint,
+    nonce: jni::sys::jlong,
 ) -> jni::sys::jstring {
     if handle == 0 {
         return std::ptr::null_mut();
@@ -1112,6 +1271,7 @@ pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeBuildSovWa
         to_vec.as_ptr(),
         amount as u64,
         chain_id as u8,
+        nonce as u64,
     );
     if hex_ptr.is_null() {
         return std::ptr::null_mut();
@@ -1190,7 +1350,10 @@ pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeSetFeeConf
         return 0;
     }
 
-    let arr = [updated_at_height as jni::sys::jlong, chain_height as jni::sys::jlong];
+    let arr = [
+        updated_at_height as jni::sys::jlong,
+        chain_height as jni::sys::jlong,
+    ];
     if env.set_long_array_region(out_heights, 0, &arr).is_err() {
         return 0;
     }
@@ -1517,13 +1680,32 @@ pub extern "C" fn zhtp_client_build_bonding_curve_deploy(
         }
     };
 
-    let midpoint = if midpoint_supply > 0 { Some(midpoint_supply) } else { None };
-    let threshold_time = if threshold_time_seconds > 0 { Some(threshold_time_seconds) } else { None };
+    let midpoint = if midpoint_supply > 0 {
+        Some(midpoint_supply)
+    } else {
+        None
+    };
+    let threshold_time = if threshold_time_seconds > 0 {
+        Some(threshold_time_seconds)
+    } else {
+        None
+    };
     let sell = sell_enabled != 0;
 
     match bonding_curve_tx::build_bonding_curve_deploy_tx(
-        identity, name_str, symbol_str, curve_type, base_price, curve_param,
-        midpoint, threshold_type, threshold_value, threshold_time, sell, chain_id, nonce
+        identity,
+        name_str,
+        symbol_str,
+        curve_type,
+        base_price,
+        curve_param,
+        midpoint,
+        threshold_type,
+        threshold_value,
+        threshold_time,
+        sell,
+        chain_id,
+        nonce,
     ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
@@ -1563,7 +1745,12 @@ pub extern "C" fn zhtp_client_build_bonding_curve_buy(
     token_id_arr.copy_from_slice(token_id_slice);
 
     match bonding_curve_tx::build_bonding_curve_buy_tx(
-        identity, &token_id_arr, stable_amount, min_tokens_out, chain_id, nonce
+        identity,
+        &token_id_arr,
+        stable_amount,
+        min_tokens_out,
+        chain_id,
+        nonce,
     ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
@@ -1603,7 +1790,12 @@ pub extern "C" fn zhtp_client_build_bonding_curve_sell(
     token_id_arr.copy_from_slice(token_id_slice);
 
     match bonding_curve_tx::build_bonding_curve_sell_tx(
-        identity, &token_id_arr, token_amount, min_stable_out, chain_id, nonce
+        identity,
+        &token_id_arr,
+        token_amount,
+        min_stable_out,
+        chain_id,
+        nonce,
     ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
@@ -1650,8 +1842,14 @@ pub extern "C" fn zhtp_client_build_swap(
     pool_id_arr.copy_from_slice(pool_id_slice);
 
     match bonding_curve_tx::build_swap_tx(
-        identity, &token_id_arr, &pool_id_arr, amount_in, min_amount_out,
-        token_to_sov != 0, chain_id, nonce
+        identity,
+        &token_id_arr,
+        &pool_id_arr,
+        amount_in,
+        min_amount_out,
+        token_to_sov != 0,
+        chain_id,
+        nonce,
     ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
@@ -1696,7 +1894,13 @@ pub extern "C" fn zhtp_client_build_add_liquidity(
     pool_id_arr.copy_from_slice(pool_id_slice);
 
     match bonding_curve_tx::build_add_liquidity_tx(
-        identity, &token_id_arr, &pool_id_arr, token_amount, sov_amount, chain_id, nonce
+        identity,
+        &token_id_arr,
+        &pool_id_arr,
+        token_amount,
+        sov_amount,
+        chain_id,
+        nonce,
     ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
@@ -1739,7 +1943,12 @@ pub extern "C" fn zhtp_client_build_remove_liquidity(
     pool_id_arr.copy_from_slice(pool_id_slice);
 
     match bonding_curve_tx::build_remove_liquidity_tx(
-        identity, &token_id_arr, &pool_id_arr, lp_amount, chain_id, nonce
+        identity,
+        &token_id_arr,
+        &pool_id_arr,
+        lp_amount,
+        chain_id,
+        nonce,
     ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
