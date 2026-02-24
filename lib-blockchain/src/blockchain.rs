@@ -3993,11 +3993,47 @@ impl Blockchain {
             // Handle ContractExecution transactions (token create/mint/transfer/burn)
             else if transaction.transaction_type == TransactionType::ContractExecution {
                 if let Err(e) = self.process_contract_execution(transaction, block.height()) {
+                    if Self::is_forbidden_contract_execution_transfer(transaction) {
+                        return Err(anyhow::anyhow!(
+                            "ContractExecution/transfer is prohibited — use TokenTransfer transactions instead"
+                        ));
+                    }
                     warn!("ContractExecution rejected (tx {}): {}", transaction.hash(), e);
                 }
             }
         }
         Ok(())
+    }
+
+    fn is_forbidden_contract_execution_transfer(transaction: &Transaction) -> bool {
+        if transaction.transaction_type != TransactionType::ContractExecution {
+            return false;
+        }
+
+        let call = if transaction
+            .memo
+            .starts_with(crate::transaction::CONTRACT_EXECUTION_MEMO_PREFIX_V2)
+        {
+            match crate::transaction::DecodedContractExecutionMemo::decode_compat(&transaction.memo) {
+                Ok(decoded) => decoded.call,
+                Err(_) => return false,
+            }
+        } else {
+            if transaction.memo.len() <= 4 || &transaction.memo[0..4] != b"ZHTP" {
+                return false;
+            }
+            let call_data = &transaction.memo[4..];
+            let deserialized: Result<
+                (crate::types::ContractCall, crate::integration::crypto_integration::Signature),
+                _
+            > = bincode::deserialize(call_data);
+            match deserialized {
+                Ok((call, _sig)) => call,
+                Err(_) => return false,
+            }
+        };
+
+        call.contract_type == crate::types::ContractType::Token && call.method == "transfer"
     }
 
     /// Process token transfer and mint transactions from a block
