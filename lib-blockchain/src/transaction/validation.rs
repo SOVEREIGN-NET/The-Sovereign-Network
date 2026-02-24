@@ -1461,6 +1461,14 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
             }
             TransactionType::TokenTransfer => {
+                // Phase 2: fee must be 0 — matches BlockExecutor enforcement exactly.
+                if transaction.fee != 0 {
+                    tracing::warn!(
+                        "Rejecting TokenTransfer with fee={} — Phase 2 requires fee==0",
+                        transaction.fee
+                    );
+                    return Err(ValidationError::InvalidFee);
+                }
                 if transaction.outputs.len() != 0 {
                     return Err(ValidationError::InvalidOutputs);
                 }
