@@ -75,32 +75,30 @@ impl MiningService {
     pub async fn mine_block(blockchain: &mut Blockchain) -> Result<()> {
         let next_height = blockchain.height + 1;
 
-        // Prune pending transactions that no longer pass validation (e.g. fee rule changes).
-        // This prevents a single stuck transaction from permanently blocking block production.
+        // Phase 2 invariant: TokenTransfer and TokenMint must have fee == 0.
         {
-            use lib_blockchain::transaction::validation::StatefulTransactionValidator;
-            // Collect invalid tx hashes first (validator borrows blockchain immutably).
-            let invalid_hashes: Vec<lib_blockchain::Hash> = {
-                let validator = StatefulTransactionValidator::new(blockchain);
-                blockchain.pending_transactions.iter()
-                    .filter_map(|tx| {
-                        match validator.validate_transaction_with_state(tx) {
-                            Ok(()) => None,
-                            Err(e) => {
-                                warn!(
-                                    "⚠️ Pruning invalid pending tx {} from mempool: {}",
-                                    hex::encode(&tx.hash().as_bytes()[..8]),
-                                    e
-                                );
-                                Some(tx.hash())
-                            }
-                        }
-                    })
-                    .collect()
-            };
-            if !invalid_hashes.is_empty() {
-                blockchain.pending_transactions.retain(|tx| !invalid_hashes.contains(&tx.hash()));
-                warn!("Pruned {} invalid transaction(s) from mempool before mining", invalid_hashes.len());
+            use lib_blockchain::TransactionType;
+            let before = blockchain.pending_transactions.len();
+            blockchain.pending_transactions.retain(|tx| {
+                let is_phase2_zero_fee = matches!(
+                    tx.transaction_type,
+                    TransactionType::TokenTransfer | TransactionType::TokenMint
+                );
+                if is_phase2_zero_fee && tx.fee != 0 {
+                    warn!(
+                        "⚠️ Evicting {} (type={:?}, fee={}) from mempool — Phase 2 requires fee==0",
+                        hex::encode(&tx.hash().as_bytes()[..8]),
+                        tx.transaction_type,
+                        tx.fee
+                    );
+                    false
+                } else {
+                    true
+                }
+            });
+            let evicted = before - blockchain.pending_transactions.len();
+            if evicted > 0 {
+                warn!("Evicted {} Phase-2-invalid transaction(s) from mempool before mining", evicted);
             }
         }
 

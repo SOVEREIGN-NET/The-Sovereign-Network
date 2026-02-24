@@ -243,6 +243,36 @@ impl BlockchainComponent {
     async fn mine_real_block(blockchain: &mut Blockchain) -> Result<()> {
         let next_height = blockchain.height + 1;
 
+        // Phase 2 invariant: TokenTransfer and TokenMint must have fee == 0.
+        // The BlockExecutor enforces this at execution time; enforce the same rule here
+        // so that any bad transaction (admitted before the rule existed, or persisted
+        // across a restart) is evicted from the pool before it can block block production.
+        {
+            use lib_blockchain::TransactionType;
+            let before = blockchain.pending_transactions.len();
+            blockchain.pending_transactions.retain(|tx| {
+                let is_phase2_zero_fee = matches!(
+                    tx.transaction_type,
+                    TransactionType::TokenTransfer | TransactionType::TokenMint
+                );
+                if is_phase2_zero_fee && tx.fee != 0 {
+                    warn!(
+                        "⚠️ Evicting {} (type={:?}, fee={}) from mempool — Phase 2 requires fee==0",
+                        hex::encode(&tx.hash().as_bytes()[..8]),
+                        tx.transaction_type,
+                        tx.fee
+                    );
+                    false
+                } else {
+                    true
+                }
+            });
+            let evicted = before - blockchain.pending_transactions.len();
+            if evicted > 0 {
+                warn!("Evicted {} Phase-2-invalid transaction(s) from mempool before mining", evicted);
+            }
+        }
+
         let mut ubi_txs: Vec<lib_blockchain::Transaction> = Vec::new();
         for entry in blockchain.collect_ubi_mint_entries(next_height) {
             let memo = format!("UBI_DISTRIBUTION_V1:{}:{}", entry.identity_id, entry.wallet_id).into_bytes();
