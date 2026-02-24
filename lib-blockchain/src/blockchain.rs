@@ -3257,10 +3257,10 @@ impl Blockchain {
     ///
     /// This is a helper that consolidates the duplicated fee logic from the two
     /// TokenTransfer code paths (wallet-addressed and key-id addressed).
+    #[allow(dead_code)]
     fn apply_token_transfer_with_fee(
         token: &mut crate::contracts::TokenContract,
         sender: &PublicKey,
-        recipient: &PublicKey,
         amount: u64,
         fee_amount: u64,
         treasury_key: &Option<PublicKey>,
@@ -4218,7 +4218,6 @@ impl Blockchain {
                         Self::apply_token_transfer_with_fee(
                             token,
                             &from_wallet_addr,
-                            &to_wallet_addr,
                             amount_u64,
                             fee_amount,
                             &treasury_pk_opt,
@@ -4257,7 +4256,6 @@ impl Blockchain {
                         Self::apply_token_transfer_with_fee(
                             token,
                             &sender_pk,
-                            &recipient_pk,
                             amount_u64,
                             fee_amount,
                             &treasury_pk_opt,
