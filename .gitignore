@@ -81,3 +81,4 @@ deploy-prod-1.sh
 # Local workspace artifacts
 .grok/
 docs/plans/CONTRACT_DAO_PRODUCTION_READINESS_PLAN.md
+.gitnexus/kuzu

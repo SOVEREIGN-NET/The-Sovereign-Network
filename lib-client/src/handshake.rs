@@ -297,8 +297,8 @@ impl HandshakeState {
         };
 
         // Serialize ClientHello
-        let payload =
-            serde_json::to_vec(&client_hello).map_err(|e| ClientError::SerializationError(e.to_string()))?;
+        let payload = serde_json::to_vec(&client_hello)
+            .map_err(|e| ClientError::SerializationError(e.to_string()))?;
 
         // Wrap in HandshakeMessage
         let message = HandshakeMessage {
@@ -308,8 +308,8 @@ impl HandshakeState {
             timestamp,
         };
 
-        let message_bytes =
-            serde_json::to_vec(&message).map_err(|e| ClientError::SerializationError(e.to_string()))?;
+        let message_bytes = serde_json::to_vec(&message)
+            .map_err(|e| ClientError::SerializationError(e.to_string()))?;
 
         // Store for transcript hash
         self.client_hello_bytes = message_bytes.clone();
@@ -349,7 +349,11 @@ impl HandshakeState {
 
         // Verify server signature
         let sig_data = build_server_hello_signature_data(&server_hello);
-        if !Dilithium5::verify(&sig_data, &server_hello.signature, &server_hello.identity.public_key)? {
+        if !Dilithium5::verify(
+            &sig_data,
+            &server_hello.signature,
+            &server_hello.identity.public_key,
+        )? {
             return Err(ClientError::InvalidSignature);
         }
 
@@ -393,8 +397,8 @@ impl HandshakeState {
         };
 
         // Serialize
-        let payload =
-            serde_json::to_vec(&client_finish).map_err(|e| ClientError::SerializationError(e.to_string()))?;
+        let payload = serde_json::to_vec(&client_finish)
+            .map_err(|e| ClientError::SerializationError(e.to_string()))?;
 
         let message = HandshakeMessage {
             version: UHP_VERSION,
@@ -403,8 +407,8 @@ impl HandshakeState {
             timestamp: current_timestamp(),
         };
 
-        let message_bytes =
-            serde_json::to_vec(&message).map_err(|e| ClientError::SerializationError(e.to_string()))?;
+        let message_bytes = serde_json::to_vec(&message)
+            .map_err(|e| ClientError::SerializationError(e.to_string()))?;
 
         Ok(with_length_prefix(&message_bytes))
     }
@@ -413,15 +417,13 @@ impl HandshakeState {
     ///
     /// Call this after sending ClientFinish to derive the session key.
     pub fn finalize(&self) -> Result<HandshakeResult> {
-        let server_nonce = self
-            .server_nonce
-            .as_ref()
-            .ok_or_else(|| ClientError::HandshakeError("Handshake not complete: missing server nonce".into()))?;
+        let server_nonce = self.server_nonce.as_ref().ok_or_else(|| {
+            ClientError::HandshakeError("Handshake not complete: missing server nonce".into())
+        })?;
 
-        let server_identity = self
-            .server_identity
-            .as_ref()
-            .ok_or_else(|| ClientError::HandshakeError("Handshake not complete: missing server identity".into()))?;
+        let server_identity = self.server_identity.as_ref().ok_or_else(|| {
+            ClientError::HandshakeError("Handshake not complete: missing server identity".into())
+        })?;
 
         // Compute transcript hash
         let transcript = [

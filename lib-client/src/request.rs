@@ -276,7 +276,11 @@ pub fn parse_zhtp_frame(data: &[u8]) -> Result<Vec<u8>> {
     let version = data[4];
     if version != ZHTP_WIRE_VERSION {
         // Log warning but continue (forward compatibility)
-        tracing::warn!("ZHTP wire version mismatch: expected {}, got {}", ZHTP_WIRE_VERSION, version);
+        tracing::warn!(
+            "ZHTP wire version mismatch: expected {}, got {}",
+            ZHTP_WIRE_VERSION,
+            version
+        );
     }
 
     // Get length
@@ -360,11 +364,7 @@ mod tests {
 
     #[test]
     fn test_request_frame_roundtrip() {
-        let request = ZhtpRequest::post(
-            "/api/v1/data",
-            b"hello world".to_vec(),
-            "text/plain",
-        );
+        let request = ZhtpRequest::post("/api/v1/data", b"hello world".to_vec(), "text/plain");
 
         let frame = create_request_frame(&request).unwrap();
         let restored = parse_request_frame(&frame).unwrap();
