@@ -1164,6 +1164,22 @@ pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
     }
 }
 
+/// Return the canonical SOV token ID as a hex string (64 chars).
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// Use this to construct the nonce URL:
+///   GET /api/v1/token/nonce/{sov_token_id}/{from_wallet_id}
+/// Then pass the returned nonce to `zhtp_client_build_sov_wallet_transfer`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_get_sov_token_id() -> *mut std::ffi::c_char {
+    use lib_blockchain::contracts::utils::generate_lib_token_id;
+    let hex = hex::encode(generate_lib_token_id());
+    match std::ffi::CString::new(hex) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Override fee parameters used by client-side fee calculation.
 /// This should be called after fetching the fee config from the node.
 #[no_mangle]

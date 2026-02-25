@@ -334,6 +334,17 @@ impl BlockchainComponent {
             }
             Err(e) => {
                 warn!("Failed to add block to blockchain: {}", e);
+                // Evict the block's transactions from the mempool so a permanently
+                // invalid transaction (e.g. bad nonce) cannot block all future blocks.
+                // Uses the shared helper to keep eviction semantics consistent.
+                // Note: if the block failure was caused by a store/consensus error
+                // unrelated to any specific tx, valid transactions may be evicted and
+                // clients must resubmit them.
+                let evicted = new_block.transactions.len();
+                blockchain.remove_pending_transactions(&new_block.transactions);
+                if evicted > 0 {
+                    warn!("Evicted {} transaction(s) from mempool after block failure", evicted);
+                }
                 return Err(e);
             }
         }
