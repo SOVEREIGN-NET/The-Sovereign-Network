@@ -273,7 +273,9 @@ fn validate_token_transfer_stateful(
 /// # Phase 2 Fee Rules
 ///
 /// - **Transfer**: fee must be >= min_fee_v2 (computed from tx metrics)
-/// - **TokenTransfer**: fee must be exactly 0 (locked for Phase 2)
+/// - **TokenTransfer**: any fee is allowed; the 1% protocol fee is deducted
+///   from the transfer amount at block processing time, not charged as a miner fee
+/// - **TokenMint**: fee must be exactly 0
 /// - **Coinbase**: fee must be exactly 0 (block reward, not a payment)
 pub fn validate_fee(tx: &Transaction, params: &FeeParamsV2) -> TxValidateResult<()> {
     match tx.transaction_type {
@@ -300,16 +302,13 @@ pub fn validate_fee(tx: &Transaction, params: &FeeParamsV2) -> TxValidateResult<
         }
 
         TransactionType::TokenTransfer => {
-            // Token transfers must have zero fee in Phase 2
-            if tx.fee != 0 {
-                return Err(TxValidateError::TokenTransferNonZeroFee(tx.fee));
-            }
+            // No fee restriction — 1% protocol fee is deducted from transfer amount server-side.
             Ok(())
         }
         TransactionType::TokenMint => {
             // Token mints must have zero fee
             if tx.fee != 0 {
-                return Err(TxValidateError::TokenTransferNonZeroFee(tx.fee));
+                return Err(TxValidateError::TokenMintNonZeroFee(tx.fee));
             }
             Ok(())
         }
@@ -481,20 +480,19 @@ mod tests {
     #[test]
     fn test_fee_validation_token_transfer_zero_ok() {
         let params = FeeParamsV2::default();
-        let tx = create_test_token_transfer(0); // Zero fee is required
-
+        let tx = create_test_token_transfer(0);
+        // Zero fee is allowed — protocol fee is deducted from amount server-side
         let result = validate_fee(&tx, &params);
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_fee_validation_token_transfer_nonzero_rejected() {
+    fn test_fee_validation_token_transfer_nonzero_ok() {
         let params = FeeParamsV2::default();
-        let tx = create_test_token_transfer(100); // Non-zero fee
-
+        let tx = create_test_token_transfer(100);
+        // Non-zero fee is also allowed — miner fee is separate from the 1% protocol fee
         let result = validate_fee(&tx, &params);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), TxValidateError::TokenTransferNonZeroFee(100)));
+        assert!(result.is_ok(), "Expected Ok for TokenTransfer with fee=100, got {:?}", result);
     }
 
     #[test]

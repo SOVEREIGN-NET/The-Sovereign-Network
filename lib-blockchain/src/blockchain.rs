@@ -3292,24 +3292,18 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Evict Phase-2-invalid transactions (TokenTransfer/TokenMint with fee != 0) from the mempool.
+    /// Evict Phase-2-invalid transactions (TokenMint with fee != 0) from the mempool.
     ///
-    /// Phase 2 requires TokenTransfer and TokenMint to have fee == 0. This helper removes
-    /// any such transactions from the pending pool. Used at block load time and before mining.
+    /// TokenMint must have fee == 0. TokenTransfer may carry any fee value.
     pub fn evict_phase2_invalid_transactions(&mut self, context: &str) -> usize {
         use crate::types::transaction_type::TransactionType;
         let before = self.pending_transactions.len();
         self.pending_transactions.retain(|tx| {
-            let is_phase2_zero_fee = matches!(
-                tx.transaction_type,
-                TransactionType::TokenTransfer | TransactionType::TokenMint
-            );
-            if is_phase2_zero_fee && tx.fee != 0 {
+            if tx.transaction_type == TransactionType::TokenMint && tx.fee != 0 {
                 warn!(
-                    "{}: evicting Phase-2-invalid pending tx hash={} type={:?} fee={}",
+                    "{}: evicting invalid TokenMint pending tx hash={} fee={}",
                     context,
                     hex::encode(&tx.hash().as_bytes()[..8]),
-                    tx.transaction_type,
                     tx.fee,
                 );
                 false
@@ -3319,7 +3313,7 @@ impl Blockchain {
         });
         let evicted = before - self.pending_transactions.len();
         if evicted > 0 {
-            warn!("{}: evicted {} Phase-2-invalid pending transaction(s)", context, evicted);
+            warn!("{}: evicted {} invalid pending transaction(s)", context, evicted);
         }
         evicted
     }

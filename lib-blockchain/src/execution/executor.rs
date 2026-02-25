@@ -874,12 +874,6 @@ impl BlockExecutor {
                         "Token transfer amount must be greater than 0".to_string(),
                     ));
                 }
-                // Phase 2 lock: TokenTransfer fee must be 0
-                if tx.fee != 0 {
-                    return Err(TxApplyError::InvalidType(
-                        "TokenTransfer transaction fee must be 0 in Phase 2".to_string(),
-                    ));
-                }
             }
             TransactionType::TokenMint => {
                 if tx.version < 2 {
