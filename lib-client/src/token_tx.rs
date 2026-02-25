@@ -417,8 +417,9 @@ pub fn build_transfer_tx(
         Vec::new(),
     );
 
-    let fee = calculate_transfer_fee(identity, &mut tx)?;
-    tx.fee = fee;
+    // TokenTransfer carries no separate miner fee — the 1% protocol fee is applied
+    // server-side at block processing time.
+    tx.fee = 0;
 
     let tx_hash = tx.signing_hash();
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
@@ -471,8 +472,9 @@ pub fn build_sov_wallet_transfer_tx(
         Vec::new(),
     );
 
-    let fee = calculate_transfer_fee(identity, &mut tx)?;
-    tx.fee = fee;
+    // TokenTransfer carries no separate miner fee — the 1% protocol fee is applied
+    // server-side at block processing time.
+    tx.fee = 0;
 
     let tx_hash = tx.signing_hash();
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())

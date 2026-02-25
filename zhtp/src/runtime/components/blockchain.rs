@@ -334,6 +334,19 @@ impl BlockchainComponent {
             }
             Err(e) => {
                 warn!("Failed to add block to blockchain: {}", e);
+                // Evict the transactions that caused the block failure so they
+                // don't permanently block mining. They will be re-submitted by
+                // clients with correct parameters.
+                let failed_hashes: std::collections::HashSet<_> = new_block.transactions
+                    .iter()
+                    .map(|tx| tx.hash())
+                    .collect();
+                let before = blockchain.pending_transactions.len();
+                blockchain.pending_transactions.retain(|tx| !failed_hashes.contains(&tx.hash()));
+                let evicted = before - blockchain.pending_transactions.len();
+                if evicted > 0 {
+                    warn!("Evicted {} transaction(s) from mempool after block failure", evicted);
+                }
                 return Err(e);
             }
         }

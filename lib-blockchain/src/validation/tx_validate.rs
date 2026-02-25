@@ -300,10 +300,7 @@ pub fn validate_fee(tx: &Transaction, params: &FeeParamsV2) -> TxValidateResult<
         }
 
         TransactionType::TokenTransfer => {
-            // Token transfers must have zero fee in Phase 2
-            if tx.fee != 0 {
-                return Err(TxValidateError::TokenTransferNonZeroFee(tx.fee));
-            }
+            // No fee restriction — 1% protocol fee is deducted from transfer amount server-side.
             Ok(())
         }
         TransactionType::TokenMint => {

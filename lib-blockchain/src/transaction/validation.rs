@@ -1482,14 +1482,6 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
             }
             TransactionType::TokenTransfer => {
-                // Phase 2: fee must be 0 — matches BlockExecutor enforcement exactly.
-                if transaction.fee != 0 {
-                    tracing::warn!(
-                        "Rejecting TokenTransfer with fee={} — Phase 2 requires fee==0",
-                        transaction.fee
-                    );
-                    return Err(ValidationError::InvalidFee);
-                }
                 if transaction.outputs.len() != 0 {
                     return Err(ValidationError::InvalidOutputs);
                 }
@@ -1607,13 +1599,14 @@ impl<'a> StatefulTransactionValidator<'a> {
             tracing::debug!("[BREADCRUMB] validate_zk_proofs OK");
         }
 
+        // TokenTransfer has no UTXO inputs — the 1% protocol fee is deducted from the
+        // transfer amount at block processing time. Skip fee validation entirely.
+        if transaction.transaction_type == TransactionType::TokenTransfer {
+            return Ok(());
+        }
+
         // Economic validation (modified for system transactions)
-        // Phase 2: TokenTransfer must have fee == 0 (BlockExecutor enforces this at execution
-        // time; the mempool must enforce the same rule to prevent stuck transactions).
-        // We keep is_system_transaction=false above so signature/ZK validation still fires,
-        // but pass true for the economics check so the fee==0 rule is applied.
-        let economics_is_system =
-            is_system_transaction || transaction.transaction_type == TransactionType::TokenTransfer;
+        let economics_is_system = is_system_transaction;
         tracing::debug!("[BREADCRUMB] validate_economics_with_system_check CALL");
         stateless_validator
             .validate_economics_with_system_check(transaction, economics_is_system)?;
