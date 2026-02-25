@@ -119,8 +119,8 @@ pub enum TxValidateError {
     #[error("Fee too low: {fee} < minimum {min_fee}")]
     FeeTooLow { fee: u64, min_fee: u64 },
 
-    #[error("TokenTransfer must have zero fee, got {0}")]
-    TokenTransferNonZeroFee(u64),
+    #[error("TokenMint must have zero fee, got {0}")]
+    TokenMintNonZeroFee(u64),
 
     #[error("Coinbase must have zero fee, got {0}")]
     CoinbaseNonZeroFee(u64),
