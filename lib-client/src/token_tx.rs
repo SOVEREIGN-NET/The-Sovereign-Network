@@ -496,33 +496,6 @@ pub fn build_sov_wallet_transfer_tx(
     Ok(hex::encode(final_tx_bytes))
 }
 
-fn calculate_transfer_fee(identity: &Identity, tx: &mut Transaction) -> Result<u64, String> {
-    // Sign once to estimate size with real signature length.
-    let tx_hash = tx.signing_hash();
-    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
-        .map_err(|e| format!("Failed to sign for fee estimation: {}", e))?;
-
-    tx.signature = Signature {
-        signature: signature_bytes,
-        public_key: create_public_key(identity.public_key.clone()),
-        algorithm: SignatureAlgorithm::Dilithium5,
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-    };
-
-    let tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize tx for fee estimation: {}", e))?;
-
-    let base_fee = TX_FEE_BASE_FEE.load(Ordering::SeqCst);
-    let bytes_per_sov = TX_FEE_BYTES_PER_SOV.load(Ordering::SeqCst);
-    let witness_cap = TX_FEE_WITNESS_CAP.load(Ordering::SeqCst);
-
-    let min_fee = calculate_min_fee_from_size(tx_bytes.len(), base_fee, bytes_per_sov, witness_cap);
-    Ok(min_fee)
-}
-
 fn calculate_min_fee_from_size(
     tx_size: usize,
     base_fee: u64,
