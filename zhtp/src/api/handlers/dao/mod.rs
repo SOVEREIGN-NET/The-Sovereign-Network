@@ -1153,7 +1153,14 @@ impl DaoHandler {
             proposal_id,
             voter: voter_identity.did.clone(),
             vote_choice: vote_choice_str,
-            voting_power: 1,
+            voting_power: {
+                let raw = blockchain.calculate_user_voting_power(&authenticated_identity_id);
+                match blockchain.voting_power_mode {
+                    lib_blockchain::dao::VotingPowerMode::Identity  => 1,
+                    lib_blockchain::dao::VotingPowerMode::Linear    => raw.max(1),
+                    lib_blockchain::dao::VotingPowerMode::Quadratic => ((raw as f64).sqrt() as u64).max(1),
+                }
+            },
             justification: request_data.justification.clone(),
             timestamp: now,
         };
@@ -1773,6 +1780,42 @@ impl DaoHandler {
         }))
     }
 
+    /// POST /api/v1/dao/voting/delegate — store a vote delegation for the authenticated identity.
+    async fn handle_vote_delegate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let session_token = match request.headers.get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+            Some(token) => token,
+            None => return Ok(create_error_response(ZhtpStatus::Unauthorized,
+                "Missing or invalid Authorization header".to_string())),
+        };
+
+        let client_ip = extract_client_ip(request);
+        let user_agent = extract_user_agent(request);
+        let session = self.session_manager
+            .validate_session(&session_token, &client_ip, &user_agent)
+            .await
+            .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
+
+        #[derive(serde::Deserialize)]
+        struct DelegateRequest {
+            delegate_did: String,
+        }
+        let req: DelegateRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        let delegator_hex = hex::encode(session.identity_id.as_bytes());
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+        blockchain.vote_delegations.insert(delegator_hex.clone(), req.delegate_did.clone());
+
+        create_json_response(json!({
+            "status": "success",
+            "delegator": delegator_hex,
+            "delegate": req.delegate_did,
+        }))
+    }
+
     async fn submit_dao_registry_execution(
         &self,
         request: &ZhtpRequest,
@@ -2163,6 +2206,11 @@ impl ZhtpRequestHandler for DaoHandler {
             },
             (ZhtpMethod::Get, ["api", "v1", "dao", "emergency", "status"]) => {
                 self.handle_emergency_status().await.map_err(anyhow::Error::from)
+            },
+
+            // Voting power delegation (dao-5)
+            (ZhtpMethod::Post, ["api", "v1", "dao", "voting", "delegate"]) => {
+                self.handle_vote_delegate(&request).await.map_err(anyhow::Error::from)
             },
 
             _ => Ok(create_error_response(ZhtpStatus::NotFound, "DAO endpoint not found".to_string())),
