@@ -61,6 +61,16 @@ fn default_treasury_epoch_length() -> u64 {
     10_080
 }
 
+/// Default veto window (~48 hours at 10s blocks)
+fn default_veto_window() -> u64 {
+    576
+}
+
+/// Default max treasury executions per epoch
+fn default_max_executions() -> u32 {
+    3
+}
+
 /// Indexed DAO registry entry derived from canonical DaoExecution events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaoRegistryIndexEntry {
@@ -281,7 +291,48 @@ pub struct Blockchain {
     #[serde(default)]
     pub treasury_epoch_start_balance: HashMap<u64, u64>,
 
-    // ===========================================================}
+    // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
+    /// Most recently computed decentralization snapshot.
+    #[serde(default)]
+    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
+    /// Configurable thresholds governing phase advancement.
+    #[serde(default)]
+    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
+    /// Number of consecutive governance epochs that met quorum (for Phase 2 gate).
+    #[serde(default)]
+    pub governance_cycles_with_quorum: u32,
+    /// Block height of the last governance cycle check.
+    #[serde(default)]
+    pub last_governance_cycle_height: u64,
+
+    // ── DAO Voting Power (dao-5) ───────────────────────────────────────────
+    /// How token balances translate to voting weight
+    #[serde(default)]
+    pub voting_power_mode: crate::dao::VotingPowerMode,
+    /// Vote delegation map: delegator_did → delegate_did
+    #[serde(default)]
+    pub vote_delegations: HashMap<String, String>,
+    /// Oracle protocol v1 consensus state (committee/config/finalized prices).
+    #[serde(default)]
+    pub oracle_state: crate::oracle::OracleState,
+
+    // ── DAO Hybrid Governance (dao-4) ──────────────────────────────────────
+    /// Council co-signatures collected for a proposal (proposal_id → [(did, sig_bytes)]).
+    #[serde(default)]
+    pub pending_cosigns: HashMap<[u8; 32], Vec<(String, Vec<u8>)>>,
+    /// Council vetoes for a proposal (proposal_id → [(did, reason)]).
+    #[serde(default)]
+    pub pending_vetoes: HashMap<[u8; 32], Vec<(String, String)>>,
+    /// Window (blocks) during which the council can veto/cosign after a vote closes.
+    #[serde(default = "default_veto_window")]
+    pub veto_window_blocks: u64,
+    /// Number of executions that occurred per treasury epoch (epoch → count).
+    #[serde(default)]
+    pub treasury_epoch_execution_count: HashMap<u64, u32>,
+    /// Maximum treasury executions allowed per epoch.
+    #[serde(default = "default_max_executions")]
+    pub max_executions_per_epoch: u32,
+}
 
 /// Validator information stored on-chain.
 ///
@@ -587,15 +638,24 @@ impl BlockchainV1 {
             emergency_activated_by: None,
             emergency_expires_at: None,
             treasury_epoch_start_balance: HashMap::new(),
-            voting_power_mode: crate::dao::VotingPowerMode::default(),
-            vote_delegations: HashMap::new(),
-            oracle_state: crate::oracle::OracleState::default(),
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
             phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
             governance_cycles_with_quorum: 0,
             last_governance_cycle_height: 0,
+
+            // DAO Voting Power
+            voting_power_mode: crate::dao::VotingPowerMode::default(),
+            vote_delegations: HashMap::new(),
+            oracle_state: crate::oracle::OracleState::default(),
+
+            // DAO Hybrid Governance
+            pending_cosigns: HashMap::new(),
+            pending_vetoes: HashMap::new(),
+            veto_window_blocks: default_veto_window(),
+            treasury_epoch_execution_count: HashMap::new(),
+            max_executions_per_epoch: default_max_executions(),
         }
     }
 }
@@ -775,6 +835,18 @@ struct BlockchainStorageV3 {
     pub governance_cycles_with_quorum: u32,
     #[serde(default)]
     pub last_governance_cycle_height: u64,
+
+    // DAO Hybrid Governance (dao-4)
+    #[serde(default)]
+    pub pending_cosigns: HashMap<[u8; 32], Vec<(String, Vec<u8>)>>,
+    #[serde(default)]
+    pub pending_vetoes: HashMap<[u8; 32], Vec<(String, String)>>,
+    #[serde(default = "default_veto_window")]
+    pub veto_window_blocks: u64,
+    #[serde(default)]
+    pub treasury_epoch_execution_count: HashMap<u64, u32>,
+    #[serde(default = "default_max_executions")]
+    pub max_executions_per_epoch: u32,
 }
 
 impl BlockchainStorageV3 {
@@ -882,6 +954,13 @@ impl BlockchainStorageV3 {
             phase_transition_config: bc.phase_transition_config.clone(),
             governance_cycles_with_quorum: bc.governance_cycles_with_quorum,
             last_governance_cycle_height: bc.last_governance_cycle_height,
+
+            // DAO Hybrid Governance
+            pending_cosigns: bc.pending_cosigns.clone(),
+            pending_vetoes: bc.pending_vetoes.clone(),
+            veto_window_blocks: bc.veto_window_blocks,
+            treasury_epoch_execution_count: bc.treasury_epoch_execution_count.clone(),
+            max_executions_per_epoch: bc.max_executions_per_epoch,
         }
     }
 
@@ -1009,6 +1088,13 @@ impl BlockchainStorageV3 {
             phase_transition_config: self.phase_transition_config,
             governance_cycles_with_quorum: self.governance_cycles_with_quorum,
             last_governance_cycle_height: self.last_governance_cycle_height,
+
+            // DAO Hybrid Governance
+            pending_cosigns: self.pending_cosigns,
+            pending_vetoes: self.pending_vetoes,
+            veto_window_blocks: self.veto_window_blocks,
+            treasury_epoch_execution_count: self.treasury_epoch_execution_count,
+            max_executions_per_epoch: self.max_executions_per_epoch,
         }
     }
 }
@@ -1123,15 +1209,24 @@ impl Blockchain {
             emergency_activated_by: None,
             emergency_expires_at: None,
             treasury_epoch_start_balance: HashMap::new(),
-            voting_power_mode: crate::dao::VotingPowerMode::default(),
-            vote_delegations: HashMap::new(),
-            oracle_state: crate::oracle::OracleState::default(),
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
             phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
             governance_cycles_with_quorum: 0,
             last_governance_cycle_height: 0,
+
+            // DAO Voting Power
+            voting_power_mode: crate::dao::VotingPowerMode::default(),
+            vote_delegations: HashMap::new(),
+            oracle_state: crate::oracle::OracleState::default(),
+
+            // DAO Hybrid Governance
+            pending_cosigns: HashMap::new(),
+            pending_vetoes: HashMap::new(),
+            veto_window_blocks: default_veto_window(),
+            treasury_epoch_execution_count: HashMap::new(),
+            max_executions_per_epoch: default_max_executions(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -3576,6 +3671,48 @@ impl Blockchain {
             return Err(anyhow::anyhow!(
                 "Treasury spending category 'Emergency' requires emergency_state to be active"
             ));
+        }
+        Ok(())
+    }
+
+    // ── DAO Hybrid Governance (dao-4) ─────────────────────────────────────────
+
+    /// Submit a council co-signature for a Hybrid-phase proposal.
+    ///
+    /// `signer_did` must be a council member; `sig_bytes` can be empty (Phase 0
+    /// doesn't verify crypto signatures — council identity check is sufficient).
+    pub fn council_cosign_proposal(
+        &mut self,
+        proposal_id: &Hash,
+        signer_did: String,
+        sig_bytes: Vec<u8>,
+    ) -> Result<()> {
+        if !self.is_council_member(&signer_did) {
+            return Err(anyhow::anyhow!("'{}' is not a council member", signer_did));
+        }
+        let id_bytes = proposal_id.as_array();
+        let entry = self.pending_cosigns.entry(id_bytes).or_default();
+        // Prevent duplicate co-sign from the same DID
+        if !entry.iter().any(|(did, _)| did == &signer_did) {
+            entry.push((signer_did, sig_bytes));
+        }
+        Ok(())
+    }
+
+    /// Submit a council veto for a Hybrid-phase proposal.
+    pub fn council_veto_proposal(
+        &mut self,
+        proposal_id: &Hash,
+        signer_did: String,
+        reason: String,
+    ) -> Result<()> {
+        if !self.is_council_member(&signer_did) {
+            return Err(anyhow::anyhow!("'{}' is not a council member", signer_did));
+        }
+        let id_bytes = proposal_id.as_array();
+        let entry = self.pending_vetoes.entry(id_bytes).or_default();
+        if !entry.iter().any(|(did, _)| did == &signer_did) {
+            entry.push((signer_did, reason));
         }
         Ok(())
     }
@@ -6103,17 +6240,51 @@ impl Blockchain {
             ));
         }
 
-        // 4. Phase 0: require council_threshold council yes-votes
-        if self.governance_phase == crate::dao::GovernancePhase::Bootstrap {
-            let votes = self.get_dao_votes_for_proposal(&proposal_id);
-            let council_yes = votes.iter()
-                .filter(|v| v.vote_choice == "Yes" && self.is_council_member(&v.voter))
-                .count() as u8;
-            if council_yes < self.council_threshold {
-                return Err(anyhow::anyhow!(
-                    "Phase 0 requires {} council yes-votes, got {}",
-                    self.council_threshold, council_yes
-                ));
+        // 4. Phase gate
+        match self.governance_phase {
+            crate::dao::GovernancePhase::Bootstrap => {
+                let votes = self.get_dao_votes_for_proposal(&proposal_id);
+                let council_yes = votes.iter()
+                    .filter(|v| v.vote_choice == "Yes" && self.is_council_member(&v.voter))
+                    .count() as u8;
+                if council_yes < self.council_threshold {
+                    return Err(anyhow::anyhow!(
+                        "Phase 0 requires {} council yes-votes, got {}",
+                        self.council_threshold, council_yes
+                    ));
+                }
+            }
+            crate::dao::GovernancePhase::Hybrid => {
+                // Hybrid phase: check co-signs and vetoes, enforce epoch rate limit
+                let id_bytes = proposal_id.as_array();
+                // Enough co-signs?
+                let cosign_count = self.pending_cosigns
+                    .get(&id_bytes).map(|v| v.len()).unwrap_or(0);
+                if (cosign_count as u8) < self.council_threshold {
+                    return Err(anyhow::anyhow!(
+                        "Hybrid phase requires {} council co-signs, got {}",
+                        self.council_threshold, cosign_count
+                    ));
+                }
+                // Council veto?
+                let veto_count = self.pending_vetoes
+                    .get(&id_bytes).map(|v| v.len()).unwrap_or(0);
+                if (veto_count as u8) >= self.council_threshold {
+                    return Err(anyhow::anyhow!("Proposal vetoed by council"));
+                }
+                // Epoch rate limit
+                let epoch = self.height / self.treasury_epoch_length_blocks.max(1);
+                let exec_count = self.treasury_epoch_execution_count.get(&epoch).copied().unwrap_or(0);
+                if exec_count >= self.max_executions_per_epoch {
+                    return Err(anyhow::anyhow!(
+                        "Treasury epoch execution rate limit reached ({}/{})",
+                        exec_count, self.max_executions_per_epoch
+                    ));
+                }
+                // After transfer succeeds, increment counter (done below after transfer)
+            }
+            crate::dao::GovernancePhase::FullDao => {
+                // Full DAO: no council gate needed, auto-execution path handles it
             }
         }
 
@@ -6188,6 +6359,11 @@ impl Blockchain {
 
         // 8. Record epoch spend
         *self.treasury_epoch_spend.entry(epoch).or_insert(0) += amount;
+
+        // 8b. In Hybrid phase, record per-epoch execution count
+        if self.governance_phase == crate::dao::GovernancePhase::Hybrid {
+            *self.treasury_epoch_execution_count.entry(epoch).or_insert(0) += 1;
+        }
 
         // 9. Build execution transaction for audit trail (inputs/outputs empty — balance model)
         let votes = self.get_dao_votes_for_proposal(&proposal_id);
