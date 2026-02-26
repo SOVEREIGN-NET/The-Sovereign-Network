@@ -73,7 +73,6 @@ pub enum OracleAttestationAdmissionError {
         attempted_price: u128,
     },
 }
-
 impl OraclePriceAttestation {
     pub fn payload(&self) -> OraclePriceAttestationPayload {
         OraclePriceAttestationPayload {
@@ -567,7 +566,6 @@ impl OracleState {
 
         Ok(OracleAttestationAdmission::Accepted)
     }
-
 }
 
 fn normalize_members(mut members: Vec<[u8; 32]>) -> Vec<[u8; 32]> {
