@@ -97,7 +97,9 @@ pub use sync::{ChainSync, SyncError, SyncResult, ImportResult};
 pub use snapshot::{Snapshot, SnapshotError, SnapshotResult, snapshot, restore};
 pub use oracle::{
     ORACLE_PRICE_SCALE, OracleConfig, OracleCommitteeState, PendingCommitteeUpdate,
-    PendingConfigUpdate, FinalizedOraclePrice, OracleEpochState, OracleState,
+    ORACLE_ATTESTATION_DOMAIN, OraclePriceAttestationPayload, OraclePriceAttestation,
+    OracleAttestationValidationError, PendingConfigUpdate, FinalizedOraclePrice,
+    OracleEpochState, OracleState,
 };
 
 // Protocol module (Phase 3B)

@@ -11,6 +11,101 @@ use std::collections::BTreeMap;
 
 /// Fixed-point scale for SOV/USD oracle prices (8 decimals).
 pub const ORACLE_PRICE_SCALE: u128 = 100_000_000;
+/// Domain separator for oracle attestation signatures.
+pub const ORACLE_ATTESTATION_DOMAIN: &str = "SOVN_ORACLE_V1";
+
+/// Canonical payload covered by oracle attestation signatures.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OraclePriceAttestationPayload {
+    pub epoch_id: u64,
+    pub sov_usd_price: u128,
+    pub timestamp: u64,
+    pub validator_pubkey: [u8; 32],
+}
+
+/// Canonical oracle attestation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OraclePriceAttestation {
+    pub epoch_id: u64,
+    pub sov_usd_price: u128,
+    pub timestamp: u64,
+    pub validator_pubkey: [u8; 32],
+    pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OracleAttestationValidationError {
+    EncodeError(String),
+    WrongEpoch { expected: u64, got: u64 },
+    NonCommitteeSigner([u8; 32]),
+    DuplicateSigner([u8; 32]),
+    MissingSignerPublicKey([u8; 32]),
+    InvalidSignature,
+}
+
+impl OraclePriceAttestation {
+    pub fn payload(&self) -> OraclePriceAttestationPayload {
+        OraclePriceAttestationPayload {
+            epoch_id: self.epoch_id,
+            sov_usd_price: self.sov_usd_price,
+            timestamp: self.timestamp,
+            validator_pubkey: self.validator_pubkey,
+        }
+    }
+
+    /// Deterministic binary payload encoding.
+    pub fn canonical_payload_bytes(&self) -> Result<Vec<u8>, OracleAttestationValidationError> {
+        bincode::serialize(&self.payload())
+            .map_err(|e| OracleAttestationValidationError::EncodeError(e.to_string()))
+    }
+
+    /// Blake3 hash of `domain || payload`.
+    pub fn signing_digest_with_domain(
+        &self,
+        domain: &[u8],
+    ) -> Result<[u8; 32], OracleAttestationValidationError> {
+        let payload_bytes = self.canonical_payload_bytes()?;
+        let mut preimage = Vec::with_capacity(domain.len() + payload_bytes.len());
+        preimage.extend_from_slice(domain);
+        preimage.extend_from_slice(&payload_bytes);
+        Ok(lib_crypto::hash_blake3(&preimage))
+    }
+
+    /// Blake3 hash of `SOVN_ORACLE_V1 || payload`.
+    pub fn signing_digest(&self) -> Result<[u8; 32], OracleAttestationValidationError> {
+        self.signing_digest_with_domain(ORACLE_ATTESTATION_DOMAIN.as_bytes())
+    }
+
+    /// Verify signature against a resolved validator signing key.
+    pub fn verify_signature_with_domain(
+        &self,
+        resolved_signing_pubkey: &[u8],
+        domain: &[u8],
+    ) -> Result<(), OracleAttestationValidationError> {
+        let digest = self.signing_digest_with_domain(domain)?;
+        let ok = lib_crypto::post_quantum::dilithium::dilithium_verify(
+            &digest,
+            &self.signature,
+            resolved_signing_pubkey,
+        )
+        .map_err(|_| OracleAttestationValidationError::InvalidSignature)?;
+        if ok {
+            Ok(())
+        } else {
+            Err(OracleAttestationValidationError::InvalidSignature)
+        }
+    }
+
+    pub fn verify_signature(
+        &self,
+        resolved_signing_pubkey: &[u8],
+    ) -> Result<(), OracleAttestationValidationError> {
+        self.verify_signature_with_domain(
+            resolved_signing_pubkey,
+            ORACLE_ATTESTATION_DOMAIN.as_bytes(),
+        )
+    }
+}
 
 /// Governance-controlled oracle configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -180,6 +275,45 @@ impl OracleState {
             }
         }
     }
+
+    /// Deterministic attestation validation for the current epoch.
+    pub fn validate_attestation<R>(
+        &self,
+        attestation: &OraclePriceAttestation,
+        current_epoch: u64,
+        seen_signers: &BTreeSet<[u8; 32]>,
+        resolve_signing_pubkey: R,
+    ) -> Result<(), OracleAttestationValidationError>
+    where
+        R: Fn([u8; 32]) -> Option<Vec<u8>>,
+    {
+        if attestation.epoch_id != current_epoch {
+            return Err(OracleAttestationValidationError::WrongEpoch {
+                expected: current_epoch,
+                got: attestation.epoch_id,
+            });
+        }
+        if !self
+            .committee
+            .members
+            .iter()
+            .any(|member| *member == attestation.validator_pubkey)
+        {
+            return Err(OracleAttestationValidationError::NonCommitteeSigner(
+                attestation.validator_pubkey,
+            ));
+        }
+        if seen_signers.contains(&attestation.validator_pubkey) {
+            return Err(OracleAttestationValidationError::DuplicateSigner(
+                attestation.validator_pubkey,
+            ));
+        }
+
+        let signing_pubkey = resolve_signing_pubkey(attestation.validator_pubkey).ok_or(
+            OracleAttestationValidationError::MissingSignerPublicKey(attestation.validator_pubkey),
+        )?;
+        attestation.verify_signature(&signing_pubkey)
+    }
 }
 
 #[cfg(test)]
@@ -239,5 +373,103 @@ mod tests {
         assert_eq!(state.config.max_price_staleness_epochs, 5);
         assert_eq!(state.config.max_deviation_bps, 350);
         assert!(state.pending_config_update.is_none());
+    }
+
+    #[test]
+    fn attestation_payload_encoding_is_deterministic() {
+        let attestation = OraclePriceAttestation {
+            epoch_id: 7,
+            sov_usd_price: 123_456_789,
+            timestamp: 1_700_000_123,
+            validator_pubkey: [9u8; 32],
+            signature: vec![1u8; 32],
+        };
+
+        let a = attestation
+            .canonical_payload_bytes()
+            .expect("payload encoding should succeed");
+        let b = attestation
+            .canonical_payload_bytes()
+            .expect("payload encoding should succeed");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn attestation_signature_verifies_with_domain() {
+        let keypair = lib_crypto::keypair::generation::KeyPair::generate()
+            .expect("keypair generation must succeed");
+        let validator_key_id = keypair.public_key.key_id;
+
+        let mut attestation = OraclePriceAttestation {
+            epoch_id: 11,
+            sov_usd_price: 222_000_000,
+            timestamp: 1_700_000_222,
+            validator_pubkey: validator_key_id,
+            signature: Vec::new(),
+        };
+
+        let digest = attestation.signing_digest().expect("digest should build");
+        let sig = keypair.sign(&digest).expect("signing must succeed");
+        attestation.signature = sig.signature;
+
+        attestation
+            .verify_signature(&keypair.public_key.dilithium_pk)
+            .expect("signature should verify");
+    }
+
+    #[test]
+    fn attestation_signature_fails_with_wrong_domain() {
+        let keypair = lib_crypto::keypair::generation::KeyPair::generate()
+            .expect("keypair generation must succeed");
+        let validator_key_id = keypair.public_key.key_id;
+
+        let mut attestation = OraclePriceAttestation {
+            epoch_id: 11,
+            sov_usd_price: 333_000_000,
+            timestamp: 1_700_000_333,
+            validator_pubkey: validator_key_id,
+            signature: Vec::new(),
+        };
+
+        let digest = attestation.signing_digest().expect("digest should build");
+        let sig = keypair.sign(&digest).expect("signing must succeed");
+        attestation.signature = sig.signature;
+
+        let result = attestation.verify_signature_with_domain(
+            &keypair.public_key.dilithium_pk,
+            b"SOVN_ORACLE_WRONG_DOMAIN",
+        );
+        assert!(matches!(
+            result,
+            Err(OracleAttestationValidationError::InvalidSignature)
+        ));
+    }
+
+    #[test]
+    fn oracle_state_attestation_validation_rejects_non_committee() {
+        let keypair = lib_crypto::keypair::generation::KeyPair::generate()
+            .expect("keypair generation must succeed");
+        let validator_key_id = keypair.public_key.key_id;
+
+        let mut attestation = OraclePriceAttestation {
+            epoch_id: 5,
+            sov_usd_price: 999_000_000,
+            timestamp: 1_700_000_555,
+            validator_pubkey: validator_key_id,
+            signature: Vec::new(),
+        };
+        let digest = attestation.signing_digest().expect("digest should build");
+        let sig = keypair.sign(&digest).expect("signing must succeed");
+        attestation.signature = sig.signature;
+
+        let state = OracleState::default();
+        let seen = BTreeSet::new();
+        let result = state.validate_attestation(&attestation, 5, &seen, |_id| {
+            Some(keypair.public_key.dilithium_pk.clone())
+        });
+        assert!(matches!(
+            result,
+            Err(OracleAttestationValidationError::NonCommitteeSigner(_))
+        ));
     }
 }
