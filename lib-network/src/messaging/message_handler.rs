@@ -362,6 +362,15 @@ impl MeshMessageHandler {
                     );
                 }
             },
+            ZhtpMeshMessage::OracleAttestation { payload } => {
+                // Oracle attestation propagation is transport-wired here; consensus
+                // admission/finalization is handled in lib-blockchain oracle state.
+                debug!(
+                    "Received OracleAttestation payload from peer {:?} ({} bytes)",
+                    hex::encode(&sender.key_id[0..8.min(sender.key_id.len())]),
+                    payload.len()
+                );
+            },
         }
         Ok(())
     }
