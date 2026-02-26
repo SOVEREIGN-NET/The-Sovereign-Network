@@ -93,7 +93,6 @@ fn test_treasury_wallet_idempotent() {
         .filter(|k| *k == &wallet_id)
         .count();
     assert_eq!(count, 1, "There must be exactly one treasury wallet registry entry after initial bootstrap");
-
     assert_eq!(
         blockchain.dao_treasury_wallet_id.as_deref(),
         Some(wallet_id.as_str())

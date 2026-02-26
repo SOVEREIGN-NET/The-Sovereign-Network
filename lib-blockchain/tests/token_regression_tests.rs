@@ -720,8 +720,8 @@ fn test_contract_execution_transfer_rejected() {
 
     let result = blockchain.process_contract_transactions(&block);
     assert!(
-        result.is_ok(),
-        "process_contract_transactions currently swallows contract-execution errors"
+        result.is_err(),
+        "ContractExecution token transfer must be rejected"
     );
 
     let token = blockchain.token_contracts.get(&token_id).unwrap();
