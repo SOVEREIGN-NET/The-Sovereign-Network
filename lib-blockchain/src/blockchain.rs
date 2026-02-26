@@ -71,6 +71,11 @@ fn default_max_executions() -> u32 {
     3
 }
 
+/// Default Phase 2 execution delay (~24 hours at 10s blocks)
+fn default_phase2_delay() -> u64 {
+    8_640
+}
+
 /// Indexed DAO registry entry derived from canonical DaoExecution events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaoRegistryIndexEntry {
@@ -326,6 +331,14 @@ pub struct Blockchain {
     /// Maximum treasury executions allowed per epoch.
     #[serde(default = "default_max_executions")]
     pub max_executions_per_epoch: u32,
+
+    // ── DAO Full DAO (dao-6) ───────────────────────────────────────────────
+    /// Delay (blocks) between a passed proposal's vote close and auto-execution.
+    #[serde(default = "default_phase2_delay")]
+    pub phase2_execution_delay_blocks: u64,
+    /// Block height at which the Bootstrap Council was dissolved (on Phase 2 entry).
+    #[serde(default)]
+    pub council_dissolved_at: Option<u64>,
 }
 
 /// Validator information stored on-chain.
@@ -648,6 +661,10 @@ impl BlockchainV1 {
             veto_window_blocks: default_veto_window(),
             treasury_epoch_execution_count: HashMap::new(),
             max_executions_per_epoch: default_max_executions(),
+
+            // DAO Full DAO
+            phase2_execution_delay_blocks: default_phase2_delay(),
+            council_dissolved_at: None,
         }
     }
 }
@@ -838,6 +855,12 @@ struct BlockchainStorageV3 {
     pub treasury_epoch_execution_count: HashMap<u64, u32>,
     #[serde(default = "default_max_executions")]
     pub max_executions_per_epoch: u32,
+
+    // DAO Full DAO (dao-6)
+    #[serde(default = "default_phase2_delay")]
+    pub phase2_execution_delay_blocks: u64,
+    #[serde(default)]
+    pub council_dissolved_at: Option<u64>,
 }
 
 impl BlockchainStorageV3 {
@@ -952,6 +975,10 @@ impl BlockchainStorageV3 {
             veto_window_blocks: bc.veto_window_blocks,
             treasury_epoch_execution_count: bc.treasury_epoch_execution_count.clone(),
             max_executions_per_epoch: bc.max_executions_per_epoch,
+
+            // DAO Full DAO
+            phase2_execution_delay_blocks: bc.phase2_execution_delay_blocks,
+            council_dissolved_at: bc.council_dissolved_at,
         }
     }
 
@@ -1086,6 +1113,10 @@ impl BlockchainStorageV3 {
             veto_window_blocks: self.veto_window_blocks,
             treasury_epoch_execution_count: self.treasury_epoch_execution_count,
             max_executions_per_epoch: self.max_executions_per_epoch,
+
+            // DAO Full DAO
+            phase2_execution_delay_blocks: self.phase2_execution_delay_blocks,
+            council_dissolved_at: self.council_dissolved_at,
         }
     }
 }
@@ -1191,6 +1222,10 @@ impl Blockchain {
             veto_window_blocks: default_veto_window(),
             treasury_epoch_execution_count: HashMap::new(),
             max_executions_per_epoch: default_max_executions(),
+
+            // DAO Full DAO
+            phase2_execution_delay_blocks: default_phase2_delay(),
+            council_dissolved_at: None,
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -3740,8 +3775,12 @@ impl Blockchain {
                     let snap = self.compute_decentralization_snapshot();
                     self.last_decentralization_snapshot = Some(snap);
                     self.governance_phase = crate::dao::GovernancePhase::FullDao;
+                    // dao-6: dissolve Bootstrap Council on Phase 2 entry
+                    self.council_members.clear();
+                    self.council_threshold = 0;
+                    self.council_dissolved_at = Some(self.height);
                     info!(
-                        "🏛 Governance advanced to Full DAO phase at height {}",
+                        "🏛 Governance advanced to Full DAO phase at height {}; council dissolved",
                         self.height
                     );
                 }
@@ -6619,6 +6658,51 @@ impl Blockchain {
         // Periodic phase-transition check every 1000 blocks (dao-3)
         if self.height > 0 && self.height % 1_000 == 0 {
             self.try_advance_governance_phase();
+        }
+
+        // Phase 2 auto-execution (dao-6)
+        if self.governance_phase == crate::dao::GovernancePhase::FullDao {
+            let delay = self.phase2_execution_delay_blocks;
+            let height = self.height;
+
+            // Collect proposals eligible for auto-execution
+            let ready: Vec<_> = self.get_dao_proposals().into_iter()
+                .filter(|p| {
+                    let vote_closed = height >= p.created_at_height.saturating_add(p.voting_period_blocks as u64);
+                    let delay_elapsed = height >= p.created_at_height.saturating_add(p.voting_period_blocks as u64).saturating_add(delay);
+                    let not_done = !self.executed_dao_proposals.contains(&p.proposal_id);
+                    let id_bytes = p.proposal_id.as_array();
+                    let no_veto = self.pending_vetoes.get(&id_bytes)
+                        .map(|v| (v.len() as u8) < self.council_threshold)
+                        .unwrap_or(true);
+                    vote_closed && delay_elapsed && not_done && no_veto
+                })
+                .collect();
+
+            for proposal in ready {
+                // Check quorum using circulating supply denominator
+                let passed = self.has_proposal_passed(
+                    &proposal.proposal_id,
+                    proposal.quorum_required as u32,
+                ).unwrap_or(false);
+                if !passed {
+                    continue;
+                }
+                // Parse execution params to find recipient and amount
+                if let Some(params_bytes) = &proposal.execution_params {
+                    if let Ok(params) = serde_json::from_slice::<crate::dao::TreasuryExecutionParams>(params_bytes) {
+                        let proposal_id = proposal.proposal_id.clone();
+                        if let Err(e) = self.execute_dao_proposal(
+                            proposal_id,
+                            "system".to_string(),
+                            params.recipient_wallet_id,
+                            params.amount,
+                        ) {
+                            warn!("Phase 2 auto-execute failed for {:?}: {}", proposal.proposal_id, e);
+                        }
+                    }
+                }
+            }
         }
 
         // Get difficulty parameter update proposals with their quorum requirements
