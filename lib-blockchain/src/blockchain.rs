@@ -10091,9 +10091,9 @@ mod oracle_storage_migration_tests {
         blockchain.oracle_state.config.epoch_duration_secs = 999;
         blockchain.oracle_state.finalized_prices.insert(
             1,
-            crate::oracle::FinalizedPrice {
+            crate::oracle::FinalizedOraclePrice {
                 epoch_id: 1,
-                price: 123_000_000,
+                sov_usd_price: 123_000_000,
             },
         );
 
