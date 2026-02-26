@@ -216,7 +216,6 @@ struct EmergencyActivateRequest {
     activated_by: String,
 }
 
-
 /// DAO handler backed by canonical blockchain state
 pub struct DaoHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
@@ -1874,7 +1873,6 @@ impl DaoHandler {
             "delegate": delegate_hex,
         }))
     }
-
 
     async fn submit_dao_registry_execution(
         &self,

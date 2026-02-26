@@ -61,7 +61,6 @@ fn default_treasury_epoch_length() -> u64 {
     10_080
 }
 
-
 /// Indexed DAO registry entry derived from canonical DaoExecution events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaoRegistryIndexEntry {
