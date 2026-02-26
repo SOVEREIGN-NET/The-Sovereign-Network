@@ -281,21 +281,7 @@ pub struct Blockchain {
     #[serde(default)]
     pub treasury_epoch_start_balance: HashMap<u64, u64>,
 
-    // ==================================================================
-    // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
-    /// Most recently computed decentralization snapshot.
-    #[serde(default)]
-    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
-    /// Configurable thresholds governing phase advancement.
-    #[serde(default)]
-    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
-    /// Number of consecutive governance epochs that met quorum (for Phase 2 gate).
-    #[serde(default)]
-    pub governance_cycles_with_quorum: u32,
-    /// Block height of the last governance cycle check.
-    #[serde(default)]
-    pub last_governance_cycle_height: u64,
-}
+    // ===========================================================}
 
 /// Validator information stored on-chain.
 ///
