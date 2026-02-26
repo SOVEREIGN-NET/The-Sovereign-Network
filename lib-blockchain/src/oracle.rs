@@ -5,9 +5,9 @@
 //! - oracle configuration
 //! - per-epoch finalized prices
 
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use serde::{Deserialize, Serialize};
 
 /// Fixed-point scale for SOV/USD oracle prices (8 decimals).
 pub const ORACLE_PRICE_SCALE: u128 = 100_000_000;
@@ -41,6 +41,37 @@ pub enum OracleAttestationValidationError {
     DuplicateSigner([u8; 32]),
     MissingSignerPublicKey([u8; 32]),
     InvalidSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OracleAttestationAdmission {
+    /// Accepted for aggregation but threshold not yet reached.
+    Accepted,
+    /// Ignored because message epoch is outside the current epoch.
+    IgnoredOutsideCurrentEpoch { current_epoch: u64, attested_epoch: u64 },
+    /// Duplicate signer for the same epoch/price; ignored.
+    IgnoredDuplicateSigner([u8; 32]),
+    /// Epoch already finalized with same price; ignored.
+    IgnoredAfterFinalization { epoch_id: u64, price: u128 },
+    /// First candidate to reach threshold for epoch.
+    Finalized(FinalizedOraclePrice),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OracleAttestationAdmissionError {
+    Validation(OracleAttestationValidationError),
+    /// Signer submitted a second, conflicting price for same epoch.
+    ConflictingSigner {
+        signer: [u8; 32],
+        existing_price: u128,
+        attempted_price: u128,
+    },
+    /// Epoch already finalized with a different price.
+    ConflictingFinalizedPrice {
+        epoch_id: u64,
+        finalized_price: u128,
+        attempted_price: u128,
+    },
 }
 
 impl OraclePriceAttestation {
@@ -238,6 +269,12 @@ pub struct OracleEpochState {
     pub winning_price: Option<u128>,
     /// Whether this epoch is finalized.
     pub finalized: bool,
+    /// Candidate signatures grouped by price.
+    #[serde(default)]
+    pub price_signers: BTreeMap<u128, BTreeSet<[u8; 32]>>,
+    /// Signer -> attested price for conflict detection.
+    #[serde(default)]
+    pub signer_prices: BTreeMap<[u8; 32], u128>,
 }
 
 /// Root oracle consensus state.
@@ -392,6 +429,143 @@ impl OracleState {
             OracleAttestationValidationError::MissingSignerPublicKey(attestation.validator_pubkey),
         )?;
         attestation.verify_signature(&signing_pubkey)
+    }
+
+    /// Admission precheck (non-mutating) used by both gossip admission and block execution.
+    pub fn precheck_attestation<R>(
+        &self,
+        attestation: &OraclePriceAttestation,
+        current_epoch: u64,
+        resolve_signing_pubkey: R,
+    ) -> Result<OracleAttestationAdmission, OracleAttestationAdmissionError>
+    where
+        R: Fn([u8; 32]) -> Option<Vec<u8>>,
+    {
+        if attestation.epoch_id != current_epoch {
+            return Ok(OracleAttestationAdmission::IgnoredOutsideCurrentEpoch {
+                current_epoch,
+                attested_epoch: attestation.epoch_id,
+            });
+        }
+
+        if let Some(finalized) = self.finalized_prices.get(&current_epoch) {
+            if finalized.sov_usd_price == attestation.sov_usd_price {
+                return Ok(OracleAttestationAdmission::IgnoredAfterFinalization {
+                    epoch_id: current_epoch,
+                    price: finalized.sov_usd_price,
+                });
+            }
+            return Err(OracleAttestationAdmissionError::ConflictingFinalizedPrice {
+                epoch_id: current_epoch,
+                finalized_price: finalized.sov_usd_price,
+                attempted_price: attestation.sov_usd_price,
+            });
+        }
+
+        let epoch_state = self.epoch_state.get(&current_epoch);
+        if let Some(state) = epoch_state {
+            if state.finalized {
+                if let Some(winning) = state.winning_price {
+                    if winning == attestation.sov_usd_price {
+                        return Ok(OracleAttestationAdmission::IgnoredAfterFinalization {
+                            epoch_id: current_epoch,
+                            price: winning,
+                        });
+                    }
+                    return Err(OracleAttestationAdmissionError::ConflictingFinalizedPrice {
+                        epoch_id: current_epoch,
+                        finalized_price: winning,
+                        attempted_price: attestation.sov_usd_price,
+                    });
+                }
+            }
+        }
+
+        if let Some(state) = epoch_state {
+            if let Some(existing_price) = state.signer_prices.get(&attestation.validator_pubkey) {
+                if *existing_price == attestation.sov_usd_price {
+                    return Ok(OracleAttestationAdmission::IgnoredDuplicateSigner(
+                        attestation.validator_pubkey,
+                    ));
+                }
+                return Err(OracleAttestationAdmissionError::ConflictingSigner {
+                    signer: attestation.validator_pubkey,
+                    existing_price: *existing_price,
+                    attempted_price: attestation.sov_usd_price,
+                });
+            }
+        }
+
+        let seen_signers = epoch_state
+            .map(|state| state.signer_prices.keys().copied().collect::<BTreeSet<_>>())
+            .unwrap_or_default();
+        self.validate_attestation(
+            attestation,
+            current_epoch,
+            &seen_signers,
+            resolve_signing_pubkey,
+        )
+        .map_err(OracleAttestationAdmissionError::Validation)?;
+
+        Ok(OracleAttestationAdmission::Accepted)
+    }
+
+    /// Mutating attestation admission + deterministic finalization.
+    pub fn process_attestation<R>(
+        &mut self,
+        attestation: &OraclePriceAttestation,
+        current_epoch: u64,
+        resolve_signing_pubkey: R,
+    ) -> Result<OracleAttestationAdmission, OracleAttestationAdmissionError>
+    where
+        R: Fn([u8; 32]) -> Option<Vec<u8>>,
+    {
+        let precheck =
+            self.precheck_attestation(attestation, current_epoch, resolve_signing_pubkey)?;
+        if !matches!(precheck, OracleAttestationAdmission::Accepted) {
+            return Ok(precheck);
+        }
+
+        let threshold = self.committee.threshold() as usize;
+        if threshold == 0 {
+            return Ok(OracleAttestationAdmission::Accepted);
+        }
+
+        let epoch_state = self.epoch_state.entry(current_epoch).or_default();
+        epoch_state
+            .signer_prices
+            .insert(attestation.validator_pubkey, attestation.sov_usd_price);
+        let signer_set = epoch_state
+            .price_signers
+            .entry(attestation.sov_usd_price)
+            .or_default();
+        signer_set.insert(attestation.validator_pubkey);
+
+        if !epoch_state.finalized && signer_set.len() >= threshold {
+            epoch_state.finalized = true;
+            epoch_state.winning_price = Some(attestation.sov_usd_price);
+
+            let finalized = FinalizedOraclePrice {
+                epoch_id: current_epoch,
+                sov_usd_price: attestation.sov_usd_price,
+            };
+
+            if let Some(existing) = self.finalized_prices.get(&current_epoch) {
+                if existing.sov_usd_price != finalized.sov_usd_price {
+                    return Err(OracleAttestationAdmissionError::ConflictingFinalizedPrice {
+                        epoch_id: current_epoch,
+                        finalized_price: existing.sov_usd_price,
+                        attempted_price: finalized.sov_usd_price,
+                    });
+                }
+            } else {
+                self.finalized_prices.insert(current_epoch, finalized.clone());
+            }
+
+            return Ok(OracleAttestationAdmission::Finalized(finalized));
+        }
+
+        Ok(OracleAttestationAdmission::Accepted)
     }
 }
 
@@ -692,5 +866,235 @@ mod tests {
             result,
             Err(OracleAttestationValidationError::NonCommitteeSigner(_))
         ));
+    }
+
+    #[test]
+    fn oracle_finalizes_first_price_to_threshold_and_rejects_conflicts() {
+        let k1 = lib_crypto::keypair::generation::KeyPair::generate().expect("k1");
+        let k2 = lib_crypto::keypair::generation::KeyPair::generate().expect("k2");
+        let k3 = lib_crypto::keypair::generation::KeyPair::generate().expect("k3");
+        let k4 = lib_crypto::keypair::generation::KeyPair::generate().expect("k4");
+
+        let mut state = OracleState::default();
+        state.committee.members = vec![
+            k1.public_key.key_id,
+            k2.public_key.key_id,
+            k3.public_key.key_id,
+            k4.public_key.key_id,
+        ];
+        let epoch = 42;
+
+        let mk_att = |kp: &lib_crypto::keypair::generation::KeyPair, price: u128| {
+            let mut att = OraclePriceAttestation {
+                epoch_id: epoch,
+                sov_usd_price: price,
+                timestamp: 1_700_000_000,
+                validator_pubkey: kp.public_key.key_id,
+                signature: Vec::new(),
+            };
+            let digest = att.signing_digest().expect("digest");
+            let sig = kp.sign(&digest).expect("sign");
+            att.signature = sig.signature;
+            att
+        };
+
+        let att1 = mk_att(&k1, 200_000_000);
+        let att2 = mk_att(&k2, 200_000_000);
+        let att3 = mk_att(&k3, 200_000_000);
+        let conflicting = mk_att(&k4, 201_000_000);
+
+        let resolver = |id: [u8; 32]| -> Option<Vec<u8>> {
+            if id == k1.public_key.key_id {
+                Some(k1.public_key.dilithium_pk.clone())
+            } else if id == k2.public_key.key_id {
+                Some(k2.public_key.dilithium_pk.clone())
+            } else if id == k3.public_key.key_id {
+                Some(k3.public_key.dilithium_pk.clone())
+            } else if id == k4.public_key.key_id {
+                Some(k4.public_key.dilithium_pk.clone())
+            } else {
+                None
+            }
+        };
+
+        assert!(matches!(
+            state.process_attestation(&att1, epoch, resolver),
+            Ok(OracleAttestationAdmission::Accepted)
+        ));
+        assert!(matches!(
+            state.process_attestation(&att2, epoch, resolver),
+            Ok(OracleAttestationAdmission::Accepted)
+        ));
+
+        let finalized = state
+            .process_attestation(&att3, epoch, resolver)
+            .expect("third signer should finalize");
+        assert!(matches!(
+            finalized,
+            OracleAttestationAdmission::Finalized(FinalizedOraclePrice {
+                epoch_id: 42,
+                sov_usd_price: 200_000_000
+            })
+        ));
+
+        let conflict = state.process_attestation(&conflicting, epoch, resolver);
+        assert!(matches!(
+            conflict,
+            Err(OracleAttestationAdmissionError::ConflictingFinalizedPrice {
+                finalized_price: 200_000_000,
+                attempted_price: 201_000_000,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn oracle_ignores_out_of_epoch_and_duplicate_attestations() {
+        let keypair = lib_crypto::keypair::generation::KeyPair::generate().expect("keypair");
+        let mut state = OracleState::default();
+        state.committee.members = vec![keypair.public_key.key_id, [2u8; 32], [3u8; 32]];
+
+        let mut wrong_epoch = OraclePriceAttestation {
+            epoch_id: 7,
+            sov_usd_price: 222_000_000,
+            timestamp: 1_700_000_001,
+            validator_pubkey: keypair.public_key.key_id,
+            signature: Vec::new(),
+        };
+        let digest = wrong_epoch.signing_digest().expect("digest");
+        wrong_epoch.signature = keypair.sign(&digest).expect("sign").signature;
+
+        let resolver = |id: [u8; 32]| -> Option<Vec<u8>> {
+            if id == keypair.public_key.key_id {
+                Some(keypair.public_key.dilithium_pk.clone())
+            } else {
+                Some(vec![0u8; 32])
+            }
+        };
+
+        let ignored = state
+            .process_attestation(&wrong_epoch, 8, resolver)
+            .expect("must ignore");
+        assert!(matches!(
+            ignored,
+            OracleAttestationAdmission::IgnoredOutsideCurrentEpoch {
+                current_epoch: 8,
+                attested_epoch: 7
+            }
+        ));
+        assert!(state.epoch_state.get(&8).is_none());
+
+        let mut current = OraclePriceAttestation {
+            epoch_id: 8,
+            ..wrong_epoch.clone()
+        };
+        let digest_current = current.signing_digest().expect("digest");
+        current.signature = keypair.sign(&digest_current).expect("sign").signature;
+        let _ = state
+            .process_attestation(&current, 8, resolver)
+            .expect("first admission should pass");
+        let duplicate = state
+            .process_attestation(&current, 8, resolver)
+            .expect("duplicate should be ignored");
+        assert!(matches!(
+            duplicate,
+            OracleAttestationAdmission::IgnoredDuplicateSigner(_)
+        ));
+    }
+
+    #[test]
+    fn oracle_precheck_matches_execution_admission() {
+        let k1 = lib_crypto::keypair::generation::KeyPair::generate().expect("k1");
+        let k2 = lib_crypto::keypair::generation::KeyPair::generate().expect("k2");
+        let k3 = lib_crypto::keypair::generation::KeyPair::generate().expect("k3");
+
+        let mut state = OracleState::default();
+        state.committee.members = vec![k1.public_key.key_id, k2.public_key.key_id, k3.public_key.key_id];
+        let epoch = 13;
+
+        let mut att = OraclePriceAttestation {
+            epoch_id: epoch,
+            sov_usd_price: 300_000_000,
+            timestamp: 1_700_000_010,
+            validator_pubkey: k1.public_key.key_id,
+            signature: Vec::new(),
+        };
+        let digest = att.signing_digest().expect("digest");
+        att.signature = k1.sign(&digest).expect("sign").signature;
+
+        let resolver = |id: [u8; 32]| -> Option<Vec<u8>> {
+            if id == k1.public_key.key_id {
+                Some(k1.public_key.dilithium_pk.clone())
+            } else if id == k2.public_key.key_id {
+                Some(k2.public_key.dilithium_pk.clone())
+            } else if id == k3.public_key.key_id {
+                Some(k3.public_key.dilithium_pk.clone())
+            } else {
+                None
+            }
+        };
+
+        let pre = state
+            .precheck_attestation(&att, epoch, resolver)
+            .expect("precheck should pass");
+        let exec = state
+            .process_attestation(&att, epoch, resolver)
+            .expect("execution should pass");
+        assert_eq!(pre, exec);
+    }
+
+    #[test]
+    fn oracle_replay_reconstructs_identical_finalized_prices() {
+        let k1 = lib_crypto::keypair::generation::KeyPair::generate().expect("k1");
+        let k2 = lib_crypto::keypair::generation::KeyPair::generate().expect("k2");
+        let k3 = lib_crypto::keypair::generation::KeyPair::generate().expect("k3");
+
+        let committee = vec![k1.public_key.key_id, k2.public_key.key_id, k3.public_key.key_id];
+        let epoch = 22;
+        let price = 250_000_000u128;
+
+        let mk = |kp: &lib_crypto::keypair::generation::KeyPair| {
+            let mut att = OraclePriceAttestation {
+                epoch_id: epoch,
+                sov_usd_price: price,
+                timestamp: 1_700_000_100,
+                validator_pubkey: kp.public_key.key_id,
+                signature: Vec::new(),
+            };
+            let digest = att.signing_digest().expect("digest");
+            att.signature = kp.sign(&digest).expect("sign").signature;
+            att
+        };
+        let attestations = vec![mk(&k1), mk(&k2), mk(&k3)];
+
+        let resolver = |id: [u8; 32]| -> Option<Vec<u8>> {
+            if id == k1.public_key.key_id {
+                Some(k1.public_key.dilithium_pk.clone())
+            } else if id == k2.public_key.key_id {
+                Some(k2.public_key.dilithium_pk.clone())
+            } else if id == k3.public_key.key_id {
+                Some(k3.public_key.dilithium_pk.clone())
+            } else {
+                None
+            }
+        };
+
+        let mut a = OracleState::default();
+        a.committee.members = committee.clone();
+        for att in &attestations {
+            a.process_attestation(att, epoch, resolver).expect("process");
+        }
+
+        let snapshot = bincode::serialize(&a).expect("serialize oracle state");
+        let restored: OracleState = bincode::deserialize(&snapshot).expect("deserialize oracle state");
+
+        let mut b = OracleState::default();
+        b.committee.members = committee;
+        for att in &attestations {
+            b.process_attestation(att, epoch, resolver).expect("replay");
+        }
+
+        assert_eq!(restored.finalized_prices, b.finalized_prices);
+        assert_eq!(restored.epoch_state, b.epoch_state);
     }
 }
