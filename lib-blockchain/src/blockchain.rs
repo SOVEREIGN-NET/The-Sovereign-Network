@@ -281,6 +281,17 @@ pub struct Blockchain {
     /// Prevents gaming the 5% cap by making multiple small proposals as balance depletes.
     #[serde(default)]
     pub treasury_epoch_start_balance: HashMap<u64, u64>,
+
+    // =========================================================================
+    // DAO Voting Power (dao-5)
+    // =========================================================================
+
+    /// How token balances translate to voting weight
+    #[serde(default)]
+    pub voting_power_mode: crate::dao::VotingPowerMode,
+    /// Vote delegation map: delegator_did → delegate_did
+    #[serde(default)]
+    pub vote_delegations: HashMap<String, String>,
 }
 
 /// Validator information stored on-chain.
@@ -587,6 +598,8 @@ impl BlockchainV1 {
             emergency_activated_by: None,
             emergency_expires_at: None,
             treasury_epoch_start_balance: HashMap::new(),
+            voting_power_mode: crate::dao::VotingPowerMode::default(),
+            vote_delegations: HashMap::new(),
         }
     }
 }
@@ -751,6 +764,12 @@ struct BlockchainStorageV3 {
     pub emergency_expires_at: Option<u64>,
     #[serde(default)]
     pub treasury_epoch_start_balance: HashMap<u64, u64>,
+
+    // DAO Voting Power (dao-5)
+    #[serde(default)]
+    pub voting_power_mode: crate::dao::VotingPowerMode,
+    #[serde(default)]
+    pub vote_delegations: HashMap<String, String>,
 }
 
 impl BlockchainStorageV3 {
@@ -849,6 +868,10 @@ impl BlockchainStorageV3 {
             emergency_activated_by: bc.emergency_activated_by.clone(),
             emergency_expires_at: bc.emergency_expires_at,
             treasury_epoch_start_balance: bc.treasury_epoch_start_balance.clone(),
+
+            // DAO Voting Power
+            voting_power_mode: bc.voting_power_mode.clone(),
+            vote_delegations: bc.vote_delegations.clone(),
         }
     }
 
@@ -967,6 +990,10 @@ impl BlockchainStorageV3 {
             emergency_activated_by: self.emergency_activated_by,
             emergency_expires_at: self.emergency_expires_at,
             treasury_epoch_start_balance: self.treasury_epoch_start_balance,
+
+            // DAO Voting Power
+            voting_power_mode: self.voting_power_mode,
+            vote_delegations: self.vote_delegations,
         }
     }
 }
@@ -1056,6 +1083,8 @@ impl Blockchain {
             emergency_activated_by: None,
             emergency_expires_at: None,
             treasury_epoch_start_balance: HashMap::new(),
+            voting_power_mode: crate::dao::VotingPowerMode::default(),
+            vote_delegations: HashMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -5735,6 +5764,37 @@ impl Blockchain {
         Ok(approval_percent >= required_approval_percent as u64)
     }
 
+    /// Return the current circulating SOV supply (total minted minus any burned).
+    pub fn get_circulating_sov_supply(&self) -> u64 {
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        self.token_contracts
+            .get(&sov_id)
+            .map(|t| t.total_supply)
+            .unwrap_or(0)
+    }
+
+    /// Check if a proposal has passed using circulating-supply-based quorum.
+    ///
+    /// `required_pct` is the minimum percentage (0–100) of circulating supply that
+    /// must have participated AND the minimum approval rate among those votes.
+    pub fn has_proposal_passed_with_quorum(
+        &self,
+        proposal_id: &Hash,
+        required_pct: u32,
+    ) -> Result<bool> {
+        let (yes_votes, _no, _ab, total_cast) = self.tally_dao_votes(proposal_id);
+        if total_cast == 0 {
+            return Ok(false);
+        }
+        let circulating = self.get_circulating_sov_supply().max(1);
+        let participation_pct = (total_cast * 100) / circulating;
+        if participation_pct < required_pct as u64 {
+            return Ok(false);
+        }
+        let approval_pct = (yes_votes * 100) / total_cast;
+        Ok(approval_pct >= required_pct as u64)
+    }
+
     /// Set the DAO treasury wallet ID
     pub fn set_dao_treasury_wallet(&mut self, wallet_id: String) -> Result<()> {
         // Verify wallet exists in registry
@@ -7144,33 +7204,45 @@ impl Blockchain {
     /// Transaction amounts are encrypted in Pedersen commitments and cannot be read.
     /// Voting power is derived entirely from publicly verifiable on-chain actions.
     pub fn calculate_user_voting_power(&self, user_id: &lib_identity::IdentityId) -> u64 {
-        // Zero-knowledge blockchain: cannot extract balance from UTXOs
-        // Transaction amounts are encrypted, so token balance = 0
-        let token_balance = 0;
-        
-        // Get staked amount (check if user is validator)
-        let staked_amount = self.validator_registry.values()
-            .find(|v| v.identity_id == user_id.to_string())
-            .map(|v| v.stake)
-            .unwrap_or(0);
-        
-        // Calculate network contribution score (0-100)
-        let network_contribution_score = self.calculate_network_contribution_score(user_id);
-        
-        // Calculate reputation score (0-100) based on on-chain activity
-        let reputation_score = self.calculate_reputation_score(user_id);
-        
-        // Get delegated voting power (from vote delegation system)
-        let delegated_power = self.get_delegated_voting_power(user_id);
-        
-        // Use DaoEngine's calculation formula
-        lib_consensus::DaoEngine::calculate_voting_power(
-            token_balance,
-            staked_amount,
-            network_contribution_score,
-            reputation_score,
-            delegated_power,
-        )
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+
+        // lib_identity::IdentityId = lib_crypto::Hash, but get_wallets_for_owner takes
+        // &crate::types::hash::Hash.  Bridge via the raw 32-byte array.
+        let user_local_id = crate::types::hash::Hash::new(user_id.0);
+
+        // Sum SOV balances across all wallets owned by this identity.
+        let sov_balance: u64 = self.get_wallets_for_owner(&user_local_id).iter()
+            .filter_map(|w| {
+                // wallet_id: crate::types::hash::Hash — as_array() gives [u8; 32] directly.
+                let pk = Self::wallet_key_for_sov(&w.wallet_id.as_array());
+                self.token_contracts.get(&sov_id).map(|t| t.balance_of(&pk))
+            })
+            .sum();
+
+        // 1 SOV (1e8 atomic units) = 1 base vote unit
+        let base_power = sov_balance / 100_000_000;
+
+        // Add power from identities that delegated to this user.
+        // vote_delegations maps delegator_did_hex → delegate_did_hex.
+        let user_hex = hex::encode(user_id.0);
+        let delegated_extra: u64 = self.vote_delegations.iter()
+            .filter(|(_, delegate_hex)| delegate_hex.as_str() == user_hex.as_str())
+            .filter_map(|(delegator_hex, _)| {
+                let bytes = hex::decode(delegator_hex).ok()?;
+                let delegator_bytes: [u8; 32] = bytes.try_into().ok()?;
+                let delegator_local_id = crate::types::hash::Hash::new(delegator_bytes);
+                let delegator_wallets = self.get_wallets_for_owner(&delegator_local_id);
+                let bal: u64 = delegator_wallets.iter()
+                    .filter_map(|w| {
+                        let pk = Self::wallet_key_for_sov(&w.wallet_id.as_array());
+                        self.token_contracts.get(&sov_id).map(|t| t.balance_of(&pk))
+                    })
+                    .sum();
+                Some(bal / 100_000_000)
+            })
+            .sum();
+
+        base_power.saturating_add(delegated_extra)
     }
 
     /// Calculate network contribution score (0-100) based on storage and compute provided
