@@ -990,6 +990,36 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// - Setting balance to 0 may delete the entry (implementation detail)
     fn set_token_balance(&self, t: &TokenId, a: &Address, v: Amount) -> StorageResult<()>;
 
+    /// Backfill token balances from a legacy TokenContract into the token_balances store.
+    ///
+    /// Used as a one-time migration when upgrading from a node that stored SOV balances
+    /// only in the TokenContract blob (legacy path) to a node that uses the token_balances
+    /// Sled tree (executor path). Entries are keyed by raw 32-byte address (wallet_id).
+    ///
+    /// Only writes entries where the token_balances tree has no existing entry for the
+    /// (token_id, address) pair. This is idempotent.
+    ///
+    /// Returns the number of entries written (0 if already up-to-date).
+    fn backfill_token_balances_from_contract(
+        &self,
+        _token_id: &TokenId,
+        _entries: &[([u8; 32], u64)],
+    ) -> StorageResult<usize> {
+        Ok(0) // Default no-op
+    }
+
+    /// Directly overwrite token balances for startup migration/repair only.
+    ///
+    /// Unlike `set_token_balance`, this does NOT require an active block transaction.
+    /// Use ONLY in startup migrations (e.g., correcting backfill inflation), never
+    /// during block execution.
+    fn force_set_token_balances(
+        &self,
+        _entries: &[(TokenId, Address, u128)],
+    ) -> StorageResult<usize> {
+        Ok(0) // Default no-op
+    }
+
     // =========================================================================
     // Token Transfer Nonces (Replay Protection)
     // =========================================================================
