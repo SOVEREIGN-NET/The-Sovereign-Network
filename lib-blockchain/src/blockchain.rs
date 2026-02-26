@@ -4366,6 +4366,63 @@ impl Blockchain {
         &self.validator_registry
     }
 
+    /// Apply oracle slashing evidence and deterministic penalties.
+    ///
+    /// Penalties:
+    /// - fixed stake reduction (`ORACLE_SLASH_BPS`)
+    /// - committee removal scheduled for next epoch boundary
+    /// Duplicate evidence is idempotent and applies no additional penalty.
+    pub fn apply_oracle_slashing_evidence(
+        &mut self,
+        evidence: &crate::oracle::OracleSlashingEvidence,
+        current_epoch: u64,
+    ) -> Result<crate::oracle::OracleSlashingOutcome> {
+        const DILITHIUM5_PK_LEN: usize = 2592;
+        let signer_pubkeys = self
+            .validator_registry
+            .values()
+            .filter_map(|info| {
+                if info.consensus_key.len() < DILITHIUM5_PK_LEN {
+                    return None;
+                }
+                let signer_key_id = lib_crypto::hash_blake3(&info.consensus_key);
+                let signer_pubkey = info.consensus_key[0..DILITHIUM5_PK_LEN].to_vec();
+                Some((signer_key_id, signer_pubkey))
+            })
+            .collect::<HashMap<[u8; 32], Vec<u8>>>();
+
+        let outcome = self
+            .oracle_state
+            .apply_slashing_evidence(evidence, current_epoch, |key_id| {
+                signer_pubkeys.get(&key_id).cloned()
+            })
+            .map_err(|e| anyhow::anyhow!("Oracle slashing evidence rejected: {:?}", e))?;
+
+        if let crate::oracle::OracleSlashingOutcome::Applied(record) = &outcome {
+            for validator in self.validator_registry.values_mut() {
+                let key_id = lib_crypto::hash_blake3(&validator.consensus_key);
+                if key_id == record.offender {
+                    let slash = ((validator.stake as u128)
+                        .saturating_mul(record.slash_bps as u128)
+                        / 10_000) as u64;
+                    let slash_amount = if validator.stake > 0 {
+                        slash.max(1)
+                    } else {
+                        0
+                    };
+                    validator.stake = validator.stake.saturating_sub(slash_amount);
+                    validator.slash_count = validator.slash_count.saturating_add(1);
+                    if validator.stake == 0 {
+                        validator.status = "slashed".to_string();
+                    }
+                    break;
+                }
+            }
+        }
+
+        Ok(outcome)
+    }
+
     /// Update validator information
     pub fn update_validator(&mut self, identity_id: &str, updated_info: ValidatorInfo) -> Result<Hash> {
         // Check if validator exists

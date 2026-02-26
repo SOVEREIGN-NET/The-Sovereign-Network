@@ -100,7 +100,9 @@ pub use oracle::{
     ORACLE_PRICE_SCALE, OracleConfig, OracleCommitteeState, PendingCommitteeUpdate,
     ORACLE_ATTESTATION_DOMAIN, OraclePriceAttestationPayload, OraclePriceAttestation,
     OracleAttestationValidationError, OracleAttestationAdmission, OracleAttestationAdmissionError,
-    PendingConfigUpdate, FinalizedOraclePrice, OracleEpochState, OracleState,
+    ORACLE_SLASH_BPS, OracleSlashingEvidence, OracleSlashingReason, OracleSlashRecord,
+    OracleSlashingOutcome, OracleSlashingError, PendingConfigUpdate, FinalizedOraclePrice,
+    OracleEpochState, OracleState,
 };
 
 // Protocol module (Phase 3B)
