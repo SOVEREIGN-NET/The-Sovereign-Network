@@ -32,6 +32,7 @@ pub struct OracleFetchedPrice {
 pub enum OracleProducerError {
     NotCommitteeMember([u8; 32]),
     DuplicateSources,
+    NotEnoughSources { expected_min: usize, got: usize },
     ZeroMedian,
     ArithmeticOverflow,
     SignFailed(String),
@@ -55,12 +56,18 @@ impl OracleProducerService {
         fetched: Vec<OracleFetchedPrice>,
     ) -> Result<Option<OraclePriceAttestation>, OracleProducerError> {
         let validator_pubkey = validator_keypair.public_key.key_id;
-        if !committee_members.iter().any(|member| *member == validator_pubkey) {
+        if !committee_members
+            .iter()
+            .any(|member| *member == validator_pubkey)
+        {
             return Err(OracleProducerError::NotCommitteeMember(validator_pubkey));
         }
 
         if fetched.len() < self.config.min_sources_required {
-            return Ok(None);
+            return Err(OracleProducerError::NotEnoughSources {
+                expected_min: self.config.min_sources_required,
+                got: fetched.len(),
+            });
         }
 
         let unique_sources = fetched
@@ -101,8 +108,8 @@ impl OracleProducerService {
         let filtered_prices = fresh_prices
             .into_iter()
             .filter(|sample| {
-                let deviation = deviation_bps(sample.sov_usd_price, fresh_median)
-                    .unwrap_or(u32::MAX);
+                let deviation =
+                    deviation_bps(sample.sov_usd_price, fresh_median).unwrap_or(u32::MAX);
                 deviation <= self.config.max_deviation_bps
             })
             .collect::<Vec<_>>();
@@ -125,9 +132,9 @@ impl OracleProducerService {
             signature: Vec::new(),
         };
 
-        let digest = attestation
-            .signing_digest()
-            .map_err(|_| OracleProducerError::SignFailed("failed to create signing digest".into()))?;
+        let digest = attestation.signing_digest().map_err(|_| {
+            OracleProducerError::SignFailed("failed to create signing digest".into())
+        })?;
         let signature = validator_keypair
             .sign(&digest)
             .map_err(|e| OracleProducerError::SignFailed(e.to_string()))?;
@@ -139,7 +146,10 @@ impl OracleProducerService {
 
 fn median_u128(values: &[u128]) -> Result<u128, OracleProducerError> {
     if values.is_empty() {
-        return Err(OracleProducerError::ArithmeticOverflow);
+        return Err(OracleProducerError::NotEnoughSources {
+            expected_min: 1,
+            got: 0,
+        });
     }
 
     let mut sorted = values.to_vec();
@@ -352,5 +362,101 @@ mod tests {
 
         // Should abstain (return None) instead of error
         assert!(attestation.is_none());
+    }
+
+    #[test]
+    fn even_length_median_rounds_down() {
+        // Test that median of even-length list averages the two middle values and rounds down
+        let values = vec![100, 200, 300, 400];
+        // Sorted: [100, 200, 300, 400]
+        // Middle two: 200 and 300
+        // Average: (200 + 300) / 2 = 250
+        let median = median_u128(&values).expect("median should succeed");
+        assert_eq!(median, 250);
+
+        // Test another case: [10, 20, 30, 40] -> median = (20 + 30) / 2 = 25
+        let values2 = vec![40, 10, 30, 20];
+        let median2 = median_u128(&values2).expect("median should succeed");
+        assert_eq!(median2, 25);
+
+        // Test odd number remains unchanged
+        let values3 = vec![100, 200, 300];
+        let median3 = median_u128(&values3).expect("median should succeed");
+        assert_eq!(median3, 200);
+    }
+
+    #[test]
+    fn future_timestamp_samples_rejected() {
+        let service = OracleProducerService::new(OracleProducerConfig::default());
+        let keypair = KeyPair::generate().expect("keypair generation should succeed");
+        let committee = vec![keypair.public_key.key_id, [9u8; 32], [8u8; 32]];
+        let now = 1_700_000_000u64;
+
+        // Future timestamp should be rejected, leaving insufficient sources
+        let attestation = service
+            .build_attestation(
+                10,
+                now,
+                &committee,
+                &keypair,
+                vec![
+                    // Future timestamp - should be rejected
+                    sample("a", 200_000_000, now + 1_000),
+                    sample("b", 202_000_000, now - 1),
+                    sample("c", 198_000_000, now - 2),
+                ],
+            )
+            .expect("pipeline should not hard-fail");
+
+        // Only 2 valid sources remain, which is >= min_valid_sources_to_attest (2)
+        // So attestation should still be produced
+        assert!(attestation.is_some());
+        assert_eq!(attestation.unwrap().sov_usd_price, 200_000_000);
+
+        // Test with more future timestamps causing abstention
+        let attestation2 = service
+            .build_attestation(
+                10,
+                now,
+                &committee,
+                &keypair,
+                vec![
+                    // All future timestamps - should be rejected
+                    sample("a", 200_000_000, now + 1_000),
+                    sample("b", 202_000_000, now + 2_000),
+                    sample("c", 198_000_000, now + 3_000),
+                ],
+            )
+            .expect("pipeline should not hard-fail");
+
+        // All sources rejected, not enough to attest -> abstain
+        assert!(attestation2.is_none());
+    }
+
+    #[test]
+    fn insufficient_sources_returns_error() {
+        let service = OracleProducerService::new(OracleProducerConfig::default());
+        let keypair = KeyPair::generate().expect("keypair generation should succeed");
+        let committee = vec![keypair.public_key.key_id, [9u8; 32], [8u8; 32]];
+        let now = 1_700_000_000u64;
+
+        // Only 2 sources provided, but min_sources_required is 3
+        let result = service.build_attestation(
+            10,
+            now,
+            &committee,
+            &keypair,
+            vec![
+                sample("a", 200_000_000, now),
+                sample("b", 202_000_000, now - 1),
+            ],
+        );
+
+        // Should return error (not Ok(None))
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            OracleProducerError::NotEnoughSources { .. }
+        ));
     }
 }
