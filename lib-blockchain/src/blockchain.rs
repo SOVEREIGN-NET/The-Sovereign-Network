@@ -281,24 +281,7 @@ pub struct Blockchain {
     #[serde(default)]
     pub treasury_epoch_start_balance: HashMap<u64, u64>,
 
-    // =========================================================================
-    // DAO Voting Power (dao-5)
-    // =========================================================================
-
-    /// How token balances translate to voting weight
-    #[serde(default)]
-    pub voting_power_mode: crate::dao::VotingPowerMode,
-    /// Vote delegation map: delegator_id_hex → delegate_id_hex
-    ///
-    /// Both keys and values are 64-char hex-encoded 32-byte identity IDs
-    /// (the raw bytes of `lib_identity::IdentityId`, NOT "did:zhtp:…" strings).
-    /// Delegation is **non-transitive**: if A→B and B→C, C does not receive A's power.
-    #[serde(default)]
-    pub vote_delegations: HashMap<String, String>,
-    /// Oracle protocol v1 consensus state (committee/config/finalized prices).
-    #[serde(default)]
-    pub oracle_state: crate::oracle::OracleState,
-
+    // ==================================================================
     // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
     /// Most recently computed decentralization snapshot.
     #[serde(default)]
