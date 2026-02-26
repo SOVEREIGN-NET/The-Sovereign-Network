@@ -24,7 +24,7 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{info, warn, debug};
+use tracing::{info, warn};
 
 // ZHTP protocol imports
 use lib_protocols::zhtp::ZhtpRequestHandler;
@@ -33,13 +33,9 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 // Blockchain imports
 use lib_blockchain::Blockchain;
 use lib_blockchain::contracts::bonding_curve::{
-    BondingCurveToken, BondingCurveRegistry, BondingCurveEvent,
-    Phase, CurveType, Threshold, CurveStats, Valuation, PriceSource, ConfidenceLevel,
-    CurveError, ReserveUpdateReason,
+    BondingCurveToken, Phase, CurveType, Threshold, Valuation, PriceSource, ConfidenceLevel,
 };
-use lib_blockchain::contracts::sov_swap::{SovSwapPool, SwapResult, SwapError, SimulationResult};
 use lib_blockchain::integration::crypto_integration::PublicKey;
-use lib_crypto::Hash;
 
 /// Helper function to create JSON responses
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -362,26 +358,12 @@ impl CurveHandler {
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         // Execute buy (contract enforces phase == Curve)
-        let (token_amount, event) = token.buy(
+        let (token_amount, _event) = token.buy(
             buyer,
             buy_req.stable_amount,
             block_height,
             timestamp,
         ).map_err(|e| anyhow::anyhow!("Buy failed: {}", e))?;
-
-        // Check for automatic graduation
-        let graduated = if token.can_graduate(timestamp) {
-            match token.graduate(timestamp, block_height) {
-                Ok(grad_event) => {
-                    info!("Token {} auto-graduated", hex::encode(&token_id[..8]));
-                    // Emit graduation event (in production, this would be indexed)
-                    Some(grad_event)
-                }
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
 
         drop(blockchain);
 
@@ -390,7 +372,6 @@ impl CurveHandler {
             "token_id": buy_req.token_id,
             "stable_paid": buy_req.stable_amount,
             "tokens_received": token_amount,
-            "auto_graduated": graduated.is_some(),
             "tx_status": "confirmed"
         }))
     }
@@ -1343,6 +1324,13 @@ fn integer_sqrt(n: u128) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_blockchain::contracts::bonding_curve::{BondingCurveToken, Phase};
+    use lib_crypto::Hash;
+    use lib_protocols::types::{ZhtpMethod, ZhtpRequest};
+
+    fn test_pubkey(seed: u8) -> PublicKey {
+        PublicKey::new(vec![seed; 1312])
+    }
 
     #[test]
     fn test_integer_sqrt() {
@@ -1367,5 +1355,71 @@ mod tests {
         let threshold: Threshold = req.into();
         assert!(threshold.is_met(1_000_000, 0, 0));
         assert!(!threshold.is_met(999_999, 0, 0));
+    }
+
+    #[tokio::test]
+    async fn buy_handler_does_not_auto_graduate_token() {
+        let mut blockchain = Blockchain::new().expect("blockchain");
+        let token_id = [0x33u8; 32];
+        let creator = test_pubkey(7);
+        let mut token = BondingCurveToken::deploy(
+            token_id,
+            "Curve Test".to_string(),
+            "CTEST".to_string(),
+            CurveType::Linear {
+                base_price: 100_000_000,
+                slope: 1,
+            },
+            Threshold::ReserveAmount(1),
+            true,
+            creator,
+            0,
+            1_700_000_000,
+        )
+        .expect("deploy token");
+        token.reserve_balance = 0;
+        blockchain
+            .bonding_curve_registry
+            .register(token)
+            .expect("register token");
+
+        let handler = CurveHandler {
+            blockchain: Arc::new(RwLock::new(blockchain)),
+        };
+
+        let req_body = serde_json::to_vec(&serde_json::json!({
+            "token_id": hex::encode(token_id),
+            "stable_amount": 1,
+        }))
+        .expect("serialize request");
+
+        let request = ZhtpRequest {
+            method: ZhtpMethod::Post,
+            uri: "/api/v1/curve/buy".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers: lib_protocols::types::ZhtpHeaders::new(),
+            body: req_body,
+            timestamp: 1_700_000_100,
+            requester: Some(Hash::from_bytes(&[9u8; 32])),
+            auth_proof: None,
+        };
+
+        let response = handler.handle_buy(request).await.expect("buy response");
+        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
+        assert!(
+            json.get("auto_graduated").is_none(),
+            "buy response must not expose runtime auto-graduation"
+        );
+
+        let guard = handler.blockchain.read().await;
+        let stored = guard
+            .bonding_curve_registry
+            .get(&token_id)
+            .expect("stored token");
+        assert_eq!(
+            stored.phase,
+            Phase::Curve,
+            "buy path must not mutate phase to graduated/amm"
+        );
     }
 }
