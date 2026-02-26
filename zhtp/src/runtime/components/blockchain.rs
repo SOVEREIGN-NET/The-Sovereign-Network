@@ -334,16 +334,14 @@ impl BlockchainComponent {
             }
             Err(e) => {
                 warn!("Failed to add block to blockchain: {}", e);
-                // Evict the transactions that caused the block failure so they
-                // don't permanently block mining. They will be re-submitted by
-                // clients with correct parameters.
-                let failed_hashes: std::collections::HashSet<_> = new_block.transactions
-                    .iter()
-                    .map(|tx| tx.hash())
-                    .collect();
-                let before = blockchain.pending_transactions.len();
-                blockchain.pending_transactions.retain(|tx| !failed_hashes.contains(&tx.hash()));
-                let evicted = before - blockchain.pending_transactions.len();
+                // Evict the block's transactions from the mempool so a permanently
+                // invalid transaction (e.g. bad nonce) cannot block all future blocks.
+                // Uses the shared helper to keep eviction semantics consistent.
+                // Note: if the block failure was caused by a store/consensus error
+                // unrelated to any specific tx, valid transactions may be evicted and
+                // clients must resubmit them.
+                let evicted = new_block.transactions.len();
+                blockchain.remove_pending_transactions(&new_block.transactions);
                 if evicted > 0 {
                     warn!("Evicted {} transaction(s) from mempool after block failure", evicted);
                 }
