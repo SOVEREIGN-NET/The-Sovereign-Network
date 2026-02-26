@@ -240,7 +240,6 @@ pub struct Blockchain {
     /// Pool ID -> SovSwapPool mapping
     #[serde(default)]
     pub amm_pools: HashMap<[u8; 32], crate::contracts::sov_swap::SovSwapPool>,
-
     // =========================================================================
     // DAO Bootstrap Council (dao-1)
     // =========================================================================
@@ -296,6 +295,9 @@ pub struct Blockchain {
     /// Delegation is **non-transitive**: if A→B and B→C, C does not receive A's power.
     #[serde(default)]
     pub vote_delegations: HashMap<String, String>,
+    /// Oracle protocol v1 consensus state (committee/config/finalized prices).
+    #[serde(default)]
+    pub oracle_state: crate::oracle::OracleState,
 }
 
 /// Validator information stored on-chain.
@@ -604,6 +606,7 @@ impl BlockchainV1 {
             treasury_epoch_start_balance: HashMap::new(),
             voting_power_mode: crate::dao::VotingPowerMode::default(),
             vote_delegations: HashMap::new(),
+            oracle_state: crate::oracle::OracleState::default(),
         }
     }
 }
@@ -980,7 +983,6 @@ impl BlockchainStorageV3 {
 
             // AMM pools - initialize empty, will be populated from storage
             amm_pools: HashMap::new(),
-
             // DAO Bootstrap Council
             governance_phase: self.governance_phase,
             council_members: self.council_members,
@@ -998,7 +1000,33 @@ impl BlockchainStorageV3 {
             // DAO Voting Power
             voting_power_mode: self.voting_power_mode,
             vote_delegations: self.vote_delegations,
+            oracle_state: crate::oracle::OracleState::default(),
         }
+    }
+}
+
+/// Stable storage format V4 for blockchain serialization.
+///
+/// V4 wraps legacy V3 payload and appends Oracle Protocol v1 consensus state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BlockchainStorageV4 {
+    pub v3: BlockchainStorageV3,
+    #[serde(default)]
+    pub oracle_state: crate::oracle::OracleState,
+}
+
+impl BlockchainStorageV4 {
+    fn from_blockchain(bc: &Blockchain) -> Self {
+        Self {
+            v3: BlockchainStorageV3::from_blockchain(bc),
+            oracle_state: bc.oracle_state.clone(),
+        }
+    }
+
+    fn to_blockchain(self) -> Blockchain {
+        let mut blockchain = self.v3.to_blockchain();
+        blockchain.oracle_state = self.oracle_state;
+        blockchain
     }
 }
 
@@ -1089,6 +1117,7 @@ impl Blockchain {
             treasury_epoch_start_balance: HashMap::new(),
             voting_power_mode: crate::dao::VotingPowerMode::default(),
             vote_delegations: HashMap::new(),
+            oracle_state: crate::oracle::OracleState::default(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -8758,7 +8787,7 @@ impl Blockchain {
     /// File format magic bytes - "ZHTP"
     const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
     /// Current file format version
-    const FILE_VERSION: u16 = 3;
+    const FILE_VERSION: u16 = 4;
 
     #[deprecated(since = "0.2.0", note = "Use Phase 2 incremental storage with SledStore instead")]
     pub fn save_to_file(&self, path: &std::path::Path) -> Result<()> {
@@ -8776,7 +8805,7 @@ impl Blockchain {
         }
 
         // Convert to stable storage format
-        let storage = BlockchainStorageV3::from_blockchain(self);
+        let storage = BlockchainStorageV4::from_blockchain(self);
 
         // Serialize to bincode
         let serialized = bincode::serialize(&storage)
@@ -8844,6 +8873,34 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
+                4 => {
+                    // V4 format - includes Oracle Protocol v1 state.
+                    match bincode::deserialize::<BlockchainStorageV4>(data) {
+                        Ok(storage) => {
+                            info!("📂 Loaded blockchain storage v4 (oracle-enabled format)");
+                            storage.to_blockchain()
+                        }
+                        Err(storage_err) => {
+                            // Fallback: v4 header but direct Blockchain format
+                            info!("📂 BlockchainStorageV4 failed, trying direct format: {}", storage_err);
+                            match bincode::deserialize::<Blockchain>(data) {
+                                Ok(bc) => {
+                                    info!("📂 Loaded v4 with direct Blockchain format (legacy v4)");
+                                    bc
+                                }
+                                Err(direct_err) => {
+                                    error!("❌ Failed to deserialize v4 blockchain:");
+                                    error!("   BlockchainStorageV4 error: {}", storage_err);
+                                    error!("   Direct format error: {}", direct_err);
+                                    return Err(anyhow::anyhow!(
+                                        "Failed to deserialize v4 blockchain: {}",
+                                        storage_err
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
                 3 => {
                     // V3 format - try BlockchainStorageV3 first, fallback to direct Blockchain
                     match bincode::deserialize::<BlockchainStorageV3>(data) {
@@ -10341,6 +10398,45 @@ mod store_backed_blockchain_tests {
     }
 }
 
+#[cfg(test)]
+mod oracle_storage_migration_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn load_v3_file_applies_default_oracle_state() {
+        let mut blockchain = Blockchain::default();
+        blockchain.oracle_state.config.epoch_duration_secs = 999;
+        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
+            epoch_id: 1,
+            sov_usd_price: 123_000_000,
+        });
+
+        // Emulate pre-oracle v3 payload (without oracle fields).
+        let storage_v3 = BlockchainStorageV3::from_blockchain(&blockchain);
+        let serialized = bincode::serialize(&storage_v3).expect("serialize v3 storage");
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("legacy_v3.dat");
+        let mut file_data = Vec::with_capacity(6 + serialized.len());
+        file_data.extend_from_slice(&Blockchain::FILE_MAGIC);
+        file_data.extend_from_slice(&3u16.to_le_bytes());
+        file_data.extend_from_slice(&serialized);
+
+        let mut f = std::fs::File::create(&path).expect("create file");
+        f.write_all(&file_data).expect("write file");
+        f.sync_all().expect("sync file");
+
+        #[allow(deprecated)]
+        let loaded = Blockchain::load_from_file(&path).expect("load v3 file");
+        assert_eq!(
+            loaded.oracle_state,
+            crate::oracle::OracleState::default(),
+            "v3 payloads must load with default oracle state"
+        );
+    }
+}
+
 // =============================================================================
 // Test helpers
 // These methods exist solely to support unit/integration tests that need
@@ -10376,8 +10472,8 @@ impl Blockchain {
             recipient_wallet_id: String::new(),
             amount: 0,
         };
-        let params_bytes = serde_json::to_vec(&params)
-            .expect("TreasuryExecutionParams must serialize");
+        let params_bytes =
+            serde_json::to_vec(&params).expect("TreasuryExecutionParams must serialize");
         let tx = Transaction::new_dao_proposal(
             DaoProposalData {
                 proposal_id,
@@ -10428,7 +10524,9 @@ impl Blockchain {
     pub fn credit_dao_treasury_sov_for_test(&mut self, amount: u64) -> Result<()> {
         // Ensure the SOV token contract exists (Blockchain::new() skips this).
         self.ensure_sov_token_contract();
-        let treasury_wallet_id = self.dao_treasury_wallet_id.clone()
+        let treasury_wallet_id = self
+            .dao_treasury_wallet_id
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
         let id_bytes: [u8; 32] = hex::decode(&treasury_wallet_id)
             .map_err(|e| anyhow::anyhow!("Bad treasury wallet hex: {}", e))?
@@ -10436,9 +10534,12 @@ impl Blockchain {
             .map_err(|_| anyhow::anyhow!("Treasury wallet ID must be 32 bytes"))?;
         let pk = Self::wallet_key_for_sov(&id_bytes);
         let sov_id = crate::contracts::utils::generate_lib_token_id();
-        let token = self.token_contracts.get_mut(&sov_id)
+        let token = self
+            .token_contracts
+            .get_mut(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
-        token.credit_balance(&pk, amount)
+        token
+            .credit_balance(&pk, amount)
             .map_err(|e| anyhow::anyhow!("Treasury credit failed: {}", e))?;
         Ok(())
     }
@@ -10452,7 +10553,9 @@ impl Blockchain {
             .map_err(|_| anyhow::anyhow!("Wallet ID must be 32 bytes"))?;
         let pk = Self::wallet_key_for_sov(&id_bytes);
         let sov_id = crate::contracts::utils::generate_lib_token_id();
-        let token = self.token_contracts.get(&sov_id)
+        let token = self
+            .token_contracts
+            .get(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
         Ok(token.balance_of(&pk))
     }
@@ -10496,9 +10599,12 @@ impl Blockchain {
         // Credit SOV to the wallet's synthetic key.
         let pk = Self::wallet_key_for_sov(&wallet_id_bytes);
         let sov_id = crate::contracts::utils::generate_lib_token_id();
-        let token = self.token_contracts.get_mut(&sov_id)
+        let token = self
+            .token_contracts
+            .get_mut(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
-        token.credit_balance(&pk, amount)
+        token
+            .credit_balance(&pk, amount)
             .map_err(|e| anyhow::anyhow!("Identity SOV credit failed: {}", e))?;
         Ok(())
     }
