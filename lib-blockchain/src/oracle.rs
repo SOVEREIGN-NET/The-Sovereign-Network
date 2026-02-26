@@ -73,6 +73,7 @@ pub enum OracleAttestationAdmissionError {
         attempted_price: u128,
     },
 }
+
 impl OraclePriceAttestation {
     pub fn payload(&self) -> OraclePriceAttestationPayload {
         OraclePriceAttestationPayload {
@@ -558,7 +559,7 @@ impl OracleState {
                     });
                 }
             } else {
-                let _ = self.try_finalize_price(finalized.clone());
+                self.finalized_prices.insert(current_epoch, finalized.clone());
             }
 
             return Ok(OracleAttestationAdmission::Finalized(finalized));
