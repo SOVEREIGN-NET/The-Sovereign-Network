@@ -207,15 +207,6 @@ struct RegisterCouncilMemberRequest {
     council_signatures: Vec<String>,
 }
 
-/// Emergency state activation request (dao-2)
-#[derive(Debug, Deserialize)]
-struct EmergencyActivateRequest {
-    /// DIDs of council members co-signing emergency activation
-    council_signatures: Vec<String>,
-    /// DID of the initiating council member
-    activated_by: String,
-}
-
 /// DAO handler backed by canonical blockchain state
 pub struct DaoHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
@@ -1153,8 +1144,7 @@ impl DaoHandler {
             proposal_id,
             voter: voter_identity.did.clone(),
             vote_choice: vote_choice_str,
-            // calculate_user_voting_power already applies voting_power_mode.
-            voting_power: blockchain.calculate_user_voting_power(&authenticated_identity_id).max(1),
+            voting_power: 1,
             justification: request_data.justification.clone(),
             timestamp: now,
         };
@@ -1229,7 +1219,12 @@ impl DaoHandler {
             "status": "success",
             "identity_id": identity_id_str,
             "voting_power": voting_power,
-            "voting_power_mode": format!("{:?}", blockchain.voting_power_mode),
+            "power_breakdown": {
+                "base_citizen_power": voting_power,
+                "reputation_multiplier": 1.0,
+                "staked_tokens_power": 0,
+                "delegated_power": voting_power.saturating_sub(1)
+            }
         });
 
         create_json_response(response)
@@ -1652,422 +1647,77 @@ impl DaoHandler {
     }
 
     /// POST /api/v1/dao/council/register
-    ///
-    /// Council membership is established at genesis via `ensure_council_bootstrap()`.
-    /// Post-genesis registration requires cryptographic multisig verification that is
-    /// not yet implemented; this endpoint validates input but rejects all writes until
-    /// proper Dilithium verification is in place.
     async fn handle_register_council_member(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         let req: RegisterCouncilMemberRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
-        // ── input validation ──────────────────────────────────────────────────
-        if !req.identity_id.starts_with("did:zhtp:") {
+        if req.identity_id.is_empty() {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                "identity_id must be a valid did:zhtp: DID".to_string(),
+                "identity_id is required".to_string(),
             ));
         }
-        if req.wallet_id.trim().is_empty() || !req.wallet_id.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "wallet_id must be a non-empty hex string".to_string(),
-            ));
-        }
-        if req.stake_amount == 0 {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "stake_amount must be greater than zero".to_string(),
-            ));
-        }
-
-        let blockchain_arc = self.get_blockchain().await?;
-        let blockchain = blockchain_arc.read().await;
-
-        // ── first-bootstrap gate ──────────────────────────────────────────────
-        // Accepting the first council member over an unauthenticated public API
-        // would let any client take over an empty council.  Council members must
-        // be seeded via genesis configuration (`ensure_council_bootstrap`).
-        if blockchain.council_members.is_empty() {
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "Council bootstrap must be performed via genesis configuration \
-                 (ensure_council_bootstrap). Runtime registration is not permitted."
-                    .to_string(),
-            ));
-        }
-
-        // ── max-size guard ────────────────────────────────────────────────────
-        const MAX_COUNCIL_SIZE: usize = 5;
-        if blockchain.council_members.len() >= MAX_COUNCIL_SIZE {
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                format!("Council is at maximum capacity ({} members)", MAX_COUNCIL_SIZE),
-            ));
-        }
-
-        // ── post-genesis registration (not yet implemented) ───────────────────
-        // Adding members after genesis requires cryptographic multisig verification
-        // (council_threshold-of-N Dilithium signatures).  The current request body
-        // carries DID strings in `council_signatures`, not actual signature bytes,
-        // so accepting them would be a security bypass.  This path is disabled
-        // until proper signature verification is wired in.
-        Ok(create_error_response(
-            ZhtpStatus::Forbidden,
-            format!(
-                "Post-genesis council registration requires cryptographic multisig verification \
-                 ({}-of-{} council signatures), which is not yet implemented.",
-                blockchain.council_threshold,
-                blockchain.council_members.len(),
-            ),
-        ))
-    }
-
-    // =========================================================================
-    // Emergency state handlers (dao-2)
-    // =========================================================================
-
-    /// POST /api/v1/dao/emergency/activate
-    ///
-    /// Emergency state activation requires cryptographic multisig verification
-    /// (council_threshold-of-N Dilithium signatures). The current request body
-    /// carries DID strings in `council_signatures`, not actual signature bytes,
-    /// so accepting them over a public API would allow anyone who knows council
-    /// member DIDs to activate emergency state without authorization.
-    /// This endpoint is disabled until proper signature verification is implemented.
-    async fn handle_emergency_activate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        let req: EmergencyActivateRequest = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-
-        let blockchain_arc = self.get_blockchain().await?;
-        let blockchain = blockchain_arc.read().await;
-
-        let _ = &req; // parsed but not used until crypto verification is available
-        Ok(create_error_response(
-            ZhtpStatus::Forbidden,
-            format!(
-                "Emergency activation requires cryptographic multisig verification \
-                 ({}-of-{} council signatures), which is not yet implemented.",
-                blockchain.council_threshold,
-                blockchain.council_members.len(),
-            ),
-        ))
-    }
-
-    /// GET /api/v1/dao/emergency/status
-    async fn handle_emergency_status(&self) -> Result<ZhtpResponse> {
-        let blockchain_arc = self.get_blockchain().await?;
-        let blockchain = blockchain_arc.read().await;
-
-        create_json_response(json!({
-            "status": "success",
-            "emergency_state": blockchain.emergency_state,
-            "activated_at": blockchain.emergency_activated_at,
-            "activated_by": blockchain.emergency_activated_by,
-            "expires_at": blockchain.emergency_expires_at,
-            "current_height": blockchain.height,
-        }))
-    }
-
-    /// POST /api/v1/dao/voting/delegate — set or revoke a vote delegation.
-    ///
-    /// Body: `{ "delegate_did": "did:zhtp:HEX" }` to delegate,
-    ///       `{ "delegate_did": "" }` to revoke an existing delegation.
-    ///
-    /// Rejects: invalid DID format, non-existent delegate, self-delegation,
-    /// circular delegation chains.
-    async fn handle_vote_delegate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        let session_token = match request.headers.get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
-            Some(token) => token,
-            None => return Ok(create_error_response(ZhtpStatus::Unauthorized,
-                "Missing or invalid Authorization header".to_string())),
-        };
-
-        let client_ip = extract_client_ip(request);
-        let user_agent = extract_user_agent(request);
-        let session = self.session_manager
-            .validate_session(&session_token, &client_ip, &user_agent)
-            .await
-            .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
-
-        #[derive(serde::Deserialize)]
-        struct DelegateRequest {
-            delegate_did: String,
-        }
-        let req: DelegateRequest = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-
-        // Delegator key is the 64-char hex of the raw identity bytes.
-        let delegator_hex = hex::encode(session.identity_id.as_bytes());
 
         let blockchain_arc = self.get_blockchain().await?;
         let mut blockchain = blockchain_arc.write().await;
 
-        // ── revocation ────────────────────────────────────────────────────────
-        if req.delegate_did.is_empty() {
-            let removed = blockchain.vote_delegations.remove(&delegator_hex).is_some();
+        // Check for duplicate
+        if blockchain.is_council_member(&req.identity_id) {
+            return Ok(create_error_response(
+                ZhtpStatus::Conflict,
+                "Identity is already a council member".to_string(),
+            ));
+        }
+
+        // Capture height before any mutable borrows
+        let current_height = blockchain.height;
+
+        // First bootstrap: accept without signatures
+        if blockchain.council_members.is_empty() {
+            blockchain.council_members.push(lib_blockchain::dao::CouncilMember {
+                identity_id: req.identity_id.clone(),
+                wallet_id: req.wallet_id.clone(),
+                stake_amount: req.stake_amount,
+                joined_at_height: current_height,
+            });
+
             return create_json_response(json!({
-                "status": if removed { "revoked" } else { "no_delegation_found" },
-                "delegator": delegator_hex,
+                "status": "success",
+                "message": "First council member registered (bootstrap)",
+                "identity_id": req.identity_id,
             }));
         }
 
-        // ── DID format validation ─────────────────────────────────────────────
-        let delegate_hex = match req.delegate_did.strip_prefix("did:zhtp:") {
-            Some(hex_part) if !hex_part.is_empty() => hex_part.to_string(),
-            _ => return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Invalid delegate_did format; expected did:zhtp:HEXVALUE".to_string(),
-            )),
-        };
-
-        // Validate the hex part is a valid 32-byte ID.
-        if hex::decode(&delegate_hex).map(|b| b.len()).unwrap_or(0) != 32 {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "delegate_did hex part must decode to exactly 32 bytes".to_string(),
-            ));
-        }
-
-        // ── self-delegation check ─────────────────────────────────────────────
-        if delegate_hex == delegator_hex {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Cannot delegate voting power to yourself".to_string(),
-            ));
-        }
-
-        // ── delegate existence check ──────────────────────────────────────────
-        if !blockchain.identity_registry.contains_key(&req.delegate_did) {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                format!("Delegate identity '{}' not found in identity registry", req.delegate_did),
-            ));
-        }
-
-        // ── cycle detection ───────────────────────────────────────────────────
-        // Walk the existing delegation graph forward from the proposed delegate.
-        // If we reach the delegator, this edge would close a cycle — reject it.
-        const MAX_DEPTH: usize = 64;
-        let mut current = delegate_hex.clone();
-        for _ in 0..MAX_DEPTH {
-            match blockchain.vote_delegations.get(&current) {
-                Some(next) if next == &delegator_hex => {
-                    return Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        "Delegation would create a cycle in the delegation graph".to_string(),
-                    ));
-                }
-                Some(next) => current = next.clone(),
-                None => break,
-            }
-        }
-
-        // ── store (delegator_id_hex → delegate_id_hex) ────────────────────────
-        blockchain.vote_delegations.insert(delegator_hex.clone(), delegate_hex.clone());
-
-        create_json_response(json!({
-            "status": "success",
-            "delegator": delegator_hex,
-            "delegate": delegate_hex,
-        }))
-    }
-
-    // ── Phase Transition endpoints (dao-3) ────────────────────────────────────
-
-    /// GET /api/v1/dao/governance/phase
-    async fn handle_get_governance_phase(&self) -> Result<ZhtpResponse> {
-        let blockchain_arc = self.get_blockchain().await?;
-        let blockchain = blockchain_arc.read().await;
-
-        let phase_str = match blockchain.governance_phase {
-            lib_blockchain::dao::GovernancePhase::Bootstrap => "bootstrap",
-            lib_blockchain::dao::GovernancePhase::Hybrid    => "hybrid",
-            lib_blockchain::dao::GovernancePhase::FullDao   => "full_dao",
-        };
-
-        create_json_response(json!({
-            "status": "success",
-            "governance_phase": phase_str,
-            "council_threshold": blockchain.council_threshold,
-            "governance_cycles_with_quorum": blockchain.governance_cycles_with_quorum,
-            "last_governance_cycle_height": blockchain.last_governance_cycle_height,
-            "current_height": blockchain.height,
-        }))
-    }
-
-    /// GET /api/v1/dao/governance/transition-status
-    async fn handle_get_transition_status(&self) -> Result<ZhtpResponse> {
-        let blockchain_arc = self.get_blockchain().await?;
-        let blockchain = blockchain_arc.read().await;
-
-        let snap = blockchain.compute_decentralization_snapshot();
-        let can_advance = match blockchain.governance_phase {
-            lib_blockchain::dao::GovernancePhase::Bootstrap => blockchain.check_phase0_to_phase1(),
-            lib_blockchain::dao::GovernancePhase::Hybrid    => blockchain.check_phase1_to_phase2(),
-            lib_blockchain::dao::GovernancePhase::FullDao   => false,
-        };
-
-        create_json_response(json!({
-            "status": "success",
-            "snapshot": {
-                "verified_citizen_count": snap.verified_citizen_count,
-                "max_wallet_pct_bps": snap.max_wallet_pct_bps,
-                "snapshot_height": snap.snapshot_height,
-            },
-            "can_advance_phase": can_advance,
-            "phase_transition_config": {
-                "min_citizens_for_phase1": blockchain.phase_transition_config.min_citizens_for_phase1,
-                "max_wallet_pct_bps_for_phase1": blockchain.phase_transition_config.max_wallet_pct_bps_for_phase1,
-                "min_citizens_for_phase2": blockchain.phase_transition_config.min_citizens_for_phase2,
-                "max_wallet_pct_bps_for_phase2": blockchain.phase_transition_config.max_wallet_pct_bps_for_phase2,
-                "phase2_quorum_consecutive_cycles": blockchain.phase_transition_config.phase2_quorum_consecutive_cycles,
-            },
-        }))
-    }
-
-    /// POST /api/v1/dao/governance/trigger-transition
-    async fn handle_trigger_transition(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        #[derive(serde::Deserialize)]
-        struct TriggerRequest {
-            council_signatures: Vec<String>,
-        }
-        let req: TriggerRequest = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-
-        let blockchain_arc = self.get_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
-
+        // Subsequent registrations require threshold council signatures
         let threshold = blockchain.council_threshold as usize;
-        let valid = req.council_signatures.iter()
+        let valid_sig_count = req.council_signatures.iter()
             .filter(|did| blockchain.is_council_member(did.as_str()))
             .count();
-        if valid < threshold {
+
+        if valid_sig_count < threshold {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
-                format!("Requires {} council signatures, got {}", threshold, valid),
+                format!(
+                    "Council registration requires {} council co-signers, got {}",
+                    threshold,
+                    valid_sig_count
+                ),
             ));
         }
 
-        let phase_before = blockchain.governance_phase.clone();
-        blockchain.try_advance_governance_phase();
-        let phase_after = blockchain.governance_phase.clone();
-        let advanced = phase_before != phase_after;
+        blockchain.council_members.push(lib_blockchain::dao::CouncilMember {
+            identity_id: req.identity_id.clone(),
+            wallet_id: req.wallet_id.clone(),
+            stake_amount: req.stake_amount,
+            joined_at_height: current_height,
+        });
+        let new_size = blockchain.council_members.len();
 
         create_json_response(json!({
             "status": "success",
-            "advanced": advanced,
-            "new_phase": format!("{:?}", phase_after),
-        }))
-    }
-
-    // =========================================================================
-    // Emergency state handlers (dao-2)
-    // =========================================================================
-
-    /// POST /api/v1/dao/emergency/activate
-    async fn handle_emergency_activate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        let req: EmergencyActivateRequest = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-
-        let blockchain_arc = self.get_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
-
-        if blockchain.emergency_state {
-            return Ok(create_error_response(
-                ZhtpStatus::Conflict,
-                "Emergency state is already active".to_string(),
-            ));
-        }
-
-        blockchain.activate_emergency_state(&req.council_signatures, req.activated_by.clone())
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        create_json_response(json!({
-            "status": "success",
-            "message": "Emergency state activated",
-            "activated_by": req.activated_by,
-            "expires_at_height": blockchain.emergency_expires_at,
-        }))
-    }
-
-    /// GET /api/v1/dao/emergency/status
-    async fn handle_emergency_status(&self) -> Result<ZhtpResponse> {
-        let blockchain_arc = self.get_blockchain().await?;
-        let blockchain = blockchain_arc.read().await;
-
-        create_json_response(json!({
-            "status": "success",
-            "emergency_state": blockchain.emergency_state,
-            "activated_at": blockchain.emergency_activated_at,
-            "activated_by": blockchain.emergency_activated_by,
-            "expires_at": blockchain.emergency_expires_at,
-            "current_height": blockchain.height,
-        }))
-    }
-
-    // ── Hybrid Governance endpoints (dao-4) ───────────────────────────────────
-
-    /// POST /api/v1/dao/proposals/{id}/council-cosign
-    async fn handle_council_cosign(&self, request: &ZhtpRequest, proposal_id_hex: &str) -> Result<ZhtpResponse> {
-        #[derive(serde::Deserialize)]
-        struct CosignRequest {
-            signer_did: String,
-            #[serde(default)]
-            signature: Vec<u8>,
-        }
-        let req: CosignRequest = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-
-        let proposal_id = Self::string_to_bc_hash(proposal_id_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid proposal ID"))?;
-
-        let blockchain_arc = self.get_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
-
-        blockchain.council_cosign_proposal(&proposal_id, req.signer_did.clone(), req.signature)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        let cosign_count = blockchain.pending_cosigns
-            .get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
-
-        create_json_response(json!({
-            "status": "success",
-            "signer": req.signer_did,
-            "cosign_count": cosign_count,
-            "threshold": blockchain.council_threshold,
-        }))
-    }
-
-    /// POST /api/v1/dao/proposals/{id}/council-veto
-    async fn handle_council_veto(&self, request: &ZhtpRequest, proposal_id_hex: &str) -> Result<ZhtpResponse> {
-        #[derive(serde::Deserialize)]
-        struct VetoRequest {
-            signer_did: String,
-            reason: String,
-        }
-        let req: VetoRequest = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-
-        let proposal_id = Self::string_to_bc_hash(proposal_id_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid proposal ID"))?;
-
-        let blockchain_arc = self.get_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
-
-        blockchain.council_veto_proposal(&proposal_id, req.signer_did.clone(), req.reason.clone())
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        let veto_count = blockchain.pending_vetoes
-            .get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
-
-        create_json_response(json!({
-            "status": "success",
-            "signer": req.signer_did,
-            "veto_count": veto_count,
-            "threshold": blockchain.council_threshold,
-            "vetoed": veto_count >= blockchain.council_threshold as usize,
+            "message": "Council member registered",
+            "identity_id": req.identity_id,
+            "council_size": new_size,
         }))
     }
 
@@ -2453,48 +2103,6 @@ impl ZhtpRequestHandler for DaoHandler {
             },
             (ZhtpMethod::Post, ["api", "v1", "dao", "council", "register"]) => {
                 self.handle_register_council_member(&request).await.map_err(anyhow::Error::from)
-            },
-
-            // Emergency state endpoints (dao-2)
-            (ZhtpMethod::Post, ["api", "v1", "dao", "emergency", "activate"]) => {
-                self.handle_emergency_activate(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "emergency", "status"]) => {
-                self.handle_emergency_status().await.map_err(anyhow::Error::from)
-            },
-
-            // Voting power delegation (dao-5)
-            (ZhtpMethod::Post, ["api", "v1", "dao", "voting", "delegate"]) => {
-                self.handle_vote_delegate(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Delete, ["api", "v1", "dao", "voting", "delegate"]) => {
-                // Revoke delegation: treat as delegate to empty string.
-                let body = b"{\"delegate_did\":\"\"}";
-                let mut revoke_req = request.clone();
-                revoke_req.body = body.to_vec();
-                self.handle_vote_delegate(&revoke_req).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "voting-power", identity_id]) => {
-                self.handle_get_voting_power(identity_id).await.map_err(anyhow::Error::from)
-            },
-            // Governance phase endpoints (dao-3)
-            (ZhtpMethod::Get, ["api", "v1", "dao", "governance", "phase"]) => {
-                self.handle_get_governance_phase().await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "governance", "transition-status"]) => {
-                self.handle_get_transition_status().await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Post, ["api", "v1", "dao", "governance", "trigger-transition"]) => {
-                self.handle_trigger_transition(&request).await.map_err(anyhow::Error::from)
-            },
-
-
-            // Hybrid governance endpoints (dao-4)
-            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", id, "council-cosign"]) => {
-                self.handle_council_cosign(&request, id).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", id, "council-veto"]) => {
-                self.handle_council_veto(&request, id).await.map_err(anyhow::Error::from)
             },
 
             _ => Ok(create_error_response(ZhtpStatus::NotFound, "DAO endpoint not found".to_string())),
