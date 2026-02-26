@@ -224,6 +224,16 @@ pub enum GovernanceParameterValue {
     TxFeeBytesPerSov(u64),
     /// Witness cap in bytes for fee calculation
     TxFeeWitnessCap(u32),
+    /// Oracle committee membership set (validator pubkeys), activates at next epoch boundary.
+    OracleCommitteeMembers(Vec<[u8; 32]>),
+    /// Oracle epoch duration in seconds.
+    OracleEpochDurationSecs(u64),
+    /// Oracle max accepted source age in seconds.
+    OracleMaxSourceAgeSecs(u64),
+    /// Oracle max source deviation in basis points.
+    OracleMaxDeviationBps(u32),
+    /// Oracle max staleness (epochs) allowed for graduation checks.
+    OracleMaxPriceStalenessEpochs(u64),
 }
 
 /// Types of DAO proposals

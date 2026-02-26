@@ -1760,6 +1760,8 @@ impl Blockchain {
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
         }
+        let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
+        self.oracle_state.apply_pending_updates(current_epoch);
 
         // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
@@ -1850,6 +1852,8 @@ impl Blockchain {
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
         }
+        let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
+        self.oracle_state.apply_pending_updates(current_epoch);
 
         // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
@@ -5978,6 +5982,11 @@ impl Blockchain {
         let mut new_base_fee: Option<u64> = None;
         let mut new_bytes_per_sov: Option<u64> = None;
         let mut new_witness_cap: Option<u32> = None;
+        let mut new_oracle_committee: Option<Vec<[u8; 32]>> = None;
+        let mut new_oracle_epoch_duration_secs: Option<u64> = None;
+        let mut new_oracle_max_source_age_secs: Option<u64> = None;
+        let mut new_oracle_max_deviation_bps: Option<u32> = None;
+        let mut new_oracle_max_price_staleness_epochs: Option<u64> = None;
 
         for param in &update.updates {
             match param {
@@ -5996,6 +6005,21 @@ impl Blockchain {
                 lib_consensus::dao::dao_types::GovernanceParameterValue::TxFeeWitnessCap(v) => {
                     new_witness_cap = Some(*v);
                 }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::OracleCommitteeMembers(v) => {
+                    new_oracle_committee = Some(v.clone());
+                }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::OracleEpochDurationSecs(v) => {
+                    new_oracle_epoch_duration_secs = Some(*v);
+                }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::OracleMaxSourceAgeSecs(v) => {
+                    new_oracle_max_source_age_secs = Some(*v);
+                }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::OracleMaxDeviationBps(v) => {
+                    new_oracle_max_deviation_bps = Some(*v);
+                }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::OracleMaxPriceStalenessEpochs(v) => {
+                    new_oracle_max_price_staleness_epochs = Some(*v);
+                }
                 _ => {
                     // Other parameters are handled elsewhere
                 }
@@ -6008,6 +6032,11 @@ impl Blockchain {
             && new_base_fee.is_none()
             && new_bytes_per_sov.is_none()
             && new_witness_cap.is_none()
+            && new_oracle_committee.is_none()
+            && new_oracle_epoch_duration_secs.is_none()
+            && new_oracle_max_source_age_secs.is_none()
+            && new_oracle_max_deviation_bps.is_none()
+            && new_oracle_max_price_staleness_epochs.is_none()
         {
             return Err(anyhow::anyhow!(
                 "ParameterValidationError: No applicable parameters found in governance update"
@@ -6050,6 +6079,51 @@ impl Blockchain {
                 ));
             }
         }
+        if let Some(ref members) = new_oracle_committee {
+            if members.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: oracle committee cannot be empty"
+                ));
+            }
+            let unique_count = members
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len();
+            if unique_count != members.len() {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: oracle committee members must be unique"
+                ));
+            }
+        }
+        if let Some(v) = new_oracle_epoch_duration_secs {
+            if v == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: oracle epoch_duration_secs cannot be zero"
+                ));
+            }
+        }
+        if let Some(v) = new_oracle_max_source_age_secs {
+            if v == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: oracle max_source_age_secs cannot be zero"
+                ));
+            }
+        }
+        if let Some(v) = new_oracle_max_deviation_bps {
+            if v > 10_000 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: oracle max_deviation_bps must be <= 10000"
+                ));
+            }
+        }
+        if let Some(v) = new_oracle_max_price_staleness_epochs {
+            if v == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: oracle max_price_staleness_epochs cannot be zero"
+                ));
+            }
+        }
 
         // 9. Log the update
         info!(
@@ -6086,30 +6160,102 @@ impl Blockchain {
                 self.tx_fee_config.witness_cap, witness_cap
             );
         }
+        if let Some(ref committee) = new_oracle_committee {
+            info!("   oracle committee members (next epoch): {}", committee.len());
+        }
+        if let Some(v) = new_oracle_epoch_duration_secs {
+            info!(
+                "   oracle epoch_duration_secs (next epoch): {} → {}",
+                self.oracle_state.config.epoch_duration_secs, v
+            );
+        }
+        if let Some(v) = new_oracle_max_source_age_secs {
+            info!(
+                "   oracle max_source_age_secs (next epoch): {} → {}",
+                self.oracle_state.config.max_source_age_secs, v
+            );
+        }
+        if let Some(v) = new_oracle_max_deviation_bps {
+            info!(
+                "   oracle max_deviation_bps (next epoch): {} → {}",
+                self.oracle_state.config.max_deviation_bps, v
+            );
+        }
+        if let Some(v) = new_oracle_max_price_staleness_epochs {
+            info!(
+                "   oracle max_price_staleness_epochs (next epoch): {} → {}",
+                self.oracle_state.config.max_price_staleness_epochs, v
+            );
+        }
 
         // 10. Apply the update
+        let mut applied_difficulty_or_fee = false;
         if let Some(ts) = new_target_timespan {
             self.difficulty_config.target_timespan = ts;
+            applied_difficulty_or_fee = true;
         }
         if let Some(ai) = new_adjustment_interval {
             self.difficulty_config.adjustment_interval = ai;
+            applied_difficulty_or_fee = true;
         }
         if let Some(base_fee) = new_base_fee {
             self.tx_fee_config.base_fee = base_fee;
             self.tx_fee_config_updated_at_height = self.height;
+            applied_difficulty_or_fee = true;
         }
         if let Some(bytes_per_sov) = new_bytes_per_sov {
             self.tx_fee_config.bytes_per_sov = bytes_per_sov;
             self.tx_fee_config_updated_at_height = self.height;
+            applied_difficulty_or_fee = true;
         }
         if let Some(witness_cap) = new_witness_cap {
             self.tx_fee_config.witness_cap = witness_cap;
             self.tx_fee_config_updated_at_height = self.height;
+            applied_difficulty_or_fee = true;
         }
-        self.difficulty_config.last_updated_at_height = self.height;
+        if applied_difficulty_or_fee {
+            self.difficulty_config.last_updated_at_height = self.height;
+        }
+
+        // Oracle governance updates are queued and activate at next epoch boundary.
+        let current_epoch = self
+            .blocks
+            .last()
+            .map(|b| self.oracle_state.epoch_id(b.header.timestamp))
+            .unwrap_or(0);
+
+        if let Some(committee) = new_oracle_committee {
+            self.oracle_state
+                .schedule_committee_update(committee, current_epoch)
+                .map_err(|e| anyhow::anyhow!("ParameterValidationError: {}", e))?;
+        }
+
+        if new_oracle_epoch_duration_secs.is_some()
+            || new_oracle_max_source_age_secs.is_some()
+            || new_oracle_max_deviation_bps.is_some()
+            || new_oracle_max_price_staleness_epochs.is_some()
+        {
+            let mut next_config = self.oracle_state.config.clone();
+            if let Some(v) = new_oracle_epoch_duration_secs {
+                next_config.epoch_duration_secs = v;
+            }
+            if let Some(v) = new_oracle_max_source_age_secs {
+                next_config.max_source_age_secs = v;
+            }
+            if let Some(v) = new_oracle_max_deviation_bps {
+                next_config.max_deviation_bps = v;
+            }
+            if let Some(v) = new_oracle_max_price_staleness_epochs {
+                next_config.max_price_staleness_epochs = v;
+            }
+            self.oracle_state
+                .schedule_config_update(next_config, current_epoch)
+                .map_err(|e| anyhow::anyhow!("ParameterValidationError: {}", e))?;
+        }
 
         // Sync with consensus coordinator if available
-        if let Some(ref coordinator) = self.consensus_coordinator {
+        if applied_difficulty_or_fee {
+            if let Some(ref coordinator) = self.consensus_coordinator {
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     let coord = coordinator.write().await;
@@ -6119,7 +6265,8 @@ impl Blockchain {
                         new_target_timespan,
                     ).await
                 })
-            })?;
+                })?;
+            }
         }
 
         // 11. Mark proposal as executed to prevent double-execution

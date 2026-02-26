@@ -246,6 +246,50 @@ async fn test_governance_parameter_validation() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_oracle_governance_parameter_validation() -> Result<()> {
+    let dao_engine = DaoEngine::new();
+
+    let valid_update = lib_consensus::GovernanceParameterUpdate {
+        updates: vec![
+            lib_consensus::GovernanceParameterValue::OracleCommitteeMembers(vec![
+                [1u8; 32],
+                [2u8; 32],
+                [3u8; 32],
+            ]),
+            lib_consensus::GovernanceParameterValue::OracleEpochDurationSecs(300),
+            lib_consensus::GovernanceParameterValue::OracleMaxSourceAgeSecs(60),
+            lib_consensus::GovernanceParameterValue::OracleMaxDeviationBps(500),
+            lib_consensus::GovernanceParameterValue::OracleMaxPriceStalenessEpochs(2),
+        ],
+    };
+
+    let result = dao_engine.validate_governance_update(&valid_update);
+    assert!(result.is_ok());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_oracle_governance_parameter_validation_rejects_invalid() -> Result<()> {
+    let dao_engine = DaoEngine::new();
+
+    let invalid_update = lib_consensus::GovernanceParameterUpdate {
+        updates: vec![
+            lib_consensus::GovernanceParameterValue::OracleCommitteeMembers(vec![
+                [1u8; 32],
+                [1u8; 32],
+            ]),
+            lib_consensus::GovernanceParameterValue::OracleMaxDeviationBps(20_000),
+        ],
+    };
+
+    let result = dao_engine.validate_governance_update(&invalid_update);
+    assert!(result.is_err());
+
+    Ok(())
+}
+
 // ============================================================================
 // Test 8: Voting Power Calculation
 // ============================================================================
@@ -696,4 +740,3 @@ fn test_difficulty_parameter_update_proposal_type_serialization() {
         serde_json::from_str(&json).expect("deserialize from JSON");
     assert_eq!(deserialized, DaoProposalType::DifficultyParameterUpdate);
 }
-
