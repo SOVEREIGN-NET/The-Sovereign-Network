@@ -90,6 +90,9 @@ jobs:
       - name: Run DAO-READY Release Gates
         run: ./scripts/validate-dao-ready-gates.sh
 
+      - name: Run Oracle v1 Determinism/Safety Gates
+        run: ./scripts/validate-oracle-v1-gates.sh
+
       - name: Clean up disk space after build
         if: always()
         run: |
