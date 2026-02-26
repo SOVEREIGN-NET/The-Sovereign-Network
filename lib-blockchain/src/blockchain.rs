@@ -1842,6 +1842,9 @@ impl Blockchain {
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
+        // Enforce oracle-based CBE graduation gating before any state mutation path.
+        self.validate_block_cbe_graduation_gating(&block)?;
+
         // If BlockExecutor is configured, use it as single source of truth
         if let Some(ref executor) = self.executor {
             // Use BlockExecutor for state mutations
@@ -4421,6 +4424,94 @@ impl Blockchain {
         }
 
         Ok(outcome)
+    }
+
+    /// Validate CBE graduation oracle gating for a candidate block timestamp.
+    ///
+    /// Enforces:
+    /// - finalized oracle price must exist
+    /// - finalized price must not be stale
+    /// - `usd_value = reserve_sov * sov_usd_price / PRICE_SCALE`
+    /// - `usd_value >= 269000 * PRICE_SCALE`
+    pub fn validate_cbe_graduation_oracle_gate(
+        &self,
+        token_id: [u8; 32],
+        block_timestamp: u64,
+    ) -> Result<()> {
+        const CBE_SYMBOL: &str = "CBE";
+        const CBE_GRADUATION_THRESHOLD_USD: u128 = 269_000;
+
+        let token = if let Some(store) = &self.store {
+            store
+                .get_bonding_curve_token(&crate::storage::TokenId(token_id))
+                .map_err(|e| anyhow::anyhow!("failed to read bonding curve token: {}", e))?
+                .or_else(|| self.bonding_curve_registry.get(&token_id).cloned())
+        } else {
+            self.bonding_curve_registry.get(&token_id).cloned()
+        }
+        .ok_or_else(|| anyhow::anyhow!("bonding curve token not found"))?;
+
+        // Scope is strictly CBE pre-graduation gating.
+        if token.symbol != CBE_SYMBOL {
+            return Ok(());
+        }
+        if token.phase.is_graduated() {
+            return Ok(());
+        }
+
+        let current_epoch = self.oracle_state.epoch_id(block_timestamp);
+        let mut oracle_view = self.oracle_state.clone();
+        oracle_view.apply_pending_updates(current_epoch);
+
+        let finalized = oracle_view
+            .finalized_prices
+            .range(..=current_epoch)
+            .next_back()
+            .map(|(_, p)| p)
+            .ok_or_else(|| anyhow::anyhow!("CBE graduation requires finalized oracle price"))?;
+
+        let age = current_epoch.saturating_sub(finalized.epoch_id);
+        if age > oracle_view.config.max_price_staleness_epochs {
+            return Err(anyhow::anyhow!(
+                "CBE graduation blocked: finalized oracle price is stale (age={} epochs, max={})",
+                age,
+                oracle_view.config.max_price_staleness_epochs
+            ));
+        }
+
+        let reserve_sov = token.reserve_balance as u128;
+        let reserve_value_usd = reserve_sov
+            .checked_mul(finalized.sov_usd_price)
+            .ok_or_else(|| anyhow::anyhow!("CBE graduation overflow (reserve * price)"))?
+            .checked_div(oracle_view.config.price_scale)
+            .ok_or_else(|| anyhow::anyhow!("CBE graduation invalid price scale"))?;
+
+        let threshold = CBE_GRADUATION_THRESHOLD_USD
+            .checked_mul(oracle_view.config.price_scale)
+            .ok_or_else(|| anyhow::anyhow!("CBE graduation threshold overflow"))?;
+        if reserve_value_usd < threshold {
+            return Err(anyhow::anyhow!(
+                "CBE graduation blocked: reserve USD value below threshold (value={}, threshold={})",
+                reserve_value_usd,
+                threshold
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_block_cbe_graduation_gating(&self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if tx.transaction_type != crate::types::transaction_type::TransactionType::BondingCurveGraduate {
+                continue;
+            }
+            let data = tx
+                .bonding_curve_graduate_data
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("BondingCurveGraduate missing data"))?;
+            self.validate_cbe_graduation_oracle_gate(data.token_id, block.header.timestamp)?;
+        }
+        Ok(())
     }
 
     /// Update validator information
