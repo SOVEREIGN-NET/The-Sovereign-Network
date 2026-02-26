@@ -1818,6 +1818,70 @@ impl DaoHandler {
         }))
     }
 
+    // ── Hybrid Governance endpoints (dao-4) ───────────────────────────────────
+
+    /// POST /api/v1/dao/proposals/{id}/council-cosign
+    async fn handle_council_cosign(&self, request: &ZhtpRequest, proposal_id_hex: &str) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct CosignRequest {
+            signer_did: String,
+            #[serde(default)]
+            signature: Vec<u8>,
+        }
+        let req: CosignRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        let proposal_id = Self::string_to_bc_hash(proposal_id_hex)
+            .map_err(|_| anyhow::anyhow!("Invalid proposal ID"))?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        blockchain.council_cosign_proposal(&proposal_id, req.signer_did.clone(), req.signature)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        let cosign_count = blockchain.pending_cosigns
+            .get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
+
+        create_json_response(json!({
+            "status": "success",
+            "signer": req.signer_did,
+            "cosign_count": cosign_count,
+            "threshold": blockchain.council_threshold,
+        }))
+    }
+
+    /// POST /api/v1/dao/proposals/{id}/council-veto
+    async fn handle_council_veto(&self, request: &ZhtpRequest, proposal_id_hex: &str) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct VetoRequest {
+            signer_did: String,
+            reason: String,
+        }
+        let req: VetoRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        let proposal_id = Self::string_to_bc_hash(proposal_id_hex)
+            .map_err(|_| anyhow::anyhow!("Invalid proposal ID"))?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        blockchain.council_veto_proposal(&proposal_id, req.signer_did.clone(), req.reason.clone())
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        let veto_count = blockchain.pending_vetoes
+            .get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
+
+        create_json_response(json!({
+            "status": "success",
+            "signer": req.signer_did,
+            "veto_count": veto_count,
+            "threshold": blockchain.council_threshold,
+            "vetoed": veto_count >= blockchain.council_threshold as usize,
+        }))
+    }
+
     async fn submit_dao_registry_execution(
         &self,
         request: &ZhtpRequest,
@@ -2213,6 +2277,14 @@ impl ZhtpRequestHandler for DaoHandler {
             // Voting power delegation (dao-5)
             (ZhtpMethod::Post, ["api", "v1", "dao", "voting", "delegate"]) => {
                 self.handle_vote_delegate(&request).await.map_err(anyhow::Error::from)
+            },
+
+            // Hybrid governance endpoints (dao-4)
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", id, "council-cosign"]) => {
+                self.handle_council_cosign(&request, id).await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", id, "council-veto"]) => {
+                self.handle_council_veto(&request, id).await.map_err(anyhow::Error::from)
             },
 
             _ => Ok(create_error_response(ZhtpStatus::NotFound, "DAO endpoint not found".to_string())),

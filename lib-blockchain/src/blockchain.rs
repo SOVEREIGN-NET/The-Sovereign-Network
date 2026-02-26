@@ -61,6 +61,16 @@ fn default_treasury_epoch_length() -> u64 {
     10_080
 }
 
+/// Default veto window (~48 hours at 10s blocks)
+fn default_veto_window() -> u64 {
+    576
+}
+
+/// Default max treasury executions per epoch
+fn default_max_executions() -> u32 {
+    3
+}
+
 /// Indexed DAO registry entry derived from canonical DaoExecution events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaoRegistryIndexEntry {
@@ -278,16 +288,44 @@ pub struct Blockchain {
     #[serde(default)]
     pub emergency_expires_at: Option<u64>,
 
-    // =========================================================================
-    // DAO Voting Power (dao-5)
-    // =========================================================================
+    // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
+    /// Most recently computed decentralization snapshot.
+    #[serde(default)]
+    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
+    /// Configurable thresholds governing phase advancement.
+    #[serde(default)]
+    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
+    /// Number of consecutive governance epochs that met quorum (for Phase 2 gate).
+    #[serde(default)]
+    pub governance_cycles_with_quorum: u32,
+    /// Block height of the last governance cycle check.
+    #[serde(default)]
+    pub last_governance_cycle_height: u64,
 
+    // ── DAO Voting Power (dao-5) ───────────────────────────────────────────
     /// How token balances translate to voting weight
     #[serde(default)]
     pub voting_power_mode: crate::dao::VotingPowerMode,
     /// Vote delegation map: delegator_did → delegate_did
     #[serde(default)]
     pub vote_delegations: HashMap<String, String>,
+
+    // ── DAO Hybrid Governance (dao-4) ──────────────────────────────────────
+    /// Council co-signatures collected for a proposal (proposal_id → [(did, sig_bytes)]).
+    #[serde(default)]
+    pub pending_cosigns: HashMap<[u8; 32], Vec<(String, Vec<u8>)>>,
+    /// Council vetoes for a proposal (proposal_id → [(did, reason)]).
+    #[serde(default)]
+    pub pending_vetoes: HashMap<[u8; 32], Vec<(String, String)>>,
+    /// Window (blocks) during which the council can veto/cosign after a vote closes.
+    #[serde(default = "default_veto_window")]
+    pub veto_window_blocks: u64,
+    /// Number of executions that occurred per treasury epoch (epoch → count).
+    #[serde(default)]
+    pub treasury_epoch_execution_count: HashMap<u64, u32>,
+    /// Maximum treasury executions allowed per epoch.
+    #[serde(default = "default_max_executions")]
+    pub max_executions_per_epoch: u32,
 }
 
 /// Validator information stored on-chain.
@@ -593,8 +631,23 @@ impl BlockchainV1 {
             emergency_activated_at: None,
             emergency_activated_by: None,
             emergency_expires_at: None,
+
+            // DAO Phase Transitions
+            last_decentralization_snapshot: None,
+            phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
+            governance_cycles_with_quorum: 0,
+            last_governance_cycle_height: 0,
+
+            // DAO Voting Power
             voting_power_mode: crate::dao::VotingPowerMode::default(),
             vote_delegations: HashMap::new(),
+
+            // DAO Hybrid Governance
+            pending_cosigns: HashMap::new(),
+            pending_vetoes: HashMap::new(),
+            veto_window_blocks: default_veto_window(),
+            treasury_epoch_execution_count: HashMap::new(),
+            max_executions_per_epoch: default_max_executions(),
         }
     }
 }
@@ -758,11 +811,33 @@ struct BlockchainStorageV3 {
     #[serde(default)]
     pub emergency_expires_at: Option<u64>,
 
+    // DAO Phase Transitions (dao-3)
+    #[serde(default)]
+    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
+    #[serde(default)]
+    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
+    #[serde(default)]
+    pub governance_cycles_with_quorum: u32,
+    #[serde(default)]
+    pub last_governance_cycle_height: u64,
+
     // DAO Voting Power (dao-5)
     #[serde(default)]
     pub voting_power_mode: crate::dao::VotingPowerMode,
     #[serde(default)]
     pub vote_delegations: HashMap<String, String>,
+
+    // DAO Hybrid Governance (dao-4)
+    #[serde(default)]
+    pub pending_cosigns: HashMap<[u8; 32], Vec<(String, Vec<u8>)>>,
+    #[serde(default)]
+    pub pending_vetoes: HashMap<[u8; 32], Vec<(String, String)>>,
+    #[serde(default = "default_veto_window")]
+    pub veto_window_blocks: u64,
+    #[serde(default)]
+    pub treasury_epoch_execution_count: HashMap<u64, u32>,
+    #[serde(default = "default_max_executions")]
+    pub max_executions_per_epoch: u32,
 }
 
 impl BlockchainStorageV3 {
@@ -861,9 +936,22 @@ impl BlockchainStorageV3 {
             emergency_activated_by: bc.emergency_activated_by.clone(),
             emergency_expires_at: bc.emergency_expires_at,
 
+            // DAO Phase Transitions
+            last_decentralization_snapshot: bc.last_decentralization_snapshot.clone(),
+            phase_transition_config: bc.phase_transition_config.clone(),
+            governance_cycles_with_quorum: bc.governance_cycles_with_quorum,
+            last_governance_cycle_height: bc.last_governance_cycle_height,
+
             // DAO Voting Power
             voting_power_mode: bc.voting_power_mode.clone(),
             vote_delegations: bc.vote_delegations.clone(),
+
+            // DAO Hybrid Governance
+            pending_cosigns: bc.pending_cosigns.clone(),
+            pending_vetoes: bc.pending_vetoes.clone(),
+            veto_window_blocks: bc.veto_window_blocks,
+            treasury_epoch_execution_count: bc.treasury_epoch_execution_count.clone(),
+            max_executions_per_epoch: bc.max_executions_per_epoch,
         }
     }
 
@@ -982,9 +1070,22 @@ impl BlockchainStorageV3 {
             emergency_activated_by: self.emergency_activated_by,
             emergency_expires_at: self.emergency_expires_at,
 
+            // DAO Phase Transitions
+            last_decentralization_snapshot: self.last_decentralization_snapshot,
+            phase_transition_config: self.phase_transition_config,
+            governance_cycles_with_quorum: self.governance_cycles_with_quorum,
+            last_governance_cycle_height: self.last_governance_cycle_height,
+
             // DAO Voting Power
             voting_power_mode: self.voting_power_mode,
             vote_delegations: self.vote_delegations,
+
+            // DAO Hybrid Governance
+            pending_cosigns: self.pending_cosigns,
+            pending_vetoes: self.pending_vetoes,
+            veto_window_blocks: self.veto_window_blocks,
+            treasury_epoch_execution_count: self.treasury_epoch_execution_count,
+            max_executions_per_epoch: self.max_executions_per_epoch,
         }
     }
 }
@@ -1073,8 +1174,23 @@ impl Blockchain {
             emergency_activated_at: None,
             emergency_activated_by: None,
             emergency_expires_at: None,
+
+            // DAO Phase Transitions
+            last_decentralization_snapshot: None,
+            phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
+            governance_cycles_with_quorum: 0,
+            last_governance_cycle_height: 0,
+
+            // DAO Voting Power
             voting_power_mode: crate::dao::VotingPowerMode::default(),
             vote_delegations: HashMap::new(),
+
+            // DAO Hybrid Governance
+            pending_cosigns: HashMap::new(),
+            pending_vetoes: HashMap::new(),
+            veto_window_blocks: default_veto_window(),
+            treasury_epoch_execution_count: HashMap::new(),
+            max_executions_per_epoch: default_max_executions(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -3505,6 +3621,135 @@ impl Blockchain {
         Ok(())
     }
 
+    // ── DAO Hybrid Governance (dao-4) ─────────────────────────────────────────
+
+    /// Submit a council co-signature for a Hybrid-phase proposal.
+    ///
+    /// `signer_did` must be a council member; `sig_bytes` can be empty (Phase 0
+    /// doesn't verify crypto signatures — council identity check is sufficient).
+    pub fn council_cosign_proposal(
+        &mut self,
+        proposal_id: &Hash,
+        signer_did: String,
+        sig_bytes: Vec<u8>,
+    ) -> Result<()> {
+        if !self.is_council_member(&signer_did) {
+            return Err(anyhow::anyhow!("'{}' is not a council member", signer_did));
+        }
+        let id_bytes = proposal_id.as_array();
+        let entry = self.pending_cosigns.entry(id_bytes).or_default();
+        // Prevent duplicate co-sign from the same DID
+        if !entry.iter().any(|(did, _)| did == &signer_did) {
+            entry.push((signer_did, sig_bytes));
+        }
+        Ok(())
+    }
+
+    /// Submit a council veto for a Hybrid-phase proposal.
+    pub fn council_veto_proposal(
+        &mut self,
+        proposal_id: &Hash,
+        signer_did: String,
+        reason: String,
+    ) -> Result<()> {
+        if !self.is_council_member(&signer_did) {
+            return Err(anyhow::anyhow!("'{}' is not a council member", signer_did));
+        }
+        let id_bytes = proposal_id.as_array();
+        let entry = self.pending_vetoes.entry(id_bytes).or_default();
+        if !entry.iter().any(|(did, _)| did == &signer_did) {
+            entry.push((signer_did, reason));
+        }
+        Ok(())
+    }
+
+    // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────────
+
+    /// Compute a decentralization snapshot from current chain state.
+    pub fn compute_decentralization_snapshot(&self) -> crate::dao::DecentralizationSnapshot {
+        let citizen_count = self.identity_registry.len() as u64;
+
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let max_wallet_pct_bps: u16 = if let Some(token) = self.token_contracts.get(&sov_id) {
+            let total = token.total_supply;
+            if total == 0 {
+                0
+            } else {
+                let max_bal = token.balances.values().copied().max().unwrap_or(0);
+                ((max_bal as u128 * 10_000) / total as u128).min(u16::MAX as u128) as u16
+            }
+        } else {
+            0
+        };
+
+        crate::dao::DecentralizationSnapshot {
+            verified_citizen_count: citizen_count,
+            max_wallet_pct_bps,
+            snapshot_height: self.height,
+        }
+    }
+
+    /// Check if conditions for Bootstrap→Hybrid transition are met.
+    /// Any one of conditions A, B, or C is sufficient.
+    pub fn check_phase0_to_phase1(&self) -> bool {
+        let cfg = &self.phase_transition_config;
+        let snap = self.compute_decentralization_snapshot();
+
+        // Condition A: enough citizens
+        let cond_a = snap.verified_citizen_count >= cfg.min_citizens_for_phase1;
+        // Condition B: whale concentration low enough
+        let cond_b = snap.max_wallet_pct_bps <= cfg.max_wallet_pct_bps_for_phase1;
+        // Condition C: time window elapsed
+        let cond_c = cfg.phase0_max_duration_blocks
+            .map(|n| self.height >= n)
+            .unwrap_or(false);
+
+        cond_a || cond_b || cond_c
+    }
+
+    /// Check if conditions for Hybrid→FullDAO transition are met.
+    /// All conditions must be satisfied simultaneously.
+    pub fn check_phase1_to_phase2(&self) -> bool {
+        let cfg = &self.phase_transition_config;
+        let snap = self.compute_decentralization_snapshot();
+
+        let enough_citizens = snap.verified_citizen_count >= cfg.min_citizens_for_phase2;
+        let low_concentration = snap.max_wallet_pct_bps <= cfg.max_wallet_pct_bps_for_phase2;
+        let quorum_cycles = self.governance_cycles_with_quorum >= cfg.phase2_quorum_consecutive_cycles;
+
+        enough_citizens && low_concentration && quorum_cycles
+    }
+
+    /// Try to advance the governance phase if conditions are met.
+    /// Called periodically from `process_approved_governance_proposals`.
+    pub fn try_advance_governance_phase(&mut self) {
+        match self.governance_phase {
+            crate::dao::GovernancePhase::Bootstrap => {
+                if self.check_phase0_to_phase1() {
+                    let snap = self.compute_decentralization_snapshot();
+                    self.last_decentralization_snapshot = Some(snap);
+                    self.governance_phase = crate::dao::GovernancePhase::Hybrid;
+                    info!(
+                        "🗳 Governance advanced to Hybrid phase at height {}",
+                        self.height
+                    );
+                }
+            }
+            crate::dao::GovernancePhase::Hybrid => {
+                if self.check_phase1_to_phase2() {
+                    let snap = self.compute_decentralization_snapshot();
+                    self.last_decentralization_snapshot = Some(snap);
+                    self.governance_phase = crate::dao::GovernancePhase::FullDao;
+                    info!(
+                        "🏛 Governance advanced to Full DAO phase at height {}",
+                        self.height
+                    );
+                }
+            }
+            crate::dao::GovernancePhase::FullDao => {} // terminal
+        }
+    }
+
     /// Apply a token transfer with protocol fee deduction and treasury routing.
     ///
     /// This is a helper that consolidates the duplicated fee logic from the two
@@ -5932,17 +6177,51 @@ impl Blockchain {
             ));
         }
 
-        // 4. Phase 0: require council_threshold council yes-votes
-        if self.governance_phase == crate::dao::GovernancePhase::Bootstrap {
-            let votes = self.get_dao_votes_for_proposal(&proposal_id);
-            let council_yes = votes.iter()
-                .filter(|v| v.vote_choice == "Yes" && self.is_council_member(&v.voter))
-                .count() as u8;
-            if council_yes < self.council_threshold {
-                return Err(anyhow::anyhow!(
-                    "Phase 0 requires {} council yes-votes, got {}",
-                    self.council_threshold, council_yes
-                ));
+        // 4. Phase gate
+        match self.governance_phase {
+            crate::dao::GovernancePhase::Bootstrap => {
+                let votes = self.get_dao_votes_for_proposal(&proposal_id);
+                let council_yes = votes.iter()
+                    .filter(|v| v.vote_choice == "Yes" && self.is_council_member(&v.voter))
+                    .count() as u8;
+                if council_yes < self.council_threshold {
+                    return Err(anyhow::anyhow!(
+                        "Phase 0 requires {} council yes-votes, got {}",
+                        self.council_threshold, council_yes
+                    ));
+                }
+            }
+            crate::dao::GovernancePhase::Hybrid => {
+                // Hybrid phase: check co-signs and vetoes, enforce epoch rate limit
+                let id_bytes = proposal_id.as_array();
+                // Enough co-signs?
+                let cosign_count = self.pending_cosigns
+                    .get(&id_bytes).map(|v| v.len()).unwrap_or(0);
+                if (cosign_count as u8) < self.council_threshold {
+                    return Err(anyhow::anyhow!(
+                        "Hybrid phase requires {} council co-signs, got {}",
+                        self.council_threshold, cosign_count
+                    ));
+                }
+                // Council veto?
+                let veto_count = self.pending_vetoes
+                    .get(&id_bytes).map(|v| v.len()).unwrap_or(0);
+                if (veto_count as u8) >= self.council_threshold {
+                    return Err(anyhow::anyhow!("Proposal vetoed by council"));
+                }
+                // Epoch rate limit
+                let epoch = self.height / self.treasury_epoch_length_blocks.max(1);
+                let exec_count = self.treasury_epoch_execution_count.get(&epoch).copied().unwrap_or(0);
+                if exec_count >= self.max_executions_per_epoch {
+                    return Err(anyhow::anyhow!(
+                        "Treasury epoch execution rate limit reached ({}/{})",
+                        exec_count, self.max_executions_per_epoch
+                    ));
+                }
+                // After transfer succeeds, increment counter (done below after transfer)
+            }
+            crate::dao::GovernancePhase::FullDao => {
+                // Full DAO: no council gate needed, auto-execution path handles it
             }
         }
 
@@ -5990,6 +6269,11 @@ impl Blockchain {
 
         // 8. Record epoch spend
         *self.treasury_epoch_spend.entry(epoch).or_insert(0) += amount;
+
+        // 8b. In Hybrid phase, record per-epoch execution count
+        if self.governance_phase == crate::dao::GovernancePhase::Hybrid {
+            *self.treasury_epoch_execution_count.entry(epoch).or_insert(0) += 1;
+        }
 
         // 9. Build execution transaction for audit trail (inputs/outputs empty — balance model)
         let votes = self.get_dao_votes_for_proposal(&proposal_id);
@@ -6330,6 +6614,11 @@ impl Blockchain {
                     info!("🔓 Emergency state expired at block height {}", self.height);
                 }
             }
+        }
+
+        // Periodic phase-transition check every 1000 blocks (dao-3)
+        if self.height > 0 && self.height % 1_000 == 0 {
+            self.try_advance_governance_phase();
         }
 
         // Get difficulty parameter update proposals with their quorum requirements
