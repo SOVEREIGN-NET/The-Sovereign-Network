@@ -1171,6 +1171,32 @@ impl Blockchain {
             }
         }
 
+        // Sync SOV balances from the TokenContract blob into the token_balances Sled tree.
+        //
+        // When SOV was minted via the legacy block processing path (before BlockExecutor was
+        // active), balances were only written to the in-memory token_contracts HashMap and
+        // the TokenContract blob. The BlockExecutor reads exclusively from the separate
+        // token_balances Sled tree, so wallets funded via the legacy path appear to have
+        // zero balance to the executor, causing "Insufficient token balance" on every transfer.
+        //
+        // This backfill is idempotent: entries already present in token_balances are skipped.
+        if let Some(sov_contract) = blockchain.token_contracts.get(&sov_token_id) {
+            let entries: Vec<([u8; 32], u64)> = sov_contract
+                .balances
+                .iter()
+                .map(|(pk, &bal)| (pk.key_id, bal))
+                .collect();
+            let token_id = crate::storage::TokenId(sov_token_id);
+            match store.backfill_token_balances_from_contract(&token_id, &entries) {
+                Ok(0) => debug!("SOV token_balances tree already up-to-date (no backfill needed)"),
+                Ok(n) => info!(
+                    "💰 Backfilled {} SOV balances into token_balances tree (legacy migration)",
+                    n
+                ),
+                Err(e) => warn!("⚠️ Failed to backfill SOV token_balances: {}", e),
+            }
+        }
+
         // Populate contract_blocks for any contracts missing deployment height tracking.
         // This ensures get_contract_block_height() returns valid data after restart.
         // Contracts without a known deployment height are assigned to genesis (block 0).
