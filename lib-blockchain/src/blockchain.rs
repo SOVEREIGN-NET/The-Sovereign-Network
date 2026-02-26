@@ -3317,7 +3317,6 @@ impl Blockchain {
         }
         evicted
     }
-
     fn resolve_credit_pubkey_from_parts(
         &self,
         public_key: Vec<u8>,
