@@ -194,6 +194,19 @@ struct SpendingProposalRequest {
     description: String,
 }
 
+/// Council member registration request (dao-1)
+#[derive(Debug, Deserialize)]
+struct RegisterCouncilMemberRequest {
+    /// DID of the new member
+    identity_id: String,
+    /// Hex wallet ID of the new member
+    wallet_id: String,
+    /// SOV stake amount
+    stake_amount: u64,
+    /// DIDs of existing council members co-signing this registration
+    council_signatures: Vec<String>,
+}
+
 /// DAO handler backed by canonical blockchain state
 pub struct DaoHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
@@ -1087,6 +1100,16 @@ impl DaoHandler {
             ));
         }
 
+        // Phase 0 gate: only Bootstrap Council members may vote
+        if blockchain.governance_phase == lib_blockchain::dao::GovernancePhase::Bootstrap
+            && !blockchain.is_council_member(&voter_identity.did)
+        {
+            return Ok(create_error_response(
+                ZhtpStatus::Unauthorized,
+                "Phase 0: voting restricted to Bootstrap Council".to_string(),
+            ));
+        }
+
         let vote_choice_str = match vote_choice {
             DaoVoteChoice::Yes => "Yes".to_string(),
             DaoVoteChoice::No => "No".to_string(),
@@ -1591,6 +1614,113 @@ impl DaoHandler {
         create_json_response(response)
     }
 
+    // =========================================================================
+    // Bootstrap Council handlers (dao-1)
+    // =========================================================================
+
+    /// GET /api/v1/dao/council/members
+    async fn handle_get_council_members(&self) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let phase_str = match blockchain.governance_phase {
+            lib_blockchain::dao::GovernancePhase::Bootstrap => "bootstrap",
+            lib_blockchain::dao::GovernancePhase::Hybrid => "hybrid",
+            lib_blockchain::dao::GovernancePhase::FullDao => "full_dao",
+        };
+
+        let members: Vec<serde_json::Value> = blockchain.get_council_members().iter().map(|m| {
+            json!({
+                "identity_id": m.identity_id,
+                "wallet_id": m.wallet_id,
+                "stake_amount": m.stake_amount,
+                "joined_at_height": m.joined_at_height,
+            })
+        }).collect();
+
+        create_json_response(json!({
+            "status": "success",
+            "governance_phase": phase_str,
+            "council_threshold": blockchain.council_threshold,
+            "members": members,
+        }))
+    }
+
+    /// POST /api/v1/dao/council/register
+    async fn handle_register_council_member(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let req: RegisterCouncilMemberRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        if req.identity_id.is_empty() {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "identity_id is required".to_string(),
+            ));
+        }
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        // Check for duplicate
+        if blockchain.is_council_member(&req.identity_id) {
+            return Ok(create_error_response(
+                ZhtpStatus::Conflict,
+                "Identity is already a council member".to_string(),
+            ));
+        }
+
+        // Capture height before any mutable borrows
+        let current_height = blockchain.height;
+
+        // First bootstrap: accept without signatures
+        if blockchain.council_members.is_empty() {
+            blockchain.council_members.push(lib_blockchain::dao::CouncilMember {
+                identity_id: req.identity_id.clone(),
+                wallet_id: req.wallet_id.clone(),
+                stake_amount: req.stake_amount,
+                joined_at_height: current_height,
+            });
+
+            return create_json_response(json!({
+                "status": "success",
+                "message": "First council member registered (bootstrap)",
+                "identity_id": req.identity_id,
+            }));
+        }
+
+        // Subsequent registrations require threshold council signatures
+        let threshold = blockchain.council_threshold as usize;
+        let valid_sig_count = req.council_signatures.iter()
+            .filter(|did| blockchain.is_council_member(did.as_str()))
+            .count();
+
+        if valid_sig_count < threshold {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                format!(
+                    "Council registration requires {} council co-signers, got {}",
+                    threshold,
+                    valid_sig_count
+                ),
+            ));
+        }
+
+        blockchain.council_members.push(lib_blockchain::dao::CouncilMember {
+            identity_id: req.identity_id.clone(),
+            wallet_id: req.wallet_id.clone(),
+            stake_amount: req.stake_amount,
+            joined_at_height: current_height,
+        });
+        let new_size = blockchain.council_members.len();
+
+        create_json_response(json!({
+            "status": "success",
+            "message": "Council member registered",
+            "identity_id": req.identity_id,
+            "council_size": new_size,
+        }))
+    }
+
     async fn submit_dao_registry_execution(
         &self,
         request: &ZhtpRequest,
@@ -1965,6 +2095,14 @@ impl ZhtpRequestHandler for DaoHandler {
             },
             (ZhtpMethod::Get, ["api", "v1", "dao", "admin", "stats"]) => {
                 self.handle_dao_stats().await.map_err(anyhow::Error::from)
+            },
+
+            // Bootstrap Council endpoints (dao-1)
+            (ZhtpMethod::Get, ["api", "v1", "dao", "council", "members"]) => {
+                self.handle_get_council_members().await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "council", "register"]) => {
+                self.handle_register_council_member(&request).await.map_err(anyhow::Error::from)
             },
 
             _ => Ok(create_error_response(ZhtpStatus::NotFound, "DAO endpoint not found".to_string())),
