@@ -2,6 +2,7 @@
 
 pub mod council;
 pub mod treasury;
+pub mod voting;
 
 pub use council::{
     GovernancePhase,
@@ -14,3 +15,5 @@ pub use treasury::{
     TreasurySpendingCategory,
     TreasuryExecutionParams,
 };
+
+pub use voting::VotingPowerMode;
