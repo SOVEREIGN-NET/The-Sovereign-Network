@@ -776,6 +776,25 @@ impl BlockchainStore for SledStore {
         Ok(written)
     }
 
+    fn force_set_token_balances(
+        &self,
+        entries: &[(TokenId, Address, u128)],
+    ) -> StorageResult<usize> {
+        let mut batch = sled::Batch::default();
+        for (token_id, addr, balance) in entries {
+            let key = keys::token_balance_key(token_id, addr);
+            if *balance == 0 {
+                batch.remove(key.as_ref());
+            } else {
+                batch.insert(key.as_ref(), &balance.to_be_bytes());
+            }
+        }
+        self.token_balances
+            .apply_batch(batch)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(entries.len())
+    }
+
     // =========================================================================
     // Token Transfer Nonce Operations (Replay Protection)
     // =========================================================================

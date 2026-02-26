@@ -272,21 +272,34 @@ impl WalletHandler {
             let blockchain_balance = blockchain_balances.get(&wallet_id_hex).copied().unwrap_or(0);
             let effective_balance = {
                 let blockchain = self.blockchain.read().await;
-                let token_balance = blockchain.token_contracts.get(&sov_token_id).and_then(|token| {
+                // When BlockExecutor is active, token balance writes go to the token_balances
+                // Sled tree. The in-memory token_contracts is never updated after executor-path
+                // transfers, so always prefer the Sled tree when a store is attached.
+                let sled_balance: Option<u64> = blockchain.get_store().and_then(|store| {
                     let wallet_id_bytes = hex::decode(&wallet_id_hex).ok()?;
-                    if wallet_id_bytes.len() != 32 {
-                        return None;
-                    }
-                    let mut key_id = [0u8; 32];
-                    key_id.copy_from_slice(&wallet_id_bytes);
-                    let wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
-                        dilithium_pk: vec![],
-                        kyber_pk: vec![],
-                        key_id,
-                    };
-                    token.balances.get(&wallet_key).copied()
+                    if wallet_id_bytes.len() != 32 { return None; }
+                    let mut wallet_id_arr = [0u8; 32];
+                    wallet_id_arr.copy_from_slice(&wallet_id_bytes);
+                    let storage_token_id = lib_blockchain::storage::TokenId(sov_token_id);
+                    let addr = lib_blockchain::storage::Address::new(wallet_id_arr);
+                    store.get_token_balance(&storage_token_id, &addr).ok().map(|b| b as u64)
                 });
-                token_balance.unwrap_or_else(|| std::cmp::max(summary.balance, blockchain_balance))
+                sled_balance.unwrap_or_else(|| {
+                    // Fallback: in-memory token contract (no store, or lookup failed)
+                    let token_balance = blockchain.token_contracts.get(&sov_token_id).and_then(|token| {
+                        let wallet_id_bytes = hex::decode(&wallet_id_hex).ok()?;
+                        if wallet_id_bytes.len() != 32 { return None; }
+                        let mut key_id = [0u8; 32];
+                        key_id.copy_from_slice(&wallet_id_bytes);
+                        let wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
+                            dilithium_pk: vec![],
+                            kyber_pk: vec![],
+                            key_id,
+                        };
+                        token.balances.get(&wallet_key).copied()
+                    });
+                    token_balance.unwrap_or_else(|| std::cmp::max(summary.balance, blockchain_balance))
+                })
             };
 
             let wallet_info = WalletInfo {

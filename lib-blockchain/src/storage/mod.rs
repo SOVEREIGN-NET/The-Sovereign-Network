@@ -1008,6 +1008,18 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Ok(0) // Default no-op
     }
 
+    /// Directly overwrite token balances for startup migration/repair only.
+    ///
+    /// Unlike `set_token_balance`, this does NOT require an active block transaction.
+    /// Use ONLY in startup migrations (e.g., correcting backfill inflation), never
+    /// during block execution.
+    fn force_set_token_balances(
+        &self,
+        _entries: &[(TokenId, Address, u128)],
+    ) -> StorageResult<usize> {
+        Ok(0) // Default no-op
+    }
+
     // =========================================================================
     // Token Transfer Nonces (Replay Protection)
     // =========================================================================

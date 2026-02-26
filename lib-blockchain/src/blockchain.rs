@@ -1247,6 +1247,9 @@ impl Blockchain {
         blockchain.ensure_sov_token_contract();
         blockchain.ensure_treasury_wallet();
         blockchain.migrate_sov_key_balances_to_wallets();
+        // Repair any balances inflated by the pre-fix backfill bug (minted on every restart).
+        blockchain.repair_backfill_inflation();
+
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
             info!(
@@ -3617,16 +3620,155 @@ impl Blockchain {
             };
 
             let recipient = Self::wallet_key_for_sov(&wallet_key);
-            let current_balance = token_opt
-                .map(|token| token.balance_of(&recipient))
-                .unwrap_or(0);
-            if current_balance >= wallet.initial_balance {
+            // Prefer Sled token_balances tree (authoritative when executor is active)
+            // over in-memory token_contracts.balances, which is never updated after
+            // executor-path TokenMint transactions. Using stale in-memory balances
+            // causes repeat minting on every restart.
+            let current_balance: u64 = if let Some(store) = self.get_store() {
+                let sov_storage_token_id = crate::storage::TokenId(sov_token_id);
+                let addr = crate::storage::Address::new(wallet_key);
+                store.get_token_balance(&sov_storage_token_id, &addr)
+                    .unwrap_or(0) as u64
+            } else {
+                token_opt
+                    .map(|token| token.balance_of(&recipient))
+                    .unwrap_or(0)
+            };
+            // Only backfill wallets that have NEVER received any SOV (balance == 0).
+            // Wallets with a positive balance already have their initial SOV (either from
+            // process_wallet_transactions, a previous backfill, or incoming transfers).
+            // Backfilling wallets that merely spent below initial_balance would inflate them.
+            if current_balance > 0 {
                 continue;
             }
-            let deficit = wallet.initial_balance - current_balance;
+            let deficit = wallet.initial_balance;
             entries.push((wallet_key, deficit, wallet_id.clone()));
         }
         entries
+    }
+
+    /// Scan all blocks for duplicate TOKEN_BACKFILL_V1 TokenMint transactions and
+    /// correct any inflated Sled balances. Each restart that triggered the old
+    /// backfill code incorrectly minted an extra `initial_balance` worth of SOV.
+    /// This function detects duplicates and subtracts the excess.
+    ///
+    /// Safe to call on every startup — no-ops when store unavailable or no duplicates found.
+    pub fn repair_backfill_inflation(&self) -> usize {
+        let store = match self.get_store() {
+            Some(s) => s,
+            None => return 0,
+        };
+
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let sov_storage_token_id = crate::storage::TokenId(sov_token_id);
+
+        // Track per-recipient mint amounts from TOKEN_BACKFILL_V1 mints (in block order).
+        let mut mint_history: std::collections::HashMap<[u8; 32], Vec<u128>> =
+            std::collections::HashMap::new();
+
+        for h in 0..=self.height {
+            let block = match store.get_block_by_height(h) {
+                Ok(Some(b)) => b,
+                _ => continue,
+            };
+            for tx in &block.transactions {
+                if tx.transaction_type != crate::types::transaction_type::TransactionType::TokenMint {
+                    continue;
+                }
+                let is_backfill = std::str::from_utf8(&tx.memo)
+                    .map(|s| s.starts_with("TOKEN_BACKFILL_V1:"))
+                    .unwrap_or(false);
+                if !is_backfill {
+                    continue;
+                }
+                if let Some(mint_data) = tx.token_mint_data.as_ref() {
+                    mint_history
+                        .entry(mint_data.to)
+                        .or_default()
+                        .push(mint_data.amount);
+                }
+            }
+        }
+
+        let mut corrections: Vec<(crate::storage::TokenId, crate::storage::Address, u128)> =
+            Vec::new();
+
+        for (wallet_key, amounts) in &mint_history {
+            if amounts.len() == 1 {
+                // Case 2: single TOKEN_BACKFILL_V1 mint — may be spurious if the wallet
+                // already had SOV from backfill_token_balances_from_contract (a direct Sled
+                // write, not a block transaction).  A partial top-up (amount < initial_balance)
+                // applied to a wallet that already had its full initial SOV causes:
+                //   current = initial_balance + mint_amount + subsequent_transfers
+                // which is inflation.  Correct by subtracting the spurious mint_amount.
+                // Idempotent: after correction current == initial_balance + subsequent_transfers,
+                // which is ≤ initial_balance only if no transfers happened, so the condition
+                // `current > initial_balance` won't trigger again on the next restart.
+                let mint_amount = amounts[0];
+                let wallet_id_hex = hex::encode(wallet_key);
+                let initial_balance = self
+                    .wallet_registry
+                    .get(&wallet_id_hex)
+                    .map(|w| w.initial_balance as u128)
+                    .unwrap_or(0);
+                if initial_balance > 0 && mint_amount < initial_balance {
+                    let addr = crate::storage::Address::new(*wallet_key);
+                    let current = store
+                        .get_token_balance(&sov_storage_token_id, &addr)
+                        .unwrap_or(0);
+                    if current > initial_balance {
+                        let corrected = current - mint_amount;
+                        info!(
+                            "🔧 Correcting spurious partial backfill for wallet {}: {} → {} \
+                             (removed spurious partial mint of {})",
+                            hex::encode(&wallet_key[..8]),
+                            current,
+                            corrected,
+                            mint_amount
+                        );
+                        corrections.push((sov_storage_token_id, addr, corrected));
+                    }
+                }
+                continue;
+            }
+            // Case 1: multiple TOKEN_BACKFILL_V1 mints — first is legitimate,
+            // all subsequent are duplicates from restarts before the fix.
+            let excess: u128 = amounts[1..].iter().sum();
+            let addr = crate::storage::Address::new(*wallet_key);
+            let current = store
+                .get_token_balance(&sov_storage_token_id, &addr)
+                .unwrap_or(0);
+            if current >= excess {
+                let corrected = current - excess;
+                info!(
+                    "🔧 Correcting backfill inflation for wallet {}: {} → {} \
+                     ({} duplicate mints, removing {} excess)",
+                    hex::encode(&wallet_key[..8]),
+                    current,
+                    corrected,
+                    amounts.len() - 1,
+                    excess
+                );
+                corrections.push((sov_storage_token_id, addr, corrected));
+            } else {
+                warn!(
+                    "⚠️ Cannot correct backfill inflation for wallet {}: \
+                     current {} < excess {}",
+                    hex::encode(&wallet_key[..8]),
+                    current,
+                    excess
+                );
+            }
+        }
+
+        let count = corrections.len();
+        if count > 0 {
+            match store.force_set_token_balances(&corrections) {
+                Ok(_) => info!("🔧 Repaired backfill inflation for {} wallets", count),
+                Err(e) => warn!("⚠️ Failed to write backfill corrections: {}", e),
+            }
+        }
+        count
     }
 
     /// Register a new wallet on the blockchain
