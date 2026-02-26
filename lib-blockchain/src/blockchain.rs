@@ -3678,7 +3678,7 @@ impl Blockchain {
                     self.last_decentralization_snapshot = Some(snap);
                     self.governance_phase = crate::dao::GovernancePhase::Hybrid;
                     info!(
-                        "🗳 Governance advanced to Hybrid phase at height {}",
+                        "Governance advanced to Hybrid phase at height {}",
                         self.height
                     );
                 }
@@ -3689,7 +3689,7 @@ impl Blockchain {
                     self.last_decentralization_snapshot = Some(snap);
                     self.governance_phase = crate::dao::GovernancePhase::FullDao;
                     info!(
-                        "🏛 Governance advanced to Full DAO phase at height {}",
+                        "Governance advanced to Full DAO phase at height {}",
                         self.height
                     );
                 }
@@ -3697,6 +3697,7 @@ impl Blockchain {
             crate::dao::GovernancePhase::FullDao => {} // terminal
         }
     }
+
 
     /// Apply a token transfer with protocol fee deduction and treasury routing.
     ///
@@ -6558,7 +6559,7 @@ impl Blockchain {
                     self.emergency_activated_at = None;
                     self.emergency_activated_by = None;
                     self.emergency_expires_at = None;
-                    info!("🔓 Emergency state expired at block height {}", self.height);
+                    info!("Emergency state expired at block height {}", self.height);
                 }
             }
         }
@@ -6567,6 +6568,7 @@ impl Blockchain {
         if self.height > 0 && self.height % 1_000 == 0 {
             self.try_advance_governance_phase();
         }
+
 
         // Get difficulty parameter update proposals with their quorum requirements
         // Collect to avoid borrowing issues with self.has_proposal_passed()

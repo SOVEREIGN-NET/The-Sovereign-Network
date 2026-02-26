@@ -1962,6 +1962,51 @@ impl DaoHandler {
         }))
     }
 
+    // =========================================================================
+    // Emergency state handlers (dao-2)
+    // =========================================================================
+
+    /// POST /api/v1/dao/emergency/activate
+    async fn handle_emergency_activate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let req: EmergencyActivateRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        if blockchain.emergency_state {
+            return Ok(create_error_response(
+                ZhtpStatus::Conflict,
+                "Emergency state is already active".to_string(),
+            ));
+        }
+
+        blockchain.activate_emergency_state(&req.council_signatures, req.activated_by.clone())
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        create_json_response(json!({
+            "status": "success",
+            "message": "Emergency state activated",
+            "activated_by": req.activated_by,
+            "expires_at_height": blockchain.emergency_expires_at,
+        }))
+    }
+
+    /// GET /api/v1/dao/emergency/status
+    async fn handle_emergency_status(&self) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        create_json_response(json!({
+            "status": "success",
+            "emergency_state": blockchain.emergency_state,
+            "activated_at": blockchain.emergency_activated_at,
+            "activated_by": blockchain.emergency_activated_by,
+            "expires_at": blockchain.emergency_expires_at,
+            "current_height": blockchain.height,
+        }))
+    }
+
     async fn submit_dao_registry_execution(
         &self,
         request: &ZhtpRequest,
@@ -2378,6 +2423,7 @@ impl ZhtpRequestHandler for DaoHandler {
             (ZhtpMethod::Post, ["api", "v1", "dao", "governance", "trigger-transition"]) => {
                 self.handle_trigger_transition(&request).await.map_err(anyhow::Error::from)
             },
+
 
             _ => Ok(create_error_response(ZhtpStatus::NotFound, "DAO endpoint not found".to_string())),
         }
