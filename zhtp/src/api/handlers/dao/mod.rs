@@ -216,6 +216,7 @@ struct EmergencyActivateRequest {
     activated_by: String,
 }
 
+
 /// DAO handler backed by canonical blockchain state
 pub struct DaoHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
