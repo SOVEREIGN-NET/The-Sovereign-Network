@@ -277,6 +277,20 @@ pub struct Blockchain {
     /// Block height at which emergency state auto-expires
     #[serde(default)]
     pub emergency_expires_at: Option<u64>,
+
+    // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
+    /// Most recently computed decentralization snapshot.
+    #[serde(default)]
+    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
+    /// Configurable thresholds governing phase advancement.
+    #[serde(default)]
+    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
+    /// Number of consecutive governance epochs that met quorum (for Phase 2 gate).
+    #[serde(default)]
+    pub governance_cycles_with_quorum: u32,
+    /// Block height of the last governance cycle check.
+    #[serde(default)]
+    pub last_governance_cycle_height: u64,
 }
 
 /// Validator information stored on-chain.
@@ -582,6 +596,12 @@ impl BlockchainV1 {
             emergency_activated_at: None,
             emergency_activated_by: None,
             emergency_expires_at: None,
+
+            // DAO Phase Transitions
+            last_decentralization_snapshot: None,
+            phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
+            governance_cycles_with_quorum: 0,
+            last_governance_cycle_height: 0,
         }
     }
 }
@@ -744,6 +764,16 @@ struct BlockchainStorageV3 {
     pub emergency_activated_by: Option<String>,
     #[serde(default)]
     pub emergency_expires_at: Option<u64>,
+
+    // DAO Phase Transitions (dao-3)
+    #[serde(default)]
+    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
+    #[serde(default)]
+    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
+    #[serde(default)]
+    pub governance_cycles_with_quorum: u32,
+    #[serde(default)]
+    pub last_governance_cycle_height: u64,
 }
 
 impl BlockchainStorageV3 {
@@ -841,6 +871,12 @@ impl BlockchainStorageV3 {
             emergency_activated_at: bc.emergency_activated_at,
             emergency_activated_by: bc.emergency_activated_by.clone(),
             emergency_expires_at: bc.emergency_expires_at,
+
+            // DAO Phase Transitions
+            last_decentralization_snapshot: bc.last_decentralization_snapshot.clone(),
+            phase_transition_config: bc.phase_transition_config.clone(),
+            governance_cycles_with_quorum: bc.governance_cycles_with_quorum,
+            last_governance_cycle_height: bc.last_governance_cycle_height,
         }
     }
 
@@ -958,6 +994,12 @@ impl BlockchainStorageV3 {
             emergency_activated_at: self.emergency_activated_at,
             emergency_activated_by: self.emergency_activated_by,
             emergency_expires_at: self.emergency_expires_at,
+
+            // DAO Phase Transitions
+            last_decentralization_snapshot: self.last_decentralization_snapshot,
+            phase_transition_config: self.phase_transition_config,
+            governance_cycles_with_quorum: self.governance_cycles_with_quorum,
+            last_governance_cycle_height: self.last_governance_cycle_height,
         }
     }
 }
@@ -1046,6 +1088,12 @@ impl Blockchain {
             emergency_activated_at: None,
             emergency_activated_by: None,
             emergency_expires_at: None,
+
+            // DAO Phase Transitions
+            last_decentralization_snapshot: None,
+            phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
+            governance_cycles_with_quorum: 0,
+            last_governance_cycle_height: 0,
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -3474,6 +3522,93 @@ impl Blockchain {
             self.height, expiry
         );
         Ok(())
+    }
+
+    // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────────
+
+    /// Compute a decentralization snapshot from current chain state.
+    pub fn compute_decentralization_snapshot(&self) -> crate::dao::DecentralizationSnapshot {
+        let citizen_count = self.identity_registry.len() as u64;
+
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let max_wallet_pct_bps: u16 = if let Some(token) = self.token_contracts.get(&sov_id) {
+            let total = token.total_supply;
+            if total == 0 {
+                0
+            } else {
+                let max_bal = token.balances.values().copied().max().unwrap_or(0);
+                ((max_bal as u128 * 10_000) / total as u128).min(u16::MAX as u128) as u16
+            }
+        } else {
+            0
+        };
+
+        crate::dao::DecentralizationSnapshot {
+            verified_citizen_count: citizen_count,
+            max_wallet_pct_bps,
+            snapshot_height: self.height,
+        }
+    }
+
+    /// Check if conditions for Bootstrap→Hybrid transition are met.
+    /// Any one of conditions A, B, or C is sufficient.
+    pub fn check_phase0_to_phase1(&self) -> bool {
+        let cfg = &self.phase_transition_config;
+        let snap = self.compute_decentralization_snapshot();
+
+        // Condition A: enough citizens
+        let cond_a = snap.verified_citizen_count >= cfg.min_citizens_for_phase1;
+        // Condition B: whale concentration low enough
+        let cond_b = snap.max_wallet_pct_bps <= cfg.max_wallet_pct_bps_for_phase1;
+        // Condition C: time window elapsed
+        let cond_c = cfg.phase0_max_duration_blocks
+            .map(|n| self.height >= n)
+            .unwrap_or(false);
+
+        cond_a || cond_b || cond_c
+    }
+
+    /// Check if conditions for Hybrid→FullDAO transition are met.
+    /// All conditions must be satisfied simultaneously.
+    pub fn check_phase1_to_phase2(&self) -> bool {
+        let cfg = &self.phase_transition_config;
+        let snap = self.compute_decentralization_snapshot();
+
+        let enough_citizens = snap.verified_citizen_count >= cfg.min_citizens_for_phase2;
+        let low_concentration = snap.max_wallet_pct_bps <= cfg.max_wallet_pct_bps_for_phase2;
+        let quorum_cycles = self.governance_cycles_with_quorum >= cfg.phase2_quorum_consecutive_cycles;
+
+        enough_citizens && low_concentration && quorum_cycles
+    }
+
+    /// Try to advance the governance phase if conditions are met.
+    /// Called periodically from `process_approved_governance_proposals`.
+    pub fn try_advance_governance_phase(&mut self) {
+        match self.governance_phase {
+            crate::dao::GovernancePhase::Bootstrap => {
+                if self.check_phase0_to_phase1() {
+                    let snap = self.compute_decentralization_snapshot();
+                    self.last_decentralization_snapshot = Some(snap);
+                    self.governance_phase = crate::dao::GovernancePhase::Hybrid;
+                    info!(
+                        "🗳 Governance advanced to Hybrid phase at height {}",
+                        self.height
+                    );
+                }
+            }
+            crate::dao::GovernancePhase::Hybrid => {
+                if self.check_phase1_to_phase2() {
+                    let snap = self.compute_decentralization_snapshot();
+                    self.last_decentralization_snapshot = Some(snap);
+                    self.governance_phase = crate::dao::GovernancePhase::FullDao;
+                    info!(
+                        "🏛 Governance advanced to Full DAO phase at height {}",
+                        self.height
+                    );
+                }
+            }
+            crate::dao::GovernancePhase::FullDao => {} // terminal
+        }
     }
 
     /// Apply a token transfer with protocol fee deduction and treasury routing.
@@ -6270,6 +6405,11 @@ impl Blockchain {
                     info!("🔓 Emergency state expired at block height {}", self.height);
                 }
             }
+        }
+
+        // Periodic phase-transition check every 1000 blocks (dao-3)
+        if self.height > 0 && self.height % 1_000 == 0 {
+            self.try_advance_governance_phase();
         }
 
         // Get difficulty parameter update proposals with their quorum requirements
