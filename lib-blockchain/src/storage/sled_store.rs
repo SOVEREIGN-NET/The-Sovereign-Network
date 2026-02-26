@@ -745,6 +745,56 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
+    fn backfill_token_balances_from_contract(
+        &self,
+        token_id: &TokenId,
+        entries: &[([u8; 32], u64)],
+    ) -> StorageResult<usize> {
+        let mut batch = sled::Batch::default();
+        let mut written = 0usize;
+        for (addr_bytes, balance) in entries {
+            if *balance == 0 {
+                continue;
+            }
+            let addr = Address::new(*addr_bytes);
+            let key = keys::token_balance_key(token_id, &addr);
+            // Only backfill entries missing from the tree (idempotent)
+            match self.token_balances.get(&key) {
+                Ok(Some(_)) => {} // Already populated, skip
+                Ok(None) => {
+                    batch.insert(key.as_ref(), &(*balance as u128).to_be_bytes());
+                    written += 1;
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+        if written > 0 {
+            self.token_balances
+                .apply_batch(batch)
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+        }
+        Ok(written)
+    }
+
+    fn force_set_token_balances(
+        &self,
+        entries: &[(TokenId, Address, u128)],
+    ) -> StorageResult<usize> {
+        let mut batch = sled::Batch::default();
+        for (token_id, addr, balance) in entries {
+            let key = keys::token_balance_key(token_id, addr);
+            if *balance == 0 {
+                batch.remove(key.as_ref());
+            } else {
+                batch.insert(key.as_ref(), &balance.to_be_bytes());
+            }
+        }
+        self.token_balances
+            .apply_batch(batch)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(entries.len())
+    }
+
     // =========================================================================
     // Token Transfer Nonce Operations (Replay Protection)
     // =========================================================================
