@@ -82,6 +82,7 @@ impl DaoPrefixRouter {
     ///
     /// # Examples
     /// ```
+    /// use lib_blockchain::contracts::root_registry::DaoPrefixRouter;
     /// assert!(DaoPrefixRouter::is_dao_prefixed("dao.shoes.sov"));
     /// assert!(!DaoPrefixRouter::is_dao_prefixed("shoes.sov"));
     /// assert!(!DaoPrefixRouter::is_dao_prefixed("mydao.sov"));
@@ -96,7 +97,8 @@ impl DaoPrefixRouter {
     ///
     /// # Examples
     /// ```
-    /// assert_eq!(DaoPrefixRouter::extract_parent("dao.shoes.sov"), Some("shoes.sov"));
+    /// use lib_blockchain::contracts::root_registry::DaoPrefixRouter;
+    /// assert_eq!(DaoPrefixRouter::extract_parent("dao.shoes.sov"), Some("shoes.sov".to_string()));
     /// assert_eq!(DaoPrefixRouter::extract_parent("shoes.sov"), None);
     /// ```
     pub fn extract_parent(name: &str) -> Option<String> {
