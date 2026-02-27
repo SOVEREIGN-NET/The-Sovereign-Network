@@ -110,11 +110,117 @@ fn test_emergency_auto_expire_in_block_processing() -> Result<()> {
     Ok(())
 }
 
-// Note: test_execute_dao_proposal_balance_model_transfer and
-// test_execute_dao_proposal_fails_without_council_votes require proposals and votes
-// to be mined into confirmed blocks, which needs the full block processing pipeline.
-// Those tests live at the integration-test level; the unit tests below cover the
-// individually-testable components of treasury execution.
+// ── balance model execution ───────────────────────────────────────────────────
+
+#[test]
+fn test_execute_dao_proposal_balance_model_transfer() -> Result<()> {
+    // Single-member council with threshold=1 — simplest valid configuration.
+    let mut bc = Blockchain::new()?;
+    bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+        members: vec![CouncilBootstrapEntry {
+            identity_id: "did:zhtp:alice".to_string(),
+            wallet_id: "aa".to_string(),
+            stake_amount: 1_000_000,
+        }],
+        threshold: 1,
+    });
+
+    let proposal_id = lib_blockchain::types::Hash::new([0xba; 32]);
+    // quorum_required=0 means any participation satisfies the quorum check.
+    bc.push_test_dao_proposal(proposal_id, 0);
+    // Alice (council member) votes yes — satisfies both quorum and Phase 0 council gate.
+    bc.push_test_dao_vote(proposal_id, "did:zhtp:alice", "Yes");
+
+    // Fund treasury with 1_000_000 SOV.
+    bc.credit_dao_treasury_sov_for_test(1_000_000)?;
+    let treasury_before = bc.get_dao_treasury_balance()?;
+    assert_eq!(treasury_before, 1_000_000);
+
+    // Recipient: 32 bytes all-0xcc (valid 32-byte hex wallet ID).
+    let recipient_hex = "cc".repeat(32);
+    let amount = 1_000u64;
+
+    bc.execute_dao_proposal(
+        proposal_id,
+        "did:zhtp:alice".to_string(),
+        recipient_hex.clone(),
+        amount,
+    )?;
+
+    // Treasury balance must have decreased by exactly `amount`.
+    assert_eq!(bc.get_dao_treasury_balance()?, treasury_before - amount);
+    // Recipient must have been credited exactly `amount`.
+    assert_eq!(bc.get_wallet_sov_for_test(&recipient_hex)?, amount);
+    Ok(())
+}
+
+#[test]
+fn test_execute_dao_proposal_fails_without_council_votes() -> Result<()> {
+    // Threshold=2 council: requires alice AND bob to both vote yes in Phase 0.
+    let mut bc = Blockchain::new()?;
+    bc.ensure_council_bootstrap(&council_config());
+
+    let proposal_id = lib_blockchain::types::Hash::new([0xab; 32]);
+    bc.push_test_dao_proposal(proposal_id, 0);
+    // Mallory (non-council member) votes yes — passes quorum but NOT council gate.
+    bc.push_test_dao_vote(proposal_id, "did:zhtp:mallory", "Yes");
+
+    bc.credit_dao_treasury_sov_for_test(1_000_000)?;
+
+    let result = bc.execute_dao_proposal(
+        proposal_id,
+        "did:zhtp:mallory".to_string(),
+        "aa".repeat(32),
+        1_000,
+    );
+    assert!(result.is_err(), "Must fail: mallory is not a council member");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.to_lowercase().contains("council"),
+        "Error must mention council requirement, got: {}", msg
+    );
+    Ok(())
+}
+
+#[test]
+fn test_epoch_spend_cap_enforced() -> Result<()> {
+    let mut bc = Blockchain::new()?;
+    bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+        members: vec![CouncilBootstrapEntry {
+            identity_id: "did:zhtp:alice".to_string(),
+            wallet_id: "aa".to_string(),
+            stake_amount: 1_000_000,
+        }],
+        threshold: 1,
+    });
+
+    let proposal_id = lib_blockchain::types::Hash::new([0xec; 32]);
+    bc.push_test_dao_proposal(proposal_id, 0);
+    bc.push_test_dao_vote(proposal_id, "did:zhtp:alice", "Yes");
+
+    // Fund treasury with 100_000 SOV → epoch-start cap = 5% × 100_000 = 5_000
+    bc.credit_dao_treasury_sov_for_test(100_000)?;
+
+    let epoch = bc.height / bc.treasury_epoch_length_blocks.max(1);
+    // Pre-record epoch start balance and simulate having already spent 4_001.
+    bc.treasury_epoch_start_balance.insert(epoch, 100_000);
+    bc.treasury_epoch_spend.insert(epoch, 4_001);
+
+    // Attempting to spend 1_000 would bring the epoch total to 5_001 > cap of 5_000.
+    let result = bc.execute_dao_proposal(
+        proposal_id,
+        "did:zhtp:alice".to_string(),
+        "dd".repeat(32),
+        1_000,
+    );
+    assert!(result.is_err(), "Must fail: 4_001 + 1_000 exceeds epoch cap of 5_000");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.to_lowercase().contains("epoch"),
+        "Error must mention epoch cap, got: {}", msg
+    );
+    Ok(())
+}
 
 // ── spending category validation ──────────────────────────────────────────────
 
