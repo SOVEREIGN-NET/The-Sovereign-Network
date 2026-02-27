@@ -96,6 +96,21 @@ pub struct OracleState {
     pub epoch_state: BTreeMap<u64, OracleEpochState>,
 }
 
+impl OracleState {
+    /// Finalize a price for an epoch exactly once.
+    ///
+    /// Returns `true` if the price was written, `false` if that epoch already has
+    /// a finalized price (first-write-wins).
+    pub fn try_finalize_price(&mut self, finalized_price: FinalizedOraclePrice) -> bool {
+        let epoch_id = finalized_price.epoch_id;
+        if self.finalized_prices.contains_key(&epoch_id) {
+            return false;
+        }
+        self.finalized_prices.insert(epoch_id, finalized_price);
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,5 +131,39 @@ mod tests {
             pending_update: None,
         };
         assert_eq!(committee.threshold(), 2);
+    }
+
+    #[test]
+    fn finalize_price_is_first_write_wins_per_epoch() {
+        let mut state = OracleState::default();
+        let first = FinalizedOraclePrice {
+            epoch_id: 7,
+            sov_usd_price: 100_000_000,
+        };
+        let second = FinalizedOraclePrice {
+            epoch_id: 7,
+            sov_usd_price: 200_000_000,
+        };
+
+        assert!(state.try_finalize_price(first.clone()));
+        assert!(
+            !state.try_finalize_price(second),
+            "second finalized price for same epoch must be rejected"
+        );
+        assert_eq!(state.finalized_prices.get(&7), Some(&first));
+    }
+
+    #[test]
+    fn finalize_price_allows_distinct_epochs() {
+        let mut state = OracleState::default();
+        assert!(state.try_finalize_price(FinalizedOraclePrice {
+            epoch_id: 1,
+            sov_usd_price: 100_000_000,
+        }));
+        assert!(state.try_finalize_price(FinalizedOraclePrice {
+            epoch_id: 2,
+            sov_usd_price: 120_000_000,
+        }));
+        assert_eq!(state.finalized_prices.len(), 2);
     }
 }
