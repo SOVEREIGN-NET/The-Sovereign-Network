@@ -59,7 +59,8 @@ pub use handshake::{HandshakeResult, HandshakeState};
 pub use identity::{
     build_migrate_identity_request, build_migrate_identity_request_json, export_keystore_base64,
     generate_identity, get_public_identity, get_seed_phrase, restore_identity_from_phrase,
-    sign_registration_proof, Identity, MigrateIdentityRequestPayload, PublicIdentity,
+    sign_pouw_receipt_json, sign_registration_proof, Identity, MigrateIdentityRequestPayload,
+    PublicIdentity,
 };
 pub use request::{
     create_zhtp_frame, deserialize_response, parse_zhtp_frame, serialize_request, ZhtpHeaders,

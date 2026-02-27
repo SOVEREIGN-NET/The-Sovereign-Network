@@ -21,6 +21,7 @@ The following are intentionally unsupported and removed for production integrati
 
 PoUW submissions use `dilithium5` signatures only.
 `PoUWController` now emits `sig_scheme: "dilithium5"` unconditionally.
+Signatures are generated over canonical `bincode(receipt)` bytes, not raw JSON bytes.
 
 ## Field Requirements
 
