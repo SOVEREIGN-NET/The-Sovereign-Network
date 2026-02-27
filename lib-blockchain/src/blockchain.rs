@@ -5992,14 +5992,22 @@ impl Blockchain {
             ));
         }
 
-        // 6b. Validate spending category from execution_params, if present
-        if let Some(ref params_bytes) = proposal.execution_params {
-            if !params_bytes.is_empty() {
-                if let Ok(params) = serde_json::from_slice::<crate::dao::TreasuryExecutionParams>(params_bytes) {
-                    self.validate_treasury_spending_category(&params)?;
-                }
-            }
-        }
+        // 6b. Validate spending category from execution_params (required per issue #1466)
+        // spending_category is mandatory — proposals without it are rejected.
+        let treasury_exec_params = {
+            let bytes = proposal.execution_params.as_ref()
+                .filter(|b| !b.is_empty())
+                .ok_or_else(|| anyhow::anyhow!(
+                    "spending_category required in execution_params; \
+                     proposal is missing a valid TreasuryExecutionParams"
+                ))?;
+            serde_json::from_slice::<crate::dao::TreasuryExecutionParams>(bytes)
+                .map_err(|e| anyhow::anyhow!(
+                    "execution_params could not be deserialized as TreasuryExecutionParams: {}",
+                    e
+                ))?
+        };
+        self.validate_treasury_spending_category(&treasury_exec_params)?;
 
         // 7. Execute balance transfer (debit treasury, credit recipient)
         let sov_id = crate::contracts::utils::generate_lib_token_id();
@@ -10499,7 +10507,30 @@ impl Blockchain {
     /// Push a minimal DAO proposal into `self.blocks` for test use.
     /// Bypasses block validation — do NOT call outside of unit tests.
     pub fn push_test_dao_proposal(&mut self, proposal_id: Hash, quorum: u8) {
-        use crate::transaction::{DaoProposalData};
+        self.push_test_dao_proposal_with_category(
+            proposal_id,
+            quorum,
+            crate::dao::TreasurySpendingCategory::GrantsFunding,
+        );
+    }
+
+    /// Push a DAO proposal with an explicit spending category for test use.
+    pub fn push_test_dao_proposal_with_category(
+        &mut self,
+        proposal_id: Hash,
+        quorum: u8,
+        category: crate::dao::TreasurySpendingCategory,
+    ) {
+        use crate::transaction::DaoProposalData;
+        // Serialize a minimal TreasuryExecutionParams — recipient/amount are overridden at
+        // execution time, but the category is validated before the transfer happens.
+        let params = crate::dao::TreasuryExecutionParams {
+            category,
+            recipient_wallet_id: String::new(),
+            amount: 0,
+        };
+        let params_bytes = serde_json::to_vec(&params)
+            .expect("TreasuryExecutionParams must serialize");
         let tx = Transaction::new_dao_proposal(
             DaoProposalData {
                 proposal_id,
@@ -10509,7 +10540,7 @@ impl Blockchain {
                 proposal_type: "treasury_allocation".to_string(),
                 voting_period_blocks: 1000,
                 quorum_required: quorum,
-                execution_params: None,
+                execution_params: Some(params_bytes),
                 created_at: 0,
                 created_at_height: 0,
             },
