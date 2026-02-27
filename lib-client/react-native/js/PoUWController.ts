@@ -338,7 +338,10 @@ export class PoUWController {
    * Serializes to JSON, then native code re-parses and signs canonical bincode bytes.
    */
   private async _signReceipt(receipt: Receipt): Promise<SignedReceipt> {
-    const receiptJson = JSON.stringify(receipt, Object.keys(receipt).sort());
+    const receiptJson = JSON.stringify(
+      receipt,
+      Object.keys(receipt).sort((a, b) => a.localeCompare(b)),
+    );
     const sigB64 = await identityProvisioning.signPouwReceipt(receiptJson);
 
     return {
