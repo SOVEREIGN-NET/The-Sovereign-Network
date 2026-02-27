@@ -51,6 +51,11 @@ fn default_finality_depth() -> u64 {
     6
 }
 
+/// Default council threshold (4 of N council members)
+fn default_council_threshold() -> u8 {
+    4
+}
+
 /// Indexed DAO registry entry derived from canonical DaoExecution events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaoRegistryIndexEntry {
@@ -233,6 +238,20 @@ pub struct Blockchain {
     /// Oracle protocol v1 consensus state (committee/config/finalized prices).
     #[serde(default)]
     pub oracle_state: crate::oracle::OracleState,
+
+    // =========================================================================
+    // DAO Bootstrap Council (dao-1)
+    // =========================================================================
+
+    /// Current governance phase (Bootstrap → Hybrid → FullDao)
+    #[serde(default)]
+    pub governance_phase: crate::dao::GovernancePhase,
+    /// Active Bootstrap Council members
+    #[serde(default)]
+    pub council_members: Vec<crate::dao::CouncilMember>,
+    /// Minimum council yes-votes required for Phase 0 execution
+    #[serde(default = "default_council_threshold")]
+    pub council_threshold: u8,
 }
 
 /// Validator information stored on-chain.
@@ -530,6 +549,9 @@ impl BlockchainV1 {
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
             amm_pools: HashMap::new(),
             oracle_state: crate::oracle::OracleState::default(),
+            governance_phase: crate::dao::GovernancePhase::default(),
+            council_members: Vec::new(),
+            council_threshold: default_council_threshold(),
         }
     }
 }
@@ -668,6 +690,16 @@ struct BlockchainStorageV3 {
     /// AMM liquidity pools for graduated bonding curve tokens
     #[serde(default)]
     pub amm_pools: HashMap<[u8; 32], crate::contracts::sov_swap::SovSwapPool>,
+
+    // =========================================================================
+    // DAO Bootstrap Council (dao-1) — append-only, always #[serde(default)]
+    // =========================================================================
+    #[serde(default)]
+    pub governance_phase: crate::dao::GovernancePhase,
+    #[serde(default)]
+    pub council_members: Vec<crate::dao::CouncilMember>,
+    #[serde(default = "default_council_threshold")]
+    pub council_threshold: u8,
 }
 
 impl BlockchainStorageV3 {
@@ -752,6 +784,11 @@ impl BlockchainStorageV3 {
             // Token nonces
             token_nonces: bc.token_nonces.clone(),
             amm_pools: HashMap::new(), // Initialize empty, pools are created on graduation
+
+            // DAO Bootstrap Council
+            governance_phase: bc.governance_phase.clone(),
+            council_members: bc.council_members.clone(),
+            council_threshold: bc.council_threshold,
         }
     }
 
@@ -853,10 +890,15 @@ impl BlockchainStorageV3 {
 
             // Bonding curve registry
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
-            
+
             // AMM pools - initialize empty, will be populated from storage
             amm_pools: HashMap::new(),
             oracle_state: crate::oracle::OracleState::default(),
+
+            // DAO Bootstrap Council
+            governance_phase: self.governance_phase,
+            council_members: self.council_members,
+            council_threshold: self.council_threshold,
         }
     }
 }
@@ -962,6 +1004,9 @@ impl Blockchain {
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
             amm_pools: HashMap::new(),
             oracle_state: crate::oracle::OracleState::default(),
+            governance_phase: crate::dao::GovernancePhase::default(),
+            council_members: Vec::new(),
+            council_threshold: default_council_threshold(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -3315,6 +3360,50 @@ impl Blockchain {
             self.dao_treasury_wallet_id = Some(wallet_id_hex);
             info!("🏦 DAO treasury wallet initialized (deterministic bootstrap)");
         }
+    }
+
+    // =========================================================================
+    // DAO Bootstrap Council (dao-1)
+    // =========================================================================
+
+    /// Idempotently populate the Bootstrap Council from config.
+    ///
+    /// If council members are already present this is a no-op (idempotent).
+    /// Called once at node startup after the blockchain is loaded/created.
+    pub fn ensure_council_bootstrap(&mut self, config: &crate::dao::CouncilBootstrapConfig) {
+        if !self.council_members.is_empty() {
+            return; // Already bootstrapped — idempotent
+        }
+        if config.members.is_empty() {
+            return; // No council configured
+        }
+
+        self.council_threshold = if config.threshold == 0 { 4 } else { config.threshold };
+
+        for entry in &config.members {
+            self.council_members.push(crate::dao::CouncilMember {
+                identity_id: entry.identity_id.clone(),
+                wallet_id: entry.wallet_id.clone(),
+                stake_amount: entry.stake_amount,
+                joined_at_height: self.height,
+            });
+        }
+
+        info!(
+            "🏛️ Bootstrap Council initialized: {} members, threshold {}",
+            self.council_members.len(),
+            self.council_threshold
+        );
+    }
+
+    /// Returns true if the given DID is a current Bootstrap Council member.
+    pub fn is_council_member(&self, did: &str) -> bool {
+        self.council_members.iter().any(|m| m.identity_id == did)
+    }
+
+    /// Returns the list of Bootstrap Council members.
+    pub fn get_council_members(&self) -> &[crate::dao::CouncilMember] {
+        &self.council_members
     }
 
     /// Apply a token transfer with protocol fee deduction and treasury routing.
