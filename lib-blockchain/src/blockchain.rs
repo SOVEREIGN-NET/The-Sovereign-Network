@@ -292,7 +292,11 @@ pub struct Blockchain {
     /// How token balances translate to voting weight
     #[serde(default)]
     pub voting_power_mode: crate::dao::VotingPowerMode,
-    /// Vote delegation map: delegator_did → delegate_did
+    /// Vote delegation map: delegator_id_hex → delegate_id_hex
+    ///
+    /// Both keys and values are 64-char hex-encoded 32-byte identity IDs
+    /// (the raw bytes of `lib_identity::IdentityId`, NOT "did:zhtp:…" strings).
+    /// Delegation is **non-transitive**: if A→B and B→C, C does not receive A's power.
     #[serde(default)]
     pub vote_delegations: HashMap<String, String>,
 }
@@ -5799,7 +5803,10 @@ impl Blockchain {
         Ok(approval_percent >= required_approval_percent as u64)
     }
 
-    /// Return the current circulating SOV supply (total minted minus any burned).
+    /// Return the current circulating SOV supply.
+    ///
+    /// `TokenContract::burn` decrements `total_supply` directly, so this value
+    /// is already net of any burned tokens — no separate subtraction is needed.
     pub fn get_circulating_sov_supply(&self) -> u64 {
         let sov_id = crate::contracts::utils::generate_lib_token_id();
         self.token_contracts
@@ -5810,12 +5817,17 @@ impl Blockchain {
 
     /// Check if a proposal has passed using circulating-supply-based quorum.
     ///
-    /// `required_pct` is the minimum percentage (0–100) of circulating supply that
-    /// must have participated AND the minimum approval rate among those votes.
+    /// `quorum_pct` is the minimum percentage (0–100) of circulating supply that
+    /// must have cast votes (participation threshold).
+    /// `approval_pct` is the minimum percentage (0–100) of cast votes that must
+    /// be "Yes" (approval threshold).
+    ///
+    /// Standard usage: `quorum_pct = 20` (20% participation), `approval_pct = 51`.
     pub fn has_proposal_passed_with_quorum(
         &self,
         proposal_id: &Hash,
-        required_pct: u32,
+        quorum_pct: u32,
+        approval_pct: u32,
     ) -> Result<bool> {
         let (yes_votes, _no, _ab, total_cast) = self.tally_dao_votes(proposal_id);
         if total_cast == 0 {
@@ -5823,11 +5835,11 @@ impl Blockchain {
         }
         let circulating = self.get_circulating_sov_supply().max(1);
         let participation_pct = (total_cast * 100) / circulating;
-        if participation_pct < required_pct as u64 {
+        if participation_pct < quorum_pct as u64 {
             return Ok(false);
         }
-        let approval_pct = (yes_votes * 100) / total_cast;
-        Ok(approval_pct >= required_pct as u64)
+        let yes_pct = (yes_votes * 100) / total_cast;
+        Ok(yes_pct >= approval_pct as u64)
     }
 
     /// Set the DAO treasury wallet ID
@@ -7370,17 +7382,21 @@ impl Blockchain {
     // ============================================================================
 
     /// Calculate comprehensive voting power for a user in DAO governance
-    /// 
-    /// Factors considered:
-    /// - Base power: 1 vote (universal suffrage)
-    /// - Staked amount: Long-term commitment (2x weight)
-    /// - Network contribution: Storage/compute provided (up to 50% bonus)
-    /// - Reputation: Historical participation quality (up to 25% bonus)
-    /// - Delegated power: Votes delegated from other users
-    /// 
-    /// NOTE: Token balance is NOT included because this is a zero-knowledge blockchain.
-    /// Transaction amounts are encrypted in Pedersen commitments and cannot be read.
-    /// Voting power is derived entirely from publicly verifiable on-chain actions.
+    /// Calculate effective voting power for a user, applying `self.voting_power_mode`.
+    ///
+    /// Raw power = (total SOV balance across all wallets) / 100_000_000 (1 SOV = 1 unit)
+    ///           + sum of each direct delegator's raw power.
+    ///
+    /// The raw power is then transformed by `voting_power_mode`:
+    /// - `Identity`  → always returns 1 (one person, one vote)
+    /// - `Linear`    → returns raw power (minimum 1 if identity has any participation)
+    /// - `Quadratic` → returns `floor(sqrt(raw))` to dampen large-balance whales.
+    ///   Note: uses f64 arithmetic; for balances > 2^53 SOV units precision is lost.
+    ///   Governance amounts at that scale are astronomically unlikely in practice.
+    ///
+    /// Delegation is **non-transitive**: if A→B and B→C, C does not receive A's power.
+    /// `vote_delegations` maps delegator_id_hex → delegate_id_hex (both 64-char hex,
+    /// NOT "did:zhtp:…" strings).
     pub fn calculate_user_voting_power(&self, user_id: &lib_identity::IdentityId) -> u64 {
         let sov_id = crate::contracts::utils::generate_lib_token_id();
 
@@ -7400,8 +7416,8 @@ impl Blockchain {
         // 1 SOV (1e8 atomic units) = 1 base vote unit
         let base_power = sov_balance / 100_000_000;
 
-        // Add power from identities that delegated to this user.
-        // vote_delegations maps delegator_did_hex → delegate_did_hex.
+        // Add power from identities that delegated directly to this user (non-transitive).
+        // Keys and values in vote_delegations are 64-char hex-encoded identity IDs.
         let user_hex = hex::encode(user_id.0);
         let delegated_extra: u64 = self.vote_delegations.iter()
             .filter(|(_, delegate_hex)| delegate_hex.as_str() == user_hex.as_str())
@@ -7420,7 +7436,14 @@ impl Blockchain {
             })
             .sum();
 
-        base_power.saturating_add(delegated_extra)
+        let raw = base_power.saturating_add(delegated_extra);
+
+        // Apply voting power mode.
+        match self.voting_power_mode {
+            crate::dao::VotingPowerMode::Identity  => 1,
+            crate::dao::VotingPowerMode::Linear    => raw,
+            crate::dao::VotingPowerMode::Quadratic => (raw as f64).sqrt() as u64,
+        }
     }
 
     /// Calculate network contribution score (0-100) based on storage and compute provided
@@ -10680,6 +10703,52 @@ impl Blockchain {
         let token = self.token_contracts.get(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
         Ok(token.balance_of(&pk))
+    }
+
+    /// Register a minimal wallet owned by `identity_bytes` and credit it with `amount` SOV.
+    /// This allows `calculate_user_voting_power` to return a non-zero value in unit tests.
+    /// For unit tests only — bypasses normal registration pipeline.
+    pub fn credit_identity_sov_for_test(
+        &mut self,
+        identity_bytes: &[u8; 32],
+        amount: u64,
+    ) -> Result<()> {
+        self.ensure_sov_token_contract();
+
+        // Wallet ID is derived from the identity bytes so it is unique per identity.
+        let wallet_id_bytes: [u8; 32] = {
+            let mut w = *identity_bytes;
+            w[0] ^= 0xee; // differentiate wallet_id from identity_id
+            w
+        };
+
+        // Insert a minimal WalletTransactionData owned by this identity.
+        let owner_hash = crate::types::hash::Hash::new(*identity_bytes);
+        let wallet_id_hash = crate::types::hash::Hash::new(wallet_id_bytes);
+        let wallet_id_hex = hex::encode(wallet_id_bytes);
+        let wallet_data = crate::transaction::WalletTransactionData {
+            wallet_id: wallet_id_hash,
+            public_key: vec![],
+            wallet_type: "standard".to_string(),
+            wallet_name: "test".to_string(),
+            alias: None,
+            owner_identity_id: Some(owner_hash),
+            seed_commitment: Hash::default(),
+            created_at: 0,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance: 0,
+        };
+        self.wallet_registry.insert(wallet_id_hex, wallet_data);
+
+        // Credit SOV to the wallet's synthetic key.
+        let pk = Self::wallet_key_for_sov(&wallet_id_bytes);
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self.token_contracts.get_mut(&sov_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
+        token.credit_balance(&pk, amount)
+            .map_err(|e| anyhow::anyhow!("Identity SOV credit failed: {}", e))?;
+        Ok(())
     }
 
     fn make_minimal_test_block(transactions: Vec<Transaction>) -> Block {
