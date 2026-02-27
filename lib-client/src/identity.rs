@@ -450,9 +450,77 @@ pub fn sign_message(identity: &Identity, message: &[u8]) -> Result<Vec<u8>> {
     Dilithium5::sign(message, &identity.private_key)
 }
 
+/// Sign a PoUW receipt from JSON using canonical server-side serialization.
+///
+/// The server verifies PoUW signatures over `bincode::serialize(receipt)`,
+/// not over raw JSON bytes. This function mirrors that exact behavior so
+/// mobile clients produce verifiable signatures.
+pub fn sign_pouw_receipt_json(identity: &Identity, receipt_json: &str) -> Result<Vec<u8>> {
+    let receipt: PouwReceiptForSigning = serde_json::from_str(receipt_json)
+        .map_err(|e| ClientError::SerializationError(e.to_string()))?;
+    let receipt_bytes =
+        bincode::serialize(&receipt).map_err(|e| ClientError::SerializationError(e.to_string()))?;
+    Dilithium5::sign(&receipt_bytes, &identity.private_key)
+}
+
 /// Verify a signature against an identity's public key
 pub fn verify_signature(public_key: &[u8], message: &[u8], signature: &[u8]) -> Result<bool> {
     Dilithium5::verify(message, signature, public_key)
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+struct PouwReceiptForSigning {
+    version: u32,
+    #[serde(with = "hex_bytes")]
+    task_id: Vec<u8>,
+    client_did: String,
+    #[serde(with = "hex_bytes")]
+    client_node_id: Vec<u8>,
+    #[serde(with = "hex_bytes")]
+    provider_id: Vec<u8>,
+    #[serde(with = "hex_bytes")]
+    content_id: Vec<u8>,
+    proof_type: PouwProofTypeForSigning,
+    bytes_verified: u64,
+    result_ok: bool,
+    started_at: u64,
+    finished_at: u64,
+    #[serde(with = "hex_bytes")]
+    receipt_nonce: Vec<u8>,
+    #[serde(with = "hex_bytes")]
+    challenge_nonce: Vec<u8>,
+    aux: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum PouwProofTypeForSigning {
+    Hash,
+    Merkle,
+    Signature,
+    #[serde(alias = "web4_manifest_route")]
+    Web4ManifestRoute,
+    #[serde(alias = "web4_content_served")]
+    Web4ContentServed,
+}
+
+mod hex_bytes {
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        hex::decode(&s).map_err(serde::de::Error::custom)
+    }
+
+    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&hex::encode(bytes))
+    }
 }
 
 /// Serialize identity to JSON for storage
@@ -705,6 +773,33 @@ mod tests {
         assert_eq!(restored.did, identity.did);
         assert_eq!(restored.public_key, identity.public_key);
         assert_eq!(restored.private_key, identity.private_key);
+    }
+
+    #[test]
+    fn test_sign_pouw_receipt_json_matches_bincode_verify() {
+        let identity = generate_identity("test-device".into()).unwrap();
+        let receipt_json = r#"{
+          "version": 1,
+          "task_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "client_did": "did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "client_node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "provider_id": "",
+          "content_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "proof_type": "web4manifestroute",
+          "bytes_verified": 4096,
+          "result_ok": true,
+          "started_at": 1700000000,
+          "finished_at": 1700000001,
+          "receipt_nonce": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "challenge_nonce": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "aux": "{\"manifest_cid\":\"cid\"}"
+        }"#;
+
+        let signature = sign_pouw_receipt_json(&identity, receipt_json).unwrap();
+        let receipt: PouwReceiptForSigning = serde_json::from_str(receipt_json).unwrap();
+        let canonical = bincode::serialize(&receipt).unwrap();
+
+        assert!(Dilithium5::verify(&canonical, &signature, &identity.public_key).unwrap());
     }
 
     #[test]

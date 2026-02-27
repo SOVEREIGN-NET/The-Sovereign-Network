@@ -21,8 +21,8 @@ jest.mock('./NativeIdentityProvisioning', () => ({
       kyberPublicKey: 'AAAA',
       nodeId: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
     }),
-    signMessage: jest.fn().mockResolvedValue(
-      // Mock 64-byte Ed25519 signature, base64
+    signPouwReceipt: jest.fn().mockResolvedValue(
+      // Mock signature bytes (base64)
       'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     ),
   },
