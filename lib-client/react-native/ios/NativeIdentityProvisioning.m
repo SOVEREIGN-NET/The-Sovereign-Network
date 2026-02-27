@@ -24,6 +24,10 @@ RCT_EXTERN_METHOD(signMessage:(NSString *)messageBase64
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(signPouwReceipt:(NSString *)receiptJson
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 // MARK: - UHP v2 Handshake
 
 RCT_EXTERN_METHOD(initHandshake:(NSString *)channelBindingBase64

@@ -21,8 +21,8 @@ jest.mock('./NativeIdentityProvisioning', () => ({
       kyberPublicKey: 'AAAA',
       nodeId: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
     }),
-    signMessage: jest.fn().mockResolvedValue(
-      // Mock 64-byte Ed25519 signature, base64
+    signPouwReceipt: jest.fn().mockResolvedValue(
+      // Mock signature bytes (base64)
       'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     ),
   },
@@ -137,7 +137,7 @@ describe('PoUWController', () => {
     expect(signed.receipt.bytes_verified).toBeGreaterThanOrEqual(1024);
     expect(signed.receipt.challenge_nonce).toBe('cc'.repeat(32));
     expect(signed.receipt.task_id).toBe('bb'.repeat(16));
-    expect(signed.sig_scheme).toBe('ed25519');
+    expect(signed.sig_scheme).toBe('dilithium5');
     expect(signed.signature).toBeTruthy();
 
     // Verify aux fields

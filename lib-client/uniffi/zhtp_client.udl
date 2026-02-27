@@ -37,6 +37,10 @@ namespace zhtp_client {
     [Throws=ClientError]
     sequence<u8> sign_message([ByRef] Identity identity, sequence<u8> message);
 
+    /// Sign a PoUW receipt JSON payload using canonical bincode receipt encoding.
+    [Throws=ClientError]
+    sequence<u8> sign_pouw_receipt_json([ByRef] Identity identity, string receipt_json);
+
     /// Verify a signature
     [Throws=ClientError]
     boolean verify_signature(sequence<u8> public_key, sequence<u8> message, sequence<u8> signature);

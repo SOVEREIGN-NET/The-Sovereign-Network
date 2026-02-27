@@ -98,8 +98,6 @@ export interface PoUWControllerConfig {
   batchIntervalMs?: number;
   /** Maximum receipts per batch */
   maxBatchSize?: number;
-  /** Signature scheme to use ("ed25519" | "dilithium5") */
-  sigScheme?: 'ed25519' | 'dilithium5';
 }
 
 // =============================================================================
@@ -133,14 +131,6 @@ function base64ToHex(b64: string): string {
     hex += binary.charCodeAt(i).toString(16).padStart(2, '0');
   }
   return hex;
-}
-
-function hexToBase64(hex: string): string {
-  const bytes = [];
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes.push(parseInt(hex.slice(i, i + 2), 16));
-  }
-  return btoa(String.fromCharCode(...bytes));
 }
 
 // =============================================================================
@@ -183,7 +173,6 @@ export class PoUWController {
       nodeApiBase: config.nodeApiBase,
       batchIntervalMs: config.batchIntervalMs ?? DEFAULT_BATCH_INTERVAL_MS,
       maxBatchSize: config.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE,
-      sigScheme: config.sigScheme ?? 'ed25519',
     };
   }
 
@@ -346,17 +335,19 @@ export class PoUWController {
 
   /**
    * Sign a receipt using the device's identity key.
-   * Serializes the receipt to JSON and signs with the native signMessage method.
+   * Serializes to JSON, then native code re-parses and signs canonical bincode bytes.
    */
   private async _signReceipt(receipt: Receipt): Promise<SignedReceipt> {
-    // Canonical serialization: sort keys for determinism
-    const receiptBytes = JSON.stringify(receipt, Object.keys(receipt).sort());
-    const receiptB64 = btoa(receiptBytes);
-    const sigB64 = await identityProvisioning.signMessage(receiptB64);
+    const receiptJson = JSON.stringify(
+      receipt,
+      Object.keys(receipt).sort((a, b) => a.localeCompare(b)),
+    );
+    const sigB64 = await identityProvisioning.signPouwReceipt(receiptJson);
 
     return {
       receipt,
-      sig_scheme: this.config.sigScheme,
+      // Canonical PoUW submit path uses Dilithium5 only.
+      sig_scheme: 'dilithium5',
       signature: base64ToHex(sigB64),
     };
   }
