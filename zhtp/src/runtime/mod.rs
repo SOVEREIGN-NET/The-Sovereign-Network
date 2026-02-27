@@ -1425,6 +1425,12 @@ impl RuntimeOrchestrator {
             info!("✓ Blockchain provider initialized with fresh blockchain");
         }
 
+        // Bootstrap Council (dao-1): idempotently populate from config
+        {
+            let mut bc = blockchain_arc.write().await;
+            bc.ensure_council_bootstrap(&self.config.consensus_config.council);
+        }
+
         if let Some(ref net_info) = network_info {
             info!("✓ Found existing network with {} peers at height {}",
                   net_info.peer_count, net_info.blockchain_height);

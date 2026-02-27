@@ -274,6 +274,9 @@ pub struct ConsensusConfig {
     pub validator_enabled: bool,
     pub min_stake: u64,
     pub reward_multipliers: HashMap<String, f64>,
+    /// Bootstrap Council configuration (dao-1)
+    #[serde(default)]
+    pub council: lib_blockchain::dao::CouncilBootstrapConfig,
 }
 
 /// Economics configuration
@@ -679,6 +682,7 @@ impl Default for NodeConfig {
                 validator_enabled: false,
                 min_stake: 1000,
                 reward_multipliers: HashMap::new(),
+                council: lib_blockchain::dao::CouncilBootstrapConfig::default(),
             },
             
             economics_config: EconomicsConfig {
