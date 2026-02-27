@@ -397,9 +397,14 @@ export class PoUWController {
     const now = nowSecs();
     const hasValid = this._challengeSupportsProofTypes(this.activeChallenge, proofTypes, now);
 
-    if (!hasValid) {
-      await this._refreshChallenge(proofTypes);
+    // If we already have a valid challenge, return early to avoid false negatives
+    // from time advancing between checks
+    if (hasValid) {
+      return true;
     }
+
+    // No valid challenge — attempt refresh
+    await this._refreshChallenge(proofTypes);
 
     const hasValidAfterRefresh = this._challengeSupportsProofTypes(
       this.activeChallenge,
