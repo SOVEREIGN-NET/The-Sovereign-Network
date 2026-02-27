@@ -2,6 +2,7 @@
 //! 
 //! Complete wallet management using MultiWalletManager and lib-economy patterns
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::Result;
@@ -895,6 +896,217 @@ impl WalletHandler {
         }
     }
 
+    fn u128_to_u64_saturating(amount: u128) -> u64 {
+        u64::try_from(amount).unwrap_or(u64::MAX)
+    }
+
+    fn infer_transaction_amount(tx: &lib_blockchain::transaction::Transaction) -> u64 {
+        if let Some(data) = &tx.token_transfer_data {
+            return Self::u128_to_u64_saturating(data.amount);
+        }
+        if let Some(data) = &tx.token_mint_data {
+            return Self::u128_to_u64_saturating(data.amount);
+        }
+        if let Some(data) = &tx.dao_execution_data {
+            return data.amount.unwrap_or(tx.outputs.len() as u64);
+        }
+        tx.outputs.len() as u64
+    }
+
+    fn canonical_key_id_from_public_key_bytes(public_key: &[u8]) -> Option<[u8; 32]> {
+        if public_key.is_empty() {
+            return None;
+        }
+        if public_key.len() == 32 {
+            let mut id = [0u8; 32];
+            id.copy_from_slice(public_key);
+            return Some(id);
+        }
+        Some(lib_blockchain::integration::crypto_integration::PublicKey::new(
+            public_key.to_vec(),
+        )
+        .key_id)
+    }
+
+    fn tx_involves_identity(
+        tx: &lib_blockchain::transaction::Transaction,
+        tracked_key_ids: &HashSet<[u8; 32]>,
+        identity_id_bytes: &[u8; 32],
+        identity_id_hex: &str,
+        identity_did: &str,
+    ) -> bool {
+        if tracked_key_ids.contains(&tx.signature.public_key.key_id) {
+            return true;
+        }
+
+        if tx
+            .outputs
+            .iter()
+            .any(|output| tracked_key_ids.contains(&output.recipient.key_id))
+        {
+            return true;
+        }
+
+        if let Some(data) = &tx.identity_data {
+            if data.did == identity_did {
+                return true;
+            }
+            if data.owned_wallets.iter().any(|wallet_id| {
+                if let Ok(bytes) = hex::decode(wallet_id) {
+                    if bytes.len() == 32 {
+                        let mut id = [0u8; 32];
+                        id.copy_from_slice(&bytes);
+                        return tracked_key_ids.contains(&id);
+                    }
+                }
+                false
+            }) {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.wallet_data {
+            if data
+                .owner_identity_id
+                .as_ref()
+                .is_some_and(|owner| owner.as_bytes() == identity_id_bytes)
+            {
+                return true;
+            }
+            if tracked_key_ids.contains(&data.wallet_id.as_array()) {
+                return true;
+            }
+            if let Some(id) = Self::canonical_key_id_from_public_key_bytes(&data.public_key) {
+                if tracked_key_ids.contains(&id) {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(data) = &tx.dao_proposal_data {
+            if data.proposer == identity_did || data.proposer == identity_id_hex {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.dao_vote_data {
+            if data.voter == identity_did || data.voter == identity_id_hex {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.dao_execution_data {
+            if data.executor == identity_did || data.executor == identity_id_hex {
+                return true;
+            }
+            if let Some(recipient) = &data.recipient {
+                if recipient == identity_did || recipient == identity_id_hex {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(data) = &tx.ubi_claim_data {
+            if data.claimant_identity == identity_did || data.claimant_identity == identity_id_hex {
+                return true;
+            }
+            if tracked_key_ids.contains(&data.recipient_wallet.key_id) {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.profit_declaration_data {
+            if data.declarant_identity == identity_did || data.declarant_identity == identity_id_hex {
+                return true;
+            }
+            if tracked_key_ids.contains(&data.nonprofit_treasury.key_id)
+                || tracked_key_ids.contains(&data.forprofit_treasury.key_id)
+            {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.token_transfer_data {
+            if tracked_key_ids.contains(&data.from) || tracked_key_ids.contains(&data.to) {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.token_mint_data {
+            if tracked_key_ids.contains(&data.to) {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.governance_config_data {
+            if tracked_key_ids.contains(&data.caller) {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.bonding_curve_deploy_data {
+            if tracked_key_ids.contains(&data.creator) {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.bonding_curve_buy_data {
+            if tracked_key_ids.contains(&data.buyer) {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.bonding_curve_sell_data {
+            if tracked_key_ids.contains(&data.seller) {
+                return true;
+            }
+        }
+
+        if let Some(data) = &tx.bonding_curve_graduate_data {
+            if tracked_key_ids.contains(&data.graduator) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn tx_to_record(
+        tx: &lib_blockchain::transaction::Transaction,
+        status: &str,
+        timestamp: u64,
+        block_height: Option<u64>,
+    ) -> TransactionRecord {
+        let tx_hash = tx.hash();
+        let amount = Self::infer_transaction_amount(tx);
+        let from_wallet = tx
+            .token_transfer_data
+            .as_ref()
+            .map(|d| hex::encode(d.from));
+        let to_address = tx
+            .token_transfer_data
+            .as_ref()
+            .map(|d| hex::encode(d.to))
+            .or_else(|| tx.token_mint_data.as_ref().map(|d| hex::encode(d.to)));
+
+        TransactionRecord {
+            tx_hash: hex::encode(tx_hash.as_bytes()),
+            tx_type: format!("{:?}", tx.transaction_type),
+            amount,
+            fee: tx.fee,
+            from_wallet,
+            to_address,
+            timestamp,
+            block_height,
+            status: status.to_string(),
+            memo: if tx.memo.is_empty() {
+                None
+            } else {
+                Some(hex::encode(&tx.memo))
+            },
+        }
+    }
+
     /// Get transaction history for an identity
     async fn handle_get_transactions(&self, identity_id: &str) -> Result<ZhtpResponse> {
         // Parse identity ID
@@ -908,98 +1120,104 @@ impl WalletHandler {
             ));
         }
 
+        let mut identity_id_bytes = [0u8; 32];
+        identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity = match self.get_identity_by_id(&identity_id_bytes).await {
+            Some(identity) => identity,
+            None => {
+                return create_json_response(json!({
+                    "status": "identity_not_found",
+                    "identity_id": identity_id,
+                    "total_transactions": 0,
+                    "transactions": []
+                }));
+            }
+        };
+
+        let identity_did = identity.did.clone();
+        let mut tracked_key_ids: HashSet<[u8; 32]> = HashSet::new();
+        tracked_key_ids.insert(identity.public_key.key_id);
+        for wallet in identity.list_wallets() {
+            tracked_key_ids.insert(wallet.id.0);
+        }
+
         // Get blockchain
         let blockchain = self.blockchain.read().await;
-        
-        // Collect all transactions involving this identity
-        let mut transactions = Vec::new();
-        
+
+        // Include any wallet registry entries linked to this identity that may
+        // not be present in the in-memory identity wallet manager.
+        for (wallet_id_hex, wallet_data) in &blockchain.wallet_registry {
+            if wallet_data
+                .owner_identity_id
+                .as_ref()
+                .is_some_and(|owner| owner.as_bytes() == identity_id_bytes)
+            {
+                if let Ok(bytes) = hex::decode(wallet_id_hex) {
+                    if bytes.len() == 32 {
+                        let mut id = [0u8; 32];
+                        id.copy_from_slice(&bytes);
+                        tracked_key_ids.insert(id);
+                    }
+                }
+                if let Some(id) =
+                    Self::canonical_key_id_from_public_key_bytes(&wallet_data.public_key)
+                {
+                    tracked_key_ids.insert(id);
+                }
+            }
+        }
+
+        // Collect all transactions involving this identity (confirmed + pending).
+        // Use a map keyed by hash to avoid duplicate records.
+        let mut tx_by_hash: HashMap<String, TransactionRecord> = HashMap::new();
+
         // Search through all blocks for transactions
         for block in &blockchain.blocks {
             for tx in &block.transactions {
-                // Check if transaction involves this identity
-                let mut involves_identity = false;
-                
-                // Check identity_data
-                if let Some(ref identity_data) = tx.identity_data {
-                    if identity_data.did.contains(identity_id) {
-                        involves_identity = true;
-                    }
-                }
-                
-                // Check wallet_data
-                if let Some(ref wallet_data) = tx.wallet_data {
-                    if let Some(ref owner_id) = wallet_data.owner_identity_id {
-                        if hex::encode(owner_id.as_bytes()).contains(identity_id) {
-                            involves_identity = true;
-                        }
-                    }
-                }
-                
-                if involves_identity {
-                    let tx_hash = tx.hash();
-                    // Calculate total output amount (for display purposes)
-                    let output_count = tx.outputs.len() as u64;
-                    transactions.push(TransactionRecord {
-                        tx_hash: hex::encode(tx_hash.as_bytes()),
-                        tx_type: format!("{:?}", tx.transaction_type),
-                        amount: output_count, // ZK system hides amounts, show output count
-                        fee: tx.fee,
-                        from_wallet: None, // Could be enhanced
-                        to_address: None, // Could be enhanced
-                        timestamp: block.timestamp(),
-                        block_height: Some(block.height()),
-                        status: "confirmed".to_string(),
-                        memo: if tx.memo.is_empty() { None } else { Some(hex::encode(&tx.memo)) },
-                    });
+                if Self::tx_involves_identity(
+                    tx,
+                    &tracked_key_ids,
+                    &identity_id_bytes,
+                    identity_id,
+                    &identity_did,
+                ) {
+                    let record =
+                        Self::tx_to_record(tx, "confirmed", block.timestamp(), Some(block.height()));
+                    tx_by_hash.insert(record.tx_hash.clone(), record);
                 }
             }
         }
-        
+
         // Also check pending transactions
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         for tx in &blockchain.pending_transactions {
-            let mut involves_identity = false;
-            
-            if let Some(ref identity_data) = tx.identity_data {
-                if identity_data.did.contains(identity_id) {
-                    involves_identity = true;
-                }
-            }
-            
-            if let Some(ref wallet_data) = tx.wallet_data {
-                if let Some(ref owner_id) = wallet_data.owner_identity_id {
-                    if hex::encode(owner_id.as_bytes()).contains(identity_id) {
-                        involves_identity = true;
-                    }
-                }
-            }
-            
-            if involves_identity {
-                let tx_hash = tx.hash();
-                let output_count = tx.outputs.len() as u64;
-                transactions.push(TransactionRecord {
-                    tx_hash: hex::encode(tx_hash.as_bytes()),
-                    tx_type: format!("{:?}", tx.transaction_type),
-                    amount: output_count,
-                    fee: tx.fee,
-                    from_wallet: None,
-                    to_address: None,
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                    block_height: None,
-                    status: "pending".to_string(),
-                    memo: if tx.memo.is_empty() { None } else { Some(hex::encode(&tx.memo)) },
-                });
+            if Self::tx_involves_identity(
+                tx,
+                &tracked_key_ids,
+                &identity_id_bytes,
+                identity_id,
+                &identity_did,
+            ) {
+                let ts = if tx.signature.timestamp > 0 {
+                    tx.signature.timestamp
+                } else {
+                    now
+                };
+                let record = Self::tx_to_record(tx, "pending", ts, None);
+                tx_by_hash.entry(record.tx_hash.clone()).or_insert(record);
             }
         }
-        
+
         drop(blockchain);
-        
+
+        let mut transactions: Vec<TransactionRecord> = tx_by_hash.into_values().collect();
+
         // Sort by timestamp (newest first)
         transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        
+
         let response = TransactionHistoryResponse {
             identity_id: identity_id.to_string(),
             total_transactions: transactions.len(),
