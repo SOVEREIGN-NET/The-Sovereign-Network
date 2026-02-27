@@ -98,8 +98,6 @@ export interface PoUWControllerConfig {
   batchIntervalMs?: number;
   /** Maximum receipts per batch */
   maxBatchSize?: number;
-  /** Signature scheme to use ("ed25519" | "dilithium5") */
-  sigScheme?: 'ed25519' | 'dilithium5';
 }
 
 // =============================================================================
@@ -183,7 +181,6 @@ export class PoUWController {
       nodeApiBase: config.nodeApiBase,
       batchIntervalMs: config.batchIntervalMs ?? DEFAULT_BATCH_INTERVAL_MS,
       maxBatchSize: config.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE,
-      sigScheme: config.sigScheme ?? 'ed25519',
     };
   }
 
@@ -356,7 +353,8 @@ export class PoUWController {
 
     return {
       receipt,
-      sig_scheme: this.config.sigScheme,
+      // Canonical PoUW submit path uses Dilithium5 only.
+      sig_scheme: 'dilithium5',
       signature: base64ToHex(sigB64),
     };
   }
