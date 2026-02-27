@@ -87,9 +87,16 @@ function resetControllerSingleton() {
 // ---------------------------------------------------------------------------
 
 describe('PoUWController', () => {
+  let warnSpy: jest.SpyInstance;
+
   beforeEach(() => {
     jest.clearAllMocks();
     resetControllerSingleton();
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
   });
 
   // -------------------------------------------------------------------------
@@ -297,6 +304,42 @@ describe('PoUWController', () => {
 
     const pending = (controller as any).pendingReceipts;
     expect(pending[0].receipt.bytes_verified).toBe(1024);
+
+    await controller.stop();
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 6: Incompatible challenge policy must block receipt queueing/submission
+  // -------------------------------------------------------------------------
+  test('hash-only challenge is rejected for web4 proof types and no receipt is queued', async () => {
+    // start(): requests web4manifestroute,web4contentserved,hash
+    // recordWeb4ManifestRoute(): requests web4manifestroute
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => makeMockChallenge(['hash']),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => makeMockChallenge(['hash']),
+      });
+
+    const controller = PoUWController.getInstance({ nodeApiBase: TEST_NODE_API });
+    await controller.start();
+
+    await controller.recordWeb4ManifestRoute({
+      manifestCid: 'cid',
+      domain: 'test.sov',
+      routeHops: 1,
+      manifestSizeBytes: 2048,
+      quicSessionId: TEST_SESSION_ID,
+    });
+
+    expect(controller.pendingCount).toBe(0);
+    expect(
+      mockFetch.mock.calls.some(([url]: [string]) => url.includes('/api/v1/pouw/submit')),
+    ).toBe(false);
+    expect(warnSpy).toHaveBeenCalled();
 
     await controller.stop();
   });
