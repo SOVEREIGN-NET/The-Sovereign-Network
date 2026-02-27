@@ -940,14 +940,6 @@ impl WalletHandler {
         }
 
         if tx
-            .inputs
-            .iter()
-            .any(|input| tracked_key_ids.contains(&input.previous_output.as_array()))
-        {
-            return true;
-        }
-
-        if tx
             .outputs
             .iter()
             .any(|output| tracked_key_ids.contains(&output.recipient.key_id))
