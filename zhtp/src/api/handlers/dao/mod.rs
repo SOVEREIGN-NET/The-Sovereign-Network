@@ -1647,78 +1647,75 @@ impl DaoHandler {
     }
 
     /// POST /api/v1/dao/council/register
+    ///
+    /// Council membership is established at genesis via `ensure_council_bootstrap()`.
+    /// Post-genesis registration requires cryptographic multisig verification that is
+    /// not yet implemented; this endpoint validates input but rejects all writes until
+    /// proper Dilithium verification is in place.
     async fn handle_register_council_member(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         let req: RegisterCouncilMemberRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
-        if req.identity_id.is_empty() {
+        // ── input validation ──────────────────────────────────────────────────
+        if !req.identity_id.starts_with("did:zhtp:") {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                "identity_id is required".to_string(),
+                "identity_id must be a valid did:zhtp: DID".to_string(),
+            ));
+        }
+        if req.wallet_id.trim().is_empty() || !req.wallet_id.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "wallet_id must be a non-empty hex string".to_string(),
+            ));
+        }
+        if req.stake_amount == 0 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "stake_amount must be greater than zero".to_string(),
             ));
         }
 
         let blockchain_arc = self.get_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
+        let blockchain = blockchain_arc.read().await;
 
-        // Check for duplicate
-        if blockchain.is_council_member(&req.identity_id) {
-            return Ok(create_error_response(
-                ZhtpStatus::Conflict,
-                "Identity is already a council member".to_string(),
-            ));
-        }
-
-        // Capture height before any mutable borrows
-        let current_height = blockchain.height;
-
-        // First bootstrap: accept without signatures
+        // ── first-bootstrap gate ──────────────────────────────────────────────
+        // Accepting the first council member over an unauthenticated public API
+        // would let any client take over an empty council.  Council members must
+        // be seeded via genesis configuration (`ensure_council_bootstrap`).
         if blockchain.council_members.is_empty() {
-            blockchain.council_members.push(lib_blockchain::dao::CouncilMember {
-                identity_id: req.identity_id.clone(),
-                wallet_id: req.wallet_id.clone(),
-                stake_amount: req.stake_amount,
-                joined_at_height: current_height,
-            });
-
-            return create_json_response(json!({
-                "status": "success",
-                "message": "First council member registered (bootstrap)",
-                "identity_id": req.identity_id,
-            }));
-        }
-
-        // Subsequent registrations require threshold council signatures
-        let threshold = blockchain.council_threshold as usize;
-        let valid_sig_count = req.council_signatures.iter()
-            .filter(|did| blockchain.is_council_member(did.as_str()))
-            .count();
-
-        if valid_sig_count < threshold {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
-                format!(
-                    "Council registration requires {} council co-signers, got {}",
-                    threshold,
-                    valid_sig_count
-                ),
+                "Council bootstrap must be performed via genesis configuration \
+                 (ensure_council_bootstrap). Runtime registration is not permitted."
+                    .to_string(),
             ));
         }
 
-        blockchain.council_members.push(lib_blockchain::dao::CouncilMember {
-            identity_id: req.identity_id.clone(),
-            wallet_id: req.wallet_id.clone(),
-            stake_amount: req.stake_amount,
-            joined_at_height: current_height,
-        });
-        let new_size = blockchain.council_members.len();
+        // ── max-size guard ────────────────────────────────────────────────────
+        const MAX_COUNCIL_SIZE: usize = 5;
+        if blockchain.council_members.len() >= MAX_COUNCIL_SIZE {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                format!("Council is at maximum capacity ({} members)", MAX_COUNCIL_SIZE),
+            ));
+        }
 
-        create_json_response(json!({
-            "status": "success",
-            "message": "Council member registered",
-            "identity_id": req.identity_id,
-            "council_size": new_size,
-        }))
+        // ── post-genesis registration (not yet implemented) ───────────────────
+        // Adding members after genesis requires cryptographic multisig verification
+        // (council_threshold-of-N Dilithium signatures).  The current request body
+        // carries DID strings in `council_signatures`, not actual signature bytes,
+        // so accepting them would be a security bypass.  This path is disabled
+        // until proper signature verification is wired in.
+        Ok(create_error_response(
+            ZhtpStatus::Forbidden,
+            format!(
+                "Post-genesis council registration requires cryptographic multisig verification \
+                 ({}-of-{} council signatures), which is not yet implemented.",
+                blockchain.council_threshold,
+                blockchain.council_members.len(),
+            ),
+        ))
     }
 
     async fn submit_dao_registry_execution(

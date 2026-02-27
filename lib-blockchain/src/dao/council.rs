@@ -33,13 +33,19 @@ pub struct CouncilMember {
 }
 
 /// Configuration for bootstrapping the initial council, loaded from TOML.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CouncilBootstrapConfig {
     /// Initial council members
     pub members: Vec<CouncilBootstrapEntry>,
     /// Minimum number of council yes-votes required for execution (default: 4)
     #[serde(default = "default_threshold")]
     pub threshold: u8,
+}
+
+impl Default for CouncilBootstrapConfig {
+    fn default() -> Self {
+        Self { members: Vec::new(), threshold: 4 }
+    }
 }
 
 fn default_threshold() -> u8 {

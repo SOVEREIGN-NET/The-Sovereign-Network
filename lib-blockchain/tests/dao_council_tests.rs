@@ -113,3 +113,50 @@ fn test_council_threshold_defaults_to_four_in_config() {
     bc.ensure_council_bootstrap(&cfg);
     assert_eq!(bc.council_threshold, 4);
 }
+
+#[test]
+fn test_council_bootstrap_config_default_threshold_is_four() {
+    // CouncilBootstrapConfig::default() must produce threshold=4, not 0.
+    // #[serde(default = "...")] only fires during TOML deserialization;
+    // the custom Default impl must set the same value.
+    let cfg = CouncilBootstrapConfig::default();
+    assert_eq!(cfg.threshold, 4, "Default threshold should be 4");
+}
+
+// ── vote gating tests ─────────────────────────────────────────────────────────
+// These tests verify the conditions that `handle_cast_vote` evaluates:
+// governance_phase == Bootstrap AND !is_council_member(did).
+
+#[test]
+fn test_vote_gating_rejects_non_council_in_phase0() {
+    use lib_blockchain::dao::GovernancePhase;
+    let mut bc = Blockchain::new().expect("genesis");
+    bc.ensure_council_bootstrap(&three_member_config());
+
+    // Sanity: we are in Bootstrap phase
+    assert_eq!(bc.governance_phase, GovernancePhase::Bootstrap);
+    // A DID that is NOT a council member should be rejected
+    assert!(
+        !bc.is_council_member("did:zhtp:mallory"),
+        "Mallory must not be a council member"
+    );
+    // The gating condition mirrors handle_cast_vote logic:
+    // phase == Bootstrap && !is_council_member → reject
+    let would_be_rejected = bc.governance_phase == GovernancePhase::Bootstrap
+        && !bc.is_council_member("did:zhtp:mallory");
+    assert!(would_be_rejected, "Non-council member should be rejected in Phase 0");
+}
+
+#[test]
+fn test_vote_gating_passes_council_member() {
+    use lib_blockchain::dao::GovernancePhase;
+    let mut bc = Blockchain::new().expect("genesis");
+    bc.ensure_council_bootstrap(&three_member_config());
+
+    assert_eq!(bc.governance_phase, GovernancePhase::Bootstrap);
+    assert!(bc.is_council_member("did:zhtp:alice"));
+    // A council member must NOT satisfy the rejection condition
+    let would_be_rejected = bc.governance_phase == GovernancePhase::Bootstrap
+        && !bc.is_council_member("did:zhtp:alice");
+    assert!(!would_be_rejected, "Council member must pass Phase 0 vote gating");
+}
