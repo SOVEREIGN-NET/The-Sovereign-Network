@@ -10485,3 +10485,120 @@ mod oracle_storage_migration_tests {
         );
     }
 }
+
+// =============================================================================
+// Test helpers
+// These methods exist solely to support unit/integration tests that need
+// fine-grained control over blockchain state without running the full block
+// pipeline. They carry `_for_test` / `_test_` in their names to make their
+// purpose clear and avoid accidental production use.
+// =============================================================================
+
+#[doc(hidden)]
+impl Blockchain {
+    /// Push a minimal DAO proposal into `self.blocks` for test use.
+    /// Bypasses block validation — do NOT call outside of unit tests.
+    pub fn push_test_dao_proposal(&mut self, proposal_id: Hash, quorum: u8) {
+        use crate::transaction::{DaoProposalData};
+        let tx = Transaction::new_dao_proposal(
+            DaoProposalData {
+                proposal_id,
+                proposer: "did:zhtp:test".to_string(),
+                title: "Test Proposal".to_string(),
+                description: "Test".to_string(),
+                proposal_type: "treasury_allocation".to_string(),
+                voting_period_blocks: 1000,
+                quorum_required: quorum,
+                execution_params: None,
+                created_at: 0,
+                created_at_height: 0,
+            },
+            vec![],
+            vec![],
+            0,
+            Signature::default(),
+            vec![],
+        );
+        self.blocks.push(Self::make_minimal_test_block(vec![tx]));
+    }
+
+    /// Push a minimal DAO vote into `self.blocks` for test use.
+    /// Bypasses block validation — do NOT call outside of unit tests.
+    pub fn push_test_dao_vote(&mut self, proposal_id: Hash, voter: &str, choice: &str) {
+        use crate::transaction::DaoVoteData;
+        let tx = Transaction::new_dao_vote(
+            DaoVoteData {
+                vote_id: Hash::default(),
+                proposal_id,
+                voter: voter.to_string(),
+                vote_choice: choice.to_string(),
+                voting_power: 1,
+                justification: None,
+                timestamp: 0,
+            },
+            vec![],
+            vec![],
+            0,
+            Signature::default(),
+            vec![],
+        );
+        self.blocks.push(Self::make_minimal_test_block(vec![tx]));
+    }
+
+    /// Credit SOV directly to the DAO treasury wallet.
+    /// Bypasses normal minting rules — for unit tests only.
+    pub fn credit_dao_treasury_sov_for_test(&mut self, amount: u64) -> Result<()> {
+        // Ensure the SOV token contract exists (Blockchain::new() skips this).
+        self.ensure_sov_token_contract();
+        let treasury_wallet_id = self.dao_treasury_wallet_id.clone()
+            .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
+        let id_bytes: [u8; 32] = hex::decode(&treasury_wallet_id)
+            .map_err(|e| anyhow::anyhow!("Bad treasury wallet hex: {}", e))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Treasury wallet ID must be 32 bytes"))?;
+        let pk = Self::wallet_key_for_sov(&id_bytes);
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self.token_contracts.get_mut(&sov_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
+        token.credit_balance(&pk, amount)
+            .map_err(|e| anyhow::anyhow!("Treasury credit failed: {}", e))?;
+        Ok(())
+    }
+
+    /// Query the raw SOV balance for an arbitrary 64-char hex wallet ID.
+    /// For unit tests only.
+    pub fn get_wallet_sov_for_test(&self, wallet_id_hex: &str) -> Result<u64> {
+        let id_bytes: [u8; 32] = hex::decode(wallet_id_hex)
+            .map_err(|e| anyhow::anyhow!("Bad wallet hex: {}", e))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Wallet ID must be 32 bytes"))?;
+        let pk = Self::wallet_key_for_sov(&id_bytes);
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self.token_contracts.get(&sov_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
+        Ok(token.balance_of(&pk))
+    }
+
+    fn make_minimal_test_block(transactions: Vec<Transaction>) -> Block {
+        use crate::block::BlockHeader;
+        let count = transactions.len() as u32;
+        Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 0,
+                difficulty: Difficulty::default(),
+                nonce: 0,
+                height: 1,
+                block_hash: Hash::default(),
+                transaction_count: count,
+                block_size: 0,
+                cumulative_difficulty: Difficulty::default(),
+                fee_model_version: 1,
+                state_root: Hash::default(),
+            },
+            transactions,
+        }
+    }
+}
