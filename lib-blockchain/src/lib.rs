@@ -14,6 +14,7 @@ pub mod types;
 pub mod transaction;
 pub mod block;
 pub mod blockchain;
+pub mod dao;
 pub mod mempool;
 pub mod integration;
 pub mod utils;
