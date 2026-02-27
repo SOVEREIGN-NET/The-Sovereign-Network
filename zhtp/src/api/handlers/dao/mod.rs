@@ -1732,29 +1732,30 @@ impl DaoHandler {
     // =========================================================================
 
     /// POST /api/v1/dao/emergency/activate
+    ///
+    /// Emergency state activation requires cryptographic multisig verification
+    /// (council_threshold-of-N Dilithium signatures). The current request body
+    /// carries DID strings in `council_signatures`, not actual signature bytes,
+    /// so accepting them over a public API would allow anyone who knows council
+    /// member DIDs to activate emergency state without authorization.
+    /// This endpoint is disabled until proper signature verification is implemented.
     async fn handle_emergency_activate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         let req: EmergencyActivateRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
         let blockchain_arc = self.get_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
+        let blockchain = blockchain_arc.read().await;
 
-        if blockchain.emergency_state {
-            return Ok(create_error_response(
-                ZhtpStatus::Conflict,
-                "Emergency state is already active".to_string(),
-            ));
-        }
-
-        blockchain.activate_emergency_state(&req.council_signatures, req.activated_by.clone())
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        create_json_response(json!({
-            "status": "success",
-            "message": "Emergency state activated",
-            "activated_by": req.activated_by,
-            "expires_at_height": blockchain.emergency_expires_at,
-        }))
+        let _ = &req; // parsed but not used until crypto verification is available
+        Ok(create_error_response(
+            ZhtpStatus::Forbidden,
+            format!(
+                "Emergency activation requires cryptographic multisig verification \
+                 ({}-of-{} council signatures), which is not yet implemented.",
+                blockchain.council_threshold,
+                blockchain.council_members.len(),
+            ),
+        ))
     }
 
     /// GET /api/v1/dao/emergency/status
