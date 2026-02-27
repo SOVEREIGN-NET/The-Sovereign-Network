@@ -913,6 +913,21 @@ impl WalletHandler {
         tx.outputs.len() as u64
     }
 
+    fn canonical_key_id_from_public_key_bytes(public_key: &[u8]) -> Option<[u8; 32]> {
+        if public_key.is_empty() {
+            return None;
+        }
+        if public_key.len() == 32 {
+            let mut id = [0u8; 32];
+            id.copy_from_slice(public_key);
+            return Some(id);
+        }
+        Some(lib_blockchain::integration::crypto_integration::PublicKey::new(
+            public_key.to_vec(),
+        )
+        .key_id)
+    }
+
     fn tx_involves_identity(
         tx: &lib_blockchain::transaction::Transaction,
         tracked_key_ids: &HashSet<[u8; 32]>,
@@ -969,9 +984,7 @@ impl WalletHandler {
             if tracked_key_ids.contains(&data.wallet_id.as_array()) {
                 return true;
             }
-            if data.public_key.len() >= 32 {
-                let mut id = [0u8; 32];
-                id.copy_from_slice(&data.public_key[..32]);
+            if let Some(id) = Self::canonical_key_id_from_public_key_bytes(&data.public_key) {
                 if tracked_key_ids.contains(&id) {
                     return true;
                 }
@@ -1154,9 +1167,9 @@ impl WalletHandler {
                         tracked_key_ids.insert(id);
                     }
                 }
-                if wallet_data.public_key.len() >= 32 {
-                    let mut id = [0u8; 32];
-                    id.copy_from_slice(&wallet_data.public_key[..32]);
+                if let Some(id) =
+                    Self::canonical_key_id_from_public_key_bytes(&wallet_data.public_key)
+                {
                     tracked_key_ids.insert(id);
                 }
             }
