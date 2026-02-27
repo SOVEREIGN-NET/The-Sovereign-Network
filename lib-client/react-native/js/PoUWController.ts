@@ -302,7 +302,8 @@ export class PoUWController {
     aux: string,
   ): Promise<void> {
     // Ensure we have a fresh challenge
-    await this._ensureChallenge([proofType]);
+    const hasValidChallenge = await this._ensureChallenge([proofType]);
+    if (!hasValidChallenge) return;
     if (!this.activeChallenge) return;
     if (!this.clientDid || !this.clientNodeId) return;
 
@@ -392,18 +393,33 @@ export class PoUWController {
    * Ensure we have a valid, non-expired challenge that allows the given proof type.
    * Fetches a new challenge from the node if needed.
    */
-  private async _ensureChallenge(proofTypes: ProofType[]): Promise<void> {
+  private async _ensureChallenge(proofTypes: ProofType[]): Promise<boolean> {
     const now = nowSecs();
-    const hasValid =
-      this.activeChallenge !== null &&
-      this.activeChallenge.expires_at > now + 60 &&
-      proofTypes.every(pt =>
-        this.activeChallenge!.policy.allowed_proof_types.includes(pt),
-      );
+    const hasValid = this._challengeSupportsProofTypes(this.activeChallenge, proofTypes, now);
 
-    if (!hasValid) {
-      await this._refreshChallenge(proofTypes);
+    // If we already have a valid challenge, return early to avoid false negatives
+    // from time advancing between checks
+    if (hasValid) {
+      return true;
     }
+
+    // No valid challenge — attempt refresh
+    await this._refreshChallenge(proofTypes);
+
+    const hasValidAfterRefresh = this._challengeSupportsProofTypes(
+      this.activeChallenge,
+      proofTypes,
+      nowSecs(),
+    );
+    if (!hasValidAfterRefresh) {
+      const actual = this.activeChallenge?.policy.allowed_proof_types ?? [];
+      console.warn(
+        `PoUW challenge incompatible with requested proof types; requested=${proofTypes.join(',')} actual=${actual.join(',')}`,
+      );
+      return false;
+    }
+
+    return true;
   }
 
   /**
@@ -420,10 +436,28 @@ export class PoUWController {
       const data = await response.json();
       // Token is base64-encoded JSON
       const tokenJson = atob(data.token);
-      this.activeChallenge = JSON.parse(tokenJson) as ChallengeToken;
+      const parsed = JSON.parse(tokenJson) as ChallengeToken;
+      if (this._challengeSupportsProofTypes(parsed, proofTypes, nowSecs())) {
+        this.activeChallenge = parsed;
+        return;
+      }
+
+      console.warn(
+        `PoUW challenge policy does not satisfy requested proof types; requested=${proofTypes.join(',')} actual=${parsed.policy.allowed_proof_types.join(',')}`,
+      );
     } catch {
       // Challenge fetch failed — receipts will accumulate until next refresh
     }
+  }
+
+  private _challengeSupportsProofTypes(
+    challenge: ChallengeToken | null,
+    proofTypes: ProofType[],
+    now: number,
+  ): boolean {
+    if (!challenge) return false;
+    if (challenge.expires_at <= now + 60) return false;
+    return proofTypes.every(pt => challenge.policy.allowed_proof_types.includes(pt));
   }
 
   // ---------------------------------------------------------------------------
