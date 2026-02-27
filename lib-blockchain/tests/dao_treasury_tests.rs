@@ -5,6 +5,7 @@ use lib_blockchain::dao::{
     GovernancePhase, CouncilBootstrapConfig, CouncilBootstrapEntry,
     TreasurySpendingCategory, TreasuryExecutionParams,
 };
+use lib_blockchain::types::Hash;
 use anyhow::Result;
 
 fn council_config() -> CouncilBootstrapConfig {
@@ -391,5 +392,126 @@ fn test_treasury_fields_survive_dat_round_trip() -> Result<()> {
     assert_eq!(loaded.emergency_activated_by.as_deref(), Some("did:zhtp:alice"));
     assert!(loaded.emergency_expires_at.is_some());
 
+    Ok(())
+}
+
+// ── mandatory execution_params validation ─────────────────────────────────────
+
+#[test]
+fn test_execute_dao_proposal_rejects_missing_execution_params() -> Result<()> {
+    // Verifies that execute_dao_proposal returns an error when the proposal
+    // has no execution_params — spending_category is required, not optional.
+    let mut bc = Blockchain::new()?;
+    bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+        members: vec![CouncilBootstrapEntry {
+            identity_id: "did:zhtp:alice".to_string(),
+            wallet_id: "aa".to_string(),
+            stake_amount: 1_000_000,
+        }],
+        threshold: 1,
+    });
+
+    // Inject a proposal that deliberately has NO execution_params.
+    use lib_blockchain::transaction::{Transaction, DaoProposalData};
+    let proposal_id = Hash::new([0xfe; 32]);
+    {
+        // We need to reach into the blockchain's blocks to inject a bare proposal.
+        // Reuse the public push_test_dao_proposal_with_category helper but craft
+        // a None-params proposal manually by directly constructing and injecting.
+        let tx = Transaction::new_dao_proposal(
+            DaoProposalData {
+                proposal_id,
+                proposer: "did:zhtp:alice".to_string(),
+                title: "No params proposal".to_string(),
+                description: "Missing execution_params".to_string(),
+                proposal_type: "treasury_allocation".to_string(),
+                voting_period_blocks: 1000,
+                quorum_required: 0,
+                execution_params: None,  // deliberately absent
+                created_at: 0,
+                created_at_height: 0,
+            },
+            vec![],
+            vec![],
+            0,
+            lib_crypto::types::signatures::Signature::default(),
+            vec![],
+        );
+        use lib_blockchain::block::{Block, BlockHeader};
+        bc.blocks.push(Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 0,
+                difficulty: lib_blockchain::types::Difficulty::default(),
+                nonce: 0,
+                height: 1,
+                block_hash: Hash::default(),
+                transaction_count: 1,
+                block_size: 0,
+                cumulative_difficulty: lib_blockchain::types::Difficulty::default(),
+                fee_model_version: 1,
+                state_root: Hash::default(),
+            },
+            transactions: vec![tx],
+        });
+    }
+    bc.push_test_dao_vote(proposal_id, "did:zhtp:alice", "Yes");
+    bc.credit_dao_treasury_sov_for_test(100_000)?;
+
+    let result = bc.execute_dao_proposal(
+        proposal_id,
+        "did:zhtp:alice".to_string(),
+        "ee".repeat(32),
+        1_000,
+    );
+    assert!(result.is_err(), "Must fail: execution_params is absent");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("spending_category"),
+        "Error must mention spending_category, got: {}", msg
+    );
+    Ok(())
+}
+
+#[test]
+fn test_execute_dao_proposal_rejects_emergency_category_when_inactive() -> Result<()> {
+    // End-to-end: a proposal with Emergency spending category must be rejected
+    // by execute_dao_proposal when emergency_state == false.
+    let mut bc = Blockchain::new()?;
+    bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+        members: vec![CouncilBootstrapEntry {
+            identity_id: "did:zhtp:alice".to_string(),
+            wallet_id: "aa".to_string(),
+            stake_amount: 1_000_000,
+        }],
+        threshold: 1,
+    });
+
+    let proposal_id = Hash::new([0xed; 32]);
+    // Push a proposal with Emergency spending category while emergency_state == false.
+    bc.push_test_dao_proposal_with_category(
+        proposal_id,
+        0,
+        TreasurySpendingCategory::Emergency,
+    );
+    bc.push_test_dao_vote(proposal_id, "did:zhtp:alice", "Yes");
+    bc.credit_dao_treasury_sov_for_test(100_000)?;
+
+    assert!(!bc.emergency_state, "Precondition: emergency_state must be false");
+
+    let result = bc.execute_dao_proposal(
+        proposal_id,
+        "did:zhtp:alice".to_string(),
+        "ff".repeat(32),
+        1_000,
+    );
+    assert!(result.is_err(), "Must fail: Emergency category requires emergency_state == true");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("emergency_state"),
+        "Error must mention emergency_state, got: {}", msg
+    );
     Ok(())
 }
