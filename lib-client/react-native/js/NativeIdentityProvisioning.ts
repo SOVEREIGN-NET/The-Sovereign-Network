@@ -37,6 +37,7 @@ interface NativeIdentityProvisioningInterface {
   getPublicIdentity(): Promise<PublicIdentity>;
   signRegistrationProof(timestamp: number): Promise<string>; // base64 signature
   signMessage(messageBase64: string): Promise<string>; // base64 signature
+  signPouwReceipt(receiptJson: string): Promise<string>; // base64 signature
   exportKeystoreForCICD(): Promise<string>; // base64 keystore tarball for GitHub Actions
 
   // UHP v2 Handshake
@@ -151,6 +152,13 @@ export class IdentityProvisioning {
    */
   async signMessage(message: string): Promise<string> {
     return NativeIdentityProvisioningModule.signMessage(message);
+  }
+
+  /**
+   * Sign a PoUW receipt JSON payload using canonical bincode receipt encoding.
+   */
+  async signPouwReceipt(receiptJson: string): Promise<string> {
+    return NativeIdentityProvisioningModule.signPouwReceipt(receiptJson);
   }
 
   // ---------------------------------------------------------------------------

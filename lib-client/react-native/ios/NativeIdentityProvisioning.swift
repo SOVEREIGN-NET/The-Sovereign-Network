@@ -179,6 +179,31 @@ class NativeIdentityProvisioning: NSObject {
         }
     }
 
+    /// Sign a PoUW receipt JSON payload using canonical bincode receipt encoding
+    @objc
+    func signPouwReceipt(
+        _ receiptJson: String,
+        resolver resolve: @escaping RCTPromiseResolveBlock,
+        rejecter reject: @escaping RCTPromiseRejectBlock
+    ) {
+        guard let identity = currentIdentity else {
+            reject("NO_IDENTITY", "No identity loaded. Call generateIdentity first.", nil)
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let signature = try ZhtpClient.signPouwReceiptJson(
+                    identity: identity,
+                    receiptJson: receiptJson
+                )
+                resolve(self.dataToBase64(signature))
+            } catch {
+                reject("SIGN_ERROR", "Failed to sign PoUW receipt: \(error.localizedDescription)", error)
+            }
+        }
+    }
+
     // MARK: - UHP v2 Handshake
 
     /// Initialize handshake with channel binding
