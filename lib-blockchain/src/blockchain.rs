@@ -280,6 +280,10 @@ pub struct Blockchain {
     /// Block height at which emergency state auto-expires
     #[serde(default)]
     pub emergency_expires_at: Option<u64>,
+    /// Treasury balance recorded at the start of each epoch, used for spend-cap calculation.
+    /// Prevents gaming the 5% cap by making multiple small proposals as balance depletes.
+    #[serde(default)]
+    pub treasury_epoch_start_balance: HashMap<u64, u64>,
 }
 
 /// Validator information stored on-chain.
@@ -586,6 +590,7 @@ impl BlockchainV1 {
             emergency_activated_at: None,
             emergency_activated_by: None,
             emergency_expires_at: None,
+            treasury_epoch_start_balance: HashMap::new(),
         }
     }
 }
@@ -748,6 +753,8 @@ struct BlockchainStorageV3 {
     pub emergency_activated_by: Option<String>,
     #[serde(default)]
     pub emergency_expires_at: Option<u64>,
+    #[serde(default)]
+    pub treasury_epoch_start_balance: HashMap<u64, u64>,
 }
 
 impl BlockchainStorageV3 {
@@ -845,6 +852,7 @@ impl BlockchainStorageV3 {
             emergency_activated_at: bc.emergency_activated_at,
             emergency_activated_by: bc.emergency_activated_by.clone(),
             emergency_expires_at: bc.emergency_expires_at,
+            treasury_epoch_start_balance: bc.treasury_epoch_start_balance.clone(),
         }
     }
 
@@ -963,6 +971,7 @@ impl BlockchainStorageV3 {
             emergency_activated_at: self.emergency_activated_at,
             emergency_activated_by: self.emergency_activated_by,
             emergency_expires_at: self.emergency_expires_at,
+            treasury_epoch_start_balance: self.treasury_epoch_start_balance,
         }
     }
 }
@@ -1077,6 +1086,7 @@ impl Blockchain {
             emergency_activated_at: None,
             emergency_activated_by: None,
             emergency_expires_at: None,
+            treasury_epoch_start_balance: HashMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -3511,6 +3521,24 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Validate that a treasury spending category is permitted in the current state.
+    ///
+    /// The `Emergency` category is only valid when `emergency_state == true`.
+    /// All other categories are always permitted.
+    pub fn validate_treasury_spending_category(
+        &self,
+        params: &crate::dao::TreasuryExecutionParams,
+    ) -> Result<()> {
+        if params.category == crate::dao::TreasurySpendingCategory::Emergency
+            && !self.emergency_state
+        {
+            return Err(anyhow::anyhow!(
+                "Treasury spending category 'Emergency' requires emergency_state to be active"
+            ));
+        }
+        Ok(())
+    }
+
     /// Apply a token transfer with protocol fee deduction and treasury routing.
     ///
     /// This is a helper that consolidates the duplicated fee logic from the two
@@ -5936,7 +5964,9 @@ impl Blockchain {
             .map_err(|_| anyhow::anyhow!("Recipient wallet ID must be 32 bytes"))?;
         let recipient_pk = Self::wallet_key_for_sov(&recip_id_bytes);
 
-        // 6. Epoch spend cap (5% of treasury balance per epoch)
+        // 6. Epoch spend cap (5% of epoch-start treasury balance per epoch)
+        // The cap is anchored to the treasury balance at the START of the epoch,
+        // not the current balance, to prevent gaming via multiple small proposals.
         let treasury_balance = self.get_dao_treasury_balance()?;
         if treasury_balance < amount {
             return Err(anyhow::anyhow!(
@@ -5946,12 +5976,29 @@ impl Blockchain {
         }
         let epoch = self.height / self.treasury_epoch_length_blocks.max(1);
         let spent_this_epoch = self.treasury_epoch_spend.get(&epoch).copied().unwrap_or(0);
-        let epoch_cap = treasury_balance.saturating_mul(5) / 100;
+        // Record epoch-start balance on first spend of this epoch (balance + already spent = start)
+        let epoch_start_balance = if let Some(&stored) = self.treasury_epoch_start_balance.get(&epoch) {
+            stored
+        } else {
+            let start = treasury_balance.saturating_add(spent_this_epoch);
+            self.treasury_epoch_start_balance.insert(epoch, start);
+            start
+        };
+        let epoch_cap = epoch_start_balance.saturating_mul(5) / 100;
         if spent_this_epoch.saturating_add(amount) > epoch_cap {
             return Err(anyhow::anyhow!(
-                "Treasury epoch spend cap: {} + {} > cap {}",
-                spent_this_epoch, amount, epoch_cap
+                "Treasury epoch spend cap: {} + {} > cap {} (epoch-start balance: {})",
+                spent_this_epoch, amount, epoch_cap, epoch_start_balance
             ));
+        }
+
+        // 6b. Validate spending category from execution_params, if present
+        if let Some(ref params_bytes) = proposal.execution_params {
+            if !params_bytes.is_empty() {
+                if let Ok(params) = serde_json::from_slice::<crate::dao::TreasuryExecutionParams>(params_bytes) {
+                    self.validate_treasury_spending_category(&params)?;
+                }
+            }
         }
 
         // 7. Execute balance transfer (debit treasury, credit recipient)
@@ -6445,6 +6492,9 @@ impl Blockchain {
             if let Some(expiry) = self.emergency_expires_at {
                 if self.height >= expiry {
                     self.emergency_state = false;
+                    self.emergency_activated_at = None;
+                    self.emergency_activated_by = None;
+                    self.emergency_expires_at = None;
                     info!("🔓 Emergency state expired at block height {}", self.height);
                 }
             }
