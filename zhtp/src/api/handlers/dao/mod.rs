@@ -207,6 +207,15 @@ struct RegisterCouncilMemberRequest {
     council_signatures: Vec<String>,
 }
 
+/// Emergency state activation request (dao-2)
+#[derive(Debug, Deserialize)]
+struct EmergencyActivateRequest {
+    /// DIDs of council members co-signing emergency activation
+    council_signatures: Vec<String>,
+    /// DID of the initiating council member
+    activated_by: String,
+}
+
 /// DAO handler backed by canonical blockchain state
 pub struct DaoHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
@@ -1718,6 +1727,52 @@ impl DaoHandler {
         ))
     }
 
+    // =========================================================================
+    // Emergency state handlers (dao-2)
+    // =========================================================================
+
+    /// POST /api/v1/dao/emergency/activate
+    ///
+    /// Emergency state activation requires cryptographic multisig verification
+    /// (council_threshold-of-N Dilithium signatures). The current request body
+    /// carries DID strings in `council_signatures`, not actual signature bytes,
+    /// so accepting them over a public API would allow anyone who knows council
+    /// member DIDs to activate emergency state without authorization.
+    /// This endpoint is disabled until proper signature verification is implemented.
+    async fn handle_emergency_activate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let req: EmergencyActivateRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let _ = &req; // parsed but not used until crypto verification is available
+        Ok(create_error_response(
+            ZhtpStatus::Forbidden,
+            format!(
+                "Emergency activation requires cryptographic multisig verification \
+                 ({}-of-{} council signatures), which is not yet implemented.",
+                blockchain.council_threshold,
+                blockchain.council_members.len(),
+            ),
+        ))
+    }
+
+    /// GET /api/v1/dao/emergency/status
+    async fn handle_emergency_status(&self) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        create_json_response(json!({
+            "status": "success",
+            "emergency_state": blockchain.emergency_state,
+            "activated_at": blockchain.emergency_activated_at,
+            "activated_by": blockchain.emergency_activated_by,
+            "expires_at": blockchain.emergency_expires_at,
+            "current_height": blockchain.height,
+        }))
+    }
+
     async fn submit_dao_registry_execution(
         &self,
         request: &ZhtpRequest,
@@ -2100,6 +2155,14 @@ impl ZhtpRequestHandler for DaoHandler {
             },
             (ZhtpMethod::Post, ["api", "v1", "dao", "council", "register"]) => {
                 self.handle_register_council_member(&request).await.map_err(anyhow::Error::from)
+            },
+
+            // Emergency state endpoints (dao-2)
+            (ZhtpMethod::Post, ["api", "v1", "dao", "emergency", "activate"]) => {
+                self.handle_emergency_activate(&request).await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Get, ["api", "v1", "dao", "emergency", "status"]) => {
+                self.handle_emergency_status().await.map_err(anyhow::Error::from)
             },
 
             _ => Ok(create_error_response(ZhtpStatus::NotFound, "DAO endpoint not found".to_string())),

@@ -56,6 +56,11 @@ fn default_council_threshold() -> u8 {
     4
 }
 
+/// Default treasury epoch length (~1 week at 10s blocks)
+fn default_treasury_epoch_length() -> u64 {
+    10_080
+}
+
 /// Indexed DAO registry entry derived from canonical DaoExecution events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaoRegistryIndexEntry {
@@ -249,6 +254,33 @@ pub struct Blockchain {
     /// Minimum council yes-votes required for Phase 0 execution
     #[serde(default = "default_council_threshold")]
     pub council_threshold: u8,
+
+    // =========================================================================
+    // DAO Treasury Execution (dao-2)
+    // =========================================================================
+
+    /// SOV spent per epoch: epoch_number → cumulative_amount
+    #[serde(default)]
+    pub treasury_epoch_spend: HashMap<u64, u64>,
+    /// Number of blocks per epoch for spend-cap accounting
+    #[serde(default = "default_treasury_epoch_length")]
+    pub treasury_epoch_length_blocks: u64,
+    /// Whether the treasury is in emergency mode (unlocks Emergency proposals)
+    #[serde(default)]
+    pub emergency_state: bool,
+    /// Block height when emergency state was activated
+    #[serde(default)]
+    pub emergency_activated_at: Option<u64>,
+    /// DID of the council member who activated emergency state
+    #[serde(default)]
+    pub emergency_activated_by: Option<String>,
+    /// Block height at which emergency state auto-expires
+    #[serde(default)]
+    pub emergency_expires_at: Option<u64>,
+    /// Treasury balance recorded at the start of each epoch, used for spend-cap calculation.
+    /// Prevents gaming the 5% cap by making multiple small proposals as balance depletes.
+    #[serde(default)]
+    pub treasury_epoch_start_balance: HashMap<u64, u64>,
 }
 
 /// Validator information stored on-chain.
@@ -548,6 +580,13 @@ impl BlockchainV1 {
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
+            treasury_epoch_spend: HashMap::new(),
+            treasury_epoch_length_blocks: default_treasury_epoch_length(),
+            emergency_state: false,
+            emergency_activated_at: None,
+            emergency_activated_by: None,
+            emergency_expires_at: None,
+            treasury_epoch_start_balance: HashMap::new(),
         }
     }
 }
@@ -696,6 +735,22 @@ struct BlockchainStorageV3 {
     pub council_members: Vec<crate::dao::CouncilMember>,
     #[serde(default = "default_council_threshold")]
     pub council_threshold: u8,
+
+    // DAO Treasury Execution (dao-2)
+    #[serde(default)]
+    pub treasury_epoch_spend: HashMap<u64, u64>,
+    #[serde(default = "default_treasury_epoch_length")]
+    pub treasury_epoch_length_blocks: u64,
+    #[serde(default)]
+    pub emergency_state: bool,
+    #[serde(default)]
+    pub emergency_activated_at: Option<u64>,
+    #[serde(default)]
+    pub emergency_activated_by: Option<String>,
+    #[serde(default)]
+    pub emergency_expires_at: Option<u64>,
+    #[serde(default)]
+    pub treasury_epoch_start_balance: HashMap<u64, u64>,
 }
 
 impl BlockchainStorageV3 {
@@ -785,6 +840,15 @@ impl BlockchainStorageV3 {
             governance_phase: bc.governance_phase.clone(),
             council_members: bc.council_members.clone(),
             council_threshold: bc.council_threshold,
+
+            // DAO Treasury Execution
+            treasury_epoch_spend: bc.treasury_epoch_spend.clone(),
+            treasury_epoch_length_blocks: bc.treasury_epoch_length_blocks,
+            emergency_state: bc.emergency_state,
+            emergency_activated_at: bc.emergency_activated_at,
+            emergency_activated_by: bc.emergency_activated_by.clone(),
+            emergency_expires_at: bc.emergency_expires_at,
+            treasury_epoch_start_balance: bc.treasury_epoch_start_balance.clone(),
         }
     }
 
@@ -894,6 +958,15 @@ impl BlockchainStorageV3 {
             governance_phase: self.governance_phase,
             council_members: self.council_members,
             council_threshold: self.council_threshold,
+
+            // DAO Treasury Execution
+            treasury_epoch_spend: self.treasury_epoch_spend,
+            treasury_epoch_length_blocks: self.treasury_epoch_length_blocks,
+            emergency_state: self.emergency_state,
+            emergency_activated_at: self.emergency_activated_at,
+            emergency_activated_by: self.emergency_activated_by,
+            emergency_expires_at: self.emergency_expires_at,
+            treasury_epoch_start_balance: self.treasury_epoch_start_balance,
         }
     }
 }
@@ -976,6 +1049,13 @@ impl Blockchain {
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
+            treasury_epoch_spend: HashMap::new(),
+            treasury_epoch_length_blocks: default_treasury_epoch_length(),
+            emergency_state: false,
+            emergency_activated_at: None,
+            emergency_activated_by: None,
+            emergency_expires_at: None,
+            treasury_epoch_start_balance: HashMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -3371,6 +3451,59 @@ impl Blockchain {
         &self.council_members
     }
 
+    // =========================================================================
+    // DAO Treasury / Emergency state (dao-2)
+    // =========================================================================
+
+    /// Activate emergency governance state.
+    ///
+    /// Requires `council_threshold` valid council member DIDs in `council_signatures`.
+    /// Emergency state auto-expires after `treasury_epoch_length_blocks` blocks.
+    pub fn activate_emergency_state(
+        &mut self,
+        council_signatures: &[String],
+        activated_by: String,
+    ) -> Result<()> {
+        let threshold = self.council_threshold as usize;
+        let valid = council_signatures.iter()
+            .filter(|did| self.is_council_member(did.as_str()))
+            .count();
+        if valid < threshold {
+            return Err(anyhow::anyhow!(
+                "Emergency activation requires {} council signatures, got {}",
+                threshold, valid
+            ));
+        }
+        let expiry = self.height + self.treasury_epoch_length_blocks.max(1);
+        self.emergency_state = true;
+        self.emergency_activated_at = Some(self.height);
+        self.emergency_activated_by = Some(activated_by);
+        self.emergency_expires_at = Some(expiry);
+        info!(
+            "🚨 Emergency state activated at height {}, expires at {}",
+            self.height, expiry
+        );
+        Ok(())
+    }
+
+    /// Validate that a treasury spending category is permitted in the current state.
+    ///
+    /// The `Emergency` category is only valid when `emergency_state == true`.
+    /// All other categories are always permitted.
+    pub fn validate_treasury_spending_category(
+        &self,
+        params: &crate::dao::TreasuryExecutionParams,
+    ) -> Result<()> {
+        if params.category == crate::dao::TreasurySpendingCategory::Emergency
+            && !self.emergency_state
+        {
+            return Err(anyhow::anyhow!(
+                "Treasury spending category 'Emergency' requires emergency_state to be active"
+            ));
+        }
+        Ok(())
+    }
+
     /// Apply a token transfer with protocol fee deduction and treasury routing.
     ///
     /// This is a helper that consolidates the duplicated fee logic from the two
@@ -5724,13 +5857,17 @@ impl Blockchain {
         Ok(fee_tx)
     }
 
-    /// Execute a passed DAO proposal (creates real blockchain transaction)
-    /// This method spends treasury UTXOs to fulfill the proposal
+    /// Execute a passed DAO proposal using the balance model (dao-2).
+    ///
+    /// Replaces the legacy UTXO path with direct SOV token balance transfers.
+    /// The recipient is identified by wallet_id (the `recipient_identity` parameter is
+    /// treated as a wallet hex ID). For the council gate the caller must be a council member
+    /// when governance_phase == Bootstrap.
     pub fn execute_dao_proposal(
         &mut self,
         proposal_id: Hash,
         executor_identity: String,
-        recipient_identity: String,
+        recipient_wallet_id: String,
         amount: u64,
     ) -> Result<Hash> {
         if amount == 0 {
@@ -5741,34 +5878,8 @@ impl Blockchain {
         let proposal = self.get_dao_proposal(&proposal_id)
             .ok_or_else(|| anyhow::anyhow!("Proposal not found"))?;
 
-        // Ensure executor and recipient identities are known.
-        if !self.identity_exists(&executor_identity) {
-            return Err(anyhow::anyhow!(
-                "Executor identity {} not found",
-                executor_identity
-            ));
-        }
-        let recipient_pubkey = self.identity_registry.get(&recipient_identity)
-            .map(|recipient_data| crate::integration::crypto_integration::PublicKey::new(recipient_data.public_key.clone()))
-            .ok_or_else(|| anyhow::anyhow!("Recipient identity {} not found", recipient_identity))?;
-
-        // Basic proposal-type guard to prevent accidental execution of non-treasury proposals.
-        let proposal_type_normalized = proposal.proposal_type.to_ascii_lowercase();
-        if !matches!(
-            proposal_type_normalized.as_str(),
-            "treasury"
-                | "treasuryspending"
-                | "treasury_spending"
-                | "treasury_allocation"
-        ) {
-            return Err(anyhow::anyhow!(
-                "Proposal type '{}' is not treasury spending",
-                proposal.proposal_type
-            ));
-        }
-
-        // 2. Verify proposal has passed
-        if !self.has_proposal_passed(&proposal_id, 60)? {
+        // 2. Verify proposal has passed using its own quorum_required (not hardcoded 60)
+        if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
             return Err(anyhow::anyhow!("Proposal has not passed"));
         }
 
@@ -5789,127 +5900,139 @@ impl Blockchain {
             ));
         }
 
-        // 4. Check treasury can cover the requested amount + execution fee.
-        let execution_fee = 100u64;
-        let required_amount = amount
-            .checked_add(execution_fee)
-            .ok_or_else(|| anyhow::anyhow!("Amount overflow"))?;
+        // 4. Phase 0: require council_threshold council yes-votes
+        if self.governance_phase == crate::dao::GovernancePhase::Bootstrap {
+            let votes = self.get_dao_votes_for_proposal(&proposal_id);
+            let council_yes = votes.iter()
+                .filter(|v| v.vote_choice == "Yes" && self.is_council_member(&v.voter))
+                .count() as u8;
+            if council_yes < self.council_threshold {
+                return Err(anyhow::anyhow!(
+                    "Phase 0 requires {} council yes-votes, got {}",
+                    self.council_threshold, council_yes
+                ));
+            }
+        }
+
+        // 5. Resolve treasury and recipient keys (balance model)
+        let treasury_wallet_id_hex = self.dao_treasury_wallet_id.clone()
+            .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
+        let treasury_id_bytes: [u8; 32] = hex::decode(&treasury_wallet_id_hex)
+            .map_err(|e| anyhow::anyhow!("Invalid treasury wallet hex: {}", e))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Treasury wallet ID must be 32 bytes"))?;
+        let treasury_pk = Self::wallet_key_for_sov(&treasury_id_bytes);
+
+        let recip_id_bytes: [u8; 32] = hex::decode(&recipient_wallet_id)
+            .map_err(|e| anyhow::anyhow!("Invalid recipient wallet hex: {}", e))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Recipient wallet ID must be 32 bytes"))?;
+        let recipient_pk = Self::wallet_key_for_sov(&recip_id_bytes);
+
+        // 6. Epoch spend cap (5% of epoch-start treasury balance per epoch)
+        // The cap is anchored to the treasury balance at the START of the epoch,
+        // not the current balance, to prevent gaming via multiple small proposals.
         let treasury_balance = self.get_dao_treasury_balance()?;
-        if treasury_balance < required_amount {
+        if treasury_balance < amount {
             return Err(anyhow::anyhow!(
                 "Insufficient treasury balance: need {}, available {}",
-                required_amount,
-                treasury_balance
+                amount, treasury_balance
             ));
         }
-
-        // 5. Get treasury wallet UTXOs
-        let treasury_utxos = self.get_dao_treasury_utxos()?;
-        if treasury_utxos.is_empty() {
+        let epoch = self.height / self.treasury_epoch_length_blocks.max(1);
+        let spent_this_epoch = self.treasury_epoch_spend.get(&epoch).copied().unwrap_or(0);
+        // Record epoch-start balance on first spend of this epoch (balance + already spent = start)
+        let epoch_start_balance = if let Some(&stored) = self.treasury_epoch_start_balance.get(&epoch) {
+            stored
+        } else {
+            let start = treasury_balance.saturating_add(spent_this_epoch);
+            self.treasury_epoch_start_balance.insert(epoch, start);
+            start
+        };
+        let epoch_cap = epoch_start_balance.saturating_mul(5) / 100;
+        if spent_this_epoch.saturating_add(amount) > epoch_cap {
             return Err(anyhow::anyhow!(
-                "No treasury UTXOs available for DAO execution"
+                "Treasury epoch spend cap: {} + {} > cap {} (epoch-start balance: {})",
+                spent_this_epoch, amount, epoch_cap, epoch_start_balance
             ));
         }
 
-        // 6. Select deterministic UTXO inputs (bounded set to limit tx size).
-        let mut selected = treasury_utxos.clone();
-        selected.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
-        let mut inputs = Vec::new();
-        for (utxo_id, _output) in selected {
-            inputs.push(TransactionInput {
-                previous_output: utxo_id,
-                output_index: 0,
-                nullifier: crate::types::hash::blake3_hash(&[utxo_id.as_bytes(), &[0u8]].concat()),
-                zk_proof: crate::integration::zk_integration::ZkTransactionProof::default(),
-            });
-        }
+        // 6b. Validate spending category from execution_params (required per issue #1466)
+        // spending_category is mandatory — proposals without it are rejected.
+        let treasury_exec_params = {
+            let bytes = proposal.execution_params.as_ref()
+                .filter(|b| !b.is_empty())
+                .ok_or_else(|| anyhow::anyhow!(
+                    "spending_category required in execution_params; \
+                     proposal is missing a valid TreasuryExecutionParams"
+                ))?;
+            serde_json::from_slice::<crate::dao::TreasuryExecutionParams>(bytes)
+                .map_err(|e| anyhow::anyhow!(
+                    "execution_params could not be deserialized as TreasuryExecutionParams: {}",
+                    e
+                ))?
+        };
+        self.validate_treasury_spending_category(&treasury_exec_params)?;
 
-        // Require at least one affirmative vote and bind execution to those approvals.
-        let yes_voters: Vec<String> = self
-            .get_dao_votes_for_proposal(&proposal_id)
-            .into_iter()
-            .filter(|v| v.vote_choice == "Yes" && v.voting_power > 0)
-            .map(|v| v.voter)
-            .collect();
-        if yes_voters.is_empty() {
-            return Err(anyhow::anyhow!(
-                "No affirmative DAO votes found for execution authorization"
-            ));
-        }
-        let multisig_signatures: Vec<Vec<u8>> = yes_voters
-            .iter()
-            .map(|voter| voter.as_bytes().to_vec())
+        // 7. Execute balance transfer (debit treasury, credit recipient)
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let sov_token = self.token_contracts.get_mut(&sov_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
+        sov_token.debit_balance(&treasury_pk, amount)
+            .map_err(|e| anyhow::anyhow!("Treasury debit failed: {}", e))?;
+        sov_token.credit_balance(&recipient_pk, amount)
+            .map_err(|e| anyhow::anyhow!("Recipient credit failed: {}", e))?;
+
+        // 8. Record epoch spend
+        *self.treasury_epoch_spend.entry(epoch).or_insert(0) += amount;
+
+        // 9. Build execution transaction for audit trail (inputs/outputs empty — balance model)
+        let votes = self.get_dao_votes_for_proposal(&proposal_id);
+        let multisig_signatures: Vec<Vec<u8>> = votes.iter()
+            .filter(|v| v.vote_choice == "Yes")
+            .map(|v| v.voter.as_bytes().to_vec())
             .collect();
 
-        // 7. Create execution data
+        let now = crate::utils::time::current_timestamp();
         let execution_data = crate::transaction::DaoExecutionData {
             proposal_id,
-            executor: executor_identity,
+            executor: executor_identity.clone(),
             execution_type: "TreasurySpending".to_string(),
-            recipient: Some(recipient_identity.clone()),
+            recipient: Some(recipient_wallet_id.clone()),
             amount: Some(amount),
-            executed_at: crate::utils::time::current_timestamp(),
+            executed_at: now,
             executed_at_height: self.height,
             multisig_signatures,
         };
 
-        // 8. Create recipient output plus deterministic treasury change output.
-        let mut outputs = vec![
-            TransactionOutput {
-                commitment: crate::types::hash::blake3_hash(&amount.to_le_bytes()),
-                note: Hash::default(),
-                recipient: recipient_pubkey,
-            }
-        ];
-        if treasury_balance > required_amount {
-            let change_amount = treasury_balance - required_amount;
-            let treasury_wallet = self.get_dao_treasury_wallet()?;
-            outputs.push(TransactionOutput {
-                commitment: crate::types::hash::blake3_hash(&change_amount.to_le_bytes()),
-                note: Hash::default(),
-                recipient: crate::integration::crypto_integration::PublicKey::new(
-                    treasury_wallet.public_key.clone(),
-                ),
-            });
-        }
-
-        // 9. Create execution transaction
         let proposal_id_bytes = proposal_id.as_bytes();
         let memo_text = format!("DAO Proposal {} Execution", hex::encode(&proposal_id_bytes[..8]));
         let executor_pubkey = self.identity_registry
-            .get(&execution_data.executor)
+            .get(&executor_identity)
             .map(|id| crate::integration::crypto_integration::PublicKey::new(id.public_key.clone()))
-            .ok_or_else(|| anyhow::anyhow!("Executor identity {} not found", execution_data.executor))?;
-        let execution_signature = crate::types::hash::blake3_hash(
-            &[
-                proposal_id.as_bytes(),
-                execution_data.executor.as_bytes(),
-                &execution_data.executed_at.to_le_bytes(),
-            ]
-            .concat(),
-        )
-        .as_bytes()
-        .to_vec();
+            .unwrap_or_else(|| crate::integration::crypto_integration::PublicKey::new(vec![]));
+        let sig_bytes = crate::types::hash::blake3_hash(
+            &[proposal_id.as_bytes(), executor_identity.as_bytes(), &now.to_le_bytes()].concat(),
+        ).as_bytes().to_vec();
         let execution_tx = Transaction::new_dao_execution(
             execution_data,
-            inputs,
-            outputs,
-            execution_fee,
+            Vec::new(), // no UTXO inputs — balance model
+            Vec::new(), // no UTXO outputs — balance model
+            0,
             crate::integration::crypto_integration::Signature {
-                signature: execution_signature,
+                signature: sig_bytes,
                 public_key: executor_pubkey,
                 algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
-                timestamp: crate::utils::time::current_timestamp(),
+                timestamp: now,
             },
             memo_text.into_bytes(),
         );
-        
-        // 10. Add to pending transactions
+
         let tx_hash = execution_tx.hash();
         self.add_pending_transaction(execution_tx)?;
         self.executed_dao_proposals.insert(proposal_id);
-        
-        info!("✅ DAO proposal {:?} executed, transaction: {:?}", proposal_id, tx_hash);
+
+        info!("✅ DAO proposal {:?} executed (balance model), tx: {:?}", proposal_id, tx_hash);
         Ok(tx_hash)
     }
 
@@ -6194,6 +6317,19 @@ impl Blockchain {
     ///
     /// Future: Treasury allocations, protocol upgrades, etc.
     pub fn process_approved_governance_proposals(&mut self) -> Result<()> {
+        // Auto-expire emergency state (dao-2)
+        if self.emergency_state {
+            if let Some(expiry) = self.emergency_expires_at {
+                if self.height >= expiry {
+                    self.emergency_state = false;
+                    self.emergency_activated_at = None;
+                    self.emergency_activated_by = None;
+                    self.emergency_expires_at = None;
+                    info!("🔓 Emergency state expired at block height {}", self.height);
+                }
+            }
+        }
+
         // Get difficulty parameter update proposals with their quorum requirements
         // Collect to avoid borrowing issues with self.has_proposal_passed()
         let difficulty_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
@@ -10107,5 +10243,145 @@ mod store_backed_blockchain_tests {
             1,
             "store latest_height should be 1 after two committed blocks"
         );
+    }
+}
+
+// =============================================================================
+// Test helpers
+// These methods exist solely to support unit/integration tests that need
+// fine-grained control over blockchain state without running the full block
+// pipeline. They carry `_for_test` / `_test_` in their names to make their
+// purpose clear and avoid accidental production use.
+// =============================================================================
+
+#[doc(hidden)]
+impl Blockchain {
+    /// Push a minimal DAO proposal into `self.blocks` for test use.
+    /// Bypasses block validation — do NOT call outside of unit tests.
+    pub fn push_test_dao_proposal(&mut self, proposal_id: Hash, quorum: u8) {
+        self.push_test_dao_proposal_with_category(
+            proposal_id,
+            quorum,
+            crate::dao::TreasurySpendingCategory::GrantsFunding,
+        );
+    }
+
+    /// Push a DAO proposal with an explicit spending category for test use.
+    pub fn push_test_dao_proposal_with_category(
+        &mut self,
+        proposal_id: Hash,
+        quorum: u8,
+        category: crate::dao::TreasurySpendingCategory,
+    ) {
+        use crate::transaction::DaoProposalData;
+        // Serialize a minimal TreasuryExecutionParams — recipient/amount are overridden at
+        // execution time, but the category is validated before the transfer happens.
+        let params = crate::dao::TreasuryExecutionParams {
+            category,
+            recipient_wallet_id: String::new(),
+            amount: 0,
+        };
+        let params_bytes = serde_json::to_vec(&params)
+            .expect("TreasuryExecutionParams must serialize");
+        let tx = Transaction::new_dao_proposal(
+            DaoProposalData {
+                proposal_id,
+                proposer: "did:zhtp:test".to_string(),
+                title: "Test Proposal".to_string(),
+                description: "Test".to_string(),
+                proposal_type: "treasury_allocation".to_string(),
+                voting_period_blocks: 1000,
+                quorum_required: quorum,
+                execution_params: Some(params_bytes),
+                created_at: 0,
+                created_at_height: 0,
+            },
+            vec![],
+            vec![],
+            0,
+            Signature::default(),
+            vec![],
+        );
+        self.blocks.push(Self::make_minimal_test_block(vec![tx]));
+    }
+
+    /// Push a minimal DAO vote into `self.blocks` for test use.
+    /// Bypasses block validation — do NOT call outside of unit tests.
+    pub fn push_test_dao_vote(&mut self, proposal_id: Hash, voter: &str, choice: &str) {
+        use crate::transaction::DaoVoteData;
+        let tx = Transaction::new_dao_vote(
+            DaoVoteData {
+                vote_id: Hash::default(),
+                proposal_id,
+                voter: voter.to_string(),
+                vote_choice: choice.to_string(),
+                voting_power: 1,
+                justification: None,
+                timestamp: 0,
+            },
+            vec![],
+            vec![],
+            0,
+            Signature::default(),
+            vec![],
+        );
+        self.blocks.push(Self::make_minimal_test_block(vec![tx]));
+    }
+
+    /// Credit SOV directly to the DAO treasury wallet.
+    /// Bypasses normal minting rules — for unit tests only.
+    pub fn credit_dao_treasury_sov_for_test(&mut self, amount: u64) -> Result<()> {
+        // Ensure the SOV token contract exists (Blockchain::new() skips this).
+        self.ensure_sov_token_contract();
+        let treasury_wallet_id = self.dao_treasury_wallet_id.clone()
+            .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
+        let id_bytes: [u8; 32] = hex::decode(&treasury_wallet_id)
+            .map_err(|e| anyhow::anyhow!("Bad treasury wallet hex: {}", e))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Treasury wallet ID must be 32 bytes"))?;
+        let pk = Self::wallet_key_for_sov(&id_bytes);
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self.token_contracts.get_mut(&sov_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
+        token.credit_balance(&pk, amount)
+            .map_err(|e| anyhow::anyhow!("Treasury credit failed: {}", e))?;
+        Ok(())
+    }
+
+    /// Query the raw SOV balance for an arbitrary 64-char hex wallet ID.
+    /// For unit tests only.
+    pub fn get_wallet_sov_for_test(&self, wallet_id_hex: &str) -> Result<u64> {
+        let id_bytes: [u8; 32] = hex::decode(wallet_id_hex)
+            .map_err(|e| anyhow::anyhow!("Bad wallet hex: {}", e))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Wallet ID must be 32 bytes"))?;
+        let pk = Self::wallet_key_for_sov(&id_bytes);
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self.token_contracts.get(&sov_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
+        Ok(token.balance_of(&pk))
+    }
+
+    fn make_minimal_test_block(transactions: Vec<Transaction>) -> Block {
+        use crate::block::BlockHeader;
+        let count = transactions.len() as u32;
+        Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 0,
+                difficulty: Difficulty::default(),
+                nonce: 0,
+                height: 1,
+                block_hash: Hash::default(),
+                transaction_count: count,
+                block_size: 0,
+                cumulative_difficulty: Difficulty::default(),
+                fee_model_version: 1,
+                state_root: Hash::default(),
+            },
+            transactions,
+        }
     }
 }
