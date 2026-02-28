@@ -21,6 +21,7 @@ fn add_validator(bc: &mut Blockchain, did: &str) {
         slash_count: 0,
         admission_source: String::new(),
         governance_proposal_id: None,
+        oracle_key_id: None,
     };
     bc.validator_registry.insert(did.to_string(), vinfo);
 }
@@ -82,6 +83,30 @@ fn test_freeze_fails_with_no_validators() {
     let mut bc = Blockchain::new().expect("genesis");
     let err = bc.activate_treasury_freeze(vec![], "test".to_string());
     assert!(err.is_err(), "no validators registered → should fail");
+}
+
+#[test]
+fn test_freeze_rejects_duplicate_validator_entries() {
+    let mut bc = Blockchain::new().expect("genesis");
+    add_validator(&mut bc, "did:zhtp:val1");
+    add_validator(&mut bc, "did:zhtp:val2");
+    add_validator(&mut bc, "did:zhtp:val3");
+    add_validator(&mut bc, "did:zhtp:val4");
+    add_validator(&mut bc, "did:zhtp:val5");
+    // 5 validators; 80% = 4. Try to cheat by repeating the same validator multiple times.
+    // The implementation should deduplicate, so only 1 unique signature counts.
+    let err = bc.activate_treasury_freeze(
+        vec![
+            "did:zhtp:val1".to_string(),
+            "did:zhtp:val1".to_string(), // duplicate
+            "did:zhtp:val1".to_string(), // duplicate
+            "did:zhtp:val1".to_string(), // duplicate
+        ],
+        "test".to_string(),
+    );
+    assert!(err.is_err(), "duplicate entries should not count toward threshold");
+    let msg = err.unwrap_err().to_string();
+    assert!(msg.contains("1 valid"), "should report only 1 valid signature: {}", msg);
 }
 
 // ── freeze blocks spending ────────────────────────────────────────────────────
