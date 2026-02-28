@@ -23,7 +23,11 @@ pub struct OracleConfig {
     /// Maximum allowed staleness (in epochs) for consumers.
     pub max_price_staleness_epochs: u64,
     /// Fixed-point price scale. Must remain 1e8 for v1.
-    pub price_scale: u128,
+    #[serde(
+        default = "default_price_scale",
+        deserialize_with = "deserialize_price_scale"
+    )]
+    price_scale: u128,
 }
 
 impl Default for OracleConfig {
@@ -38,12 +42,37 @@ impl Default for OracleConfig {
     }
 }
 
+fn default_price_scale() -> u128 {
+    ORACLE_PRICE_SCALE
+}
+
+fn deserialize_price_scale<'de, D>(deserializer: D) -> Result<u128, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u128::deserialize(deserializer)?;
+    if value != ORACLE_PRICE_SCALE {
+        return Err(serde::de::Error::custom(format!(
+            "invalid oracle price_scale {}; expected {}",
+            value, ORACLE_PRICE_SCALE
+        )));
+    }
+    Ok(value)
+}
+
+impl OracleConfig {
+    pub fn price_scale(&self) -> u128 {
+        self.price_scale
+    }
+}
+
 /// Pending governance committee update, activated at an epoch boundary.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingCommitteeUpdate {
     /// Epoch where this update becomes active.
     pub activate_at_epoch: u64,
     /// New committee members (validator public keys).
+    #[serde(default, deserialize_with = "deserialize_members_sorted_dedup")]
     pub members: Vec<[u8; 32]>,
 }
 
@@ -51,16 +80,41 @@ pub struct PendingCommitteeUpdate {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct OracleCommitteeState {
     /// Active committee members (sorted, deduplicated).
-    pub members: Vec<[u8; 32]>,
+    #[serde(default, deserialize_with = "deserialize_members_sorted_dedup")]
+    members: Vec<[u8; 32]>,
     /// Pending update, if scheduled.
-    pub pending_update: Option<PendingCommitteeUpdate>,
+    pending_update: Option<PendingCommitteeUpdate>,
 }
 
 impl OracleCommitteeState {
+    pub fn new(members: Vec<[u8; 32]>, pending_update: Option<PendingCommitteeUpdate>) -> Self {
+        Self {
+            members: normalize_members(members),
+            pending_update: normalize_pending_update(pending_update),
+        }
+    }
+
+    pub fn members(&self) -> &[[u8; 32]] {
+        &self.members
+    }
+
+    pub fn pending_update(&self) -> Option<&PendingCommitteeUpdate> {
+        self.pending_update.as_ref()
+    }
+
+    pub fn set_members(&mut self, members: Vec<[u8; 32]>) {
+        self.members = normalize_members(members);
+    }
+
+    pub fn set_pending_update(&mut self, pending_update: Option<PendingCommitteeUpdate>) {
+        self.pending_update = normalize_pending_update(pending_update);
+    }
+
     /// Threshold formula: floor(2N/3)+1.
     pub fn threshold(&self) -> u16 {
-        let n = self.members.len() as u16;
-        if n == 0 { 0 } else { (2 * n) / 3 + 1 }
+        let n = self.members.len() as u64;
+        let threshold = (2 * n) / 3 + 1;
+        threshold.min(u16::MAX as u64) as u16
     }
 }
 
@@ -89,8 +143,8 @@ pub struct OracleState {
     #[serde(default)]
     pub committee: OracleCommitteeState,
     /// One immutable finalized price per epoch.
-    #[serde(default)]
-    pub finalized_prices: BTreeMap<u64, FinalizedOraclePrice>,
+    #[serde(default, deserialize_with = "deserialize_finalized_prices")]
+    finalized_prices: BTreeMap<u64, FinalizedOraclePrice>,
     /// Per-epoch transient/finalization status.
     #[serde(default)]
     pub epoch_state: BTreeMap<u64, OracleEpochState>,
@@ -106,9 +160,62 @@ impl OracleState {
         if self.finalized_prices.contains_key(&epoch_id) {
             return false;
         }
+        let winning_price = finalized_price.sov_usd_price;
         self.finalized_prices.insert(epoch_id, finalized_price);
+        let epoch_state = self.epoch_state.entry(epoch_id).or_default();
+        epoch_state.winning_price = Some(winning_price);
+        epoch_state.finalized = true;
         true
     }
+
+    pub fn finalized_price(&self, epoch_id: u64) -> Option<&FinalizedOraclePrice> {
+        self.finalized_prices.get(&epoch_id)
+    }
+
+    pub fn finalized_prices_len(&self) -> usize {
+        self.finalized_prices.len()
+    }
+}
+
+fn normalize_members(mut members: Vec<[u8; 32]>) -> Vec<[u8; 32]> {
+    members.sort_unstable();
+    members.dedup();
+    members
+}
+
+fn normalize_pending_update(
+    pending_update: Option<PendingCommitteeUpdate>,
+) -> Option<PendingCommitteeUpdate> {
+    pending_update.map(|mut update| {
+        update.members = normalize_members(update.members);
+        update
+    })
+}
+
+fn deserialize_members_sorted_dedup<'de, D>(deserializer: D) -> Result<Vec<[u8; 32]>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let members = Vec::<[u8; 32]>::deserialize(deserializer)?;
+    Ok(normalize_members(members))
+}
+
+fn deserialize_finalized_prices<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<u64, FinalizedOraclePrice>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let map = BTreeMap::<u64, FinalizedOraclePrice>::deserialize(deserializer)?;
+    for (epoch_key, price) in &map {
+        if *epoch_key != price.epoch_id {
+            return Err(serde::de::Error::custom(format!(
+                "finalized_prices key {} does not match payload epoch_id {}",
+                epoch_key, price.epoch_id
+            )));
+        }
+    }
+    Ok(map)
 }
 
 #[cfg(test)]
@@ -117,20 +224,40 @@ mod tests {
 
     #[test]
     fn committee_threshold_defaults_to_supermajority() {
-        let committee = OracleCommitteeState {
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]],
-            pending_update: None,
-        };
+        let committee =
+            OracleCommitteeState::new(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]], None);
         assert_eq!(committee.threshold(), 3);
     }
 
     #[test]
     fn committee_threshold_for_small_sets() {
-        let committee = OracleCommitteeState {
-            members: vec![[1u8; 32], [2u8; 32]],
-            pending_update: None,
-        };
+        let committee = OracleCommitteeState::new(vec![[1u8; 32], [2u8; 32]], None);
         assert_eq!(committee.threshold(), 2);
+    }
+
+    #[test]
+    fn committee_threshold_empty_is_one() {
+        let committee = OracleCommitteeState::default();
+        assert_eq!(committee.threshold(), 1);
+    }
+
+    #[test]
+    fn committee_members_are_normalized() {
+        let committee = OracleCommitteeState::new(vec![[2u8; 32], [1u8; 32], [2u8; 32]], None);
+        assert_eq!(committee.members().len(), 2);
+        assert_eq!(committee.members()[0], [1u8; 32]);
+        assert_eq!(committee.members()[1], [2u8; 32]);
+    }
+
+    #[test]
+    fn pending_committee_update_members_are_normalized() {
+        let pending = PendingCommitteeUpdate {
+            activate_at_epoch: 10,
+            members: vec![[3u8; 32], [1u8; 32], [3u8; 32], [2u8; 32]],
+        };
+        let committee = OracleCommitteeState::new(vec![], Some(pending));
+        let pending = committee.pending_update().expect("pending update must be set");
+        assert_eq!(pending.members, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
     }
 
     #[test]
@@ -150,7 +277,7 @@ mod tests {
             !state.try_finalize_price(second),
             "second finalized price for same epoch must be rejected"
         );
-        assert_eq!(state.finalized_prices.get(&7), Some(&first));
+        assert_eq!(state.finalized_price(7), Some(&first));
     }
 
     #[test]
@@ -164,6 +291,53 @@ mod tests {
             epoch_id: 2,
             sov_usd_price: 120_000_000,
         }));
-        assert_eq!(state.finalized_prices.len(), 2);
+        assert_eq!(state.finalized_prices_len(), 2);
+    }
+
+    #[test]
+    fn finalize_price_sets_epoch_state_winning_price_and_finalized_flag() {
+        let mut state = OracleState::default();
+        assert!(state.try_finalize_price(FinalizedOraclePrice {
+            epoch_id: 7,
+            sov_usd_price: 123_000_000,
+        }));
+        let epoch_state = state.epoch_state.get(&7).expect("epoch state must exist");
+        assert_eq!(epoch_state.winning_price, Some(123_000_000));
+        assert!(epoch_state.finalized);
+    }
+
+    #[test]
+    fn deserialize_rejects_noncanonical_price_scale() {
+        let invalid = r#"{
+            "epoch_duration_secs":300,
+            "max_source_age_secs":60,
+            "max_deviation_bps":500,
+            "max_price_staleness_epochs":2,
+            "price_scale":123
+        }"#;
+        let err =
+            serde_json::from_str::<OracleConfig>(invalid).expect_err("must reject non-1e8 scale");
+        assert!(
+            err.to_string().contains("invalid oracle price_scale"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn deserialize_rejects_mismatched_finalized_price_epoch_key() {
+        let invalid = r#"{
+            "finalized_prices": {
+                "7": { "epoch_id": 8, "sov_usd_price": 100000000 }
+            },
+            "epoch_state": {}
+        }"#;
+        let err =
+            serde_json::from_str::<OracleState>(invalid).expect_err("must reject mismatched key");
+        assert!(
+            err.to_string().contains("does not match payload epoch_id"),
+            "unexpected error: {}",
+            err
+        );
     }
 }
