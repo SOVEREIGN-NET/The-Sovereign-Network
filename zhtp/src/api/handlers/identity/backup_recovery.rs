@@ -1987,6 +1987,7 @@ mod tests {
                 // directly into the registry at height 0 for testing purposes.
                 admission_source: lib_blockchain::blockchain::ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string(),
                 governance_proposal_id: None,
+                oracle_key_id: None,
             },
         );
 
