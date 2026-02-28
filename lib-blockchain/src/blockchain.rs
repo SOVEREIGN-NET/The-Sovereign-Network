@@ -2008,6 +2008,37 @@ impl Blockchain {
                     self.height += 1;
                     for tx in &block.transactions {
                         self.index_dao_registry_entry_from_tx(tx, block.header.height);
+                        // Executor returns LegacySystem for ValidatorRegistration — update registry here
+                        if tx.transaction_type == TransactionType::ValidatorRegistration {
+                            if let Some(vd) = &tx.validator_data {
+                                let status = match vd.operation {
+                                    crate::transaction::ValidatorOperation::Register => "active",
+                                    crate::transaction::ValidatorOperation::Update => "active",
+                                    crate::transaction::ValidatorOperation::Unregister => "inactive",
+                                };
+                                let vi = ValidatorInfo {
+                                    identity_id: vd.identity_id.clone(),
+                                    stake: vd.stake,
+                                    storage_provided: vd.storage_provided,
+                                    consensus_key: vd.consensus_key.clone(),
+                                    networking_key: vd.networking_key.clone(),
+                                    rewards_key: vd.rewards_key.clone(),
+                                    network_address: vd.network_address.clone(),
+                                    commission_rate: vd.commission_rate,
+                                    status: status.to_string(),
+                                    registered_at: block.header.height,
+                                    last_activity: block.header.height,
+                                    blocks_validated: 0,
+                                    slash_count: 0,
+                                    admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
+                                    governance_proposal_id: None,
+                                    oracle_key_id: None,
+                                };
+                                self.validator_registry.insert(vd.identity_id.clone(), vi);
+                                self.validator_blocks.insert(vd.identity_id.clone(), block.header.height);
+                                info!("Validator {} {:?} at height {}", vd.identity_id, vd.operation, block.header.height);
+                            }
+                        }
                     }
                     self.adjust_difficulty()?;
                     

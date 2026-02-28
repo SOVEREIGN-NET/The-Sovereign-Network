@@ -8,7 +8,6 @@ use anyhow::{Result, Context};
 use tracing::{info, warn, error, debug};
 use lib_crypto::PublicKey;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
-use lib_network::protocols::NetworkProtocol;
 use lib_network::mesh::server::ZhtpMeshServer;
 use lib_identity::IdentityManager;
 
@@ -27,7 +26,6 @@ impl MeshRouter {
     ) {
         info!("📡 Blockchain broadcast channel connected to mesh router");
         
-        let connections = self.connections.clone();
         let recent_blocks = self.recent_blocks.clone();
         let recent_transactions = self.recent_transactions.clone();
         let quic_protocol = self.quic_protocol.clone();
@@ -93,20 +91,13 @@ impl MeshRouter {
                             }
                         };
                         
-                        // Broadcast to all connected peers via QUIC
-                        // ⚠️ TICKET 2.6 BYPASS: Direct protocol call - will be fixed when set_broadcast_receiver
-                        // accepts Arc<Self> and can use mesh_router.broadcast_to_peers()
-                        let conns = connections.read().await;
+                        // Broadcast to all connected peers via the canonical QUIC connection store
                         let mut success_count = 0;
-                        
+
                         if let Some(quic) = quic_protocol.read().await.as_ref() {
-                            for peer_entry in conns.all_peers() {
-                                // Check if peer has QUIC protocol
-                                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
-                                    // Use peer_id (PublicKey) to send via QUIC
-                                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
-                                        success_count += 1;
-                                    }
+                            for peer_id in quic.connected_peer_ids() {
+                                if quic.send_to_peer(&peer_id, message.clone()).await.is_ok() {
+                                    success_count += 1;
                                 }
                             }
                         }
@@ -180,19 +171,13 @@ impl MeshRouter {
                             }
                         };
                         
-                        // Broadcast to all connected peers
-                        // ⚠️ TICKET 2.6 BYPASS: Direct protocol call - will be fixed when set_broadcast_receiver
-                        // accepts Arc<Self> and can use mesh_router.broadcast_to_peers()
-                        let conns = connections.read().await;
+                        // Broadcast to all connected peers via the canonical QUIC connection store
                         let mut success_count = 0;
-                        
+
                         if let Some(quic) = quic_protocol.read().await.as_ref() {
-                            for peer_entry in conns.all_peers() {
-                                // Check if peer has QUIC protocol
-                                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
-                                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
-                                        success_count += 1;
-                                    }
+                            for peer_id in quic.connected_peer_ids() {
+                                if quic.send_to_peer(&peer_id, message.clone()).await.is_ok() {
+                                    success_count += 1;
                                 }
                             }
                         }
