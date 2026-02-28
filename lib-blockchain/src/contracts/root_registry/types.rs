@@ -9,6 +9,7 @@
 //! - State lifecycle management
 //! - Governance pointers for dao.X resolution
 
+use lib_types::primitives::BlockHeight;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -27,8 +28,6 @@ pub type NameHash = [u8; 32];
 /// DAO identifier
 pub type DaoId = [u8; 32];
 
-/// Block height timestamp
-pub type BlockHeight = u64;
 
 /// Unix timestamp in seconds
 pub type Timestamp = u64;
