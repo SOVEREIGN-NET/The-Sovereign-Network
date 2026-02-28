@@ -41,8 +41,8 @@ run_gate \
   cargo test --locked -p lib-blockchain oracle_replay_reconstructs_identical_finalized_prices -- --nocapture
 
 run_gate \
-  "Duplicate/replay slashing evidence remains deterministic after restart" \
-  cargo test --locked -p lib-blockchain oracle_slashing_restart_replay_is_deterministic -- --nocapture
+  "Slashing penalties are idempotent and offender removed next epoch" \
+  cargo test --locked -p lib-blockchain --test oracle_slashing_penalties_tests oracle_slash_reduces_stake_is_idempotent_and_removes_next_epoch -- --nocapture
 
 # Crash safety / persistence boundary for oracle state writes.
 run_gate \
