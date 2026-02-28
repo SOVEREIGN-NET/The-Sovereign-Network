@@ -223,21 +223,17 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.DEV_DEPLOY_SSH_KEY }}
           DEV_HOST_1: ${{ secrets.DEV_DEPLOY_HOST }}
-          DEV_HOST_2: ${{ secrets.DEV_DEPLOY_HOST_2 }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          # Scan both dev servers
-          for host in "$DEV_HOST_1" "$DEV_HOST_2"; do
-            for i in 1 2 3; do
-              ssh-keyscan -T 10 -H "$host" >> ~/.ssh/known_hosts && break
-              echo "ssh-keyscan attempt $i for $host failed, retrying..."
-              sleep 2
-            done
+          for i in 1 2 3; do
+            ssh-keyscan -T 10 -H "$DEV_HOST_1" >> ~/.ssh/known_hosts && break
+            echo "ssh-keyscan attempt $i failed, retrying..."
+            sleep 2
           done
 
-      - name: Deploy to Dev Server 1 (zhtp-dev)
+      - name: Deploy to Dev Server (zhtp-dev)
         env:
           DEV_HOST: ${{ secrets.DEV_DEPLOY_HOST }}
           DEV_USER: ${{ secrets.DEV_DEPLOY_USER }}
@@ -260,31 +256,5 @@ jobs:
             systemctl enable zhtp &&
             systemctl start zhtp &&
             sleep 5 &&
-            systemctl is-active zhtp && echo "Deployed to DEV SERVER 1 at $(date)" || echo "WARNING: Service not active!"
-          '
-
-      - name: Deploy to Dev Server 2 (zhtp-dev-2)
-        env:
-          DEV_HOST: ${{ secrets.DEV_DEPLOY_HOST_2 }}
-          DEV_USER: ${{ secrets.DEV_DEPLOY_USER }}
-        run: |
-          scp -i ~/.ssh/deploy_key ./zhtp "${DEV_USER}@${DEV_HOST}:/opt/zhtp/zhtp.new"
-          scp -i ~/.ssh/deploy_key ./deploy/zhtp-dev.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
-          ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
-            cd /opt/zhtp &&
-            systemctl stop zhtp 2>/dev/null || true &&
-            sleep 2 &&
-            # Clear nonce caches to prevent sled DB corruption on restart
-            rm -rf /opt/zhtp/data/tls/quic_nonce_cache/* 2>/dev/null || true &&
-            rm -rf /opt/zhtp/nonce_cache_wifi/* 2>/dev/null || true &&
-            rm -rf /root/.zhtp/client_nonce_cache/* 2>/dev/null || true &&
-            if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
-            mv zhtp.new zhtp &&
-            chmod +x zhtp &&
-            mv /tmp/zhtp.service /etc/systemd/system/zhtp.service &&
-            systemctl daemon-reload &&
-            systemctl enable zhtp &&
-            systemctl start zhtp &&
-            sleep 5 &&
-            systemctl is-active zhtp && echo "Deployed to DEV SERVER 2 at $(date)" || echo "WARNING: Service not active!"
+            systemctl is-active zhtp && echo "Deployed to DEV SERVER at $(date)" || echo "WARNING: Service not active!"
           '
