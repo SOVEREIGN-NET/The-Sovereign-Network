@@ -477,6 +477,15 @@ impl OracleState {
                         finalized_price: winning,
                         attempted_price: attestation.sov_usd_price,
                     });
+                } else {
+                    // Defensive guard: epoch is marked finalized but has no winning_price.
+                    // This state should not normally occur, but if it does, we must avoid
+                    // mutating signer state for an already-finalized epoch. Treat this
+                    // attestation as if it arrived after finalization and ignore it.
+                    return Ok(OracleAttestationAdmission::IgnoredAfterFinalization {
+                        epoch_id: current_epoch,
+                        price: attestation.sov_usd_price,
+                    });
                 }
             }
         }
@@ -527,9 +536,6 @@ impl OracleState {
         }
 
         let threshold = self.committee.threshold() as usize;
-        if threshold == 0 {
-            return Ok(OracleAttestationAdmission::Accepted);
-        }
 
         let epoch_state = self.epoch_state.entry(current_epoch).or_default();
         epoch_state
@@ -559,7 +565,7 @@ impl OracleState {
                     });
                 }
             } else {
-                let _ = self.try_finalize_price(finalized.clone());
+                self.finalized_prices.insert(current_epoch, finalized.clone());
             }
 
             return Ok(OracleAttestationAdmission::Finalized(finalized));
@@ -567,7 +573,6 @@ impl OracleState {
 
         Ok(OracleAttestationAdmission::Accepted)
     }
-
 }
 
 fn normalize_members(mut members: Vec<[u8; 32]>) -> Vec<[u8; 32]> {

@@ -782,7 +782,8 @@ impl ZhtpMeshMessage {
                 (MessageType::IdentityDeliveryAck, bincode::serialize(ack)?)
             },
             Self::OracleAttestation { payload } => {
-                (MessageType::OracleAttestation, bincode::serialize(payload)?)
+                // Use raw bytes directly to avoid bincode's 8-byte length prefix overhead
+                (MessageType::OracleAttestation, payload.clone())
             },
         };
         Ok((msg_type, payload))
@@ -943,8 +944,8 @@ impl ZhtpMeshMessage {
                 Self::IdentityDeliveryAck(ack)
             },
             MessageType::OracleAttestation => {
-                let payload: Vec<u8> = bincode::deserialize(payload)?;
-                Self::OracleAttestation { payload }
+                // Use raw bytes directly (payload is the opaque attestation bytes)
+                Self::OracleAttestation { payload: payload.to_vec() }
             },
         };
         Ok(message)
