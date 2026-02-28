@@ -6,6 +6,7 @@ use tokio::time::{Duration, Instant};
 use tracing::{info, debug, warn};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
+use crate::runtime::node_runtime::NodeRole;
 use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
 use lib_identity::IdentityManager;
 
@@ -16,6 +17,8 @@ pub struct IdentityComponent {
     identity_manager: Arc<RwLock<Option<IdentityManager>>>,
     genesis_identities: Arc<RwLock<Vec<lib_identity::ZhtpIdentity>>>,
     genesis_private_data: Arc<RwLock<Vec<(lib_identity::IdentityId, lib_identity::identity::PrivateIdentityData)>>>,
+    /// Whether this node can mine blocks. Only FullValidator nodes mine startup backfill blocks.
+    can_mine: bool,
 }
 
 impl std::fmt::Debug for IdentityComponent {
@@ -26,32 +29,36 @@ impl std::fmt::Debug for IdentityComponent {
             .field("identity_manager", &"<RwLock<Option<IdentityManager>>>")
             .field("genesis_identities", &"<RwLock<Vec<ZhtpIdentity>>>")
             .field("genesis_private_data", &"<RwLock<Vec<(IdentityId, PrivateIdentityData)>>>")
+            .field("can_mine", &self.can_mine)
             .finish()
     }
 }
 
 impl IdentityComponent {
-    pub fn new() -> Self {
+    pub fn new(node_role: NodeRole) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
             identity_manager: Arc::new(RwLock::new(None)),
             genesis_identities: Arc::new(RwLock::new(Vec::new())),
             genesis_private_data: Arc::new(RwLock::new(Vec::new())),
+            can_mine: node_role.can_mine(),
         }
     }
-    
-    pub fn new_with_identities(genesis_identities: Vec<lib_identity::ZhtpIdentity>) -> Self {
+
+    pub fn new_with_identities(node_role: NodeRole, genesis_identities: Vec<lib_identity::ZhtpIdentity>) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
             identity_manager: Arc::new(RwLock::new(None)),
             genesis_identities: Arc::new(RwLock::new(genesis_identities)),
             genesis_private_data: Arc::new(RwLock::new(Vec::new())),
+            can_mine: node_role.can_mine(),
         }
     }
-    
+
     pub fn new_with_identities_and_private_data(
+        node_role: NodeRole,
         genesis_identities: Vec<lib_identity::ZhtpIdentity>,
         genesis_private_data: Vec<(lib_identity::IdentityId, lib_identity::identity::PrivateIdentityData)>,
     ) -> Self {
@@ -61,9 +68,10 @@ impl IdentityComponent {
             identity_manager: Arc::new(RwLock::new(None)),
             genesis_identities: Arc::new(RwLock::new(genesis_identities)),
             genesis_private_data: Arc::new(RwLock::new(genesis_private_data)),
+            can_mine: node_role.can_mine(),
         }
     }
-    
+
     pub fn get_identity_manager_arc(&self) -> Arc<RwLock<Option<IdentityManager>>> {
         self.identity_manager.clone()
     }
@@ -123,7 +131,7 @@ impl Component for IdentityComponent {
             }
         }
 
-        if let Err(e) = run_post_bootstrap_sov_backfill().await {
+        if let Err(e) = run_post_bootstrap_sov_backfill(self.can_mine).await {
             info!("⚠️ SOV backfill skipped (non-fatal): {}", e);
         }
 
@@ -916,7 +924,8 @@ async fn bootstrap_identities_from_dht(
 
 /// After DHT bootstrap and identity migration, mint missing SOV balances via TokenMint txs.
 /// This makes token balances block-authoritative and durable across restarts.
-async fn run_post_bootstrap_sov_backfill() -> Result<()> {
+/// Observer nodes skip the mine_block calls — they receive these blocks from the validator.
+async fn run_post_bootstrap_sov_backfill(can_mine: bool) -> Result<()> {
     let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
 
     // First, ensure all wallets in the registry are registered on-chain before minting.
@@ -960,10 +969,14 @@ async fn run_post_bootstrap_sov_backfill() -> Result<()> {
             .iter()
             .any(|tx| matches!(tx.transaction_type, lib_blockchain::TransactionType::WalletRegistration));
         if pending_wallet_regs {
-            if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await {
-                warn!("🪙 Failed to mine wallet registration block before backfill: {}", e);
+            if can_mine {
+                if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await {
+                    warn!("🪙 Failed to mine wallet registration block before backfill: {}", e);
+                } else {
+                    info!("🪙 Mined wallet registration block before SOV backfill");
+                }
             } else {
-                info!("🪙 Mined wallet registration block before SOV backfill");
+                info!("🪙 Observer node: skipping startup mine for wallet registrations (validator will broadcast)");
             }
         }
     }
@@ -1007,10 +1020,14 @@ async fn run_post_bootstrap_sov_backfill() -> Result<()> {
         return Ok(());
     }
 
-    if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await {
-        warn!("🪙 Failed to mine SOV backfill block: {}", e);
+    if can_mine {
+        if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await {
+            warn!("🪙 Failed to mine SOV backfill block: {}", e);
+        } else {
+            info!("🪙 Mined SOV backfill block with {} TokenMint txs", queued);
+        }
     } else {
-        info!("🪙 Mined SOV backfill block with {} TokenMint txs", queued);
+        info!("🪙 Observer node: skipping startup mine for SOV backfill (validator will broadcast)");
     }
 
     Ok(())

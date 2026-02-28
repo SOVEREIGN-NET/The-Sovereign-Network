@@ -660,15 +660,16 @@ impl RuntimeOrchestrator {
         if !is_registered(ComponentId::Identity).await {
             let genesis_identities = self.genesis_identities.read().await.clone();
             let genesis_private_data = self.genesis_private_data.read().await.clone();
-            
+            let node_role_for_identity = self.node_role.read().await.clone();
+
             if genesis_identities.is_empty() {
                 info!("Registering Identity component without genesis identities");
-                self.register_component(Arc::new(IdentityComponent::new())).await?;
+                self.register_component(Arc::new(IdentityComponent::new(node_role_for_identity))).await?;
             } else {
-                info!(" Registering Identity component with {} genesis identities and {} private keys", 
+                info!(" Registering Identity component with {} genesis identities and {} private keys",
                     genesis_identities.len(), genesis_private_data.len());
                 self.register_component(Arc::new(
-                    IdentityComponent::new_with_identities_and_private_data(genesis_identities, genesis_private_data)
+                    IdentityComponent::new_with_identities_and_private_data(node_role_for_identity, genesis_identities, genesis_private_data)
                 )).await?;
             }
         }
@@ -687,10 +688,11 @@ impl RuntimeOrchestrator {
             let user_wallet = user_wallet_guard.clone();
             let environment = self.config.environment;  // Get environment from config
             let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();  // Get bootstrap validators from config
+            let bootstrap_peers = self.config.network_config.bootstrap_peers.clone();
             let joined_existing_network = *self.joined_existing_network.read().await;  // Check if we joined existing network
             let node_role = self.node_role.read().await.clone();
 
-            let blockchain_component = BlockchainComponent::new_with_full_config(node_role, user_wallet, environment, bootstrap_validators, joined_existing_network);
+            let blockchain_component = BlockchainComponent::new_with_full_config(node_role, user_wallet, environment, bootstrap_validators, bootstrap_peers, joined_existing_network);
             self.register_component(Arc::new(blockchain_component)).await?;
         }
 
@@ -1499,8 +1501,9 @@ impl RuntimeOrchestrator {
         // This ensures deterministic initialization and prevents silent empty state
         let genesis_ids = self.genesis_identities.read().await.clone();
         let genesis_private = self.genesis_private_data.read().await.clone();
+        let node_role_for_identity = self.node_role.read().await.clone();
         self.register_component(
-            Arc::new(IdentityComponent::new_with_identities_and_private_data(genesis_ids, genesis_private))
+            Arc::new(IdentityComponent::new_with_identities_and_private_data(node_role_for_identity, genesis_ids, genesis_private))
         ).await?;
 
         self.register_component(Arc::new(StorageComponent::new())).await?;
@@ -1508,6 +1511,7 @@ impl RuntimeOrchestrator {
         let user_wallet = self.get_user_wallet().await;
         let environment = self.get_environment();
         let bootstrap_validators = self.get_bootstrap_validators();
+        let bootstrap_peers = self.config.network_config.bootstrap_peers.clone();
         let joined_existing_network = self.get_joined_existing_network().await;
         let node_role = self.node_role.read().await.clone();
 
@@ -1516,6 +1520,7 @@ impl RuntimeOrchestrator {
             user_wallet,
             environment,
             bootstrap_validators,
+            bootstrap_peers,
             joined_existing_network
         );
         self.register_component(Arc::new(blockchain_component)).await?;

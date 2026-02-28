@@ -39,61 +39,38 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
         _timestamp: u64,
         _sender_key: Vec<u8>,
     ) -> Result<()> {
-        // **CRITICAL (Issue #938)**: Network blocks are PROPOSAL-ONLY.
-        // They MUST NOT be persisted before BFT commit.
-        //
-        // FLOW:
-        // 1. Deserialize and validate block structure
-        // 2. Submit as proposal to BFT consensus (NOT persistence)
-        // 3. BFT consensus decides if block should be finalized
-        // 4. ONLY on BFT commit → BlockCommitCallback persists the block
-        //
-        // This ensures network blocks can't bypass consensus and reach storage prematurely.
-
-        // Deserialize before acquiring any lock (no shared state needed)
+        // Deserialize before acquiring any lock
         let block: lib_blockchain::Block = bincode::deserialize(&block_bytes)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize received block: {}", e))?;
 
         let blockchain = get_global_blockchain().await?;
 
-        // Acquire read lock for height check (no write needed - proposal-only)
-        let bc = blockchain.read().await;
-        let local_height = bc.get_height();
+        let local_height = blockchain.read().await.get_height();
 
         if height <= local_height {
-            debug!("Ignoring block proposal {} (local height {})", height, local_height);
+            debug!("Ignoring block {} (local height {})", height, local_height);
             return Ok(());
         }
 
-        // Drop read lock before expensive operations
-        drop(bc);
+        if height != local_height + 1 {
+            info!("Block {} is non-consecutive (local height {}), cannot apply", height, local_height);
+            return Ok(());
+        }
 
         let block_hash = hex::encode(&block.header.hash().as_bytes()[..8]);
+        info!("⛓️ Applying network block {} (hash {}) from mesh peer", height, block_hash);
 
-        // **Issue #938**: Submit as PROPOSAL to consensus, not direct persistence
-        // TODO: Wire up consensus proposal submission
-        // For now, log that this would be submitted as a proposal
-        info!(
-            "📋 Received block {} (hash {}) from mesh peer as PROPOSAL (Issue #938: proposal-only)",
-            height, block_hash
-        );
-        info!(
-            "   Block will be validated by BFT consensus before persistence"
-        );
-
-        // TODO (Issue #938 followup): Implement actual proposal submission
-        // This requires:
-        // 1. Access to ConsensusEngine instance
-        // 2. Converting Block → ConsensusProposal format
-        // 3. Submitting to consensus via on_proposal() or similar
-        // 4. Consensus will call BlockCommitCallback on 2/3+1 commit votes
-
-        warn!(
-            "⚠️ Block proposal {} not yet wired to consensus - pending full BFT integration",
-            height
-        );
-
-        Ok(())
+        let mut bc = blockchain.write().await;
+        match bc.add_block_from_network_with_persistence(block).await {
+            Ok(()) => {
+                info!("✅ Network block {} applied, chain height now {}", height, bc.get_height());
+                Ok(())
+            }
+            Err(e) => {
+                warn!("❌ Failed to apply network block {}: {}", height, e);
+                Ok(())
+            }
+        }
     }
 
     async fn on_transaction_received(

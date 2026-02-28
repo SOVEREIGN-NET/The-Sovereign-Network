@@ -324,10 +324,17 @@ impl PouwHandler {
         let params = Self::parse_query_params(&request.uri);
 
         // Capability: default to "hash" if not provided.
-        let capability = params
-            .get("cap")
-            .map(|s| s.as_str())
-            .or(Some("hash"));
+        // URL-decode the value so %2C-separated lists (e.g. Android clients) are handled correctly.
+        let cap_decoded: String;
+        let capability = match params.get("cap") {
+            Some(raw) => {
+                cap_decoded = urlencoding::decode(raw)
+                    .unwrap_or_else(|_| std::borrow::Cow::Borrowed(raw.as_str()))
+                    .into_owned();
+                Some(cap_decoded.as_str())
+            }
+            None => Some("hash"),
+        };
 
         // Optional numeric limits from query parameters; invalid values are ignored.
         let max_bytes = params
@@ -811,7 +818,9 @@ impl ZhtpRequestHandler for PouwHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let full_uri = request.uri.as_str();
         // Strip /api/v1 prefix so internal routing works with /pouw/... paths
-        let uri = full_uri.strip_prefix("/api/v1").unwrap_or(full_uri);
+        let uri_with_query = full_uri.strip_prefix("/api/v1").unwrap_or(full_uri);
+        // Strip query string for routing — handlers read params via parse_query_params(&request.uri)
+        let uri = uri_with_query.split('?').next().unwrap_or(uri_with_query);
         
         // Handle routes with path parameters
         // GET /pouw/rewards/{did}/transactions — must be checked BEFORE /pouw/rewards/{did}
