@@ -48,6 +48,7 @@ impl Default for CouncilBootstrapConfig {
     }
 }
 
+
 fn default_threshold() -> u8 {
     4
 }
