@@ -372,6 +372,7 @@ impl CurveHandler {
             "token_id": buy_req.token_id,
             "stable_paid": buy_req.stable_amount,
             "tokens_received": token_amount,
+            "auto_graduated": false,
             "tx_status": "confirmed"
         }))
     }
@@ -1406,9 +1407,10 @@ mod tests {
 
         let response = handler.handle_buy(request).await.expect("buy response");
         let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
-        assert!(
-            json.get("auto_graduated").is_none(),
-            "buy response must not expose runtime auto-graduation"
+        assert_eq!(
+            json.get("auto_graduated").and_then(|v| v.as_bool()),
+            Some(false),
+            "buy response must indicate auto_graduated=false (runtime auto-graduation removed)"
         );
 
         let guard = handler.blockchain.read().await;
