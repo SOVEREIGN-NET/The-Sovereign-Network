@@ -33,6 +33,10 @@ pub enum TxKind {
     DataUpload = 3,
     /// Governance action (vote, proposal)
     Governance = 4,
+    /// Staking (delegation)
+    Staking = 5,
+    /// Unstaking (withdrawal)
+    Unstaking = 6,
 }
 
 impl TxKind {
@@ -47,6 +51,8 @@ impl TxKind {
             TxKind::ContractCall => 65_536,       // 64KB - contract proofs
             TxKind::DataUpload => 131_072,        // 128KB - data proofs
             TxKind::Governance => 4_096,          // 4KB - governance proofs
+            TxKind::Staking => 2_048,             // 2KB - staking proofs
+            TxKind::Unstaking => 2_048,           // 2KB - unstaking proofs
         }
     }
 
@@ -60,6 +66,8 @@ impl TxKind {
             TxKind::ContractCall => 15_000,     // 1.5x - computation cost
             TxKind::DataUpload => 20_000,       // 2.0x - storage cost
             TxKind::Governance => 5_000,        // 0.5x - subsidized
+            TxKind::Staking => 12_000,          // 1.2x - similar to token transfer
+            TxKind::Unstaking => 12_000,        // 1.2x - similar to staking
         }
     }
 }
@@ -459,6 +467,40 @@ mod tests {
 
         // Governance should be cheaper (0.5x multiplier)
         assert!(governance_fee < transfer_fee);
+    }
+
+    #[test]
+    fn test_staking_fee() {
+        let params = FeeParams::default();
+
+        let mut transfer = FeeInput::native_transfer(200, SigScheme::Ed25519);
+        let mut staking = transfer.clone();
+        staking.kind = TxKind::Staking;
+
+        let transfer_fee = compute_fee_v2(&transfer, &params);
+        let staking_fee = compute_fee_v2(&staking, &params);
+
+        // Staking should be slightly higher than transfer (1.2x multiplier)
+        assert!(staking_fee > transfer_fee);
+        assert_eq!(TxKind::Staking.base_multiplier_bps(), 12_000);
+        assert_eq!(TxKind::Staking.witness_cap(), 2_048);
+    }
+
+    #[test]
+    fn test_unstaking_fee() {
+        let params = FeeParams::default();
+
+        let mut transfer = FeeInput::native_transfer(200, SigScheme::Ed25519);
+        let mut unstaking = transfer.clone();
+        unstaking.kind = TxKind::Unstaking;
+
+        let transfer_fee = compute_fee_v2(&transfer, &params);
+        let unstaking_fee = compute_fee_v2(&unstaking, &params);
+
+        // Unstaking should be slightly higher than transfer (1.2x multiplier)
+        assert!(unstaking_fee > transfer_fee);
+        assert_eq!(TxKind::Unstaking.base_multiplier_bps(), 12_000);
+        assert_eq!(TxKind::Unstaking.witness_cap(), 2_048);
     }
 
     #[test]
