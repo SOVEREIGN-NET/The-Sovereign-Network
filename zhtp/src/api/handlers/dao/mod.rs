@@ -1153,7 +1153,8 @@ impl DaoHandler {
             proposal_id,
             voter: voter_identity.did.clone(),
             vote_choice: vote_choice_str,
-            voting_power: 1,
+            // calculate_user_voting_power already applies voting_power_mode.
+            voting_power: blockchain.calculate_user_voting_power(&authenticated_identity_id).max(1),
             justification: request_data.justification.clone(),
             timestamp: now,
         };
@@ -1228,12 +1229,7 @@ impl DaoHandler {
             "status": "success",
             "identity_id": identity_id_str,
             "voting_power": voting_power,
-            "power_breakdown": {
-                "base_citizen_power": voting_power,
-                "reputation_multiplier": 1.0,
-                "staked_tokens_power": 0,
-                "delegated_power": voting_power.saturating_sub(1)
-            }
+            "voting_power_mode": format!("{:?}", blockchain.voting_power_mode),
         });
 
         create_json_response(response)
@@ -1773,6 +1769,112 @@ impl DaoHandler {
         }))
     }
 
+    /// POST /api/v1/dao/voting/delegate — set or revoke a vote delegation.
+    ///
+    /// Body: `{ "delegate_did": "did:zhtp:HEX" }` to delegate,
+    ///       `{ "delegate_did": "" }` to revoke an existing delegation.
+    ///
+    /// Rejects: invalid DID format, non-existent delegate, self-delegation,
+    /// circular delegation chains.
+    async fn handle_vote_delegate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let session_token = match request.headers.get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+            Some(token) => token,
+            None => return Ok(create_error_response(ZhtpStatus::Unauthorized,
+                "Missing or invalid Authorization header".to_string())),
+        };
+
+        let client_ip = extract_client_ip(request);
+        let user_agent = extract_user_agent(request);
+        let session = self.session_manager
+            .validate_session(&session_token, &client_ip, &user_agent)
+            .await
+            .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
+
+        #[derive(serde::Deserialize)]
+        struct DelegateRequest {
+            delegate_did: String,
+        }
+        let req: DelegateRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        // Delegator key is the 64-char hex of the raw identity bytes.
+        let delegator_hex = hex::encode(session.identity_id.as_bytes());
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        // ── revocation ────────────────────────────────────────────────────────
+        if req.delegate_did.is_empty() {
+            let removed = blockchain.vote_delegations.remove(&delegator_hex).is_some();
+            return create_json_response(json!({
+                "status": if removed { "revoked" } else { "no_delegation_found" },
+                "delegator": delegator_hex,
+            }));
+        }
+
+        // ── DID format validation ─────────────────────────────────────────────
+        let delegate_hex = match req.delegate_did.strip_prefix("did:zhtp:") {
+            Some(hex_part) if !hex_part.is_empty() => hex_part.to_string(),
+            _ => return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Invalid delegate_did format; expected did:zhtp:HEXVALUE".to_string(),
+            )),
+        };
+
+        // Validate the hex part is a valid 32-byte ID.
+        if hex::decode(&delegate_hex).map(|b| b.len()).unwrap_or(0) != 32 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "delegate_did hex part must decode to exactly 32 bytes".to_string(),
+            ));
+        }
+
+        // ── self-delegation check ─────────────────────────────────────────────
+        if delegate_hex == delegator_hex {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Cannot delegate voting power to yourself".to_string(),
+            ));
+        }
+
+        // ── delegate existence check ──────────────────────────────────────────
+        if !blockchain.identity_registry.contains_key(&req.delegate_did) {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                format!("Delegate identity '{}' not found in identity registry", req.delegate_did),
+            ));
+        }
+
+        // ── cycle detection ───────────────────────────────────────────────────
+        // Walk the existing delegation graph forward from the proposed delegate.
+        // If we reach the delegator, this edge would close a cycle — reject it.
+        const MAX_DEPTH: usize = 64;
+        let mut current = delegate_hex.clone();
+        for _ in 0..MAX_DEPTH {
+            match blockchain.vote_delegations.get(&current) {
+                Some(next) if next == &delegator_hex => {
+                    return Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        "Delegation would create a cycle in the delegation graph".to_string(),
+                    ));
+                }
+                Some(next) => current = next.clone(),
+                None => break,
+            }
+        }
+
+        // ── store (delegator_id_hex → delegate_id_hex) ────────────────────────
+        blockchain.vote_delegations.insert(delegator_hex.clone(), delegate_hex.clone());
+
+        create_json_response(json!({
+            "status": "success",
+            "delegator": delegator_hex,
+            "delegate": delegate_hex,
+        }))
+    }
+
+
     async fn submit_dao_registry_execution(
         &self,
         request: &ZhtpRequest,
@@ -2163,6 +2265,21 @@ impl ZhtpRequestHandler for DaoHandler {
             },
             (ZhtpMethod::Get, ["api", "v1", "dao", "emergency", "status"]) => {
                 self.handle_emergency_status().await.map_err(anyhow::Error::from)
+            },
+
+            // Voting power delegation (dao-5)
+            (ZhtpMethod::Post, ["api", "v1", "dao", "voting", "delegate"]) => {
+                self.handle_vote_delegate(&request).await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Delete, ["api", "v1", "dao", "voting", "delegate"]) => {
+                // Revoke delegation: treat as delegate to empty string.
+                let body = b"{\"delegate_did\":\"\"}";
+                let mut revoke_req = request.clone();
+                revoke_req.body = body.to_vec();
+                self.handle_vote_delegate(&revoke_req).await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Get, ["api", "v1", "dao", "voting-power", identity_id]) => {
+                self.handle_get_voting_power(identity_id).await.map_err(anyhow::Error::from)
             },
 
             _ => Ok(create_error_response(ZhtpStatus::NotFound, "DAO endpoint not found".to_string())),
