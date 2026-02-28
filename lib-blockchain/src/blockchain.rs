@@ -299,6 +299,9 @@ pub struct Blockchain {
     /// Delegation is **non-transitive**: if A→B and B→C, C does not receive A's power.
     #[serde(default)]
     pub vote_delegations: HashMap<String, String>,
+    /// Oracle protocol v1 consensus state (committee/config/finalized prices).
+    #[serde(default)]
+    pub oracle_state: crate::oracle::OracleState,
 }
 
 /// Validator information stored on-chain.
@@ -608,6 +611,7 @@ impl BlockchainV1 {
             treasury_epoch_start_balance: HashMap::new(),
             voting_power_mode: crate::dao::VotingPowerMode::default(),
             vote_delegations: HashMap::new(),
+            oracle_state: crate::oracle::OracleState::default(),
         }
     }
 }
@@ -1003,6 +1007,7 @@ impl BlockchainStorageV3 {
             // DAO Voting Power
             voting_power_mode: self.voting_power_mode,
             vote_delegations: self.vote_delegations,
+            oracle_state: crate::oracle::OracleState::default(),
         }
     }
 }
@@ -1120,6 +1125,7 @@ impl Blockchain {
             treasury_epoch_start_balance: HashMap::new(),
             voting_power_mode: crate::dao::VotingPowerMode::default(),
             vote_delegations: HashMap::new(),
+            oracle_state: crate::oracle::OracleState::default(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -10556,13 +10562,10 @@ mod oracle_storage_migration_tests {
     fn load_v3_file_applies_default_oracle_state() {
         let mut blockchain = Blockchain::default();
         blockchain.oracle_state.config.epoch_duration_secs = 999;
-        blockchain.oracle_state.finalized_prices.insert(
-            1,
-            crate::oracle::FinalizedOraclePrice {
-                epoch_id: 1,
-                sov_usd_price: 123_000_000,
-            },
-        );
+        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
+            epoch_id: 1,
+            sov_usd_price: 123_000_000,
+        });
 
         // Emulate pre-oracle v3 payload (without oracle fields).
         let storage_v3 = BlockchainStorageV3::from_blockchain(&blockchain);
@@ -10624,8 +10627,8 @@ impl Blockchain {
             recipient_wallet_id: String::new(),
             amount: 0,
         };
-        let params_bytes = serde_json::to_vec(&params)
-            .expect("TreasuryExecutionParams must serialize");
+        let params_bytes =
+            serde_json::to_vec(&params).expect("TreasuryExecutionParams must serialize");
         let tx = Transaction::new_dao_proposal(
             DaoProposalData {
                 proposal_id,
@@ -10676,7 +10679,9 @@ impl Blockchain {
     pub fn credit_dao_treasury_sov_for_test(&mut self, amount: u64) -> Result<()> {
         // Ensure the SOV token contract exists (Blockchain::new() skips this).
         self.ensure_sov_token_contract();
-        let treasury_wallet_id = self.dao_treasury_wallet_id.clone()
+        let treasury_wallet_id = self
+            .dao_treasury_wallet_id
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
         let id_bytes: [u8; 32] = hex::decode(&treasury_wallet_id)
             .map_err(|e| anyhow::anyhow!("Bad treasury wallet hex: {}", e))?
@@ -10684,9 +10689,12 @@ impl Blockchain {
             .map_err(|_| anyhow::anyhow!("Treasury wallet ID must be 32 bytes"))?;
         let pk = Self::wallet_key_for_sov(&id_bytes);
         let sov_id = crate::contracts::utils::generate_lib_token_id();
-        let token = self.token_contracts.get_mut(&sov_id)
+        let token = self
+            .token_contracts
+            .get_mut(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
-        token.credit_balance(&pk, amount)
+        token
+            .credit_balance(&pk, amount)
             .map_err(|e| anyhow::anyhow!("Treasury credit failed: {}", e))?;
         Ok(())
     }
@@ -10700,7 +10708,9 @@ impl Blockchain {
             .map_err(|_| anyhow::anyhow!("Wallet ID must be 32 bytes"))?;
         let pk = Self::wallet_key_for_sov(&id_bytes);
         let sov_id = crate::contracts::utils::generate_lib_token_id();
-        let token = self.token_contracts.get(&sov_id)
+        let token = self
+            .token_contracts
+            .get(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
         Ok(token.balance_of(&pk))
     }
@@ -10744,9 +10754,12 @@ impl Blockchain {
         // Credit SOV to the wallet's synthetic key.
         let pk = Self::wallet_key_for_sov(&wallet_id_bytes);
         let sov_id = crate::contracts::utils::generate_lib_token_id();
-        let token = self.token_contracts.get_mut(&sov_id)
+        let token = self
+            .token_contracts
+            .get_mut(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
-        token.credit_balance(&pk, amount)
+        token
+            .credit_balance(&pk, amount)
             .map_err(|e| anyhow::anyhow!("Identity SOV credit failed: {}", e))?;
         Ok(())
     }
