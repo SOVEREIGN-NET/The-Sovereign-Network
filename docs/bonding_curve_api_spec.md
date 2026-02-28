@@ -126,7 +126,6 @@ Purchase tokens from the bonding curve.
   "token_id": "a1b2c3d4e5f6...",
   "stable_paid": 100000000,
   "tokens_received": 950000000,
-  "auto_graduated": false,
   "tx_status": "confirmed"
 }
 ```
