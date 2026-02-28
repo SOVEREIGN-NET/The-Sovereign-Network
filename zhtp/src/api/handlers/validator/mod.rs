@@ -271,6 +271,7 @@ impl ValidatorHandler {
             // on update — the admission path cannot be changed after registration.
             admission_source: existing_validator.admission_source.clone(),
             governance_proposal_id: existing_validator.governance_proposal_id.clone(),
+            oracle_key_id: existing_validator.oracle_key_id,
         };
 
         // Update validator through blockchain

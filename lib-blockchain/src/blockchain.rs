@@ -293,6 +293,20 @@ pub struct Blockchain {
     #[serde(default)]
     pub emergency_expires_at: Option<u64>,
 
+    // ── Treasury Emergency Freeze (dao-7) ─────────────────────────────────
+    /// Whether the treasury is frozen (emergency freeze)
+    #[serde(default)]
+    pub treasury_frozen: bool,
+    /// Block height when treasury was frozen
+    #[serde(default)]
+    pub treasury_frozen_at: Option<u64>,
+    /// Block height at which treasury freeze expires
+    #[serde(default)]
+    pub treasury_freeze_expiry: Option<u64>,
+    /// Validator signatures that activated the freeze (DID strings)
+    #[serde(default)]
+    pub treasury_freeze_signatures: Vec<String>,
+
     // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
     /// Most recently computed decentralization snapshot.
     #[serde(default)]
@@ -420,6 +434,11 @@ pub struct ValidatorInfo {
     /// Optional governance proposal ID authorizing this validator.
     #[serde(default)]
     pub governance_proposal_id: Option<String>,
+    /// Oracle signer key ID (hash of dilithium_pk || kyber_pk) for oracle committee membership.
+    /// This is the key_id from lib_crypto::KeyPair and is used to identify the validator
+    /// in oracle attestations and slashing evidence.
+    #[serde(default)]
+    pub oracle_key_id: Option<[u8; 32]>,
 }
 
 /// UBI (Universal Basic Income) registry entry
@@ -645,6 +664,12 @@ impl BlockchainV1 {
             emergency_activated_by: None,
             emergency_expires_at: None,
 
+            // Treasury Emergency Freeze (dao-7)
+            treasury_frozen: false,
+            treasury_frozen_at: None,
+            treasury_freeze_expiry: None,
+            treasury_freeze_signatures: Vec::new(),
+
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
             phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
@@ -828,6 +853,16 @@ struct BlockchainStorageV3 {
     #[serde(default)]
     pub emergency_expires_at: Option<u64>,
 
+    // Treasury Emergency Freeze (dao-7)
+    #[serde(default)]
+    pub treasury_frozen: bool,
+    #[serde(default)]
+    pub treasury_frozen_at: Option<u64>,
+    #[serde(default)]
+    pub treasury_freeze_expiry: Option<u64>,
+    #[serde(default)]
+    pub treasury_freeze_signatures: Vec<String>,
+
     // DAO Phase Transitions (dao-3)
     #[serde(default)]
     pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
@@ -958,6 +993,12 @@ impl BlockchainStorageV3 {
             emergency_activated_at: bc.emergency_activated_at,
             emergency_activated_by: bc.emergency_activated_by.clone(),
             emergency_expires_at: bc.emergency_expires_at,
+
+            // Treasury Emergency Freeze (dao-7)
+            treasury_frozen: bc.treasury_frozen,
+            treasury_frozen_at: bc.treasury_frozen_at,
+            treasury_freeze_expiry: bc.treasury_freeze_expiry,
+            treasury_freeze_signatures: bc.treasury_freeze_signatures.clone(),
 
             // DAO Phase Transitions
             last_decentralization_snapshot: bc.last_decentralization_snapshot.clone(),
@@ -1097,6 +1138,12 @@ impl BlockchainStorageV3 {
             emergency_activated_by: self.emergency_activated_by,
             emergency_expires_at: self.emergency_expires_at,
 
+            // Treasury Emergency Freeze (dao-7)
+            treasury_frozen: self.treasury_frozen,
+            treasury_frozen_at: self.treasury_frozen_at,
+            treasury_freeze_expiry: self.treasury_freeze_expiry,
+            treasury_freeze_signatures: self.treasury_freeze_signatures,
+
             // DAO Phase Transitions
             last_decentralization_snapshot: self.last_decentralization_snapshot,
             phase_transition_config: self.phase_transition_config,
@@ -1205,6 +1252,12 @@ impl Blockchain {
             emergency_activated_at: None,
             emergency_activated_by: None,
             emergency_expires_at: None,
+
+            // Treasury Emergency Freeze (dao-7)
+            treasury_frozen: false,
+            treasury_frozen_at: None,
+            treasury_freeze_expiry: None,
+            treasury_freeze_signatures: Vec::new(),
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
@@ -1421,6 +1474,7 @@ impl Blockchain {
                                 slash_count: 0,
                                 admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
                                 governance_proposal_id: None,
+                                oracle_key_id: None,
                             };
                             blockchain.validator_registry.insert(
                                 validator_data.identity_id.clone(),
@@ -6190,6 +6244,11 @@ impl Blockchain {
             return Err(anyhow::anyhow!("Execution amount must be greater than zero"));
         }
 
+        // Check if treasury is frozen (dao-7 emergency freeze)
+        if self.treasury_frozen {
+            return Err(anyhow::anyhow!("Treasury is frozen by emergency freeze (dao-7)"));
+        }
+
         // 1. Get the proposal
         let proposal = self.get_dao_proposal(&proposal_id)
             .ok_or_else(|| anyhow::anyhow!("Proposal not found"))?;
@@ -6362,6 +6421,70 @@ impl Blockchain {
 
         info!("✅ DAO proposal {:?} executed (balance model), tx: {:?}", proposal_id, tx_hash);
         Ok(tx_hash)
+    }
+
+    // ============================================================================
+    // TREASURY EMERGENCY FREEZE (dao-7)
+    // ============================================================================
+
+    /// Activate emergency treasury freeze with ≥80% validator signatures (dao-7).
+    ///
+    /// Requires at least 80% of registered validators to sign. The freeze expires
+    /// automatically after `treasury_epoch_length_blocks` (default ~1 week).
+    /// Duplicate validator entries are deduplicated before counting.
+    pub fn activate_treasury_freeze(
+        &mut self,
+        validator_signatures: Vec<String>,
+        _reason: String,
+    ) -> Result<()> {
+        let validator_count = self.validator_registry.len();
+        if validator_count == 0 {
+            return Err(anyhow::anyhow!("No validators registered"));
+        }
+
+        // Deduplicate signatures and validate each signer is a registered validator
+        let unique_signers: std::collections::HashSet<String> = validator_signatures
+            .into_iter()
+            .filter(|did| self.validator_registry.contains_key(did))
+            .collect();
+
+        let valid_count = unique_signers.len();
+        let threshold = (validator_count * 8 + 9) / 10; // ceil(80%)
+
+        if valid_count < threshold {
+            return Err(anyhow::anyhow!(
+                "Insufficient validator signatures: {} valid ({} unique) / {} validators, need {} (80%)",
+                valid_count,
+                unique_signers.len(),
+                validator_count,
+                threshold
+            ));
+        }
+
+        self.treasury_frozen = true;
+        self.treasury_frozen_at = Some(self.height);
+        self.treasury_freeze_expiry = Some(self.height + self.treasury_epoch_length_blocks);
+        self.treasury_freeze_signatures = unique_signers.into_iter().collect();
+
+        info!(
+            "🚨 Treasury emergency freeze activated at height {} (expires at {})",
+            self.height,
+            self.treasury_freeze_expiry.unwrap()
+        );
+        Ok(())
+    }
+
+    /// Check and auto-expire treasury freeze if past expiry height.
+    pub fn check_treasury_freeze_expiry(&mut self) {
+        if let Some(expiry) = self.treasury_freeze_expiry {
+            if self.height >= expiry && self.treasury_frozen {
+                self.treasury_frozen = false;
+                self.treasury_freeze_signatures.clear();
+                self.treasury_frozen_at = None;
+                self.treasury_freeze_expiry = None;
+                info!("🔓 Treasury freeze auto-expired at height {}", self.height);
+            }
+        }
     }
 
     // ============================================================================
@@ -6654,6 +6777,9 @@ impl Blockchain {
                 }
             }
         }
+
+        // Auto-expire treasury freeze (dao-7)
+        self.check_treasury_freeze_expiry();
 
         // Periodic phase-transition check every 1000 blocks (dao-3)
         if self.height > 0 && self.height % 1_000 == 0 {
