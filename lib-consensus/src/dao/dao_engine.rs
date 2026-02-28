@@ -456,7 +456,12 @@ impl DaoEngine {
                 | GovernanceParameterValue::BlockchainTargetTimespan(_)
                 | GovernanceParameterValue::TxFeeBase(_)
                 | GovernanceParameterValue::TxFeeBytesPerSov(_)
-                | GovernanceParameterValue::TxFeeWitnessCap(_) => {
+                | GovernanceParameterValue::TxFeeWitnessCap(_)
+                | GovernanceParameterValue::OracleCommitteeMembers(_)
+                | GovernanceParameterValue::OracleEpochDurationSecs(_)
+                | GovernanceParameterValue::OracleMaxSourceAgeSecs(_)
+                | GovernanceParameterValue::OracleMaxDeviationBps(_)
+                | GovernanceParameterValue::OracleMaxPriceStalenessEpochs(_) => {
                     // No-op here: these are applied via the DifficultyManager pathway
                     // described in the comment above, not via ConsensusConfig mutation
                 }
@@ -591,6 +596,37 @@ impl DaoEngine {
                 GovernanceParameterValue::TxFeeWitnessCap(value) => {
                     if *value == 0 {
                         return Err(anyhow::anyhow!("Tx witness cap must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::OracleCommitteeMembers(members) => {
+                    if members.is_empty() {
+                        return Err(anyhow::anyhow!(
+                            "Oracle committee members must not be empty"
+                        ));
+                    }
+                    let unique_count = members
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len();
+                    if unique_count != members.len() {
+                        return Err(anyhow::anyhow!(
+                            "Oracle committee members must be unique"
+                        ));
+                    }
+                }
+                GovernanceParameterValue::OracleEpochDurationSecs(value)
+                | GovernanceParameterValue::OracleMaxSourceAgeSecs(value)
+                | GovernanceParameterValue::OracleMaxPriceStalenessEpochs(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Oracle parameter must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::OracleMaxDeviationBps(value) => {
+                    if *value > 10_000 {
+                        return Err(anyhow::anyhow!(
+                            "Oracle max deviation bps must be <= 10000"
+                        ));
                     }
                 }
             }

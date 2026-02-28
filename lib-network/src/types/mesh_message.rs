@@ -65,6 +65,8 @@ pub enum MessageType {
     IdentityEnvelope = 30,
     /// Identity delivery acknowledgement (store-and-forward)
     IdentityDeliveryAck = 31,
+    /// Oracle price attestation gossip payload.
+    OracleAttestation = 32,
 }
 
 /// Message envelope for multi-hop routing
@@ -654,6 +656,13 @@ pub enum ZhtpMeshMessage {
 
     /// Acknowledgement for store-and-forward delivery
     IdentityDeliveryAck(IdentityDeliveryAck),
+
+    /// Oracle attestation payload.
+    ///
+    /// Contains canonical serialized attestation bytes produced by oracle logic.
+    OracleAttestation {
+        payload: Vec<u8>,
+    },
 }
 
 /// Acknowledgement for store-and-forward message delivery
@@ -771,6 +780,9 @@ impl ZhtpMeshMessage {
             },
             Self::IdentityDeliveryAck(ack) => {
                 (MessageType::IdentityDeliveryAck, bincode::serialize(ack)?)
+            },
+            Self::OracleAttestation { payload } => {
+                (MessageType::OracleAttestation, bincode::serialize(payload)?)
             },
         };
         Ok((msg_type, payload))
@@ -929,6 +941,10 @@ impl ZhtpMeshMessage {
             MessageType::IdentityDeliveryAck => {
                 let ack: IdentityDeliveryAck = bincode::deserialize(payload)?;
                 Self::IdentityDeliveryAck(ack)
+            },
+            MessageType::OracleAttestation => {
+                let payload: Vec<u8> = bincode::deserialize(payload)?;
+                Self::OracleAttestation { payload }
             },
         };
         Ok(message)
@@ -1317,6 +1333,30 @@ mod tests {
                 assert_eq!(inner.message_id, ack.message_id);
                 assert_eq!(inner.device_id, ack.device_id);
                 assert!(inner.retain_until_ttl);
+            }
+            _ => panic!("Wrong message type after deserialization"),
+        }
+    }
+
+    #[test]
+    fn test_oracle_attestation_serialization() {
+        let origin = PublicKey::new(vec![9, 9, 9]);
+        let dest = PublicKey::new(vec![8, 8, 8]);
+        let payload = vec![1u8, 2, 3, 5, 8, 13];
+
+        let msg = ZhtpMeshMessage::OracleAttestation {
+            payload: payload.clone(),
+        };
+        let envelope = MeshMessageEnvelope::from_message(2001, origin, dest, msg)
+            .expect("Failed to create envelope");
+        assert_eq!(envelope.message_type, MessageType::OracleAttestation);
+
+        let bytes = envelope.to_bytes().expect("serialize envelope");
+        let decoded = MeshMessageEnvelope::from_bytes(&bytes).expect("deserialize envelope");
+        let reconstructed = decoded.deserialize_message().expect("decode message");
+        match reconstructed {
+            ZhtpMeshMessage::OracleAttestation { payload: inner } => {
+                assert_eq!(inner, payload);
             }
             _ => panic!("Wrong message type after deserialization"),
         }

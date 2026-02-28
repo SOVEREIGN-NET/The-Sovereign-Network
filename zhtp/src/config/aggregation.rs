@@ -1224,6 +1224,7 @@ mod tests {
             enable_bluetooth: false,  // POLICY: Bluetooth disabled
             enable_mdns: true,
             quic_priority: 1,
+            gateway_enabled: false,
         };
 
         let requested = vec![
@@ -1269,6 +1270,7 @@ mod tests {
             enable_bluetooth: true,  // POLICY: Bluetooth enabled
             enable_mdns: true,
             quic_priority: 1,
+            gateway_enabled: false,
         };
 
         let requested = vec![
@@ -1301,6 +1303,7 @@ mod tests {
             enable_bluetooth: true,
             enable_mdns: true,
             quic_priority: 1,
+            gateway_enabled: false,
         };
 
         let requested = vec![
@@ -1339,6 +1342,7 @@ mod tests {
             enable_bluetooth: false,
             enable_mdns: true,
             quic_priority: 1,
+            gateway_enabled: false,
         };
 
         let requested = vec![];
