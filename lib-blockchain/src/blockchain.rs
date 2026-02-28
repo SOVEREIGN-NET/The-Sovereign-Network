@@ -4377,13 +4377,16 @@ impl Blockchain {
         evidence: &crate::oracle::OracleSlashingEvidence,
         current_epoch: u64,
     ) -> Result<crate::oracle::OracleSlashingOutcome> {
-        // Build a map from oracle_key_id to consensus_key for signature verification
-        // The oracle_key_id is the key_id from KeyPair (hash of dilithium_pk || kyber_pk)
+        // Build a map from validator key_id to consensus_key for signature verification.
+        // Uses oracle_key_id if available, otherwise falls back to hash of consensus_key.
+        // This must match the identifier used in oracle committee membership.
         let signer_pubkeys: HashMap<[u8; 32], Vec<u8>> = self
             .validator_registry
             .values()
             .filter_map(|info| {
-                let key_id = info.oracle_key_id?;
+                let key_id = info.oracle_key_id.unwrap_or_else(|| {
+                    lib_crypto::hash_blake3(&info.consensus_key)
+                });
                 Some((key_id, info.consensus_key.clone()))
             })
             .collect();
@@ -4396,10 +4399,10 @@ impl Blockchain {
             .map_err(|e| anyhow::anyhow!("Oracle slashing evidence rejected: {:?}", e))?;
 
         if let crate::oracle::OracleSlashingOutcome::Applied(record) = &outcome {
-            // Find the validator by matching oracle_key_id
+            // Find the validator by matching the same key_id used for committee membership.
+            // Uses oracle_key_id if set, otherwise falls back to hash of consensus_key.
             for validator in self.validator_registry.values_mut() {
                 let validator_key_id = validator.oracle_key_id.unwrap_or_else(|| {
-                    // Fallback for legacy validators without oracle_key_id
                     lib_crypto::hash_blake3(&validator.consensus_key)
                 });
                 if validator_key_id == record.offender {
