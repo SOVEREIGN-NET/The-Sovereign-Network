@@ -26,6 +26,8 @@ pub struct BlockchainComponent {
     user_wallet: Arc<RwLock<Option<crate::runtime::did_startup::WalletStartupResult>>>,
     environment: crate::config::Environment,
     bootstrap_validators: Arc<RwLock<Vec<BootstrapValidator>>>,
+    /// QUIC peer addresses (e.g. "77.42.37.161:9334") used by observer sync loop
+    bootstrap_peers: Vec<String>,
     joined_existing_network: bool,
     validator_manager: Arc<RwLock<Option<Arc<RwLock<ValidatorManager>>>>>,
     node_identity: Arc<RwLock<Option<IdentityId>>>,
@@ -51,6 +53,7 @@ impl BlockchainComponent {
             user_wallet: Arc::new(RwLock::new(None)),
             environment: crate::config::Environment::Development,
             bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
+            bootstrap_peers: Vec::new(),
             joined_existing_network: false,
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
@@ -78,6 +81,7 @@ impl BlockchainComponent {
             user_wallet: Arc::new(RwLock::new(user_wallet)),
             environment: crate::config::Environment::Development,
             bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
+            bootstrap_peers: Vec::new(),
             joined_existing_network: false,
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
@@ -101,6 +105,7 @@ impl BlockchainComponent {
             user_wallet: Arc::new(RwLock::new(user_wallet)),
             environment,
             bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
+            bootstrap_peers: Vec::new(),
             joined_existing_network: false,
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
@@ -115,6 +120,7 @@ impl BlockchainComponent {
         user_wallet: Option<crate::runtime::did_startup::WalletStartupResult>,
         environment: crate::config::Environment,
         bootstrap_validators: Vec<BootstrapValidator>,
+        bootstrap_peers: Vec<String>,
         joined_existing_network: bool,
     ) -> Self {
         Self {
@@ -126,6 +132,7 @@ impl BlockchainComponent {
             user_wallet: Arc::new(RwLock::new(user_wallet)),
             environment,
             bootstrap_validators: Arc::new(RwLock::new(bootstrap_validators)),
+            bootstrap_peers,
             joined_existing_network,
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
@@ -552,6 +559,146 @@ impl BlockchainComponent {
             }
         }
     }
+
+    /// Periodic catch-up loop for Observer nodes.
+    ///
+    /// Runs every 30 seconds. For each bootstrap peer, opens a QUIC connection,
+    /// checks the peer's chain tip, and if the peer is ahead fetches missing blocks
+    /// in batches and applies them via `add_block_from_network_with_persistence`.
+    async fn observer_sync_loop(bootstrap_peers: Vec<String>) {
+        use lib_network::client::{ZhtpClient, ZhtpClientConfig};
+        use serde::Deserialize;
+
+        // Brief initial delay so the rest of the runtime finishes wiring up.
+        tokio::time::sleep(Duration::from_secs(15)).await;
+
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+
+            let bc_arc = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+
+            let local_height = bc_arc.read().await.height;
+
+            // Try each bootstrap peer until one succeeds.
+            'peers: for peer_quic_addr in &bootstrap_peers {
+                // Create a throwaway identity for the QUIC handshake.
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let temp_id = match lib_identity::ZhtpIdentity::new_unified(
+                    lib_identity::IdentityType::Device,
+                    None, None,
+                    &format!("observer-sync-{}", ts),
+                    None,
+                ) {
+                    Ok(id) => id,
+                    Err(e) => { warn!("observer_sync: failed to create temp identity: {}", e); continue; }
+                };
+
+                let cfg = ZhtpClientConfig { allow_bootstrap: true };
+                let mut client = match ZhtpClient::new_bootstrap_with_config(temp_id, cfg).await {
+                    Ok(c) => c,
+                    Err(e) => { warn!("observer_sync: failed to create QUIC client: {}", e); continue; }
+                };
+
+                if let Err(e) = client.connect(peer_quic_addr).await {
+                    debug!("observer_sync: could not connect to {}: {}", peer_quic_addr, e);
+                    continue;
+                }
+
+                // Fetch peer's chain tip.
+                #[derive(Deserialize)]
+                struct ChainTip { height: u64 }
+
+                let tip_resp = match tokio::time::timeout(
+                    Duration::from_secs(10),
+                    client.get("/api/v1/blockchain/tip"),
+                ).await {
+                    Ok(Ok(r)) => r,
+                    Ok(Err(e)) => { warn!("observer_sync: tip request failed for {}: {}", peer_quic_addr, e); continue; }
+                    Err(_) => { warn!("observer_sync: tip request timed out for {}", peer_quic_addr); continue; }
+                };
+
+                if !tip_resp.is_success() {
+                    warn!("observer_sync: peer {} returned non-success for /tip", peer_quic_addr);
+                    continue;
+                }
+
+                let peer_tip: ChainTip = match serde_json::from_slice(&tip_resp.body) {
+                    Ok(t) => t,
+                    Err(e) => { warn!("observer_sync: failed to parse tip JSON: {}", e); continue; }
+                };
+
+                if peer_tip.height <= local_height {
+                    debug!("observer_sync: peer {} at height {}, local={}, no gap", peer_quic_addr, peer_tip.height, local_height);
+                    break 'peers; // We're caught up; no need to try other peers.
+                }
+
+                info!("📥 Observer gap-fill: peer {} height={}, local={}, fetching {} block(s)",
+                      peer_quic_addr, peer_tip.height, local_height, peer_tip.height - local_height);
+
+                // Fetch and apply missing blocks in batches of 100.
+                let mut current = local_height;
+                let target = peer_tip.height;
+
+                'batches: loop {
+                    if current >= target { break; }
+
+                    let from = current + 1;
+                    let to   = std::cmp::min(from + 99, target);
+
+                    let path = format!("/api/v1/blockchain/blocks/{}/{}", from, to);
+                    let blocks_resp = match tokio::time::timeout(
+                        Duration::from_secs(30),
+                        client.get(&path),
+                    ).await {
+                        Ok(Ok(r)) => r,
+                        Ok(Err(e)) => { warn!("observer_sync: blocks request failed: {}", e); break 'batches; }
+                        Err(_)    => { warn!("observer_sync: blocks request timed out"); break 'batches; }
+                    };
+
+                    if !blocks_resp.is_success() {
+                        warn!("observer_sync: peer returned error for blocks {}-{}", from, to);
+                        break 'batches;
+                    }
+
+                    let blocks: Vec<lib_blockchain::Block> = match bincode::deserialize(&blocks_resp.body) {
+                        Ok(b) => b,
+                        Err(e) => { warn!("observer_sync: failed to deserialize blocks: {}", e); break 'batches; }
+                    };
+
+                    if blocks.is_empty() {
+                        warn!("observer_sync: peer returned empty block list for {}-{}", from, to);
+                        break 'batches;
+                    }
+
+                    info!("📥 Applying {} block(s) ({}-{}) from {}", blocks.len(), from, to, peer_quic_addr);
+
+                    let mut bc = bc_arc.write().await;
+                    let mut applied: u64 = 0;
+                    for block in blocks {
+                        let h = block.header.height;
+                        match bc.add_block_from_network_with_persistence(block).await {
+                            Ok(()) => { applied += 1; current = h; }
+                            Err(e) => { warn!("observer_sync: failed to apply block {}: {}", h, e); break 'batches; }
+                        }
+                    }
+                    drop(bc);
+
+                    info!("✅ observer_sync: applied {} block(s), local height now {}", applied, current);
+                    if applied == 0 { break 'batches; }
+                }
+
+                // Successfully synced (or gap is filled); stop trying other peers.
+                break 'peers;
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -634,7 +781,17 @@ impl Component for BlockchainComponent {
                 *self.node_role,
                 role_desc
             );
-            // Node starts successfully but skips mining service
+
+            // Observer nodes run a periodic sync loop to catch up when behind validators.
+            // This handles the gap created by startup backfill blocks on the validator.
+            if !self.bootstrap_peers.is_empty() {
+                let peers = self.bootstrap_peers.clone();
+                tokio::spawn(Self::observer_sync_loop(peers));
+                info!("✓ Observer sync loop started ({} bootstrap peer(s))", self.bootstrap_peers.len());
+            } else {
+                info!("⚠️ No bootstrap peers configured — observer sync loop disabled");
+            }
+
             *self.status.write().await = ComponentStatus::Running;
             return Ok(());
         }
