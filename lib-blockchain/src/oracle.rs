@@ -191,6 +191,10 @@ impl OracleConfig {
     pub fn price_scale(&self) -> u128 {
         self.price_scale
     }
+
+    pub fn max_price_staleness_epochs(&self) -> u64 {
+        self.max_price_staleness_epochs
+    }
 }
 
 /// Pending governance committee update, activated at an epoch boundary.
@@ -573,6 +577,14 @@ impl OracleState {
 
         Ok(OracleAttestationAdmission::Accepted)
     }
+
+    pub fn latest_finalized_epoch(&self) -> Option<u64> {
+        self.finalized_prices.keys().max().copied()
+    }
+
+    pub fn config(&self) -> &OracleConfig {
+        &self.config
+    }
 }
 
 fn normalize_members(mut members: Vec<[u8; 32]>) -> Vec<[u8; 32]> {
@@ -654,7 +666,9 @@ mod tests {
             members: vec![[3u8; 32], [1u8; 32], [3u8; 32], [2u8; 32]],
         };
         let committee = OracleCommitteeState::new(vec![], Some(pending));
-        let pending = committee.pending_update().expect("pending update must be set");
+        let pending = committee
+            .pending_update()
+            .expect("pending update must be set");
         assert_eq!(pending.members, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
     }
 
