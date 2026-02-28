@@ -524,6 +524,9 @@ pub struct ConsensusComponent {
     /// This is IMMUTABLE and set at construction time based on configuration
     /// The role cannot change after the component is created
     node_role: Arc<NodeRole>,
+    /// Bootstrap validators pre-seeded from config for initial proposer rotation.
+    /// These are replaced by on-chain ValidatorInfo once blocks are mined.
+    bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
 }
 
 // Manual Debug implementation because ConsensusEngine doesn't derive Debug
@@ -541,10 +544,66 @@ impl std::fmt::Debug for ConsensusComponent {
     }
 }
 
+/// Derive a deterministic 32-byte key from a validator identity ID and a domain tag.
+/// Used to pre-seed ValidatorManager before on-chain ValidatorRegistration txs are mined.
+fn derive_key_from_identity(identity_id: &str, domain: &[u8]) -> Vec<u8> {
+    let mut input = Vec::with_capacity(identity_id.len() + domain.len());
+    input.extend_from_slice(identity_id.as_bytes());
+    input.extend_from_slice(domain);
+    lib_crypto::hash_blake3(&input).to_vec()
+}
+
+/// Adapter that implements lib-consensus ValidatorInfo for bootstrap config entries.
+/// Uses deterministic key derivation so no keys need to be stored in config files.
+struct BootstrapValidatorAdapter {
+    identity_id: String,
+    stake: u64,
+    storage_provided: u64,
+    commission_rate: u8,
+}
+
+impl lib_consensus::validators::ValidatorInfo for BootstrapValidatorAdapter {
+    fn identity_id(&self) -> lib_crypto::Hash {
+        let identity_hex = self.identity_id
+            .strip_prefix("did:zhtp:")
+            .unwrap_or(&self.identity_id);
+        if let Ok(bytes) = hex::decode(identity_hex) {
+            if bytes.len() >= 32 {
+                return lib_crypto::Hash::from_bytes(&bytes[..32]);
+            }
+        }
+        lib_crypto::Hash(lib_crypto::hash_blake3(self.identity_id.as_bytes()))
+    }
+
+    fn stake(&self) -> u64 { self.stake }
+    fn storage_provided(&self) -> u64 { self.storage_provided }
+
+    fn consensus_key(&self) -> Vec<u8> {
+        derive_key_from_identity(&self.identity_id, b"consensus")
+    }
+    fn networking_key(&self) -> Vec<u8> {
+        derive_key_from_identity(&self.identity_id, b"networking")
+    }
+    fn rewards_key(&self) -> Vec<u8> {
+        derive_key_from_identity(&self.identity_id, b"rewards")
+    }
+    fn commission_rate(&self) -> u8 { self.commission_rate }
+}
+
 impl ConsensusComponent {
     /// Create a new ConsensusComponent with the specified node role
     /// CRITICAL: node_role must be derived from configuration before calling this
     pub fn new(environment: crate::config::Environment, node_role: NodeRole, min_stake: u64) -> Self {
+        Self::new_with_bootstrap_validators(environment, node_role, min_stake, Vec::new())
+    }
+
+    /// Create a new ConsensusComponent with bootstrap validators pre-seeded.
+    pub fn new_with_bootstrap_validators(
+        environment: crate::config::Environment,
+        node_role: NodeRole,
+        min_stake: u64,
+        bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
+    ) -> Self {
         let development_mode = matches!(environment, crate::config::Environment::Development);
 
         let validator_manager = ValidatorManager::new_with_development_mode(
@@ -564,10 +623,11 @@ impl ConsensusComponent {
             local_validator_identity: Arc::new(RwLock::new(None)),
             local_validator_keypair: Arc::new(RwLock::new(None)),
             node_role: Arc::new(node_role),
+            bootstrap_validators,
         }
     }
 
-    #[deprecated = "Use new(environment, node_role) instead to properly initialize node role from config"]
+    #[deprecated = "Use new_with_bootstrap_validators(environment, node_role, min_stake, validators) instead"]
     pub fn new_deprecated(environment: crate::config::Environment) -> Self {
         Self::new(environment, NodeRole::Observer, 0)
     }
@@ -657,6 +717,45 @@ impl ConsensusComponent {
     
     pub async fn get_validator_manager(&self) -> Arc<RwLock<ValidatorManager>> {
         self.validator_manager.clone()
+    }
+
+    /// Pre-seed the ValidatorManager from `bootstrap_validators` config entries.
+    ///
+    /// This runs before on-chain ValidatorRegistration transactions are mined, giving
+    /// each node knowledge of all expected validators so proposer rotation can begin
+    /// immediately (preventing forks from simultaneous mining).
+    ///
+    /// Keys are derived deterministically from identity_id — no keys stored in config.
+    /// When `sync_validators_from_blockchain()` runs after blocks are mined, real on-chain
+    /// keys will replace these bootstrap entries.
+    async fn seed_from_bootstrap_validators(&self) {
+        if self.bootstrap_validators.is_empty() {
+            return;
+        }
+
+        let adapters: Vec<BootstrapValidatorAdapter> = self.bootstrap_validators
+            .iter()
+            .map(|bv| BootstrapValidatorAdapter {
+                identity_id: bv.identity_id.clone(),
+                stake: bv.stake.max(1), // ensure non-zero for admission
+                storage_provided: bv.storage_provided,
+                commission_rate: (bv.commission_rate.min(100)) as u8,
+            })
+            .collect();
+
+        let count = adapters.len();
+        let mut vm = self.validator_manager.write().await;
+        match vm.sync_from_validator_list(adapters) {
+            Ok((added, skipped)) => {
+                info!(
+                    "🌱 Pre-seeded ValidatorManager with {} bootstrap validator(s) ({} added, {} already present)",
+                    count, added, skipped
+                );
+            }
+            Err(e) => {
+                warn!("Failed to seed ValidatorManager from bootstrap config: {}", e);
+            }
+        }
     }
 }
 
@@ -854,7 +953,12 @@ impl Component for ConsensusComponent {
         }
 
         info!("✓ Node role {:?} can validate - starting consensus engine", *self.node_role);
-        
+
+        // Pre-seed ValidatorManager from bootstrap_validators config.
+        // This enables proposer rotation before on-chain ValidatorRegistration txs are mined,
+        // preventing simultaneous mining / fork races on startup.
+        self.seed_from_bootstrap_validators().await;
+
         let mut config = ConsensusConfig::default();
 
         // Keep this node's consensus parameters aligned with zhtp configuration.
@@ -1048,6 +1152,78 @@ impl Component for ConsensusComponent {
                 }
             }
         });
+
+        // Spawn periodic validator re-sync background task.
+        // Every 10 s, refresh ValidatorManager from blockchain.validator_registry so
+        // newly-mined ValidatorRegistration transactions are picked up without restart.
+        {
+            let blockchain_slot = self.blockchain.clone();
+            let validator_manager = self.validator_manager.clone();
+            let consensus_engine = self.consensus_engine.clone();
+            let local_id = self.local_validator_identity.clone();
+            let local_kp = self.local_validator_keypair.clone();
+            let can_validate = self.node_role.can_validate();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(10));
+                interval.tick().await; // skip first immediate tick
+                loop {
+                    interval.tick().await;
+                    let slot = blockchain_slot.read().await;
+                    let blockchain_arc = match slot.as_ref() {
+                        Some(bc) => bc.clone(),
+                        None => continue,
+                    };
+                    drop(slot);
+
+                    // Clone validators out of the read guard so the guard can be dropped
+                    let active_validators: Vec<lib_blockchain::ValidatorInfo> = {
+                        let bc = blockchain_arc.read().await;
+                        bc.get_active_validators()
+                            .into_iter()
+                            .map(|v| v.clone())
+                            .collect()
+                    };
+
+                    if active_validators.is_empty() {
+                        continue;
+                    }
+
+                    let adapters: Vec<BlockchainValidatorAdapter> = active_validators
+                        .iter()
+                        .map(|v| BlockchainValidatorAdapter(v.clone()))
+                        .collect();
+
+                    let result = {
+                        let mut vm = validator_manager.write().await;
+                        vm.sync_from_validator_list(adapters)
+                    };
+                    match result {
+                        Ok((added, _)) if added > 0 => {
+                            info!("🔄 Periodic validator sync: {} new validator(s) added from blockchain", added);
+                            // Also sync into running consensus engine
+                            let mut engine_guard = consensus_engine.write().await;
+                            if let Some(engine) = engine_guard.as_mut() {
+                                let adapters2: Vec<BlockchainValidatorAdapter> = active_validators
+                                    .iter()
+                                    .map(|v| BlockchainValidatorAdapter(v.clone()))
+                                    .collect();
+                                if let Err(e) = engine.sync_validators_from_list(adapters2) {
+                                    warn!("Periodic consensus engine validator sync failed: {}", e);
+                                } else if can_validate {
+                                    if let Some(id) = local_id.read().await.clone() {
+                                        let _ = engine.set_local_validator_identity(id);
+                                        if let Some(kp) = local_kp.read().await.clone() {
+                                            let _ = engine.set_validator_keypair(kp);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            });
+        }
 
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
