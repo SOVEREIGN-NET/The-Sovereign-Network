@@ -353,6 +353,11 @@ pub struct Blockchain {
     /// Block height at which the Bootstrap Council was dissolved (on Phase 2 entry).
     #[serde(default)]
     pub council_dissolved_at: Option<u64>,
+
+    // ── Oracle Protocol v1 ─────────────────────────────────────────────────
+    /// Oracle state for price attestation and finalization
+    #[serde(default)]
+    pub oracle_state: crate::oracle::OracleState,
 }
 
 /// Validator information stored on-chain.
@@ -690,6 +695,9 @@ impl BlockchainV1 {
             // DAO Full DAO
             phase2_execution_delay_blocks: default_phase2_delay(),
             council_dissolved_at: None,
+
+            // Oracle Protocol v1
+            oracle_state: crate::oracle::OracleState::default(),
         }
     }
 }
@@ -1164,6 +1172,9 @@ impl BlockchainStorageV3 {
             // DAO Full DAO
             phase2_execution_delay_blocks: self.phase2_execution_delay_blocks,
             council_dissolved_at: self.council_dissolved_at,
+
+            // Oracle Protocol v1
+            oracle_state: crate::oracle::OracleState::default(),
         }
     }
 }
@@ -1279,6 +1290,9 @@ impl Blockchain {
             // DAO Full DAO
             phase2_execution_delay_blocks: default_phase2_delay(),
             council_dissolved_at: None,
+
+            // Oracle Protocol v1
+            oracle_state: crate::oracle::OracleState::default(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;

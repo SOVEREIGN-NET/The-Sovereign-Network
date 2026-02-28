@@ -363,8 +363,13 @@ impl MeshMessageHandler {
                 }
             },
             ZhtpMeshMessage::OracleAttestation { payload } => {
-                // Oracle attestation propagation is transport-wired here; consensus
-                // admission/finalization is handled in lib-blockchain oracle state.
+                // TODO: Forward attestation to blockchain layer for processing.
+                // Currently, attestations are only logged at the network layer.
+                // The expected wiring is:
+                // 1. Deserialize attestation from payload (OraclePriceAttestation)
+                // 2. Forward to Blockchain::oracle_state.process_attestation() 
+                //    via a channel or direct call from the consensus/gossip layer.
+                // Consensus admission/finalization logic lives in lib-blockchain/src/oracle.rs.
                 debug!(
                     "Received OracleAttestation payload from peer {:?} ({} bytes)",
                     hex::encode(&sender.key_id[0..8.min(sender.key_id.len())]),
