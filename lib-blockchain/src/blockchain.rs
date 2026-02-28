@@ -299,9 +299,6 @@ pub struct Blockchain {
     /// Delegation is **non-transitive**: if A→B and B→C, C does not receive A's power.
     #[serde(default)]
     pub vote_delegations: HashMap<String, String>,
-    /// Oracle protocol v1 consensus state (committee/config/finalized prices).
-    #[serde(default)]
-    pub oracle_state: crate::oracle::OracleState,
 }
 
 /// Validator information stored on-chain.
@@ -383,6 +380,11 @@ pub struct ValidatorInfo {
     /// Optional governance proposal ID authorizing this validator.
     #[serde(default)]
     pub governance_proposal_id: Option<String>,
+    /// Oracle signer key ID (hash of dilithium_pk || kyber_pk) for oracle committee membership.
+    /// This is the key_id from lib_crypto::KeyPair and is used to identify the validator
+    /// in oracle attestations and slashing evidence.
+    #[serde(default)]
+    pub oracle_key_id: Option<[u8; 32]>,
 }
 
 /// UBI (Universal Basic Income) registry entry
@@ -611,7 +613,6 @@ impl BlockchainV1 {
             treasury_epoch_start_balance: HashMap::new(),
             voting_power_mode: crate::dao::VotingPowerMode::default(),
             vote_delegations: HashMap::new(),
-            oracle_state: crate::oracle::OracleState::default(),
         }
     }
 }
@@ -1007,7 +1008,6 @@ impl BlockchainStorageV3 {
             // DAO Voting Power
             voting_power_mode: self.voting_power_mode,
             vote_delegations: self.vote_delegations,
-            oracle_state: crate::oracle::OracleState::default(),
         }
     }
 }
@@ -1125,7 +1125,6 @@ impl Blockchain {
             treasury_epoch_start_balance: HashMap::new(),
             voting_power_mode: crate::dao::VotingPowerMode::default(),
             vote_delegations: HashMap::new(),
-            oracle_state: crate::oracle::OracleState::default(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -1321,6 +1320,7 @@ impl Blockchain {
                                 slash_count: 0,
                                 admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
                                 governance_proposal_id: None,
+                                oracle_key_id: None,
                             };
                             blockchain.validator_registry.insert(
                                 validator_data.identity_id.clone(),
@@ -4377,19 +4377,16 @@ impl Blockchain {
         evidence: &crate::oracle::OracleSlashingEvidence,
         current_epoch: u64,
     ) -> Result<crate::oracle::OracleSlashingOutcome> {
-        const DILITHIUM5_PK_LEN: usize = 2592;
-        let signer_pubkeys = self
+        // Build a map from oracle_key_id to consensus_key for signature verification
+        // The oracle_key_id is the key_id from KeyPair (hash of dilithium_pk || kyber_pk)
+        let signer_pubkeys: HashMap<[u8; 32], Vec<u8>> = self
             .validator_registry
             .values()
             .filter_map(|info| {
-                if info.consensus_key.len() < DILITHIUM5_PK_LEN {
-                    return None;
-                }
-                let signer_key_id = lib_crypto::hash_blake3(&info.consensus_key);
-                let signer_pubkey = info.consensus_key[0..DILITHIUM5_PK_LEN].to_vec();
-                Some((signer_key_id, signer_pubkey))
+                let key_id = info.oracle_key_id?;
+                Some((key_id, info.consensus_key.clone()))
             })
-            .collect::<HashMap<[u8; 32], Vec<u8>>>();
+            .collect();
 
         let outcome = self
             .oracle_state
@@ -4399,9 +4396,13 @@ impl Blockchain {
             .map_err(|e| anyhow::anyhow!("Oracle slashing evidence rejected: {:?}", e))?;
 
         if let crate::oracle::OracleSlashingOutcome::Applied(record) = &outcome {
+            // Find the validator by matching oracle_key_id
             for validator in self.validator_registry.values_mut() {
-                let key_id = lib_crypto::hash_blake3(&validator.consensus_key);
-                if key_id == record.offender {
+                let validator_key_id = validator.oracle_key_id.unwrap_or_else(|| {
+                    // Fallback for legacy validators without oracle_key_id
+                    lib_crypto::hash_blake3(&validator.consensus_key)
+                });
+                if validator_key_id == record.offender {
                     let slash = ((validator.stake as u128)
                         .saturating_mul(record.slash_bps as u128)
                         / 10_000) as u64;
@@ -4415,6 +4416,19 @@ impl Blockchain {
                     if validator.stake == 0 {
                         validator.status = "slashed".to_string();
                     }
+                    
+                    // Schedule committee removal at next epoch boundary
+                    let _ = self.oracle_state.schedule_committee_update(
+                        self.oracle_state
+                            .committee
+                            .members()
+                            .iter()
+                            .filter(|m| **m != record.offender)
+                            .copied()
+                            .collect(),
+                        current_epoch,
+                    );
+                    
                     break;
                 }
             }

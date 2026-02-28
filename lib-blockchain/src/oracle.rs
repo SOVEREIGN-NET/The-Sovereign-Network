@@ -14,6 +14,56 @@ pub const ORACLE_PRICE_SCALE: u128 = 100_000_000;
 /// Domain separator for oracle attestation signatures.
 pub const ORACLE_ATTESTATION_DOMAIN: &str = "SOVN_ORACLE_V1";
 
+/// Basis points for oracle slashing penalty (5%).
+pub const ORACLE_SLASH_BPS: u32 = 500;
+
+/// Slashing reason for oracle misbehavior.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum OracleSlashingReason {
+    /// Double signing conflicting prices for the same epoch.
+    DoubleSign,
+}
+
+/// Evidence of oracle misbehavior.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum OracleSlashingEvidence {
+    /// Two conflicting attestations signed by the same validator for the same epoch.
+    DoubleSign {
+        first: OraclePriceAttestation,
+        second: OraclePriceAttestation,
+    },
+}
+
+/// Outcome of applying slashing evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OracleSlashingOutcome {
+    /// Evidence was applied, offender was slashed.
+    Applied(OracleSlashRecord),
+    /// Evidence was already processed (duplicate).
+    DuplicateEvidence { epoch_id: u64, offender: [u8; 32] },
+    /// Evidence was invalid or signer could not be verified.
+    InvalidEvidence(String),
+}
+
+/// Record of an applied slash.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OracleSlashRecord {
+    pub epoch_id: u64,
+    pub offender: [u8; 32],
+    pub reason: OracleSlashingReason,
+    pub slash_bps: u32,
+}
+
+/// Error type for slashing operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OracleSlashingError {
+    MissingSignerPublicKey([u8; 32]),
+    InvalidSignature,
+    NotCommitteeMember([u8; 32]),
+    ConflictingPricesNotDifferent,
+    EpochMismatch,
+}
+
 /// Canonical payload covered by oracle attestation signatures.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OraclePriceAttestationPayload {
@@ -293,6 +343,9 @@ pub struct OracleState {
     /// Per-epoch transient/finalization status.
     #[serde(default)]
     pub epoch_state: BTreeMap<u64, OracleEpochState>,
+    /// Applied slashes per epoch for idempotency.
+    #[serde(default)]
+    pub applied_slashes: BTreeMap<u64, Vec<OracleSlashRecord>>,
 }
 
 impl OracleState {
@@ -568,6 +621,82 @@ impl OracleState {
         Ok(OracleAttestationAdmission::Accepted)
     }
 
+    /// Apply slashing evidence for oracle misbehavior.
+    ///
+    /// Returns the outcome of applying the evidence. If the evidence is valid and the offender
+    /// hasn't been slashed for this epoch yet, returns `Applied` with the slash record.
+    pub fn apply_slashing_evidence(
+        &mut self,
+        evidence: &OracleSlashingEvidence,
+        current_epoch: u64,
+        resolve_signing_pubkey: impl Fn([u8; 32]) -> Option<Vec<u8>>,
+    ) -> Result<OracleSlashingOutcome, OracleSlashingError> {
+        match evidence {
+            OracleSlashingEvidence::DoubleSign { first, second } => {
+                // Verify both attestations are for the same epoch
+                if first.epoch_id != second.epoch_id {
+                    return Err(OracleSlashingError::EpochMismatch);
+                }
+                if first.epoch_id != current_epoch {
+                    return Err(OracleSlashingError::EpochMismatch);
+                }
+
+                // Verify the prices are different (conflicting)
+                if first.sov_usd_price == second.sov_usd_price {
+                    return Err(OracleSlashingError::ConflictingPricesNotDifferent);
+                }
+
+                // Verify the signer is the same in both attestations
+                if first.validator_pubkey != second.validator_pubkey {
+                    return Err(OracleSlashingError::EpochMismatch);
+                }
+
+                let offender = first.validator_pubkey;
+
+                // Check if offender is a committee member
+                if !self.committee.members.iter().any(|m| *m == offender) {
+                    return Err(OracleSlashingError::NotCommitteeMember(offender));
+                }
+
+                // Check for duplicate evidence before verifying signatures
+                if let Some(existing) = self.applied_slashes.get(&current_epoch) {
+                    if existing.iter().any(|r| r.offender == offender) {
+                        return Ok(OracleSlashingOutcome::DuplicateEvidence {
+                            epoch_id: current_epoch,
+                            offender,
+                        });
+                    }
+                }
+
+                // Verify both signatures
+                let signing_pubkey = resolve_signing_pubkey(offender)
+                    .ok_or(OracleSlashingError::MissingSignerPublicKey(offender))?;
+
+                first
+                    .verify_signature(&signing_pubkey)
+                    .map_err(|_| OracleSlashingError::InvalidSignature)?;
+                second
+                    .verify_signature(&signing_pubkey)
+                    .map_err(|_| OracleSlashingError::InvalidSignature)?;
+
+                // Create slash record
+                let record = OracleSlashRecord {
+                    epoch_id: current_epoch,
+                    offender,
+                    reason: OracleSlashingReason::DoubleSign,
+                    slash_bps: ORACLE_SLASH_BPS,
+                };
+
+                // Store the applied slash
+                self.applied_slashes
+                    .entry(current_epoch)
+                    .or_default()
+                    .push(record.clone());
+
+                Ok(OracleSlashingOutcome::Applied(record))
+            }
+        }
+    }
 }
 
 fn normalize_members(mut members: Vec<[u8; 32]>) -> Vec<[u8; 32]> {

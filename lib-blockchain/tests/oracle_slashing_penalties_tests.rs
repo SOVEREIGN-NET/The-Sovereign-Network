@@ -9,11 +9,8 @@ fn make_validator(identity_id: &str, keypair: &KeyPair, stake: u64) -> Validator
         identity_id: identity_id.to_string(),
         stake,
         storage_provided: 1_000_000,
-        consensus_key: {
-            let mut bytes = keypair.public_key.dilithium_pk.clone();
-            bytes.extend_from_slice(&keypair.public_key.kyber_pk);
-            bytes
-        },
+        // Use only the Dilithium PK as consensus_key for production consistency
+        consensus_key: keypair.public_key.dilithium_pk.clone(),
         networking_key: vec![7u8; 32],
         rewards_key: vec![8u8; 32],
         network_address: "127.0.0.1:9334".to_string(),
@@ -25,6 +22,8 @@ fn make_validator(identity_id: &str, keypair: &KeyPair, stake: u64) -> Validator
         slash_count: 0,
         admission_source: "test".to_string(),
         governance_proposal_id: None,
+        // Set oracle_key_id to the key_id from KeyPair for proper lookup
+        oracle_key_id: Some(keypair.public_key.key_id),
     }
 }
 
@@ -56,11 +55,15 @@ fn oracle_slash_reduces_stake_is_idempotent_and_removes_next_epoch() {
         make_validator("peer", &peer, 2_000_000_000),
     );
 
-    blockchain.oracle_state.committee.members = vec![
-        offender.public_key.key_id,
-        peer.public_key.key_id,
-        [9u8; 32],
-    ];
+    // Use the public set_members() API instead of direct field access
+    blockchain
+        .oracle_state
+        .committee
+        .set_members(vec![
+            offender.public_key.key_id,
+            peer.public_key.key_id,
+            [9u8; 32],
+        ]);
 
     let evidence = OracleSlashingEvidence::DoubleSign {
         first: signed_attestation(&offender, 5, 200_000_000),
@@ -89,13 +92,13 @@ fn oracle_slash_reduces_stake_is_idempotent_and_removes_next_epoch() {
     assert!(blockchain
         .oracle_state
         .committee
-        .members
+        .members()
         .contains(&offender.public_key.key_id));
 
     blockchain.oracle_state.apply_pending_updates(6);
     assert!(!blockchain
         .oracle_state
         .committee
-        .members
+        .members()
         .contains(&offender.public_key.key_id));
 }
