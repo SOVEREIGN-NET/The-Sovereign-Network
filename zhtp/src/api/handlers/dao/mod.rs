@@ -1874,6 +1874,93 @@ impl DaoHandler {
         }))
     }
 
+    // ── Phase Transition endpoints (dao-3) ────────────────────────────────────
+
+    /// GET /api/v1/dao/governance/phase
+    async fn handle_get_governance_phase(&self) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let phase_str = match blockchain.governance_phase {
+            lib_blockchain::dao::GovernancePhase::Bootstrap => "bootstrap",
+            lib_blockchain::dao::GovernancePhase::Hybrid    => "hybrid",
+            lib_blockchain::dao::GovernancePhase::FullDao   => "full_dao",
+        };
+
+        create_json_response(json!({
+            "status": "success",
+            "governance_phase": phase_str,
+            "council_threshold": blockchain.council_threshold,
+            "governance_cycles_with_quorum": blockchain.governance_cycles_with_quorum,
+            "last_governance_cycle_height": blockchain.last_governance_cycle_height,
+            "current_height": blockchain.height,
+        }))
+    }
+
+    /// GET /api/v1/dao/governance/transition-status
+    async fn handle_get_transition_status(&self) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let snap = blockchain.compute_decentralization_snapshot();
+        let can_advance = match blockchain.governance_phase {
+            lib_blockchain::dao::GovernancePhase::Bootstrap => blockchain.check_phase0_to_phase1(),
+            lib_blockchain::dao::GovernancePhase::Hybrid    => blockchain.check_phase1_to_phase2(),
+            lib_blockchain::dao::GovernancePhase::FullDao   => false,
+        };
+
+        create_json_response(json!({
+            "status": "success",
+            "snapshot": {
+                "verified_citizen_count": snap.verified_citizen_count,
+                "max_wallet_pct_bps": snap.max_wallet_pct_bps,
+                "snapshot_height": snap.snapshot_height,
+            },
+            "can_advance_phase": can_advance,
+            "phase_transition_config": {
+                "min_citizens_for_phase1": blockchain.phase_transition_config.min_citizens_for_phase1,
+                "max_wallet_pct_bps_for_phase1": blockchain.phase_transition_config.max_wallet_pct_bps_for_phase1,
+                "min_citizens_for_phase2": blockchain.phase_transition_config.min_citizens_for_phase2,
+                "max_wallet_pct_bps_for_phase2": blockchain.phase_transition_config.max_wallet_pct_bps_for_phase2,
+                "phase2_quorum_consecutive_cycles": blockchain.phase_transition_config.phase2_quorum_consecutive_cycles,
+            },
+        }))
+    }
+
+    /// POST /api/v1/dao/governance/trigger-transition
+    async fn handle_trigger_transition(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct TriggerRequest {
+            council_signatures: Vec<String>,
+        }
+        let req: TriggerRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        let threshold = blockchain.council_threshold as usize;
+        let valid = req.council_signatures.iter()
+            .filter(|did| blockchain.is_council_member(did.as_str()))
+            .count();
+        if valid < threshold {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                format!("Requires {} council signatures, got {}", threshold, valid),
+            ));
+        }
+
+        let phase_before = blockchain.governance_phase.clone();
+        blockchain.try_advance_governance_phase();
+        let phase_after = blockchain.governance_phase.clone();
+        let advanced = phase_before != phase_after;
+
+        create_json_response(json!({
+            "status": "success",
+            "advanced": advanced,
+            "new_phase": format!("{:?}", phase_after),
+        }))
+    }
 
     async fn submit_dao_registry_execution(
         &self,
@@ -2280,6 +2367,16 @@ impl ZhtpRequestHandler for DaoHandler {
             },
             (ZhtpMethod::Get, ["api", "v1", "dao", "voting-power", identity_id]) => {
                 self.handle_get_voting_power(identity_id).await.map_err(anyhow::Error::from)
+            },
+            // Governance phase endpoints (dao-3)
+            (ZhtpMethod::Get, ["api", "v1", "dao", "governance", "phase"]) => {
+                self.handle_get_governance_phase().await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Get, ["api", "v1", "dao", "governance", "transition-status"]) => {
+                self.handle_get_transition_status().await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "governance", "trigger-transition"]) => {
+                self.handle_trigger_transition(&request).await.map_err(anyhow::Error::from)
             },
 
             _ => Ok(create_error_response(ZhtpStatus::NotFound, "DAO endpoint not found".to_string())),

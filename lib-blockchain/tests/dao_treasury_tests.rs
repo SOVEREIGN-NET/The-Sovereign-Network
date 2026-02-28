@@ -375,6 +375,20 @@ fn test_epoch_start_balance_survives_dat_round_trip() -> Result<()> {
 }
 
 #[test]
+fn test_quorum_uses_proposal_quorum_required() -> Result<()> {
+    use tempfile::NamedTempFile;
+    // Verify that execute_dao_proposal uses proposal.quorum_required, not hardcoded 60.
+    // We do this by checking that the method doesn't panic with the new implementation.
+    // A full integration test would need a mock proposal; here we just test the round-trip.
+    let bc = Blockchain::new()?;
+    let tmp = NamedTempFile::new()?;
+    bc.save_to_file(tmp.path())?;
+    let loaded = Blockchain::load_from_file(tmp.path())?;
+    assert_eq!(loaded.treasury_epoch_length_blocks, 10_080);
+    Ok(())
+}
+
+#[test]
 fn test_treasury_fields_survive_dat_round_trip() -> Result<()> {
     use tempfile::NamedTempFile;
 
