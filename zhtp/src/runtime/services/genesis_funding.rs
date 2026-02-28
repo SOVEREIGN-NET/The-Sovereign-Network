@@ -387,6 +387,7 @@ impl GenesisFundingService {
                 // the blockchain will enforce that this source is only accepted at height 0.
                 admission_source: lib_blockchain::blockchain::ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string(),
                 governance_proposal_id: None,
+                oracle_key_id: None,
             };
             
             match blockchain.register_validator(validator_info) {

@@ -1782,6 +1782,57 @@ impl DaoHandler {
         }))
     }
 
+    /// POST /api/v1/dao/treasury/freeze — activate emergency treasury freeze with validator signatures.
+    async fn handle_treasury_freeze(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct FreezeRequest {
+            validator_signatures: Vec<String>,
+            reason: String,
+        }
+
+        let req: FreezeRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        match blockchain.activate_treasury_freeze(req.validator_signatures, req.reason) {
+            Ok(()) => create_json_response(json!({
+                "status": "success",
+                "message": "Treasury freeze activated",
+                "treasury_frozen": blockchain.treasury_frozen,
+                "frozen_at": blockchain.treasury_frozen_at,
+                "freeze_expiry": blockchain.treasury_freeze_expiry,
+                "signer_count": blockchain.treasury_freeze_signatures.len(),
+            })),
+            Err(e) => Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                format!("Failed to activate treasury freeze: {}", e),
+            )),
+        }
+    }
+
+    /// GET /api/v1/dao/treasury/freeze-status — get current treasury freeze status.
+    async fn handle_treasury_freeze_status(&self) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let validator_count = blockchain.validator_registry.len();
+        let threshold = (validator_count * 8 + 9) / 10; // ceil(80%)
+
+        create_json_response(json!({
+            "status": "success",
+            "treasury_frozen": blockchain.treasury_frozen,
+            "frozen_at": blockchain.treasury_frozen_at,
+            "freeze_expiry": blockchain.treasury_freeze_expiry,
+            "current_height": blockchain.height,
+            "signer_count": blockchain.treasury_freeze_signatures.len(),
+            "validator_count": validator_count,
+            "threshold": threshold,
+            "signatures": blockchain.treasury_freeze_signatures,
+        }))
+    }
+
     /// POST /api/v1/dao/voting/delegate — store a vote delegation for the authenticated identity.
     async fn handle_vote_delegate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         let session_token = match request.headers.get("Authorization")
@@ -2272,6 +2323,14 @@ impl ZhtpRequestHandler for DaoHandler {
             },
             (ZhtpMethod::Get, ["api", "v1", "dao", "emergency", "status"]) => {
                 self.handle_emergency_status().await.map_err(anyhow::Error::from)
+            },
+
+            // Treasury freeze endpoints (dao-7)
+            (ZhtpMethod::Post, ["api", "v1", "dao", "treasury", "freeze"]) => {
+                self.handle_treasury_freeze(&request).await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Get, ["api", "v1", "dao", "treasury", "freeze-status"]) => {
+                self.handle_treasury_freeze_status().await.map_err(anyhow::Error::from)
             },
 
             // Voting power delegation (dao-5)
