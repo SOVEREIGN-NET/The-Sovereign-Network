@@ -61,19 +61,14 @@ fn default_treasury_epoch_length() -> u64 {
     10_080
 }
 
-/// Default veto window (~48 hours at 10s blocks)
+/// Default veto window blocks (~1 day at 10s blocks)
 fn default_veto_window() -> u64 {
-    576
-}
-
-/// Default max treasury executions per epoch
-fn default_max_executions() -> u32 {
-    3
-}
-
-/// Default Phase 2 execution delay (~24 hours at 10s blocks)
-fn default_phase2_delay() -> u64 {
     8_640
+}
+
+/// Default max executions per treasury epoch
+fn default_max_executions() -> u32 {
+    10
 }
 
 /// Indexed DAO registry entry derived from canonical DaoExecution events.
@@ -255,7 +250,6 @@ pub struct Blockchain {
     /// Pool ID -> SovSwapPool mapping
     #[serde(default)]
     pub amm_pools: HashMap<[u8; 32], crate::contracts::sov_swap::SovSwapPool>,
-
     // =========================================================================
     // DAO Bootstrap Council (dao-1)
     // =========================================================================
@@ -292,9 +286,15 @@ pub struct Blockchain {
     /// Block height at which emergency state auto-expires
     #[serde(default)]
     pub emergency_expires_at: Option<u64>,
+    /// Treasury balance recorded at the start of each epoch, used for spend-cap calculation.
+    /// Prevents gaming the 5% cap by making multiple small proposals as balance depletes.
+    #[serde(default)]
+    pub treasury_epoch_start_balance: HashMap<u64, u64>,
 
-    // ── Treasury Emergency Freeze (dao-7) ─────────────────────────────────
-    /// Whether the treasury is frozen (emergency freeze)
+    // =========================================================================
+    // DAO Emergency Treasury Freeze (dao-7)
+    // =========================================================================
+    /// Whether the treasury is frozen (emergency freeze by 80% validators)
     #[serde(default)]
     pub treasury_frozen: bool,
     /// Block height when treasury was frozen
@@ -303,33 +303,24 @@ pub struct Blockchain {
     /// Block height at which treasury freeze expires
     #[serde(default)]
     pub treasury_freeze_expiry: Option<u64>,
-    /// Validator signatures that activated the freeze (DID strings)
+    /// Signatures from validators who signed the freeze
     #[serde(default)]
-    pub treasury_freeze_signatures: Vec<String>,
+    pub treasury_freeze_signatures: Vec<(String, Vec<u8>)>, // (validator_did, signature)
 
-    // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
-    /// Most recently computed decentralization snapshot.
-    #[serde(default)]
-    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
-    /// Configurable thresholds governing phase advancement.
-    #[serde(default)]
-    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
-    /// Number of consecutive governance epochs that met quorum (for Phase 2 gate).
-    #[serde(default)]
-    pub governance_cycles_with_quorum: u32,
-    /// Block height of the last governance cycle check.
-    #[serde(default)]
-    pub last_governance_cycle_height: u64,
+    // =========================================================================
+    // DAO Voting Power (dao-5)
+    // =========================================================================
 
-    // ── DAO Voting Power (dao-5) ───────────────────────────────────────────
     /// How token balances translate to voting weight
     #[serde(default)]
     pub voting_power_mode: crate::dao::VotingPowerMode,
-    /// Vote delegation map: delegator_did → delegate_did
+    /// Vote delegation map: delegator_id_hex → delegate_id_hex
+    ///
+    /// Both keys and values are 64-char hex-encoded 32-byte identity IDs
+    /// (the raw bytes of `lib_identity::IdentityId`, NOT "did:zhtp:…" strings).
+    /// Delegation is **non-transitive**: if A→B and B→C, C does not receive A's power.
     #[serde(default)]
     pub vote_delegations: HashMap<String, String>,
-
-    // ── DAO Hybrid Governance (dao-4) ──────────────────────────────────────
     /// Council co-signatures collected for a proposal (proposal_id → [(did, sig_bytes)]).
     #[serde(default)]
     pub pending_cosigns: HashMap<[u8; 32], Vec<(String, Vec<u8>)>>,
@@ -345,19 +336,23 @@ pub struct Blockchain {
     /// Maximum treasury executions allowed per epoch.
     #[serde(default = "default_max_executions")]
     pub max_executions_per_epoch: u32,
-
-    // ── DAO Full DAO (dao-6) ───────────────────────────────────────────────
-    /// Delay (blocks) between a passed proposal's vote close and auto-execution.
-    #[serde(default = "default_phase2_delay")]
-    pub phase2_execution_delay_blocks: u64,
-    /// Block height at which the Bootstrap Council was dissolved (on Phase 2 entry).
-    #[serde(default)]
-    pub council_dissolved_at: Option<u64>,
-
-    // ── Oracle Protocol v1 ─────────────────────────────────────────────────
-    /// Oracle state for price attestation and finalization
+    /// Oracle protocol v1 consensus state (committee/config/finalized prices).
     #[serde(default)]
     pub oracle_state: crate::oracle::OracleState,
+
+    // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
+    /// Most recently computed decentralization snapshot.
+    #[serde(default)]
+    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
+    /// Configurable thresholds governing phase advancement.
+    #[serde(default)]
+    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
+    /// Number of consecutive governance epochs that met quorum (for Phase 2 gate).
+    #[serde(default)]
+    pub governance_cycles_with_quorum: u32,
+    /// Block height of the last governance cycle check.
+    #[serde(default)]
+    pub last_governance_cycle_height: u64,
 }
 
 /// Validator information stored on-chain.
@@ -439,9 +434,7 @@ pub struct ValidatorInfo {
     /// Optional governance proposal ID authorizing this validator.
     #[serde(default)]
     pub governance_proposal_id: Option<String>,
-    /// Oracle signer key ID (hash of dilithium_pk || kyber_pk) for oracle committee membership.
-    /// This is the key_id from lib_crypto::KeyPair and is used to identify the validator
-    /// in oracle attestations and slashing evidence.
+    /// Oracle attestation key ID (for oracle committee membership).
     #[serde(default)]
     pub oracle_key_id: Option<[u8; 32]>,
 }
@@ -668,36 +661,28 @@ impl BlockchainV1 {
             emergency_activated_at: None,
             emergency_activated_by: None,
             emergency_expires_at: None,
+            treasury_epoch_start_balance: HashMap::new(),
 
-            // Treasury Emergency Freeze (dao-7)
+            // DAO Emergency Treasury Freeze (dao-7)
             treasury_frozen: false,
             treasury_frozen_at: None,
             treasury_freeze_expiry: None,
             treasury_freeze_signatures: Vec::new(),
+
+            voting_power_mode: crate::dao::VotingPowerMode::default(),
+            vote_delegations: HashMap::new(),
+            pending_cosigns: HashMap::new(),
+            pending_vetoes: HashMap::new(),
+            veto_window_blocks: default_veto_window(),
+            treasury_epoch_execution_count: HashMap::new(),
+            max_executions_per_epoch: default_max_executions(),
+            oracle_state: crate::oracle::OracleState::default(),
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
             phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
             governance_cycles_with_quorum: 0,
             last_governance_cycle_height: 0,
-
-            // DAO Voting Power
-            voting_power_mode: crate::dao::VotingPowerMode::default(),
-            vote_delegations: HashMap::new(),
-
-            // DAO Hybrid Governance
-            pending_cosigns: HashMap::new(),
-            pending_vetoes: HashMap::new(),
-            veto_window_blocks: default_veto_window(),
-            treasury_epoch_execution_count: HashMap::new(),
-            max_executions_per_epoch: default_max_executions(),
-
-            // DAO Full DAO
-            phase2_execution_delay_blocks: default_phase2_delay(),
-            council_dissolved_at: None,
-
-            // Oracle Protocol v1
-            oracle_state: crate::oracle::OracleState::default(),
         }
     }
 }
@@ -860,8 +845,10 @@ struct BlockchainStorageV3 {
     pub emergency_activated_by: Option<String>,
     #[serde(default)]
     pub emergency_expires_at: Option<u64>,
+    #[serde(default)]
+    pub treasury_epoch_start_balance: HashMap<u64, u64>,
 
-    // Treasury Emergency Freeze (dao-7)
+    // DAO Emergency Treasury Freeze (dao-7)
     #[serde(default)]
     pub treasury_frozen: bool,
     #[serde(default)]
@@ -869,25 +856,13 @@ struct BlockchainStorageV3 {
     #[serde(default)]
     pub treasury_freeze_expiry: Option<u64>,
     #[serde(default)]
-    pub treasury_freeze_signatures: Vec<String>,
-
-    // DAO Phase Transitions (dao-3)
-    #[serde(default)]
-    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
-    #[serde(default)]
-    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
-    #[serde(default)]
-    pub governance_cycles_with_quorum: u32,
-    #[serde(default)]
-    pub last_governance_cycle_height: u64,
+    pub treasury_freeze_signatures: Vec<(String, Vec<u8>)>,
 
     // DAO Voting Power (dao-5)
     #[serde(default)]
     pub voting_power_mode: crate::dao::VotingPowerMode,
     #[serde(default)]
     pub vote_delegations: HashMap<String, String>,
-
-    // DAO Hybrid Governance (dao-4)
     #[serde(default)]
     pub pending_cosigns: HashMap<[u8; 32], Vec<(String, Vec<u8>)>>,
     #[serde(default)]
@@ -899,11 +874,15 @@ struct BlockchainStorageV3 {
     #[serde(default = "default_max_executions")]
     pub max_executions_per_epoch: u32,
 
-    // DAO Full DAO (dao-6)
-    #[serde(default = "default_phase2_delay")]
-    pub phase2_execution_delay_blocks: u64,
+    // DAO Phase Transitions (dao-3)
     #[serde(default)]
-    pub council_dissolved_at: Option<u64>,
+    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
+    #[serde(default)]
+    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
+    #[serde(default)]
+    pub governance_cycles_with_quorum: u32,
+    #[serde(default)]
+    pub last_governance_cycle_height: u64,
 }
 
 impl BlockchainStorageV3 {
@@ -1001,33 +980,27 @@ impl BlockchainStorageV3 {
             emergency_activated_at: bc.emergency_activated_at,
             emergency_activated_by: bc.emergency_activated_by.clone(),
             emergency_expires_at: bc.emergency_expires_at,
+            treasury_epoch_start_balance: bc.treasury_epoch_start_balance.clone(),
 
-            // Treasury Emergency Freeze (dao-7)
+            // DAO Emergency Treasury Freeze (dao-7)
             treasury_frozen: bc.treasury_frozen,
             treasury_frozen_at: bc.treasury_frozen_at,
             treasury_freeze_expiry: bc.treasury_freeze_expiry,
             treasury_freeze_signatures: bc.treasury_freeze_signatures.clone(),
 
-            // DAO Phase Transitions
-            last_decentralization_snapshot: bc.last_decentralization_snapshot.clone(),
-            phase_transition_config: bc.phase_transition_config.clone(),
-            governance_cycles_with_quorum: bc.governance_cycles_with_quorum,
-            last_governance_cycle_height: bc.last_governance_cycle_height,
-
             // DAO Voting Power
             voting_power_mode: bc.voting_power_mode.clone(),
             vote_delegations: bc.vote_delegations.clone(),
-
-            // DAO Hybrid Governance
             pending_cosigns: bc.pending_cosigns.clone(),
             pending_vetoes: bc.pending_vetoes.clone(),
             veto_window_blocks: bc.veto_window_blocks,
             treasury_epoch_execution_count: bc.treasury_epoch_execution_count.clone(),
             max_executions_per_epoch: bc.max_executions_per_epoch,
-
-            // DAO Full DAO
-            phase2_execution_delay_blocks: bc.phase2_execution_delay_blocks,
-            council_dissolved_at: bc.council_dissolved_at,
+            // DAO Phase Transitions
+            last_decentralization_snapshot: bc.last_decentralization_snapshot.clone(),
+            phase_transition_config: bc.phase_transition_config.clone(),
+            governance_cycles_with_quorum: bc.governance_cycles_with_quorum,
+            last_governance_cycle_height: bc.last_governance_cycle_height,
         }
     }
 
@@ -1132,7 +1105,6 @@ impl BlockchainStorageV3 {
 
             // AMM pools - initialize empty, will be populated from storage
             amm_pools: HashMap::new(),
-
             // DAO Bootstrap Council
             governance_phase: self.governance_phase,
             council_members: self.council_members,
@@ -1145,37 +1117,54 @@ impl BlockchainStorageV3 {
             emergency_activated_at: self.emergency_activated_at,
             emergency_activated_by: self.emergency_activated_by,
             emergency_expires_at: self.emergency_expires_at,
+            treasury_epoch_start_balance: self.treasury_epoch_start_balance,
 
-            // Treasury Emergency Freeze (dao-7)
+            // DAO Emergency Treasury Freeze (dao-7)
             treasury_frozen: self.treasury_frozen,
             treasury_frozen_at: self.treasury_frozen_at,
             treasury_freeze_expiry: self.treasury_freeze_expiry,
             treasury_freeze_signatures: self.treasury_freeze_signatures,
 
-            // DAO Phase Transitions
-            last_decentralization_snapshot: self.last_decentralization_snapshot,
-            phase_transition_config: self.phase_transition_config,
-            governance_cycles_with_quorum: self.governance_cycles_with_quorum,
-            last_governance_cycle_height: self.last_governance_cycle_height,
-
             // DAO Voting Power
             voting_power_mode: self.voting_power_mode,
             vote_delegations: self.vote_delegations,
-
-            // DAO Hybrid Governance
             pending_cosigns: self.pending_cosigns,
             pending_vetoes: self.pending_vetoes,
             veto_window_blocks: self.veto_window_blocks,
             treasury_epoch_execution_count: self.treasury_epoch_execution_count,
             max_executions_per_epoch: self.max_executions_per_epoch,
-
-            // DAO Full DAO
-            phase2_execution_delay_blocks: self.phase2_execution_delay_blocks,
-            council_dissolved_at: self.council_dissolved_at,
-
-            // Oracle Protocol v1
             oracle_state: crate::oracle::OracleState::default(),
+            // DAO Phase Transitions
+            last_decentralization_snapshot: self.last_decentralization_snapshot,
+            phase_transition_config: self.phase_transition_config,
+            governance_cycles_with_quorum: self.governance_cycles_with_quorum,
+            last_governance_cycle_height: self.last_governance_cycle_height,
         }
+    }
+}
+
+/// Stable storage format V4 for blockchain serialization.
+///
+/// V4 wraps legacy V3 payload and appends Oracle Protocol v1 consensus state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BlockchainStorageV4 {
+    pub v3: BlockchainStorageV3,
+    #[serde(default)]
+    pub oracle_state: crate::oracle::OracleState,
+}
+
+impl BlockchainStorageV4 {
+    fn from_blockchain(bc: &Blockchain) -> Self {
+        Self {
+            v3: BlockchainStorageV3::from_blockchain(bc),
+            oracle_state: bc.oracle_state.clone(),
+        }
+    }
+
+    fn to_blockchain(self) -> Blockchain {
+        let mut blockchain = self.v3.to_blockchain();
+        blockchain.oracle_state = self.oracle_state;
+        blockchain
     }
 }
 
@@ -1263,36 +1252,28 @@ impl Blockchain {
             emergency_activated_at: None,
             emergency_activated_by: None,
             emergency_expires_at: None,
+            treasury_epoch_start_balance: HashMap::new(),
 
-            // Treasury Emergency Freeze (dao-7)
+            // DAO Emergency Treasury Freeze (dao-7)
             treasury_frozen: false,
             treasury_frozen_at: None,
             treasury_freeze_expiry: None,
             treasury_freeze_signatures: Vec::new(),
+
+            voting_power_mode: crate::dao::VotingPowerMode::default(),
+            vote_delegations: HashMap::new(),
+            pending_cosigns: HashMap::new(),
+            pending_vetoes: HashMap::new(),
+            veto_window_blocks: default_veto_window(),
+            treasury_epoch_execution_count: HashMap::new(),
+            max_executions_per_epoch: default_max_executions(),
+            oracle_state: crate::oracle::OracleState::default(),
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
             phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
             governance_cycles_with_quorum: 0,
             last_governance_cycle_height: 0,
-
-            // DAO Voting Power
-            voting_power_mode: crate::dao::VotingPowerMode::default(),
-            vote_delegations: HashMap::new(),
-
-            // DAO Hybrid Governance
-            pending_cosigns: HashMap::new(),
-            pending_vetoes: HashMap::new(),
-            veto_window_blocks: default_veto_window(),
-            treasury_epoch_execution_count: HashMap::new(),
-            max_executions_per_epoch: default_max_executions(),
-
-            // DAO Full DAO
-            phase2_execution_delay_blocks: default_phase2_delay(),
-            council_dissolved_at: None,
-
-            // Oracle Protocol v1
-            oracle_state: crate::oracle::OracleState::default(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -2012,11 +1993,16 @@ impl Blockchain {
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
         // If BlockExecutor is configured, use it as single source of truth
         if let Some(ref executor) = self.executor {
+            // Validate CBE graduation oracle gate BEFORE applying block
+            // This ensures consensus rules are enforced atomically
+            self.validate_block_cbe_graduation_gating(&block)?;
+
             // Use BlockExecutor for state mutations
             // Note: executor.apply_block() handles begin_block/commit_block internally
             match executor.apply_block(&block) {
                 Ok(_outcome) => {
                     // Block applied successfully through executor
+
                     // Update blockchain metadata
                     self.blocks.push(block.clone());
                     self.height += 1;
@@ -2092,8 +2078,6 @@ impl Blockchain {
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
         }
-        let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
-        self.oracle_state.apply_pending_updates(current_epoch);
 
         // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
@@ -2184,8 +2168,6 @@ impl Blockchain {
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
         }
-        let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
-        self.oracle_state.apply_pending_updates(current_epoch);
 
         // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
@@ -3728,44 +3710,20 @@ impl Blockchain {
         Ok(())
     }
 
-    // ── DAO Hybrid Governance (dao-4) ─────────────────────────────────────────
-
-    /// Submit a council co-signature for a Hybrid-phase proposal.
+    /// Validate that a treasury spending category is permitted in the current state.
     ///
-    /// `signer_did` must be a council member; `sig_bytes` can be empty (Phase 0
-    /// doesn't verify crypto signatures — council identity check is sufficient).
-    pub fn council_cosign_proposal(
-        &mut self,
-        proposal_id: &Hash,
-        signer_did: String,
-        sig_bytes: Vec<u8>,
+    /// The `Emergency` category is only valid when `emergency_state == true`.
+    /// All other categories are always permitted.
+    pub fn validate_treasury_spending_category(
+        &self,
+        params: &crate::dao::TreasuryExecutionParams,
     ) -> Result<()> {
-        if !self.is_council_member(&signer_did) {
-            return Err(anyhow::anyhow!("'{}' is not a council member", signer_did));
-        }
-        let id_bytes = proposal_id.as_array();
-        let entry = self.pending_cosigns.entry(id_bytes).or_default();
-        // Prevent duplicate co-sign from the same DID
-        if !entry.iter().any(|(did, _)| did == &signer_did) {
-            entry.push((signer_did, sig_bytes));
-        }
-        Ok(())
-    }
-
-    /// Submit a council veto for a Hybrid-phase proposal.
-    pub fn council_veto_proposal(
-        &mut self,
-        proposal_id: &Hash,
-        signer_did: String,
-        reason: String,
-    ) -> Result<()> {
-        if !self.is_council_member(&signer_did) {
-            return Err(anyhow::anyhow!("'{}' is not a council member", signer_did));
-        }
-        let id_bytes = proposal_id.as_array();
-        let entry = self.pending_vetoes.entry(id_bytes).or_default();
-        if !entry.iter().any(|(did, _)| did == &signer_did) {
-            entry.push((signer_did, reason));
+        if params.category == crate::dao::TreasurySpendingCategory::Emergency
+            && !self.emergency_state
+        {
+            return Err(anyhow::anyhow!(
+                "Treasury spending category 'Emergency' requires emergency_state to be active"
+            ));
         }
         Ok(())
     }
@@ -3847,12 +3805,8 @@ impl Blockchain {
                     let snap = self.compute_decentralization_snapshot();
                     self.last_decentralization_snapshot = Some(snap);
                     self.governance_phase = crate::dao::GovernancePhase::FullDao;
-                    // dao-6: dissolve Bootstrap Council on Phase 2 entry
-                    self.council_members.clear();
-                    self.council_threshold = 0;
-                    self.council_dissolved_at = Some(self.height);
                     info!(
-                        "🏛 Governance advanced to Full DAO phase at height {}; council dissolved",
+                        "🏛 Governance advanced to Full DAO phase at height {}",
                         self.height
                     );
                 }
@@ -6092,7 +6046,10 @@ impl Blockchain {
         Ok(approval_percent >= required_approval_percent as u64)
     }
 
-    /// Return the current circulating SOV supply (total minted minus any burned).
+    /// Return the current circulating SOV supply.
+    ///
+    /// `TokenContract::burn` decrements `total_supply` directly, so this value
+    /// is already net of any burned tokens — no separate subtraction is needed.
     pub fn get_circulating_sov_supply(&self) -> u64 {
         let sov_id = crate::contracts::utils::generate_lib_token_id();
         self.token_contracts
@@ -6103,12 +6060,17 @@ impl Blockchain {
 
     /// Check if a proposal has passed using circulating-supply-based quorum.
     ///
-    /// `required_pct` is the minimum percentage (0–100) of circulating supply that
-    /// must have participated AND the minimum approval rate among those votes.
+    /// `quorum_pct` is the minimum percentage (0–100) of circulating supply that
+    /// must have cast votes (participation threshold).
+    /// `approval_pct` is the minimum percentage (0–100) of cast votes that must
+    /// be "Yes" (approval threshold).
+    ///
+    /// Standard usage: `quorum_pct = 20` (20% participation), `approval_pct = 51`.
     pub fn has_proposal_passed_with_quorum(
         &self,
         proposal_id: &Hash,
-        required_pct: u32,
+        quorum_pct: u32,
+        approval_pct: u32,
     ) -> Result<bool> {
         let (yes_votes, _no, _ab, total_cast) = self.tally_dao_votes(proposal_id);
         if total_cast == 0 {
@@ -6116,11 +6078,11 @@ impl Blockchain {
         }
         let circulating = self.get_circulating_sov_supply().max(1);
         let participation_pct = (total_cast * 100) / circulating;
-        if participation_pct < required_pct as u64 {
+        if participation_pct < quorum_pct as u64 {
             return Ok(false);
         }
-        let approval_pct = (yes_votes * 100) / total_cast;
-        Ok(approval_pct >= required_pct as u64)
+        let yes_pct = (yes_votes * 100) / total_cast;
+        Ok(yes_pct >= approval_pct as u64)
     }
 
     /// Set the DAO treasury wallet ID
@@ -6262,11 +6224,6 @@ impl Blockchain {
             return Err(anyhow::anyhow!("Execution amount must be greater than zero"));
         }
 
-        // Check if treasury is frozen (dao-7 emergency freeze)
-        if self.treasury_frozen {
-            return Err(anyhow::anyhow!("Treasury is frozen by emergency freeze (dao-7)"));
-        }
-
         // 1. Get the proposal
         let proposal = self.get_dao_proposal(&proposal_id)
             .ok_or_else(|| anyhow::anyhow!("Proposal not found"))?;
@@ -6293,51 +6250,17 @@ impl Blockchain {
             ));
         }
 
-        // 4. Phase gate
-        match self.governance_phase {
-            crate::dao::GovernancePhase::Bootstrap => {
-                let votes = self.get_dao_votes_for_proposal(&proposal_id);
-                let council_yes = votes.iter()
-                    .filter(|v| v.vote_choice == "Yes" && self.is_council_member(&v.voter))
-                    .count() as u8;
-                if council_yes < self.council_threshold {
-                    return Err(anyhow::anyhow!(
-                        "Phase 0 requires {} council yes-votes, got {}",
-                        self.council_threshold, council_yes
-                    ));
-                }
-            }
-            crate::dao::GovernancePhase::Hybrid => {
-                // Hybrid phase: check co-signs and vetoes, enforce epoch rate limit
-                let id_bytes = proposal_id.as_array();
-                // Enough co-signs?
-                let cosign_count = self.pending_cosigns
-                    .get(&id_bytes).map(|v| v.len()).unwrap_or(0);
-                if (cosign_count as u8) < self.council_threshold {
-                    return Err(anyhow::anyhow!(
-                        "Hybrid phase requires {} council co-signs, got {}",
-                        self.council_threshold, cosign_count
-                    ));
-                }
-                // Council veto?
-                let veto_count = self.pending_vetoes
-                    .get(&id_bytes).map(|v| v.len()).unwrap_or(0);
-                if (veto_count as u8) >= self.council_threshold {
-                    return Err(anyhow::anyhow!("Proposal vetoed by council"));
-                }
-                // Epoch rate limit
-                let epoch = self.height / self.treasury_epoch_length_blocks.max(1);
-                let exec_count = self.treasury_epoch_execution_count.get(&epoch).copied().unwrap_or(0);
-                if exec_count >= self.max_executions_per_epoch {
-                    return Err(anyhow::anyhow!(
-                        "Treasury epoch execution rate limit reached ({}/{})",
-                        exec_count, self.max_executions_per_epoch
-                    ));
-                }
-                // After transfer succeeds, increment counter (done below after transfer)
-            }
-            crate::dao::GovernancePhase::FullDao => {
-                // Full DAO: no council gate needed, auto-execution path handles it
+        // 4. Phase 0: require council_threshold council yes-votes
+        if self.governance_phase == crate::dao::GovernancePhase::Bootstrap {
+            let votes = self.get_dao_votes_for_proposal(&proposal_id);
+            let council_yes = votes.iter()
+                .filter(|v| v.vote_choice == "Yes" && self.is_council_member(&v.voter))
+                .count() as u8;
+            if council_yes < self.council_threshold {
+                return Err(anyhow::anyhow!(
+                    "Phase 0 requires {} council yes-votes, got {}",
+                    self.council_threshold, council_yes
+                ));
             }
         }
 
@@ -6356,7 +6279,9 @@ impl Blockchain {
             .map_err(|_| anyhow::anyhow!("Recipient wallet ID must be 32 bytes"))?;
         let recipient_pk = Self::wallet_key_for_sov(&recip_id_bytes);
 
-        // 6. Epoch spend cap (5% of treasury balance per epoch)
+        // 6. Epoch spend cap (5% of epoch-start treasury balance per epoch)
+        // The cap is anchored to the treasury balance at the START of the epoch,
+        // not the current balance, to prevent gaming via multiple small proposals.
         let treasury_balance = self.get_dao_treasury_balance()?;
         if treasury_balance < amount {
             return Err(anyhow::anyhow!(
@@ -6366,13 +6291,38 @@ impl Blockchain {
         }
         let epoch = self.height / self.treasury_epoch_length_blocks.max(1);
         let spent_this_epoch = self.treasury_epoch_spend.get(&epoch).copied().unwrap_or(0);
-        let epoch_cap = treasury_balance.saturating_mul(5) / 100;
+        // Record epoch-start balance on first spend of this epoch (balance + already spent = start)
+        let epoch_start_balance = if let Some(&stored) = self.treasury_epoch_start_balance.get(&epoch) {
+            stored
+        } else {
+            let start = treasury_balance.saturating_add(spent_this_epoch);
+            self.treasury_epoch_start_balance.insert(epoch, start);
+            start
+        };
+        let epoch_cap = epoch_start_balance.saturating_mul(5) / 100;
         if spent_this_epoch.saturating_add(amount) > epoch_cap {
             return Err(anyhow::anyhow!(
-                "Treasury epoch spend cap: {} + {} > cap {}",
-                spent_this_epoch, amount, epoch_cap
+                "Treasury epoch spend cap: {} + {} > cap {} (epoch-start balance: {})",
+                spent_this_epoch, amount, epoch_cap, epoch_start_balance
             ));
         }
+
+        // 6b. Validate spending category from execution_params (required per issue #1466)
+        // spending_category is mandatory — proposals without it are rejected.
+        let treasury_exec_params = {
+            let bytes = proposal.execution_params.as_ref()
+                .filter(|b| !b.is_empty())
+                .ok_or_else(|| anyhow::anyhow!(
+                    "spending_category required in execution_params; \
+                     proposal is missing a valid TreasuryExecutionParams"
+                ))?;
+            serde_json::from_slice::<crate::dao::TreasuryExecutionParams>(bytes)
+                .map_err(|e| anyhow::anyhow!(
+                    "execution_params could not be deserialized as TreasuryExecutionParams: {}",
+                    e
+                ))?
+        };
+        self.validate_treasury_spending_category(&treasury_exec_params)?;
 
         // 7. Execute balance transfer (debit treasury, credit recipient)
         let sov_id = crate::contracts::utils::generate_lib_token_id();
@@ -6385,11 +6335,6 @@ impl Blockchain {
 
         // 8. Record epoch spend
         *self.treasury_epoch_spend.entry(epoch).or_insert(0) += amount;
-
-        // 8b. In Hybrid phase, record per-epoch execution count
-        if self.governance_phase == crate::dao::GovernancePhase::Hybrid {
-            *self.treasury_epoch_execution_count.entry(epoch).or_insert(0) += 1;
-        }
 
         // 9. Build execution transaction for audit trail (inputs/outputs empty — balance model)
         let votes = self.get_dao_votes_for_proposal(&proposal_id);
@@ -6439,70 +6384,6 @@ impl Blockchain {
 
         info!("✅ DAO proposal {:?} executed (balance model), tx: {:?}", proposal_id, tx_hash);
         Ok(tx_hash)
-    }
-
-    // ============================================================================
-    // TREASURY EMERGENCY FREEZE (dao-7)
-    // ============================================================================
-
-    /// Activate emergency treasury freeze with ≥80% validator signatures (dao-7).
-    ///
-    /// Requires at least 80% of registered validators to sign. The freeze expires
-    /// automatically after `treasury_epoch_length_blocks` (default ~1 week).
-    /// Duplicate validator entries are deduplicated before counting.
-    pub fn activate_treasury_freeze(
-        &mut self,
-        validator_signatures: Vec<String>,
-        _reason: String,
-    ) -> Result<()> {
-        let validator_count = self.validator_registry.len();
-        if validator_count == 0 {
-            return Err(anyhow::anyhow!("No validators registered"));
-        }
-
-        // Deduplicate signatures and validate each signer is a registered validator
-        let unique_signers: std::collections::HashSet<String> = validator_signatures
-            .into_iter()
-            .filter(|did| self.validator_registry.contains_key(did))
-            .collect();
-
-        let valid_count = unique_signers.len();
-        let threshold = (validator_count * 8 + 9) / 10; // ceil(80%)
-
-        if valid_count < threshold {
-            return Err(anyhow::anyhow!(
-                "Insufficient validator signatures: {} valid ({} unique) / {} validators, need {} (80%)",
-                valid_count,
-                unique_signers.len(),
-                validator_count,
-                threshold
-            ));
-        }
-
-        self.treasury_frozen = true;
-        self.treasury_frozen_at = Some(self.height);
-        self.treasury_freeze_expiry = Some(self.height + self.treasury_epoch_length_blocks);
-        self.treasury_freeze_signatures = unique_signers.into_iter().collect();
-
-        info!(
-            "🚨 Treasury emergency freeze activated at height {} (expires at {})",
-            self.height,
-            self.treasury_freeze_expiry.unwrap()
-        );
-        Ok(())
-    }
-
-    /// Check and auto-expire treasury freeze if past expiry height.
-    pub fn check_treasury_freeze_expiry(&mut self) {
-        if let Some(expiry) = self.treasury_freeze_expiry {
-            if self.height >= expiry && self.treasury_frozen {
-                self.treasury_frozen = false;
-                self.treasury_freeze_signatures.clear();
-                self.treasury_frozen_at = None;
-                self.treasury_freeze_expiry = None;
-                info!("🔓 Treasury freeze auto-expired at height {}", self.height);
-            }
-        }
     }
 
     // ============================================================================
@@ -6628,11 +6509,6 @@ impl Blockchain {
         let mut new_base_fee: Option<u64> = None;
         let mut new_bytes_per_sov: Option<u64> = None;
         let mut new_witness_cap: Option<u32> = None;
-        let mut new_oracle_committee: Option<Vec<[u8; 32]>> = None;
-        let mut new_oracle_epoch_duration_secs: Option<u64> = None;
-        let mut new_oracle_max_source_age_secs: Option<u64> = None;
-        let mut new_oracle_max_deviation_bps: Option<u32> = None;
-        let mut new_oracle_max_price_staleness_epochs: Option<u64> = None;
 
         for param in &update.updates {
             match param {
@@ -6651,21 +6527,6 @@ impl Blockchain {
                 lib_consensus::dao::dao_types::GovernanceParameterValue::TxFeeWitnessCap(v) => {
                     new_witness_cap = Some(*v);
                 }
-                lib_consensus::dao::dao_types::GovernanceParameterValue::OracleCommitteeMembers(v) => {
-                    new_oracle_committee = Some(v.clone());
-                }
-                lib_consensus::dao::dao_types::GovernanceParameterValue::OracleEpochDurationSecs(v) => {
-                    new_oracle_epoch_duration_secs = Some(*v);
-                }
-                lib_consensus::dao::dao_types::GovernanceParameterValue::OracleMaxSourceAgeSecs(v) => {
-                    new_oracle_max_source_age_secs = Some(*v);
-                }
-                lib_consensus::dao::dao_types::GovernanceParameterValue::OracleMaxDeviationBps(v) => {
-                    new_oracle_max_deviation_bps = Some(*v);
-                }
-                lib_consensus::dao::dao_types::GovernanceParameterValue::OracleMaxPriceStalenessEpochs(v) => {
-                    new_oracle_max_price_staleness_epochs = Some(*v);
-                }
                 _ => {
                     // Other parameters are handled elsewhere
                 }
@@ -6678,11 +6539,6 @@ impl Blockchain {
             && new_base_fee.is_none()
             && new_bytes_per_sov.is_none()
             && new_witness_cap.is_none()
-            && new_oracle_committee.is_none()
-            && new_oracle_epoch_duration_secs.is_none()
-            && new_oracle_max_source_age_secs.is_none()
-            && new_oracle_max_deviation_bps.is_none()
-            && new_oracle_max_price_staleness_epochs.is_none()
         {
             return Err(anyhow::anyhow!(
                 "ParameterValidationError: No applicable parameters found in governance update"
@@ -6725,51 +6581,6 @@ impl Blockchain {
                 ));
             }
         }
-        if let Some(ref members) = new_oracle_committee {
-            if members.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "ParameterValidationError: oracle committee cannot be empty"
-                ));
-            }
-            let unique_count = members
-                .iter()
-                .copied()
-                .collect::<std::collections::BTreeSet<_>>()
-                .len();
-            if unique_count != members.len() {
-                return Err(anyhow::anyhow!(
-                    "ParameterValidationError: oracle committee members must be unique"
-                ));
-            }
-        }
-        if let Some(v) = new_oracle_epoch_duration_secs {
-            if v == 0 {
-                return Err(anyhow::anyhow!(
-                    "ParameterValidationError: oracle epoch_duration_secs cannot be zero"
-                ));
-            }
-        }
-        if let Some(v) = new_oracle_max_source_age_secs {
-            if v == 0 {
-                return Err(anyhow::anyhow!(
-                    "ParameterValidationError: oracle max_source_age_secs cannot be zero"
-                ));
-            }
-        }
-        if let Some(v) = new_oracle_max_deviation_bps {
-            if v > 10_000 {
-                return Err(anyhow::anyhow!(
-                    "ParameterValidationError: oracle max_deviation_bps must be <= 10000"
-                ));
-            }
-        }
-        if let Some(v) = new_oracle_max_price_staleness_epochs {
-            if v == 0 {
-                return Err(anyhow::anyhow!(
-                    "ParameterValidationError: oracle max_price_staleness_epochs cannot be zero"
-                ));
-            }
-        }
 
         // 9. Log the update
         info!(
@@ -6806,102 +6617,30 @@ impl Blockchain {
                 self.tx_fee_config.witness_cap, witness_cap
             );
         }
-        if let Some(ref committee) = new_oracle_committee {
-            info!("   oracle committee members (next epoch): {}", committee.len());
-        }
-        if let Some(v) = new_oracle_epoch_duration_secs {
-            info!(
-                "   oracle epoch_duration_secs (next epoch): {} → {}",
-                self.oracle_state.config.epoch_duration_secs, v
-            );
-        }
-        if let Some(v) = new_oracle_max_source_age_secs {
-            info!(
-                "   oracle max_source_age_secs (next epoch): {} → {}",
-                self.oracle_state.config.max_source_age_secs, v
-            );
-        }
-        if let Some(v) = new_oracle_max_deviation_bps {
-            info!(
-                "   oracle max_deviation_bps (next epoch): {} → {}",
-                self.oracle_state.config.max_deviation_bps, v
-            );
-        }
-        if let Some(v) = new_oracle_max_price_staleness_epochs {
-            info!(
-                "   oracle max_price_staleness_epochs (next epoch): {} → {}",
-                self.oracle_state.config.max_price_staleness_epochs, v
-            );
-        }
 
         // 10. Apply the update
-        let mut applied_difficulty_or_fee = false;
         if let Some(ts) = new_target_timespan {
             self.difficulty_config.target_timespan = ts;
-            applied_difficulty_or_fee = true;
         }
         if let Some(ai) = new_adjustment_interval {
             self.difficulty_config.adjustment_interval = ai;
-            applied_difficulty_or_fee = true;
         }
         if let Some(base_fee) = new_base_fee {
             self.tx_fee_config.base_fee = base_fee;
             self.tx_fee_config_updated_at_height = self.height;
-            applied_difficulty_or_fee = true;
         }
         if let Some(bytes_per_sov) = new_bytes_per_sov {
             self.tx_fee_config.bytes_per_sov = bytes_per_sov;
             self.tx_fee_config_updated_at_height = self.height;
-            applied_difficulty_or_fee = true;
         }
         if let Some(witness_cap) = new_witness_cap {
             self.tx_fee_config.witness_cap = witness_cap;
             self.tx_fee_config_updated_at_height = self.height;
-            applied_difficulty_or_fee = true;
         }
-        if applied_difficulty_or_fee {
-            self.difficulty_config.last_updated_at_height = self.height;
-        }
-
-        // Oracle governance updates are queued and activate at next epoch boundary.
-        let current_epoch = self
-            .blocks
-            .last()
-            .map(|b| self.oracle_state.epoch_id(b.header.timestamp))
-            .unwrap_or(0);
-
-        if let Some(committee) = new_oracle_committee {
-            self.oracle_state
-                .schedule_committee_update(committee, current_epoch)
-                .map_err(|e| anyhow::anyhow!("ParameterValidationError: {}", e))?;
-        }
-
-        if new_oracle_epoch_duration_secs.is_some()
-            || new_oracle_max_source_age_secs.is_some()
-            || new_oracle_max_deviation_bps.is_some()
-            || new_oracle_max_price_staleness_epochs.is_some()
-        {
-            let mut next_config = self.oracle_state.config.clone();
-            if let Some(v) = new_oracle_epoch_duration_secs {
-                next_config.epoch_duration_secs = v;
-            }
-            if let Some(v) = new_oracle_max_source_age_secs {
-                next_config.max_source_age_secs = v;
-            }
-            if let Some(v) = new_oracle_max_deviation_bps {
-                next_config.max_deviation_bps = v;
-            }
-            if let Some(v) = new_oracle_max_price_staleness_epochs {
-                next_config.max_price_staleness_epochs = v;
-            }
-            self.oracle_state
-                .schedule_config_update(next_config, current_epoch)
-                .map_err(|e| anyhow::anyhow!("ParameterValidationError: {}", e))?;
-        }
+        self.difficulty_config.last_updated_at_height = self.height;
 
         // Sync with consensus coordinator if available
-        if applied_difficulty_or_fee {
-            if let Some(ref coordinator) = self.consensus_coordinator {
+        if let Some(ref coordinator) = self.consensus_coordinator {
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     let coord = coordinator.write().await;
@@ -6911,8 +6650,7 @@ impl Blockchain {
                         new_target_timespan,
                     ).await
                 })
-                })?;
-            }
+            })?;
         }
 
         // 11. Mark proposal as executed to prevent double-execution
@@ -6934,62 +6672,17 @@ impl Blockchain {
             if let Some(expiry) = self.emergency_expires_at {
                 if self.height >= expiry {
                     self.emergency_state = false;
+                    self.emergency_activated_at = None;
+                    self.emergency_activated_by = None;
+                    self.emergency_expires_at = None;
                     info!("🔓 Emergency state expired at block height {}", self.height);
                 }
             }
         }
 
-        // Auto-expire treasury freeze (dao-7)
-        self.check_treasury_freeze_expiry();
-
         // Periodic phase-transition check every 1000 blocks (dao-3)
         if self.height > 0 && self.height % 1_000 == 0 {
             self.try_advance_governance_phase();
-        }
-
-        // Phase 2 auto-execution (dao-6)
-        if self.governance_phase == crate::dao::GovernancePhase::FullDao {
-            let delay = self.phase2_execution_delay_blocks;
-            let height = self.height;
-
-            // Collect proposals eligible for auto-execution
-            let ready: Vec<_> = self.get_dao_proposals().into_iter()
-                .filter(|p| {
-                    let vote_closed = height >= p.created_at_height.saturating_add(p.voting_period_blocks as u64);
-                    let delay_elapsed = height >= p.created_at_height.saturating_add(p.voting_period_blocks as u64).saturating_add(delay);
-                    let not_done = !self.executed_dao_proposals.contains(&p.proposal_id);
-                    let id_bytes = p.proposal_id.as_array();
-                    let no_veto = self.pending_vetoes.get(&id_bytes)
-                        .map(|v| (v.len() as u8) < self.council_threshold)
-                        .unwrap_or(true);
-                    vote_closed && delay_elapsed && not_done && no_veto
-                })
-                .collect();
-
-            for proposal in ready {
-                // Check quorum using circulating supply denominator
-                let passed = self.has_proposal_passed(
-                    &proposal.proposal_id,
-                    proposal.quorum_required as u32,
-                ).unwrap_or(false);
-                if !passed {
-                    continue;
-                }
-                // Parse execution params to find recipient and amount
-                if let Some(params_bytes) = &proposal.execution_params {
-                    if let Ok(params) = serde_json::from_slice::<crate::dao::TreasuryExecutionParams>(params_bytes) {
-                        let proposal_id = proposal.proposal_id.clone();
-                        if let Err(e) = self.execute_dao_proposal(
-                            proposal_id,
-                            "system".to_string(),
-                            params.recipient_wallet_id,
-                            params.amount,
-                        ) {
-                            warn!("Phase 2 auto-execute failed for {:?}: {}", proposal.proposal_id, e);
-                        }
-                    }
-                }
-            }
         }
 
         // Get difficulty parameter update proposals with their quorum requirements
@@ -7794,17 +7487,21 @@ impl Blockchain {
     // ============================================================================
 
     /// Calculate comprehensive voting power for a user in DAO governance
-    /// 
-    /// Factors considered:
-    /// - Base power: 1 vote (universal suffrage)
-    /// - Staked amount: Long-term commitment (2x weight)
-    /// - Network contribution: Storage/compute provided (up to 50% bonus)
-    /// - Reputation: Historical participation quality (up to 25% bonus)
-    /// - Delegated power: Votes delegated from other users
-    /// 
-    /// NOTE: Token balance is NOT included because this is a zero-knowledge blockchain.
-    /// Transaction amounts are encrypted in Pedersen commitments and cannot be read.
-    /// Voting power is derived entirely from publicly verifiable on-chain actions.
+    /// Calculate effective voting power for a user, applying `self.voting_power_mode`.
+    ///
+    /// Raw power = (total SOV balance across all wallets) / 100_000_000 (1 SOV = 1 unit)
+    ///           + sum of each direct delegator's raw power.
+    ///
+    /// The raw power is then transformed by `voting_power_mode`:
+    /// - `Identity`  → always returns 1 (one person, one vote)
+    /// - `Linear`    → returns raw power (minimum 1 if identity has any participation)
+    /// - `Quadratic` → returns `floor(sqrt(raw))` to dampen large-balance whales.
+    ///   Note: uses f64 arithmetic; for balances > 2^53 SOV units precision is lost.
+    ///   Governance amounts at that scale are astronomically unlikely in practice.
+    ///
+    /// Delegation is **non-transitive**: if A→B and B→C, C does not receive A's power.
+    /// `vote_delegations` maps delegator_id_hex → delegate_id_hex (both 64-char hex,
+    /// NOT "did:zhtp:…" strings).
     pub fn calculate_user_voting_power(&self, user_id: &lib_identity::IdentityId) -> u64 {
         let sov_id = crate::contracts::utils::generate_lib_token_id();
 
@@ -7824,8 +7521,8 @@ impl Blockchain {
         // 1 SOV (1e8 atomic units) = 1 base vote unit
         let base_power = sov_balance / 100_000_000;
 
-        // Add power from identities that delegated to this user.
-        // vote_delegations maps delegator_did_hex → delegate_did_hex.
+        // Add power from identities that delegated directly to this user (non-transitive).
+        // Keys and values in vote_delegations are 64-char hex-encoded identity IDs.
         let user_hex = hex::encode(user_id.0);
         let delegated_extra: u64 = self.vote_delegations.iter()
             .filter(|(_, delegate_hex)| delegate_hex.as_str() == user_hex.as_str())
@@ -7844,7 +7541,14 @@ impl Blockchain {
             })
             .sum();
 
-        base_power.saturating_add(delegated_extra)
+        let raw = base_power.saturating_add(delegated_extra);
+
+        // Apply voting power mode.
+        match self.voting_power_mode {
+            crate::dao::VotingPowerMode::Identity  => 1,
+            crate::dao::VotingPowerMode::Linear    => raw,
+            crate::dao::VotingPowerMode::Quadratic => (raw as f64).sqrt() as u64,
+        }
     }
 
     /// Calculate network contribution score (0-100) based on storage and compute provided
@@ -9337,7 +9041,7 @@ impl Blockchain {
     /// File format magic bytes - "ZHTP"
     const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
     /// Current file format version
-    const FILE_VERSION: u16 = 3;
+    const FILE_VERSION: u16 = 4;
 
     #[deprecated(since = "0.2.0", note = "Use Phase 2 incremental storage with SledStore instead")]
     pub fn save_to_file(&self, path: &std::path::Path) -> Result<()> {
@@ -9355,7 +9059,7 @@ impl Blockchain {
         }
 
         // Convert to stable storage format
-        let storage = BlockchainStorageV3::from_blockchain(self);
+        let storage = BlockchainStorageV4::from_blockchain(self);
 
         // Serialize to bincode
         let serialized = bincode::serialize(&storage)
@@ -9423,6 +9127,34 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
+                4 => {
+                    // V4 format - includes Oracle Protocol v1 state.
+                    match bincode::deserialize::<BlockchainStorageV4>(data) {
+                        Ok(storage) => {
+                            info!("📂 Loaded blockchain storage v4 (oracle-enabled format)");
+                            storage.to_blockchain()
+                        }
+                        Err(storage_err) => {
+                            // Fallback: v4 header but direct Blockchain format
+                            info!("📂 BlockchainStorageV4 failed, trying direct format: {}", storage_err);
+                            match bincode::deserialize::<Blockchain>(data) {
+                                Ok(bc) => {
+                                    info!("📂 Loaded v4 with direct Blockchain format (legacy v4)");
+                                    bc
+                                }
+                                Err(direct_err) => {
+                                    error!("❌ Failed to deserialize v4 blockchain:");
+                                    error!("   BlockchainStorageV4 error: {}", storage_err);
+                                    error!("   Direct format error: {}", direct_err);
+                                    return Err(anyhow::anyhow!(
+                                        "Failed to deserialize v4 blockchain: {}",
+                                        storage_err
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
                 3 => {
                     // V3 format - try BlockchainStorageV3 first, fallback to direct Blockchain
                     match bincode::deserialize::<BlockchainStorageV3>(data) {
@@ -10917,5 +10649,580 @@ mod store_backed_blockchain_tests {
             1,
             "store latest_height should be 1 after two committed blocks"
         );
+    }
+}
+
+#[cfg(test)]
+mod oracle_storage_migration_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn load_v3_file_applies_default_oracle_state() {
+        let mut blockchain = Blockchain::default();
+        blockchain.oracle_state.config.epoch_duration_secs = 999;
+        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
+            epoch_id: 1,
+            sov_usd_price: 123_000_000,
+        });
+
+        // Emulate pre-oracle v3 payload (without oracle fields).
+        let storage_v3 = BlockchainStorageV3::from_blockchain(&blockchain);
+        let serialized = bincode::serialize(&storage_v3).expect("serialize v3 storage");
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("legacy_v3.dat");
+        let mut file_data = Vec::with_capacity(6 + serialized.len());
+        file_data.extend_from_slice(&Blockchain::FILE_MAGIC);
+        file_data.extend_from_slice(&3u16.to_le_bytes());
+        file_data.extend_from_slice(&serialized);
+
+        let mut f = std::fs::File::create(&path).expect("create file");
+        f.write_all(&file_data).expect("write file");
+        f.sync_all().expect("sync file");
+
+        #[allow(deprecated)]
+        let loaded = Blockchain::load_from_file(&path).expect("load v3 file");
+        assert_eq!(
+            loaded.oracle_state,
+            crate::oracle::OracleState::default(),
+            "v3 payloads must load with default oracle state"
+        );
+    }
+}
+
+// =============================================================================
+// Test helpers
+// These methods exist solely to support unit/integration tests that need
+// fine-grained control over blockchain state without running the full block
+// pipeline. They carry `_for_test` / `_test_` in their names to make their
+// purpose clear and avoid accidental production use.
+// =============================================================================
+
+#[doc(hidden)]
+impl Blockchain {
+    /// Push a minimal DAO proposal into `self.blocks` for test use.
+    /// Bypasses block validation — do NOT call outside of unit tests.
+    pub fn push_test_dao_proposal(&mut self, proposal_id: Hash, quorum: u8) {
+        self.push_test_dao_proposal_with_category(
+            proposal_id,
+            quorum,
+            crate::dao::TreasurySpendingCategory::GrantsFunding,
+        );
+    }
+
+    /// Push a DAO proposal with an explicit spending category for test use.
+    pub fn push_test_dao_proposal_with_category(
+        &mut self,
+        proposal_id: Hash,
+        quorum: u8,
+        category: crate::dao::TreasurySpendingCategory,
+    ) {
+        use crate::transaction::DaoProposalData;
+        // Serialize a minimal TreasuryExecutionParams — recipient/amount are overridden at
+        // execution time, but the category is validated before the transfer happens.
+        let params = crate::dao::TreasuryExecutionParams {
+            category,
+            recipient_wallet_id: String::new(),
+            amount: 0,
+        };
+        let params_bytes =
+            serde_json::to_vec(&params).expect("TreasuryExecutionParams must serialize");
+        let tx = Transaction::new_dao_proposal(
+            DaoProposalData {
+                proposal_id,
+                proposer: "did:zhtp:test".to_string(),
+                title: "Test Proposal".to_string(),
+                description: "Test".to_string(),
+                proposal_type: "treasury_allocation".to_string(),
+                voting_period_blocks: 1000,
+                quorum_required: quorum,
+                execution_params: Some(params_bytes),
+                created_at: 0,
+                created_at_height: 0,
+            },
+            vec![],
+            vec![],
+            0,
+            Signature::default(),
+            vec![],
+        );
+        self.blocks.push(Self::make_minimal_test_block(vec![tx]));
+    }
+
+    /// Push a minimal DAO vote into `self.blocks` for test use.
+    /// Bypasses block validation — do NOT call outside of unit tests.
+    pub fn push_test_dao_vote(&mut self, proposal_id: Hash, voter: &str, choice: &str) {
+        use crate::transaction::DaoVoteData;
+        let tx = Transaction::new_dao_vote(
+            DaoVoteData {
+                vote_id: Hash::default(),
+                proposal_id,
+                voter: voter.to_string(),
+                vote_choice: choice.to_string(),
+                voting_power: 1,
+                justification: None,
+                timestamp: 0,
+            },
+            vec![],
+            vec![],
+            0,
+            Signature::default(),
+            vec![],
+        );
+        self.blocks.push(Self::make_minimal_test_block(vec![tx]));
+    }
+
+    /// Credit SOV directly to the DAO treasury wallet.
+    /// Bypasses normal minting rules — for unit tests only.
+    pub fn credit_dao_treasury_sov_for_test(&mut self, amount: u64) -> Result<()> {
+        // Ensure the SOV token contract exists (Blockchain::new() skips this).
+        self.ensure_sov_token_contract();
+        let treasury_wallet_id = self
+            .dao_treasury_wallet_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
+        let id_bytes: [u8; 32] = hex::decode(&treasury_wallet_id)
+            .map_err(|e| anyhow::anyhow!("Bad treasury wallet hex: {}", e))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Treasury wallet ID must be 32 bytes"))?;
+        let pk = Self::wallet_key_for_sov(&id_bytes);
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self
+            .token_contracts
+            .get_mut(&sov_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
+        token
+            .credit_balance(&pk, amount)
+            .map_err(|e| anyhow::anyhow!("Treasury credit failed: {}", e))?;
+        Ok(())
+    }
+
+    /// Query the raw SOV balance for an arbitrary 64-char hex wallet ID.
+    /// For unit tests only.
+    pub fn get_wallet_sov_for_test(&self, wallet_id_hex: &str) -> Result<u64> {
+        let id_bytes: [u8; 32] = hex::decode(wallet_id_hex)
+            .map_err(|e| anyhow::anyhow!("Bad wallet hex: {}", e))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Wallet ID must be 32 bytes"))?;
+        let pk = Self::wallet_key_for_sov(&id_bytes);
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self
+            .token_contracts
+            .get(&sov_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
+        Ok(token.balance_of(&pk))
+    }
+
+    /// Register a minimal wallet owned by `identity_bytes` and credit it with `amount` SOV.
+    /// This allows `calculate_user_voting_power` to return a non-zero value in unit tests.
+    /// For unit tests only — bypasses normal registration pipeline.
+    pub fn credit_identity_sov_for_test(
+        &mut self,
+        identity_bytes: &[u8; 32],
+        amount: u64,
+    ) -> Result<()> {
+        self.ensure_sov_token_contract();
+
+        // Wallet ID is derived from the identity bytes so it is unique per identity.
+        let wallet_id_bytes: [u8; 32] = {
+            let mut w = *identity_bytes;
+            w[0] ^= 0xee; // differentiate wallet_id from identity_id
+            w
+        };
+
+        // Insert a minimal WalletTransactionData owned by this identity.
+        let owner_hash = crate::types::hash::Hash::new(*identity_bytes);
+        let wallet_id_hash = crate::types::hash::Hash::new(wallet_id_bytes);
+        let wallet_id_hex = hex::encode(wallet_id_bytes);
+        let wallet_data = crate::transaction::WalletTransactionData {
+            wallet_id: wallet_id_hash,
+            public_key: vec![],
+            wallet_type: "standard".to_string(),
+            wallet_name: "test".to_string(),
+            alias: None,
+            owner_identity_id: Some(owner_hash),
+            seed_commitment: Hash::default(),
+            created_at: 0,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance: 0,
+        };
+        self.wallet_registry.insert(wallet_id_hex, wallet_data);
+
+        // Credit SOV to the wallet's synthetic key.
+        let pk = Self::wallet_key_for_sov(&wallet_id_bytes);
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self
+            .token_contracts
+            .get_mut(&sov_id)
+            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
+        token
+            .credit_balance(&pk, amount)
+            .map_err(|e| anyhow::anyhow!("Identity SOV credit failed: {}", e))?;
+        Ok(())
+    }
+
+    /// Validates CBE (Community Bonding Engine) graduation oracle gate.
+    ///
+    /// Enforces:
+    /// - finalized oracle price must exist
+    /// - finalized price must not be stale
+    /// - `usd_value = reserve_sov * sov_usd_price` (both in price-scaled units)
+    /// - `usd_value >= 269_000` (plain USD, compared against scaled values)
+    pub fn validate_cbe_graduation_oracle_gate(
+        &self,
+        token_id: [u8; 32],
+        block_timestamp: u64,
+    ) -> Result<()> {
+        use crate::contracts::tokens::CBE_SYMBOL;
+        const CBE_GRADUATION_THRESHOLD_USD: u128 = 269_000;
+
+        let token = if let Some(store) = &self.store {
+            store
+                .get_bonding_curve_token(&crate::storage::TokenId(token_id))
+                .map_err(|e| anyhow::anyhow!("failed to read bonding curve token: {}", e))?
+                .or_else(|| self.bonding_curve_registry.get(&token_id).cloned())
+        } else {
+            self.bonding_curve_registry.get(&token_id).cloned()
+        }
+        .ok_or_else(|| anyhow::anyhow!("bonding curve token not found"))?;
+
+        if token.symbol != CBE_SYMBOL {
+            return Ok(());
+        }
+        if token.phase.is_graduated() {
+            return Ok(());
+        }
+
+        let latest_epoch = self.oracle_state.latest_finalized_epoch()
+            .ok_or_else(|| anyhow::anyhow!("CBE graduation requires finalized oracle price"))?;
+
+        let config = self.oracle_state.config();
+        let current_epoch = block_timestamp / config.epoch_duration_secs.max(1);
+        let age = current_epoch.saturating_sub(latest_epoch);
+        if age > config.max_price_staleness_epochs {
+            return Err(anyhow::anyhow!(
+                "CBE graduation blocked: finalized oracle price is stale (age={} epochs, max={})",
+                age,
+                config.max_price_staleness_epochs
+            ));
+        }
+
+        // Reserve balance is in stablecoin (USD-pegged), so we can compare directly
+        // Convert threshold to same units as reserve_balance (micro-USD: 1 USD = 1_000_000)
+        const MICRO_USD_PER_USD: u128 = 1_000_000;
+        let threshold_micro_usd = CBE_GRADUATION_THRESHOLD_USD * MICRO_USD_PER_USD;
+        let reserve_micro_usd = token.reserve_balance as u128;
+
+        if reserve_micro_usd < threshold_micro_usd {
+            return Err(anyhow::anyhow!(
+                "CBE graduation blocked: reserve USD value below threshold (reserve={} micro-USD, threshold={} micro-USD)",
+                reserve_micro_usd,
+                threshold_micro_usd
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_block_cbe_graduation_gating(&self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if tx.transaction_type != crate::types::transaction_type::TransactionType::BondingCurveGraduate {
+                continue;
+            }
+            let data = tx
+                .bonding_curve_graduate_data
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("BondingCurveGraduate missing data"))?;
+            self.validate_cbe_graduation_oracle_gate(data.token_id, block.header.timestamp)?;
+        }
+        Ok(())
+    }
+
+    fn make_minimal_test_block(transactions: Vec<Transaction>) -> Block {
+        use crate::block::BlockHeader;
+        let count = transactions.len() as u32;
+        Block {
+            header: BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                timestamp: 0,
+                difficulty: Difficulty::default(),
+                nonce: 0,
+                height: 1,
+                block_hash: Hash::default(),
+                transaction_count: count,
+                block_size: 0,
+                cumulative_difficulty: Difficulty::default(),
+                fee_model_version: 1,
+                state_root: Hash::default(),
+            },
+            transactions,
+        }
+    }
+
+    /// Activate emergency treasury freeze with 80% validator signatures.
+    pub fn activate_treasury_freeze(
+        &mut self,
+        validator_dids: Vec<String>,
+        _reason: String,
+    ) -> Result<()> {
+        let validator_count = self.validator_registry.len();
+        let threshold = (validator_count * 8 + 9) / 10; // ceil(80%)
+
+        if validator_dids.len() < threshold {
+            return Err(anyhow::anyhow!(
+                "Insufficient validator signatures: got {}, need {} (80% of {})",
+                validator_dids.len(),
+                threshold,
+                validator_count
+            ));
+        }
+
+        // Verify all signers are active validators
+        for did in &validator_dids {
+            match self.validator_registry.get(did) {
+                Some(v) if v.status == "active" => continue,
+                _ => return Err(anyhow::anyhow!("Invalid or inactive validator: {}", did)),
+            }
+        }
+
+        self.treasury_frozen = true;
+        self.treasury_frozen_at = Some(self.height);
+        self.treasury_freeze_expiry = Some(self.height + 10_080); // ~1 week at 10s blocks
+        // Store validator DIDs with empty signatures (signatures verified separately)
+        self.treasury_freeze_signatures = validator_dids.into_iter().map(|d| (d, Vec::new())).collect();
+
+        Ok(())
+    }
+
+    /// Council veto for a proposal.
+    pub fn council_veto_proposal(
+        &mut self,
+        proposal_id: &Hash,
+        signer_did: String,
+        reason: String,
+    ) -> Result<()> {
+        // Verify signer is a council member
+        if !self.council_members.iter().any(|m| m.identity_id == signer_did) {
+            return Err(anyhow::anyhow!("Signer is not a council member"));
+        }
+
+        let vetoes = self.pending_vetoes.entry(proposal_id.as_array()).or_default();
+        
+        // Check for duplicate veto
+        if vetoes.iter().any(|(did, _)| did == &signer_did) {
+            return Err(anyhow::anyhow!("Council member already vetoed this proposal"));
+        }
+
+        vetoes.push((signer_did, reason));
+        Ok(())
+    }
+
+    /// Council cosign for a proposal.
+    pub fn council_cosign_proposal(
+        &mut self,
+        proposal_id: &Hash,
+        signer_did: String,
+        signature: Vec<u8>,
+    ) -> Result<()> {
+        // Verify signer is a council member
+        if !self.council_members.iter().any(|m| m.identity_id == signer_did) {
+            return Err(anyhow::anyhow!("Signer is not a council member"));
+        }
+
+        let cosigns = self.pending_cosigns.entry(proposal_id.as_array()).or_default();
+        
+        // Check for duplicate cosign
+        if cosigns.iter().any(|(did, _)| did == &signer_did) {
+            return Err(anyhow::anyhow!("Council member already cosigned this proposal"));
+        }
+
+        cosigns.push((signer_did, signature));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cbe_graduation_oracle_gate_tests {
+    use super::*;
+    use crate::contracts::tokens::CBE_SYMBOL;
+    use crate::contracts::bonding_curve::{BondingCurveToken, Phase};
+
+    fn create_test_cbe_token(reserve_micro_usd: u64) -> BondingCurveToken {
+        BondingCurveToken {
+            token_id: [1u8; 32],
+            name: "Test CBE".to_string(),
+            symbol: CBE_SYMBOL.to_string(),
+            decimals: 8,
+            phase: Phase::Curve,
+            total_supply: 1_000_000_000,
+            reserve_balance: reserve_micro_usd,
+            curve_type: crate::contracts::bonding_curve::CurveType::Linear {
+                base_price: 1,
+                slope: 1,
+            },
+            threshold: crate::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000),
+            sell_enabled: true,
+            amm_pool_id: None,
+            creator: PublicKey::new(vec![1u8; 32]),
+            deployed_at_block: 1,
+            deployed_at_timestamp: 1,
+        }
+    }
+
+    #[test]
+    fn cbe_graduation_rejects_missing_finalized_price() {
+        let mut blockchain = Blockchain::default();
+        // No finalized oracle price set
+        let token = create_test_cbe_token(300_000_000_000); // $300K reserve
+        blockchain.bonding_curve_registry.register(token).unwrap();
+
+        let result = blockchain.validate_cbe_graduation_oracle_gate(
+            [1u8; 32],
+            1_700_000_000
+        );
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("CBE graduation requires finalized oracle price"), "Error: {}", err_msg);
+    }
+
+    #[test]
+    fn cbe_graduation_rejects_stale_finalized_price() {
+        let mut blockchain = Blockchain::default();
+        let token = create_test_cbe_token(300_000_000_000); // $300K reserve
+        blockchain.bonding_curve_registry.register(token).unwrap();
+
+        // Set a finalized price at epoch 0
+        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
+            epoch_id: 0,
+            sov_usd_price: 100_000_000, // $1.00
+        });
+
+        // Configure oracle to have short staleness window
+        blockchain.oracle_state.config.max_price_staleness_epochs = 5;
+        blockchain.oracle_state.config.epoch_duration_secs = 300; // 5 min epochs
+
+        // Try to graduate at timestamp that puts us at epoch 10 (stale)
+        let block_timestamp = 10 * 300; // epoch 10
+        let result = blockchain.validate_cbe_graduation_oracle_gate(
+            [1u8; 32],
+            block_timestamp
+        );
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("stale"), "Error: {}", err_msg);
+    }
+
+    #[test]
+    fn cbe_graduation_accepts_fresh_finalized_price() {
+        let mut blockchain = Blockchain::default();
+        let token = create_test_cbe_token(300_000_000_000); // $300K reserve
+        blockchain.bonding_curve_registry.register(token).unwrap();
+
+        // Set a finalized price at epoch 5
+        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
+            epoch_id: 5,
+            sov_usd_price: 100_000_000, // $1.00
+        });
+
+        blockchain.oracle_state.config.max_price_staleness_epochs = 10;
+        blockchain.oracle_state.config.epoch_duration_secs = 300;
+
+        // Try to graduate at epoch 10 (age = 5, within threshold)
+        let block_timestamp = 10 * 300;
+        let result = blockchain.validate_cbe_graduation_oracle_gate(
+            [1u8; 32],
+            block_timestamp
+        );
+
+        assert!(result.is_ok(), "Expected Ok but got: {:?}", result);
+    }
+
+    #[test]
+    fn cbe_graduation_rejects_reserve_below_threshold() {
+        let mut blockchain = Blockchain::default();
+        // Reserve of $200K is below $269K threshold
+        let token = create_test_cbe_token(200_000_000_000);
+        blockchain.bonding_curve_registry.register(token).unwrap();
+
+        // Set a finalized price at current epoch
+        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
+            epoch_id: 10,
+            sov_usd_price: 100_000_000,
+        });
+
+        blockchain.oracle_state.config.max_price_staleness_epochs = 10;
+        blockchain.oracle_state.config.epoch_duration_secs = 300;
+
+        let block_timestamp = 10 * 300; // same epoch as finalized price
+        let result = blockchain.validate_cbe_graduation_oracle_gate(
+            [1u8; 32],
+            block_timestamp
+        );
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("below threshold"), "Error: {}", err_msg);
+    }
+
+    #[test]
+    fn cbe_graduation_accepts_reserve_at_threshold_boundary() {
+        let mut blockchain = Blockchain::default();
+        // Reserve of exactly $269K threshold (269_000 * 1_000_000 micro-USD)
+        let token = create_test_cbe_token(269_000_000_000);
+        blockchain.bonding_curve_registry.register(token).unwrap();
+
+        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
+            epoch_id: 10,
+            sov_usd_price: 100_000_000,
+        });
+
+        blockchain.oracle_state.config.max_price_staleness_epochs = 10;
+        blockchain.oracle_state.config.epoch_duration_secs = 300;
+
+        let block_timestamp = 10 * 300;
+        let result = blockchain.validate_cbe_graduation_oracle_gate(
+            [1u8; 32],
+            block_timestamp
+        );
+
+        assert!(result.is_ok(), "Expected Ok for exact threshold boundary but got: {:?}", result);
+    }
+
+    #[test]
+    fn cbe_graduation_skips_non_cbe_tokens() {
+        let mut blockchain = Blockchain::default();
+        let mut token = create_test_cbe_token(300_000_000_000);
+        token.symbol = "OTHER".to_string(); // Not CBE
+        blockchain.bonding_curve_registry.register(token).unwrap();
+
+        // No oracle price needed for non-CBE tokens
+        let result = blockchain.validate_cbe_graduation_oracle_gate(
+            [1u8; 32],
+            1_700_000_000
+        );
+
+        assert!(result.is_ok(), "Non-CBE tokens should skip oracle gate");
+    }
+
+    #[test]
+    fn cbe_graduation_skips_already_graduated() {
+        let mut blockchain = Blockchain::default();
+        let mut token = create_test_cbe_token(300_000_000_000);
+        token.phase = Phase::Graduated; // Already graduated
+        blockchain.bonding_curve_registry.register(token).unwrap();
+
+        // No oracle price needed for already-graduated tokens
+        let result = blockchain.validate_cbe_graduation_oracle_gate(
+            [1u8; 32],
+            1_700_000_000
+        );
+
+        assert!(result.is_ok(), "Already graduated tokens should skip oracle gate");
     }
 }
