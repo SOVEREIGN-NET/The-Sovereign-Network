@@ -504,10 +504,10 @@ pub const ISP_BYPASS_UPTIME_BONUS: u64 = 10; // SOV per hour uptime
 
 /// Quality and uptime bonus thresholds
 pub const QUALITY_BONUS_THRESHOLD: f64 = 0.95;
-pub const UPTIME_BONUS_THRESHOLD: u64 = 24;
+pub const UPTIME_BONUS_THRESHOLD: u64 = 23; // 23 hours (99%+ uptime)
 
 /// Network utilization thresholds for reward adjustments
-pub const HIGH_UTILIZATION_THRESHOLD: f64 = 0.8;
+pub const HIGH_UTILIZATION_THRESHOLD: f64 = 0.9; // 90%
 pub const LOW_UTILIZATION_THRESHOLD: f64 = 0.3;
 pub const HIGH_UTILIZATION_ADJUSTMENT: u64 = 105; // +5%
 pub const LOW_UTILIZATION_ADJUSTMENT: u64 = 98;   // -2%

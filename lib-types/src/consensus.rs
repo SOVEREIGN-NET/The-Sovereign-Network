@@ -82,6 +82,9 @@ pub enum ConsensusStep {
 
 impl std::fmt::Display for ConsensusStep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Note: This Display impl is kept in lib-types as it is a fundamental
+        // representation concern. For programmatic access to the display name,
+        // use ConsensusStepExt::display_name() in lib-consensus.
         match self {
             ConsensusStep::Propose => write!(f, "Propose"),
             ConsensusStep::PreVote => write!(f, "PreVote"),
@@ -212,14 +215,6 @@ impl FeeDistributionResult {
         }
     }
 
-    /// Calculate distribution from total fees using 45/30/15/10 split
-    pub fn from_total_fees(total_fees: u64) -> Self {
-        let ubi_amount = total_fees * 45 / 100;
-        let consensus_amount = total_fees * 30 / 100;
-        let governance_amount = total_fees * 15 / 100;
-        let treasury_amount = total_fees * 10 / 100;
-        Self::new(ubi_amount, consensus_amount, governance_amount, treasury_amount)
-    }
 }
 
 /// Minimum validators required for BFT consensus mode

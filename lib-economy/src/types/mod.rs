@@ -4,8 +4,6 @@
 //! Pure data types are re-exported from lib-types.
 //! Behavior is added via extension traits.
 
-use serde::{Serialize, Deserialize};
-
 // Re-export pure data types from lib-types (canonical location)
 pub use lib_types::economy::{
     Priority, TransactionType, TreasuryFund, TreasuryOperationType, UbiRecipientCategory,
@@ -220,11 +218,11 @@ impl WorkMetricsExt for WorkMetrics {
     }
     
     fn qualifies_for_quality_bonus(&self) -> bool {
-        self.quality_score > crate::QUALITY_BONUS_THRESHOLD
+        self.quality_score > lib_types::economy::QUALITY_BONUS_THRESHOLD
     }
     
     fn qualifies_for_uptime_bonus(&self) -> bool {
-        self.uptime_hours >= crate::UPTIME_BONUS_THRESHOLD
+        self.uptime_hours >= lib_types::economy::UPTIME_BONUS_THRESHOLD
     }
 }
 
@@ -328,7 +326,7 @@ impl NetworkStatsExt for NetworkStats {
     }
     
     fn is_high_utilization(&self) -> bool {
-        self.utilization > crate::HIGH_UTILIZATION_THRESHOLD
+        self.utilization > lib_types::economy::HIGH_UTILIZATION_THRESHOLD
     }
     
     fn is_low_utilization(&self) -> bool {
@@ -337,9 +335,9 @@ impl NetworkStatsExt for NetworkStats {
     
     fn get_reward_adjustment_multiplier(&self) -> u64 {
         if self.is_high_utilization() {
-            crate::HIGH_UTILIZATION_ADJUSTMENT
+            lib_types::economy::HIGH_UTILIZATION_ADJUSTMENT
         } else if self.is_low_utilization() {
-            crate::LOW_UTILIZATION_ADJUSTMENT
+            lib_types::economy::LOW_UTILIZATION_ADJUSTMENT
         } else {
             100
         }
@@ -488,5 +486,112 @@ mod tests {
         ].iter().map(|fund| fund.recommended_allocation_percentage()).sum();
         
         assert!((total - 100.0).abs() < 0.1);
+    }
+
+    /// Ensure `update_quality_score` clamps the quality score into [0.0, 1.0].
+    #[test]
+    fn test_work_metrics_quality_bounds() {
+        use lib_types::economy::WorkMetrics;
+        let mut metrics = WorkMetrics::new();
+
+        // Below lower bound should clamp to 0.0
+        metrics.update_quality_score(-0.5);
+        assert!(metrics.quality_score >= 0.0 && metrics.quality_score <= 1.0);
+        assert_eq!(metrics.quality_score, 0.0);
+
+        // Above upper bound should clamp to 1.0
+        metrics.update_quality_score(1.5);
+        assert!(metrics.quality_score >= 0.0 && metrics.quality_score <= 1.0);
+        assert_eq!(metrics.quality_score, 1.0);
+    }
+
+    /// Ensure `update_utilization` clamps utilization into [0.0, 1.0].
+    #[test]
+    fn test_network_stats_utilization_bounds() {
+        use lib_types::economy::NetworkStats;
+        let mut stats = NetworkStats::new();
+
+        // Below lower bound should clamp to 0.0
+        stats.update_utilization(-0.25);
+        assert!(stats.utilization >= 0.0 && stats.utilization <= 1.0);
+        assert_eq!(stats.utilization, 0.0);
+
+        // Above upper bound should clamp to 1.0
+        stats.update_utilization(1.25);
+        assert!(stats.utilization >= 0.0 && stats.utilization <= 1.0);
+        assert_eq!(stats.utilization, 1.0);
+    }
+
+    /// Verify high/low utilization predicates respect the configured thresholds.
+    #[test]
+    fn test_network_stats_thresholds() {
+        use lib_types::economy::NetworkStats;
+        use lib_types::economy::{HIGH_UTILIZATION_THRESHOLD, LOW_UTILIZATION_THRESHOLD};
+        let mut stats = NetworkStats::new();
+
+        // Just below low utilization threshold
+        stats.update_utilization(LOW_UTILIZATION_THRESHOLD - 0.01);
+        assert!(stats.is_low_utilization());
+        assert!(!stats.is_high_utilization());
+
+        // Between thresholds should be neither high nor low
+        stats.update_utilization((LOW_UTILIZATION_THRESHOLD + HIGH_UTILIZATION_THRESHOLD) / 2.0);
+        assert!(!stats.is_low_utilization());
+        assert!(!stats.is_high_utilization());
+
+        // Just above high utilization threshold
+        stats.update_utilization(HIGH_UTILIZATION_THRESHOLD + 0.01);
+        assert!(stats.is_high_utilization());
+        assert!(!stats.is_low_utilization());
+    }
+
+    /// Verify reward adjustment multipliers for different utilization regimes.
+    #[test]
+    fn test_network_stats_adjustment_multipliers() {
+        use lib_types::economy::NetworkStats;
+        use lib_types::economy::{HIGH_UTILIZATION_THRESHOLD, LOW_UTILIZATION_THRESHOLD, HIGH_UTILIZATION_ADJUSTMENT, LOW_UTILIZATION_ADJUSTMENT};
+        let mut stats = NetworkStats::new();
+
+        // Low utilization should use LOW_UTILIZATION_ADJUSTMENT
+        stats.update_utilization(LOW_UTILIZATION_THRESHOLD - 0.01);
+        let low_mult = stats.get_reward_adjustment_multiplier();
+        assert_eq!(low_mult, LOW_UTILIZATION_ADJUSTMENT);
+
+        // Normal utilization should have neutral multiplier (100 = 1.0 in basis points)
+        stats.update_utilization((LOW_UTILIZATION_THRESHOLD + HIGH_UTILIZATION_THRESHOLD) / 2.0);
+        let normal_mult = stats.get_reward_adjustment_multiplier();
+        assert_eq!(normal_mult, 100);
+
+        // High utilization should use HIGH_UTILIZATION_ADJUSTMENT
+        stats.update_utilization(HIGH_UTILIZATION_THRESHOLD + 0.01);
+        let high_mult = stats.get_reward_adjustment_multiplier();
+        assert_eq!(high_mult, HIGH_UTILIZATION_ADJUSTMENT);
+    }
+
+    /// Sanity checks for the network health score computation.
+    ///
+    /// We don't depend on the exact formula, but we assert that:
+    /// - The score is always within [0.0, 1.0].
+    /// - Better utilization/quality does not produce a worse score.
+    #[test]
+    fn test_network_health_score() {
+        use lib_types::economy::NetworkStats;
+        let mut stats_low = NetworkStats::new();
+        stats_low.update_utilization(0.2);
+        stats_low.update_avg_quality(0.3);
+
+        let mut stats_high = NetworkStats::new();
+        stats_high.update_utilization(0.8);
+        stats_high.update_avg_quality(0.9);
+
+        let score_low = stats_low.network_health_score();
+        let score_high = stats_high.network_health_score();
+
+        // Scores should always be within [0.0, 1.0]
+        assert!(score_low >= 0.0 && score_low <= 1.0);
+        assert!(score_high >= 0.0 && score_high <= 1.0);
+
+        // Better metrics should not yield a strictly worse health score
+        assert!(score_high >= score_low);
     }
 }
