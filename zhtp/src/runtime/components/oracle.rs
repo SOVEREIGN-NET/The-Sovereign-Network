@@ -91,9 +91,11 @@ impl OracleComponent {
                 if !ready {
                     warn!("Oracle consumer: validator_registry still has <2 active validators after 60 s — starting anyway");
                 }
-                // Note: Committee membership is set through governance path only.
-                // The consumer reads from oracle_state.committee.members() which is populated
-                // via schedule_committee_update() → apply_pending_updates() at epoch boundaries.
+                // Note: Committee membership is currently managed outside this runtime component
+                // (e.g. via governance or genesis configuration). The consumer reads from
+                // oracle_state.committee.members(), which must be populated by the blockchain/
+                // oracle layer before or during node startup; this code does not invoke
+                // schedule_committee_update() or apply_pending_updates() itself.
                 Self::run_consumer(oracle_rx, bc).await;
             });
         }
