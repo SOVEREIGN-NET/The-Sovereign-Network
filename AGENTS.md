@@ -243,6 +243,82 @@ Done criteria:
 - Any out-of-transaction consensus write path is a merge blocker.
 - Any duplicate executable token or DAO engine in consensus path is a merge blocker.
 
+## Agent 11: Type Architecture Agent
+
+Focus: type centralization, consistency, and the "types in lib-types, behavior in domain crates" rule.
+
+Owned surfaces:
+- `lib-types/*`
+- Type migration coordination across all crates
+
+Responsibilities:
+- Enforce the type architecture rule: pure data types in `lib-types`, behavior in domain crates via extension traits.
+- Review type placements during PR review.
+- Coordinate type migrations from domain crates to `lib-types`.
+- Maintain type architecture documentation.
+
+Critical invariants:
+- No duplicate type definitions across crates.
+- Domain crates re-export from `lib-types`, never redefine.
+- Extension traits provide behavior without modifying lib-types.
+
+### Type Architecture Rule
+
+**Principle**: `lib-types` is the canonical source for all protocol-neutral, behavior-free data types.
+
+**What belongs in lib-types:**
+- Pure data structs/enums (no methods beyond basic constructors/accessors)
+- Types used across multiple crates
+- Serialization-stable types (consensus-relevant)
+- Primitive types (Address, Hash, Amount, etc.)
+
+**What does NOT belong in lib-types:**
+- Business logic / calculation methods
+- I/O operations
+- Types with complex external dependencies (crypto, storage)
+- Implementation details of specific domains
+
+**Pattern for adding behavior:**
+```rust
+// In lib-types: pure data
+pub struct MyType { ... }
+
+// In domain crate: behavior via extension trait
+pub trait MyTypeExt {
+    fn calculate_something(&self) -> Result;
+}
+impl MyTypeExt for MyType { ... }
+```
+
+**Examples:**
+| Type | Data Location | Behavior Location |
+|------|--------------|-------------------|
+| `TxKind` | `lib-types::fees` | `TxKindExt` in `lib-fees` |
+| `MempoolConfig` | `lib-types::mempool` | `MempoolConfigExt` in `lib-mempool` |
+| `ConsensusStep` | `lib-types::consensus` | `ConsensusStepExt` in `lib-consensus` |
+| `WorkMetrics` | `lib-types::economy` | `WorkMetricsExt` in `lib-economy` |
+
+Done criteria:
+- New types follow the architecture rule.
+- No type duplication across crates.
+- Extension traits used for behavior.
+- Documentation updated.
+
+## Handoff Protocol
+
+- Primary agent opens the change with explicit invariants.
+- Secondary reviewer agent validates domain-specific risks.
+- Security agent signs off on critical consensus changes.
+- **Type Architecture agent reviews type placement and migrations.**
+- QA agent validates required gates before merge.
+
+## Escalation Rules
+
+- Any detected consensus divergence risk is a merge blocker.
+- Any out-of-transaction consensus write path is a merge blocker.
+- Any duplicate executable token or DAO engine in consensus path is a merge blocker.
+- **Any type definition outside lib-types that duplicates or shadows a lib-types definition is a merge blocker.**
+
 ## Standard Deliverables Per Change
 
 - Scope summary.
@@ -250,3 +326,4 @@ Done criteria:
 - File-level diff map.
 - Tests added or updated.
 - Risk note and rollback strategy.
+- **Type architecture compliance note (for type-related changes).**

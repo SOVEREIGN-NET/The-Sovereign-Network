@@ -49,7 +49,7 @@ impl AdmitError {
     }
 
     pub fn mempool_bytes_full(current: u64, max: u64) -> Self {
-        Self::new(AdmitErrorKind::MempoolBytesFull { current, max })
+        Self::new(AdmitErrorKind::MempoolBytesFull { prospective_total_bytes: current, max })
     }
 
     pub fn sender_limit(sender: Address, count: u32, max: u32) -> Self {
