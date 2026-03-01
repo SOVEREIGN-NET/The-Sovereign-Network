@@ -197,10 +197,15 @@ fn empty_committee_threshold_is_one() {
     assert!(committee.members().is_empty());
 }
 
-/// Test that direct set_members_genesis_only is not callable from external crates.
-/// This verifies the governance-only enforcement at the API level.
+/// Test that committee changes after genesis use the governance path.
+///
+/// This verifies runtime behavior: post-genesis, committee updates must go through
+/// `schedule_committee_update()` → `apply_pending_updates()`. 
+///
+/// For compile-time verification that `set_members_genesis_only` is unreachable from
+/// external crates, see the `compile_fail` doctest on `OracleCommitteeState::set_members_genesis_only`.
 #[test]
-fn governance_path_is_enforced() {
+fn committee_changes_require_governance_path() {
     let mut state = OracleState::default();
 
     // Pre-genesis/bootstrap: committee can be set via constructor
@@ -208,8 +213,7 @@ fn governance_path_is_enforced() {
     assert_eq!(state.committee.members().len(), 2);
 
     // Post-genesis: committee changes must go through schedule_committee_update
-    // This is enforced by having set_members_genesis_only be pub(crate)
-    // which means external crates cannot call it directly.
+    // (The pub(crate) visibility of set_members_genesis_only enforces this at compile time)
     
     // Verify the governance path works
     state

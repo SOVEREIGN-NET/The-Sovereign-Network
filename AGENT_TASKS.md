@@ -1,8 +1,59 @@
-# Agent Task List - TYPES Migration (Phase B Complete)
+# Agent Task List - ORACLE Protocol v1 Implementation
+
+**Last Updated:** 2026-03-01 by Kimi
+
+## ORACLE-3 (#1688): Sovereign Exchange Price Feed - COMPLETED ✅
+
+### Summary
+Implemented §5 of Oracle Spec v1: 3 independent on-chain exchange price sources for SOV/USDC.
+
+**Post-Review Fix:** Renamed misleading test `governance_path_is_enforced` → `committee_changes_require_governance_path` (PR #1702 follow-up). Added `compile_fail` doctest to `set_members_genesis_only` to actually verify API unreachability from external crates.
+
+### Changes Made
+
+**lib-blockchain (Exchange State):**
+- Created `lib-blockchain/src/exchange/mod.rs` - Exchange module
+- Created `lib-blockchain/src/exchange/state.rs` with:
+  - `ExchangeState` - On-chain order book state
+  - `TradingPair` - Trading pair identifier (SOV/USDC)
+  - `LastTradePrice` - Last trade price with timestamp
+  - `last_trade_price_sov_usdc()` - Most recent trade price
+  - `order_book_mid_sov_usdc()` - (best_bid + best_ask) / 2
+  - `vwap_sov_usdc(since_ts, until_ts)` - Volume-weighted average price
+- Integrated `exchange_state: ExchangeState` into `Blockchain` struct
+- Updated storage format V4 to persist exchange state
+- All prices use `ORACLE_PRICE_SCALE` (1e8) fixed-point
+
+**zhtp (Exchange Price Feed Service):**
+- Created `zhtp/src/runtime/components/oracle_exchange_feed.rs`:
+  - `ExchangePriceFeed` service for gathering prices
+  - `PriceSample` - Price with source and timestamp
+  - `PriceSource` enum (LastTrade, OrderBookMid, Vwap)
+  - `gather_prices()` - Queries blockchain for 3 price sources
+  - `median_price()` - Calculates median from samples
+  - `is_price_valid()` - Sanity check for price bounds
+- Updated `zhtp/src/runtime/components/oracle.rs`:
+  - `gather_prices()` now uses `ExchangePriceFeed` with on-chain state
+  - Falls back to 3 synthetic mock sources when `mock_sov_usd_price` is set
+
+**Tests:**
+- `lib-blockchain/src/exchange/state.rs` - 4 unit tests
+- `lib-blockchain/tests/oracle_exchange_feed_tests.rs` - 9 integration tests
+- `zhtp/src/runtime/components/oracle_exchange_feed.rs` - 3 unit tests
+- All oracle tests passing (committee tests: 9, epoch tests: 8)
+
+### Spec Compliance
+- ✅ §5: 3 independent on-chain sources (last_trade, order_book_mid, vwap)
+- ✅ §5: All prices in ORACLE_PRICE_SCALE (1e8) atomic units
+- ✅ §4.1: Epoch derived from block timestamp (not wall clock)
+
+---
+
+## Legacy: TYPES Migration (Phase B Complete)
 
 **Last Updated:** 2026-02-28 by Code
 
-## TYPES-EPIC #1642: Phase B Status
+### TYPES-EPIC #1642: Phase B Status
 
 ### Completed ✅
 

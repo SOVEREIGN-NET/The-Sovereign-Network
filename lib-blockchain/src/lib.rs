@@ -34,6 +34,7 @@ pub mod resources;
 pub mod snapshot;
 pub mod vm;
 pub mod oracle;
+pub mod exchange;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
@@ -101,6 +102,13 @@ pub use oracle::{
     ORACLE_ATTESTATION_DOMAIN, OraclePriceAttestationPayload, OraclePriceAttestation,
     OracleAttestationValidationError, OracleAttestationAdmission, OracleAttestationAdmissionError,
     PendingConfigUpdate, FinalizedOraclePrice, OracleEpochState, OracleState,
+    // ORACLE-4: Slashing
+    OracleSlashEvent, OracleSlashReason, OracleSlashingConfig,
+};
+
+// Exchange module re-exports (ORACLE-3)
+pub use exchange::{
+    ExchangeState, TradingPair, LastTradePrice,
 };
 
 // Protocol module (Phase 3B)

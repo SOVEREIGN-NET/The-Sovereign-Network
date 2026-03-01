@@ -21,6 +21,7 @@ use lib_network::types::mesh_message::ZhtpMeshMessage;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
+use crate::runtime::components::oracle_exchange_feed::ExchangePriceFeed;
 use crate::runtime::services::{OracleFetchedPrice, OracleProducerConfig, OracleProducerService};
 
 /// Oracle attestation consumer/producer runtime.
@@ -91,11 +92,9 @@ impl OracleComponent {
                 if !ready {
                     warn!("Oracle consumer: validator_registry still has <2 active validators after 60 s — starting anyway");
                 }
-                // Note: Committee membership is currently managed outside this runtime component
-                // (e.g. via governance or genesis configuration). The consumer reads from
-                // oracle_state.committee.members(), which must be populated by the blockchain/
-                // oracle layer before or during node startup; this code does not invoke
-                // schedule_committee_update() or apply_pending_updates() itself.
+                // Note: Committee membership is set through governance path only.
+                // The consumer reads from oracle_state.committee.members() which is populated
+                // via schedule_committee_update() → apply_pending_updates() at epoch boundaries.
                 Self::run_consumer(oracle_rx, bc).await;
             });
         }
@@ -166,6 +165,8 @@ impl OracleComponent {
                 },
             );
 
+            use lib_blockchain::oracle::{OracleAttestationAdmissionError, OracleSlashReason};
+            
             match result {
                 Ok(admission) => {
                     info!(
@@ -173,6 +174,30 @@ impl OracleComponent {
                         attestation.epoch_id,
                         attestation.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64,
                         admission
+                    );
+                }
+                Err(OracleAttestationAdmissionError::ConflictingSigner { .. }) => {
+                    // ORACLE-4: Slash for double-signing (two different prices for same epoch)
+                    warn!(
+                        "🔮 Oracle: ConflictingSigner detected — slashing validator {} for double-sign",
+                        hex::encode(&attestation.validator_pubkey[..8])
+                    );
+                    bc.slash_oracle_validator(
+                        attestation.validator_pubkey,
+                        OracleSlashReason::ConflictingAttestation,
+                        attestation.epoch_id,
+                    );
+                }
+                Err(OracleAttestationAdmissionError::Validation(_)) => {
+                    // ORACLE-4: Slash for validation errors including wrong-epoch
+                    warn!(
+                        "🔮 Oracle: Validation error — slashing validator {} for protocol violation",
+                        hex::encode(&attestation.validator_pubkey[..8])
+                    );
+                    bc.slash_oracle_validator(
+                        attestation.validator_pubkey,
+                        OracleSlashReason::WrongEpoch,
+                        attestation.epoch_id,
                     );
                 }
                 Err(e) => {
@@ -201,11 +226,10 @@ impl OracleComponent {
                 bc.oracle_state.config.epoch_duration_secs.max(60)
             };
 
-            // Note: Committee membership is managed by the blockchain oracle state
-            // (e.g., via governance or chain-initialization paths) and is treated as
-            // read-only by this component. This loop only reads from
-            // oracle_state.committee.members() and does NOT modify committee state or
-            // apply any pending updates itself.
+            // Note: Committee membership is set through governance path only.
+            // The committee is updated via schedule_committee_update() → apply_pending_updates()
+            // at epoch boundaries in the block processing pipeline.
+            // This loop reads from oracle_state.committee.members() but does NOT modify it.
 
             let committee_members: Vec<[u8; 32]> = {
                 let bc = blockchain.read().await;
@@ -220,15 +244,15 @@ impl OracleComponent {
 
             // Get block timestamp for epoch derivation (Oracle Spec v1 §4.1)
             // Wall clock MUST NOT be used to determine epoch_id.
-            let (_block_timestamp, current_epoch) = {
+            let (block_timestamp, current_epoch) = {
                 let bc = blockchain.read().await;
                 let ts = bc.last_committed_timestamp();
                 (ts, bc.oracle_state.epoch_id(ts))
             };
 
-            // Fetch prices (may involve network I/O for real exchange feeds).
-            // Note: gather_prices uses wall clock for source freshness (intentional per §5)
-            let prices = Self::gather_prices(mock_sov_usd_price, unix_now()).await;
+            // Fetch prices from on-chain exchange state (Oracle Spec v1 §5).
+            // Uses 3 independent sources: last trade, order book mid, VWAP.
+            let prices = Self::gather_prices(blockchain.clone(), mock_sov_usd_price, unix_now()).await;
             if prices.is_empty() {
                 warn!("Oracle producer: no price sources available, skipping epoch {}", current_epoch);
                 tokio::time::sleep(tokio::time::Duration::from_secs(epoch_duration_secs)).await;
@@ -324,7 +348,14 @@ impl OracleComponent {
     ///
     /// When `mock_price` is set it is used as three identical synthetic sources so
     /// the median aggregation always passes the `min_sources_required = 3` check.
-    async fn gather_prices(mock_price: Option<u64>, now: u64) -> Vec<OracleFetchedPrice> {
+    ///
+    /// Otherwise, queries the on-chain exchange state for 3 independent price sources
+    /// (last trade, order book mid, VWAP) per Oracle Spec v1 §5.
+    async fn gather_prices(
+        blockchain: Arc<RwLock<Blockchain>>,
+        mock_price: Option<u64>,
+        now: u64,
+    ) -> Vec<OracleFetchedPrice> {
         if let Some(price) = mock_price {
             // Three synthetic sources (identical values, different source IDs) so the
             // producer's min_sources_required = 3 check passes.
@@ -335,17 +366,20 @@ impl OracleComponent {
             ];
         }
 
-        // Real exchange feeds (SOV not yet listed — these will return errors; kept as scaffolding).
-        let mut prices = Vec::new();
+        // Query on-chain exchange state for 3 independent price sources (Oracle Spec v1 §5)
+        let feed = ExchangePriceFeed::new();
+        let samples = feed.gather_prices(blockchain, now).await;
 
-        if let Some(p) = fetch_coingecko_sov_usd(now).await {
-            prices.push(p);
-        }
-        if let Some(p) = fetch_binance_sov_usdt(now).await {
-            prices.push(p);
-        }
-
-        prices
+        // Convert PriceSample to OracleFetchedPrice
+        samples
+            .into_iter()
+            .filter(|s| ExchangePriceFeed::is_price_valid(s.price_atomic))
+            .map(|s| OracleFetchedPrice {
+                source_id: s.source.as_str().to_string(),
+                sov_usd_price: s.price_atomic,
+                timestamp: s.timestamp,
+            })
+            .collect()
     }
 
     // ── Gossip ──────────────────────────────────────────────────────────────
