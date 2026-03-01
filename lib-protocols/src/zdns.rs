@@ -557,11 +557,63 @@ impl ZdnsServer {
     }
 
     fn validate_zk_proofs(&self, records: &[ZdnsRecord]) -> Result<()> {
+        use lib_proofs::types::ZkProof;
+        
         for record in records {
-            if record.ownership_proof.len() < 64 {
-                return Err(ProtocolError::ZkProofError("Invalid ownership proof".to_string()));
+            let proof_bytes = if let Ok(bytes) = base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                &record.ownership_proof
+            ) {
+                bytes
+            } else {
+                return Err(ProtocolError::ZkProofError(
+                    "Ownership proof must be base64 encoded".to_string()
+                ));
+            };
+
+            let zk_proof: ZkProof = match bincode::deserialize(&proof_bytes) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Err(ProtocolError::ZkProofError(format!(
+                        "Failed to deserialize ownership proof: {}", e
+                    )));
+                }
+            };
+
+            if zk_proof.proof_data.is_empty() {
+                return Err(ProtocolError::ZkProofError(
+                    "Ownership proof has no proof data".to_string()
+                ));
             }
-            // TODO: Implement actual ZK proof verification
+
+            if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
+                let mut zk_system = match lib_proofs::plonky2::ZkProofSystem::new() {
+                    Ok(sys) => sys,
+                    Err(e) => {
+                        return Err(ProtocolError::ZkProofError(format!(
+                            "Failed to initialize ZK system: {}", e
+                        )));
+                    }
+                };
+                
+                match zk_system.verify_storage_access(plonky2_proof) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(ProtocolError::ZkProofError(
+                            "Ownership proof verification failed".to_string()
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(ProtocolError::ZkProofError(format!(
+                            "Ownership proof verification error: {}", e
+                        )));
+                    }
+                }
+            } else {
+                return Err(ProtocolError::ZkProofError(
+                    "Unsupported proof system - Plonky2 proof required".to_string()
+                ));
+            }
         }
         Ok(())
     }
@@ -678,16 +730,16 @@ impl ZdnsServer {
         if record.ownership_proof.len() < 64 {
             return Err(ProtocolError::ZkProofError("Ownership proof too short".to_string()));
         }
-        // TODO: Implement actual ownership proof validation
-        Ok(())
+        // Note: Full ZK proof verification requires lib-proofs integration
+        Err(ProtocolError::ZkProofError("Ownership proof validation not implemented".to_string()))
     }
 
     fn validate_dao_fee_proof(&self, record: &ZdnsRecord) -> Result<()> {
         if record.dao_fee_proof.len() < 32 {
             return Err(ProtocolError::DaoFeeError("DAO fee proof too short".to_string()));
         }
-        // TODO: Implement actual DAO fee proof validation
-        Ok(())
+        // Note: Full DAO fee proof validation requires economic module integration
+        Err(ProtocolError::DaoFeeError("DAO fee proof validation not implemented".to_string()))
     }
 }
 
