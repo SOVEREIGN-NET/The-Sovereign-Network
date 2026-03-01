@@ -50,10 +50,7 @@ impl AuthoritySet {
 
     /// Add an address to a role
     pub fn add(&mut self, role: Role, address: Address) {
-        self.authorities
-            .entry(role)
-            .or_default()
-            .insert(address);
+        self.authorities.entry(role).or_default().insert(address);
     }
 
     /// Remove an address from a role
@@ -191,9 +188,7 @@ impl FeeSchedule {
             return 0;
         }
 
-        let raw_fee = amount
-            .saturating_mul(self.transfer_fee_bps as Amount)
-            / MAX_BPS as Amount;
+        let raw_fee = amount.saturating_mul(self.transfer_fee_bps as Amount) / MAX_BPS as Amount;
 
         let clamped = raw_fee.max(self.min_fee);
         if self.fee_cap > 0 {
@@ -211,9 +206,7 @@ impl FeeSchedule {
             return 0;
         }
 
-        let raw_fee = amount
-            .saturating_mul(self.burn_fee_bps as Amount)
-            / MAX_BPS as Amount;
+        let raw_fee = amount.saturating_mul(self.burn_fee_bps as Amount) / MAX_BPS as Amount;
 
         if self.fee_cap > 0 {
             raw_fee.min(self.fee_cap)
@@ -371,9 +364,9 @@ impl TokenContract {
 
     /// Get remaining mintable supply (None = unlimited)
     pub fn mintable_supply(&self) -> Option<Amount> {
-        self.supply_policy.max_supply().map(|max| {
-            max.saturating_sub(self.total_supply)
-        })
+        self.supply_policy
+            .max_supply()
+            .map(|max| max.saturating_sub(self.total_supply))
     }
 }
 
