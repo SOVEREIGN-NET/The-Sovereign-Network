@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use sled::{Batch, Db, IVec, Tree};
 
 use super::{
-    keys, AccountState, Address, Amount, BlockHash, BlockHeight, BlockchainStore,
+    keys, AccountState, Address, AddressExt, Amount, BlockHash, BlockHeight, BlockchainStore,
     IdentityConsensus, IdentityMetadata, OutPoint, StorageError, StorageResult, TokenId,
     TokenStateSnapshot, Utxo,
 };
