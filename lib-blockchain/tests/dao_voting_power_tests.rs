@@ -56,7 +56,7 @@ fn test_quorum_method_returns_false_when_no_votes() -> Result<()> {
     use lib_blockchain::types::Hash;
     let bc = Blockchain::new()?;
     let fake_id = Hash::new([9u8; 32]);
-    let passed = bc.has_proposal_passed_with_quorum(&fake_id, 51)?;
+    let passed = bc.has_proposal_passed_with_quorum(&fake_id, 51, 60)?;
     assert!(!passed, "No votes means proposal has not passed");
     Ok(())
 }

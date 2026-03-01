@@ -800,7 +800,10 @@ impl BlockExecutor {
             | TransactionType::BondingCurveDeploy
             | TransactionType::BondingCurveBuy
             | TransactionType::BondingCurveSell
-            | TransactionType::BondingCurveGraduate => {
+            | TransactionType::BondingCurveGraduate
+            // Oracle governance types - handled by executor
+            | TransactionType::UpdateOracleCommittee
+            | TransactionType::UpdateOracleConfig => {
                 return Ok(());
             }
         }
@@ -2336,6 +2339,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -2368,6 +2373,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -2556,6 +2563,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -2716,6 +2725,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 

@@ -451,6 +451,8 @@ impl EconomicTransactionProcessor {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 })
     }
 
@@ -494,6 +496,8 @@ impl EconomicTransactionProcessor {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         };
 
         // Create signing hash

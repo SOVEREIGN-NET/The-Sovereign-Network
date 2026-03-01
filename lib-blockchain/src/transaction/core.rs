@@ -5,6 +5,7 @@
 use crate::integration::crypto_integration::{PublicKey, Signature};
 use crate::integration::zk_integration::ZkTransactionProof;
 use crate::types::{transaction_type::TransactionType, Hash};
+use crate::transaction::oracle_governance::{OracleCommitteeUpdateData, OracleConfigUpdateData};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Zero-knowledge transaction with identity support
@@ -67,6 +68,12 @@ pub struct Transaction {
     pub bonding_curve_sell_data: Option<BondingCurveSellData>,
     /// Bonding curve graduate data
     pub bonding_curve_graduate_data: Option<BondingCurveGraduateData>,
+    /// Oracle committee update data (ORACLE-6)
+    /// Required for TransactionType::UpdateOracleCommittee
+    pub oracle_committee_update_data: Option<OracleCommitteeUpdateData>,
+    /// Oracle config update data (ORACLE-6)
+    /// Required for TransactionType::UpdateOracleConfig
+    pub oracle_config_update_data: Option<OracleConfigUpdateData>,
 }
 
 /// Version constants for the `Transaction` wire format.
@@ -75,21 +82,26 @@ pub struct Transaction {
 pub const TX_VERSION_V1: u32 = 1; // Base: 18 fields
 pub const TX_VERSION_V2: u32 = 2; // +token_mint_data → 19 fields
 pub const TX_VERSION_V3: u32 = 3; // +bonding_curve_*_data → 23 fields
+pub const TX_VERSION_V4: u32 = 4; // +oracle_*_data → 25 fields
 
 /// V1 has 18 fields (no token_mint_data). V2 has 19 (token_mint_data between
-/// token_transfer_data and governance_config_data). Serialization writes the
-/// field count matching the version so old V1 blocks stay byte-identical.
-/// Deserialization requests V3 slots (the max); for older versions we read
+/// token_transfer_data and governance_config_data). V3 adds bonding curve data.
+/// V4 adds oracle governance data.
+/// Serialization writes the field count matching the version so old blocks stay byte-identical.
+/// Deserialization requests V4 slots (the max); for older versions we read
 /// only as many fields as the version declares.
 const TX_FIELD_COUNT_V1: usize = 18;
 const TX_FIELD_COUNT_V2: usize = 19;
 const TX_FIELD_COUNT_V3: usize = 23; // Added bonding curve data fields
+const TX_FIELD_COUNT_V4: usize = 25; // Added oracle governance data fields
 
 impl Serialize for Transaction {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeTuple;
 
-        let field_count = if self.version >= TX_VERSION_V3 {
+        let field_count = if self.version >= TX_VERSION_V4 {
+            TX_FIELD_COUNT_V4
+        } else if self.version >= TX_VERSION_V3 {
             TX_FIELD_COUNT_V3
         } else if self.version >= TX_VERSION_V2 {
             TX_FIELD_COUNT_V2
@@ -124,6 +136,10 @@ impl Serialize for Transaction {
             tup.serialize_element(&self.bonding_curve_buy_data)?;
             tup.serialize_element(&self.bonding_curve_sell_data)?;
             tup.serialize_element(&self.bonding_curve_graduate_data)?;
+        }
+        if self.version >= TX_VERSION_V4 {
+            tup.serialize_element(&self.oracle_committee_update_data)?;
+            tup.serialize_element(&self.oracle_config_update_data)?;
         }
 
         tup.end()
@@ -195,6 +211,14 @@ impl<'de> Deserialize<'de> for Transaction {
                     (None, None, None, None)
                 };
 
+                // V4 added oracle governance data fields
+                let (oracle_committee_update_data, oracle_config_update_data) = if version >= TX_VERSION_V4 {
+                    (next!("oracle_committee_update_data"),
+                     next!("oracle_config_update_data"))
+                } else {
+                    (None, None)
+                };
+
                 Ok(Transaction {
                     version,
                     chain_id,
@@ -219,13 +243,15 @@ impl<'de> Deserialize<'de> for Transaction {
                     bonding_curve_buy_data,
                     bonding_curve_sell_data,
                     bonding_curve_graduate_data,
+                    oracle_committee_update_data,
+                    oracle_config_update_data,
                 })
             }
         }
 
-        // Request V3 field count (the maximum). For older versions the visitor reads
+        // Request V4 field count (the maximum). For older versions the visitor reads
         // fewer elements; leftover slots are never consumed.
-        deserializer.deserialize_tuple(TX_FIELD_COUNT_V3, TxVisitor)
+        deserializer.deserialize_tuple(TX_FIELD_COUNT_V4, TxVisitor)
     }
 }
 
@@ -789,6 +815,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -824,6 +852,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -861,6 +891,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -914,6 +946,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -949,6 +983,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1001,6 +1037,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1045,6 +1083,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1088,6 +1128,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1126,6 +1168,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1161,6 +1205,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1198,6 +1244,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1235,6 +1283,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1272,6 +1322,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1309,6 +1361,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1346,6 +1400,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1395,6 +1451,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1451,6 +1509,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -1505,6 +1565,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -1597,6 +1659,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -1631,6 +1695,8 @@ impl Transaction {
             bonding_curve_buy_data: Some(bonding_curve_buy_data),
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -1665,6 +1731,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: Some(bonding_curve_sell_data),
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -1699,6 +1767,8 @@ impl Transaction {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: Some(bonding_curve_graduate_data),
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 }

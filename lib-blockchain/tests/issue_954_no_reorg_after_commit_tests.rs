@@ -49,6 +49,7 @@ fn register_n_validators(blockchain: &mut Blockchain, n: usize) {
             slash_count: 0,
             admission_source: "genesis".to_string(),
             governance_proposal_id: None,
+            oracle_key_id: None,
         };
         blockchain.validator_registry.insert(id, info);
     }
