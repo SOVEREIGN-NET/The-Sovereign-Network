@@ -33,7 +33,6 @@
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 // Note: lib_crypto::Hash replaced with direct blake3 usage for lib-types compatibility
-use blake3;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -469,16 +468,31 @@ pub fn kademlia_distance(&self, other: &Self) -> u32 {
         0
     }
 
+    /// Convert to 32-byte array (compatible with storage Hash)
+    pub fn to_bytes_array(&self) -> [u8; 32] {
+        self.bytes
+    }
+
+    /// Create NodeId from 32-byte array
+    pub fn from_bytes_array(bytes: [u8; 32]) -> Self {
+        Self::from_bytes(bytes)
+    }
+
     /// Convert to 32-byte storage Hash
-    pub fn to_storage_hash(&self) -> Hash {
-        Hash::from_bytes(&self.bytes)
+    /// 
+    /// Note: This returns raw bytes. Use `lib_crypto::Hash::from_bytes(node_id.to_bytes_array())` 
+    /// to convert to lib_crypto::Hash if needed.
+    #[deprecated(since = "0.1.0", note = "Use to_bytes_array() instead, then convert to your Hash type")]
+    pub fn to_storage_hash(&self) -> [u8; 32] {
+        self.bytes
     }
 
     /// Create NodeId from 32-byte storage Hash
-    pub fn from_storage_hash(hash: &Hash) -> Self {
-        let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(hash.as_bytes());
-        Self::from_bytes(bytes)
+    ///
+    /// Note: Pass raw bytes. Use `node_id_hash.as_bytes()` to get bytes from lib_crypto::Hash.
+    #[deprecated(since = "0.1.0", note = "Use from_bytes_array() instead")]
+    pub fn from_storage_hash(bytes: &[u8; 32]) -> Self {
+        Self::from_bytes(*bytes)
     }
 
     /// Get the creation nonce

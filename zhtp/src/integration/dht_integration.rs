@@ -61,7 +61,7 @@ pub fn setup_mesh_dht_integration(
         mpsc::unbounded_channel::<(Vec<u8>, NodeId)>();
     tokio::spawn(async move {
         while let Some((data, node_id)) = mapped_rx.recv().await {
-            let peer_id = lib_storage::dht::transport::PeerId::Mesh(node_id.0.to_vec());
+            let peer_id = lib_storage::dht::transport::PeerId::Mesh(node_id.as_bytes().to_vec());
             let _ = dht_payload_sender_raw.send((data, peer_id));
         }
     });
