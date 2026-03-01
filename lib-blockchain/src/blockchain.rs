@@ -24,6 +24,8 @@ use lib_storage::dht::storage::DhtStorage;
 pub const ADMISSION_SOURCE_OFFCHAIN_GENESIS: &str = "offchain_genesis";
 /// Validator was admitted through an on-chain governance/registration transaction.
 pub const ADMISSION_SOURCE_ONCHAIN_GOVERNANCE: &str = "onchain_governance";
+/// Validator was seeded from the bootstrap_validators config at node startup (pre-genesis).
+pub const ADMISSION_SOURCE_BOOTSTRAP_GENESIS: &str = "bootstrap_genesis";
 
 /// Messages for real-time blockchain synchronization
 #[derive(Debug, Clone)]
@@ -2006,6 +2008,7 @@ impl Blockchain {
                     // Update blockchain metadata
                     self.blocks.push(block.clone());
                     self.height += 1;
+                    self.process_validator_registration_transactions(&block);
                     for tx in &block.transactions {
                         self.index_dao_registry_entry_from_tx(tx, block.header.height);
                         // Executor returns LegacySystem for ValidatorRegistration — update registry here
@@ -2041,9 +2044,9 @@ impl Blockchain {
                         }
                     }
                     self.adjust_difficulty()?;
-                    
+
                     debug!("Block {} applied via BlockExecutor (single source of truth)", block.height());
-                    
+
                     // Continue with post-processing (events, persistence)
                     self.finish_block_processing(block).await?;
                     return Ok(());
@@ -2101,6 +2104,7 @@ impl Blockchain {
         self.process_wallet_transactions(&block)?;
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
+        self.process_validator_registration_transactions(&block);
         for tx in &block.transactions {
             self.index_dao_registry_entry_from_tx(tx, block.header.height);
         }
@@ -4778,6 +4782,46 @@ impl Blockchain {
                 "Validator in sync: {} (stake: {}, joined at height: {})",
                 validator.identity_id, validator.stake, validator.registered_at
             );
+        }
+    }
+
+    /// Process ValidatorRegistration transactions from a newly-committed block.
+    ///
+    /// This mirrors the replay logic in `load_from_file` so that validator state is
+    /// updated in real-time as blocks are mined, not only on restart.
+    pub fn process_validator_registration_transactions(&mut self, block: &Block) {
+        let height = block.height();
+        for tx in &block.transactions {
+            if let Some(validator_data) = &tx.validator_data {
+                let status = match validator_data.operation {
+                    crate::transaction::ValidatorOperation::Register => "active",
+                    crate::transaction::ValidatorOperation::Update => "active",
+                    crate::transaction::ValidatorOperation::Unregister => "inactive",
+                };
+                let validator_info = ValidatorInfo {
+                    identity_id: validator_data.identity_id.clone(),
+                    stake: validator_data.stake,
+                    storage_provided: validator_data.storage_provided,
+                    consensus_key: validator_data.consensus_key.clone(),
+                    networking_key: validator_data.networking_key.clone(),
+                    rewards_key: validator_data.rewards_key.clone(),
+                    network_address: validator_data.network_address.clone(),
+                    commission_rate: validator_data.commission_rate,
+                    status: status.to_string(),
+                    registered_at: height,
+                    last_activity: height,
+                    blocks_validated: 0,
+                    slash_count: 0,
+                    admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
+                    governance_proposal_id: None,
+                    oracle_key_id: None,
+                };
+                self.validator_registry.insert(validator_data.identity_id.clone(), validator_info);
+                self.validator_blocks.insert(validator_data.identity_id.clone(), height);
+                info!("Registered new validator {} with {} SOV stake",
+                    &validator_data.identity_id[..validator_data.identity_id.len().min(40)],
+                    validator_data.stake);
+            }
         }
     }
 

@@ -55,6 +55,10 @@ pub struct PartialNetworkConfig {
     pub max_peers: Option<usize>,
     #[serde(default)]
     pub network_id: Option<String>,
+    /// Bootstrap validators for pre-seeding the ValidatorManager before on-chain txs are mined.
+    /// Enables proposer rotation from block 0 in multi-node setups.
+    #[serde(default)]
+    pub bootstrap_validators: Vec<BootstrapValidator>,
 }
 
 /// Partial consensus configuration (matches [consensus_config] section)
@@ -488,11 +492,22 @@ impl Default for ValidatorConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BootstrapValidator {
     pub identity_id: String,
-    pub consensus_key: String, // Public key as hex or base64
+    /// Optional explicit consensus public key (hex). When empty, the key is derived
+    /// deterministically from identity_id using blake3 domain separation.
+    #[serde(default)]
+    pub consensus_key: String,
+    #[serde(default = "default_bootstrap_stake")]
     pub stake: u64,
+    #[serde(default)]
     pub storage_provided: u64,
+    #[serde(default)]
     pub commission_rate: u16,
-    pub endpoints: Vec<String>, // Network endpoints
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+}
+
+fn default_bootstrap_stake() -> u64 {
+    1000
 }
 
 /// Resource allocation across packages
@@ -989,6 +1004,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                             tracing::info!("Loaded {} bootstrap peer pin(s) from [network] section", network.bootstrap_peer_pins.len());
                             config.network_config.bootstrap_peer_pins = network.bootstrap_peer_pins;
                         }
+                        if !network.bootstrap_validators.is_empty() {
+                            tracing::info!("Loaded {} bootstrap validator(s) from [network] section", network.bootstrap_validators.len());
+                            config.network_config.bootstrap_validators = network.bootstrap_validators;
+                        }
                         if let Some(mesh_port) = network.mesh_port {
                             config.network_config.mesh_port = mesh_port;
                         }
@@ -999,7 +1018,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                             config.blockchain_config.network_id = network_id;
                         }
                     }
-                    
+
                     // Merge [network_config] section
                     if let Some(network) = partial.network_config {
                         if !network.bootstrap_peers.is_empty() {
@@ -1009,6 +1028,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                         if !network.bootstrap_peer_pins.is_empty() {
                             tracing::info!("Loaded {} bootstrap peer pin(s) from [network_config] section", network.bootstrap_peer_pins.len());
                             config.network_config.bootstrap_peer_pins = network.bootstrap_peer_pins;
+                        }
+                        if !network.bootstrap_validators.is_empty() {
+                            tracing::info!("Loaded {} bootstrap validator(s) from [network_config] section", network.bootstrap_validators.len());
+                            config.network_config.bootstrap_validators = network.bootstrap_validators;
                         }
                         if let Some(mesh_port) = network.mesh_port {
                             config.network_config.mesh_port = mesh_port;

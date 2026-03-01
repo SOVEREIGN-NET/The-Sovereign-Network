@@ -465,14 +465,29 @@ impl BlockchainComponent {
                                     let node_id_hex = hex::encode(node_id.as_bytes());
                                     let mut is_proposer = false;
 
-                                    for (did_string, identity_data) in blockchain_guard.identity_registry.iter() {
-                                        if identity_data.controlled_nodes.contains(&node_id_hex) {
-                                            if let Some(identity_hex) = did_string.strip_prefix("did:zhtp:") {
-                                                if let Ok(identity_bytes) = hex::decode(identity_hex) {
-                                                    let user_identity_hash = lib_crypto::Hash::from_bytes(&identity_bytes[..32]);
-                                                    if user_identity_hash == proposer.identity {
-                                                        is_proposer = true;
-                                                        break;
+                                    // Direct check: node identity bytes == proposer identity.
+                                    // Validators are registered by node DID, so proposer.identity
+                                    // is Hash(node_did_bytes). node_id.as_bytes() is the same
+                                    // 32-byte slice. This is the primary matching path.
+                                    let node_hash = lib_crypto::Hash::from_bytes(node_id.as_bytes());
+                                    if node_hash == proposer.identity {
+                                        is_proposer = true;
+                                    }
+
+                                    // Fallback: look up via user identity → controlled_nodes.
+                                    // Handles cases where validator identity_id is the user DID.
+                                    if !is_proposer {
+                                        for (did_string, identity_data) in blockchain_guard.identity_registry.iter() {
+                                            if identity_data.controlled_nodes.contains(&node_id_hex) {
+                                                if let Some(identity_hex) = did_string.strip_prefix("did:zhtp:") {
+                                                    if let Ok(identity_bytes) = hex::decode(identity_hex) {
+                                                        if identity_bytes.len() >= 32 {
+                                                            let user_identity_hash = lib_crypto::Hash::from_bytes(&identity_bytes[..32]);
+                                                            if user_identity_hash == proposer.identity {
+                                                                is_proposer = true;
+                                                                break;
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
