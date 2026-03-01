@@ -2886,6 +2886,20 @@ impl Blockchain {
         self.blocks.last()
     }
 
+    /// Get the timestamp of the last committed block.
+    ///
+    /// Returns the timestamp from the latest block header, or the genesis timestamp
+    /// if only the genesis block exists. This is the canonical time reference for
+    /// oracle epoch derivation per Oracle Spec v1 §4.1.
+    /// 
+    /// Note: Blockchain::new() creates a genesis block with timestamp 1730419200
+    /// (November 1, 2025 00:00:00 UTC), so this never returns 0 in practice.
+    pub fn last_committed_timestamp(&self) -> u64 {
+        self.latest_block()
+            .map(|b| b.header.timestamp)
+            .unwrap_or(0)
+    }
+
     /// Get block by height
     pub fn get_block(&self, height: u64) -> Option<&Block> {
         if height >= self.blocks.len() as u64 {
@@ -10763,6 +10777,25 @@ mod oracle_storage_migration_tests {
             crate::oracle::OracleState::default(),
             "v3 payloads must load with default oracle state"
         );
+    }
+}
+
+// =============================================================================
+// Oracle Committee Bootstrap
+// =============================================================================
+
+impl Blockchain {
+    /// Initialize the oracle committee with the given members.
+    ///
+    /// This should be called during node bootstrap to establish the initial committee.
+    /// After initialization, committee changes should be made through governance.
+    pub fn init_oracle_committee(&mut self, members: Vec<[u8; 32]>) -> Result<()> {
+        if !self.oracle_state.committee.members().is_empty() {
+            return Err(anyhow::anyhow!("Oracle committee already initialized"));
+        }
+        
+        self.oracle_state.committee.set_members_genesis_only(members);
+        Ok(())
     }
 }
 
