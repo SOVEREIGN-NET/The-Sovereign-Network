@@ -341,6 +341,19 @@ pub struct Blockchain {
     /// Oracle protocol v1 consensus state (committee/config/finalized prices).
     #[serde(default)]
     pub oracle_state: crate::oracle::OracleState,
+    /// On-chain exchange state for SOV/USDC and other trading pairs.
+    /// Provides price feeds to the oracle protocol.
+    #[serde(default)]
+    pub exchange_state: crate::exchange::ExchangeState,
+    /// Oracle slashing events log.
+    #[serde(default)]
+    pub oracle_slash_events: Vec<crate::oracle::OracleSlashEvent>,
+    /// Oracle slashing configuration.
+    #[serde(default)]
+    pub oracle_slashing_config: crate::oracle::OracleSlashingConfig,
+    /// Validators banned from oracle committee (key_id).
+    #[serde(default)]
+    pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
 
     // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
     /// Most recently computed decentralization snapshot.
@@ -679,6 +692,10 @@ impl BlockchainV1 {
             treasury_epoch_execution_count: HashMap::new(),
             max_executions_per_epoch: default_max_executions(),
             oracle_state: crate::oracle::OracleState::default(),
+            exchange_state: crate::exchange::ExchangeState::new(),
+            oracle_slash_events: Vec::new(),
+            oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
+            oracle_banned_validators: std::collections::HashSet::new(),
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
@@ -1136,6 +1153,10 @@ impl BlockchainStorageV3 {
             treasury_epoch_execution_count: self.treasury_epoch_execution_count,
             max_executions_per_epoch: self.max_executions_per_epoch,
             oracle_state: crate::oracle::OracleState::default(),
+            exchange_state: crate::exchange::ExchangeState::new(),
+            oracle_slash_events: Vec::new(),
+            oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
+            oracle_banned_validators: std::collections::HashSet::new(),
             // DAO Phase Transitions
             last_decentralization_snapshot: self.last_decentralization_snapshot,
             phase_transition_config: self.phase_transition_config,
@@ -1153,6 +1174,14 @@ struct BlockchainStorageV4 {
     pub v3: BlockchainStorageV3,
     #[serde(default)]
     pub oracle_state: crate::oracle::OracleState,
+    #[serde(default)]
+    pub exchange_state: crate::exchange::ExchangeState,
+    #[serde(default)]
+    pub oracle_slash_events: Vec<crate::oracle::OracleSlashEvent>,
+    #[serde(default)]
+    pub oracle_slashing_config: crate::oracle::OracleSlashingConfig,
+    #[serde(default)]
+    pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
 }
 
 impl BlockchainStorageV4 {
@@ -1160,12 +1189,20 @@ impl BlockchainStorageV4 {
         Self {
             v3: BlockchainStorageV3::from_blockchain(bc),
             oracle_state: bc.oracle_state.clone(),
+            exchange_state: bc.exchange_state.clone(),
+            oracle_slash_events: bc.oracle_slash_events.clone(),
+            oracle_slashing_config: bc.oracle_slashing_config.clone(),
+            oracle_banned_validators: bc.oracle_banned_validators.clone(),
         }
     }
 
     fn to_blockchain(self) -> Blockchain {
         let mut blockchain = self.v3.to_blockchain();
         blockchain.oracle_state = self.oracle_state;
+        blockchain.exchange_state = self.exchange_state;
+        blockchain.oracle_slash_events = self.oracle_slash_events;
+        blockchain.oracle_slashing_config = self.oracle_slashing_config;
+        blockchain.oracle_banned_validators = self.oracle_banned_validators;
         blockchain
     }
 }
@@ -1270,6 +1307,10 @@ impl Blockchain {
             treasury_epoch_execution_count: HashMap::new(),
             max_executions_per_epoch: default_max_executions(),
             oracle_state: crate::oracle::OracleState::default(),
+            exchange_state: crate::exchange::ExchangeState::new(),
+            oracle_slash_events: Vec::new(),
+            oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
+            oracle_banned_validators: std::collections::HashSet::new(),
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
@@ -11150,6 +11191,79 @@ impl Blockchain {
 
         cosigns.push((signer_did, signature));
         Ok(())
+    }
+
+    /// Slash an oracle validator for misbehavior.
+    ///
+    /// Implements §9 of Oracle Spec v1:
+    /// - Reduces offender's stake by the slash fraction
+    /// - Removes offender from oracle committee
+    /// - Bans validator from future committee participation
+    ///
+    /// # Arguments
+    /// * `key_id` - The validator's oracle key_id (blake3 of consensus_key)
+    /// * `reason` - The slashing reason (double-sign or wrong-epoch)
+    /// * `epoch_id` - The epoch where the violation occurred
+    ///
+    /// # Returns
+    /// The amount of stake slashed (in SOV atomic units)
+    pub fn slash_oracle_validator(
+        &mut self,
+        key_id: [u8; 32],
+        reason: crate::oracle::OracleSlashReason,
+        epoch_id: u64,
+    ) -> u64 {
+        use crate::types::hash::blake3_hash;
+        use tracing::{info, warn};
+
+        // 1. Find validator by key_id match in validator_registry
+        let validator = self.validator_registry.values_mut().find(|v| {
+            let kid = blake3_hash(&v.consensus_key).as_array();
+            kid == key_id
+        });
+
+        let slash_amount = if let Some(v) = validator {
+            let config = &self.oracle_slashing_config;
+            let amount = config.calculate_slash(v.stake);
+            v.stake = v.stake.saturating_sub(amount);
+            amount
+        } else {
+            0
+        };
+
+        // 2. Ban from oracle committee (permanent until governance re-adds)
+        self.oracle_banned_validators.insert(key_id);
+
+        // 3. Remove from active committee immediately
+        self.oracle_state.committee.remove_member(key_id);
+
+        // 4. Record the slash event
+        self.oracle_slash_events.push(crate::oracle::OracleSlashEvent {
+            validator_key_id: key_id,
+            reason,
+            epoch_id,
+            slash_amount,
+            slashed_at_height: self.height,
+        });
+
+        if slash_amount > 0 {
+            warn!(
+                "⚔️ Oracle validator {} slashed {} SOV for {} at epoch {}",
+                hex::encode(&key_id[..8]),
+                slash_amount,
+                reason,
+                epoch_id
+            );
+        } else {
+            info!(
+                "⚔️ Oracle validator {} banned for {} at epoch {} (no stake to slash)",
+                hex::encode(&key_id[..8]),
+                reason,
+                epoch_id
+            );
+        }
+
+        slash_amount
     }
 }
 

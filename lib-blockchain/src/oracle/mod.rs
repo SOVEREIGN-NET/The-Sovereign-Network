@@ -252,6 +252,20 @@ impl OracleCommitteeState {
     /// Direct calls to this method bypass governance consensus. Use only for:
     /// - Genesis block initialization (when no prior committee exists)
     /// - Unit tests with `#[cfg(test)]` guards
+    /// 
+    /// # Compile-Time Enforcement
+    /// 
+    /// The `pub(crate)` visibility ensures external crates cannot call this method.
+    /// The following code will fail to compile:
+    ///
+    /// ```compile_fail,E0599
+    /// // This code fails to compile because set_members_genesis_only is pub(crate)
+    /// use lib_blockchain::oracle::OracleCommitteeState;
+    /// 
+    /// let mut committee = OracleCommitteeState::default();
+    /// // ERROR: method `set_members_genesis_only` is private
+    /// committee.set_members_genesis_only(vec![[1u8; 32]]);
+    /// ```
     pub(crate) fn set_members_genesis_only(&mut self, members: Vec<[u8; 32]>) {
         self.members = normalize_members(members);
     }
@@ -269,6 +283,18 @@ impl OracleCommitteeState {
 
     pub fn set_pending_update(&mut self, pending_update: Option<PendingCommitteeUpdate>) {
         self.pending_update = normalize_pending_update(pending_update);
+    }
+
+    /// Remove a member from the committee immediately.
+    /// 
+    /// This is used for slashing — the slashed validator is removed from the
+    /// committee for the remainder of the epoch and all future epochs.
+    /// 
+    /// # Security
+    /// This is `pub(crate)` to restrict usage to slashing within lib-blockchain.
+    pub(crate) fn remove_member(&mut self, key_id: [u8; 32]) {
+        self.members.retain(|m| *m != key_id);
+        // Note: threshold is computed dynamically from member count
     }
 
     /// Threshold formula: floor(2N/3)+1.
@@ -416,6 +442,21 @@ impl OracleState {
     /// Returns the most recently finalized price with epoch_id <= `epoch`.
     pub fn latest_finalized_price_at_or_before(&self, epoch: u64) -> Option<&FinalizedOraclePrice> {
         self.finalized_prices.range(..=epoch).next_back().map(|(_, v)| v)
+    }
+
+    /// Returns the latest finalized price only if it is within `max_price_staleness_epochs`
+    /// of `current_epoch`. Returns None if no fresh price exists.
+    /// 
+    /// This enforces Oracle Spec v1 §11 — Staleness.
+    pub fn latest_fresh_price(&self, current_epoch: u64) -> Option<&FinalizedOraclePrice> {
+        let max_staleness = self.config.max_price_staleness_epochs;
+        let oldest_acceptable = current_epoch.saturating_sub(max_staleness);
+        
+        self.finalized_prices
+            .range(..=current_epoch)
+            .next_back()
+            .filter(|(epoch, _)| **epoch >= oldest_acceptable)
+            .map(|(_, v)| v)
     }
 
     pub fn finalized_prices_len(&self) -> usize {
@@ -1144,3 +1185,12 @@ mod tests {
         assert_eq!(restored.epoch_state, b.epoch_state);
     }
 }
+
+// ORACLE-4: Slashing module
+pub mod slashing;
+
+pub use slashing::{
+    OracleSlashEvent,
+    OracleSlashReason,
+    OracleSlashingConfig,
+};
