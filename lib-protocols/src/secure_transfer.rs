@@ -81,13 +81,14 @@ impl SecureWalletTransferHandler {
 
         use lib_blockchain::Blockchain;
         
-        let blockchain = match Blockchain::new() {
-            Ok(bc) => bc,
+        let blockchain_path = std::path::Path::new("data/blockchain.dat");
+        let blockchain = match Blockchain::load_or_create(blockchain_path) {
+            Ok((bc, _)) => bc,
             Err(e) => {
                 return Ok(SecureTransferResponse {
                     success: false,
                     transaction_id: String::new(),
-                    message: format!("Failed to initialize blockchain: {}", e),
+                    message: format!("Failed to load blockchain: {}", e),
                     verification_details: VerificationDetails {
                         identity_verified: false,
                         public_key_matches: false,

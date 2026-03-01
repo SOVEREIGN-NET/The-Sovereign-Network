@@ -562,8 +562,6 @@ impl ZdnsServer {
     }
 
     fn validate_zk_proofs(&self, records: &[ZdnsRecord]) -> Result<()> {
-        use lib_proofs::types::ZkProof;
-        
         for record in records {
             let proof_bytes = if let Ok(bytes) = base64::Engine::decode(
                 &base64::engine::general_purpose::STANDARD,
