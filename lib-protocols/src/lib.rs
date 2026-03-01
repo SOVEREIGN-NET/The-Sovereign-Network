@@ -148,7 +148,7 @@ pub use validation::{
 pub use crypto::{ZhtpCrypto, CryptoConfig};
 pub use economics::{ZhtpEconomics, EconomicConfig, EconomicAssessment, EconomicStats};
 #[cfg(feature = "storage")]
-pub use storage::{StorageIntegration, StorageConfig, StorageContract, StorageStats};
+pub use storage::{StorageIntegration, StorageConfig, StorageContract};
 #[cfg(not(feature = "storage"))]
 pub use storage_stub::{StorageIntegration, StorageConfig, StorageContract};
 pub use identity::{ProtocolIdentityService, IdentityServiceConfig, IdentitySession, IdentityAuthRequest, IdentityAuthResponse};
