@@ -1,7 +1,5 @@
 #!/bin/bash
-# Check for TRUE duplicate type definitions across crates
-# Only flags types that have IDENTICAL field definitions
-# Part of TYPES-EPIC #1642
+# Check for TRUE duplicate type definitions across DIFFERENT crates
 
 set -e
 
@@ -10,106 +8,71 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo "Checking for TRUE duplicate type definitions (same name + same fields)..."
+echo "Checking for cross-crate duplicate types..."
 
-# Allowlist: Known duplicates that need to be fixed in a future refactor
-# Format: "TypeName"
-ALLOWLIST=(
-    "ValidatorInfo"
-    "BandwidthStatistics"
-    "DiscoveryStatistics"
-    "MeshStatus"
-    "NetworkStatistics"
-    "BlockchainSyncManager"
-    "NetworkConfig"
-    "NullBlockchainProvider"
-    "PeerReputation"
-    "StorageStats"
-    "SyncCoordinator"
-    "CacheConfig"
-    "ContentMetadata"
-    "EconomicAssessment"
-    "EconomicConfig"
-    "EconomicRequirements"
-    "EconomicStats"
-    "MeshConfig"
-    "RateLimitConfig"
-    "SecurityConfig"
-    "SessionActivity"
-    "SessionStats"
-    "StorageConfig"
-    "StorageContract"
-    "StorageIntegration"
-    "TimeRestrictions"
-    "ZdnsConfig"
-    "ZdnsFlags"
-    "ZdnsQuery"
-    "ZdnsRecord"
-    "ZdnsResponse"
-    "ErasureConfig"
-)
-
-ALLOWLIST_PATTERN=$(printf "|%s" "${ALLOWLIST[@]}")
-ALLOWLIST_PATTERN="${ALLOWLIST_PATTERN:1}"  # Remove leading |
-
-# Temp file to store type definitions
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
 
-# Find all pub structs and extract their full definitions
+# Collect all types
 for crate in lib-*/src; do
-    if [[ "$crate" == "lib-types/src" ]]; then
-        continue  # Skip lib-types (canonical source)
-    fi
-    
+    [[ "$crate" == "lib-types/src" ]] && continue
     crate_name=$(echo "$crate" | sed 's|/src||')
     
-    # Find all pub struct definitions with their fields
-    grep -rh "^pub struct" "$crate" --include="*.rs" 2>/dev/null | while read -r line; do
-        struct_name=$(echo "$line" | sed -n 's/.*pub struct \([A-Za-z0-9_]*\).*/\1/p')
-        if [[ -z "$struct_name" ]]; then
-            continue
-        fi
+    for file in "$crate"/*.rs; do
+        [[ -f "$file" ]] || continue
         
-        # Skip if in allowlist
-        if echo "$struct_name" | grep -qE "^($ALLOWLIST_PATTERN)$"; then
-            continue
-        fi
-        
-        file=$(grep -l "pub struct $struct_name" "$crate"/*.rs 2>/dev/null | head -1)
-        if [[ -z "$file" ]]; then
-            continue
-        fi
-        
-        fields=$(sed -n "/pub struct $struct_name/,/^}/p" "$file" 2>/dev/null | \
-            grep -E "^\s+\w+:" | \
-            sed 's/:.*//' | \
-            tr '\n' ' ' | \
-            xargs)
-        
-        if [[ -n "$fields" ]]; then
-            echo "$crate_name:$struct_name:$fields" >> "$TEMP_DIR/types.txt"
-        else
-            echo "$crate_name:$struct_name:" >> "$TEMP_DIR/types.txt"
-        fi
+        grep -n "^pub struct" "$file" | while read -r line; do
+            linenum=$(echo "$line" | cut -d: -f1)
+            struct_name=$(echo "$line" | sed 's/.*pub struct \([A-Za-z0-9_]*\).*/\1/')
+            [[ -z "$struct_name" ]] && continue
+            
+            fields=$(sed -n "${linenum},/^}/p" "$file" | \
+                grep -E "^\s+pub" | \
+                sed 's/.*pub \([a-zA-Z0-9_]*\):.*/\1/' | \
+                tr '\n' ' ' | \
+                sed 's/ $//')
+            
+            echo "$crate_name:$struct_name:$fields"
+        done
     done
-done
+done > "$TEMP_DIR/types.txt"
 
-# Find duplicates (same name + same fields)
-DUPLICATES=$(cat "$TEMP_DIR/types.txt" | sort | uniq -d | grep -v "^:$" || true)
+# Find duplicates - use unique crate list per (name, fields)
+awk -F: '{
+    key = $2 SUBSEP $3
+    crates[key] = crates[key] ? crates[key] SUBSEP $1 : $1
+}
+END {
+    for (key in crates) {
+        n = split(crates[key], arr, SUBSEP)
+        # Get unique crate names
+        delete seen
+        unique = ""
+        for (i = 1; i <= n; i++) {
+            if (!seen[arr[i]]) {
+                seen[arr[i]] = 1
+                unique = unique ? unique SUBSEP arr[i] : arr[i]
+            }
+        }
+        count = 0
+        for (c in seen) count++
+        if (count > 1) {
+            split(key, parts, SUBSEP)
+            print parts[1] SUBSEP unique
+        }
+    }
+}' "$TEMP_DIR/types.txt" > "$TEMP_DIR/dups.txt"
 
-if [[ -n "$DUPLICATES" ]]; then
+if [[ -s "$TEMP_DIR/dups.txt" ]]; then
     echo ""
-    echo -e "${RED}ERROR: Found TRUE duplicate type definitions:${NC}"
-    echo ""
-    echo "$DUPLICATES" | while read -r dup; do
-        crate=$(echo "$dup" | cut -d: -f1)
-        name=$(echo "$dup" | cut -d: -f2)
-        echo -e "  ${YELLOW}$name${NC} in $crate"
-    done
-    echo ""
+    echo -e "${RED}ERROR: Found cross-crate duplicate types:${NC}"
+    while IFS=SUBSEP read -r name crates; do
+        echo -e "${YELLOW}Type: $name${NC}"
+        echo "$crates" | tr SUBSEP '\n' | sed 's/^/  - /'
+        echo ""
+    done < "$TEMP_DIR/dups.txt"
     exit 1
 fi
 
-echo -e "${GREEN}No true duplicate types found.${NC}"
+echo -e "${GREEN}No cross-crate duplicate types found.${NC}"
 exit 0
