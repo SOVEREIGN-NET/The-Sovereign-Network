@@ -10,6 +10,7 @@ pub mod economics;
 pub mod protocols;
 pub mod api;
 pub mod oracle;
+pub mod oracle_exchange_feed;
 
 // Re-export component types
 pub use crypto::CryptoComponent;
