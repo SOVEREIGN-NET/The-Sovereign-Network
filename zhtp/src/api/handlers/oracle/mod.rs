@@ -88,6 +88,12 @@ impl OracleHandler {
         match latest {
             Some(finalized) => {
                 let price_usd = finalized.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64;
+                
+                // ORACLE-5: Include staleness metadata
+                let epochs_since = current_epoch.saturating_sub(finalized.epoch_id);
+                let max_staleness = bc.oracle_state.config.max_price_staleness_epochs;
+                let is_fresh = epochs_since <= max_staleness;
+                
                 // u128 fields are serialized as strings — serde_json cannot represent
                 // integers beyond u64::MAX and will return an error otherwise.
                 let body = json!({
@@ -95,6 +101,10 @@ impl OracleHandler {
                     "sov_usd_price_atomic": finalized.sov_usd_price.to_string(),
                     "sov_usd_price": price_usd,
                     "oracle_price_scale": ORACLE_PRICE_SCALE.to_string(),
+                    "current_epoch": current_epoch,
+                    "epochs_since_finalization": epochs_since,
+                    "is_fresh": is_fresh,
+                    "max_price_staleness_epochs": max_staleness,
                 });
                 let bytes = match serde_json::to_vec(&body) {
                     Ok(b) => b,
@@ -146,10 +156,14 @@ impl OracleHandler {
             .latest_finalized_price_at_or_before(current_epoch)
             .map(|p| {
                 let price_usd = p.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64;
+                let epochs_since = current_epoch.saturating_sub(p.epoch_id);
+                let max_staleness = bc.oracle_state.config.max_price_staleness_epochs;
                 json!({
                     "epoch_id": p.epoch_id,
                     "sov_usd_price_atomic": p.sov_usd_price.to_string(),
                     "sov_usd_price": price_usd,
+                    "epochs_since_finalization": epochs_since,
+                    "is_fresh": epochs_since <= max_staleness,
                 })
             });
 
@@ -162,6 +176,7 @@ impl OracleHandler {
             "finalized_prices_count": finalized_count,
             "latest_finalized_price": latest_price,
             "oracle_price_scale": ORACLE_PRICE_SCALE.to_string(),
+            "max_price_staleness_epochs": bc.oracle_state.config.max_price_staleness_epochs,
         });
 
         let bytes = match serde_json::to_vec(&body) {

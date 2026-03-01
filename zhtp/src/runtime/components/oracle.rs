@@ -21,6 +21,7 @@ use lib_network::types::mesh_message::ZhtpMeshMessage;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
+use crate::runtime::components::oracle_exchange_feed::ExchangePriceFeed;
 use crate::runtime::services::{OracleFetchedPrice, OracleProducerConfig, OracleProducerService};
 
 /// Oracle attestation consumer/producer runtime.
@@ -164,6 +165,8 @@ impl OracleComponent {
                 },
             );
 
+            use lib_blockchain::oracle::{OracleAttestationAdmissionError, OracleSlashReason};
+            
             match result {
                 Ok(admission) => {
                     info!(
@@ -171,6 +174,30 @@ impl OracleComponent {
                         attestation.epoch_id,
                         attestation.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64,
                         admission
+                    );
+                }
+                Err(OracleAttestationAdmissionError::ConflictingSigner { .. }) => {
+                    // ORACLE-4: Slash for double-signing (two different prices for same epoch)
+                    warn!(
+                        "🔮 Oracle: ConflictingSigner detected — slashing validator {} for double-sign",
+                        hex::encode(&attestation.validator_pubkey[..8])
+                    );
+                    bc.slash_oracle_validator(
+                        attestation.validator_pubkey,
+                        OracleSlashReason::ConflictingAttestation,
+                        attestation.epoch_id,
+                    );
+                }
+                Err(OracleAttestationAdmissionError::Validation(_)) => {
+                    // ORACLE-4: Slash for validation errors including wrong-epoch
+                    warn!(
+                        "🔮 Oracle: Validation error — slashing validator {} for protocol violation",
+                        hex::encode(&attestation.validator_pubkey[..8])
+                    );
+                    bc.slash_oracle_validator(
+                        attestation.validator_pubkey,
+                        OracleSlashReason::WrongEpoch,
+                        attestation.epoch_id,
                     );
                 }
                 Err(e) => {
@@ -223,9 +250,9 @@ impl OracleComponent {
                 (ts, bc.oracle_state.epoch_id(ts))
             };
 
-            // Fetch prices (may involve network I/O for real exchange feeds).
-            // Note: gather_prices uses wall clock for source freshness (intentional per §5)
-            let prices = Self::gather_prices(mock_sov_usd_price, unix_now()).await;
+            // Fetch prices from on-chain exchange state (Oracle Spec v1 §5).
+            // Uses 3 independent sources: last trade, order book mid, VWAP.
+            let prices = Self::gather_prices(blockchain.clone(), mock_sov_usd_price, unix_now()).await;
             if prices.is_empty() {
                 warn!("Oracle producer: no price sources available, skipping epoch {}", current_epoch);
                 tokio::time::sleep(tokio::time::Duration::from_secs(epoch_duration_secs)).await;
@@ -321,7 +348,14 @@ impl OracleComponent {
     ///
     /// When `mock_price` is set it is used as three identical synthetic sources so
     /// the median aggregation always passes the `min_sources_required = 3` check.
-    async fn gather_prices(mock_price: Option<u64>, now: u64) -> Vec<OracleFetchedPrice> {
+    ///
+    /// Otherwise, queries the on-chain exchange state for 3 independent price sources
+    /// (last trade, order book mid, VWAP) per Oracle Spec v1 §5.
+    async fn gather_prices(
+        blockchain: Arc<RwLock<Blockchain>>,
+        mock_price: Option<u64>,
+        now: u64,
+    ) -> Vec<OracleFetchedPrice> {
         if let Some(price) = mock_price {
             // Three synthetic sources (identical values, different source IDs) so the
             // producer's min_sources_required = 3 check passes.
@@ -332,17 +366,20 @@ impl OracleComponent {
             ];
         }
 
-        // Real exchange feeds (SOV not yet listed — these will return errors; kept as scaffolding).
-        let mut prices = Vec::new();
+        // Query on-chain exchange state for 3 independent price sources (Oracle Spec v1 §5)
+        let feed = ExchangePriceFeed::new();
+        let samples = feed.gather_prices(blockchain, now).await;
 
-        if let Some(p) = fetch_coingecko_sov_usd(now).await {
-            prices.push(p);
-        }
-        if let Some(p) = fetch_binance_sov_usdt(now).await {
-            prices.push(p);
-        }
-
-        prices
+        // Convert PriceSample to OracleFetchedPrice
+        samples
+            .into_iter()
+            .filter(|s| ExchangePriceFeed::is_price_valid(s.price_atomic))
+            .map(|s| OracleFetchedPrice {
+                source_id: s.source.as_str().to_string(),
+                sov_usd_price: s.price_atomic,
+                timestamp: s.timestamp,
+            })
+            .collect()
     }
 
     // ── Gossip ──────────────────────────────────────────────────────────────
