@@ -93,7 +93,7 @@ impl TxKind {
     /// - Data stored indefinitely on-chain
     /// - Storage is the scarcest resource in blockchain systems
     /// - Multiplier discourages unnecessary data bloat
-    /// - Based on state rent economic model (see ECONOMY-EPIC)
+    /// - Based on state rent economic model (see `docs/economy/STATE_RENT_MODEL.md`)
     ///
     /// ### Governance (0.5x)
     /// Subsidized to encourage network participation:
