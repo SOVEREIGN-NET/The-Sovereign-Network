@@ -318,7 +318,6 @@ impl CurveHandler {
             const CBE_DEPLOY_MIN_SOV: u64 = 100 * 100_000_000; // 100 SOV atomic
             let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
             let sov_token = blockchain.token_contracts.get(&sov_id);
-
             // Resolve the creator's primary wallet and check SOV balance against the wallet-based key.
             let sov_balance = match sov_token {
                 Some(token) => {
@@ -362,6 +361,7 @@ impl CurveHandler {
             threshold,
             deploy_req.sell_enabled,
             creator,
+            creator_did,
             self.get_current_block().await?,
             self.get_current_timestamp().await?,
         ).map_err(|e| anyhow::anyhow!("Deploy failed: {}", e))?;
