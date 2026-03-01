@@ -80,21 +80,6 @@ pub enum ConsensusStep {
     NewRound,
 }
 
-impl std::fmt::Display for ConsensusStep {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Note: This Display impl is kept in lib-types as it is a fundamental
-        // representation concern. For programmatic access to the display name,
-        // use ConsensusStepExt::display_name() in lib-consensus.
-        match self {
-            ConsensusStep::Propose => write!(f, "Propose"),
-            ConsensusStep::PreVote => write!(f, "PreVote"),
-            ConsensusStep::PreCommit => write!(f, "PreCommit"),
-            ConsensusStep::Commit => write!(f, "Commit"),
-            ConsensusStep::NewRound => write!(f, "NewRound"),
-        }
-    }
-}
-
 /// Types of slashing events
 #[derive(Debug, Clone, PartialEq)]
 pub enum SlashType {
@@ -260,13 +245,6 @@ mod tests {
         assert!(ConsensusStep::PreVote < ConsensusStep::PreCommit);
         assert!(ConsensusStep::PreCommit < ConsensusStep::Commit);
         assert!(ConsensusStep::Commit < ConsensusStep::NewRound);
-    }
-
-    #[test]
-    fn test_consensus_step_display() {
-        assert_eq!(format!("{}", ConsensusStep::Propose), "Propose");
-        assert_eq!(format!("{}", ConsensusStep::PreVote), "PreVote");
-        assert_eq!(format!("{}", ConsensusStep::Commit), "Commit");
     }
 
     #[test]

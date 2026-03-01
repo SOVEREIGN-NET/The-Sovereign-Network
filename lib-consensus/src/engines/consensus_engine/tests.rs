@@ -1854,3 +1854,4 @@
             "Registered local validator should be allowed to load signing key"
         );
     }
+}
