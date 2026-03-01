@@ -127,9 +127,20 @@ impl OracleComponent {
                 }
             };
 
-            let now = unix_now();
+            // Use block timestamp for epoch derivation (Oracle Spec v1 §4.1)
+            // Wall clock MUST NOT be used to determine epoch_id.
             let mut bc = blockchain.write().await;
-            let current_epoch = bc.oracle_state.epoch_id(now);
+            let block_timestamp = bc.last_committed_timestamp();
+            let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+
+            // Guard: reject attestations from future epochs (more than 1 epoch ahead)
+            if attestation.epoch_id > current_epoch + 1 {
+                warn!(
+                    "Oracle: attestation epoch {} is too far ahead of current {} — dropping",
+                    attestation.epoch_id, current_epoch
+                );
+                continue;
+            }
 
             // Snapshot validator consensus keys for signature verification.
             let key_map: Vec<([u8; 32], Vec<u8>)> = bc
@@ -204,14 +215,17 @@ impl OracleComponent {
                 continue;
             }
 
-            let now = unix_now();
-            let current_epoch = {
+            // Get block timestamp for epoch derivation (Oracle Spec v1 §4.1)
+            // Wall clock MUST NOT be used to determine epoch_id.
+            let (block_timestamp, current_epoch) = {
                 let bc = blockchain.read().await;
-                bc.oracle_state.epoch_id(now)
+                let ts = bc.last_committed_timestamp();
+                (ts, bc.oracle_state.epoch_id(ts))
             };
 
             // Fetch prices (may involve network I/O for real exchange feeds).
-            let prices = Self::gather_prices(mock_sov_usd_price, now).await;
+            // Note: gather_prices uses wall clock for source freshness (intentional per §5)
+            let prices = Self::gather_prices(mock_sov_usd_price, unix_now()).await;
             if prices.is_empty() {
                 warn!("Oracle producer: no price sources available, skipping epoch {}", current_epoch);
                 tokio::time::sleep(tokio::time::Duration::from_secs(epoch_duration_secs)).await;
@@ -220,10 +234,10 @@ impl OracleComponent {
 
             // Re-check the epoch: if price fetching crossed an epoch boundary the attestation
             // would be built for a stale epoch and rejected by peers.
-            let now_after_fetch = unix_now();
+            // Use block timestamp for consistent epoch derivation across nodes.
             let epoch_after_fetch = {
                 let bc = blockchain.read().await;
-                bc.oracle_state.epoch_id(now_after_fetch)
+                bc.oracle_state.epoch_id(bc.last_committed_timestamp())
             };
             if epoch_after_fetch != current_epoch {
                 warn!(
@@ -235,9 +249,12 @@ impl OracleComponent {
             }
 
             // Build and sign the attestation.
+            // Note: attestation timestamp uses wall clock (when attestation was created),
+            // while epoch_id uses block timestamp (per Oracle Spec v1 §4.1).
+            let attestation_timestamp = unix_now();
             match producer.build_attestation(
                 current_epoch,
-                now,
+                attestation_timestamp,
                 &committee_members,
                 &keypair,
                 prices,
@@ -262,9 +279,9 @@ impl OracleComponent {
                         }
                     };
 
-                    let now2 = unix_now();
+                    // Use block timestamp for epoch derivation (Oracle Spec v1 §4.1)
                     let mut bc = blockchain.write().await;
-                    let epoch2 = bc.oracle_state.epoch_id(now2);
+                    let epoch2 = bc.oracle_state.epoch_id(bc.last_committed_timestamp());
                     let key_map: Vec<([u8; 32], Vec<u8>)> = bc
                         .validator_registry
                         .values()
