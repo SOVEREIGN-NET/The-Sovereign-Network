@@ -13,38 +13,26 @@
 //!
 //! BlockExecutor MUST reject: `tx.fee < compute_fee_v2(...)`
 
-use serde::{Deserialize, Serialize};
+use lib_types::fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
 
 // =============================================================================
-// TRANSACTION KIND
+// TXKIND EXTENSION TRAIT (behavior only, types in lib-types)
 // =============================================================================
 
-/// Transaction type classification for fee calculation
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum TxKind {
-    /// Native token transfer (SOV)
-    NativeTransfer = 0,
-    /// Custom token transfer
-    TokenTransfer = 1,
-    /// Smart contract call
-    ContractCall = 2,
-    /// Data upload (storage commitment)
-    DataUpload = 3,
-    /// Governance action (vote, proposal)
-    Governance = 4,
-    /// Staking (delegation)
-    Staking = 5,
-    /// Unstaking (withdrawal)
-    Unstaking = 6,
+/// Extension trait for TxKind with fee calculation behavior
+pub trait TxKindExt {
+    /// Get the witness cap for this transaction kind (in bytes)
+    fn witness_cap(self) -> u32;
+    /// Get the base multiplier for this transaction kind (basis points)
+    fn base_multiplier_bps(self) -> u32;
 }
 
-impl TxKind {
+impl TxKindExt for TxKind {
     /// Get the witness cap for this transaction kind (in bytes)
     ///
     /// Witness data is capped to prevent denial-of-service attacks
     /// where transactions include excessive witness data.
-    pub const fn witness_cap(self) -> u32 {
+    fn witness_cap(self) -> u32 {
         match self {
             TxKind::NativeTransfer => 1_024,      // 1KB - simple signatures
             TxKind::TokenTransfer => 2_048,       // 2KB - token proofs
@@ -59,70 +47,7 @@ impl TxKind {
     /// Get the base multiplier for this transaction kind (basis points)
     ///
     /// 10000 = 1.0x, 15000 = 1.5x, etc.
-    ///
-    /// # Multiplier Rationale
-    ///
-    /// Multipliers reflect the relative computational and storage costs
-    /// of different transaction types, aligned with the ZHTP economic model.
-    ///
-    /// ## Economic Model
-    ///
-    /// | Kind | Multiplier | Rationale |
-    /// |------|------------|-----------|
-    /// | NativeTransfer | 1.0x | Baseline - minimal computation |
-    /// | TokenTransfer | 1.2x | Token state lookups + balance checks |
-    /// | ContractCall | 1.5x | VM execution + state transitions |
-    /// | DataUpload | 2.0x | Permanent storage commitment |
-    /// | Governance | 0.5x | Subsidized - encourages participation |
-    ///
-    /// ## Detailed Reasoning
-    ///
-    /// ### NativeTransfer (1.0x)
-    /// Simplest transaction type. Only updates two balances (sender/recipient).
-    /// Serves as the baseline for all other multipliers.
-    ///
-    /// ### TokenTransfer (1.2x)
-    /// Slightly more expensive than native transfer due to:
-    /// - Token contract state lookup
-    /// - Additional balance validation logic
-    /// - Potential allowance checks for delegated transfers
-    ///
-    /// ### ContractCall (1.5x)
-    /// Higher cost reflects:
-    /// - VM execution environment setup
-    /// - Contract code loading and interpretation
-    /// - Variable execution units (metered separately via exec_units)
-    /// - More complex state transitions
-    ///
-    /// ### DataUpload (2.0x)
-    /// Most expensive due to permanent storage commitment:
-    /// - Data stored indefinitely on-chain
-    /// - Storage is the scarcest resource in blockchain systems
-    /// - Multiplier discourages unnecessary data bloat
-    /// - Based on state rent economic model (see `docs/economy/STATE_RENT_MODEL.md`)
-    ///
-    /// ### Governance (0.5x)
-    /// Priced lower to encourage network participation:
-    /// - Voting is a civic duty in the ZHTP ecosystem
-    /// - Lower barriers increase voter turnout
-    /// - Cost still non-zero to prevent spam voting
-    ///
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use lib_fees::TxKind;
-    ///
-    /// // Governance is 50% cheaper than native transfer
-    /// let gov_multiplier = TxKind::Governance.base_multiplier_bps();      // 5000
-    /// let native_multiplier = TxKind::NativeTransfer.base_multiplier_bps(); // 10000
-    /// assert_eq!(gov_multiplier * 2, native_multiplier);
-    ///
-    /// // Data upload is 2x more expensive
-    /// let upload_multiplier = TxKind::DataUpload.base_multiplier_bps();   // 20000
-    /// assert_eq!(upload_multiplier, native_multiplier * 2);
-    /// ```
-    pub const fn base_multiplier_bps(self) -> u32 {
+    fn base_multiplier_bps(self) -> u32 {
         match self {
             TxKind::NativeTransfer => 10_000,   // 1.0x - standard
             TxKind::TokenTransfer => 12_000,    // 1.2x - slightly higher
@@ -136,93 +61,22 @@ impl TxKind {
 }
 
 // =============================================================================
-// SIGNATURE SCHEME
+// SIGSCHEME EXTENSION TRAIT (behavior only, types in lib-types)
 // =============================================================================
 
-/// Cryptographic signature scheme used
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum SigScheme {
-    /// Ed25519 - compact, fast (64 byte signatures)
-    Ed25519 = 0,
-    /// Dilithium5 - post-quantum (4627 byte signatures)
-    Dilithium5 = 1,
-    /// Hybrid Ed25519 + Dilithium (combined)
-    Hybrid = 2,
+/// Extension trait for SigScheme with fee calculation behavior
+pub trait SigSchemeExt {
+    /// Get the signature size multiplier (basis points)
+    fn size_multiplier_bps(self) -> u32;
+    /// Get approximate signature size in bytes
+    fn signature_size(self) -> u32;
 }
 
-impl SigScheme {
+impl SigSchemeExt for SigScheme {
     /// Get the signature size multiplier (basis points)
     ///
     /// Larger signatures cost more to verify and store.
-    ///
-    /// # Multiplier Rationale
-    ///
-    /// Multipliers account for the verification cost and storage overhead
-    /// of different post-quantum cryptographic schemes.
-    ///
-    /// ## Cryptographic Specifications
-    ///
-    /// | Scheme     | Sig Size   | Multiplier | Verification Cost (relative)        |
-    /// |------------|------------|------------|-------------------------------------|
-    /// | Ed25519    | 64 bytes   | 1.0x       | Baseline (fast on commodity CPUs)   |
-    /// | Dilithium5 | 4,627 bytes| 5.0x       | Higher than Ed25519                 |
-    /// | Hybrid     | 4,691 bytes| 5.5x       | Combined Ed25519 + Dilithium5 cost  |
-    ///
-    /// ## Detailed Reasoning
-    ///
-    /// ### Ed25519 (1.0x)
-    /// Standard elliptic curve signatures. Serves as the baseline.
-    /// - 64 bytes (compact)
-    /// - Fast verification on commodity hardware (exact timings are
-    ///   hardware- and implementation-dependent, not a protocol guarantee)
-    /// - Well-established security
-    ///
-    /// ### Dilithium5 (5.0x)
-    /// NIST PQ Standard for digital signatures. Higher cost due to:
-    /// - 4,627 bytes signature size (72x larger than Ed25519)
-    /// - Increased bandwidth for network propagation
-    /// - Higher storage cost in blocks
-    /// - More complex verification algorithm (~4x slower)
-    /// - NIST PQC Round 3 winner, security level equivalent to AES-256
-    ///
-    /// Reference: [NIST FIPS 204](https://csrc.nist.gov/pubs/fips/204/final)
-    ///
-    /// ### Hybrid (5.5x)
-    /// Combines both Ed25519 and Dilithium5 for defense-in-depth:
-    /// - Total size: 4,691 bytes (64 + 4,627)
-    /// - Security: Protected against both classical and quantum attacks
-    /// - Cost: 5.5x (slightly above Dilithium5 to account for Ed25519)
-    /// - Rationale for 5.5x vs 6.0x:
-    ///   - Ed25519 adds relatively small marginal verification cost on top of Dilithium5
-    ///   - Additional storage and bandwidth overhead from the 64-byte Ed25519 signature is minor
-    ///   - Hybrid is priced close to Dilithium5, rather than as a full additive 1.0x + 5.0x
-    ///
-    /// ## Tradeoff Analysis
-    ///
-    /// Signature size vs verification time tradeoff:
-    /// - Larger signatures increase bandwidth and storage costs
-    /// - Slower verification reduces transaction throughput
-    /// - PQ security is essential for long-term protection
-    /// - Multipliers balance these competing concerns
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use lib_fees::SigScheme;
-    ///
-    /// // Ed25519 is the baseline
-    /// let ed_mult = SigScheme::Ed25519.size_multiplier_bps();      // 10000
-    ///
-    /// // Dilithium5 is 5x more expensive
-    /// let dil_mult = SigScheme::Dilithium5.size_multiplier_bps();  // 50000
-    /// assert_eq!(dil_mult, ed_mult * 5);
-    ///
-    /// // Hybrid combines both with slight efficiency discount
-    /// let hyb_mult = SigScheme::Hybrid.size_multiplier_bps();      // 55000
-    /// assert!(hyb_mult < ed_mult + dil_mult); // 55000 < 60000
-    /// ```
-    pub const fn size_multiplier_bps(self) -> u32 {
+    fn size_multiplier_bps(self) -> u32 {
         match self {
             SigScheme::Ed25519 => 10_000,     // 1.0x baseline
             SigScheme::Dilithium5 => 50_000,  // 5.0x (much larger)
@@ -231,7 +85,7 @@ impl SigScheme {
     }
 
     /// Get approximate signature size in bytes
-    pub const fn signature_size(self) -> u32 {
+    fn signature_size(self) -> u32 {
         match self {
             SigScheme::Ed25519 => 64,
             SigScheme::Dilithium5 => 4_627,
@@ -241,39 +95,22 @@ impl SigScheme {
 }
 
 // =============================================================================
-// FEE INPUT
+// FEEINPUT EXTENSION TRAIT (behavior only, types in lib-types)
 // =============================================================================
 
-/// Input parameters for fee computation
-///
-/// All fields are transaction-derived and deterministic.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FeeInput {
-    /// Transaction kind
-    pub kind: TxKind,
-    /// Signature scheme used
-    pub sig_scheme: SigScheme,
-    /// Number of signatures
-    pub sig_count: u8,
-    /// Size of transaction envelope (headers, metadata) in bytes
-    pub envelope_bytes: u32,
-    /// Size of transaction payload in bytes
-    pub payload_bytes: u32,
-    /// Size of witness data in bytes (will be capped)
-    pub witness_bytes: u32,
-    /// Execution units consumed (for contract calls)
-    pub exec_units: u32,
-    /// Number of state reads
-    pub state_reads: u32,
-    /// Number of state writes
-    pub state_writes: u32,
-    /// Total bytes written to state
-    pub state_write_bytes: u32,
+/// Extension trait for FeeInput with helper methods
+pub trait FeeInputExt {
+    /// Create a simple native transfer input
+    fn native_transfer(envelope_bytes: u32, sig_scheme: SigScheme) -> Self;
+    /// Get the effective witness bytes (capped by kind)
+    fn effective_witness_bytes(&self) -> u32;
+    /// Get total transaction size in bytes
+    fn total_bytes(&self) -> u32;
 }
 
-impl FeeInput {
+impl FeeInputExt for FeeInput {
     /// Create a simple native transfer input
-    pub fn native_transfer(envelope_bytes: u32, sig_scheme: SigScheme) -> Self {
+    fn native_transfer(envelope_bytes: u32, sig_scheme: SigScheme) -> Self {
         Self {
             kind: TxKind::NativeTransfer,
             sig_scheme,
@@ -289,73 +126,15 @@ impl FeeInput {
     }
 
     /// Get the effective witness bytes (capped by kind)
-    pub fn effective_witness_bytes(&self) -> u32 {
+    fn effective_witness_bytes(&self) -> u32 {
         self.witness_bytes.min(self.kind.witness_cap())
     }
 
     /// Get total transaction size in bytes
-    pub fn total_bytes(&self) -> u32 {
+    fn total_bytes(&self) -> u32 {
         self.envelope_bytes
             .saturating_add(self.payload_bytes)
             .saturating_add(self.effective_witness_bytes())
-    }
-}
-
-// =============================================================================
-// FEE PARAMETERS
-// =============================================================================
-
-/// Fee calculation parameters (set by governance)
-///
-/// All values are in smallest token units per unit of resource.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FeeParams {
-    /// Base fee per byte of transaction data
-    pub base_fee_per_byte: u64,
-    /// Fee per execution unit (for contract calls)
-    pub fee_per_exec_unit: u64,
-    /// Fee per state read operation
-    pub fee_per_state_read: u64,
-    /// Fee per state write operation
-    pub fee_per_state_write: u64,
-    /// Fee per byte written to state
-    pub fee_per_state_write_byte: u64,
-    /// Fee per signature verification
-    pub fee_per_signature: u64,
-    /// Minimum fee for any transaction
-    pub minimum_fee: u64,
-    /// Maximum fee (sanity cap)
-    pub maximum_fee: u64,
-}
-
-impl Default for FeeParams {
-    fn default() -> Self {
-        Self {
-            base_fee_per_byte: 1,
-            fee_per_exec_unit: 10,
-            fee_per_state_read: 100,
-            fee_per_state_write: 500,
-            fee_per_state_write_byte: 10,
-            fee_per_signature: 1_000,
-            minimum_fee: 1_000,
-            maximum_fee: 1_000_000_000,  // 1 billion units max
-        }
-    }
-}
-
-impl FeeParams {
-    /// Create params for testing (lower fees)
-    pub fn for_testing() -> Self {
-        Self {
-            base_fee_per_byte: 1,
-            fee_per_exec_unit: 1,
-            fee_per_state_read: 1,
-            fee_per_state_write: 1,
-            fee_per_state_write_byte: 1,
-            fee_per_signature: 1,
-            minimum_fee: 0,
-            maximum_fee: u64::MAX,
-        }
     }
 }
 
@@ -463,29 +242,6 @@ pub fn verify_fee(input: &FeeInput, params: &FeeParams, paid_fee: u64) -> Result
         })
     }
 }
-
-/// Error returned when transaction fee is insufficient
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FeeDeficit {
-    /// Required fee
-    pub required: u64,
-    /// Fee actually paid
-    pub paid: u64,
-    /// Shortfall amount
-    pub deficit: u64,
-}
-
-impl std::fmt::Display for FeeDeficit {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Insufficient fee: paid {} but required {} (deficit: {})",
-            self.paid, self.required, self.deficit
-        )
-    }
-}
-
-impl std::error::Error for FeeDeficit {}
 
 // =============================================================================
 // TESTS
@@ -768,5 +524,25 @@ mod tests {
         // Above cap: 100 + 50 + 1024 (capped) = 1174
         input.witness_bytes = 10_000;
         assert_eq!(input.total_bytes(), 1174);
+    }
+
+    #[test]
+    fn test_tx_kind_variants() {
+        // Verify discriminant values are stable (from lib-types)
+        assert_eq!(TxKind::NativeTransfer as u8, 0);
+        assert_eq!(TxKind::TokenTransfer as u8, 1);
+        assert_eq!(TxKind::ContractCall as u8, 2);
+        assert_eq!(TxKind::DataUpload as u8, 3);
+        assert_eq!(TxKind::Governance as u8, 4);
+        assert_eq!(TxKind::Staking as u8, 5);
+        assert_eq!(TxKind::Unstaking as u8, 6);
+    }
+
+    #[test]
+    fn test_sig_scheme_variants() {
+        // Verify discriminant values are stable (from lib-types)
+        assert_eq!(SigScheme::Ed25519 as u8, 0);
+        assert_eq!(SigScheme::Dilithium5 as u8, 1);
+        assert_eq!(SigScheme::Hybrid as u8, 2);
     }
 }

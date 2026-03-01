@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::wallets::WalletBalance;
 use crate::models::TokenReward;
-use crate::types::{TransactionType, Priority};
+use crate::types::{TransactionType, Priority, TransactionTypeExt, PriorityExt};
 use crate::transactions::create_payment_transaction;
 use crate::wasm::logging::info;
 

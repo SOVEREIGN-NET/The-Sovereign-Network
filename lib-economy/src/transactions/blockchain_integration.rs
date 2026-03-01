@@ -10,6 +10,7 @@
 use anyhow::Result;
 use crate::transactions::Transaction as EconomyTransaction;
 use crate::types::TransactionType as EconomyTxType;
+use crate::types::TransactionTypeExt;
 
 /// Economy transaction data needed for blockchain conversion
 /// This struct provides the necessary data without importing blockchain types

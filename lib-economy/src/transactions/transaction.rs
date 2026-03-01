@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
-use crate::types::{TransactionType, Priority};
+use crate::types::{TransactionType, Priority, TransactionTypeExt, PriorityExt};
 use crate::wasm::{hash_blake3, compatibility::current_timestamp};
 use std::sync::atomic::{AtomicU64, Ordering};
 

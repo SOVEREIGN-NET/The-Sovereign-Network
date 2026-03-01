@@ -10,6 +10,7 @@ use serde::{Serialize, Deserialize};
 use tracing::{info, warn, debug, error};
 
 use crate::types::{Hash, transaction_type::TransactionType as BlockchainTransactionType};
+use lib_economy::types::{TransactionTypeExt, PriorityExt};
 
 /// Calculate minimum fee required for blockchain transaction
 pub fn calculate_minimum_blockchain_fee(

@@ -9,6 +9,11 @@
 //! 3. **No floats** - All arithmetic uses u64/u128 integers
 //! 4. **Overflow-safe** - Uses checked/saturating arithmetic
 //!
+//! # Type Architecture
+//!
+//! Pure data types (`TxKind`, `SigScheme`, `FeeInput`, `FeeParams`, `FeeDeficit`)
+//! are defined in `lib-types::fees` and re-exported here for convenience.
+//!
 //! # Usage
 //!
 //! ```ignore
@@ -36,4 +41,8 @@ pub mod model_v2;
 #[cfg(test)]
 mod golden_vectors;
 
-pub use model_v2::*;
+// Re-export pure data types from lib-types (canonical location)
+pub use lib_types::fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
+
+// Re-export computation functions, logic, and extension traits from model_v2
+pub use model_v2::{compute_fee_v2, verify_fee, FeeInputExt, SigSchemeExt, TxKindExt};

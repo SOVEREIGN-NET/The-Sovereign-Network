@@ -1019,6 +1019,7 @@ impl lib_consensus::types::FeeCollector for FeeRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_consensus::types::FeeDistributionResultExt;
 
     fn create_test_public_key(id: u8) -> PublicKey {
         PublicKey {
