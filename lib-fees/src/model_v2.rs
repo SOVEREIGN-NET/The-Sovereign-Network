@@ -155,18 +155,19 @@ impl SigScheme {
     ///
     /// ## Cryptographic Specifications
     ///
-    /// | Scheme | Sig Size | Multiplier | Verification Cost |
-    /// |--------|----------|------------|-------------------|
-    /// | Ed25519 | 64 bytes | 1.0x | ~50μs (fast) |
-    /// | Dilithium5 | 4,627 bytes | 5.0x | ~200μs (4x slower) |
-    /// | Hybrid | 4,691 bytes | 5.5x | Combined cost |
+    /// | Scheme     | Sig Size   | Multiplier | Verification Cost (relative)        |
+    /// |------------|------------|------------|-------------------------------------|
+    /// | Ed25519    | 64 bytes   | 1.0x       | Baseline (fast on commodity CPUs)   |
+    /// | Dilithium5 | 4,627 bytes| 5.0x       | Higher than Ed25519                 |
+    /// | Hybrid     | 4,691 bytes| 5.5x       | Combined Ed25519 + Dilithium5 cost  |
     ///
     /// ## Detailed Reasoning
     ///
     /// ### Ed25519 (1.0x)
     /// Standard elliptic curve signatures. Serves as the baseline.
     /// - 64 bytes (compact)
-    /// - Fast verification (~50 microseconds)
+    /// - Fast verification on commodity hardware (exact timings are
+    ///   hardware- and implementation-dependent, not a protocol guarantee)
     /// - Well-established security
     ///
     /// ### Dilithium5 (5.0x)
