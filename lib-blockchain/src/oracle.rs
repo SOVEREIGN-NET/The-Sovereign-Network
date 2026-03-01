@@ -256,10 +256,12 @@ impl OracleCommitteeState {
         self.members = normalize_members(members);
     }
 
-    /// Test-only accessor for setting members in integration tests.
-    /// 
-    /// This is equivalent to `set_members_genesis_only` but is public when
-    /// running tests. Production code outside of tests should NEVER use this.
+    /// Test-only helper for setting committee members in crate-local tests.
+    ///
+    /// This is equivalent to [`set_members_genesis_only`] but is only compiled
+    /// when `cfg(test)` is enabled, so it is available to unit and module
+    /// tests within this crate. Production code and external integration
+    /// tests must not rely on this API.
     #[cfg(test)]
     pub fn set_members_for_test(&mut self, members: Vec<[u8; 32]>) {
         self.members = normalize_members(members);
