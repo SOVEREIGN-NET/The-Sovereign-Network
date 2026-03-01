@@ -217,7 +217,7 @@ impl OracleComponent {
 
             // Get block timestamp for epoch derivation (Oracle Spec v1 §4.1)
             // Wall clock MUST NOT be used to determine epoch_id.
-            let (block_timestamp, current_epoch) = {
+            let (_block_timestamp, current_epoch) = {
                 let bc = blockchain.read().await;
                 let ts = bc.last_committed_timestamp();
                 (ts, bc.oracle_state.epoch_id(ts))
