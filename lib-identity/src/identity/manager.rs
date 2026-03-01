@@ -455,7 +455,6 @@ impl IdentityManager {
     
     /// Set up privacy-preserving credentials - IMPLEMENTATION FROM ORIGINAL
     #[cfg(test)]
-    #[allow(dead_code)]
     async fn setup_privacy_credentials(&self, identity: &mut ZhtpIdentity) -> Result<PrivacyCredentials> {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?

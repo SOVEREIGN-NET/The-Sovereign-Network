@@ -397,21 +397,6 @@ pub async fn create_node_device_identity(
     Ok(node_identity_id)
 }
 
-/// DEPRECATED: Use create_user_identity_with_wallet instead
-/// This name is confusing - "node" identity implies a device, but it was creating user identities
-#[deprecated(
-    since = "0.2.0",
-    note = "Use create_user_identity_with_wallet for users or create_node_device_identity for nodes"
-)]
-pub async fn create_node_identity_with_wallet(
-    node_name: String,
-    wallet_name: String,
-    wallet_alias: Option<String>,
-) -> Result<(IdentityId, WalletId, String)> {
-    // Redirect to the proper function
-    create_user_identity_with_wallet(node_name, wallet_name, wallet_alias).await
-}
-
 /// Demonstrate hierarchical DAO wallet functionality
 /// This showcases advanced DAO-to-DAO ownership and control structures
 pub async fn demonstrate_hierarchical_dao_system() -> Result<String> {

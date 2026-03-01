@@ -57,13 +57,6 @@ impl WalletManager {
         })
     }
 
-    /// Legacy: Create multiple wallets with separate seed phrases (deprecated)
-    #[deprecated(note = "Use create_citizen_wallets_with_hd_derivation instead")]
-    pub async fn create_citizen_wallets_with_seed_phrases(&mut self) -> Result<CitizenWalletSetHD> {
-        // Use HD derivation under the hood (single master seed phrase)
-        self.create_citizen_wallets_with_hd_derivation().await
-    }
-    
     /// Get all wallet summaries grouped by type
     pub fn get_wallets_by_type_summary(&self) -> WalletTypeSummary {
         let mut primary_wallets = Vec::new();
@@ -152,27 +145,6 @@ pub struct HdDerivationIndices {
     pub primary: u32,
     pub ubi: u32,
     pub savings: u32,
-}
-
-/// Legacy: Set of wallets created for a new citizen with separate seed phrases
-#[deprecated(note = "Use CitizenWalletSetHD instead - single master seed")]
-#[derive(Debug, Clone)]
-pub struct CitizenWalletSetWithSeeds {
-    pub primary_wallet_id: WalletId,
-    pub ubi_wallet_id: WalletId,
-    pub savings_wallet_id: WalletId,
-    pub primary_seed_phrase: crate::recovery::RecoveryPhrase,
-    pub ubi_seed_phrase: crate::recovery::RecoveryPhrase,
-    pub savings_seed_phrase: crate::recovery::RecoveryPhrase,
-}
-
-/// Legacy struct - use CitizenWalletSetHD for new code
-#[deprecated(note = "Use CitizenWalletSetHD instead")]
-#[derive(Debug, Clone)]
-pub struct CitizenWalletSet {
-    pub primary_wallet_id: WalletId,
-    pub ubi_wallet_id: WalletId,
-    pub savings_wallet_id: WalletId,
 }
 
 /// Summary of wallets grouped by type
