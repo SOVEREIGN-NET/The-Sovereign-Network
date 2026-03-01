@@ -64,6 +64,7 @@ fn create_test_validator(id: &str, stake: u64) -> ValidatorInfo {
         // registered at height 0 in the test harness.
         admission_source: lib_blockchain::blockchain::ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string(),
         governance_proposal_id: None,
+        oracle_key_id: None,
     }
 }
 
