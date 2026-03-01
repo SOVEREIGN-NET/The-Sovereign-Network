@@ -13,6 +13,7 @@
 #![allow(dead_code, private_interfaces)]
 
 use crate::{ProtocolError, Result};
+use lib_proofs::types::ZkProof;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -591,7 +592,7 @@ impl ZdnsServer {
             }
 
             if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-                let mut zk_system = match lib_proofs::plonky2::ZkProofSystem::new() {
+                let zk_system = match lib_proofs::plonky2::ZkProofSystem::new() {
                     Ok(sys) => sys,
                     Err(e) => {
                         return Err(ProtocolError::ZkProofError(format!(
@@ -731,19 +732,73 @@ impl ZdnsServer {
     }
 
     fn validate_ownership_proof(&self, record: &ZdnsRecord) -> Result<()> {
-        if record.ownership_proof.len() < 64 {
+        if record.ownership_proof.is_empty() {
+            return Err(ProtocolError::ZkProofError("Ownership proof required".to_string()));
+        }
+        
+        let proof_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &record.ownership_proof
+        ).map_err(|e| ProtocolError::ZkProofError(format!("Invalid base64: {}", e)))?;
+
+        if proof_bytes.len() < 64 {
             return Err(ProtocolError::ZkProofError("Ownership proof too short".to_string()));
         }
-        // Note: Full ZK proof verification requires lib-proofs integration
-        Err(ProtocolError::ZkProofError("Ownership proof validation not implemented".to_string()))
+
+        let zk_proof: ZkProof = bincode::deserialize(&proof_bytes)
+            .map_err(|e| ProtocolError::ZkProofError(format!("Deserialize failed: {}", e)))?;
+
+        if zk_proof.proof_data.is_empty() {
+            return Err(ProtocolError::ZkProofError("Proof data empty".to_string()));
+        }
+
+        if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
+            let zk_system = lib_proofs::plonky2::ZkProofSystem::new()
+                .map_err(|e| ProtocolError::ZkProofError(format!("ZK system init failed: {}", e)))?;
+            
+            match zk_system.verify_storage_access(plonky2_proof) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(ProtocolError::ZkProofError("Ownership proof verification failed".to_string())),
+                Err(e) => Err(ProtocolError::ZkProofError(format!("Verification error: {}", e))),
+            }
+        } else {
+            Err(ProtocolError::ZkProofError("Plonky2 proof required".to_string()))
+        }
     }
 
     fn validate_dao_fee_proof(&self, record: &ZdnsRecord) -> Result<()> {
-        if record.dao_fee_proof.len() < 32 {
+        if record.dao_fee_proof.is_empty() {
+            return Err(ProtocolError::DaoFeeError("DAO fee proof required".to_string()));
+        }
+
+        let proof_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &record.dao_fee_proof
+        ).map_err(|e| ProtocolError::DaoFeeError(format!("Invalid base64: {}", e)))?;
+
+        if proof_bytes.len() < 32 {
             return Err(ProtocolError::DaoFeeError("DAO fee proof too short".to_string()));
         }
-        // Note: Full DAO fee proof validation requires economic module integration
-        Err(ProtocolError::DaoFeeError("DAO fee proof validation not implemented".to_string()))
+
+        let zk_proof: ZkProof = bincode::deserialize(&proof_bytes)
+            .map_err(|e| ProtocolError::DaoFeeError(format!("Deserialize failed: {}", e)))?;
+
+        if zk_proof.proof_data.is_empty() {
+            return Err(ProtocolError::DaoFeeError("Proof data empty".to_string()));
+        }
+
+        if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
+            let zk_system = lib_proofs::plonky2::ZkProofSystem::new()
+                .map_err(|e| ProtocolError::DaoFeeError(format!("ZK system init failed: {}", e)))?;
+            
+            match zk_system.verify_storage_access(plonky2_proof) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(ProtocolError::DaoFeeError("DAO fee proof verification failed".to_string())),
+                Err(e) => Err(ProtocolError::DaoFeeError(format!("Verification error: {}", e))),
+            }
+        } else {
+            Err(ProtocolError::DaoFeeError("Plonky2 proof required".to_string()))
+        }
     }
 }
 
@@ -768,8 +823,8 @@ impl Default for ZdnsConfig {
                 hosting_reward: 0.1,
             },
             security_config: SecurityConfig {
-                require_zk_proofs: false,
-                require_dao_fees: false,
+                require_zk_proofs: true,
+                require_dao_fees: true,
                 enable_pq_signatures: true,
                 max_query_rate: 100,
                 enable_query_logging: true,
@@ -1192,7 +1247,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_zdns_query_processing() {
-        let config = ZdnsConfig::default();
+        let config = ZdnsConfig {
+            security_config: SecurityConfig {
+                require_zk_proofs: false,
+                require_dao_fees: false,
+                enable_pq_signatures: true,
+                max_query_rate: 100,
+                enable_query_logging: true,
+            },
+            ..ZdnsConfig::default()
+        };
         let server = ZdnsServer::new(config);
 
         // Register a test record
