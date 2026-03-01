@@ -664,6 +664,13 @@ impl ZdnsServer {
     }
 
     fn create_response_from_cache(&self, query: ZdnsQuery, cached_record: ZdnsRecord) -> ZdnsResponse {
+        let stats = self.query_stats.read().unwrap();
+        let hit_ratio = if stats.total_queries > 0 {
+            stats.cache_hits as f64 / stats.total_queries as f64
+        } else {
+            0.0
+        };
+        
         ZdnsResponse {
             id: query.id,
             flags: ZdnsFlags {
@@ -688,7 +695,7 @@ impl ZdnsServer {
                 economic_details: None,
                 cache_info: Some(CacheInfo {
                     cached: true,
-                    hit_ratio: 0.8, // TODO: Calculate actual hit ratio
+                    hit_ratio,
                     expires_at: chrono::Utc::now() + chrono::Duration::seconds(300),
                     cache_nodes: vec![self.config.node_id.clone()],
                 }),
