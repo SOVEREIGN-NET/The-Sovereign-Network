@@ -3313,6 +3313,7 @@ dependencies = [
  "lib-crypto",
  "lib-identity-core",
  "lib-proofs",
+ "lib-types",
  "md5",
  "names",
  "pbkdf2",
@@ -3526,8 +3527,10 @@ dependencies = [
 name = "lib-types"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bincode",
  "blake3",
+ "getrandom 0.2.17",
  "hex",
  "serde",
 ]
