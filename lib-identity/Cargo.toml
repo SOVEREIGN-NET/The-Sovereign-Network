@@ -29,6 +29,7 @@ chrono = { version = "0.4", features = ["serde"] }
 lib-crypto = { path = "../lib-crypto" }
 lib-identity-core = { path = "../lib-identity-core" }
 lib-proofs = { path = "../lib-proofs" }
+lib-types = { path = "../lib-types" }
 aes-gcm = "0.10"
 argon2 = "0.5"
 subtle = "2.5"

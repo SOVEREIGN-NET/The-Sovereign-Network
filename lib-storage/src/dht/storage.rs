@@ -584,7 +584,7 @@ impl<B: StorageBackend> DhtStorage<B> {
     async fn replicate_to_dht(&mut self, key: &str, data: &[u8]) -> Result<()> {
         // Find closest nodes for this key
         let key_hash = Hash::from_bytes(&blake3::hash(key.as_bytes()).as_bytes()[..32]);
-        let target_key = NodeId::from_storage_hash(&key_hash);
+        let target_key = NodeId::from_bytes_array(key_hash.0);
         let closest_nodes = self.router.find_closest_nodes(&target_key, 3);
         
         if let Some(network) = &self.network {
@@ -628,7 +628,7 @@ impl<B: StorageBackend> DhtStorage<B> {
     async fn retrieve_from_dht(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
         // Find closest nodes for this key
         let key_hash = Hash::from_bytes(&blake3::hash(key.as_bytes()).as_bytes()[..32]);
-        let target_key = NodeId::from_storage_hash(&key_hash);
+        let target_key = NodeId::from_bytes_array(key_hash.0);
         let closest_nodes = self.router.find_closest_nodes(&target_key, 5);
         
         if let Some(network) = &self.network {
