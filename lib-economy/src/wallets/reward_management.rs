@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::{TokenReward, EconomicModel};
-use crate::types::{WorkMetrics, IspBypassWork, NetworkStats, TransactionType};
+use crate::types::{WorkMetrics, IspBypassWork, NetworkStats, TransactionType, WorkMetricsExt, IspBypassWorkExt, NetworkStatsExt};
 use crate::wallets::WalletBalance;
 use crate::wasm::logging::info;
 

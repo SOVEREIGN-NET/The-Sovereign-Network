@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
-use crate::types::{WorkMetrics, IspBypassWork};
+use crate::types::{WorkMetrics, IspBypassWork, WorkMetricsExt};
 use crate::models::EconomicModel; calculation and         // Routing: 10 SOV per MB routed (covers bandwidth costs)
         let routing_reward = (work.routing_work / 1_000_000).saturating_mul(model.base_routing_rate); // bytes to MB
         

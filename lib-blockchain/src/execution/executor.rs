@@ -55,7 +55,7 @@ use crate::resources::{BlockAccumulator, BlockLimits};
 
 // Re-export lib-fees types for convenience
 pub use lib_fees::{
-    compute_fee_v2, verify_fee, FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind,
+    compute_fee_v2, verify_fee, FeeDeficit, FeeInput, FeeParams, SigScheme, SigSchemeExt, TxKind,
 };
 
 // =============================================================================
