@@ -125,20 +125,21 @@ fn calculate_relevance_score(keywords: &[String], metadata: &lib_storage::types:
     }
     
     let mut score = 0.0;
-    let query_terms: Vec<&str> = keywords.iter().map(|s| s.to_lowercase()).collect();
     
     // Check filename
     let filename_lower = metadata.filename.to_lowercase();
-    for term in &query_terms {
-        if filename_lower.contains(term) {
-            score += 0.4; // Higher weight for filename matches
+    for keyword in keywords {
+        let term = keyword.to_lowercase();
+        if filename_lower.contains(&term) {
+            score += 0.4;
         }
     }
     
     // Check description
     let desc_lower = metadata.description.to_lowercase();
-    for term in &query_terms {
-        if desc_lower.contains(term) {
+    for keyword in keywords {
+        let term = keyword.to_lowercase();
+        if desc_lower.contains(&term) {
             score += 0.3;
         }
     }

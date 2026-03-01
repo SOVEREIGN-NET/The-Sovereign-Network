@@ -117,8 +117,8 @@ impl SecureWalletTransferHandler {
         }
 
         let identity = identity.unwrap();
-        let registered_public_key = &identity.public_key;
-
+        let registered_public_key = identity.public_key.clone();
+        
         let signature_bytes = match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &request.signature) {
             Ok(bytes) => bytes,
             Err(_) => {
@@ -153,7 +153,7 @@ impl SecureWalletTransferHandler {
             }
         };
 
-        let public_key_matches = provided_public_key == *registered_public_key;
+        let public_key_matches = provided_public_key == registered_public_key;
         
         if !public_key_matches {
             return Ok(SecureTransferResponse {

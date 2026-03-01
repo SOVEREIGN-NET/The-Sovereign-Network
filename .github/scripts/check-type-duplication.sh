@@ -13,7 +13,7 @@ echo "Checking for cross-crate duplicate types..."
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
 
-# Collect all types
+# Collect all types - output as "type_name crate_name field1 field2 ..."
 for crate in lib-*/src; do
     [[ "$crate" == "lib-types/src" ]] && continue
     crate_name=$(echo "$crate" | sed 's|/src||')
@@ -32,43 +32,51 @@ for crate in lib-*/src; do
                 tr '\n' ' ' | \
                 sed 's/ $//')
             
-            echo "$crate_name:$struct_name:$fields"
+            # Output: "type_name crate_name fields..."
+            echo "$struct_name $crate_name $fields"
         done
     done
 done > "$TEMP_DIR/types.txt"
 
-# Find duplicates - use unique crate list per (name, fields)
-awk -F: '{
-    key = $2 SUBSEP $3
-    crates[key] = crates[key] ? crates[key] SUBSEP $1 : $1
+# Find duplicates: group by type_name and check if in multiple crates
+# Output format: "type_name:crate1,crate2,..."
+awk '
+{
+    type = $1
+    crate = $2
+    fields = ""
+    for (i = 3; i <= NF; i++) {
+        fields = fields (fields ? " " : "") $i
+    }
+    
+    # Key is type+fields (same definition)
+    key = type SUBSEP fields
+    
+    # Track crates per type+fields
+    if (!(key in crate_list)) {
+        crate_list[key] = crate
+    } else if (crate_list[key] !~ crate) {
+        crate_list[key] = crate_list[key] "," crate
+    }
 }
 END {
-    for (key in crates) {
-        n = split(crates[key], arr, SUBSEP)
-        # Get unique crate names
-        delete seen
-        unique = ""
-        for (i = 1; i <= n; i++) {
-            if (!seen[arr[i]]) {
-                seen[arr[i]] = 1
-                unique = unique ? unique SUBSEP arr[i] : arr[i]
-            }
-        }
-        count = 0
-        for (c in seen) count++
-        if (count > 1) {
+    for (key in crate_list) {
+        n = split(crate_list[key], crates, ",")
+        if (n > 1) {
             split(key, parts, SUBSEP)
-            print parts[1] SUBSEP unique
+            type_name = parts[1]
+            printf "%s:%s\n", type_name, crate_list[key]
         }
     }
-}' "$TEMP_DIR/types.txt" > "$TEMP_DIR/dups.txt"
+}
+' "$TEMP_DIR/types.txt" > "$TEMP_DIR/dups.txt"
 
 if [[ -s "$TEMP_DIR/dups.txt" ]]; then
     echo ""
     echo -e "${RED}ERROR: Found cross-crate duplicate types:${NC}"
-    while IFS=SUBSEP read -r name crates; do
+    while IFS=: read -r name crates; do
         echo -e "${YELLOW}Type: $name${NC}"
-        echo "$crates" | tr SUBSEP '\n' | sed 's/^/  - /'
+        echo "$crates" | tr ',' '\n' | sed 's/^/  - /'
         echo ""
     done < "$TEMP_DIR/dups.txt"
     exit 1
