@@ -295,16 +295,52 @@ impl CurveHandler {
         // Generate token ID deterministically
         let token_id = self.generate_token_id(&deploy_req.name, &deploy_req.symbol, &creator.key_id);
 
-        // Check if already exists
-        {
+        // Gate 1 + duplicate check inside single read lock
+        let creator_did = {
             let blockchain = self.blockchain.read().await;
+
             if blockchain.bonding_curve_registry.contains(&token_id) {
                 return Ok(create_error_response(
                     ZhtpStatus::Conflict,
                     "Token with this name and symbol already exists".to_string(),
                 ));
             }
-        }
+
+            // Gate 1: creator must have a registered on-chain identity (DID).
+            let identity = blockchain.get_identity_by_public_key(&creator.dilithium_pk);
+            let identity = match identity {
+                Some(id) => id,
+                None => return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Deployer must have a registered identity (DID) on-chain to deploy a token".to_string(),
+                )),
+            };
+            let did = identity.did.clone();
+
+            // Gate 2: creator must hold at least 100 SOV.
+            const CBE_DEPLOY_MIN_SOV: u64 = 100 * 100_000_000; // 100 SOV atomic
+            let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+            let sov_token = blockchain.token_contracts.get(&sov_id);
+            let creator_pk = lib_blockchain::integration::crypto_integration::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: creator.key_id,
+            };
+            let sov_balance = sov_token
+                .map(|t| t.balance_of(&creator_pk))
+                .unwrap_or(0);
+            if sov_balance < CBE_DEPLOY_MIN_SOV {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    format!(
+                        "Deployer must hold at least 100 SOV to deploy a token (current balance: {:.2} SOV)",
+                        sov_balance as f64 / 100_000_000.0
+                    ),
+                ));
+            }
+
+            did
+        };
 
         // Deploy token
         let curve_type: CurveType = deploy_req.curve_type.into();
@@ -318,6 +354,7 @@ impl CurveHandler {
             threshold,
             deploy_req.sell_enabled,
             creator,
+            creator_did,
             self.get_current_block().await?,
             self.get_current_timestamp().await?,
         ).map_err(|e| anyhow::anyhow!("Deploy failed: {}", e))?;

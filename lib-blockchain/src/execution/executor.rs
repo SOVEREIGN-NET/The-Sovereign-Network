@@ -1493,6 +1493,31 @@ impl BlockExecutor {
             ));
         }
 
+        // Gate 1: creator must have a registered on-chain identity (DID).
+        let creator_addr = Address::new(data.creator);
+        let creator_identity = mutator.get_identity_by_owner(&creator_addr)?.ok_or_else(|| {
+            TxApplyError::InvalidType(
+                "BondingCurveDeploy: creator must have a registered identity (DID) on-chain".to_string(),
+            )
+        })?;
+        // did_hash is the canonical on-chain identifier; encode as hex for storage.
+        let creator_did = format!("did:zhtp:{}", hex::encode(creator_identity.did_hash));
+
+        // Gate 2: creator must hold at least CBE_DEPLOY_MIN_SOV SOV.
+        const CBE_DEPLOY_MIN_SOV: u64 = 100 * 100_000_000; // 100 SOV in atomic units
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let sov_balance = mutator
+            .get_token_balance(&TokenId::new(sov_token_id), &creator_addr)
+            .map_err(|e| TxApplyError::InvalidType(
+                format!("BondingCurveDeploy: SOV balance check failed: {}", e)
+            ))?;
+        if sov_balance < CBE_DEPLOY_MIN_SOV {
+            return Err(TxApplyError::InvalidType(format!(
+                "BondingCurveDeploy: creator must hold at least 100 SOV to deploy a token (balance: {} atomic units)",
+                sov_balance,
+            )));
+        }
+
         // Generate token ID from name, symbol, and creator
         use lib_crypto::hash_blake3;
         let input = format!("{}:{}:{}", data.name, data.symbol, hex::encode(&data.creator));
@@ -1554,6 +1579,7 @@ impl BlockExecutor {
                 kyber_pk: vec![],
                 key_id: data.creator,
             },
+            creator_did,
             deployed_at_block: block_height,
             deployed_at_timestamp: block_timestamp,
         };

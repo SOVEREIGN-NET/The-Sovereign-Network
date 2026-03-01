@@ -54,6 +54,9 @@ pub struct BondingCurveToken {
     // === Metadata ===
     /// Creator address
     pub creator: PublicKey,
+    /// Creator DID (populated when deployer has a registered identity)
+    #[serde(default)]
+    pub creator_did: String,
     /// Block height at deployment
     pub deployed_at_block: u64,
     /// Timestamp at deployment
@@ -81,6 +84,7 @@ impl BondingCurveToken {
         threshold: Threshold,
         sell_enabled: bool,
         creator: PublicKey,
+        creator_did: String,
         deployed_at_block: u64,
         deployed_at_timestamp: u64,
     ) -> Result<Self, CurveError> {
@@ -108,6 +112,7 @@ impl BondingCurveToken {
             sell_enabled,
             amm_pool_id: None,
             creator,
+            creator_did,
             deployed_at_block,
             deployed_at_timestamp,
         })
