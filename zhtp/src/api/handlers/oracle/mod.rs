@@ -39,8 +39,10 @@ impl ZhtpRequestHandler for OracleHandler {
     }
 
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let uri = request.uri.trim_end_matches('/').to_string();
-        let path_parts: Vec<&str> = uri.trim_start_matches('/').split('/').collect();
+        // Strip trailing slash and query string before routing.
+        let uri = request.uri.trim_end_matches('/');
+        let uri_no_query = uri.splitn(2, '?').next().unwrap_or(uri);
+        let path_parts: Vec<&str> = uri_no_query.trim_start_matches('/').split('/').collect();
 
         match path_parts.as_slice() {
             ["api", "v1", "oracle", "price"] => self.handle_get_price().await,
@@ -48,7 +50,7 @@ impl ZhtpRequestHandler for OracleHandler {
             ["api", "v1", "oracle", "config"] => self.handle_get_config().await,
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
-                format!("Oracle endpoint not found: {}", uri),
+                format!("Oracle endpoint not found: {}", uri_no_query),
             )),
         }
     }
@@ -88,13 +90,24 @@ impl OracleHandler {
         match latest {
             Some(finalized) => {
                 let price_usd = finalized.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64;
+                // u128 fields are serialized as strings — serde_json cannot represent
+                // integers beyond u64::MAX and will return an error otherwise.
                 let body = json!({
                     "epoch_id": finalized.epoch_id,
-                    "sov_usd_price_atomic": finalized.sov_usd_price,
+                    "sov_usd_price_atomic": finalized.sov_usd_price.to_string(),
                     "sov_usd_price": price_usd,
-                    "oracle_price_scale": ORACLE_PRICE_SCALE,
+                    "oracle_price_scale": ORACLE_PRICE_SCALE.to_string(),
                 });
-                let bytes = serde_json::to_vec(&body).unwrap_or_default();
+                let bytes = match serde_json::to_vec(&body) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        warn!("Oracle price API: failed to serialize response: {}", e);
+                        return Ok(ZhtpResponse::error(
+                            ZhtpStatus::InternalServerError,
+                            "Failed to serialize oracle price response".to_string(),
+                        ));
+                    }
+                };
                 Ok(ZhtpResponse::success_with_content_type(
                     bytes,
                     "application/json".to_string(),
@@ -134,11 +147,14 @@ impl OracleHandler {
         let latest_price = bc
             .oracle_state
             .latest_finalized_price_at_or_before(current_epoch)
-            .map(|p| json!({
-                "epoch_id": p.epoch_id,
-                "sov_usd_price_atomic": p.sov_usd_price,
-                "sov_usd_price": p.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64,
-            }));
+            .map(|p| {
+                let price_usd = p.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64;
+                json!({
+                    "epoch_id": p.epoch_id,
+                    "sov_usd_price_atomic": p.sov_usd_price.to_string(),
+                    "sov_usd_price": price_usd,
+                })
+            });
 
         let body = json!({
             "current_epoch": current_epoch,
@@ -148,10 +164,19 @@ impl OracleHandler {
             "committee_members": committee.iter().map(hex::encode).collect::<Vec<_>>(),
             "finalized_prices_count": finalized_count,
             "latest_finalized_price": latest_price,
-            "oracle_price_scale": ORACLE_PRICE_SCALE,
+            "oracle_price_scale": ORACLE_PRICE_SCALE.to_string(),
         });
 
-        let bytes = serde_json::to_vec(&body).unwrap_or_default();
+        let bytes = match serde_json::to_vec(&body) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("Oracle status API: failed to serialize response: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    "Failed to serialize oracle status response".to_string(),
+                ));
+            }
+        };
         Ok(ZhtpResponse::success_with_content_type(
             bytes,
             "application/json".to_string(),
@@ -209,7 +234,7 @@ impl OracleHandler {
             "max_deviation_bps": cfg.max_deviation_bps,
             "max_deviation_pct": cfg.max_deviation_bps as f64 / 100.0,
             "max_price_staleness_epochs": cfg.max_price_staleness_epochs(),
-            "price_scale": cfg.price_scale(),
+            "price_scale": cfg.price_scale().to_string(),
             "committee_size": committee.len(),
             "committee_threshold": threshold,
             "committee_members": committee.iter().map(hex::encode).collect::<Vec<_>>(),
@@ -217,7 +242,16 @@ impl OracleHandler {
             "pending_config_update": pending_config,
         });
 
-        let bytes = serde_json::to_vec(&body).unwrap_or_default();
+        let bytes = match serde_json::to_vec(&body) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("Oracle config API: failed to serialize response: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    "Failed to serialize oracle config response".to_string(),
+                ));
+            }
+        };
         Ok(ZhtpResponse::success_with_content_type(
             bytes,
             "application/json".to_string(),

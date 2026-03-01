@@ -44,9 +44,10 @@ impl OracleComponent {
         mock_sov_usd_price: Option<u64>,
     ) -> Result<()> {
         // Channel: gossip bytes → consumer task.
+        // Bounded to 256 entries so a flooding peer cannot cause unbounded memory growth.
         // Wire the sender immediately so no incoming attestations are dropped while we wait
         // for the validator_registry to be fully seeded with bootstrap validators.
-        let (oracle_tx, oracle_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (oracle_tx, oracle_rx) = mpsc::channel::<Vec<u8>>(256);
 
         // Wire the sender into the QUIC message handler.
         if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
@@ -123,7 +124,8 @@ impl OracleComponent {
             .collect();
 
         if members.is_empty() {
-            debug!("Oracle: no active validators with consensus keys — committee empty");
+            debug!("Oracle: no active validators with consensus keys — clearing committee");
+            bc.oracle_state.committee.set_members(vec![]);
             return;
         }
 
@@ -137,7 +139,7 @@ impl OracleComponent {
     // ── Consumer task ───────────────────────────────────────────────────────
 
     async fn run_consumer(
-        mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
+        mut rx: mpsc::Receiver<Vec<u8>>,
         blockchain: Arc<RwLock<Blockchain>>,
     ) {
         info!("🔮 Oracle attestation consumer started");
@@ -232,10 +234,26 @@ impl OracleComponent {
                 bc.oracle_state.epoch_id(now)
             };
 
-            // Fetch prices.
+            // Fetch prices (may involve network I/O for real exchange feeds).
             let prices = Self::gather_prices(mock_sov_usd_price, now).await;
             if prices.is_empty() {
                 warn!("Oracle producer: no price sources available, skipping epoch {}", current_epoch);
+                tokio::time::sleep(tokio::time::Duration::from_secs(epoch_duration_secs)).await;
+                continue;
+            }
+
+            // Re-check the epoch: if price fetching crossed an epoch boundary the attestation
+            // would be built for a stale epoch and rejected by peers.
+            let now_after_fetch = unix_now();
+            let epoch_after_fetch = {
+                let bc = blockchain.read().await;
+                bc.oracle_state.epoch_id(now_after_fetch)
+            };
+            if epoch_after_fetch != current_epoch {
+                warn!(
+                    "Oracle producer: epoch changed during price fetch ({} → {}) — skipping",
+                    current_epoch, epoch_after_fetch
+                );
                 tokio::time::sleep(tokio::time::Duration::from_secs(epoch_duration_secs)).await;
                 continue;
             }
@@ -373,11 +391,20 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
+/// Build a shared `reqwest::Client` with a 10-second overall timeout.
+fn exchange_http_client() -> Option<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()
+}
+
 /// Fetch SOV/USD from CoinGecko (scaffolding — SOV not yet listed).
 async fn fetch_coingecko_sov_usd(now: u64) -> Option<OracleFetchedPrice> {
     // CoinGecko simple price API.  Replace `sov-token` with the actual CoinGecko ID once listed.
     let url = "https://api.coingecko.com/api/v3/simple/price?ids=sov-token&vs_currencies=usd";
-    let resp = reqwest::get(url).await.ok()?;
+    let client = exchange_http_client()?;
+    let resp = client.get(url).send().await.ok()?.error_for_status().ok()?;
     let json: serde_json::Value = resp.json().await.ok()?;
     let price_f = json["sov-token"]["usd"].as_f64()?;
     let price_atomic = (price_f * ORACLE_PRICE_SCALE as f64) as u128;
@@ -391,7 +418,8 @@ async fn fetch_coingecko_sov_usd(now: u64) -> Option<OracleFetchedPrice> {
 /// Fetch SOV/USDT from Binance (scaffolding — SOV not yet listed).
 async fn fetch_binance_sov_usdt(now: u64) -> Option<OracleFetchedPrice> {
     let url = "https://api.binance.com/api/v3/ticker/price?symbol=SOVUSDT";
-    let resp = reqwest::get(url).await.ok()?;
+    let client = exchange_http_client()?;
+    let resp = client.get(url).send().await.ok()?.error_for_status().ok()?;
     let json: serde_json::Value = resp.json().await.ok()?;
     let price_str = json["price"].as_str()?;
     let price_f: f64 = price_str.parse().ok()?;

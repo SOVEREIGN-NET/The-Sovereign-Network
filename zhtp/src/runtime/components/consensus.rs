@@ -1285,7 +1285,7 @@ impl Component for ConsensusComponent {
                                 }
                             }
                             None => {
-                                tracing::warn!("Oracle: no validator keypair available — oracle will not run");
+                                tracing::info!("Oracle: no validator keypair available — oracle producer disabled (non-validating node)");
                             }
                         }
                         break;

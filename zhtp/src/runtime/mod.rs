@@ -1995,12 +1995,30 @@ impl RuntimeOrchestrator {
             };
 
             // If consensus_key is provided, hex-decode it into raw bytes; otherwise derive.
+            // IMPORTANT: a missing or malformed consensus_key causes the oracle committee to use
+            // a placeholder key that will never match the validator's real Dilithium signing key,
+            // resulting in NonCommitteeSigner rejections on every epoch.  Set consensus_key in
+            // config.toml to the hex-encoded Dilithium public key from the node's keystore.
             let consensus_key = if bv.consensus_key.is_empty() {
+                tracing::warn!(
+                    "Bootstrap validator '{}' has no consensus_key in config — oracle committee \
+                     will use a derived placeholder that never matches the real signing key. \
+                     Set consensus_key to the hex-encoded Dilithium public key.",
+                    bv.identity_id
+                );
                 derive(b"consensus")
             } else {
                 match hex::decode(&bv.consensus_key) {
                     Ok(bytes) => bytes,
-                    Err(_) => derive(b"consensus"), // fallback to derived key on bad hex
+                    Err(e) => {
+                        tracing::warn!(
+                            "Bootstrap validator '{}' consensus_key is invalid hex ({}) — \
+                             falling back to derived placeholder. Oracle attestations will be \
+                             rejected as NonCommitteeSigner.",
+                            bv.identity_id, e
+                        );
+                        derive(b"consensus")
+                    }
                 }
             };
             let networking_key = derive(b"networking");

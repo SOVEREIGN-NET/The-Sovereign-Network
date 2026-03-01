@@ -27,7 +27,12 @@ pub type ConsensusMessageSender = tokio::sync::mpsc::Sender<lib_consensus::types
 type DhtPayloadSender = tokio::sync::mpsc::UnboundedSender<DhtPayload>;
 
 /// Sender half for oracle price attestation gossip payloads.
-pub type OracleAttestationSender = tokio::sync::mpsc::UnboundedSender<Vec<u8>>;
+///
+/// Bounded to 256 messages to prevent unbounded memory growth when a peer
+/// floods the node with attestation gossip. Excess messages are dropped with
+/// a warning; the oracle epoch is long enough that one dropped attestation
+/// per epoch does not affect finalization.
+pub type OracleAttestationSender = tokio::sync::mpsc::Sender<Vec<u8>>;
 
 /// Central mesh message handler
 ///
@@ -379,10 +384,11 @@ impl MeshMessageHandler {
             },
             ZhtpMeshMessage::OracleAttestation { payload } => {
                 if let Some(ref tx) = self.oracle_attestation_sender {
-                    if let Err(e) = tx.send(payload) {
+                    if let Err(e) = tx.try_send(payload) {
+                        let len = e.into_inner().len();
                         warn!(
-                            "Failed to forward OracleAttestation to oracle runtime ({} bytes): {}",
-                            e.0.len(), e
+                            "OracleAttestation dropped (oracle inbox full or closed, {} bytes)",
+                            len
                         );
                     }
                 } else {
