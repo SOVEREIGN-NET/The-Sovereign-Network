@@ -28,10 +28,6 @@ const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Request buffer size
 const REQUEST_BUFFER_SIZE: usize = 8192;
 
-/// Response buffer size
-#[allow(dead_code)]
-const RESPONSE_BUFFER_SIZE: usize = 8192;
-
 /// ZHTP Server state
 #[derive(Debug, Clone)]
 pub struct ServerState {
