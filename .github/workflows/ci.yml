@@ -144,6 +144,16 @@ jobs:
       - name: Run zhtp-cli Handler Tests (macOS)
         run: cargo test -p zhtp-cli --test handler_tests --locked
 
+  type-check:
+    name: Check for type duplication
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for duplicate types
+        run: .github/scripts/check-type-duplication.sh
+
   # Deploy to production server (main branch)
   deploy-production:
     name: Deploy to Production Server
