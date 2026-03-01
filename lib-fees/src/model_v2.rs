@@ -96,11 +96,11 @@ impl TxKind {
     /// - Based on state rent economic model (see `docs/economy/STATE_RENT_MODEL.md`)
     ///
     /// ### Governance (0.5x)
-    /// Subsidized to encourage network participation:
+    /// Priced lower to encourage network participation:
     /// - Voting is a civic duty in the ZHTP ecosystem
     /// - Lower barriers increase voter turnout
     /// - Cost still non-zero to prevent spam voting
-    /// - Subsidy funded by network treasury
+    ///
     ///
     /// # Examples
     ///
