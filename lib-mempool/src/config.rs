@@ -1,81 +1,23 @@
 //! Mempool Configuration
 //!
 //! Limits and thresholds for mempool admission.
+//! 
+//! Note: The canonical type definition has moved to lib-types.
+//! This module provides extension behavior via the MempoolConfigExt trait.
 
-use serde::{Deserialize, Serialize};
+pub use lib_types::mempool::MempoolConfig;
 use lib_types::Amount;
 
-/// Configuration for mempool admission checks
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MempoolConfig {
-    // =========================================================================
-    // Size Limits
-    // =========================================================================
-    /// Maximum total mempool size in bytes
-    pub max_mempool_bytes: u64,
-    /// Maximum number of transactions in mempool
-    pub max_tx_count: u32,
-    /// Maximum transactions per sender address
-    pub max_per_sender: u32,
-
-    // =========================================================================
-    // Transaction Limits
-    // =========================================================================
-    /// Maximum transaction size in bytes
-    pub max_tx_bytes: u32,
-    /// Maximum witness size per transaction in bytes
-    pub max_witness_bytes: u32,
-    /// Maximum number of signatures per transaction
-    pub max_signatures: u8,
-    /// Maximum number of inputs per transaction
-    pub max_inputs: u16,
-    /// Maximum number of outputs per transaction
-    pub max_outputs: u16,
-
-    // =========================================================================
-    // Fee Thresholds
-    // =========================================================================
-    /// Minimum fee multiplier (1.0 = exact minimum, 1.1 = 10% above)
-    /// Stored as basis points: 10000 = 1.0x, 11000 = 1.1x
-    pub min_fee_multiplier_bps: u16,
-
-    // =========================================================================
-    // Rate Limiting
-    // =========================================================================
-    /// Maximum transactions per sender per block period
-    pub max_per_sender_per_period: u32,
-    /// Rate limit period in blocks
-    pub rate_limit_period_blocks: u32,
-}
-
-impl Default for MempoolConfig {
-    fn default() -> Self {
-        Self {
-            // Size limits
-            max_mempool_bytes: 50 * 1024 * 1024, // 50 MB
-            max_tx_count: 50_000,
-            max_per_sender: 100,
-
-            // Transaction limits
-            max_tx_bytes: 100_000,      // 100 KB max tx
-            max_witness_bytes: 50_000,  // 50 KB witness
-            max_signatures: 16,
-            max_inputs: 256,
-            max_outputs: 256,
-
-            // Fee thresholds
-            min_fee_multiplier_bps: 10_000, // 1.0x (exact minimum)
-
-            // Rate limiting
-            max_per_sender_per_period: 10,
-            rate_limit_period_blocks: 10,
-        }
-    }
-}
-
-impl MempoolConfig {
+/// Extension trait for MempoolConfig with behavior methods
+pub trait MempoolConfigExt {
     /// Create a permissive config for testing
-    pub fn for_testing() -> Self {
+    fn for_testing() -> Self;
+    /// Calculate the effective minimum fee given the computed fee
+    fn effective_min_fee(&self, computed_fee: Amount) -> Amount;
+}
+
+impl MempoolConfigExt for MempoolConfig {
+    fn for_testing() -> Self {
         Self {
             max_mempool_bytes: u64::MAX,
             max_tx_count: u32::MAX,
@@ -91,8 +33,7 @@ impl MempoolConfig {
         }
     }
 
-    /// Calculate the effective minimum fee given the computed fee
-    pub fn effective_min_fee(&self, computed_fee: Amount) -> Amount {
+    fn effective_min_fee(&self, computed_fee: Amount) -> Amount {
         // Apply multiplier: fee * multiplier_bps / 10000
         computed_fee
             .saturating_mul(self.min_fee_multiplier_bps as Amount)
@@ -107,8 +48,13 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = MempoolConfig::default();
-        assert_eq!(config.max_mempool_bytes, 50 * 1024 * 1024);
+        // These are the original lib-mempool defaults (preserved during move to lib-types)
+        assert_eq!(config.max_mempool_bytes, 50 * 1024 * 1024); // 50 MB
         assert_eq!(config.max_tx_count, 50_000);
+        assert_eq!(config.max_witness_bytes, 50_000);
+        assert_eq!(config.max_signatures, 16);
+        assert_eq!(config.max_inputs, 256);
+        assert_eq!(config.max_outputs, 256);
         assert_eq!(config.min_fee_multiplier_bps, 10_000);
     }
 
