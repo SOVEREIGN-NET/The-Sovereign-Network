@@ -23,7 +23,7 @@ fn committee_update_through_governance_path_activates_at_epoch_boundary() {
 
     // Schedule a committee update via governance path (the ONLY allowed way post-genesis)
     state
-        .schedule_committee_update(vec![[9u8; 32], [8u8; 32]], 10)
+        .schedule_committee_update(vec![[9u8; 32], [8u8; 32]], 11)
         .expect("schedule must succeed");
 
     // Pending update should exist but not be active yet
@@ -49,17 +49,17 @@ fn schedule_committee_update_validates_input() {
     let mut state = OracleState::default();
 
     // Empty committee should be rejected
-    let result = state.schedule_committee_update(vec![], 10);
+    let result = state.schedule_committee_update(vec![], 11);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("must not be empty"));
 
     // Duplicate members should be rejected
-    let result = state.schedule_committee_update(vec![[1u8; 32], [1u8; 32]], 10);
+    let result = state.schedule_committee_update(vec![[1u8; 32], [1u8; 32]], 11);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("duplicate"));
 
     // Valid committee should be accepted
-    let result = state.schedule_committee_update(vec![[1u8; 32], [2u8; 32]], 10);
+    let result = state.schedule_committee_update(vec![[1u8; 32], [2u8; 32]], 11);
     assert!(result.is_ok());
 }
 
@@ -132,7 +132,7 @@ fn subsequent_schedule_replaces_pending_update() {
 
     // Schedule first update
     state
-        .schedule_committee_update(vec![[1u8; 32], [2u8; 32]], 10)
+        .schedule_committee_update(vec![[1u8; 32], [2u8; 32]], 11)
         .expect("schedule must succeed");
     
     assert_eq!(
@@ -142,7 +142,7 @@ fn subsequent_schedule_replaces_pending_update() {
 
     // Schedule second update (should replace first)
     state
-        .schedule_committee_update(vec![[3u8; 32], [4u8; 32], [5u8; 32]], 10)
+        .schedule_committee_update(vec![[3u8; 32], [4u8; 32], [5u8; 32]], 11)
         .expect("schedule must succeed");
     
     assert_eq!(
@@ -177,7 +177,7 @@ fn genesis_bootstrap_creates_initial_committee() {
     state
         .schedule_committee_update(
             vec![[0x01; 32], [0x02; 32], [0x05; 32]], // Add validator 5, remove 3 and 4
-            0, // Current epoch
+            1, // Activate at epoch 1
         )
         .expect("schedule must succeed");
 
@@ -217,7 +217,7 @@ fn committee_changes_require_governance_path() {
     
     // Verify the governance path works
     state
-        .schedule_committee_update(vec![[3u8; 32]], 5)
+        .schedule_committee_update(vec![[3u8; 32]], 6)
         .expect("governance schedule must succeed");
     
     state.apply_pending_updates(6);

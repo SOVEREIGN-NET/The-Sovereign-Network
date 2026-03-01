@@ -277,17 +277,9 @@ impl TransactionValidator {
                 // AMM/Token operations - not yet fully implemented
                 // TODO: Add validation for these transaction types
             }
-            TransactionType::UpdateOracleCommittee => {
-                // Oracle committee update - validate data exists
-                if transaction.oracle_committee_update_data.is_none() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::UpdateOracleConfig => {
-                // Oracle config update - validate data exists
-                if transaction.oracle_config_update_data.is_none() {
-                    return Err(ValidationError::InvalidInputs);
-                }
+            TransactionType::UpdateOracleCommittee
+            | TransactionType::UpdateOracleConfig => {
+                // Oracle governance transactions - semantic validation in stateful validator
             }
         }
 
@@ -472,7 +464,7 @@ impl TransactionValidator {
             }
             TransactionType::UpdateOracleCommittee
             | TransactionType::UpdateOracleConfig => {
-                // Oracle governance transactions - validation handled at execution layer
+                // Oracle governance transactions - semantic validation in stateful validator
             }
         }
 
@@ -2352,8 +2344,8 @@ mod tests {
                 bonding_curve_buy_data: None,
                 bonding_curve_sell_data: None,
                 bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
+                oracle_committee_update_data: None,
+                oracle_config_update_data: None,
             };
 
             assert!(
@@ -2394,8 +2386,8 @@ mod tests {
                 bonding_curve_buy_data: None,
                 bonding_curve_sell_data: None,
                 bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
+                oracle_committee_update_data: None,
+                oracle_config_update_data: None,
             };
 
             assert!(

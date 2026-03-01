@@ -24,6 +24,8 @@ pub struct OracleConfigUpdateData {
     pub max_source_age_secs: u64,
     /// Maximum price deviation in basis points (100 = 1%).
     pub max_deviation_bps: u32,
+    /// Maximum allowed staleness (in epochs) for consumers.
+    pub max_price_staleness_epochs: u64,
     /// Epoch when this update becomes active.
     pub activate_at_epoch: u64,
     /// Reason for the update.
@@ -77,6 +79,11 @@ impl OracleConfigUpdateData {
                 "max_deviation_bps ({}) must be <= 10000",
                 self.max_deviation_bps
             ));
+        }
+
+        // Max price staleness must be positive
+        if self.max_price_staleness_epochs == 0 {
+            return Err("max_price_staleness_epochs must be greater than 0".to_string());
         }
 
         // Activation epoch must be in the future
@@ -144,6 +151,7 @@ mod tests {
             epoch_duration_secs: 300,
             max_source_age_secs: 60,
             max_deviation_bps: 500,
+            max_price_staleness_epochs: 10,
             activate_at_epoch: 10,
             reason: "Test".to_string(),
         };
@@ -154,6 +162,7 @@ mod tests {
             epoch_duration_secs: 0,
             max_source_age_secs: 60,
             max_deviation_bps: 500,
+            max_price_staleness_epochs: 10,
             activate_at_epoch: 10,
             reason: "Test".to_string(),
         };
@@ -164,6 +173,7 @@ mod tests {
             epoch_duration_secs: 300,
             max_source_age_secs: 60,
             max_deviation_bps: 15_000,
+            max_price_staleness_epochs: 10,
             activate_at_epoch: 10,
             reason: "Test".to_string(),
         };
@@ -174,16 +184,29 @@ mod tests {
             epoch_duration_secs: 300,
             max_source_age_secs: 300,
             max_deviation_bps: 500,
+            max_price_staleness_epochs: 10,
             activate_at_epoch: 10,
             reason: "Test".to_string(),
         };
         assert!(bad_age.validate(5).is_err());
+
+        // Zero max_price_staleness_epochs
+        let zero_staleness = OracleConfigUpdateData {
+            epoch_duration_secs: 300,
+            max_source_age_secs: 60,
+            max_deviation_bps: 500,
+            max_price_staleness_epochs: 0,
+            activate_at_epoch: 10,
+            reason: "Test".to_string(),
+        };
+        assert!(zero_staleness.validate(5).is_err());
 
         // Past activation
         let past = OracleConfigUpdateData {
             epoch_duration_secs: 300,
             max_source_age_secs: 60,
             max_deviation_bps: 500,
+            max_price_staleness_epochs: 10,
             activate_at_epoch: 3,
             reason: "Test".to_string(),
         };

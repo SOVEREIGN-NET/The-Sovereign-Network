@@ -353,11 +353,11 @@ impl OracleState {
         block_timestamp / duration
     }
 
-    /// Queue a committee update for activation at the next epoch boundary.
+    /// Queue a committee update for activation at the specified epoch.
     pub fn schedule_committee_update(
         &mut self,
         members: Vec<[u8; 32]>,
-        current_epoch: u64,
+        activate_at_epoch: u64,
     ) -> Result<(), String> {
         if members.is_empty() {
             return Err("oracle committee must not be empty".to_string());
@@ -369,17 +369,17 @@ impl OracleState {
         }
 
         self.committee.pending_update = Some(PendingCommitteeUpdate {
-            activate_at_epoch: current_epoch.saturating_add(1),
+            activate_at_epoch,
             members: normalize_members(members),
         });
         Ok(())
     }
 
-    /// Queue an oracle config update for activation at the next epoch boundary.
+    /// Queue an oracle config update for activation at the specified epoch.
     pub fn schedule_config_update(
         &mut self,
         config: OracleConfig,
-        current_epoch: u64,
+        activate_at_epoch: u64,
     ) -> Result<(), String> {
         if config.epoch_duration_secs == 0 {
             return Err("oracle epoch duration must be > 0".to_string());
@@ -395,7 +395,7 @@ impl OracleState {
         }
 
         self.pending_config_update = Some(PendingConfigUpdate {
-            activate_at_epoch: current_epoch.saturating_add(1),
+            activate_at_epoch,
             config,
         });
         Ok(())
@@ -825,7 +825,7 @@ mod tests {
         let mut state = OracleState::default();
         state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         state
-            .schedule_committee_update(vec![[9u8; 32], [8u8; 32], [7u8; 32]], 12)
+            .schedule_committee_update(vec![[9u8; 32], [8u8; 32], [7u8; 32]], 13)
             .expect("schedule must succeed");
 
         state.apply_pending_updates(12);
@@ -844,7 +844,7 @@ mod tests {
         next.max_deviation_bps = 350;
 
         state
-            .schedule_config_update(next.clone(), 3)
+            .schedule_config_update(next.clone(), 4)
             .expect("schedule must succeed");
 
         state.apply_pending_updates(3);

@@ -1917,7 +1917,9 @@ impl BlockExecutor {
             | TransactionType::DifficultyUpdate
             | TransactionType::UBIClaim
             | TransactionType::ProfitDeclaration
-            | TransactionType::GovernanceConfigUpdate => Ok(TxOutcome::LegacySystem),
+            | TransactionType::GovernanceConfigUpdate
+            | TransactionType::UpdateOracleCommittee
+            | TransactionType::UpdateOracleConfig => Ok(TxOutcome::LegacySystem),
 
             // Bonding curve types
             TransactionType::BondingCurveDeploy => {

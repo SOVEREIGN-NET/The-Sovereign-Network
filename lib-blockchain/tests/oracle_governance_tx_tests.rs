@@ -54,6 +54,7 @@ fn config_update_data_serialization() {
         epoch_duration_secs: 600,
         max_source_age_secs: 120,
         max_deviation_bps: 1000,
+        max_price_staleness_epochs: 12,
         activate_at_epoch: 50,
         reason: "Increasing epoch duration".to_string(),
     };
@@ -64,6 +65,7 @@ fn config_update_data_serialization() {
     assert_eq!(data.epoch_duration_secs, deserialized.epoch_duration_secs);
     assert_eq!(data.max_source_age_secs, deserialized.max_source_age_secs);
     assert_eq!(data.max_deviation_bps, deserialized.max_deviation_bps);
+    assert_eq!(data.max_price_staleness_epochs, deserialized.max_price_staleness_epochs);
     assert_eq!(data.activate_at_epoch, deserialized.activate_at_epoch);
     assert_eq!(data.reason, deserialized.reason);
 }
@@ -92,6 +94,7 @@ fn config_update_validation_with_epoch() {
         epoch_duration_secs: 300,
         max_source_age_secs: 60,
         max_deviation_bps: 500,
+        max_price_staleness_epochs: 10,
         activate_at_epoch: 100,
         reason: "Test".to_string(),
     };
@@ -114,7 +117,7 @@ fn schedule_committee_update_via_governance() {
     // Schedule update (activates at current_epoch + 1)
     let result = state.schedule_committee_update(
         vec![[3u8; 32], [4u8; 32], [5u8; 32]],
-        current_epoch,
+        current_epoch + 1,
     );
     assert!(result.is_ok());
     
@@ -148,7 +151,7 @@ fn schedule_config_update_via_governance() {
     
     let result = state.schedule_config_update(
         new_config,
-        current_epoch,
+        current_epoch + 1,
     );
     assert!(result.is_ok());
     
@@ -172,7 +175,7 @@ fn scheduled_update_replaces_previous() {
     // Schedule first update
     state.schedule_committee_update(
         vec![[1u8; 32]],
-        10,
+        11,
     ).unwrap();
     
     assert_eq!(state.committee.pending_update().unwrap().members.len(), 1);
@@ -180,7 +183,7 @@ fn scheduled_update_replaces_previous() {
     // Schedule second update (should replace first)
     state.schedule_committee_update(
         vec![[2u8; 32], [3u8; 32]],
-        10,
+        11,
     ).unwrap();
     
     assert_eq!(state.committee.pending_update().unwrap().members.len(), 2);
@@ -232,6 +235,7 @@ fn config_update_rejects_zero_epoch_duration() {
         epoch_duration_secs: 0,
         max_source_age_secs: 60,
         max_deviation_bps: 500,
+        max_price_staleness_epochs: 10,
         activate_at_epoch: 100,
         reason: "Zero duration".to_string(),
     };
@@ -245,8 +249,23 @@ fn config_update_rejects_zero_max_source_age() {
         epoch_duration_secs: 300,
         max_source_age_secs: 0,
         max_deviation_bps: 500,
+        max_price_staleness_epochs: 10,
         activate_at_epoch: 100,
         reason: "Zero source age".to_string(),
+    };
+    assert!(data.validate(50).is_err());
+}
+
+/// Test config validation failure for zero max price staleness.
+#[test]
+fn config_update_rejects_zero_max_price_staleness() {
+    let data = OracleConfigUpdateData {
+        epoch_duration_secs: 300,
+        max_source_age_secs: 60,
+        max_deviation_bps: 500,
+        max_price_staleness_epochs: 0,
+        activate_at_epoch: 100,
+        reason: "Zero staleness".to_string(),
     };
     assert!(data.validate(50).is_err());
 }
@@ -277,6 +296,7 @@ fn config_update_data_for_governance() {
         epoch_duration_secs: 600,    // 10 minute epochs
         max_source_age_secs: 180,     // 3 minute max age
         max_deviation_bps: 1000,      // 10% max deviation
+        max_price_staleness_epochs: 12, // 2 epochs at 10 min each
         activate_at_epoch: 50,
         reason: "Increase epoch duration to reduce network overhead".to_string(),
     };
@@ -284,4 +304,5 @@ fn config_update_data_for_governance() {
     // Validate before proposal submission
     assert!(config_data.validate(25).is_ok());
     assert_eq!(config_data.epoch_duration_secs, 600);
+    assert_eq!(config_data.max_price_staleness_epochs, 12);
 }
