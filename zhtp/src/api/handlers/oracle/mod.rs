@@ -6,7 +6,6 @@
 //!   GET /api/v1/oracle/config  — all operating parameters (epoch cadence, thresholds, deviation limits)
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use lib_blockchain::oracle::ORACLE_PRICE_SCALE;
@@ -77,11 +76,10 @@ impl OracleHandler {
         };
 
         let bc = bc_arc.read().await;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let current_epoch = bc.oracle_state.epoch_id(now);
+        // Use block timestamp for epoch derivation (Oracle Spec v1 §4.1)
+        // Wall clock MUST NOT be used to determine epoch_id.
+        let block_timestamp = bc.last_committed_timestamp();
+        let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
 
         let latest = bc
             .oracle_state
@@ -135,11 +133,10 @@ impl OracleHandler {
         };
 
         let bc = bc_arc.read().await;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let current_epoch = bc.oracle_state.epoch_id(now);
+        // Use block timestamp for epoch derivation (Oracle Spec v1 §4.1)
+        // Wall clock MUST NOT be used to determine epoch_id.
+        let block_timestamp = bc.last_committed_timestamp();
+        let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
         let committee = bc.oracle_state.committee.members();
         let finalized_count = bc.oracle_state.finalized_prices_len();
         let threshold = bc.oracle_state.committee.threshold();
