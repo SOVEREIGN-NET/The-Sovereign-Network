@@ -1305,7 +1305,7 @@ impl MeshMessageHandler {
 
         // Forward to DHT transport if sender is configured
         if let Some(sender) = &self.dht_payload_sender {
-            let peer_id = NodeId(requester.key_id);
+            let peer_id = NodeId::from_bytes(requester.key_id);
 
             if let Err(e) = sender.send((payload.clone(), peer_id)) {
                 warn!(
