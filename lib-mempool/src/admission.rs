@@ -6,9 +6,9 @@
 //! This module provides the admission logic while the data types
 //! (AdmitResult, AdmitTx, etc.) live in lib-types.
 
-use lib_types::{Address, Amount, BlockHeight};
+use lib_types::{Amount, BlockHeight};
 use lib_types::mempool::{AdmitResult, AdmitTx, AdmitErrorKind};
-use lib_fees::{FeeParams, FeeInput, TxKind, SigScheme, compute_fee_v2};
+use lib_fees::{FeeParams, FeeInput, compute_fee_v2};
 use lib_fees::model_v2::TxKindExt;
 
 use crate::config::{MempoolConfig, MempoolConfigExt};
@@ -170,6 +170,8 @@ pub fn admit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_fees::{TxKind, SigScheme};
+    use lib_types::Address;
 
     fn create_test_tx(fee: u64) -> AdmitTx {
         AdmitTx {
