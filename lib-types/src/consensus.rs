@@ -267,7 +267,9 @@ mod tests {
 
     #[test]
     fn test_fee_distribution_result() {
-        let result = FeeDistributionResult::from_total_fees(1000);
+        // Note: from_total_fees() logic is in FeeDistributionResultExt in lib-consensus
+        // Here we test the basic struct construction
+        let result = FeeDistributionResult::new(450, 300, 150, 100);
         assert_eq!(result.ubi_amount, 450);        // 45%
         assert_eq!(result.consensus_amount, 300);  // 30%
         assert_eq!(result.governance_amount, 150); // 15%

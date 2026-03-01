@@ -12,6 +12,7 @@ pub mod errors;
 pub mod fees;
 pub mod consensus;
 pub mod economy;
+pub mod mempool;
 
 // Canonical consensus types (Phase 1)
 pub use primitives::{Address, Amount, BlockHash, BlockHeight, Bps, TokenId, TxHash};
