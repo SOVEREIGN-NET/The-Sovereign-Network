@@ -10,10 +10,6 @@
 //! - [`SupplyPolicy`]: Controls minting behavior
 //! - [`TransferPolicy`]: Controls transfer restrictions
 //! - [`FeeSchedule`]: Transfer and burn fee configuration
-//!
-//! # Execution
-//!
-//! Use [`apply_token_transfer`] to execute transfers with full validation.
 
 pub mod contract;
 pub mod errors;
@@ -21,4 +17,3 @@ pub mod transfer;
 
 pub use contract::*;
 pub use errors::*;
-pub use transfer::apply_token_transfer;
