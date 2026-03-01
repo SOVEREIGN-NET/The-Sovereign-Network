@@ -183,11 +183,11 @@ impl SigScheme {
     /// Combines both Ed25519 and Dilithium5 for defense-in-depth:
     /// - Total size: 4,691 bytes (64 + 4,627)
     /// - Security: Protected against both classical and quantum attacks
-    /// - Cost: 5.5x (not simply 6.0x because verification can be parallelized)
+    /// - Cost: 5.5x (slightly above Dilithium5 to account for Ed25519)
     /// - Rationale for 5.5x vs 6.0x:
-    ///   - Ed25519 verification is very fast and can run in parallel
-    ///   - Combined verification time < sum of individual times
-    ///   - 5.5x reflects the marginal cost of adding Ed25519 to Dilithium5
+    ///   - Ed25519 adds relatively small marginal verification cost on top of Dilithium5
+    ///   - Additional storage and bandwidth overhead from the 64-byte Ed25519 signature is minor
+    ///   - Hybrid is priced close to Dilithium5, rather than as a full additive 1.0x + 5.0x
     ///
     /// ## Tradeoff Analysis
     ///
