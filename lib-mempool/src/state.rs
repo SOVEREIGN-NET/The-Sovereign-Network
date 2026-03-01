@@ -1,56 +1,58 @@
 //! Mempool State
 //!
 //! Tracks current mempool usage for admission checks.
+//!
+//! Note: The canonical type definitions have moved to lib-types.
+//! This module provides extension behavior via the MempoolStateExt trait.
 
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
+pub use lib_types::mempool::{MempoolState, SenderState};
 use lib_types::Address;
 
-/// Current state of the mempool for admission checks
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct MempoolState {
-    /// Current total bytes in mempool
-    pub total_bytes: u64,
-    /// Current transaction count
-    pub tx_count: u32,
-    /// Transactions per sender address
-    pub per_sender: HashMap<Address, SenderState>,
-}
-
-/// Per-sender state tracking
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SenderState {
-    /// Number of pending transactions from this sender
-    pub pending_count: u32,
-    /// Total bytes from this sender
-    pub total_bytes: u64,
-    /// Transactions in current rate limit period
-    pub period_count: u32,
-    /// Block height when period started
-    pub period_start_block: u64,
-}
-
-impl MempoolState {
+/// Extension trait for MempoolState with behavior methods
+///
+/// These methods provide mempool state management operations
+/// that are kept in lib-mempool while the pure data types
+/// live in lib-types.
+pub trait MempoolStateExt {
     /// Create empty mempool state
-    pub fn new() -> Self {
+    fn new() -> Self;
+    /// Get sender state, creating if not exists
+    fn get_sender(&self, address: &Address) -> Option<&SenderState>;
+    /// Get sender's pending transaction count
+    fn sender_pending_count(&self, address: &Address) -> u32;
+    /// Get sender's transactions in current period
+    fn sender_period_count(&self, address: &Address, current_block: u64, period_blocks: u32) -> u32;
+    /// Record a transaction being added to mempool
+    fn add_tx(&mut self, sender: Address, tx_bytes: u64, current_block: u64, period_blocks: u32);
+    /// Record a transaction being removed from mempool
+    fn remove_tx(&mut self, sender: &Address, tx_bytes: u64);
+    /// Check if mempool has capacity for more bytes
+    fn has_byte_capacity(&self, max_bytes: u64) -> bool;
+    /// Check if mempool has capacity for more transactions
+    fn has_tx_capacity(&self, max_count: u32) -> bool;
+    /// Get remaining byte capacity
+    fn remaining_bytes(&self, max_bytes: u64) -> u64;
+    /// Clear all state (e.g., after block commit)
+    fn clear(&mut self);
+}
+
+impl MempoolStateExt for MempoolState {
+    fn new() -> Self {
         Self::default()
     }
 
-    /// Get sender state, creating if not exists
-    pub fn get_sender(&self, address: &Address) -> Option<&SenderState> {
+    fn get_sender(&self, address: &Address) -> Option<&SenderState> {
         self.per_sender.get(address)
     }
 
-    /// Get sender's pending transaction count
-    pub fn sender_pending_count(&self, address: &Address) -> u32 {
+    fn sender_pending_count(&self, address: &Address) -> u32 {
         self.per_sender
             .get(address)
             .map(|s| s.pending_count)
             .unwrap_or(0)
     }
 
-    /// Get sender's transactions in current period
-    pub fn sender_period_count(&self, address: &Address, current_block: u64, period_blocks: u32) -> u32 {
+    fn sender_period_count(&self, address: &Address, current_block: u64, period_blocks: u32) -> u32 {
         self.per_sender
             .get(address)
             .map(|s| {
@@ -64,8 +66,7 @@ impl MempoolState {
             .unwrap_or(0)
     }
 
-    /// Record a transaction being added to mempool
-    pub fn add_tx(&mut self, sender: Address, tx_bytes: u64, current_block: u64, period_blocks: u32) {
+    fn add_tx(&mut self, sender: Address, tx_bytes: u64, current_block: u64, period_blocks: u32) {
         self.total_bytes = self.total_bytes.saturating_add(tx_bytes);
         self.tx_count = self.tx_count.saturating_add(1);
 
@@ -83,8 +84,7 @@ impl MempoolState {
         }
     }
 
-    /// Record a transaction being removed from mempool
-    pub fn remove_tx(&mut self, sender: &Address, tx_bytes: u64) {
+    fn remove_tx(&mut self, sender: &Address, tx_bytes: u64) {
         self.total_bytes = self.total_bytes.saturating_sub(tx_bytes);
         self.tx_count = self.tx_count.saturating_sub(1);
 
@@ -99,23 +99,19 @@ impl MempoolState {
         }
     }
 
-    /// Check if mempool has capacity for more bytes
-    pub fn has_byte_capacity(&self, max_bytes: u64) -> bool {
+    fn has_byte_capacity(&self, max_bytes: u64) -> bool {
         self.total_bytes < max_bytes
     }
 
-    /// Check if mempool has capacity for more transactions
-    pub fn has_tx_capacity(&self, max_count: u32) -> bool {
+    fn has_tx_capacity(&self, max_count: u32) -> bool {
         self.tx_count < max_count
     }
 
-    /// Get remaining byte capacity
-    pub fn remaining_bytes(&self, max_bytes: u64) -> u64 {
+    fn remaining_bytes(&self, max_bytes: u64) -> u64 {
         max_bytes.saturating_sub(self.total_bytes)
     }
 
-    /// Clear all state (e.g., after block commit)
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         self.total_bytes = 0;
         self.tx_count = 0;
         self.per_sender.clear();

@@ -1,31 +1,12 @@
 //! Mempool Admission Errors
+//!
+//! Note: The canonical error kind definition (`AdmitErrorKind`) lives in lib-types
+//! and is re-exported here. This module defines `AdmitError` and provides
+//! convenience constructors for building specific admission errors.
 
 use thiserror::Error;
+pub use lib_types::mempool::AdmitErrorKind;
 use lib_types::{Address, Amount};
-
-/// Specific reason for admission rejection
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AdmitErrorKind {
-    // Fee errors
-    InsufficientFee { required: Amount, provided: Amount },
-
-    // Size errors
-    TxTooLarge { size: u32, max: u32 },
-    WitnessTooLarge { size: u32, max: u32 },
-    TooManyInputs { count: u16, max: u16 },
-    TooManyOutputs { count: u16, max: u16 },
-    TooManySignatures { count: u8, max: u8 },
-
-    // Mempool capacity errors
-    MempoolFull,
-    MempoolBytesFull { current: u64, max: u64 },
-    SenderLimitReached { sender: Address, count: u32, max: u32 },
-    RateLimited { sender: Address, period_count: u32, max: u32 },
-
-    // Validation errors
-    InvalidTransaction(String),
-    DuplicateTransaction,
-}
 
 /// Error during mempool admission
 #[derive(Error, Debug, Clone)]
@@ -79,17 +60,50 @@ impl AdmitError {
         Self::new(AdmitErrorKind::RateLimited { sender, period_count, max })
     }
 
-    pub fn invalid_transaction(reason: impl Into<String>) -> Self {
-        Self::new(AdmitErrorKind::InvalidTransaction(reason.into()))
+    pub fn invalid_transaction(msg: impl Into<String>) -> Self {
+        Self::new(AdmitErrorKind::InvalidTransaction(msg.into()))
     }
 
-    pub fn duplicate() -> Self {
+    pub fn duplicate_transaction() -> Self {
         Self::new(AdmitErrorKind::DuplicateTransaction)
+    }
+
+    /// Deprecated alias for `duplicate_transaction()`
+    #[deprecated(since = "0.1.0", note = "Use duplicate_transaction() instead")]
+    pub fn duplicate() -> Self {
+        Self::duplicate_transaction()
     }
 }
 
 impl From<AdmitErrorKind> for AdmitError {
     fn from(kind: AdmitErrorKind) -> Self {
         Self::new(kind)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_constructors() {
+        let err = AdmitError::insufficient_fee(100, 50);
+        assert!(matches!(err.kind, AdmitErrorKind::InsufficientFee { required: 100, provided: 50 }));
+
+        let err = AdmitError::tx_too_large(200, 100);
+        assert!(matches!(err.kind, AdmitErrorKind::TxTooLarge { size: 200, max: 100 }));
+
+        let err = AdmitError::mempool_full();
+        assert!(matches!(err.kind, AdmitErrorKind::MempoolFull));
+
+        let err = AdmitError::duplicate_transaction();
+        assert!(matches!(err.kind, AdmitErrorKind::DuplicateTransaction));
+    }
+
+    #[test]
+    fn test_error_display() {
+        let err = AdmitError::mempool_full();
+        let display = format!("{}", err);
+        assert!(display.contains("Admission rejected"));
     }
 }
