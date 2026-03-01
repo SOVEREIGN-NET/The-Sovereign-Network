@@ -1988,9 +1988,20 @@ impl RuntimeOrchestrator {
                 lib_crypto::hash_blake3(&input).to_vec()
             };
 
-            let consensus_key  = if bv.consensus_key.is_empty() { derive(b"consensus")  } else { bv.consensus_key.as_bytes().to_vec() };
+            // If consensus_key is provided, hex-decode it into raw bytes; otherwise derive.
+            let consensus_key = if bv.consensus_key.is_empty() {
+                derive(b"consensus")
+            } else {
+                match hex::decode(&bv.consensus_key) {
+                    Ok(bytes) => bytes,
+                    Err(_) => derive(b"consensus"), // fallback to derived key on bad hex
+                }
+            };
             let networking_key = derive(b"networking");
             let rewards_key    = derive(b"rewards");
+
+            // Use the first declared endpoint as network_address (already host:port format).
+            let network_address = bv.endpoints.first().cloned().unwrap_or_default();
 
             let validator_info = lib_blockchain::ValidatorInfo {
                 identity_id: bv.identity_id.clone(),
@@ -1999,15 +2010,16 @@ impl RuntimeOrchestrator {
                 consensus_key,
                 networking_key,
                 rewards_key,
-                network_address: bv.endpoints.first().cloned().unwrap_or_default(),
+                network_address,
                 commission_rate: bv.commission_rate.min(100) as u8,
                 status: "active".to_string(),
                 registered_at: 0,
                 last_activity: 0,
                 blocks_validated: 0,
                 slash_count: 0,
-                admission_source: "bootstrap_genesis".to_string(),
+                admission_source: lib_blockchain::ADMISSION_SOURCE_BOOTSTRAP_GENESIS.to_string(),
                 governance_proposal_id: None,
+                oracle_key_id: None,
             };
             blockchain.validator_registry.insert(bv.identity_id.clone(), validator_info);
             seeded += 1;
@@ -2067,9 +2079,15 @@ impl RuntimeOrchestrator {
             &[ks.dilithium_pk.as_slice(), b"rewards"].concat()
         ).to_vec();
 
-        // Derive our QUIC endpoint from the API port
-        let api_port = self.config.protocols_config.api_port;
-        let network_address = format!("0.0.0.0:{}", api_port);
+        // Use the configured QUIC port for the network address so peers can dial this validator.
+        // The API port (HTTP) is not the right address for consensus/P2P traffic.
+        // Look up this node's endpoint from bootstrap_validators config if available,
+        // otherwise fall back to the configured QUIC port.
+        let quic_port = self.config.protocols_config.quic_port;
+        let network_address = self.config.network_config.bootstrap_validators.iter()
+            .find(|bv| bv.identity_id == node_did)
+            .and_then(|bv| bv.endpoints.first().cloned())
+            .unwrap_or_else(|| format!("0.0.0.0:{}", quic_port));
 
         let validator_data = lib_blockchain::transaction::ValidatorTransactionData {
             identity_id: node_did.clone(),

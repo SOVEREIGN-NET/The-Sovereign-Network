@@ -1198,9 +1198,13 @@ impl Component for ConsensusComponent {
                         vm.sync_from_validator_list(adapters)
                     };
                     match result {
-                        Ok((added, _)) if added > 0 => {
-                            info!("🔄 Periodic validator sync: {} new validator(s) added from blockchain", added);
-                            // Also sync into running consensus engine
+                        Ok((added, skipped)) => {
+                            if added > 0 {
+                                info!("🔄 Periodic validator sync: {} new validator(s) added from blockchain ({} already present)", added, skipped);
+                            }
+                            // Always sync into the running consensus engine so that validators
+                            // seeded at startup (with placeholder keys) get replaced by real
+                            // on-chain keys, and so the engine activates BFT mode.
                             let mut engine_guard = consensus_engine.write().await;
                             if let Some(engine) = engine_guard.as_mut() {
                                 let adapters2: Vec<BlockchainValidatorAdapter> = active_validators
@@ -1219,7 +1223,9 @@ impl Component for ConsensusComponent {
                                 }
                             }
                         }
-                        _ => {}
+                        Err(e) => {
+                            warn!("Periodic validator manager sync failed: {}", e);
+                        }
                     }
                 }
             });

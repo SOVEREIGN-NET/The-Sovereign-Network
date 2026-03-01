@@ -24,6 +24,8 @@ use lib_storage::dht::storage::DhtStorage;
 pub const ADMISSION_SOURCE_OFFCHAIN_GENESIS: &str = "offchain_genesis";
 /// Validator was admitted through an on-chain governance/registration transaction.
 pub const ADMISSION_SOURCE_ONCHAIN_GOVERNANCE: &str = "onchain_governance";
+/// Validator was seeded from the bootstrap_validators config at node startup (pre-genesis).
+pub const ADMISSION_SOURCE_BOOTSTRAP_GENESIS: &str = "bootstrap_genesis";
 
 /// Messages for real-time blockchain synchronization
 #[derive(Debug, Clone)]
@@ -4812,6 +4814,7 @@ impl Blockchain {
                     slash_count: 0,
                     admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
                     governance_proposal_id: None,
+                    oracle_key_id: None,
                 };
                 self.validator_registry.insert(validator_data.identity_id.clone(), validator_info);
                 self.validator_blocks.insert(validator_data.identity_id.clone(), height);
