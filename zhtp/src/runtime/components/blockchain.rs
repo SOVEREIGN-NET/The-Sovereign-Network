@@ -518,22 +518,27 @@ impl BlockchainComponent {
                                     block_counter += 1;
                                     consensus_round = 0;
 
-                                    // Auto-persist blockchain after mining
-                                    blockchain_guard.increment_persist_counter();
-                                    const PERSIST_INTERVAL: u64 = 1; // Save every block
-                                    if blockchain_guard.should_auto_persist(PERSIST_INTERVAL) {
-                                        // Use environment-specific path
-                                        let persist_path_str = env_for_persist.blockchain_data_path();
-                                        let persist_path = std::path::Path::new(&persist_path_str);
-                                        match blockchain_guard.save_to_file(persist_path) {
-                                            Ok(()) => {
-                                                blockchain_guard.mark_persisted();
-                                                info!("💾 Blockchain auto-persisted to disk");
-                                            }
-                                            Err(e) => {
-                                                warn!("⚠️ Failed to auto-persist blockchain: {}", e);
+                                    // Auto-persist blockchain after mining (legacy mode only)
+                                    if blockchain_guard.get_store().is_none() {
+                                        blockchain_guard.increment_persist_counter();
+                                        const PERSIST_INTERVAL: u64 = 1; // Save every block
+                                        if blockchain_guard.should_auto_persist(PERSIST_INTERVAL) {
+                                            // Use environment-specific path
+                                            let persist_path_str = env_for_persist.blockchain_data_path();
+                                            let persist_path = std::path::Path::new(&persist_path_str);
+                                            #[allow(deprecated)]
+                                            match blockchain_guard.save_to_file(persist_path) {
+                                                Ok(()) => {
+                                                    blockchain_guard.mark_persisted();
+                                                    info!("💾 Blockchain auto-persisted to disk");
+                                                }
+                                                Err(e) => {
+                                                    warn!("⚠️ Failed to auto-persist blockchain: {}", e);
+                                                }
                                             }
                                         }
+                                    } else {
+                                        info!("💾 Blockchain persisted via store after mining");
                                     }
                                 }
                                 Err(e) => {
@@ -843,14 +848,19 @@ impl Component for BlockchainComponent {
         info!("Stopping blockchain component...");
         *self.status.write().await = ComponentStatus::Stopping;
 
-        // Persist blockchain before shutdown
+        // Persist blockchain before shutdown (legacy mode only)
         if let Ok(shared_blockchain) = crate::runtime::blockchain_provider::get_global_blockchain().await {
             let blockchain_guard = shared_blockchain.read().await;
-            let persist_path_str = self.environment.blockchain_data_path();
-            let persist_path = std::path::Path::new(&persist_path_str);
-            match blockchain_guard.save_to_file(persist_path) {
-                Ok(()) => info!("💾 Blockchain persisted to {} before shutdown", persist_path_str),
-                Err(e) => warn!("⚠️ Failed to persist blockchain on shutdown: {}", e),
+            if blockchain_guard.get_store().is_none() {
+                let persist_path_str = self.environment.blockchain_data_path();
+                let persist_path = std::path::Path::new(&persist_path_str);
+                #[allow(deprecated)]
+                match blockchain_guard.save_to_file(persist_path) {
+                    Ok(()) => info!("💾 Blockchain persisted to {} before shutdown", persist_path_str),
+                    Err(e) => warn!("⚠️ Failed to persist blockchain on shutdown: {}", e),
+                }
+            } else {
+                info!("💾 Blockchain store handles persistence on shutdown");
             }
         }
 

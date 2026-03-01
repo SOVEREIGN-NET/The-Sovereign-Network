@@ -1676,13 +1676,18 @@ impl RuntimeOrchestrator {
                         }
                     }
 
-                    // Save blockchain to disk after all registrations complete
-                    let persist_path_str = self.config.environment.blockchain_data_path();
-                    let persist_path = std::path::Path::new(&persist_path_str);
-                    if let Err(e) = blockchain_ref.save_to_file(persist_path) {
-                        warn!("⚠️  Failed to save blockchain after identity registration: {}", e);
+                    // Save blockchain to disk after all registrations complete (legacy mode only)
+                    if blockchain_ref.get_store().is_none() {
+                        let persist_path_str = self.config.environment.blockchain_data_path();
+                        let persist_path = std::path::Path::new(&persist_path_str);
+                        #[allow(deprecated)]
+                        if let Err(e) = blockchain_ref.save_to_file(persist_path) {
+                            warn!("⚠️  Failed to save blockchain after identity registration: {}", e);
+                        } else {
+                            info!("💾 Blockchain saved after new identity registration");
+                        }
                     } else {
-                        info!("💾 Blockchain saved after new identity registration");
+                        info!("💾 Blockchain persisted via store after identity registration");
                     }
                 }
                 Err(e) => {
@@ -1918,13 +1923,18 @@ impl RuntimeOrchestrator {
                             }
                         }
 
-                        // Save blockchain after any modifications in existing identity path
-                        let persist_path_str = self.config.environment.blockchain_data_path();
-                        let persist_path = std::path::Path::new(&persist_path_str);
-                        if let Err(e) = blockchain_ref.save_to_file(persist_path) {
-                            warn!("⚠️  Failed to save blockchain after existing identity check: {}", e);
+                        // Save blockchain after any modifications in existing identity path (legacy mode only)
+                        if blockchain_ref.get_store().is_none() {
+                            let persist_path_str = self.config.environment.blockchain_data_path();
+                            let persist_path = std::path::Path::new(&persist_path_str);
+                            #[allow(deprecated)]
+                            if let Err(e) = blockchain_ref.save_to_file(persist_path) {
+                                warn!("⚠️  Failed to save blockchain after existing identity check: {}", e);
+                            } else {
+                                info!("💾 Blockchain saved after existing identity check/registration");
+                            }
                         } else {
-                            info!("💾 Blockchain saved after existing identity check/registration");
+                            info!("💾 Blockchain persisted via store after identity check/registration");
                         }
                     }
                     Err(e) => {

@@ -392,18 +392,23 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                 );
                 info!("📍 Stored consensus checkpoint for height {}", proposal.height);
 
-                // Auto-persist blockchain after BFT commit
-                blockchain.increment_persist_counter();
-                let persist_path_str = self.environment.blockchain_data_path();
-                let persist_path = std::path::Path::new(&persist_path_str);
-                match blockchain.save_to_file(persist_path) {
-                    Ok(()) => {
-                        blockchain.mark_persisted();
-                        info!("💾 Blockchain auto-persisted after BFT commit");
+                // Auto-persist blockchain after BFT commit (legacy mode only)
+                if blockchain.get_store().is_none() {
+                    blockchain.increment_persist_counter();
+                    let persist_path_str = self.environment.blockchain_data_path();
+                    let persist_path = std::path::Path::new(&persist_path_str);
+                    #[allow(deprecated)]
+                    match blockchain.save_to_file(persist_path) {
+                        Ok(()) => {
+                            blockchain.mark_persisted();
+                            info!("💾 Blockchain auto-persisted after BFT commit");
+                        }
+                        Err(e) => {
+                            warn!("⚠️ Failed to auto-persist blockchain after BFT commit: {}", e);
+                        }
                     }
-                    Err(e) => {
-                        warn!("⚠️ Failed to auto-persist blockchain after BFT commit: {}", e);
-                    }
+                } else {
+                    info!("💾 Blockchain persisted via store after BFT commit");
                 }
 
                 // Index in DHT

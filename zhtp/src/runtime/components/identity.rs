@@ -494,7 +494,8 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
                             // Add block - this handles sled persistence internally
                             if let Err(e) = bc.add_block(mined_block).await {
                                 info!("⚠️  Failed to add migration block: {}", e);
-                                // Fallback: save to file
+                                // Fallback: save to file (deprecated, for legacy mode only)
+                                #[allow(deprecated)]
                                 if let Err(e2) = bc.save_to_file(std::path::Path::new("./data/testnet/blockchain.dat")) {
                                     info!("⚠️  Fallback save also failed: {}", e2);
                                 }
@@ -505,7 +506,8 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
                         }
                         Err(e) => {
                             info!("⚠️  Failed to mine migration block: {}", e);
-                            // Fallback: save to file
+                            // Fallback: save to file (deprecated, for legacy mode only)
+                            #[allow(deprecated)]
                             if let Err(e2) = bc.save_to_file(std::path::Path::new("./data/testnet/blockchain.dat")) {
                                 info!("⚠️  Fallback save also failed: {}", e2);
                             }
