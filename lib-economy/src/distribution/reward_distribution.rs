@@ -6,7 +6,7 @@
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use crate::models::TokenReward;
-use crate::types::{WorkMetrics, IspBypassWork};
+use crate::types::{WorkMetrics, IspBypassWork, WorkMetricsExt, IspBypassWorkExt};
 use crate::wallets::WalletBalance;
 use crate::wasm::logging::info;
 use std::collections::HashMap;

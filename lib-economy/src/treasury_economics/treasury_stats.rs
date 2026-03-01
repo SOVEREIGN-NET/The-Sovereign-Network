@@ -2,6 +2,9 @@
 //! 
 //! Provides comprehensive treasury management, UBI distribution tracking,
 //! and financial analytics for the economics system.
+//!
+//! Note: All pure data types are re-exported from lib-types::economy.
+//! This module adds behavior through the TreasuryStatsManager.
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
@@ -10,6 +13,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::wasm::logging::info;
 use crate::network_types::{get_mesh_status, get_network_statistics};
+use crate::types::{
+    TreasuryFund, TreasuryFundData, FundEfficiencyMetrics, UbiDistributionStats,
+    TreasuryOperation, TreasuryHealthMetrics, TreasurySettings, UbiImpactMetrics,
+};
+use crate::types::TreasuryFundExt;
 
 // Local stub functions to avoid circular dependencies with lib-consensus
 async fn get_validator_stats() -> Result<ValidatorStats> {
@@ -53,304 +61,10 @@ struct StakingRewards {
     total_distributed: u64,
 }
 
-/// Treasury fund categories for tracking different purposes
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum TreasuryFund {
-    /// General operational fund
-    Operations,
-    /// Universal Basic Income distribution fund
-    UbiDistribution,
-    /// Infrastructure development fund
-    Infrastructure,
-    /// Community governance fund
-    Governance,
-    /// Research and development fund
-    Research,
-    /// Emergency reserve fund
-    EmergencyReserve,
-    /// Validator reward pool
-    ValidatorRewards,
-    ///  service fund
-    IspBypassFund,
-    /// Mesh discovery incentive fund
-    MeshDiscoveryFund,
-    /// Bridge operation fund
-    BridgeFund,
-    /// Smart contract development fund
-    SmartContractFund,
-}
-
-impl TreasuryFund {
-    /// Get fund description
-    pub fn description(&self) -> &'static str {
-        match self {
-            TreasuryFund::Operations => "General operational expenses and maintenance",
-            TreasuryFund::UbiDistribution => "Universal Basic Income distribution to verified users",
-            TreasuryFund::Infrastructure => "Network infrastructure development and expansion",
-            TreasuryFund::Governance => "DAO governance operations and proposal funding",
-            TreasuryFund::Research => "Research and development initiatives",
-            TreasuryFund::EmergencyReserve => "Emergency fund for critical situations",
-            TreasuryFund::ValidatorRewards => "Validator and consensus participant rewards",
-            TreasuryFund::IspBypassFund => " service provider incentives",
-            TreasuryFund::MeshDiscoveryFund => "Mesh network discovery and topology rewards",
-            TreasuryFund::BridgeFund => "Cross-chain bridge operation funding",
-            TreasuryFund::SmartContractFund => "Smart contract development incentives",
-        }
-    }
-
-    /// Get recommended allocation percentage for this fund
-    pub fn recommended_allocation_percentage(&self) -> f64 {
-        match self {
-            TreasuryFund::Operations => 15.0,
-            TreasuryFund::UbiDistribution => 30.0,
-            TreasuryFund::Infrastructure => 20.0,
-            TreasuryFund::Governance => 5.0,
-            TreasuryFund::Research => 10.0,
-            TreasuryFund::EmergencyReserve => 10.0,
-            TreasuryFund::ValidatorRewards => 5.0,
-            TreasuryFund::IspBypassFund => 2.0,
-            TreasuryFund::MeshDiscoveryFund => 1.5,
-            TreasuryFund::BridgeFund => 1.0,
-            TreasuryFund::SmartContractFund => 0.5,
-        }
-    }
-
-    /// Check if this fund requires governance approval for expenditure
-    pub fn requires_governance_approval(&self) -> bool {
-        matches!(
-            self,
-            TreasuryFund::EmergencyReserve | 
-            TreasuryFund::Research | 
-            TreasuryFund::Infrastructure |
-            TreasuryFund::Governance
-        )
-    }
-}
-
-/// Treasury fund allocation and balance information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TreasuryFundData {
-    /// Fund category
-    pub fund: TreasuryFund,
-    /// Current balance in SOV
-    pub current_balance: u64,
-    /// Allocated percentage of total treasury
-    pub allocated_percentage: f64,
-    /// Total amount ever allocated to this fund
-    pub total_allocated: u64,
-    /// Total amount spent from this fund
-    pub total_spent: u64,
-    /// Pending expenditures awaiting approval
-    pub pending_expenditures: u64,
-    /// Last allocation timestamp
-    pub last_allocation: u64,
-    /// Fund utilization rate (spent / allocated)
-    pub utilization_rate: f64,
-    /// Average monthly expenditure
-    pub average_monthly_expenditure: f64,
-    /// Fund efficiency metrics
-    pub efficiency_metrics: FundEfficiencyMetrics,
-}
-
-/// Fund efficiency and performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FundEfficiencyMetrics {
-    /// Return on investment for this fund
-    pub roi_percentage: f64,
-    /// Cost per beneficiary (for distribution funds)
-    pub cost_per_beneficiary: Option<f64>,
-    /// Success rate of funded projects
-    pub project_success_rate: f64,
-    /// Average time to deployment for funded initiatives
-    pub average_deployment_time_days: f64,
-    /// Impact score (subjective measure of fund effectiveness)
-    pub impact_score: f64,
-}
-
-/// UBI distribution statistics and metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UbiDistributionStats {
-    /// Total UBI recipients currently active
-    pub active_recipients: u64,
-    /// Total UBI distributed to date
-    pub total_distributed: u64,
-    /// Monthly UBI distribution amount
-    pub monthly_distribution: u64,
-    /// Average UBI per recipient per month
-    pub average_ubi_per_recipient: f64,
-    /// UBI distribution efficiency
-    pub distribution_efficiency: f64,
-    /// Geographic distribution of UBI recipients
-    pub geographic_distribution: HashMap<String, u64>,
-    /// UBI recipient categories
-    pub recipient_categories: HashMap<UbiRecipientCategory, u64>,
-    /// Distribution timeline
-    pub distribution_timeline: BTreeMap<String, MonthlyUbiData>,
-    /// UBI impact metrics
-    pub impact_metrics: UbiImpactMetrics,
-}
-
-/// UBI recipient categories for targeted distribution
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum UbiRecipientCategory {
-    /// Individual verified users
-    Individual,
-    /// Community development projects
-    CommunityProject,
-    /// Open source contributors
-    OpenSourceContributor,
-    /// Network infrastructure providers
-    InfrastructureProvider,
-    /// Educational institutions
-    EducationalInstitution,
-    /// Non-profit organizations
-    NonProfit,
-    /// Research institutions
-    ResearchInstitution,
-    /// Small businesses using SOV
-    SmallBusiness,
-}
-
-/// Monthly UBI distribution data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonthlyUbiData {
-    /// Month identifier (YYYY-MM)
-    pub month: String,
-    /// Total amount distributed this month
-    pub total_distributed: u64,
-    /// Number of recipients this month
-    pub recipient_count: u64,
-    /// Average distribution per recipient
-    pub average_per_recipient: f64,
-    /// New recipients added this month
-    pub new_recipients: u64,
-    /// Distribution completion rate
-    pub completion_rate: f64,
-}
-
-/// UBI impact and effectiveness metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UbiImpactMetrics {
-    /// Economic activity generated by UBI (estimated)
-    pub economic_activity_multiplier: f64,
-    /// Network adoption rate correlation with UBI
-    pub adoption_correlation: f64,
-    /// Retention rate of UBI recipients
-    pub recipient_retention_rate: f64,
-    /// Community development projects funded
-    pub community_projects_funded: u64,
-    /// Open source contributions incentivized
-    pub open_source_contributions: u64,
-    /// Educational impact score
-    pub educational_impact_score: f64,
-}
-
-/// Treasury operation and transaction record
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TreasuryOperation {
-    /// Operation ID
-    pub operation_id: [u8; 32],
-    /// Operation type
-    pub operation_type: TreasuryOperationType,
-    /// Associated fund
-    pub fund: TreasuryFund,
-    /// Operation amount
-    pub amount: u64,
-    /// Transaction fees
-    pub fees: u64,
-    /// Blockchain transaction hash
-    pub blockchain_tx_hash: Option<[u8; 32]>,
-    /// Block height when operation occurred
-    pub block_height: u64,
-    /// Operation timestamp
-    pub timestamp: u64,
-    /// Governance approval status
-    pub governance_approval: Option<GovernanceApproval>,
-    /// Operation description/purpose
-    pub description: String,
-    /// Operation beneficiaries
-    pub beneficiaries: Vec<[u8; 32]>,
-    /// Operation metadata
-    pub metadata: HashMap<String, String>,
-}
-
-/// Types of treasury operations
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TreasuryOperationType {
-    /// Allocation from main treasury to fund
-    Allocation,
-    /// Distribution from fund to beneficiaries
-    Distribution,
-    /// Reallocation between funds
-    Reallocation,
-    /// Emergency fund access
-    EmergencyAccess,
-    /// Governance-approved expenditure
-    GovernanceExpenditure,
-    /// Automatic distribution (UBI)
-    AutomaticDistribution,
-    /// Fund replenishment from network fees
-    Replenishment,
-    /// Cross-chain treasury operation
-    CrossChain,
-}
-
-/// Governance approval record for treasury operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GovernanceApproval {
-    /// Proposal ID
-    pub proposal_id: [u8; 32],
-    /// Voting results
-    pub votes_for: u64,
-    pub votes_against: u64,
-    pub votes_abstain: u64,
-    /// Approval status
-    pub approved: bool,
-    /// Approval timestamp
-    pub approval_timestamp: u64,
-    /// Required majority threshold met
-    pub threshold_met: bool,
-}
-
-/// Treasury health and stability metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TreasuryHealthMetrics {
-    /// Monthly burn rate (spending rate)
-    pub monthly_burn_rate: f64,
-    /// Runway in months at current burn rate
-    pub runway_months: f64,
-    /// Revenue growth rate
-    pub revenue_growth_rate: f64,
-    /// Fund diversification score
-    pub diversification_score: f64,
-    /// Risk assessment score
-    pub risk_score: f64,
-    /// Sustainability index
-    pub sustainability_index: f64,
-    /// Emergency fund adequacy ratio
-    pub emergency_fund_ratio: f64,
-}
-
-/// Treasury management settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TreasurySettings {
-    /// Minimum emergency fund ratio
-    pub minimum_emergency_ratio: f64,
-    /// Maximum single expenditure without governance
-    pub max_auto_expenditure: u64,
-    /// UBI distribution frequency in seconds
-    pub ubi_distribution_frequency: u64,
-    /// Fund rebalancing frequency in seconds
-    pub rebalancing_frequency: u64,
-    /// Enable automatic fund rebalancing
-    pub auto_rebalancing_enabled: bool,
-    /// Governance approval threshold percentage
-    pub governance_threshold: f64,
-    /// Treasury health check frequency
-    pub health_check_frequency: u64,
-}
-
 /// Comprehensive DAO Treasury Statistics Manager
+/// 
+/// This struct adds behavior (methods) to the pure data types from lib-types.
+/// All data fields use types re-exported from lib-types::economy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreasuryStatsManager {
     /// Total treasury balance across all funds
@@ -410,7 +124,7 @@ impl TreasuryStatsManager {
         }
 
         // Initialize UBI statistics
-        let ubi_stats = UbiDistributionStats::new().await?;
+        let ubi_stats = init_ubi_stats().await?;
 
         // Calculate initial health metrics
         let health_metrics = Self::calculate_health_metrics(&fund_data, total_treasury_balance);
@@ -499,7 +213,7 @@ impl TreasuryStatsManager {
         }
 
         // Update UBI statistics
-        self.ubi_stats.update_from_blockchain().await?;
+        update_ubi_stats_from_blockchain(&mut self.ubi_stats).await?;
 
         // Recalculate health metrics
         self.health_metrics = Self::calculate_health_metrics(&self.fund_data, self.total_treasury_balance);
@@ -643,66 +357,30 @@ impl TreasuryStatsManager {
     }
 }
 
-impl UbiDistributionStats {
-    async fn new() -> Result<Self> {
-        // In production, this would load from blockchain/database
-        Ok(Self {
-            active_recipients: 0,
-            total_distributed: 0,
-            monthly_distribution: 0,
-            average_ubi_per_recipient: 0.0,
-            distribution_efficiency: 100.0,
-            geographic_distribution: HashMap::new(),
-            recipient_categories: HashMap::new(),
-            distribution_timeline: BTreeMap::new(),
-            impact_metrics: UbiImpactMetrics::default(),
-        })
-    }
-
-    async fn update_from_blockchain(&mut self) -> Result<()> {
-        // In production, update from blockchain data
-        Ok(())
-    }
+// Helper function to initialize UBI stats
+async fn init_ubi_stats() -> Result<UbiDistributionStats> {
+    // In production, this would load from blockchain/database
+    Ok(UbiDistributionStats {
+        active_recipients: 0,
+        total_distributed: 0,
+        monthly_distribution: 0,
+        average_ubi_per_recipient: 0.0,
+        distribution_efficiency: 100.0,
+        geographic_distribution: HashMap::new(),
+        recipient_categories: HashMap::new(),
+        distribution_timeline: BTreeMap::new(),
+        impact_metrics: UbiImpactMetrics::default(),
+    })
 }
 
-impl Default for FundEfficiencyMetrics {
-    fn default() -> Self {
-        Self {
-            roi_percentage: 0.0,
-            cost_per_beneficiary: None,
-            project_success_rate: 80.0,
-            average_deployment_time_days: 30.0,
-            impact_score: 75.0,
-        }
-    }
+// Helper function to update UBI stats from blockchain
+async fn update_ubi_stats_from_blockchain(_stats: &mut UbiDistributionStats) -> Result<()> {
+    // In production, update from blockchain data
+    Ok(())
 }
 
-impl Default for UbiImpactMetrics {
-    fn default() -> Self {
-        Self {
-            economic_activity_multiplier: 1.5,
-            adoption_correlation: 0.8,
-            recipient_retention_rate: 85.0,
-            community_projects_funded: 0,
-            open_source_contributions: 0,
-            educational_impact_score: 70.0,
-        }
-    }
-}
-
-impl Default for TreasurySettings {
-    fn default() -> Self {
-        Self {
-            minimum_emergency_ratio: 0.1, // 10%
-            max_auto_expenditure: 1_000_000, // 1M SOV
-            ubi_distribution_frequency: 86400 * 30, // Monthly
-            rebalancing_frequency: 86400 * 7, // Weekly
-            auto_rebalancing_enabled: true,
-            governance_threshold: 66.0, // 66% majority
-            health_check_frequency: 86400, // Daily
-        }
-    }
-}
+// Note: All public items in this module are automatically re-exported by
+// treasury_economics/mod.rs via `pub use treasury_stats::*`
 
 /// Main public function for getting treasury statistics (maintaining compatibility)
 pub async fn get_treasury_statistics() -> Result<serde_json::Value> {

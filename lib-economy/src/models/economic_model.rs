@@ -6,6 +6,7 @@
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use crate::types::*;
+use crate::types::PriorityExt;
 use crate::treasury_economics::DaoTreasury;
 use crate::transactions::calculate_dao_fee_distribution;
 use crate::wasm::logging::info;

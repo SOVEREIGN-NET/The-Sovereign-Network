@@ -23,6 +23,7 @@ pub use blockchain_integration::*;
 mod tests {
     use super::*;
     use crate::types::*;
+    use crate::types::TransactionTypeExt;
 
     #[test]
     fn test_transaction_creation() {

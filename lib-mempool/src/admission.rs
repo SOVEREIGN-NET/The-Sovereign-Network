@@ -4,6 +4,7 @@
 
 use lib_types::{Address, Amount, BlockHeight};
 use lib_fees::{FeeParams, FeeInput, TxKind, SigScheme, compute_fee_v2};
+use lib_fees::model_v2::{TxKindExt, SigSchemeExt};
 
 use crate::config::MempoolConfig;
 use crate::state::MempoolState;

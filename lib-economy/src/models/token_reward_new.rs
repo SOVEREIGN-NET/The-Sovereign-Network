@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
-use crate::types::{WorkMetrics, IspBypassWork};
+use crate::types::{WorkMetrics, IspBypassWork, WorkMetricsExt};
 use crate::models::EconomicModel;
 
 /// Token reward for infrastructure services

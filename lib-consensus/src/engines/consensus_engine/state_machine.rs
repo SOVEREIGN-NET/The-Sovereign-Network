@@ -23,6 +23,7 @@
 //! before proceeding.
 
 use super::*;
+use crate::types::ConsensusStepExt;
 use lib_crypto::hash_blake3;
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -87,7 +88,7 @@ pub fn log_consensus_event(
         target: "consensus_audit",
         height = height,
         round = round,
-        step = %step,
+        step = %step.display_name(),
         event = event,
         validator_id = validator_id,
         logical_time = logical_time,
@@ -196,13 +197,14 @@ mod consensus_audit_log_tests {
     }
 
     #[test]
-    fn test_consensus_step_display() {
-        // Verify ConsensusStep Display trait for logging
-        assert_eq!(format!("{}", ConsensusStep::Propose), "Propose");
-        assert_eq!(format!("{}", ConsensusStep::PreVote), "PreVote");
-        assert_eq!(format!("{}", ConsensusStep::PreCommit), "PreCommit");
-        assert_eq!(format!("{}", ConsensusStep::Commit), "Commit");
-        assert_eq!(format!("{}", ConsensusStep::NewRound), "NewRound");
+    fn test_consensus_step_display_name() {
+        // Verify ConsensusStepExt::display_name() for logging
+        use crate::types::ConsensusStepExt;
+        assert_eq!(ConsensusStep::Propose.display_name(), "Propose");
+        assert_eq!(ConsensusStep::PreVote.display_name(), "PreVote");
+        assert_eq!(ConsensusStep::PreCommit.display_name(), "PreCommit");
+        assert_eq!(ConsensusStep::Commit.display_name(), "Commit");
+        assert_eq!(ConsensusStep::NewRound.display_name(), "NewRound");
     }
 }
 

@@ -3,7 +3,7 @@
 //! Implements the fee calculation logic for network infrastructure costs
 //! and mandatory DAO fees for Universal Basic Income funding.
 
-use crate::types::Priority;
+use crate::types::{Priority, PriorityExt};
 
 /// Calculate network infrastructure fee based on transaction size and priority
 pub fn calculate_network_fee(tx_size: u64, priority: Priority) -> u64 {

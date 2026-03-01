@@ -4,7 +4,7 @@
 //! network utilization and performance metrics.
 
 use anyhow::Result;
-use crate::types::NetworkStats;
+use crate::types::{NetworkStats, NetworkStatsExt};
 use crate::wasm::logging::info;
 
 /// Adjust base rates based on network utilization
