@@ -190,10 +190,11 @@ impl OracleComponent {
                 bc.oracle_state.config.epoch_duration_secs.max(60)
             };
 
-            // Note: Committee membership is set through governance path only.
-            // The committee is updated via schedule_committee_update() → apply_pending_updates()
-            // at epoch boundaries in the block processing pipeline.
-            // This loop reads from oracle_state.committee.members() but does NOT modify it.
+            // Note: Committee membership is managed by the blockchain oracle state
+            // (e.g., via governance or chain-initialization paths) and is treated as
+            // read-only by this component. This loop only reads from
+            // oracle_state.committee.members() and does NOT modify committee state or
+            // apply any pending updates itself.
 
             let committee_members: Vec<[u8; 32]> = {
                 let bc = blockchain.read().await;
