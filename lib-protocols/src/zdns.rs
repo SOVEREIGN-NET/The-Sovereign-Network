@@ -435,11 +435,15 @@ impl ZdnsServer {
         // Validate record
         self.validate_record(&record)?;
 
-        // Validate ownership proof
-        self.validate_ownership_proof(&record)?;
+        // Validate ownership proof if required
+        if self.config.security_config.require_zk_proofs {
+            self.validate_ownership_proof(&record)?;
+        }
 
-        // Validate DAO fee payment
-        self.validate_dao_fee_proof(&record)?;
+        // Validate DAO fee payment if required
+        if self.config.security_config.require_dao_fees {
+            self.validate_dao_fee_proof(&record)?;
+        }
 
         // Store record
         let mut records = self.records.write().unwrap();
