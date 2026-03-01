@@ -91,11 +91,9 @@ impl OracleComponent {
                 if !ready {
                     warn!("Oracle consumer: validator_registry still has <2 active validators after 60 s — starting anyway");
                 }
-                // Note: Committee membership is currently managed outside this runtime component
-                // (e.g. via governance or genesis configuration). The consumer reads from
-                // oracle_state.committee.members(), which must be populated by the blockchain/
-                // oracle layer before or during node startup; this code does not invoke
-                // schedule_committee_update() or apply_pending_updates() itself.
+                // Note: Committee membership is set through governance path only.
+                // The consumer reads from oracle_state.committee.members() which is populated
+                // via schedule_committee_update() → apply_pending_updates() at epoch boundaries.
                 Self::run_consumer(oracle_rx, bc).await;
             });
         }
@@ -201,11 +199,10 @@ impl OracleComponent {
                 bc.oracle_state.config.epoch_duration_secs.max(60)
             };
 
-            // Note: Committee membership is managed by the blockchain oracle state
-            // (e.g., via governance or chain-initialization paths) and is treated as
-            // read-only by this component. This loop only reads from
-            // oracle_state.committee.members() and does NOT modify committee state or
-            // apply any pending updates itself.
+            // Note: Committee membership is set through governance path only.
+            // The committee is updated via schedule_committee_update() → apply_pending_updates()
+            // at epoch boundaries in the block processing pipeline.
+            // This loop reads from oracle_state.committee.members() but does NOT modify it.
 
             let committee_members: Vec<[u8; 32]> = {
                 let bc = blockchain.read().await;
@@ -220,7 +217,7 @@ impl OracleComponent {
 
             // Get block timestamp for epoch derivation (Oracle Spec v1 §4.1)
             // Wall clock MUST NOT be used to determine epoch_id.
-            let (_block_timestamp, current_epoch) = {
+            let (block_timestamp, current_epoch) = {
                 let bc = blockchain.read().await;
                 let ts = bc.last_committed_timestamp();
                 (ts, bc.oracle_state.epoch_id(ts))
