@@ -11,7 +11,7 @@
 //! - All changes are deterministic and reproducible
 
 use crate::storage::{
-    AccountState, Address, BlockchainStore, IdentityConsensus, IdentityMetadata, OutPoint, TokenId,
+    AccountState, Address, AddressExt, BlockchainStore, IdentityConsensus, IdentityMetadata, OutPoint, TokenId,
     Utxo, WalletState,
 };
 use crate::transaction::{Transaction, TransactionOutput};

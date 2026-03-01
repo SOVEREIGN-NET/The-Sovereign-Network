@@ -16,7 +16,7 @@
 //! - Hashes are raw bytes (32 bytes)
 //! - Composite keys use fixed-width fields (no delimiters needed)
 
-use super::{Address, BlockHash, OutPoint, TokenId, TxHash};
+use super::{Address, AddressExt, BlockHash, OutPoint, TokenId, TxHash};
 
 // =============================================================================
 // BLOCK KEYS
