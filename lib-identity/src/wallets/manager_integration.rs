@@ -153,17 +153,6 @@ impl WalletManager {
         Ok(wallet_id)
     }
     
-    /// DEPRECATED: Standalone wallets are no longer allowed
-    /// All wallets must be attached to an identity
-    /// Use WalletManager::new(identity_id) instead
-    #[deprecated(
-        since = "0.2.0",
-        note = "Wallets must be attached to an identity. Use WalletManager::new(identity_id) instead."
-    )]
-    pub fn new_standalone() -> Self {
-        panic!("Standalone wallets are not allowed. All wallets must be attached to an identity. Use WalletManager::new(identity_id) instead.");
-    }
-    
     // Note: Basic wallet creation removed - use create_wallet_with_seed_phrase() for all wallets
     // This ensures consistent seed phrase support across all wallet types
     
