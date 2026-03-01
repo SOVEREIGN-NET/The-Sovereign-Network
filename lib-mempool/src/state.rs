@@ -16,7 +16,7 @@ use lib_types::Address;
 pub trait MempoolStateExt {
     /// Create empty mempool state
     fn new() -> Self;
-    /// Get sender state if it exists
+    /// Get sender state, creating if not exists
     fn get_sender(&self, address: &Address) -> Option<&SenderState>;
     /// Get sender's pending transaction count
     fn sender_pending_count(&self, address: &Address) -> u32;
