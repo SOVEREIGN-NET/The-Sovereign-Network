@@ -392,6 +392,11 @@ impl OracleState {
         self.finalized_prices.get(&epoch_id)
     }
 
+    /// Returns the most recently finalized price with epoch_id <= `epoch`.
+    pub fn latest_finalized_price_at_or_before(&self, epoch: u64) -> Option<&FinalizedOraclePrice> {
+        self.finalized_prices.range(..=epoch).next_back().map(|(_, v)| v)
+    }
+
     pub fn finalized_prices_len(&self) -> usize {
         self.finalized_prices.len()
     }

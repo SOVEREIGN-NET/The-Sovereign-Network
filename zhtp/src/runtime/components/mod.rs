@@ -9,6 +9,7 @@ pub mod consensus;
 pub mod economics;
 pub mod protocols;
 pub mod api;
+pub mod oracle;
 
 // Re-export component types
 pub use crypto::CryptoComponent;

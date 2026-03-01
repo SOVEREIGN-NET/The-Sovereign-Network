@@ -713,9 +713,12 @@ impl RuntimeOrchestrator {
             let node_role = self.node_role.read().await.clone();
             let min_stake = self.config.consensus_config.min_stake;
             let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();
-            self.register_component(Arc::new(ConsensusComponent::new_with_bootstrap_validators(
-                environment, node_role, min_stake, bootstrap_validators,
-            ))).await?;
+            let oracle_mock_price = self.config.consensus_config.oracle_mock_sov_usd_price;
+            self.register_component(Arc::new(
+                ConsensusComponent::new_with_bootstrap_validators_and_oracle(
+                    environment, node_role, min_stake, bootstrap_validators, oracle_mock_price,
+                )
+            )).await?;
         }
 
         if !is_registered(ComponentId::Economics).await {
@@ -1535,12 +1538,15 @@ impl RuntimeOrchestrator {
             self.config.protocols_config.quic_port,
             self.config.protocols_config.discovery_port,
         ))).await?;
-        self.register_component(Arc::new(ConsensusComponent::new_with_bootstrap_validators(
-            environment,
-            node_role,
-            self.config.consensus_config.min_stake,
-            self.config.network_config.bootstrap_validators.clone(),
-        ))).await?;
+        self.register_component(Arc::new(
+            ConsensusComponent::new_with_bootstrap_validators_and_oracle(
+                environment,
+                node_role,
+                self.config.consensus_config.min_stake,
+                self.config.network_config.bootstrap_validators.clone(),
+                self.config.consensus_config.oracle_mock_sov_usd_price,
+            )
+        )).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         

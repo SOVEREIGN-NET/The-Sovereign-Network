@@ -834,6 +834,12 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/v1/dao".to_string(), dao_handler);
 
+        // Oracle price/status endpoints
+        let oracle_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::oracle::OracleHandler::new()
+        );
+        zhtp_router.register_handler("/api/v1/oracle".to_string(), oracle_handler);
+
         // Crypto utilities (sign message, verify signature, generate keypair)
         let crypto_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::CryptoHandler::new(identity_manager.clone())

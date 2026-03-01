@@ -527,6 +527,9 @@ pub struct ConsensusComponent {
     /// Bootstrap validators pre-seeded from config for initial proposer rotation.
     /// These are replaced by on-chain ValidatorInfo once blocks are mined.
     bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
+    /// Mock SOV/USD price for oracle attestations (testnet/bootstrap).
+    /// `None` means attempt real exchange price feeds.
+    oracle_mock_sov_usd_price: Option<u64>,
 }
 
 // Manual Debug implementation because ConsensusEngine doesn't derive Debug
@@ -604,6 +607,16 @@ impl ConsensusComponent {
         min_stake: u64,
         bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
     ) -> Self {
+        Self::new_with_bootstrap_validators_and_oracle(environment, node_role, min_stake, bootstrap_validators, None)
+    }
+
+    pub fn new_with_bootstrap_validators_and_oracle(
+        environment: crate::config::Environment,
+        node_role: NodeRole,
+        min_stake: u64,
+        bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
+        oracle_mock_sov_usd_price: Option<u64>,
+    ) -> Self {
         let development_mode = matches!(environment, crate::config::Environment::Development);
 
         let validator_manager = ValidatorManager::new_with_development_mode(
@@ -624,6 +637,7 @@ impl ConsensusComponent {
             local_validator_keypair: Arc::new(RwLock::new(None)),
             node_role: Arc::new(node_role),
             bootstrap_validators,
+            oracle_mock_sov_usd_price,
         }
     }
 
@@ -1236,6 +1250,34 @@ impl Component for ConsensusComponent {
 
         info!("🗳️ BFT consensus loop started - listening for validator messages");
         info!("Consensus component started with consensus mechanisms");
+
+        // ── Oracle pipeline ────────────────────────────────────────────────
+        // Reuses the validator keypair already loaded above.  The oracle
+        // mock_sov_usd_price comes from the consensus config (set in TOML with
+        // `oracle_mock_sov_usd_price = 100000000` for $1.00 testnet pricing).
+        let oracle_keypair = self.local_validator_keypair.read().await.clone();
+        let oracle_mock_price = self.oracle_mock_sov_usd_price;
+        if let Some(keypair) = oracle_keypair {
+            if let Some(slot) = self.blockchain.read().await.as_ref() {
+                let bc_arc = slot.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::runtime::components::oracle::OracleComponent::start(
+                        bc_arc,
+                        keypair,
+                        oracle_mock_price,
+                    )
+                    .await
+                    {
+                        tracing::warn!("Oracle component failed to start: {}", e);
+                    }
+                });
+            } else {
+                tracing::warn!("Oracle: blockchain slot not set yet — oracle will not run");
+            }
+        } else {
+            tracing::warn!("Oracle: no validator keypair available — oracle will not run");
+        }
+
         Ok(())
     }
 
