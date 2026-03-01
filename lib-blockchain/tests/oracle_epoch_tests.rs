@@ -164,13 +164,16 @@ fn last_committed_timestamp_from_blockchain() {
     // Create a new blockchain (has genesis block)
     let bc = Blockchain::new().expect("Failed to create blockchain");
     
-    // At genesis, there should be a genesis block with timestamp
+    // At genesis, there should be a genesis block with a timestamp.
     let timestamp = bc.last_committed_timestamp();
     
-    // Genesis block typically has timestamp 0 or a preset value
-    // The important thing is that the method returns a value
-    // and doesn't panic
-    
-    // The genesis block should exist
-    assert!(bc.latest_block().is_some());
+    // The last_committed_timestamp should match the timestamp of the latest block header.
+    let latest_block = bc
+        .latest_block()
+        .expect("Blockchain should have a latest block (genesis)");
+    assert_eq!(
+        timestamp,
+        latest_block.header.timestamp,
+        "last_committed_timestamp should match latest block header timestamp"
+    );
 }
