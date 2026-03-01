@@ -17,31 +17,6 @@ pub struct DhtPeerIdentity {
 }
 
 impl DhtPeerIdentity {
-    /// Create a placeholder identity from a NodeId only.
-    ///
-    /// WARNING: This is insecure and intended for legacy/bootstrap paths.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use from_zhtp_identity_full() or construct with valid public key"
-    )]
-    pub fn from_zhtp_identity(identity: &NodeId) -> Result<Self> {
-        tracing::warn!(
-            "from_zhtp_identity() creates placeholder identity without valid public key. \
-             Use from_zhtp_identity_full() for security-critical operations."
-        );
-
-        Ok(Self {
-            node_id: identity.clone(),
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
-                key_id: [0u8; 32],
-            },
-            did: String::from("did:zhtp:placeholder"),
-            device_id: String::from("default"),
-        })
-    }
-
     /// Create from full ZhtpIdentity with all cryptographic material.
     pub fn from_zhtp_identity_full(identity: &crate::ZhtpIdentity) -> Self {
         Self {
