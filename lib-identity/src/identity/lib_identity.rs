@@ -30,7 +30,6 @@ mod credentials_serde {
         ser_map.end()
     }
 
-    #[allow(dead_code)]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<CredentialType, ZkCredential>, D::Error>
     where
         D: Deserializer<'de>,
@@ -163,7 +162,6 @@ pub struct ZhtpIdentity {
 
 // Default functions for deserialization of secret fields
 // SECURITY: These explicitly return zero values - secrets MUST be re-derived after deserialization
-#[allow(dead_code)]
 fn default_wallet_seed() -> [u8; 64] {
     [0u8; 64]
 }
