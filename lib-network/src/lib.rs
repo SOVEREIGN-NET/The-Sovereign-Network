@@ -232,6 +232,10 @@ pub async fn get_bandwidth_statistics() -> Result<BandwidthStatistics> {
         download_utilization: mesh_stats.download_utilization,
         efficiency: mesh_stats.bandwidth_efficiency,
         congestion_level: mesh_stats.congestion_level,
+        bytes_transferred: 0,
+        peak_bandwidth: 0.0,
+        average_bandwidth: 0.0,
+        quality_score: 0.0,
     })
 }
 

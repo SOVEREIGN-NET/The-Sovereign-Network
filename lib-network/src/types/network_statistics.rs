@@ -1,6 +1,6 @@
 //! Network statistics and status types for the ZHTP mesh network
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Network statistics from the mesh network
@@ -87,48 +87,11 @@ impl Default for MeshStatus {
     }
 }
 
-/// Bandwidth utilization statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BandwidthStatistics {
-    /// Upload bandwidth utilization (0.0 to 1.0)
-    pub upload_utilization: f64,
-    /// Download bandwidth utilization (0.0 to 1.0)
-    pub download_utilization: f64,
-    /// Overall bandwidth efficiency
-    pub efficiency: f64,
-    /// Current congestion level
-    pub congestion_level: CongestionLevel,
-}
+/// Bandwidth utilization statistics - re-exported from lib-types
+pub type BandwidthStatistics = lib_types::BandwidthStatistics;
 
-impl Default for BandwidthStatistics {
-    fn default() -> Self {
-        Self {
-            upload_utilization: 0.0,
-            download_utilization: 0.0,
-            efficiency: 1.0,
-            congestion_level: CongestionLevel::Low,
-        }
-    }
-}
-
-/// Network congestion levels
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum CongestionLevel {
-    /// Low congestion - optimal performance
-    Low,
-    /// Moderate congestion - slight delays
-    Moderate,
-    /// High congestion - noticeable delays
-    High,
-    /// Critical congestion - severe performance impact
-    Critical,
-}
-
-impl Default for CongestionLevel {
-    fn default() -> Self {
-        CongestionLevel::Low
-    }
-}
+/// Network congestion levels - re-exported from lib-types
+pub type CongestionLevel = lib_types::CongestionLevel;
 
 /// Network latency statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
