@@ -23,6 +23,7 @@ pub mod validator;
 pub mod crypto;
 pub mod token;
 pub mod bonding_curve;
+pub mod oracle;
 
 pub use identity::IdentityHandler;
 pub use guardian::GuardianHandler;

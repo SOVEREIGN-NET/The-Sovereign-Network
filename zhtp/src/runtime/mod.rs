@@ -713,9 +713,12 @@ impl RuntimeOrchestrator {
             let node_role = self.node_role.read().await.clone();
             let min_stake = self.config.consensus_config.min_stake;
             let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();
-            self.register_component(Arc::new(ConsensusComponent::new_with_bootstrap_validators(
-                environment, node_role, min_stake, bootstrap_validators,
-            ))).await?;
+            let oracle_mock_price = self.config.consensus_config.oracle_mock_sov_usd_price;
+            self.register_component(Arc::new(
+                ConsensusComponent::new_with_bootstrap_validators_and_oracle(
+                    environment, node_role, min_stake, bootstrap_validators, oracle_mock_price,
+                )
+            )).await?;
         }
 
         if !is_registered(ComponentId::Economics).await {
@@ -1535,12 +1538,15 @@ impl RuntimeOrchestrator {
             self.config.protocols_config.quic_port,
             self.config.protocols_config.discovery_port,
         ))).await?;
-        self.register_component(Arc::new(ConsensusComponent::new_with_bootstrap_validators(
-            environment,
-            node_role,
-            self.config.consensus_config.min_stake,
-            self.config.network_config.bootstrap_validators.clone(),
-        ))).await?;
+        self.register_component(Arc::new(
+            ConsensusComponent::new_with_bootstrap_validators_and_oracle(
+                environment,
+                node_role,
+                self.config.consensus_config.min_stake,
+                self.config.network_config.bootstrap_validators.clone(),
+                self.config.consensus_config.oracle_mock_sov_usd_price,
+            )
+        )).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         
@@ -1989,12 +1995,30 @@ impl RuntimeOrchestrator {
             };
 
             // If consensus_key is provided, hex-decode it into raw bytes; otherwise derive.
+            // IMPORTANT: a missing or malformed consensus_key causes the oracle committee to use
+            // a placeholder key that will never match the validator's real Dilithium signing key,
+            // resulting in NonCommitteeSigner rejections on every epoch.  Set consensus_key in
+            // config.toml to the hex-encoded Dilithium public key from the node's keystore.
             let consensus_key = if bv.consensus_key.is_empty() {
+                tracing::warn!(
+                    "Bootstrap validator '{}' has no consensus_key in config — oracle committee \
+                     will use a derived placeholder that never matches the real signing key. \
+                     Set consensus_key to the hex-encoded Dilithium public key.",
+                    bv.identity_id
+                );
                 derive(b"consensus")
             } else {
                 match hex::decode(&bv.consensus_key) {
                     Ok(bytes) => bytes,
-                    Err(_) => derive(b"consensus"), // fallback to derived key on bad hex
+                    Err(e) => {
+                        tracing::warn!(
+                            "Bootstrap validator '{}' consensus_key is invalid hex ({}) — \
+                             falling back to derived placeholder. Oracle attestations will be \
+                             rejected as NonCommitteeSigner.",
+                            bv.identity_id, e
+                        );
+                        derive(b"consensus")
+                    }
                 }
             };
             let networking_key = derive(b"networking");
