@@ -43,10 +43,9 @@ impl OracleComponent {
         validator_keypair: KeyPair,
         mock_sov_usd_price: Option<u64>,
     ) -> Result<()> {
-        // Initialise committee members from active validators in the blockchain.
-        Self::init_committee(&blockchain).await;
-
         // Channel: gossip bytes → consumer task.
+        // Wire the sender immediately so no incoming attestations are dropped while we wait
+        // for the validator_registry to be fully seeded with bootstrap validators.
         let (oracle_tx, oracle_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
         // Wire the sender into the QUIC message handler.
@@ -65,10 +64,33 @@ impl OracleComponent {
             warn!("Oracle: mesh router not available — attestations won't be received from peers");
         }
 
-        // Consumer task: decode + process incoming peer attestations.
+        // Consumer task: waits for the validator_registry to have >= 2 active validators with
+        // consensus keys before initialising the committee, then drains any queued attestations.
+        // This eliminates the startup race where bootstrap validators haven't been seeded yet.
         {
             let bc = blockchain.clone();
             tokio::spawn(async move {
+                // Poll until validator_registry has at least 2 validators with consensus keys
+                // (i.e. bootstrap seeding has completed). Timeout after 60 s.
+                let mut ready = false;
+                for _ in 0..60 {
+                    let count = {
+                        let b = bc.read().await;
+                        b.validator_registry
+                            .values()
+                            .filter(|v| v.status == "active" && !v.consensus_key.is_empty())
+                            .count()
+                    };
+                    if count >= 2 {
+                        ready = true;
+                        break;
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+                if !ready {
+                    warn!("Oracle consumer: validator_registry still has <2 active validators after 60 s — starting anyway");
+                }
+                Self::init_committee(&bc).await;
                 Self::run_consumer(oracle_rx, bc).await;
             });
         }
