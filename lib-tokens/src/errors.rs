@@ -1,7 +1,7 @@
 //! Token Contract Errors
 
-use thiserror::Error;
 use lib_types::{Amount, TokenId};
+use thiserror::Error;
 
 /// Error during token operations
 #[derive(Error, Debug, Clone)]
