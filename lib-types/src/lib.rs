@@ -9,6 +9,8 @@ pub mod peer;
 pub mod dht;
 pub mod chunk;
 pub mod errors;
+pub mod fees;
+pub mod consensus;
 
 // Canonical consensus types (Phase 1)
 pub use primitives::{Address, Amount, BlockHash, BlockHeight, Bps, TokenId, TxHash};
@@ -18,3 +20,8 @@ pub use peer::PeerId;
 pub use dht::*;
 pub use chunk::*;
 pub use errors::*;
+pub use fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
+pub use consensus::{
+    ConsensusType, UsefulWorkType, ValidatorStatus, VoteType, ConsensusStep,
+    SlashType, ConsensusConfig, FeeDistributionResult, MIN_BFT_VALIDATORS,
+};

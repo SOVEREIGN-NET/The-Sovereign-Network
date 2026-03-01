@@ -6,6 +6,15 @@ use lib_identity::IdentityId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// =============================================================================
+// RE-EXPORTS FROM LIB-TYPES (canonical location for pure data types)
+// =============================================================================
+
+pub use lib_types::consensus::{
+    ConsensusConfig, ConsensusStep, ConsensusType, FeeDistributionResult,
+    MIN_BFT_VALIDATORS, SlashType, UsefulWorkType, ValidatorStatus, VoteType,
+};
+
 // Re-export proof types from proofs module
 pub use crate::proofs::{
     ProofOfUsefulWork,
@@ -17,92 +26,20 @@ pub use crate::proofs::{
 // Re-export heartbeat types from validator protocol module
 pub use crate::validators::validator_protocol::HeartbeatMessage;
 
-/// Consensus mechanism types
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ConsensusType {
-    /// Proof of Stake consensus
-    ProofOfStake,
-    /// Proof of Storage consensus
-    ProofOfStorage,
-    /// Proof of Useful Work consensus
-    ProofOfUsefulWork,
-    /// Byzantine Fault Tolerance
-    #[serde(alias = "Hybrid")]
-    ByzantineFaultTolerance,
-}
+// =============================================================================
+// CONSENSUS STEP EXTENSION TRAIT (behavior kept in lib-consensus)
+// =============================================================================
 
-/// Types of useful work that can be performed for consensus rewards
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum UsefulWorkType {
-    /// Network packet routing and mesh forwarding
-    NetworkRouting,
-    /// Data storage and retrieval services
-    DataStorage,
-    /// Computational processing for other nodes
-    Computation,
-    /// Network validation and consensus participation
-    Validation,
-    /// Cross-chain bridge operations
-    BridgeOperations,
-}
-
-/// Validator status in the consensus network
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ValidatorStatus {
-    /// Active validator participating in consensus
-    Active,
-    /// Inactive validator (not participating)
-    Inactive,
-    /// Slashed validator (penalized)
-    Slashed,
-    /// Jailed validator (temporarily suspended)
-    Jailed,
-}
-
-/// Vote types for consensus
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum VoteType {
-    /// Pre-vote for a proposal
-    PreVote = 1,
-    /// Pre-commit for a proposal
-    PreCommit = 2,
-    /// Final commit vote
-    Commit = 3,
-    /// Vote against a proposal
-    Against = 4,
-}
-
-/// Consensus step in the BFT protocol
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
-pub enum ConsensusStep {
-    /// Propose step - validator proposes a block
-    Propose,
-    /// Prevote step - validators vote on proposals
-    PreVote,
-    /// Precommit step - validators commit to a proposal
-    PreCommit,
-    /// Commit step - finalize the block
-    Commit,
-    /// New round initialization
-    NewRound,
-}
-
-impl std::fmt::Display for ConsensusStep {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConsensusStep::Propose => write!(f, "Propose"),
-            ConsensusStep::PreVote => write!(f, "PreVote"),
-            ConsensusStep::PreCommit => write!(f, "PreCommit"),
-            ConsensusStep::Commit => write!(f, "Commit"),
-            ConsensusStep::NewRound => write!(f, "NewRound"),
-        }
-    }
-}
-
-impl ConsensusStep {
+/// Extension trait for ConsensusStep with additional behavior
+pub trait ConsensusStepExt {
     /// Convert step to ordinal value for comparison and serialization
-    pub fn as_ordinal(&self) -> u8 {
+    fn as_ordinal(&self) -> u8;
+    /// Convert ordinal value back to ConsensusStep
+    fn from_ordinal(ordinal: u8) -> Option<ConsensusStep>;
+}
+
+impl ConsensusStepExt for ConsensusStep {
+    fn as_ordinal(&self) -> u8 {
         match self {
             ConsensusStep::Propose => 0,
             ConsensusStep::PreVote => 1,
@@ -112,8 +49,7 @@ impl ConsensusStep {
         }
     }
 
-    /// Convert ordinal value back to ConsensusStep
-    pub fn from_ordinal(ordinal: u8) -> Option<Self> {
+    fn from_ordinal(ordinal: u8) -> Option<Self> {
         match ordinal {
             0 => Some(ConsensusStep::Propose),
             1 => Some(ConsensusStep::PreVote),
@@ -234,96 +170,6 @@ impl ComputeResult {
         // In production, this would verify computation proofs and signatures
         Ok(self.work_units > 0 && !self.signature.is_empty())
     }
-}
-
-/// Consensus configuration.
-///
-/// # Validator count bounds
-///
-/// `max_validators` is the governance-adjustable upper bound on the active
-/// validator set.  Its valid range at runtime is:
-///
-/// - **Minimum**: `MIN_VALIDATORS` (= 4) — the BFT safety floor.
-///   Governance MUST NOT lower `max_validators` below this value.
-/// - **Maximum**: `MAX_VALIDATORS_HARD_CAP` (= 256) — the protocol ceiling.
-///   Governance MUST NOT raise `max_validators` above this value without a
-///   network upgrade.
-///
-/// Both bounds are enforced by `DaoEngine::validate_governance_update()` and
-/// clamped in `ValidatorManager::new()`.  The default value is `MAX_VALIDATORS`
-/// (= 100).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConsensusConfig {
-    /// Type of consensus mechanism
-    pub consensus_type: ConsensusType,
-    /// Minimum stake required to be a validator (in micro-SOV)
-    pub min_stake: u64,
-    /// Minimum storage required to be a validator (in bytes)
-    pub min_storage: u64,
-    /// Governance-adjustable upper bound on the active validator set.
-    /// Valid range: `[MIN_VALIDATORS, MAX_VALIDATORS_HARD_CAP]` = `[4, 256]`.
-    /// Default: `MAX_VALIDATORS` = 100.
-    pub max_validators: u32,
-    /// Target block time in seconds
-    pub block_time: u64,
-    /// Epoch length in blocks for validator set updates
-    pub epoch_length_blocks: u64,
-    /// Proposal timeout in milliseconds
-    pub propose_timeout: u64,
-    /// Prevote timeout in milliseconds
-    pub prevote_timeout: u64,
-    /// Precommit timeout in milliseconds
-    pub precommit_timeout: u64,
-    /// Maximum transactions per block
-    pub max_transactions_per_block: u32,
-    /// Maximum difficulty for PoUW
-    pub max_difficulty: u64,
-    /// Target difficulty for PoUW
-    pub target_difficulty: u64,
-    /// Byzantine fault tolerance threshold (typically 1/3)
-    pub byzantine_threshold: f64,
-    /// Slashing percentage for double signing
-    pub slash_double_sign: u8,
-    /// Slashing percentage for liveness violation
-    pub slash_liveness: u8,
-    /// Development mode flag - allows single validator consensus for testing
-    pub development_mode: bool,
-}
-
-impl Default for ConsensusConfig {
-    fn default() -> Self {
-        Self {
-            consensus_type: ConsensusType::ByzantineFaultTolerance,
-            min_stake: 1000 * 1_000_000,           // 1000 SOV tokens
-            min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
-            max_validators: 100,
-            block_time: 10,          // 10 seconds
-            epoch_length_blocks: 100,
-            propose_timeout: 3000,   // 3 seconds
-            prevote_timeout: 1000,   // 1 second
-            precommit_timeout: 1000, // 1 second
-            max_transactions_per_block: 1000,
-            max_difficulty: 0x00000000FFFFFFFF,
-            target_difficulty: 0x00000FFF,
-            byzantine_threshold: 1.0 / 3.0, // 1/3 Byzantine tolerance
-            slash_double_sign: 5,           // 5% slash for double signing
-            slash_liveness: 1,              // 1% slash for liveness violation
-            development_mode: false,        // Production mode by default
-        }
-    }
-}
-
-/// Types of slashing events
-#[derive(Debug, Clone, PartialEq)]
-pub enum SlashType {
-    /// Double signing (signing multiple blocks at same height)
-    DoubleSign,
-    /// Liveness violation (not participating in consensus)
-    Liveness,
-    /// Invalid proposal
-    InvalidProposal,
-    /// Invalid vote
-    InvalidVote,
 }
 
 /// Consensus events for pure component communication
@@ -594,68 +440,6 @@ pub trait BlockCommitCallback: Send + Sync {
     /// Used by the mining loop to determine whether to use BFT consensus
     /// (4+ validators) or bootstrap mode (< 4 validators).
     async fn get_active_validator_count(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>;
-}
-
-/// Minimum validators required for BFT consensus mode
-///
-/// With fewer validators, the network operates in bootstrap mode where
-/// a single validator can mine blocks directly. Once this threshold is
-/// reached, all block production must go through BFT consensus.
-///
-/// Value: 4 validators (allows 1 Byzantine fault with f < n/3)
-pub const MIN_BFT_VALIDATORS: usize = 4;
-
-// ============================================================================
-// FEE COLLECTION TRAIT
-// ============================================================================
-
-/// Fee distribution result from a distribution operation
-///
-/// Represents the breakdown of fees distributed to different pools
-/// according to the 45/30/15/10 split:
-/// - 45% UBI pool
-/// - 30% Consensus/DAO pool
-/// - 15% Governance/Emergency reserve
-/// - 10% Treasury/Development grants
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct FeeDistributionResult {
-    /// Amount sent to UBI pool (45%)
-    pub ubi_amount: u64,
-    /// Amount sent to Consensus rewards pool (30%)
-    pub consensus_amount: u64,
-    /// Amount sent to Governance pool (15%)
-    pub governance_amount: u64,
-    /// Amount sent to Treasury pool (10%)
-    pub treasury_amount: u64,
-    /// Total amount distributed
-    pub total_distributed: u64,
-}
-
-impl FeeDistributionResult {
-    /// Create a new fee distribution result
-    pub fn new(
-        ubi_amount: u64,
-        consensus_amount: u64,
-        governance_amount: u64,
-        treasury_amount: u64,
-    ) -> Self {
-        Self {
-            ubi_amount,
-            consensus_amount,
-            governance_amount,
-            treasury_amount,
-            total_distributed: ubi_amount + consensus_amount + governance_amount + treasury_amount,
-        }
-    }
-
-    /// Calculate distribution from total fees using 45/30/15/10 split
-    pub fn from_total_fees(total_fees: u64) -> Self {
-        let ubi_amount = total_fees * 45 / 100;
-        let consensus_amount = total_fees * 30 / 100;
-        let governance_amount = total_fees * 15 / 100;
-        let treasury_amount = total_fees * 10 / 100;
-        Self::new(ubi_amount, consensus_amount, governance_amount, treasury_amount)
-    }
 }
 
 /// Fee collector trait for consensus-blockchain integration

@@ -20,6 +20,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::model_v2::FeeInputExt;
     use crate::{compute_fee_v2, FeeInput, FeeParams, SigScheme, TxKind};
 
     // =========================================================================
