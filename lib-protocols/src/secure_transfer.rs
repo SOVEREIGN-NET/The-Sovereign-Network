@@ -169,8 +169,27 @@ impl SecureWalletTransferHandler {
             });
         }
 
-        let transaction_data = format!("{}:{}:{}", request.from, request.to, request.amount);
-        let signature_valid = match verify_signature(transaction_data.as_bytes(), &signature_bytes, &provided_public_key) {
+        let transaction_data = match base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &request.signed_transaction
+        ) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return Ok(SecureTransferResponse {
+                    success: false,
+                    transaction_id: String::new(),
+                    message: "Invalid signed transaction encoding".to_string(),
+                    verification_details: VerificationDetails {
+                        identity_verified: true,
+                        public_key_matches: true,
+                        signature_valid: false,
+                        transaction_processed: false,
+                    },
+                });
+            }
+        };
+
+        let signature_valid = match verify_signature(&transaction_data, &signature_bytes, &provided_public_key) {
             Ok(valid) => valid,
             Err(e) => {
                 eprintln!("Signature verification error: {}", e);
