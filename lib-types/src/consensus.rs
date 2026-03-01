@@ -149,7 +149,7 @@ impl Default for ConsensusConfig {
             min_stake: 1000 * 1_000_000,           // 1000 SOV tokens
             min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
             max_validators: 100,
-            block_time: 10,          // 10 seconds
+            block_time: 10, // 10 seconds
             epoch_length_blocks: 100,
             propose_timeout: 3000,   // 3 seconds
             prevote_timeout: 1000,   // 1 second
@@ -199,7 +199,6 @@ impl FeeDistributionResult {
             total_distributed: ubi_amount + consensus_amount + governance_amount + treasury_amount,
         }
     }
-
 }
 
 /// Minimum validators required for BFT consensus mode
@@ -253,7 +252,10 @@ mod tests {
         assert_eq!(config.max_validators, 100);
         assert_eq!(config.block_time, 10);
         assert_eq!(config.min_stake, 1000 * 1_000_000);
-        assert!(matches!(config.consensus_type, ConsensusType::ByzantineFaultTolerance));
+        assert!(matches!(
+            config.consensus_type,
+            ConsensusType::ByzantineFaultTolerance
+        ));
     }
 
     #[test]
@@ -270,10 +272,10 @@ mod tests {
         // Note: from_total_fees() logic is in FeeDistributionResultExt in lib-consensus
         // Here we test the basic struct construction
         let result = FeeDistributionResult::new(450, 300, 150, 100);
-        assert_eq!(result.ubi_amount, 450);        // 45%
-        assert_eq!(result.consensus_amount, 300);  // 30%
+        assert_eq!(result.ubi_amount, 450); // 45%
+        assert_eq!(result.consensus_amount, 300); // 30%
         assert_eq!(result.governance_amount, 150); // 15%
-        assert_eq!(result.treasury_amount, 100);   // 10%
+        assert_eq!(result.treasury_amount, 100); // 10%
         assert_eq!(result.total_distributed, 1000);
     }
 
