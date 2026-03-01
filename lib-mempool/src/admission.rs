@@ -6,10 +6,9 @@
 //! This module provides the admission logic while the data types
 //! (AdmitResult, AdmitTx, etc.) live in lib-types.
 
-use lib_types::{Address, Amount};
+use lib_types::{Address, Amount, BlockHeight};
 use lib_types::mempool::{AdmitResult, AdmitTx, AdmitErrorKind};
 use lib_fees::{FeeParams, FeeInput, TxKind, SigScheme, compute_fee_v2};
-use lib_fees::model_v2::{TxKindExt, SigSchemeExt};
 
 use crate::config::MempoolConfig;
 use crate::state::{MempoolState, MempoolStateExt};
@@ -37,11 +36,20 @@ impl AdmitResultExt for AdmitResult {
 /// Validates a transaction against mempool limits and fee requirements.
 /// Returns AdmitResult::Accepted if the transaction can be admitted,
 /// or AdmitResult::Rejected with the specific reason.
+///
+/// # Arguments
+///
+/// * `tx` - The transaction to check
+/// * `fee_params` - Fee calculation parameters
+/// * `config` - Mempool configuration limits
+/// * `state` - Current mempool state
+/// * `current_block` - Current block height for rate limit calculations
 pub fn admit(
     tx: &AdmitTx,
     fee_params: &FeeParams,
     config: &MempoolConfig,
     state: &MempoolState,
+    current_block: BlockHeight,
 ) -> AdmitResult {
     // Check mempool capacity
     if !state.has_tx_capacity(config.max_tx_count) {
@@ -103,7 +111,7 @@ pub fn admit(
     }
 
     // Check rate limiting
-    let period_count = state.sender_period_count(&tx.sender, 0, config.rate_limit_period_blocks);
+    let period_count = state.sender_period_count(&tx.sender, current_block, config.rate_limit_period_blocks);
     if period_count >= config.max_per_sender_per_period {
         return AdmitResult::Rejected(AdmitErrorKind::RateLimited {
             sender: tx.sender,
@@ -180,7 +188,7 @@ mod tests {
         let config = MempoolConfig::default();
         let state = MempoolState::default();
 
-        let result = admit(&tx, &fee_params, &config, &state);
+        let result = admit(&tx, &fee_params, &config, &state, 100);
         assert!(result.is_accepted());
     }
 
@@ -193,7 +201,7 @@ mod tests {
         let config = MempoolConfig::default();
         let state = MempoolState::default();
 
-        let result = admit(&tx, &fee_params, &config, &state);
+        let result = admit(&tx, &fee_params, &config, &state, 100);
         assert!(matches!(result, AdmitResult::Rejected(AdmitErrorKind::TxTooLarge { .. })));
     }
 
@@ -205,7 +213,7 @@ mod tests {
         let config = MempoolConfig::default();
         let state = MempoolState::default();
 
-        let result = admit(&tx, &fee_params, &config, &state);
+        let result = admit(&tx, &fee_params, &config, &state, 100);
         assert!(matches!(result, AdmitResult::Rejected(AdmitErrorKind::InsufficientFee { .. })));
     }
 }
