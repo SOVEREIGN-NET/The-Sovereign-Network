@@ -3267,6 +3267,7 @@ dependencies = [
  "lib-crypto",
  "lib-identity",
  "lib-proofs",
+ "lib-types",
  "proptest",
  "serde",
  "serde_json",
