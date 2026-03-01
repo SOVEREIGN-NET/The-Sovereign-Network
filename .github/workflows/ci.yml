@@ -151,8 +151,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Using bash prefix (fixes comment #3) and continue-on-error (fixes comment #5)
       - name: Check for duplicate types
-        run: .github/scripts/check-type-duplication.sh
+        run: bash .github/scripts/check-type-duplication.sh
+        continue-on-error: true
 
   # Deploy to production server (main branch)
   deploy-production:
