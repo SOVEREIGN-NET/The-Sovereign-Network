@@ -44,27 +44,42 @@ fn epoch_id_is_deterministic() {
     }
 }
 
-/// Test future epoch guard boundary condition.
+/// Test future epoch boundary behavior using epoch_id derivation.
 #[test]
 fn future_epoch_guard_boundary() {
     let state = OracleState::default();
-    
+
+    // Choose an arbitrary "current" epoch and derive its canonical timestamp.
     let current_epoch = 10;
-    let current_timestamp = current_epoch * 300; // epoch_duration_secs is 300
-    
-    // Verify current epoch calculation
+    let epoch_duration_secs = 300; // default epoch_duration_secs is 300 (5 minutes)
+    let current_timestamp = current_epoch * epoch_duration_secs;
+
+    // Verify current epoch calculation from its canonical timestamp.
     assert_eq!(state.epoch_id(current_timestamp), current_epoch);
-    
-    // Attestations from current epoch should be accepted
-    assert!(current_epoch <= current_epoch + 1);
-    
-    // Attestations from epoch + 1 should be accepted (within tolerance)
-    let next_epoch = current_epoch + 1;
-    assert!(next_epoch <= current_epoch + 1);
-    
-    // Attestations from epoch + 2 should be rejected (too far ahead)
-    let far_future_epoch = current_epoch + 2;
-    assert!(far_future_epoch > current_epoch + 1);
+
+    // Timestamps within the same epoch should map to the same epoch_id.
+    let same_epoch_timestamp = current_timestamp + (epoch_duration_secs - 1);
+    assert_eq!(
+        state.epoch_id(same_epoch_timestamp),
+        current_epoch,
+        "Timestamp just before epoch boundary should still be in current epoch"
+    );
+
+    // Timestamps in the next epoch should map to current_epoch + 1.
+    let next_epoch_timestamp = current_timestamp + epoch_duration_secs;
+    assert_eq!(
+        state.epoch_id(next_epoch_timestamp),
+        current_epoch + 1,
+        "Timestamp at next epoch boundary should be in next epoch"
+    );
+
+    // Timestamps two epochs ahead should map to current_epoch + 2.
+    let far_future_timestamp = current_timestamp + 2 * epoch_duration_secs;
+    assert_eq!(
+        state.epoch_id(far_future_timestamp),
+        current_epoch + 2,
+        "Far future timestamp should advance epoch_id by 2"
+    );
 }
 
 /// Test that epoch 0 is correctly handled at genesis.
