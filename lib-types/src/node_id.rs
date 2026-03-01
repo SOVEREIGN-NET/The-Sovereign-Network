@@ -30,7 +30,7 @@
 //! ).expect("Valid NodeId");
 //! ```
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 // Note: lib_crypto::Hash replaced with direct blake3 usage for lib-types compatibility
 use std::sync::OnceLock;
@@ -59,7 +59,8 @@ static NETWORK_GENESIS: OnceLock<[u8; 32]> = OnceLock::new();
 /// set_network_genesis(mainnet_genesis);
 /// ```
 pub fn set_network_genesis(genesis_hash: [u8; 32]) {
-    NETWORK_GENESIS.set(genesis_hash)
+    NETWORK_GENESIS
+        .set(genesis_hash)
         .expect("Network genesis already set - can only be called once");
 }
 
@@ -74,8 +75,9 @@ pub fn try_set_network_genesis(genesis_hash: [u8; 32]) -> Result<(), ()> {
 ///
 /// Returns an error if not yet initialized via `set_network_genesis()`.
 pub fn get_network_genesis() -> Result<&'static [u8; 32]> {
-    NETWORK_GENESIS.get()
-        .ok_or_else(|| anyhow!("Network genesis not initialized - call set_network_genesis() at startup"))
+    NETWORK_GENESIS.get().ok_or_else(|| {
+        anyhow!("Network genesis not initialized - call set_network_genesis() at startup")
+    })
 }
 
 /// Canonical NodeId - 32-byte identity routing address with full entropy
@@ -185,10 +187,7 @@ impl NodeId {
     ///
     /// - `Ok(NodeId)` if generation succeeds
     /// - `Err(...)` if validation fails or entropy unavailable
-    pub fn from_identity_components(
-        did: &str,
-        device_id: &str,
-    ) -> Result<Self> {
+    pub fn from_identity_components(did: &str, device_id: &str) -> Result<Self> {
         // Validate inputs
         Self::validate_did(did)?;
         Self::validate_device_id(device_id)?;
@@ -273,12 +272,7 @@ impl NodeId {
     /// Verify NodeId was correctly generated from components
     ///
     /// Recomputes the hash with the stored nonce and verifies it matches.
-    pub fn verify_derivation(
-        &self,
-        did: &str,
-        device_id: &str,
-        timestamp: u64,
-    ) -> Result<bool> {
+    pub fn verify_derivation(&self, did: &str, device_id: &str, timestamp: u64) -> Result<bool> {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"ZHTP_NODE_ID_V2");
         hasher.update(&self.network_genesis);
@@ -322,8 +316,7 @@ impl NodeId {
         }
 
         // Check for sufficient unique characters (prevents "aaaaaaaa")
-        let unique_chars: std::collections::HashSet<char> =
-            device_id.chars().collect();
+        let unique_chars: std::collections::HashSet<char> = device_id.chars().collect();
 
         if unique_chars.len() < 4 {
             return Err(anyhow!(
@@ -334,9 +327,8 @@ impl NodeId {
 
         // Check for common weak device IDs
         const WEAK_IDS: &[&str] = &[
-            "00000000", "11111111", "12345678", "aaaaaaaa",
-            "testtest", "deviceid", "abcdefgh", "password",
-            "device-1", "device-2", "laptop01", "phone001",
+            "00000000", "11111111", "12345678", "aaaaaaaa", "testtest", "deviceid", "abcdefgh",
+            "password", "device-1", "device-2", "laptop01", "phone001",
         ];
 
         if WEAK_IDS.contains(&device_id.to_lowercase().as_str()) {
@@ -375,8 +367,13 @@ impl NodeId {
             return Err(anyhow!("DID identifier cannot contain whitespace"));
         }
 
-        if id_part.chars().any(|c| "!@#$%^&*()+=[]{}|\\;:'\",<>?/".contains(c)) {
-            return Err(anyhow!("DID identifier contains invalid special characters"));
+        if id_part
+            .chars()
+            .any(|c| "!@#$%^&*()+=[]{}|\\;:'\",<>?/".contains(c))
+        {
+            return Err(anyhow!(
+                "DID identifier contains invalid special characters"
+            ));
         }
 
         Ok(())
@@ -397,7 +394,10 @@ impl NodeId {
             ));
         }
 
-        if !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-') {
+        if !trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+        {
             return Err(anyhow!(
                 "Device name must match ^[A-Za-z0-9._-]+$, got '{}'",
                 trimmed
@@ -421,8 +421,7 @@ impl NodeId {
             ));
         }
 
-        let bytes = hex::decode(hex)
-            .map_err(|e| anyhow!("Invalid hex string: {}", e))?;
+        let bytes = hex::decode(hex).map_err(|e| anyhow!("Invalid hex string: {}", e))?;
 
         let mut array = [0u8; 32];
         array.copy_from_slice(&bytes);
@@ -452,13 +451,13 @@ impl NodeId {
     /// ```
     /// use lib_identity::types::NodeId;
     ///
-/// let node1 = NodeId::from_bytes([0b10000000; 32]);
-/// let node2 = NodeId::from_bytes([0b00000000; 32]);
-///
-/// // With this implementation, the most significant differing bit in the first byte yields distance 0.
-/// assert_eq!(node1.kademlia_distance(&node2), 0);
-/// ```
-pub fn kademlia_distance(&self, other: &Self) -> u32 {
+    /// let node1 = NodeId::from_bytes([0b10000000; 32]);
+    /// let node2 = NodeId::from_bytes([0b00000000; 32]);
+    ///
+    /// // With this implementation, the most significant differing bit in the first byte yields distance 0.
+    /// assert_eq!(node1.kademlia_distance(&node2), 0);
+    /// ```
+    pub fn kademlia_distance(&self, other: &Self) -> u32 {
         let xor_bytes = self.xor_distance(other);
         for (i, byte) in xor_bytes.iter().enumerate() {
             if *byte != 0 {
@@ -479,10 +478,13 @@ pub fn kademlia_distance(&self, other: &Self) -> u32 {
     }
 
     /// Convert to 32-byte storage Hash
-    /// 
-    /// Note: This returns raw bytes. Use `lib_crypto::Hash::from_bytes(node_id.to_bytes_array())` 
+    ///
+    /// Note: This returns raw bytes. Use `lib_crypto::Hash::from_bytes(node_id.to_bytes_array())`
     /// to convert to lib_crypto::Hash if needed.
-    #[deprecated(since = "0.1.0", note = "Use to_bytes_array() instead, then convert to your Hash type")]
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use to_bytes_array() instead, then convert to your Hash type"
+    )]
     pub fn to_storage_hash(&self) -> [u8; 32] {
         self.bytes
     }
@@ -534,14 +536,19 @@ mod tests {
         let id1 = NodeId::from_identity_components(
             "did:zhtp:test12345",
             "device-with-sufficient-entropy",
-        ).unwrap();
+        )
+        .unwrap();
 
         let id2 = NodeId::from_identity_components(
             "did:zhtp:test12345",
             "device-with-sufficient-entropy",
-        ).unwrap();
+        )
+        .unwrap();
 
-        assert_ne!(id1.bytes, id2.bytes, "NodeIds should be unique due to random nonce");
+        assert_ne!(
+            id1.bytes, id2.bytes,
+            "NodeIds should be unique due to random nonce"
+        );
     }
 
     #[test]
@@ -557,11 +564,12 @@ mod tests {
 
         let weak_ids = vec!["00000000", "12345678", "aaaaaaaa", "testtest"];
         for weak_id in weak_ids {
-            let result = NodeId::from_identity_components(
-                "did:zhtp:test",
-                weak_id,
+            let result = NodeId::from_identity_components("did:zhtp:test", weak_id);
+            assert!(
+                result.is_err(),
+                "Weak device ID should be rejected: {}",
+                weak_id
             );
-            assert!(result.is_err(), "Weak device ID should be rejected: {}", weak_id);
         }
     }
 
@@ -571,7 +579,7 @@ mod tests {
 
         let result = NodeId::from_identity_components(
             "did:zhtp:test",
-            "short7",  // Only 6 chars, min is 8
+            "short7", // Only 6 chars, min is 8
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("too short"));
@@ -583,10 +591,13 @@ mod tests {
 
         let result = NodeId::from_identity_components(
             "did:zhtp:test",
-            "aaabbbcc",  // Only 3 unique chars
+            "aaabbbcc", // Only 3 unique chars
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("insufficient entropy"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("insufficient entropy"));
     }
 
     // Legacy tests for backward compatibility

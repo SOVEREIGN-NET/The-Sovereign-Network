@@ -3,11 +3,11 @@
 //! Pure data types for mempool configuration, state tracking, and admission.
 //! Behavior (admission logic, transaction ordering) lives in lib-mempool.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-use crate::{Address, Amount};
 use crate::fees::{SigScheme, TxKind};
+use crate::{Address, Amount};
 
 // =============================================================================
 // CONFIGURATION
@@ -65,8 +65,8 @@ impl Default for MempoolConfig {
             max_per_sender: 100,
 
             // Transaction limits (preserving original lib-mempool defaults)
-            max_tx_bytes: 100_000,      // 100 KB
-            max_witness_bytes: 50_000,  // 50 KB
+            max_tx_bytes: 100_000,     // 100 KB
+            max_witness_bytes: 50_000, // 50 KB
             max_signatures: 16,
             max_inputs: 256,
             max_outputs: 256,
@@ -133,20 +133,49 @@ pub enum AdmitResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AdmitErrorKind {
     // Fee errors
-    InsufficientFee { required: Amount, provided: Amount },
+    InsufficientFee {
+        required: Amount,
+        provided: Amount,
+    },
 
     // Size errors
-    TxTooLarge { size: u32, max: u32 },
-    WitnessTooLarge { size: u32, max: u32 },
-    TooManyInputs { count: u16, max: u16 },
-    TooManyOutputs { count: u16, max: u16 },
-    TooManySignatures { count: u8, max: u8 },
+    TxTooLarge {
+        size: u32,
+        max: u32,
+    },
+    WitnessTooLarge {
+        size: u32,
+        max: u32,
+    },
+    TooManyInputs {
+        count: u16,
+        max: u16,
+    },
+    TooManyOutputs {
+        count: u16,
+        max: u16,
+    },
+    TooManySignatures {
+        count: u8,
+        max: u8,
+    },
 
     // Mempool capacity errors
     MempoolFull,
-    MempoolBytesFull { prospective_total_bytes: u64, max: u64 },
-    SenderLimitReached { sender: Address, count: u32, max: u32 },
-    RateLimited { sender: Address, period_count: u32, max: u32 },
+    MempoolBytesFull {
+        prospective_total_bytes: u64,
+        max: u64,
+    },
+    SenderLimitReached {
+        sender: Address,
+        count: u32,
+        max: u32,
+    },
+    RateLimited {
+        sender: Address,
+        period_count: u32,
+        max: u32,
+    },
 
     // Validation errors
     InvalidTransaction(String),
@@ -216,7 +245,10 @@ mod tests {
         let deserialized: MempoolConfig = serde_json::from_str(&serialized).unwrap();
         assert_eq!(config.max_mempool_bytes, deserialized.max_mempool_bytes);
         assert_eq!(config.max_tx_count, deserialized.max_tx_count);
-        assert_eq!(config.min_fee_multiplier_bps, deserialized.min_fee_multiplier_bps);
+        assert_eq!(
+            config.min_fee_multiplier_bps,
+            deserialized.min_fee_multiplier_bps
+        );
     }
 
     #[test]
@@ -233,12 +265,15 @@ mod tests {
         let mut state = MempoolState::new();
         state.total_bytes = 1000;
         state.tx_count = 10;
-        state.per_sender.insert(Address::default(), SenderState {
-            pending_count: 1,
-            total_bytes: 100,
-            period_count: 0,
-            period_start_block: 0,
-        });
+        state.per_sender.insert(
+            Address::default(),
+            SenderState {
+                pending_count: 1,
+                total_bytes: 100,
+                period_count: 0,
+                period_start_block: 0,
+            },
+        );
 
         let serialized = bincode::serialize(&state).unwrap();
         let deserialized: MempoolState = bincode::deserialize(&serialized).unwrap();
@@ -259,18 +294,33 @@ mod tests {
     #[test]
     fn test_admit_result_variants() {
         assert_eq!(AdmitResult::Accepted, AdmitResult::Accepted);
-        assert_ne!(AdmitResult::Accepted, AdmitResult::Rejected(AdmitErrorKind::MempoolFull));
-        
-        let err = AdmitErrorKind::InsufficientFee { required: 100, provided: 50 };
-        assert_eq!(AdmitResult::Rejected(err.clone()), AdmitResult::Rejected(err));
+        assert_ne!(
+            AdmitResult::Accepted,
+            AdmitResult::Rejected(AdmitErrorKind::MempoolFull)
+        );
+
+        let err = AdmitErrorKind::InsufficientFee {
+            required: 100,
+            provided: 50,
+        };
+        assert_eq!(
+            AdmitResult::Rejected(err.clone()),
+            AdmitResult::Rejected(err)
+        );
     }
 
     #[test]
     fn test_admit_error_kind_variants() {
-        let fee_err = AdmitErrorKind::InsufficientFee { required: 100, provided: 50 };
+        let fee_err = AdmitErrorKind::InsufficientFee {
+            required: 100,
+            provided: 50,
+        };
         assert!(matches!(fee_err, AdmitErrorKind::InsufficientFee { .. }));
 
-        let size_err = AdmitErrorKind::TxTooLarge { size: 200_000, max: 100_000 };
+        let size_err = AdmitErrorKind::TxTooLarge {
+            size: 200_000,
+            max: 100_000,
+        };
         assert!(matches!(size_err, AdmitErrorKind::TxTooLarge { .. }));
 
         let rate_err = AdmitErrorKind::RateLimited {
@@ -288,11 +338,14 @@ mod tests {
             AdmitErrorKind::DuplicateTransaction,
             AdmitErrorKind::InvalidTransaction("test".to_string()),
             AdmitErrorKind::TxTooLarge { size: 100, max: 50 },
-            AdmitErrorKind::InsufficientFee { required: 100, provided: 50 },
-            AdmitErrorKind::SenderLimitReached { 
-                sender: Address::default(), 
-                count: 10, 
-                max: 5 
+            AdmitErrorKind::InsufficientFee {
+                required: 100,
+                provided: 50,
+            },
+            AdmitErrorKind::SenderLimitReached {
+                sender: Address::default(),
+                count: 10,
+                max: 5,
             },
         ];
 
