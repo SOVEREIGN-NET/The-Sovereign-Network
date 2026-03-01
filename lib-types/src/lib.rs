@@ -38,6 +38,8 @@ pub use economy::{
 };
 pub use errors::*;
 pub use fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
-pub use network::{BandwidthStatistics, CongestionLevel};
+pub use network::{
+    BandwidthStatistics, CongestionLevel, DiscoveryStatistics, MeshStatus, NetworkStatistics,
+};
 pub use node_id::NodeId;
 pub use peer::PeerId;

@@ -448,13 +448,13 @@ pub struct TreasurySettings {
 impl Default for TreasurySettings {
     fn default() -> Self {
         Self {
-            minimum_emergency_ratio: 0.1,      // 10%
-            max_auto_expenditure: 1_000_000,   // 1M SOV
+            minimum_emergency_ratio: 0.1,           // 10%
+            max_auto_expenditure: 1_000_000,        // 1M SOV
             ubi_distribution_frequency: 86400 * 30, // Monthly
-            rebalancing_frequency: 86400 * 7,  // Weekly
+            rebalancing_frequency: 86400 * 7,       // Weekly
             auto_rebalancing_enabled: true,
-            governance_threshold: 66.0,        // 66% majority
-            health_check_frequency: 86400,     // Daily
+            governance_threshold: 66.0,    // 66% majority
+            health_check_frequency: 86400, // Daily
         }
     }
 }
@@ -510,7 +510,7 @@ pub const UPTIME_BONUS_THRESHOLD: u64 = 23; // 23 hours (99%+ uptime)
 pub const HIGH_UTILIZATION_THRESHOLD: f64 = 0.9; // 90%
 pub const LOW_UTILIZATION_THRESHOLD: f64 = 0.3;
 pub const HIGH_UTILIZATION_ADJUSTMENT: u64 = 105; // +5%
-pub const LOW_UTILIZATION_ADJUSTMENT: u64 = 98;   // -2%
+pub const LOW_UTILIZATION_ADJUSTMENT: u64 = 98; // -2%
 
 // =============================================================================
 // TESTS
