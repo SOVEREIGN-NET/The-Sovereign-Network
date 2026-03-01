@@ -712,7 +712,10 @@ impl RuntimeOrchestrator {
             let environment = self.config.environment;
             let node_role = self.node_role.read().await.clone();
             let min_stake = self.config.consensus_config.min_stake;
-            self.register_component(Arc::new(ConsensusComponent::new(environment, node_role, min_stake))).await?;
+            let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();
+            self.register_component(Arc::new(ConsensusComponent::new_with_bootstrap_validators(
+                environment, node_role, min_stake, bootstrap_validators,
+            ))).await?;
         }
 
         if !is_registered(ComponentId::Economics).await {
@@ -1532,10 +1535,11 @@ impl RuntimeOrchestrator {
             self.config.protocols_config.quic_port,
             self.config.protocols_config.discovery_port,
         ))).await?;
-        self.register_component(Arc::new(ConsensusComponent::new(
+        self.register_component(Arc::new(ConsensusComponent::new_with_bootstrap_validators(
             environment,
             node_role,
             self.config.consensus_config.min_stake,
+            self.config.network_config.bootstrap_validators.clone(),
         ))).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
@@ -1930,9 +1934,193 @@ impl RuntimeOrchestrator {
             }
         }
 
+        // Seed blockchain.validator_registry from bootstrap config (idempotent).
+        // This ensures all bootstrap validators appear in the registry immediately,
+        // regardless of whether their on-chain ValidatorRegistration txs have been mined yet.
+        // On-chain registrations (with real keys) always WIN over bootstrap-seeded entries
+        // because existing entries are never overwritten.
+        if !self.config.network_config.bootstrap_validators.is_empty() {
+            if let Err(e) = self.seed_blockchain_validator_registry().await {
+                warn!("⚠️ Failed to seed blockchain validator registry from bootstrap config: {}", e);
+            }
+        }
+
+        // Submit a ValidatorRegistration tx for this node if validator_enabled.
+        // This ensures the on-chain validator_registry is populated so other nodes
+        // see this node's registration after the next block is mined.
+        if self.config.consensus_config.validator_enabled {
+            if let Err(e) = self.submit_self_validator_registration().await {
+                warn!("⚠️ Failed to submit self validator registration: {}", e);
+            }
+        }
+
         info!("✅ ZHTP node started successfully");
         info!("🌐 ZHTP server active on port {}", self.config.protocols_config.api_port);
-        
+
+        Ok(())
+    }
+
+    /// Seed blockchain.validator_registry from bootstrap_validators config (idempotent).
+    ///
+    /// Inserts all bootstrap validators into the in-memory registry with status "active"
+    /// using derived keys (blake3 of identity_id || domain).  On-chain registrations are
+    /// never overwritten — a validator already present in the registry is skipped.
+    async fn seed_blockchain_validator_registry(&self) -> anyhow::Result<()> {
+        let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();
+        if bootstrap_validators.is_empty() {
+            return Ok(());
+        }
+
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        let mut seeded = 0usize;
+        for bv in &bootstrap_validators {
+            if blockchain.validator_registry.contains_key(&bv.identity_id) {
+                continue; // on-chain registration wins
+            }
+
+            // Derive keys deterministically from identity_id (same scheme as ConsensusComponent)
+            let derive = |domain: &[u8]| -> Vec<u8> {
+                let mut input = Vec::with_capacity(bv.identity_id.len() + domain.len());
+                input.extend_from_slice(bv.identity_id.as_bytes());
+                input.extend_from_slice(domain);
+                lib_crypto::hash_blake3(&input).to_vec()
+            };
+
+            // If consensus_key is provided, hex-decode it into raw bytes; otherwise derive.
+            let consensus_key = if bv.consensus_key.is_empty() {
+                derive(b"consensus")
+            } else {
+                match hex::decode(&bv.consensus_key) {
+                    Ok(bytes) => bytes,
+                    Err(_) => derive(b"consensus"), // fallback to derived key on bad hex
+                }
+            };
+            let networking_key = derive(b"networking");
+            let rewards_key    = derive(b"rewards");
+
+            // Use the first declared endpoint as network_address (already host:port format).
+            let network_address = bv.endpoints.first().cloned().unwrap_or_default();
+
+            let validator_info = lib_blockchain::ValidatorInfo {
+                identity_id: bv.identity_id.clone(),
+                stake: bv.stake.max(1),
+                storage_provided: bv.storage_provided,
+                consensus_key,
+                networking_key,
+                rewards_key,
+                network_address,
+                commission_rate: bv.commission_rate.min(100) as u8,
+                status: "active".to_string(),
+                registered_at: 0,
+                last_activity: 0,
+                blocks_validated: 0,
+                slash_count: 0,
+                admission_source: lib_blockchain::ADMISSION_SOURCE_BOOTSTRAP_GENESIS.to_string(),
+                governance_proposal_id: None,
+                oracle_key_id: None,
+            };
+            blockchain.validator_registry.insert(bv.identity_id.clone(), validator_info);
+            seeded += 1;
+        }
+
+        if seeded > 0 {
+            info!("🌱 Seeded blockchain.validator_registry with {} bootstrap validator(s)", seeded);
+        }
+        Ok(())
+    }
+
+    /// Submit a ValidatorRegistration transaction for this node.
+    ///
+    /// Reads the node's Dilithium public key from the keystore and constructs a
+    /// `ValidatorRegistration` transaction that gets mined into the next block.
+    /// All nodes that see this block will then add this node to their
+    /// `validator_registry` via `process_and_commit_block`.
+    async fn submit_self_validator_registration(&self) -> Result<()> {
+        use crate::keystore_names::{KeystorePrivateKey, NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
+        use std::path::PathBuf;
+
+        let keystore_dir = std::env::var("ZHTP_KEYSTORE_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|h| h.join(".zhtp").join("keystore")))
+            .ok_or_else(|| anyhow::anyhow!("Could not determine keystore directory"))?;
+
+        let node_identity_json = tokio::fs::read_to_string(keystore_dir.join(NODE_IDENTITY_FILENAME))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read node identity: {}", e))?;
+        let node_identity_val: serde_json::Value = serde_json::from_str(&node_identity_json)?;
+        let node_did = node_identity_val
+            .get("did")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing .did in node identity"))?
+            .to_string();
+
+        let key_json = tokio::fs::read_to_string(keystore_dir.join(NODE_PRIVATE_KEY_FILENAME))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read node private key: {}", e))?;
+        let ks: KeystorePrivateKey = serde_json::from_str(&key_json)?;
+
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        // Idempotent: skip if this node is already in validator_registry
+        if blockchain.validator_registry.contains_key(&node_did) {
+            info!("ℹ️ Node {} already in validator_registry, skipping self-registration", &node_did[..40]);
+            return Ok(());
+        }
+
+        let consensus_key = ks.dilithium_pk.clone();
+        let networking_key = lib_crypto::hash_blake3(
+            &[ks.dilithium_pk.as_slice(), b"networking"].concat()
+        ).to_vec();
+        let rewards_key = lib_crypto::hash_blake3(
+            &[ks.dilithium_pk.as_slice(), b"rewards"].concat()
+        ).to_vec();
+
+        // Use the configured QUIC port for the network address so peers can dial this validator.
+        // The API port (HTTP) is not the right address for consensus/P2P traffic.
+        // Look up this node's endpoint from bootstrap_validators config if available,
+        // otherwise fall back to the configured QUIC port.
+        let quic_port = self.config.protocols_config.quic_port;
+        let network_address = self.config.network_config.bootstrap_validators.iter()
+            .find(|bv| bv.identity_id == node_did)
+            .and_then(|bv| bv.endpoints.first().cloned())
+            .unwrap_or_else(|| format!("0.0.0.0:{}", quic_port));
+
+        let validator_data = lib_blockchain::transaction::ValidatorTransactionData {
+            identity_id: node_did.clone(),
+            stake: 1000,
+            storage_provided: 0,
+            consensus_key,
+            networking_key,
+            rewards_key,
+            network_address,
+            commission_rate: 5,
+            operation: lib_blockchain::transaction::ValidatorOperation::Register,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+
+        let tx = lib_blockchain::Transaction::new_validator_registration(
+            validator_data,
+            Vec::new(),
+            lib_crypto::Signature::default(),
+            Vec::new(),
+        );
+
+        match blockchain.add_pending_transaction(tx) {
+            Ok(()) => {
+                info!("✅ Self validator registration tx queued for node {}", &node_did[..40]);
+            }
+            Err(e) => {
+                warn!("⚠️ Failed to queue validator registration tx: {}", e);
+            }
+        }
+
         Ok(())
     }
     

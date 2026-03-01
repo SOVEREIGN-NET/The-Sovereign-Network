@@ -79,7 +79,7 @@ pub use block::{
 // Blockchain module
 pub use blockchain::{
     Blockchain, BlockchainImport, BlockchainBroadcastMessage, EconomicsTransaction, ValidatorInfo,
-    ConsensusCheckpoint
+    ConsensusCheckpoint, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
 };
 
 // Mempool module
