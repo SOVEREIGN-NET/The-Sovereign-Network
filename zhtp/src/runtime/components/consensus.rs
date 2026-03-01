@@ -1255,27 +1255,45 @@ impl Component for ConsensusComponent {
         // Reuses the validator keypair already loaded above.  The oracle
         // mock_sov_usd_price comes from the consensus config (set in TOML with
         // `oracle_mock_sov_usd_price = 100000000` for $1.00 testnet pricing).
-        let oracle_keypair = self.local_validator_keypair.read().await.clone();
-        let oracle_mock_price = self.oracle_mock_sov_usd_price;
-        if let Some(keypair) = oracle_keypair {
-            if let Some(slot) = self.blockchain.read().await.as_ref() {
-                let bc_arc = slot.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = crate::runtime::components::oracle::OracleComponent::start(
-                        bc_arc,
-                        keypair,
-                        oracle_mock_price,
-                    )
-                    .await
-                    {
-                        tracing::warn!("Oracle component failed to start: {}", e);
+        //
+        // The blockchain slot may not be populated yet at this point — it is set
+        // later via set_blockchain().  Spawn a watcher task that polls every 1 s
+        // until the slot is filled, then starts the oracle component.
+        {
+            let blockchain_slot = self.blockchain.clone();
+            let keypair_slot = self.local_validator_keypair.clone();
+            let oracle_mock_price = self.oracle_mock_sov_usd_price;
+            tokio::spawn(async move {
+                loop {
+                    // Check whether blockchain slot is populated.
+                    let bc_arc_opt = {
+                        let slot = blockchain_slot.read().await;
+                        slot.as_ref().cloned()
+                    };
+                    if let Some(bc_arc) = bc_arc_opt {
+                        let keypair_opt = keypair_slot.read().await.clone();
+                        match keypair_opt {
+                            Some(keypair) => {
+                                if let Err(e) = crate::runtime::components::oracle::OracleComponent::start(
+                                    bc_arc,
+                                    keypair,
+                                    oracle_mock_price,
+                                )
+                                .await
+                                {
+                                    tracing::warn!("Oracle component failed to start: {}", e);
+                                }
+                            }
+                            None => {
+                                tracing::warn!("Oracle: no validator keypair available — oracle will not run");
+                            }
+                        }
+                        break;
                     }
-                });
-            } else {
-                tracing::warn!("Oracle: blockchain slot not set yet — oracle will not run");
-            }
-        } else {
-            tracing::warn!("Oracle: no validator keypair available — oracle will not run");
+                    // Blockchain not ready yet — retry after 1 s.
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+            });
         }
 
         Ok(())
