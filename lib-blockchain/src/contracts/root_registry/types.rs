@@ -9,7 +9,7 @@
 //! - State lifecycle management
 //! - Governance pointers for dao.X resolution
 
-use lib_types::primitives::BlockHeight;
+pub use lib_types::primitives::BlockHeight;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
