@@ -91,7 +91,9 @@ impl OracleComponent {
                 if !ready {
                     warn!("Oracle consumer: validator_registry still has <2 active validators after 60 s — starting anyway");
                 }
-                Self::init_committee(&bc).await;
+                // Note: Committee membership is set through governance path only.
+                // The consumer reads from oracle_state.committee.members() which is populated
+                // via schedule_committee_update() → apply_pending_updates() at epoch boundaries.
                 Self::run_consumer(oracle_rx, bc).await;
             });
         }
@@ -106,34 +108,6 @@ impl OracleComponent {
 
         info!("🔮 Oracle runtime started (mock_price={:?})", mock_sov_usd_price);
         Ok(())
-    }
-
-    // ── Committee init ──────────────────────────────────────────────────────
-
-    /// Populate `oracle_state.committee.members` from active validators.
-    ///
-    /// Each committee member key_id = blake3(consensus_key).  This is consistent
-    /// with how `build_attestation` derives `validator_pubkey` from the keypair.
-    async fn init_committee(blockchain: &Arc<RwLock<Blockchain>>) {
-        let mut bc = blockchain.write().await;
-        let members: Vec<[u8; 32]> = bc
-            .validator_registry
-            .values()
-            .filter(|v| v.status == "active" && !v.consensus_key.is_empty())
-            .map(|v| lib_blockchain::blake3_hash(&v.consensus_key).as_array())
-            .collect();
-
-        if members.is_empty() {
-            debug!("Oracle: no active validators with consensus keys — clearing committee");
-            bc.oracle_state.committee.set_members(vec![]);
-            return;
-        }
-
-        bc.oracle_state.committee.set_members(members.clone());
-        info!(
-            "🔮 Oracle committee initialised with {} member(s)",
-            members.len()
-        );
     }
 
     // ── Consumer task ───────────────────────────────────────────────────────
@@ -214,8 +188,10 @@ impl OracleComponent {
                 bc.oracle_state.config.epoch_duration_secs.max(60)
             };
 
-            // Re-sync committee each epoch (new validators may have joined).
-            Self::init_committee(&blockchain).await;
+            // Note: Committee membership is set through governance path only.
+            // The committee is updated via schedule_committee_update() → apply_pending_updates()
+            // at epoch boundaries in the block processing pipeline.
+            // This loop reads from oracle_state.committee.members() but does NOT modify it.
 
             let committee_members: Vec<[u8; 32]> = {
                 let bc = blockchain.read().await;

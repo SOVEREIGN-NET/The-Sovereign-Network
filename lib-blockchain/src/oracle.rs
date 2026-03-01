@@ -242,7 +242,26 @@ impl OracleCommitteeState {
         self.pending_update.as_ref()
     }
 
-    pub fn set_members(&mut self, members: Vec<[u8; 32]>) {
+    /// Set committee members — **genesis bootstrap only**.
+    /// 
+    /// This method is restricted to `pub(crate)` to enforce that committee membership
+    /// changes in production MUST go through the governance-gated path:
+    /// `schedule_committee_update()` → `apply_pending_updates()`.
+    /// 
+    /// # Security Warning
+    /// Direct calls to this method bypass governance consensus. Use only for:
+    /// - Genesis block initialization (when no prior committee exists)
+    /// - Unit tests with `#[cfg(test)]` guards
+    pub(crate) fn set_members_genesis_only(&mut self, members: Vec<[u8; 32]>) {
+        self.members = normalize_members(members);
+    }
+
+    /// Test-only accessor for setting members in integration tests.
+    /// 
+    /// This is equivalent to `set_members_genesis_only` but is public when
+    /// running tests. Production code outside of tests should NEVER use this.
+    #[cfg(test)]
+    pub fn set_members_for_test(&mut self, members: Vec<[u8; 32]>) {
         self.members = normalize_members(members);
     }
 
@@ -761,7 +780,7 @@ mod tests {
     #[test]
     fn pending_committee_update_activates_at_next_epoch() {
         let mut state = OracleState::default();
-        state.committee.set_members(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         state
             .schedule_committee_update(vec![[9u8; 32], [8u8; 32], [7u8; 32]], 12)
             .expect("schedule must succeed");
