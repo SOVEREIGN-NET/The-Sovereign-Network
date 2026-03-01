@@ -527,6 +527,9 @@ pub struct ConsensusComponent {
     /// Bootstrap validators pre-seeded from config for initial proposer rotation.
     /// These are replaced by on-chain ValidatorInfo once blocks are mined.
     bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
+    /// Mock SOV/USD price for oracle attestations (testnet/bootstrap).
+    /// `None` means attempt real exchange price feeds.
+    oracle_mock_sov_usd_price: Option<u64>,
 }
 
 // Manual Debug implementation because ConsensusEngine doesn't derive Debug
@@ -604,6 +607,16 @@ impl ConsensusComponent {
         min_stake: u64,
         bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
     ) -> Self {
+        Self::new_with_bootstrap_validators_and_oracle(environment, node_role, min_stake, bootstrap_validators, None)
+    }
+
+    pub fn new_with_bootstrap_validators_and_oracle(
+        environment: crate::config::Environment,
+        node_role: NodeRole,
+        min_stake: u64,
+        bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
+        oracle_mock_sov_usd_price: Option<u64>,
+    ) -> Self {
         let development_mode = matches!(environment, crate::config::Environment::Development);
 
         let validator_manager = ValidatorManager::new_with_development_mode(
@@ -624,6 +637,7 @@ impl ConsensusComponent {
             local_validator_keypair: Arc::new(RwLock::new(None)),
             node_role: Arc::new(node_role),
             bootstrap_validators,
+            oracle_mock_sov_usd_price,
         }
     }
 
@@ -1236,6 +1250,52 @@ impl Component for ConsensusComponent {
 
         info!("🗳️ BFT consensus loop started - listening for validator messages");
         info!("Consensus component started with consensus mechanisms");
+
+        // ── Oracle pipeline ────────────────────────────────────────────────
+        // Reuses the validator keypair already loaded above.  The oracle
+        // mock_sov_usd_price comes from the consensus config (set in TOML with
+        // `oracle_mock_sov_usd_price = 100000000` for $1.00 testnet pricing).
+        //
+        // The blockchain slot may not be populated yet at this point — it is set
+        // later via set_blockchain().  Spawn a watcher task that polls every 1 s
+        // until the slot is filled, then starts the oracle component.
+        {
+            let blockchain_slot = self.blockchain.clone();
+            let keypair_slot = self.local_validator_keypair.clone();
+            let oracle_mock_price = self.oracle_mock_sov_usd_price;
+            tokio::spawn(async move {
+                loop {
+                    // Check whether blockchain slot is populated.
+                    let bc_arc_opt = {
+                        let slot = blockchain_slot.read().await;
+                        slot.as_ref().cloned()
+                    };
+                    if let Some(bc_arc) = bc_arc_opt {
+                        let keypair_opt = keypair_slot.read().await.clone();
+                        match keypair_opt {
+                            Some(keypair) => {
+                                if let Err(e) = crate::runtime::components::oracle::OracleComponent::start(
+                                    bc_arc,
+                                    keypair,
+                                    oracle_mock_price,
+                                )
+                                .await
+                                {
+                                    tracing::warn!("Oracle component failed to start: {}", e);
+                                }
+                            }
+                            None => {
+                                tracing::info!("Oracle: no validator keypair available — oracle producer disabled (non-validating node)");
+                            }
+                        }
+                        break;
+                    }
+                    // Blockchain not ready yet — retry after 1 s.
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+            });
+        }
+
         Ok(())
     }
 

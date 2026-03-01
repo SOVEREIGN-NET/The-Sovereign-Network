@@ -26,6 +26,14 @@ pub type ConsensusMessageSender = tokio::sync::mpsc::Sender<lib_consensus::types
 
 type DhtPayloadSender = tokio::sync::mpsc::UnboundedSender<DhtPayload>;
 
+/// Sender half for oracle price attestation gossip payloads.
+///
+/// Bounded to 256 messages to prevent unbounded memory growth when a peer
+/// floods the node with attestation gossip. Excess messages are dropped with
+/// a warning; the oracle epoch is long enough that one dropped attestation
+/// per epoch does not affect finalization.
+pub type OracleAttestationSender = tokio::sync::mpsc::Sender<Vec<u8>>;
+
 /// Central mesh message handler
 ///
 /// **MIGRATION (Ticket #149):** Now uses unified PeerRegistry instead of separate mesh_connections
@@ -62,6 +70,10 @@ pub struct MeshMessageHandler {
     pub raw_validator_message_sender: Option<tokio::sync::mpsc::Sender<lib_consensus::validators::ValidatorMessage>>,
     /// Store-and-forward queue for identity envelopes
     pub identity_store_forward: Option<Arc<RwLock<crate::identity_store_forward::IdentityStoreForward>>>,
+    /// Oracle price attestation sender.
+    /// When set, received OracleAttestation gossip payloads are forwarded here for
+    /// deserialization and processing by the oracle runtime component.
+    pub oracle_attestation_sender: Option<OracleAttestationSender>,
 }
 
 /// DHT rate limit configuration
@@ -95,7 +107,15 @@ impl MeshMessageHandler {
             consensus_message_sender: None,
             raw_validator_message_sender: None,
             identity_store_forward: None,
+            oracle_attestation_sender: None,
         }
+    }
+
+    /// Wire the oracle attestation sender.
+    /// Once set, received `OracleAttestation` gossip payloads are forwarded here instead of
+    /// being silently dropped.
+    pub fn set_oracle_attestation_sender(&mut self, sender: OracleAttestationSender) {
+        self.oracle_attestation_sender = Some(sender);
     }
 
     /// Set DHT payload sender for forwarding received DHT messages (Ticket #154)
@@ -363,18 +383,20 @@ impl MeshMessageHandler {
                 }
             },
             ZhtpMeshMessage::OracleAttestation { payload } => {
-                // TODO: Forward attestation to blockchain layer for processing.
-                // Currently, attestations are only logged at the network layer.
-                // The expected wiring is:
-                // 1. Deserialize attestation from payload (OraclePriceAttestation)
-                // 2. Forward to Blockchain::oracle_state.process_attestation() 
-                //    via a channel or direct call from the consensus/gossip layer.
-                // Consensus admission/finalization logic lives in lib-blockchain/src/oracle.rs.
-                debug!(
-                    "Received OracleAttestation payload from peer {:?} ({} bytes)",
-                    hex::encode(&sender.key_id[0..8.min(sender.key_id.len())]),
-                    payload.len()
-                );
+                if let Some(ref tx) = self.oracle_attestation_sender {
+                    if let Err(e) = tx.try_send(payload) {
+                        let len = e.into_inner().len();
+                        warn!(
+                            "OracleAttestation dropped (oracle inbox full or closed, {} bytes)",
+                            len
+                        );
+                    }
+                } else {
+                    debug!(
+                        "Received OracleAttestation ({} bytes) but oracle sender not wired — ignoring",
+                        payload.len()
+                    );
+                }
             },
         }
         Ok(())
