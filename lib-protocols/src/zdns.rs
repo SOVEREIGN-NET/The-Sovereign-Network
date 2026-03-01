@@ -768,8 +768,8 @@ impl Default for ZdnsConfig {
                 hosting_reward: 0.1,
             },
             security_config: SecurityConfig {
-                require_zk_proofs: true,
-                require_dao_fees: true,
+                require_zk_proofs: false,
+                require_dao_fees: false,
                 enable_pq_signatures: true,
                 max_query_rate: 100,
                 enable_query_logging: true,
