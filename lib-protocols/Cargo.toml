@@ -59,6 +59,7 @@ lib-identity = { path = "../lib-identity" }
 lib-economy = { path = "../lib-economy" }
 lib-consensus = { path = "../lib-consensus" }
 lib-blockchain = { path = "../lib-blockchain" }
+lib-types = { path = "../lib-types" }
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -134,24 +134,8 @@ impl QualityMetrics {
 
 /// Storage statistics tracked by the mesh server
 /// 
-/// Tracks storage contributions for economic reward calculations
-#[derive(Debug, Clone, Default)]
-pub struct StorageStats {
-    /// Total number of content items stored
-    pub items_stored: u64,
-    /// Total bytes stored (cumulative size of all content)
-    pub bytes_stored: u64,
-    /// Total number of content retrievals served
-    pub retrievals_served: u64,
-    /// Total storage duration in hours (sum of all content storage time)
-    pub storage_duration_hours: u64,
-    /// Theoretical tokens earned from storage (for display only)
-    pub theoretical_tokens_earned: u64,
-    /// Number of successful storage operations
-    pub successful_storage_ops: u64,
-    /// Number of failed storage operations
-    pub failed_storage_ops: u64,
-}
+/// Now re-exported from lib-types for consistency across crates
+pub type StorageStats = lib_types::StorageStats;
 
 // use crate::types::*; // Removed - unused imports
 use crate::types::mesh_message::ZhtpMeshMessage;
@@ -2292,11 +2276,11 @@ impl ZhtpMeshServer {
         tokens_earned: u64,
     ) {
         let mut stats = self.storage_stats.write().await;
-        stats.items_stored += 1;
-        stats.bytes_stored += content_size;
+        stats.total_content += 1;
+        stats.total_size_bytes += content_size;
         stats.storage_duration_hours += duration_hours;
         stats.theoretical_tokens_earned += tokens_earned;
-        stats.successful_storage_ops += 1;
+        stats.successful_operations += 1;
         
         info!(
             " Storage recorded: {} bytes, {} hours, {} SOV earned",
@@ -2317,7 +2301,7 @@ impl ZhtpMeshServer {
     /// Record a failed storage operation
     pub async fn record_storage_failure(&self) {
         let mut stats = self.storage_stats.write().await;
-        stats.failed_storage_ops += 1;
+        stats.failed_operations += 1;
     }
     
     /// Reset theoretical tokens counter after successful reward claim

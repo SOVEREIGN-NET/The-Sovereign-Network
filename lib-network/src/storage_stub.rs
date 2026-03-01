@@ -3,6 +3,7 @@
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use lib_types::StorageStats;
 
 /// Trait defining the storage interface
 ///
@@ -46,7 +47,7 @@ impl UnifiedStorageSystem {
 
     pub async fn get_statistics(&self) -> Result<StorageStatistics> {
         Ok(StorageStatistics {
-            storage_stats: StorageStats { total_uploads: 0 },
+            storage_stats: StorageStats::default(),
         })
     }
 }
@@ -85,9 +86,4 @@ impl UnifiedStorage for UnifiedStorageSystem {
 #[derive(Clone, Default)]
 pub struct StorageStatistics {
     pub storage_stats: StorageStats,
-}
-
-#[derive(Clone, Default)]
-pub struct StorageStats {
-    pub total_uploads: u64,
 }

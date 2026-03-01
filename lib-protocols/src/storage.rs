@@ -13,6 +13,7 @@ use crate::types::{
     ZhtpRequest, ContentMetadata, CachedContent, 
     ContentSearchResult, StorageSearchQuery
 };
+use lib_types::StorageStats;
 // Placeholder types until storage integration is re-enabled.
 pub type ContentHash = Vec<u8>;
 use serde::{Deserialize, Serialize};
@@ -98,19 +99,8 @@ pub enum ContractStatus {
 }
 
 /// Storage statistics
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct StorageStats {
-    /// Total content stored (bytes)
-    pub total_bytes_stored: u64,
-    /// Number of active contracts
-    pub active_contracts: u64,
-    /// Total storage fees paid
-    pub total_fees_paid: u64,
-    /// Average replication factor
-    pub avg_replication: f64,
-    /// Storage reliability percentage
-    pub reliability_percentage: f64,
-}
+/// Now re-exported from lib-types for consistency across crates
+pub type StorageStats = lib_types::StorageStats;
 
 /// Storage request for ZHTP content
 #[derive(Debug, Clone, Serialize, Deserialize)]
