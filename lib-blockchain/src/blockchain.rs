@@ -2886,6 +2886,17 @@ impl Blockchain {
         self.blocks.last()
     }
 
+    /// Get the timestamp of the last committed block.
+    ///
+    /// Returns the timestamp from the latest block header, or 0 if no blocks exist
+    /// (genesis/bootstrap scenario). This is the canonical time reference for
+    /// oracle epoch derivation per Oracle Spec v1 §4.1.
+    pub fn last_committed_timestamp(&self) -> u64 {
+        self.latest_block()
+            .map(|b| b.header.timestamp)
+            .unwrap_or(0)
+    }
+
     /// Get block by height
     pub fn get_block(&self, height: u64) -> Option<&Block> {
         if height >= self.blocks.len() as u64 {
