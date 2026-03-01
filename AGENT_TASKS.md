@@ -1,4 +1,56 @@
-# Agent Task List - Casino PRs
+# Agent Task List - TYPES Migration (Phase B Complete)
+
+**Last Updated:** 2026-02-28 by Code
+
+## TYPES-EPIC #1642: Phase B Status
+
+### Completed ✅
+
+| PR | Title | Status |
+|----|-------|--------|
+| #1680 | TYPES-12: Move mempool primitives to lib-types | MERGED |
+| #1681 | TYPES-13: Document type architecture rule | MERGED |
+
+### Summary of Changes
+
+**TYPES-12 (#1680):**
+- Moved mempool primitives to `lib-types`: `MempoolConfig`, `MempoolState`, `AdmitResult`, `AdmitTx`
+- Created extension traits in `lib-mempool`: `MempoolConfigExt`, `MempoolStateExt`, `AdmitResultExt`
+- Fixed all review comments:
+  - Added `current_block` parameter to `AdmitResult::with_capacity_checked()`
+  - Added per-TxKind witness cap check (`witness_bytes` > `tx_kind.effective_witness_cap()`)
+  - Preserved original `MempoolConfig` defaults for size limits
+  - Restored `From<AdmitErrorKind>` impl for `MempoolError`
+- All 13 mempool tests passing
+
+**TYPES-13 (#1681):**
+- Documented type architecture rule in `lib-types/README.md`
+- Added AGENTS.md Agent 11: Type Architecture Guardian
+- Updated PR template with type architecture checklist
+
+### Technical Debt Identified (Out of Scope for Current PR)
+
+**Duplicate Types in lib-blockchain:**
+- `lib-blockchain/src/fees/types.rs` has duplicate `FeeInput`, `TxKind`, `SigScheme`
+- These have different field names/types than `lib-types` versions
+- Requires coordinated migration in separate PR (TYPES-14+)
+
+### Extension Trait Pattern Established
+
+Pure data types in `lib-types`, behavior via extension traits in domain crates:
+- `lib_economy::TransactionTypeExt` → provides `description()` method
+- `lib_mempool::MempoolConfigExt` → provides mempool operations
+- `lib_mempool::MempoolStateExt` → provides state operations
+
+### Build Status
+```
+cargo check --workspace  ✅ PASSING
+cargo test -p lib-mempool ✅ 13/13 tests passing
+```
+
+---
+
+## Legacy: Casino PRs
 
 **Last Updated:** 2026-02-01 by Opus
 **Scope:** ONLY PRs by scasino983/casino

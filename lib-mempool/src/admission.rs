@@ -65,7 +65,7 @@ pub fn admit(
     if prospective_bytes > config.max_mempool_bytes {
         return AdmitResult::Rejected(AdmitErrorKind::MempoolBytesFull {
             // Report the would-be size if this transaction were admitted
-            current: prospective_bytes,
+            prospective_total_bytes: prospective_bytes,
             max: config.max_mempool_bytes,
         });
     }
@@ -243,7 +243,7 @@ mod tests {
         // but is within the global max_witness_bytes
         let mut tx = create_test_tx(100_000u64);
         tx.tx_kind = TxKind::NativeTransfer; // witness_cap = 1024 bytes
-        tx.witness_bytes = 2000; // Exceeds 1024 but under default max_witness_bytes (10_000)
+        tx.witness_bytes = 2000; // Exceeds 1024 but under default max_witness_bytes (50_000)
 
         let fee_params = FeeParams::default();
         let config = MempoolConfig::default();

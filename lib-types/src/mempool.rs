@@ -144,7 +144,7 @@ pub enum AdmitErrorKind {
 
     // Mempool capacity errors
     MempoolFull,
-    MempoolBytesFull { current: u64, max: u64 },
+    MempoolBytesFull { prospective_total_bytes: u64, max: u64 },
     SenderLimitReached { sender: Address, count: u32, max: u32 },
     RateLimited { sender: Address, period_count: u32, max: u32 },
 

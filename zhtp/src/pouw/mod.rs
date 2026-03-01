@@ -110,8 +110,15 @@ pub fn spawn_pouw_payout_task(
                 let mint_result = {
                     let mut bc = blockchain.write().await;
                     bc.mint_sov_for_pouw(key_id, reward.final_amount).and_then(|_| {
-                        bc.save_to_file(&blockchain_dat_path)
-                            .map_err(|e| anyhow::anyhow!("save_to_file after POUW mint: {}", e))
+                        // Phase 2: Use incremental storage if available, else fall back to file
+                        if bc.get_store().is_some() {
+                            // Store handles persistence incrementally
+                            Ok(())
+                        } else {
+                            #[allow(deprecated)]
+                            bc.save_to_file(&blockchain_dat_path)
+                                .map_err(|e| anyhow::anyhow!("save_to_file after POUW mint: {}", e))
+                        }
                     })
                 };
 
