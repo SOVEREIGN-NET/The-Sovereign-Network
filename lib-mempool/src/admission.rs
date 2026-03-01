@@ -9,6 +9,7 @@
 use lib_types::{Address, Amount, BlockHeight};
 use lib_types::mempool::{AdmitResult, AdmitTx, AdmitErrorKind};
 use lib_fees::{FeeParams, FeeInput, TxKind, SigScheme, compute_fee_v2};
+use lib_fees::model_v2::TxKindExt;
 
 use crate::config::MempoolConfig;
 use crate::state::{MempoolState, MempoolStateExt};
@@ -75,6 +76,17 @@ pub fn admit(
         return AdmitResult::Rejected(AdmitErrorKind::WitnessTooLarge {
             size: tx.witness_bytes,
             max: config.max_witness_bytes,
+        });
+    }
+
+    // Check per-TxKind witness cap (DoS mitigation)
+    // The effective cap is the minimum of global config and TxKind-specific cap
+    let kind_witness_cap = tx.tx_kind.witness_cap();
+    let effective_witness_cap = config.max_witness_bytes.min(kind_witness_cap);
+    if tx.witness_bytes > effective_witness_cap {
+        return AdmitResult::Rejected(AdmitErrorKind::WitnessTooLarge {
+            size: tx.witness_bytes,
+            max: effective_witness_cap,
         });
     }
 
@@ -215,5 +227,38 @@ mod tests {
 
         let result = admit(&tx, &fee_params, &config, &state, 100);
         assert!(matches!(result, AdmitResult::Rejected(AdmitErrorKind::InsufficientFee { .. })));
+    }
+
+    #[test]
+    fn test_admit_rejects_txkind_witness_cap() {
+        // Create a transaction that exceeds the NativeTransfer witness cap
+        // but is within the global max_witness_bytes
+        let mut tx = create_test_tx(100_000u64);
+        tx.tx_kind = TxKind::NativeTransfer; // witness_cap = 1024 bytes
+        tx.witness_bytes = 2000; // Exceeds 1024 but under default max_witness_bytes (10_000)
+
+        let fee_params = FeeParams::default();
+        let config = MempoolConfig::default();
+        let state = MempoolState::default();
+
+        let result = admit(&tx, &fee_params, &config, &state, 100);
+        assert!(matches!(result, AdmitResult::Rejected(AdmitErrorKind::WitnessTooLarge { .. })));
+    }
+
+    #[test]
+    fn test_admit_accepts_within_txkind_witness_cap() {
+        // Create a transaction that is within the NativeTransfer witness cap
+        let mut tx = create_test_tx(100_000u64);
+        tx.tx_kind = TxKind::NativeTransfer; // witness_cap = 1024 bytes
+        tx.witness_bytes = 500; // Well under 1024
+
+        let fee_params = FeeParams::default();
+        let config = MempoolConfig::default();
+        let state = MempoolState::default();
+
+        let result = admit(&tx, &fee_params, &config, &state, 100);
+        // Should be accepted (fee is sufficient, within all limits)
+        // Note: fee might not be sufficient for this tx, so we just check it doesn't fail on witness
+        assert!(!matches!(result, AdmitResult::Rejected(AdmitErrorKind::WitnessTooLarge { .. })));
     }
 }
