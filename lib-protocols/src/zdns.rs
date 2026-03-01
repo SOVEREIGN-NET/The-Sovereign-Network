@@ -562,60 +562,34 @@ impl ZdnsServer {
     }
 
     fn validate_zk_proofs(&self, records: &[ZdnsRecord]) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        let _zk_system = lib_proofs::plonky2::ZkProofSystem::new()
+            .map_err(|e| ProtocolError::ZkProofError(format!("Failed to initialize ZK system: {}", e)))?;
+
         for record in records {
-            let proof_bytes = if let Ok(bytes) = base64::Engine::decode(
+            let proof_bytes = base64::Engine::decode(
                 &base64::engine::general_purpose::STANDARD,
                 &record.ownership_proof
-            ) {
-                bytes
-            } else {
-                return Err(ProtocolError::ZkProofError(
-                    "Ownership proof must be base64 encoded".to_string()
-                ));
-            };
+            ).map_err(|e| ProtocolError::ZkProofError(format!("Invalid base64: {}", e)))?;
 
-            let zk_proof: ZkProof = match bincode::deserialize(&proof_bytes) {
-                Ok(p) => p,
-                Err(e) => {
-                    return Err(ProtocolError::ZkProofError(format!(
-                        "Failed to deserialize ownership proof: {}", e
-                    )));
-                }
-            };
+            let zk_proof: ZkProof = bincode::deserialize(&proof_bytes)
+                .map_err(|e| ProtocolError::ZkProofError(format!("Deserialize failed: {}", e)))?;
 
             if zk_proof.proof_data.is_empty() {
-                return Err(ProtocolError::ZkProofError(
-                    "Ownership proof has no proof data".to_string()
-                ));
+                return Err(ProtocolError::ZkProofError("Proof data empty".to_string()));
             }
 
-            if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-                let zk_system = match lib_proofs::plonky2::ZkProofSystem::new() {
-                    Ok(sys) => sys,
-                    Err(e) => {
-                        return Err(ProtocolError::ZkProofError(format!(
-                            "Failed to initialize ZK system: {}", e
-                        )));
-                    }
-                };
-                
-                match zk_system.verify_storage_access(plonky2_proof) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        return Err(ProtocolError::ZkProofError(
-                            "Ownership proof verification failed".to_string()
-                        ));
-                    }
-                    Err(e) => {
-                        return Err(ProtocolError::ZkProofError(format!(
-                            "Ownership proof verification error: {}", e
-                        )));
-                    }
-                }
-            } else {
+            if let Some(_plonky2_proof) = &zk_proof.plonky2_proof {
+                // NOTE: A dedicated DNS ownership proof circuit is required here.
+                // Using storage access circuit is semantically incorrect.
                 return Err(ProtocolError::ZkProofError(
-                    "Unsupported proof system - Plonky2 proof required".to_string()
+                    "DNS ownership ZK verification requires a dedicated circuit".to_string()
                 ));
+            } else {
+                return Err(ProtocolError::ZkProofError("Plonky2 proof required".to_string()));
             }
         }
         Ok(())
@@ -750,25 +724,12 @@ impl ZdnsServer {
             return Err(ProtocolError::ZkProofError("Ownership proof too short".to_string()));
         }
 
-        let zk_proof: ZkProof = bincode::deserialize(&proof_bytes)
-            .map_err(|e| ProtocolError::ZkProofError(format!("Deserialize failed: {}", e)))?;
-
-        if zk_proof.proof_data.is_empty() {
-            return Err(ProtocolError::ZkProofError("Proof data empty".to_string()));
-        }
-
-        if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-            let zk_system = lib_proofs::plonky2::ZkProofSystem::new()
-                .map_err(|e| ProtocolError::ZkProofError(format!("ZK system init failed: {}", e)))?;
-            
-            match zk_system.verify_storage_access(plonky2_proof) {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(ProtocolError::ZkProofError("Ownership proof verification failed".to_string())),
-                Err(e) => Err(ProtocolError::ZkProofError(format!("Verification error: {}", e))),
-            }
-        } else {
-            Err(ProtocolError::ZkProofError("Plonky2 proof required".to_string()))
-        }
+        // NOTE: A dedicated DNS ownership proof circuit is required here.
+        // Using storage access circuit (verify_storage_access) is semantically incorrect
+        // and could allow proof reuse attacks.
+        Err(ProtocolError::ZkProofError(
+            "DNS ownership ZK verification requires a dedicated circuit".to_string()
+        ))
     }
 
     fn validate_dao_fee_proof(&self, record: &ZdnsRecord) -> Result<()> {
@@ -785,25 +746,11 @@ impl ZdnsServer {
             return Err(ProtocolError::DaoFeeError("DAO fee proof too short".to_string()));
         }
 
-        let zk_proof: ZkProof = bincode::deserialize(&proof_bytes)
-            .map_err(|e| ProtocolError::DaoFeeError(format!("Deserialize failed: {}", e)))?;
-
-        if zk_proof.proof_data.is_empty() {
-            return Err(ProtocolError::DaoFeeError("Proof data empty".to_string()));
-        }
-
-        if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-            let zk_system = lib_proofs::plonky2::ZkProofSystem::new()
-                .map_err(|e| ProtocolError::DaoFeeError(format!("ZK system init failed: {}", e)))?;
-            
-            match zk_system.verify_storage_access(plonky2_proof) {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(ProtocolError::DaoFeeError("DAO fee proof verification failed".to_string())),
-                Err(e) => Err(ProtocolError::DaoFeeError(format!("Verification error: {}", e))),
-            }
-        } else {
-            Err(ProtocolError::DaoFeeError("Plonky2 proof required".to_string()))
-        }
+        // NOTE: A dedicated DAO fee payment proof circuit is required here.
+        // Using storage access circuit is semantically incorrect.
+        Err(ProtocolError::DaoFeeError(
+            "DAO fee ZK verification requires a dedicated circuit".to_string()
+        ))
     }
 }
 
