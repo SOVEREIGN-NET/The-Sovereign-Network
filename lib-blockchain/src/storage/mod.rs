@@ -11,7 +11,7 @@
 //!    The only valid block operation after genesis is `append_block`.
 //!
 //! 2. **State is fully derivable from blocks** - Given the genesis state and all blocks,
-//!    the current state can be reconstructed determinically. No "magic" state.
+//!    the current state can be reconstructed deterministically. No "magic" state.
 //!
 //! 3. **State writes only occur inside begin_block → commit_block** - All state mutations
 //!    (UTXOs, accounts, balances) must happen within an atomic block transaction.
@@ -55,9 +55,6 @@ pub use lib_types::primitives::{Address, Amount, BlockHash, BlockHeight, Bps, To
 // =============================================================================
 // STORAGE-SPECIFIC TYPES
 // =============================================================================
-// These types extend canonical types with storage-specific functionality.
-// They are NOT duplicates - they provide additional storage-layer behavior.
-// =============================================================================
 
 /// Reference to a specific output within a transaction
 ///
@@ -86,15 +83,13 @@ impl fmt::Display for OutPoint {
 // EXTENSION TRAITS FOR CANONICAL TYPES
 // =============================================================================
 // These traits add storage-specific methods to canonical types from lib-types.
-// This follows the "extension trait" pattern - we extend types we don't own.
+// The trait implementations (Display, AsRef, From) are in lib-types.
 // =============================================================================
 
 /// Extension trait adding storage-specific methods to BlockHash
 pub trait BlockHashExt {
     /// Zero hash (used for genesis parent)
     const ZERO: Self;
-    /// Create from bytes
-    fn new(bytes: [u8; 32]) -> Self;
     /// Convert to Vec<u8>
     fn to_vec(&self) -> Vec<u8>;
 }
@@ -102,30 +97,8 @@ pub trait BlockHashExt {
 impl BlockHashExt for BlockHash {
     const ZERO: Self = Self([0u8; 32]);
 
-    fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
     fn to_vec(&self) -> Vec<u8> {
         self.0.to_vec()
-    }
-}
-
-impl fmt::Display for BlockHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
-    }
-}
-
-impl AsRef<[u8]> for BlockHash {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl From<[u8; 32]> for BlockHash {
-    fn from(bytes: [u8; 32]) -> Self {
-        Self(bytes)
     }
 }
 
@@ -133,8 +106,6 @@ impl From<[u8; 32]> for BlockHash {
 pub trait TxHashExt {
     /// Zero hash
     const ZERO: Self;
-    /// Create from bytes
-    fn new(bytes: [u8; 32]) -> Self;
     /// Convert to Vec<u8>
     fn to_vec(&self) -> Vec<u8>;
 }
@@ -142,30 +113,8 @@ pub trait TxHashExt {
 impl TxHashExt for TxHash {
     const ZERO: Self = Self([0u8; 32]);
 
-    fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
     fn to_vec(&self) -> Vec<u8> {
         self.0.to_vec()
-    }
-}
-
-impl fmt::Display for TxHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
-    }
-}
-
-impl AsRef<[u8]> for TxHash {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl From<[u8; 32]> for TxHash {
-    fn from(bytes: [u8; 32]) -> Self {
-        Self(bytes)
     }
 }
 
@@ -173,8 +122,6 @@ impl From<[u8; 32]> for TxHash {
 pub trait AddressExt {
     /// Zero address
     const ZERO: Self;
-    /// Create from bytes
-    fn new(bytes: [u8; 32]) -> Self;
     /// Convert to Vec<u8>
     fn to_vec(&self) -> Vec<u8>;
 }
@@ -182,82 +129,19 @@ pub trait AddressExt {
 impl AddressExt for Address {
     const ZERO: Self = Self([0u8; 32]);
 
-    fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
     fn to_vec(&self) -> Vec<u8> {
         self.0.to_vec()
-    }
-}
-
-impl fmt::Display for Address {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
-    }
-}
-
-impl AsRef<[u8]> for Address {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl From<[u8; 32]> for Address {
-    fn from(bytes: [u8; 32]) -> Self {
-        Self(bytes)
     }
 }
 
 /// Extension trait adding storage-specific methods to TokenId
 pub trait TokenIdExt {
-    /// Native SOV token (all zeros)
-    const NATIVE: Self;
-    /// Create from bytes
-    fn new(bytes: [u8; 32]) -> Self;
     /// Convert to Vec<u8>
     fn to_vec(&self) -> Vec<u8>;
-    /// Check if this is the native token
-    fn is_native(&self) -> bool;
 }
 
 impl TokenIdExt for TokenId {
-    const NATIVE: Self = Self([0u8; 32]);
-
-    fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
     fn to_vec(&self) -> Vec<u8> {
         self.0.to_vec()
     }
-
-    fn is_native(&self) -> bool {
-        self.0 == [0u8; 32]
-    }
 }
-
-impl fmt::Display for TokenId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_native() {
-            write!(f, "NATIVE")
-        } else {
-            write!(f, "{}", hex::encode(self.0))
-        }
-    }
-}
-
-impl AsRef<[u8]> for TokenId {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl From<[u8; 32]> for TokenId {
-    fn from(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-}
-
-// =============================================================================
-// UTXO TYPE
