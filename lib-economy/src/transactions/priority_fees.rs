@@ -2,7 +2,7 @@
 //! 
 //! Implements quality-of-service style pricing for network transactions.
 
-use crate::types::Priority;
+use crate::types::{Priority, PriorityExt};
 
 /// Calculate priority-based fee multiplier
 pub fn get_priority_multiplier(priority: Priority) -> f64 {

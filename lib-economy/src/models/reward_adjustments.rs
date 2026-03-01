@@ -4,7 +4,7 @@
 //! while maintaining stable infrastructure economics.
 
 use anyhow::Result;
-use crate::types::NetworkStats;
+use crate::types::{NetworkStats, NetworkStatsExt};
 use crate::models::TokenReward;
 use crate::wasm::logging::info;
 
