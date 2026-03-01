@@ -27,14 +27,14 @@
 //! # Usage
 //!
 //! ```ignore
-//! use lib_mempool::{admit, MempoolConfig, MempoolState, MempoolStateExt};
+//! use lib_mempool::{admit, MempoolConfig, MempoolState, MempoolStateExt, AdmitResult};
 //! use lib_fees::FeeParams;
 //!
-//! let result = admit(&tx, &fee_params, &config, &mempool_state);
+//! let current_block = 100;
+//! let result = admit(&tx, &fee_params, &config, &mempool_state, current_block);
 //! match result {
-//!     Ok(AdmitResult::Accepted) => { /* add to mempool */ }
-//!     Ok(AdmitResult::Rejected(reason)) => { /* reject */ }
-//!     Err(e) => { /* error during admission */ }
+//!     AdmitResult::Accepted => { /* add to mempool */ }
+//!     AdmitResult::Rejected(reason) => { /* reject */ }
 //! }
 //! ```
 

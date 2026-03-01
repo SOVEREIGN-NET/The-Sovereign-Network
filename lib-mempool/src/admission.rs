@@ -11,7 +11,7 @@ use lib_types::mempool::{AdmitResult, AdmitTx, AdmitErrorKind};
 use lib_fees::{FeeParams, FeeInput, TxKind, SigScheme, compute_fee_v2};
 use lib_fees::model_v2::TxKindExt;
 
-use crate::config::MempoolConfig;
+use crate::config::{MempoolConfig, MempoolConfigExt};
 use crate::state::{MempoolState, MempoolStateExt};
 
 /// Extension trait for AdmitResult with convenience methods
@@ -57,9 +57,15 @@ pub fn admit(
         return AdmitResult::Rejected(AdmitErrorKind::MempoolFull);
     }
 
-    if !state.has_byte_capacity(config.max_mempool_bytes) {
+    // Check byte capacity, accounting for the incoming transaction size
+    let prospective_bytes = state
+        .total_bytes
+        .saturating_add(tx.tx_bytes as u64);
+
+    if prospective_bytes > config.max_mempool_bytes {
         return AdmitResult::Rejected(AdmitErrorKind::MempoolBytesFull {
-            current: state.total_bytes,
+            // Report the would-be size if this transaction were admitted
+            current: prospective_bytes,
             max: config.max_mempool_bytes,
         });
     }
@@ -148,8 +154,8 @@ pub fn admit(
 
     let min_fee = compute_fee_v2(&fee_input, fee_params);
 
-    // Apply fee multiplier
-    let required_fee = (min_fee as u128 * config.min_fee_multiplier_bps as u128 / 10000);
+    // Apply fee multiplier using MempoolConfigExt for consistency
+    let required_fee = config.effective_min_fee(min_fee as Amount);
 
     if tx.fee < required_fee {
         return AdmitResult::Rejected(AdmitErrorKind::InsufficientFee {

@@ -1,8 +1,8 @@
 //! Mempool Admission Errors
 //!
-//! Note: The canonical type definitions have moved to lib-types.
-//! This module provides convenience constructors while AdmitErrorKind
-//! and AdmitError live in lib-types.
+//! Note: The canonical error kind definition (`AdmitErrorKind`) lives in lib-types
+//! and is re-exported here. This module defines `AdmitError` and provides
+//! convenience constructors for building specific admission errors.
 
 use thiserror::Error;
 pub use lib_types::mempool::AdmitErrorKind;
@@ -66,6 +66,18 @@ impl AdmitError {
 
     pub fn duplicate_transaction() -> Self {
         Self::new(AdmitErrorKind::DuplicateTransaction)
+    }
+
+    /// Deprecated alias for `duplicate_transaction()`
+    #[deprecated(since = "0.1.0", note = "Use duplicate_transaction() instead")]
+    pub fn duplicate() -> Self {
+        Self::duplicate_transaction()
+    }
+}
+
+impl From<AdmitErrorKind> for AdmitError {
+    fn from(kind: AdmitErrorKind) -> Self {
+        Self::new(kind)
     }
 }
 

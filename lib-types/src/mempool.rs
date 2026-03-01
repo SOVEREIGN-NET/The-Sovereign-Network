@@ -59,17 +59,17 @@ pub struct MempoolConfig {
 impl Default for MempoolConfig {
     fn default() -> Self {
         Self {
-            // Size limits
-            max_mempool_bytes: 100 * 1024 * 1024, // 100 MB
-            max_tx_count: 100_000,
+            // Size limits (preserving original lib-mempool defaults)
+            max_mempool_bytes: 50 * 1024 * 1024, // 50 MB
+            max_tx_count: 50_000,
             max_per_sender: 100,
 
-            // Transaction limits
+            // Transaction limits (preserving original lib-mempool defaults)
             max_tx_bytes: 100_000,      // 100 KB
-            max_witness_bytes: 10_000,  // 10 KB
-            max_signatures: 20,
-            max_inputs: 1000,
-            max_outputs: 1000,
+            max_witness_bytes: 50_000,  // 50 KB
+            max_signatures: 16,
+            max_inputs: 256,
+            max_outputs: 256,
 
             // Fee threshold: 1.0x minimum
             min_fee_multiplier_bps: 10_000,
@@ -198,9 +198,14 @@ mod tests {
     #[test]
     fn test_mempool_config_default() {
         let config = MempoolConfig::default();
-        assert_eq!(config.max_mempool_bytes, 100 * 1024 * 1024);
-        assert_eq!(config.max_tx_count, 100_000);
+        // Original lib-mempool defaults (preserved during type move)
+        assert_eq!(config.max_mempool_bytes, 50 * 1024 * 1024); // 50 MB
+        assert_eq!(config.max_tx_count, 50_000);
         assert_eq!(config.max_per_sender, 100);
+        assert_eq!(config.max_witness_bytes, 50_000);
+        assert_eq!(config.max_signatures, 16);
+        assert_eq!(config.max_inputs, 256);
+        assert_eq!(config.max_outputs, 256);
         assert_eq!(config.min_fee_multiplier_bps, 10_000);
     }
 

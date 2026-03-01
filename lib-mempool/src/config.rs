@@ -48,8 +48,13 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = MempoolConfig::default();
-        assert_eq!(config.max_mempool_bytes, 100 * 1024 * 1024);
-        assert_eq!(config.max_tx_count, 100_000);
+        // These are the original lib-mempool defaults (preserved during move to lib-types)
+        assert_eq!(config.max_mempool_bytes, 50 * 1024 * 1024); // 50 MB
+        assert_eq!(config.max_tx_count, 50_000);
+        assert_eq!(config.max_witness_bytes, 50_000);
+        assert_eq!(config.max_signatures, 16);
+        assert_eq!(config.max_inputs, 256);
+        assert_eq!(config.max_outputs, 256);
         assert_eq!(config.min_fee_multiplier_bps, 10_000);
     }
 
