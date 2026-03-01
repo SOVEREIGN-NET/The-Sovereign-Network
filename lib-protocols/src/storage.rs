@@ -129,6 +129,44 @@ pub struct ZhtpStorageRequest {
     pub preferred_regions: Vec<String>,
 }
 
+fn calculate_relevance_score(keywords: &[String], metadata: &lib_storage::types::storage_types::ContentMetadata) -> f64 {
+    if keywords.is_empty() {
+        return 0.5;
+    }
+    
+    let mut score = 0.0;
+    let query_terms: Vec<&str> = keywords.iter().map(|s| s.to_lowercase()).collect();
+    
+    // Check filename
+    let filename_lower = metadata.filename.to_lowercase();
+    for term in &query_terms {
+        if filename_lower.contains(term) {
+            score += 0.4; // Higher weight for filename matches
+        }
+    }
+    
+    // Check description
+    let desc_lower = metadata.description.to_lowercase();
+    for term in &query_terms {
+        if desc_lower.contains(term) {
+            score += 0.3;
+        }
+    }
+    
+    // Check tags
+    for tag in &metadata.tags {
+        let tag_lower = tag.to_lowercase();
+        for term in &query_terms {
+            if tag_lower.contains(term) {
+                score += 0.3;
+            }
+        }
+    }
+    
+    // Normalize to 0.0-1.0 range
+    score.min(1.0)
+}
+
 impl StorageIntegration {
     /// Create new storage integration with lib-storage backend
     pub async fn new(config: StorageConfig) -> Result<Self> {
@@ -322,6 +360,9 @@ impl StorageIntegration {
                 .unwrap_or("unknown")
                 .to_string();
             
+            // Calculate relevance score based on keyword matching
+            let relevance_score = calculate_relevance_score(&query.keywords, &storage_metadata);
+            
             let result = ContentSearchResult {
                 content_id: storage_metadata.hash.to_string(),
                 filename: storage_metadata.filename,
@@ -330,7 +371,7 @@ impl StorageIntegration {
                 created_at: storage_metadata.created_at,
                 description: storage_metadata.description,
                 tags: storage_metadata.tags,
-                relevance_score: 0.5, // Default score - could be enhanced with query matching
+                relevance_score,
                 owner_id: storage_metadata.owner.id.to_string(),
                 access_level,
             };
