@@ -23,7 +23,12 @@ pub trait TokenStore {
     fn get_token_balance(&self, token: &TokenId, address: &Address) -> TokenResult<Amount>;
 
     /// Set token balance for an address
-    fn set_token_balance(&self, token: &TokenId, address: &Address, amount: Amount) -> TokenResult<()>;
+    fn set_token_balance(
+        &self,
+        token: &TokenId,
+        address: &Address,
+        amount: Amount,
+    ) -> TokenResult<()>;
 }
 
 /// Apply a token transfer with full validation
@@ -78,7 +83,7 @@ pub fn apply_token_transfer(
     // =========================================================================
     if !contract.transfer_policy.allows_transfer(&from, &to) {
         return Err(TokenError::TransferNotAllowed(
-            "Transfer not allowed by policy".to_string()
+            "Transfer not allowed by policy".to_string(),
         ));
     }
 
@@ -124,9 +129,7 @@ pub fn apply_token_transfer(
 
     // 2. Credit recipient: balances[to] += amount
     let to_balance = store.get_token_balance(&contract.id, &to)?;
-    let new_to_balance = to_balance
-        .checked_add(amount)
-        .ok_or(TokenError::Overflow)?;
+    let new_to_balance = to_balance.checked_add(amount).ok_or(TokenError::Overflow)?;
     store.set_token_balance(&contract.id, &to, new_to_balance)?;
 
     // 3. Credit fee recipient: balances[fee_recipient] += transfer_fee
@@ -140,10 +143,12 @@ pub fn apply_token_transfer(
 
     // 4. Apply burn: total_supply -= burn_fee, total_burned += burn_fee
     if burn_fee > 0 {
-        contract.total_supply = contract.total_supply
+        contract.total_supply = contract
+            .total_supply
             .checked_sub(burn_fee)
             .ok_or(TokenError::Underflow)?;
-        contract.total_burned = contract.total_burned
+        contract.total_burned = contract
+            .total_burned
             .checked_add(burn_fee)
             .ok_or(TokenError::Overflow)?;
 
@@ -219,16 +224,29 @@ mod tests {
         }
 
         fn put_token_contract(&self, contract: &TokenContract) -> TokenResult<()> {
-            self.contracts.borrow_mut().insert(contract.id, contract.clone());
+            self.contracts
+                .borrow_mut()
+                .insert(contract.id, contract.clone());
             Ok(())
         }
 
         fn get_token_balance(&self, token: &TokenId, address: &Address) -> TokenResult<Amount> {
-            Ok(*self.balances.borrow().get(&(*token, *address)).unwrap_or(&0))
+            Ok(*self
+                .balances
+                .borrow()
+                .get(&(*token, *address))
+                .unwrap_or(&0))
         }
 
-        fn set_token_balance(&self, token: &TokenId, address: &Address, amount: Amount) -> TokenResult<()> {
-            self.balances.borrow_mut().insert((*token, *address), amount);
+        fn set_token_balance(
+            &self,
+            token: &TokenId,
+            address: &Address,
+            amount: Amount,
+        ) -> TokenResult<()> {
+            self.balances
+                .borrow_mut()
+                .insert((*token, *address), amount);
             Ok(())
         }
     }
@@ -288,14 +306,19 @@ mod tests {
         let result = apply_token_transfer(&store, &mut contract, from, to, 1_000).unwrap();
 
         assert_eq!(result.amount, 1_000);
-        assert_eq!(result.transfer_fee, 10);  // 1% of 1000
-        assert_eq!(result.burn_fee, 5);       // 0.5% of 1000
+        assert_eq!(result.transfer_fee, 10); // 1% of 1000
+        assert_eq!(result.burn_fee, 5); // 0.5% of 1000
         assert_eq!(result.total_debit, 1_015); // 1000 + 10 + 5
 
         // Verify balances
         assert_eq!(store.get_token_balance(&contract.id, &from).unwrap(), 8_985); // 10000 - 1015
         assert_eq!(store.get_token_balance(&contract.id, &to).unwrap(), 1_000);
-        assert_eq!(store.get_token_balance(&contract.id, &fee_recipient).unwrap(), 10);
+        assert_eq!(
+            store
+                .get_token_balance(&contract.id, &fee_recipient)
+                .unwrap(),
+            10
+        );
 
         // Verify burn
         assert_eq!(contract.total_supply, 999_995); // 1_000_000 - 5
@@ -341,7 +364,10 @@ mod tests {
         store.set_balance(contract.id, from, 500);
 
         let result = apply_token_transfer(&store, &mut contract, from, to, 1_000);
-        assert!(matches!(result, Err(TokenError::InsufficientBalance { .. })));
+        assert!(matches!(
+            result,
+            Err(TokenError::InsufficientBalance { .. })
+        ));
     }
 
     #[test]
