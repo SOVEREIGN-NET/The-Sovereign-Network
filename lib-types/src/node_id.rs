@@ -478,17 +478,19 @@ pub fn kademlia_distance(&self, other: &Self) -> u32 {
         Self::from_bytes(bytes)
     }
 
-    /// Convert to 32-byte storage hash (raw bytes)
+    /// Convert to 32-byte storage Hash
     /// 
     /// Note: This returns raw bytes. Use `lib_crypto::Hash::from_bytes(node_id.to_bytes_array())` 
     /// to convert to lib_crypto::Hash if needed.
+    #[deprecated(since = "0.1.0", note = "Use to_bytes_array() instead, then convert to your Hash type")]
     pub fn to_storage_hash(&self) -> [u8; 32] {
         self.bytes
     }
 
-    /// Create NodeId from 32-byte storage hash bytes
+    /// Create NodeId from 32-byte storage Hash
     ///
     /// Note: Pass raw bytes. Use `node_id_hash.as_bytes()` to get bytes from lib_crypto::Hash.
+    #[deprecated(since = "0.1.0", note = "Use from_bytes_array() instead")]
     pub fn from_storage_hash(bytes: &[u8; 32]) -> Self {
         Self::from_bytes(*bytes)
     }
