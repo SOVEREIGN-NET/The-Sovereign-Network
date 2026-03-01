@@ -59,6 +59,69 @@ impl TxKind {
     /// Get the base multiplier for this transaction kind (basis points)
     ///
     /// 10000 = 1.0x, 15000 = 1.5x, etc.
+    ///
+    /// # Multiplier Rationale
+    ///
+    /// Multipliers reflect the relative computational and storage costs
+    /// of different transaction types, aligned with the ZHTP economic model.
+    ///
+    /// ## Economic Model
+    ///
+    /// | Kind | Multiplier | Rationale |
+    /// |------|------------|-----------|
+    /// | NativeTransfer | 1.0x | Baseline - minimal computation |
+    /// | TokenTransfer | 1.2x | Token state lookups + balance checks |
+    /// | ContractCall | 1.5x | VM execution + state transitions |
+    /// | DataUpload | 2.0x | Permanent storage commitment |
+    /// | Governance | 0.5x | Subsidized - encourages participation |
+    ///
+    /// ## Detailed Reasoning
+    ///
+    /// ### NativeTransfer (1.0x)
+    /// Simplest transaction type. Only updates two balances (sender/recipient).
+    /// Serves as the baseline for all other multipliers.
+    ///
+    /// ### TokenTransfer (1.2x)
+    /// Slightly more expensive than native transfer due to:
+    /// - Token contract state lookup
+    /// - Additional balance validation logic
+    /// - Potential allowance checks for delegated transfers
+    ///
+    /// ### ContractCall (1.5x)
+    /// Higher cost reflects:
+    /// - VM execution environment setup
+    /// - Contract code loading and interpretation
+    /// - Variable execution units (metered separately via exec_units)
+    /// - More complex state transitions
+    ///
+    /// ### DataUpload (2.0x)
+    /// Most expensive due to permanent storage commitment:
+    /// - Data stored indefinitely on-chain
+    /// - Storage is the scarcest resource in blockchain systems
+    /// - Multiplier discourages unnecessary data bloat
+    /// - Based on state rent economic model (see `docs/economy/STATE_RENT_MODEL.md`)
+    ///
+    /// ### Governance (0.5x)
+    /// Priced lower to encourage network participation:
+    /// - Voting is a civic duty in the ZHTP ecosystem
+    /// - Lower barriers increase voter turnout
+    /// - Cost still non-zero to prevent spam voting
+    ///
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use lib_fees::TxKind;
+    ///
+    /// // Governance is 50% cheaper than native transfer
+    /// let gov_multiplier = TxKind::Governance.base_multiplier_bps();      // 5000
+    /// let native_multiplier = TxKind::NativeTransfer.base_multiplier_bps(); // 10000
+    /// assert_eq!(gov_multiplier * 2, native_multiplier);
+    ///
+    /// // Data upload is 2x more expensive
+    /// let upload_multiplier = TxKind::DataUpload.base_multiplier_bps();   // 20000
+    /// assert_eq!(upload_multiplier, native_multiplier * 2);
+    /// ```
     pub const fn base_multiplier_bps(self) -> u32 {
         match self {
             TxKind::NativeTransfer => 10_000,   // 1.0x - standard
@@ -92,11 +155,78 @@ impl SigScheme {
     /// Get the signature size multiplier (basis points)
     ///
     /// Larger signatures cost more to verify and store.
+    ///
+    /// # Multiplier Rationale
+    ///
+    /// Multipliers account for the verification cost and storage overhead
+    /// of different post-quantum cryptographic schemes.
+    ///
+    /// ## Cryptographic Specifications
+    ///
+    /// | Scheme     | Sig Size   | Multiplier | Verification Cost (relative)        |
+    /// |------------|------------|------------|-------------------------------------|
+    /// | Ed25519    | 64 bytes   | 1.0x       | Baseline (fast on commodity CPUs)   |
+    /// | Dilithium5 | 4,627 bytes| 5.0x       | Higher than Ed25519                 |
+    /// | Hybrid     | 4,691 bytes| 5.5x       | Combined Ed25519 + Dilithium5 cost  |
+    ///
+    /// ## Detailed Reasoning
+    ///
+    /// ### Ed25519 (1.0x)
+    /// Standard elliptic curve signatures. Serves as the baseline.
+    /// - 64 bytes (compact)
+    /// - Fast verification on commodity hardware (exact timings are
+    ///   hardware- and implementation-dependent, not a protocol guarantee)
+    /// - Well-established security
+    ///
+    /// ### Dilithium5 (5.0x)
+    /// NIST PQ Standard for digital signatures. Higher cost due to:
+    /// - 4,627 bytes signature size (72x larger than Ed25519)
+    /// - Increased bandwidth for network propagation
+    /// - Higher storage cost in blocks
+    /// - More complex verification algorithm (~4x slower)
+    /// - NIST PQC Round 3 winner, security level equivalent to AES-256
+    ///
+    /// Reference: [NIST FIPS 204](https://csrc.nist.gov/pubs/fips/204/final)
+    ///
+    /// ### Hybrid (5.5x)
+    /// Combines both Ed25519 and Dilithium5 for defense-in-depth:
+    /// - Total size: 4,691 bytes (64 + 4,627)
+    /// - Security: Protected against both classical and quantum attacks
+    /// - Cost: 5.5x (slightly above Dilithium5 to account for Ed25519)
+    /// - Rationale for 5.5x vs 6.0x:
+    ///   - Ed25519 adds relatively small marginal verification cost on top of Dilithium5
+    ///   - Additional storage and bandwidth overhead from the 64-byte Ed25519 signature is minor
+    ///   - Hybrid is priced close to Dilithium5, rather than as a full additive 1.0x + 5.0x
+    ///
+    /// ## Tradeoff Analysis
+    ///
+    /// Signature size vs verification time tradeoff:
+    /// - Larger signatures increase bandwidth and storage costs
+    /// - Slower verification reduces transaction throughput
+    /// - PQ security is essential for long-term protection
+    /// - Multipliers balance these competing concerns
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use lib_fees::SigScheme;
+    ///
+    /// // Ed25519 is the baseline
+    /// let ed_mult = SigScheme::Ed25519.size_multiplier_bps();      // 10000
+    ///
+    /// // Dilithium5 is 5x more expensive
+    /// let dil_mult = SigScheme::Dilithium5.size_multiplier_bps();  // 50000
+    /// assert_eq!(dil_mult, ed_mult * 5);
+    ///
+    /// // Hybrid combines both with slight efficiency discount
+    /// let hyb_mult = SigScheme::Hybrid.size_multiplier_bps();      // 55000
+    /// assert!(hyb_mult < ed_mult + dil_mult); // 55000 < 60000
+    /// ```
     pub const fn size_multiplier_bps(self) -> u32 {
         match self {
             SigScheme::Ed25519 => 10_000,     // 1.0x baseline
             SigScheme::Dilithium5 => 50_000,  // 5.0x (much larger)
-            SigScheme::Hybrid => 55_000,      // 5.5x (both)
+            SigScheme::Hybrid => 55_000,      // 5.5x (both, with parallelization discount)
         }
     }
 
