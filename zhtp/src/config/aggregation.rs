@@ -72,6 +72,12 @@ pub struct PartialConsensusConfig {
     pub dao_enabled: Option<bool>,
     #[serde(default)]
     pub min_stake: Option<u64>,
+    /// Testnet/bootstrap mock SOV/USD price for the oracle (atomic units, scale 1e8).
+    /// E.g. `100_000_000` = $1.00 USD.  When set, this value is used as the oracle
+    /// price instead of fetching from external exchanges.  Required while SOV is not
+    /// yet listed on any exchange.
+    #[serde(default)]
+    pub oracle_mock_sov_usd_price: Option<u64>,
 }
 
 /// Partial blockchain configuration (matches [blockchain_config] section)
@@ -281,6 +287,11 @@ pub struct ConsensusConfig {
     /// Bootstrap Council configuration (dao-1)
     #[serde(default)]
     pub council: lib_blockchain::dao::CouncilBootstrapConfig,
+    /// Mock SOV/USD price for oracle attestations (testnet/bootstrap).
+    /// Atomic units with ORACLE_PRICE_SCALE (1e8), e.g. 100_000_000 = $1.00.
+    /// When absent the oracle will attempt real exchange price feeds.
+    #[serde(default)]
+    pub oracle_mock_sov_usd_price: Option<u64>,
 }
 
 /// Economics configuration
@@ -698,6 +709,7 @@ impl Default for NodeConfig {
                 min_stake: 1000,
                 reward_multipliers: HashMap::new(),
                 council: lib_blockchain::dao::CouncilBootstrapConfig::default(),
+                oracle_mock_sov_usd_price: None,
             },
             
             economics_config: EconomicsConfig {
@@ -1059,8 +1071,11 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                         if let Some(min_stake) = consensus.min_stake {
                             config.consensus_config.min_stake = min_stake;
                         }
+                        if let Some(price) = consensus.oracle_mock_sov_usd_price {
+                            config.consensus_config.oracle_mock_sov_usd_price = Some(price);
+                        }
                     }
-                    
+
                     // Merge [blockchain_config] section
                     if let Some(blockchain) = partial.blockchain_config {
                         if let Some(network_id) = blockchain.network_id {

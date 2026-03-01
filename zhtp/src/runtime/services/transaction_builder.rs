@@ -10,6 +10,7 @@ use anyhow::Result;
 use lib_blockchain::{Transaction, TransactionOutput, TransactionInput};
 use lib_blockchain::types::TransactionType as BlockchainTxType;
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
+use lib_economy::TransactionTypeExt;
 
 /// Transaction builder for creating blockchain transactions from economic data
 pub struct TransactionBuilder;
