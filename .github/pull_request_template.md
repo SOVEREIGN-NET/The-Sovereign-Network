@@ -44,7 +44,7 @@ Fixes #(issue number)
 - [ ] No duplicate type definitions across crates
 - [ ] Domain crates re-export from `lib-types` for backward compatibility
 - [ ] Serialization stability considered for consensus-relevant types
-- [ ] See [lib-types/README.md](../lib-types/README.md) for full architecture rule
+- [ ] See [lib-types/README.md](lib-types/README.md) for full architecture rule
 
 ## For Maintainers Only
 > ⚠️ **DO NOT MERGE TO MAIN** - This PR must target `development`

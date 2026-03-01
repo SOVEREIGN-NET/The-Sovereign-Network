@@ -83,7 +83,9 @@ lib-types/
     ├── primitives.rs       # Address, BlockHash, TxHash, TokenId, Amount, BlockHeight
     ├── node_id.rs          # NodeId (96-byte with entropy)
     ├── peer.rs             # PeerId
-    ├── dht.rs              # DHT-related types
+    ├── dht/                # DHT-related types
+    │   ├── mod.rs          # DHT module root
+    │   └── types.rs        # Core DHT type definitions
     ├── chunk.rs            # Chunk types
     ├── fees.rs             # TxKind, SigScheme, FeeInput, FeeParams, FeeDeficit
     ├── consensus.rs        # ConsensusStep, VoteType, ConsensusConfig, FeeDistributionResult
