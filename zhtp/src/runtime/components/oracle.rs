@@ -120,6 +120,7 @@ impl OracleComponent {
     ) {
         info!("🔮 Oracle attestation consumer started");
         while let Some(payload) = rx.recv().await {
+            debug!("🔮 Oracle: received attestation payload ({} bytes) via gossip", payload.len());
             let attestation: OraclePriceAttestation = match bincode::deserialize(&payload) {
                 Ok(a) => a,
                 Err(e) => {
@@ -164,7 +165,7 @@ impl OracleComponent {
                     );
                 }
                 Err(e) => {
-                    debug!("Oracle attestation rejected (epoch={}): {:?}", attestation.epoch_id, e);
+                    warn!("🔮 Oracle attestation rejected (epoch={}): {:?}", attestation.epoch_id, e);
                 }
             }
         }
@@ -258,13 +259,16 @@ impl OracleComponent {
                         })
                         .collect();
 
-                    let _ = bc.oracle_state.process_attestation(
+                    match bc.oracle_state.process_attestation(
                         &attestation,
                         epoch2,
                         |key_id: [u8; 32]| {
                             key_map.iter().find(|(kid, _)| *kid == key_id).map(|(_, pk)| pk.clone())
                         },
-                    );
+                    ) {
+                        Ok(r) => info!("🔮 Oracle: self-attestation local result: {:?}", r),
+                        Err(e) => warn!("🔮 Oracle: self-attestation local rejected: {:?}", e),
+                    }
                 }
                 Ok(None) => {
                     debug!("Oracle producer: abstaining epoch {} (not enough valid sources)", current_epoch);
@@ -330,7 +334,7 @@ impl OracleComponent {
         if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
             if let Some(qp) = mesh_router.quic_protocol.read().await.as_ref() {
                 match qp.broadcast_message(&bytes).await {
-                    Ok(count) => debug!("Oracle attestation gossiped to {} peer(s)", count),
+                    Ok(count) => info!("🔮 Oracle attestation gossiped to {} peer(s)", count),
                     Err(e) => warn!("Oracle gossip broadcast failed: {}", e),
                 }
             }
