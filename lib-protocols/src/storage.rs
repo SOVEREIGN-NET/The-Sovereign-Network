@@ -313,6 +313,15 @@ impl StorageIntegration {
         // Convert storage metadata to our search result format
         let mut results = Vec::new();
         for storage_metadata in search_results {
+            let access_level = storage_metadata.access_control.first()
+                .map(|al| match al {
+                    lib_storage::types::dht_types::AccessLevel::Public => "public",
+                    lib_storage::types::dht_types::AccessLevel::Private => "private", 
+                    lib_storage::types::dht_types::AccessLevel::Restricted => "restricted",
+                })
+                .unwrap_or("unknown")
+                .to_string();
+            
             let result = ContentSearchResult {
                 content_id: storage_metadata.hash.to_string(),
                 filename: storage_metadata.filename,
@@ -321,9 +330,9 @@ impl StorageIntegration {
                 created_at: storage_metadata.created_at,
                 description: storage_metadata.description,
                 tags: storage_metadata.tags,
-                relevance_score: 1.0, // TODO: Implement relevance scoring
+                relevance_score: 0.5, // Default score - could be enhanced with query matching
                 owner_id: storage_metadata.owner.id.to_string(),
-                access_level: "private".to_string(), // TODO: Determine actual access level
+                access_level,
             };
             results.push(result);
         }
