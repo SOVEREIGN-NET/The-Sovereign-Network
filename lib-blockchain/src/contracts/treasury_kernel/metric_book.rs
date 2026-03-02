@@ -365,6 +365,7 @@ impl EpochClock {
     }
 
     /// Get mutable epoch state
+    #[allow(dead_code)]
     fn get_epoch_mut(&mut self, epoch: u64) -> Option<&mut EpochState> {
         self.epochs.get_mut(&epoch)
     }
