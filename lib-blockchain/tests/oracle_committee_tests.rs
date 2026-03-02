@@ -23,7 +23,7 @@ fn committee_update_through_governance_path_activates_at_epoch_boundary() {
 
     // Schedule a committee update via governance path (the ONLY allowed way post-genesis)
     state
-        .schedule_committee_update(vec![[9u8; 32], [8u8; 32]], 11)
+        .schedule_committee_update_for_test(vec![[9u8; 32], [8u8; 32]], 11)
         .expect("schedule must succeed");
 
     // Pending update should exist but not be active yet
@@ -45,21 +45,21 @@ fn committee_update_through_governance_path_activates_at_epoch_boundary() {
 
 /// Test that schedule_committee_update validates input.
 #[test]
-fn schedule_committee_update_validates_input() {
+fn schedule_committee_update_for_test_validates_input() {
     let mut state = OracleState::default();
 
     // Empty committee should be rejected
-    let result = state.schedule_committee_update(vec![], 11);
+    let result = state.schedule_committee_update_for_test(vec![], 11);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("must not be empty"));
 
     // Duplicate members should be rejected
-    let result = state.schedule_committee_update(vec![[1u8; 32], [1u8; 32]], 11);
+    let result = state.schedule_committee_update_for_test(vec![[1u8; 32], [1u8; 32]], 11);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("duplicate"));
 
     // Valid committee should be accepted
-    let result = state.schedule_committee_update(vec![[1u8; 32], [2u8; 32]], 11);
+    let result = state.schedule_committee_update_for_test(vec![[1u8; 32], [2u8; 32]], 11);
     assert!(result.is_ok());
 }
 
@@ -132,7 +132,7 @@ fn subsequent_schedule_replaces_pending_update() {
 
     // Schedule first update
     state
-        .schedule_committee_update(vec![[1u8; 32], [2u8; 32]], 11)
+        .schedule_committee_update_for_test(vec![[1u8; 32], [2u8; 32]], 11)
         .expect("schedule must succeed");
     
     assert_eq!(
@@ -142,7 +142,7 @@ fn subsequent_schedule_replaces_pending_update() {
 
     // Schedule second update (should replace first)
     state
-        .schedule_committee_update(vec![[3u8; 32], [4u8; 32], [5u8; 32]], 11)
+        .schedule_committee_update_for_test(vec![[3u8; 32], [4u8; 32], [5u8; 32]], 11)
         .expect("schedule must succeed");
     
     assert_eq!(
@@ -175,7 +175,7 @@ fn genesis_bootstrap_creates_initial_committee() {
     // After genesis, all updates must go through governance
     // Schedule an update for a future epoch
     state
-        .schedule_committee_update(
+        .schedule_committee_update_for_test(
             vec![[0x01; 32], [0x02; 32], [0x05; 32]], // Add validator 5, remove 3 and 4
             1, // Activate at epoch 1
         )
@@ -200,7 +200,7 @@ fn empty_committee_threshold_is_one() {
 /// Test that committee changes after genesis use the governance path.
 ///
 /// This verifies runtime behavior: post-genesis, committee updates must go through
-/// `schedule_committee_update()` → `apply_pending_updates()`. 
+/// `schedule_committee_update_for_test()` → `apply_pending_updates()`. 
 ///
 /// For compile-time verification that `set_members_genesis_only` is unreachable from
 /// external crates, see the `compile_fail` doctest on `OracleCommitteeState::set_members_genesis_only`.
@@ -212,12 +212,12 @@ fn committee_changes_require_governance_path() {
     state.committee = OracleCommitteeState::new(vec![[1u8; 32], [2u8; 32]], None);
     assert_eq!(state.committee.members().len(), 2);
 
-    // Post-genesis: committee changes must go through schedule_committee_update
+    // Post-genesis: committee changes must go through schedule_committee_update_for_test
     // (The pub(crate) visibility of set_members_genesis_only enforces this at compile time)
     
     // Verify the governance path works
     state
-        .schedule_committee_update(vec![[3u8; 32]], 6)
+        .schedule_committee_update_for_test(vec![[3u8; 32]], 6)
         .expect("governance schedule must succeed");
     
     state.apply_pending_updates(6);
