@@ -2181,7 +2181,7 @@ impl Blockchain {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
         }
 
-        // ORACLE-7: Apply pending oracle updates at epoch boundaries
+        // ORACLE-7/13: Apply pending oracle updates at epoch boundaries (both BlockExecutor and legacy paths)
         let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
         if current_epoch > self.last_oracle_epoch_processed {
             self.oracle_state.apply_pending_updates(current_epoch);
