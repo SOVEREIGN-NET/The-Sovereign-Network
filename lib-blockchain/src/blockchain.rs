@@ -354,6 +354,10 @@ pub struct Blockchain {
     /// Validators banned from oracle committee (key_id).
     #[serde(default)]
     pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
+    /// Last oracle epoch for which apply_pending_updates() was called.
+    /// Prevents double-application within the same epoch.
+    #[serde(default)]
+    pub last_oracle_epoch_processed: u64,
 
     // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
     /// Most recently computed decentralization snapshot.
@@ -698,6 +702,7 @@ impl BlockchainV1 {
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
+            last_oracle_epoch_processed: 0,
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
@@ -1159,6 +1164,7 @@ impl BlockchainStorageV3 {
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
+            last_oracle_epoch_processed: 0,
             // DAO Phase Transitions
             last_decentralization_snapshot: self.last_decentralization_snapshot,
             phase_transition_config: self.phase_transition_config,
@@ -1200,6 +1206,7 @@ impl BlockchainStorageV4 {
 
     fn to_blockchain(self) -> Blockchain {
         let mut blockchain = self.v3.to_blockchain();
+        blockchain.last_oracle_epoch_processed = 0;
         blockchain.oracle_state = self.oracle_state;
         blockchain.exchange_state = self.exchange_state;
         blockchain.oracle_slash_events = self.oracle_slash_events;
@@ -1222,6 +1229,12 @@ pub struct BlockchainImport {
     pub contract_blocks: HashMap<[u8; 32], u64>,
     #[serde(default)]
     pub dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
+    /// ORACLE-10: Oracle state for initial sync
+    #[serde(default)]
+    pub oracle_state: Option<crate::oracle::OracleState>,
+    /// ORACLE-10: Last oracle epoch processed for sync consistency
+    #[serde(default)]
+    pub last_oracle_epoch_processed: u64,
 }
 
 impl Blockchain {
@@ -1313,6 +1326,7 @@ impl Blockchain {
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
+            last_oracle_epoch_processed: 0,
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
@@ -8023,7 +8037,7 @@ impl Blockchain {
     }
 
     /// Export the entire blockchain state for network transfer
-    /// Includes: blocks, UTXO set, identity registry, wallet registry, and smart contracts
+    /// Includes: blocks, UTXO set, identity registry, wallet registry, smart contracts, and oracle state
     pub fn export_chain(&self) -> Result<Vec<u8>> {
         #[derive(Serialize)]
         struct BlockchainExport {
@@ -8036,6 +8050,9 @@ impl Blockchain {
             web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
             contract_blocks: HashMap<[u8; 32], u64>,
             dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
+            // ORACLE-10: Include oracle state for initial sync
+            oracle_state: Option<crate::oracle::OracleState>,
+            last_oracle_epoch_processed: u64,
         }
 
         // Convert full wallet data to minimal references for sync
@@ -8064,10 +8081,14 @@ impl Blockchain {
             web4_contracts: self.web4_contracts.clone(),
             contract_blocks: self.contract_blocks.clone(),
             dao_registry_index: self.dao_registry_index.clone(),
+            // ORACLE-10: Export oracle state for initial sync
+            oracle_state: Some(self.oracle_state.clone()),
+            last_oracle_epoch_processed: self.last_oracle_epoch_processed,
         };
 
-        info!(" Exporting blockchain: {} blocks, {} validators, {} token contracts, {} web4 contracts", 
-            self.blocks.len(), self.validator_registry.len(), self.token_contracts.len(), self.web4_contracts.len());
+        info!(" Exporting blockchain: {} blocks, {} validators, {} token contracts, {} web4 contracts, {} oracle finalized prices", 
+            self.blocks.len(), self.validator_registry.len(), self.token_contracts.len(), self.web4_contracts.len(),
+            self.oracle_state.finalized_prices_len());
         
         // Debug: Log transaction counts for each block
         for (i, block) in self.blocks.iter().enumerate() {
@@ -8077,6 +8098,72 @@ impl Blockchain {
 
         bincode::serialize(&export)
             .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))
+    }
+
+    /// Validate imported oracle state for consistency (ORACLE-10).
+    /// 
+    /// Performs the following validations:
+    /// - Committee members must exist in validator_registry (no ghost members)
+    /// - Finalized prices must be in ascending epoch order
+    /// - No price from a future epoch (relative to imported block height)
+    fn validate_imported_oracle_state(
+        &self,
+        oracle_state: &crate::oracle::OracleState,
+        last_oracle_epoch_processed: u64,
+        imported_block_height: u64,
+    ) -> Result<()> {
+        // 1. Verify committee members are all in validator_registry (no ghost members)
+        for member_key_id in oracle_state.committee.members() {
+            let exists = self.validator_registry.values().any(|v| {
+                lib_crypto::hash_blake3(&v.consensus_key) == *member_key_id
+            });
+            if !exists {
+                return Err(anyhow::anyhow!(
+                    "Ghost committee member: validator with key_id {} not found in registry",
+                    hex::encode(member_key_id)
+                ));
+            }
+        }
+
+        // 2. Verify finalized prices are in ascending epoch order
+        let mut prev_epoch: Option<u64> = None;
+        for (epoch_id, _price) in oracle_state.all_finalized_prices() {
+            if let Some(prev) = prev_epoch {
+                if *epoch_id <= prev {
+                    return Err(anyhow::anyhow!(
+                        "Finalized prices not in ascending epoch order: {} followed by {}",
+                        prev, epoch_id
+                    ));
+                }
+            }
+            prev_epoch = Some(*epoch_id);
+        }
+
+        // 3. Verify no price is from a future epoch (relative to imported block height)
+        // Estimate max reasonable epoch based on block height (assuming 5-minute epochs)
+        let epoch_duration_blocks = 50u64; // Approximate: 5 min epochs / 6 sec block time
+        let max_reasonable_epoch = imported_block_height / epoch_duration_blocks;
+        
+        for (epoch_id, _price) in oracle_state.all_finalized_prices() {
+            if *epoch_id > max_reasonable_epoch + 10 { // Allow some buffer
+                return Err(anyhow::anyhow!(
+                    "Future epoch price detected: epoch {} at block height {} (max reasonable: {})",
+                    epoch_id, imported_block_height, max_reasonable_epoch
+                ));
+            }
+        }
+
+        // 4. Verify last_oracle_epoch_processed is consistent with finalized prices
+        if let Some((&max_epoch, _)) = oracle_state.all_finalized_prices().iter().next_back() {
+            if last_oracle_epoch_processed < max_epoch {
+                return Err(anyhow::anyhow!(
+                    "Inconsistent last_oracle_epoch_processed: {} but have finalized price for epoch {}",
+                    last_oracle_epoch_processed, max_epoch
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Evaluate and potentially merge a blockchain from another node
@@ -8109,6 +8196,27 @@ impl Blockchain {
             self.contract_blocks = import.contract_blocks;
             self.dao_registry_index = import.dao_registry_index;
             self.rebuild_dao_registry_index();
+            
+            // ORACLE-10: Import oracle state if present
+            if let Some(oracle_state) = import.oracle_state {
+                // Validate imported oracle state before accepting
+                match self.validate_imported_oracle_state(&oracle_state, import.last_oracle_epoch_processed, imported_height) {
+                    Ok(()) => {
+                        self.oracle_state = oracle_state;
+                        self.last_oracle_epoch_processed = import.last_oracle_epoch_processed;
+                        info!("🔮 Oracle state imported: {} finalized prices, epoch {}",
+                              self.oracle_state.finalized_prices_len(),
+                              self.last_oracle_epoch_processed);
+                    }
+                    Err(e) => {
+                        warn!("⚠️ Oracle state validation failed during import: {}. Starting with empty oracle state.", e);
+                        // Start with default oracle state - will be backfilled from blocks
+                    }
+                }
+            } else {
+                warn!("⚠️ Oracle state not present in import — new node will start without oracle prices (backfill from blocks)");
+            }
+            
             info!("Successfully adopted imported chain during bootstrap");
             return Ok(lib_consensus::ChainMergeResult::ImportedAdopted);
         }
