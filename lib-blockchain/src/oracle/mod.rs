@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
 
 /// Fixed-point scale for SOV/USD oracle prices (8 decimals).
 pub const ORACLE_PRICE_SCALE: u128 = 100_000_000;
@@ -205,6 +206,20 @@ pub struct PendingCommitteeUpdate {
     /// New committee members (validator public keys).
     #[serde(default, deserialize_with = "deserialize_members_sorted_dedup")]
     pub members: Vec<[u8; 32]>,
+    /// Epoch when this update was scheduled.
+    #[serde(default)]
+    pub scheduled_at_epoch: u64,
+    /// Epoch when this update expires (auto-cancelled if not activated).
+    /// Default: activate_at_epoch + 2
+    #[serde(default = "default_expiry")]
+    pub expires_at_epoch: u64,
+    /// Governance proposal that triggered this update.
+    #[serde(default)]
+    pub source_proposal_id: Option<[u8; 32]>,
+}
+
+fn default_expiry() -> u64 {
+    u64::MAX // For backward compatibility with existing data
 }
 
 /// Pending governance config update, activated at an epoch boundary.
@@ -214,6 +229,16 @@ pub struct PendingConfigUpdate {
     pub activate_at_epoch: u64,
     /// Config values that become active at `activate_at_epoch`.
     pub config: OracleConfig,
+    /// Epoch when this update was scheduled.
+    #[serde(default)]
+    pub scheduled_at_epoch: u64,
+    /// Epoch when this update expires (auto-cancelled if not activated).
+    /// Default: activate_at_epoch + 2
+    #[serde(default = "default_expiry")]
+    pub expires_at_epoch: u64,
+    /// Governance proposal that triggered this update.
+    #[serde(default)]
+    pub source_proposal_id: Option<[u8; 32]>,
 }
 
 /// Active oracle committee state.
@@ -369,6 +394,7 @@ impl OracleState {
         &mut self,
         members: Vec<[u8; 32]>,
         activate_at_epoch: u64,
+        current_epoch: u64,
     ) -> Result<(), String> {
         if members.is_empty() {
             return Err("oracle committee must not be empty".to_string());
@@ -379,9 +405,15 @@ impl OracleState {
             return Err("oracle committee must not contain duplicate members".to_string());
         }
 
+        // Calculate expiry: if not activated by activate_at_epoch + 2, auto-cancel
+        let expires_at_epoch = activate_at_epoch.saturating_add(2);
+        
         self.committee.pending_update = Some(PendingCommitteeUpdate {
             activate_at_epoch,
             members: normalize_members(members),
+            scheduled_at_epoch: current_epoch,
+            expires_at_epoch,
+            source_proposal_id: None, // Will be set by governance layer if applicable
         });
         Ok(())
     }
@@ -402,6 +434,7 @@ impl OracleState {
         &mut self,
         config: OracleConfig,
         activate_at_epoch: u64,
+        current_epoch: u64,
     ) -> Result<(), String> {
         if config.epoch_duration_secs == 0 {
             return Err("oracle epoch duration must be > 0".to_string());
@@ -416,9 +449,15 @@ impl OracleState {
             return Err("oracle price scale must be canonical 1e8".to_string());
         }
 
+        // Calculate expiry: if not activated by activate_at_epoch + 2, auto-cancel
+        let expires_at_epoch = activate_at_epoch.saturating_add(2);
+        
         self.pending_config_update = Some(PendingConfigUpdate {
             activate_at_epoch,
             config,
+            scheduled_at_epoch: current_epoch,
+            expires_at_epoch,
+            source_proposal_id: None, // Will be set by governance layer if applicable
         });
         Ok(())
     }
@@ -460,20 +499,77 @@ impl OracleState {
     }
 
     /// Apply pending committee/config updates once activation epoch is reached.
+    /// 
+    /// Also handles auto-expiry: if current_epoch >= expires_at_epoch, the pending
+    /// update is discarded without activation (ORACLE-11).
     pub fn apply_pending_updates(&mut self, current_epoch: u64) {
+        // Check committee pending update for expiry or activation
         if let Some(pending) = &self.committee.pending_update {
-            if current_epoch >= pending.activate_at_epoch {
+            if current_epoch >= pending.expires_at_epoch {
+                // Auto-expire: discard without activation
+                warn!(
+                    "🔮 Oracle committee update expired at epoch {} (scheduled: {}, activate: {}) — discarded",
+                    pending.expires_at_epoch,
+                    pending.scheduled_at_epoch,
+                    pending.activate_at_epoch
+                );
+                self.committee.pending_update = None;
+            } else if current_epoch >= pending.activate_at_epoch {
+                // Activate the update
+                info!(
+                    "🔮 Activating oracle committee update at epoch {} (scheduled: {})",
+                    current_epoch,
+                    pending.scheduled_at_epoch
+                );
                 self.committee.members = normalize_members(pending.members.clone());
                 self.committee.pending_update = None;
             }
         }
 
+        // Check config pending update for expiry or activation
         if let Some(pending) = &self.pending_config_update {
-            if current_epoch >= pending.activate_at_epoch {
+            if current_epoch >= pending.expires_at_epoch {
+                // Auto-expire: discard without activation
+                warn!(
+                    "🔮 Oracle config update expired at epoch {} (scheduled: {}, activate: {}) — discarded",
+                    pending.expires_at_epoch,
+                    pending.scheduled_at_epoch,
+                    pending.activate_at_epoch
+                );
+                self.pending_config_update = None;
+            } else if current_epoch >= pending.activate_at_epoch {
+                // Activate the update
+                info!(
+                    "🔮 Activating oracle config update at epoch {} (scheduled: {})",
+                    current_epoch,
+                    pending.scheduled_at_epoch
+                );
                 self.config = pending.config.clone();
                 self.pending_config_update = None;
             }
         }
+    }
+
+    /// Cancel pending oracle updates (ORACLE-11).
+    /// 
+    /// Called when a CancelOracleUpdate governance proposal is approved.
+    /// Returns true if any update was cancelled.
+    pub fn cancel_pending_updates(&mut self, cancel_committee: bool, cancel_config: bool) -> bool {
+        let mut cancelled = false;
+        
+        if cancel_committee && self.committee.pending_update.is_some() {
+            info!("🔮 Pending oracle committee update cancelled by governance");
+            self.committee.pending_update = None;
+            cancelled = true;
+        }
+        
+        if cancel_config && self.pending_config_update.is_some() {
+            info!("🔮 Pending oracle config update cancelled by governance");
+            self.pending_config_update = None;
+            cancelled = true;
+        }
+        
+        cancelled
     }
 
     /// Finalize a price for an epoch exactly once.
@@ -814,6 +910,9 @@ mod tests {
         let pending = PendingCommitteeUpdate {
             activate_at_epoch: 10,
             members: vec![[3u8; 32], [1u8; 32], [3u8; 32], [2u8; 32]],
+            scheduled_at_epoch: 9,
+            expires_at_epoch: 12,
+            source_proposal_id: None,
         };
         let committee = OracleCommitteeState::new(vec![], Some(pending));
         let pending = committee
@@ -908,7 +1007,7 @@ mod tests {
         let mut state = OracleState::default();
         state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         state
-            .schedule_committee_update(vec![[9u8; 32], [8u8; 32], [7u8; 32]], 13)
+            .schedule_committee_update(vec![[9u8; 32], [8u8; 32], [7u8; 32]], 13, 12)
             .expect("schedule must succeed");
 
         state.apply_pending_updates(12);
@@ -927,7 +1026,7 @@ mod tests {
         next.max_deviation_bps = 350;
 
         state
-            .schedule_config_update(next.clone(), 4)
+            .schedule_config_update(next.clone(), 4, 3)
             .expect("schedule must succeed");
 
         state.apply_pending_updates(3);

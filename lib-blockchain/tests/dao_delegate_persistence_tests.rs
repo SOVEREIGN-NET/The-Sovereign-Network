@@ -74,6 +74,7 @@ fn dao_execution_tx(
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
     }
 }
 

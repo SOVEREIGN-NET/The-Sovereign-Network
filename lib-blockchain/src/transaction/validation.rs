@@ -284,6 +284,9 @@ impl TransactionValidator {
             TransactionType::OracleAttestation => {
                 // Oracle attestation - full validation in stateful validator
             }
+            TransactionType::CancelOracleUpdate => {
+                // Cancel oracle update - validation in stateful validator
+            }
         }
 
         // Signature validation:
@@ -471,6 +474,9 @@ impl TransactionValidator {
             }
             TransactionType::OracleAttestation => {
                 // Oracle attestation - full validation in StatefulValidator
+            }
+            TransactionType::CancelOracleUpdate => {
+                // Cancel oracle update - validation in stateful validator
             }
         }
 
@@ -1571,6 +1577,9 @@ impl<'a> StatefulTransactionValidator<'a> {
                 // ORACLE-9: Validate oracle attestation at block execution time
                 self.validate_oracle_attestation_transaction(transaction)?;
             }
+            TransactionType::CancelOracleUpdate => {
+                // Cancel oracle update - validation handled at execution layer
+            }
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -2076,6 +2085,10 @@ pub mod utils {
                 // Oracle attestation transactions
                 true
             }
+            TransactionType::CancelOracleUpdate => {
+                // Cancel oracle update
+                true
+            }
         }
     }
 
@@ -2175,6 +2188,7 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -2214,6 +2228,7 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -2260,6 +2275,7 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -2331,6 +2347,7 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         };
 
         assert!(!is_token_contract_execution(&mint_tx));
@@ -2434,6 +2451,7 @@ mod tests {
                 oracle_committee_update_data: None,
                 oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
             };
 
             assert!(
@@ -2477,6 +2495,7 @@ mod tests {
                 oracle_committee_update_data: None,
                 oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
             };
 
             assert!(
@@ -2520,6 +2539,7 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         };
 
         assert!(
@@ -2564,6 +2584,7 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         };
 
         let validator = TransactionValidator::new();
@@ -2773,6 +2794,7 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 

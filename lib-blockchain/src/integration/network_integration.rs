@@ -201,7 +201,8 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
-};
+            cancel_oracle_update_data: None,
+        };
 
         let serialized = serialize_transaction_for_network(&transaction)?;
         let deserialized = deserialize_transaction_from_network(&serialized)?;

@@ -208,6 +208,7 @@ impl TransactionBuilder {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         };
 
         // Sign the transaction
@@ -694,6 +695,9 @@ pub mod utils {
             }
             TransactionType::OracleAttestation => {
                 // Oracle price attestation - validation handled at block execution layer
+            }
+            TransactionType::CancelOracleUpdate => {
+                // Cancel oracle update - validation handled at consensus layer
             }
         }
 
