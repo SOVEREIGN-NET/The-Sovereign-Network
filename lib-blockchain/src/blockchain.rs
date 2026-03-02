@@ -354,6 +354,11 @@ pub struct Blockchain {
     /// Validators banned from oracle committee (key_id).
     #[serde(default)]
     pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
+    /// Last oracle timestamp for which apply_pending_updates() was called.
+    /// Prevents double-application within the same epoch.
+    /// Stored as timestamp (not epoch_id) to remain correct if epoch_duration_secs changes.
+    #[serde(default)]
+    pub last_oracle_epoch_processed: u64,
 
     // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
     /// Most recently computed decentralization snapshot.
@@ -698,6 +703,7 @@ impl BlockchainV1 {
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
+            last_oracle_epoch_processed: 0,
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
@@ -1159,6 +1165,7 @@ impl BlockchainStorageV3 {
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
+            last_oracle_epoch_processed: 0,
             // DAO Phase Transitions
             last_decentralization_snapshot: self.last_decentralization_snapshot,
             phase_transition_config: self.phase_transition_config,
@@ -1184,6 +1191,8 @@ struct BlockchainStorageV4 {
     pub oracle_slashing_config: crate::oracle::OracleSlashingConfig,
     #[serde(default)]
     pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
+    #[serde(default)]
+    pub last_oracle_epoch_processed: u64,
 }
 
 impl BlockchainStorageV4 {
@@ -1195,6 +1204,7 @@ impl BlockchainStorageV4 {
             oracle_slash_events: bc.oracle_slash_events.clone(),
             oracle_slashing_config: bc.oracle_slashing_config.clone(),
             oracle_banned_validators: bc.oracle_banned_validators.clone(),
+            last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
         }
     }
 
@@ -1205,6 +1215,7 @@ impl BlockchainStorageV4 {
         blockchain.oracle_slash_events = self.oracle_slash_events;
         blockchain.oracle_slashing_config = self.oracle_slashing_config;
         blockchain.oracle_banned_validators = self.oracle_banned_validators;
+        blockchain.last_oracle_epoch_processed = self.last_oracle_epoch_processed;
         blockchain
     }
 }
@@ -1313,6 +1324,7 @@ impl Blockchain {
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
+            last_oracle_epoch_processed: 0,
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
@@ -2159,6 +2171,18 @@ impl Blockchain {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
         }
 
+        // Process oracle epoch advancement
+        // Apply pending committee/config updates when epoch boundary is crossed
+        // This runs for both BlockExecutor and legacy paths
+        let block_epoch = self.oracle_state.epoch_id(block.header.timestamp);
+        let last_processed_epoch = self.oracle_state.epoch_id(self.last_oracle_epoch_processed);
+        if block_epoch > last_processed_epoch {
+            self.oracle_state.apply_pending_updates(block_epoch);
+            // Store timestamp (not epoch_id) to remain correct if epoch_duration_secs changes
+            self.last_oracle_epoch_processed = block.header.timestamp;
+            info!("🔮 Oracle advanced to epoch {} (block height {})", block_epoch, self.height);
+        }
+
         // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
             warn!("Error processing UBI claims at height {}: {}", self.height, e);
@@ -2247,6 +2271,18 @@ impl Blockchain {
         // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
+        }
+
+        // Process oracle epoch advancement
+        // Apply pending committee/config updates when epoch boundary is crossed
+        // This runs for both BlockExecutor and legacy paths
+        let block_epoch = self.oracle_state.epoch_id(block.header.timestamp);
+        let last_processed_epoch = self.oracle_state.epoch_id(self.last_oracle_epoch_processed);
+        if block_epoch > last_processed_epoch {
+            self.oracle_state.apply_pending_updates(block_epoch);
+            // Store timestamp (not epoch_id) to remain correct if epoch_duration_secs changes
+            self.last_oracle_epoch_processed = block.header.timestamp;
+            info!("🔮 Oracle advanced to epoch {} (block height {})", block_epoch, self.height);
         }
 
         // Process economic features
@@ -9473,6 +9509,17 @@ impl Blockchain {
 
         if let Err(e) = blockchain.process_approved_governance_proposals() {
             warn!("Failed to apply governance parameter updates during load_from_file: {}", e);
+        }
+
+        // Catch up oracle epoch advancement for any epochs missed while offline
+        // Use canonical committed timestamp to determine current epoch
+        let current_epoch = blockchain.oracle_state.epoch_id(blockchain.last_committed_timestamp());
+        let last_processed_epoch = blockchain.oracle_state.epoch_id(blockchain.last_oracle_epoch_processed);
+        if current_epoch > last_processed_epoch {
+            blockchain.oracle_state.apply_pending_updates(current_epoch);
+            // Store timestamp (not epoch_id) to remain correct if epoch_duration_secs changes
+            blockchain.last_oracle_epoch_processed = blockchain.last_committed_timestamp();
+            info!("🔮 Oracle caught up to epoch {} during load", current_epoch);
         }
 
         // Phase 2 mempool cleanup: evict any TokenTransfer / TokenMint transactions
