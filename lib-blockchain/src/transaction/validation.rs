@@ -1933,29 +1933,12 @@ impl<'a> StatefulTransactionValidator<'a> {
         }
 
         // 3. Check no replay (validator hasn't attested for this epoch yet)
-        // This is checked and updated via oracle_state.epoch_state which tracks signers per epoch.
-        //
-        // IMPORTANT: We must record the signer as soon as we accept an attestation so that
-        // multiple attestations from the same validator for the same epoch in a single block
-        // are rejected. By mutating epoch_state here, subsequent validations within the same
-        // block will observe the updated state.
-        {
-            let epoch_state = oracle_state
-                .epoch_state
-                .entry(data.epoch_id)
-                .or_default();
-
-            if epoch_state
-                .signer_prices
-                .contains_key(&data.validator_pubkey)
-            {
+        // Replay protection is handled at execution time via oracle_state.record_attestation()
+        // We check here but cannot mutate because validation takes &self, not &mut self.
+        if let Some(epoch_state) = oracle_state.epoch_state.get(&data.epoch_id) {
+            if epoch_state.signer_prices.contains_key(&data.validator_pubkey) {
                 return Err(ValidationError::DoubleSpend);
             }
-
-            // Record this validator's attestation for the epoch to prevent same-block replays.
-            epoch_state
-                .signer_prices
-                .insert(data.validator_pubkey, data.sov_usd_price);
         }
 
         // 4. Verify signature

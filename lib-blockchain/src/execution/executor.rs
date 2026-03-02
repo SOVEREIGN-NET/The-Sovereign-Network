@@ -805,10 +805,11 @@ impl BlockExecutor {
             | TransactionType::UpdateOracleCommittee
             | TransactionType::UpdateOracleConfig
             // Oracle attestation - validated in StatefulValidator; no special-casing here
-            => {
+            | TransactionType::OracleAttestation => {
                 // Fall through to the general validation flow below without
                 // treating oracle attestations as automatically valid.
             }
+        }
 
         // Basic structural checks
         match tx.transaction_type {
