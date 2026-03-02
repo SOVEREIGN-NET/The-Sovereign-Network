@@ -112,6 +112,8 @@ pub enum TransactionType {
     UpdateOracleCommittee = 34,
     /// Update oracle configuration parameters (via DAO governance)
     UpdateOracleConfig = 35,
+    /// Oracle price attestation (validator submits price for epoch)
+    OracleAttestation = 36,
 }
 
 impl TransactionType {
@@ -187,6 +189,11 @@ impl TransactionType {
         )
     }
 
+    /// Check if this transaction type is an oracle attestation
+    pub fn is_oracle_attestation(&self) -> bool {
+        matches!(self, TransactionType::OracleAttestation)
+    }
+
     /// Get a human-readable description of the transaction type
     pub fn description(&self) -> &'static str {
         match self {
@@ -228,6 +235,7 @@ impl TransactionType {
             TransactionType::BondingCurveGraduate => "Graduate bonding curve token to AMM",
             TransactionType::UpdateOracleCommittee => "Update oracle committee membership (via DAO governance)",
             TransactionType::UpdateOracleConfig => "Update oracle configuration parameters (via DAO governance)",
+            TransactionType::OracleAttestation => "Oracle price attestation (validator submits price for epoch)",
         }
     }
 
@@ -270,6 +278,7 @@ impl TransactionType {
             TransactionType::BondingCurveGraduate => "bonding_curve_graduate",
             TransactionType::UpdateOracleCommittee => "update_oracle_committee",
             TransactionType::UpdateOracleConfig => "update_oracle_config",
+            TransactionType::OracleAttestation => "oracle_attestation",
         }
     }
 
@@ -312,6 +321,7 @@ impl TransactionType {
             "bonding_curve_graduate" => Some(TransactionType::BondingCurveGraduate),
             "update_oracle_committee" => Some(TransactionType::UpdateOracleCommittee),
             "update_oracle_config" => Some(TransactionType::UpdateOracleConfig),
+            "oracle_attestation" => Some(TransactionType::OracleAttestation),
             _ => None,
         }
     }
