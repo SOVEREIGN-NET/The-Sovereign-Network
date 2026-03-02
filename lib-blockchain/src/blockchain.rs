@@ -2058,11 +2058,13 @@ impl Blockchain {
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
+        // ORACLE-13: Validate CBE graduation oracle gate BEFORE applying block
+        // This ensures consensus rules are enforced atomically in BOTH
+        // BlockExecutor and legacy paths
+        self.validate_block_cbe_graduation_gating(&block)?;
+
         // If BlockExecutor is configured, use it as single source of truth
         if let Some(ref executor) = self.executor {
-            // Validate CBE graduation oracle gate BEFORE applying block
-            // This ensures consensus rules are enforced atomically
-            self.validate_block_cbe_graduation_gating(&block)?;
 
             // Use BlockExecutor for state mutations
             // Note: executor.apply_block() handles begin_block/commit_block internally
@@ -11174,13 +11176,15 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Validates CBE (Community Bonding Engine) graduation oracle gate.
+    /// Validates CBE (Community Bonding Engine) graduation oracle gate (ORACLE-5, ORACLE-13).
     ///
     /// Enforces:
     /// - finalized oracle price must exist
-    /// - finalized price must not be stale
+    /// - finalized price must not be stale (uses latest_fresh_price per ORACLE-5)
     /// - `usd_value = reserve_sov * sov_usd_price` (both in price-scaled units)
     /// - `usd_value >= 269_000` (plain USD, compared against scaled values)
+    ///
+    /// Called unconditionally in both BlockExecutor and legacy paths (ORACLE-13).
     pub fn validate_cbe_graduation_oracle_gate(
         &self,
         token_id: [u8; 32],
@@ -11206,19 +11210,15 @@ impl Blockchain {
             return Ok(());
         }
 
-        let latest_epoch = self.oracle_state.latest_finalized_epoch()
-            .ok_or_else(|| anyhow::anyhow!("CBE graduation requires finalized oracle price"))?;
-
+        // ORACLE-5: Use latest_fresh_price() which handles staleness check internally
         let config = self.oracle_state.config();
         let current_epoch = block_timestamp / config.epoch_duration_secs.max(1);
-        let age = current_epoch.saturating_sub(latest_epoch);
-        if age > config.max_price_staleness_epochs {
-            return Err(anyhow::anyhow!(
-                "CBE graduation blocked: finalized oracle price is stale (age={} epochs, max={})",
-                age,
-                config.max_price_staleness_epochs
-            ));
-        }
+        
+        let _fresh_price = self.oracle_state.latest_fresh_price(current_epoch)
+            .ok_or_else(|| anyhow::anyhow!(
+                "CBE graduation blocked: no fresh finalized oracle price available (current_epoch={})",
+                current_epoch
+            ))?;
 
         // Reserve balance is in stablecoin (USD-pegged), so we can compare directly
         // Convert threshold to same units as reserve_balance (micro-USD: 1 USD = 1_000_000)
@@ -11471,7 +11471,7 @@ mod cbe_graduation_oracle_gate_tests {
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("CBE graduation requires finalized oracle price"), "Error: {}", err_msg);
+        assert!(err_msg.contains("no fresh finalized oracle price"), "Error: {}", err_msg);
     }
 
     #[test]
@@ -11499,7 +11499,7 @@ mod cbe_graduation_oracle_gate_tests {
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("stale"), "Error: {}", err_msg);
+        assert!(err_msg.contains("no fresh finalized oracle price"), "Error: {}", err_msg);
     }
 
     #[test]
