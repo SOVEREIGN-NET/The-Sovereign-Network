@@ -369,7 +369,7 @@ async fn test_node_id_storage_hash_conversion() -> Result<()> {
     
     // Convert to storage hash
     let storage_hash = identity.node_id.to_storage_hash();
-    assert_eq!(storage_hash.as_bytes().len(), 32, "Storage hash should be 32 bytes");
+    assert_eq!(storage_hash.len(), 32, "Storage hash should be 32 bytes");
     
     // Convert back from storage hash
     let restored = NodeId::from_storage_hash(&storage_hash);

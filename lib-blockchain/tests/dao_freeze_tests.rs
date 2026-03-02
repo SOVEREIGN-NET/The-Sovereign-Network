@@ -1,7 +1,7 @@
 //! DAO Emergency Treasury Freeze tests (dao-7)
 
-use lib_blockchain::Blockchain;
 use anyhow::Result;
+use lib_blockchain::Blockchain;
 
 /// Register a validator on the blockchain so freeze threshold can be met.
 fn add_validator(bc: &mut Blockchain, did: &str) {
@@ -49,7 +49,11 @@ fn test_freeze_requires_80pct_validators() {
     add_validator(&mut bc, "did:zhtp:val5");
     // 5 validators; 80% = 4. Supply only 3 signatures → should fail.
     let err = bc.activate_treasury_freeze(
-        vec!["did:zhtp:val1".to_string(), "did:zhtp:val2".to_string(), "did:zhtp:val3".to_string()],
+        vec![
+            "did:zhtp:val1".to_string(),
+            "did:zhtp:val2".to_string(),
+            "did:zhtp:val3".to_string(),
+        ],
         "test".to_string(),
     );
     assert!(err.is_err(), "3/5 < 80%");
@@ -104,9 +108,16 @@ fn test_freeze_rejects_duplicate_validator_entries() {
         ],
         "test".to_string(),
     );
-    assert!(err.is_err(), "duplicate entries should not count toward threshold");
+    assert!(
+        err.is_err(),
+        "duplicate entries should not count toward threshold"
+    );
     let msg = err.unwrap_err().to_string();
-    assert!(msg.contains("1 valid"), "should report only 1 valid signature: {}", msg);
+    assert!(
+        msg.contains("1 valid"),
+        "should report only 1 valid signature: {}",
+        msg
+    );
 }
 
 // ── freeze blocks spending ────────────────────────────────────────────────────
@@ -119,7 +130,8 @@ fn test_freeze_blocks_treasury_spending() {
     bc.activate_treasury_freeze(
         vec!["did:zhtp:val1".to_string()],
         "block all spending".to_string(),
-    ).expect("single validator should suffice for 100% >= 80%");
+    )
+    .expect("single validator should suffice for 100% >= 80%");
     assert!(bc.treasury_frozen);
 
     let fake_id = Hash::new([1u8; 32]);
@@ -129,9 +141,15 @@ fn test_freeze_blocks_treasury_spending() {
         "recipient".to_string(),
         1000,
     );
-    assert!(result.is_err(), "execute_dao_proposal should fail when treasury is frozen");
+    assert!(
+        result.is_err(),
+        "execute_dao_proposal should fail when treasury is frozen"
+    );
     let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("frozen"), "error message should mention freeze");
+    assert!(
+        msg.contains("frozen"),
+        "error message should mention freeze"
+    );
 }
 
 // ── auto-unfreeze ─────────────────────────────────────────────────────────────
@@ -140,17 +158,17 @@ fn test_freeze_blocks_treasury_spending() {
 fn test_freeze_auto_expires_at_height() -> Result<()> {
     let mut bc = Blockchain::new()?;
     add_validator(&mut bc, "did:zhtp:val1");
-    bc.activate_treasury_freeze(
-        vec!["did:zhtp:val1".to_string()],
-        "test expire".to_string(),
-    )?;
+    bc.activate_treasury_freeze(vec!["did:zhtp:val1".to_string()], "test expire".to_string())?;
     assert!(bc.treasury_frozen);
 
     let expiry = bc.treasury_freeze_expiry.unwrap();
     bc.height = expiry;
     bc.process_approved_governance_proposals()?;
     assert!(!bc.treasury_frozen, "freeze should have auto-expired");
-    assert!(bc.treasury_freeze_signatures.is_empty(), "signatures should be cleared");
+    assert!(
+        bc.treasury_freeze_signatures.is_empty(),
+        "signatures should be cleared"
+    );
 
     Ok(())
 }
@@ -175,7 +193,10 @@ fn test_freeze_fields_survive_dat_round_trip() -> Result<()> {
     assert!(loaded.treasury_frozen);
     assert!(loaded.treasury_frozen_at.is_some());
     assert!(loaded.treasury_freeze_expiry.is_some());
-    assert_eq!(loaded.treasury_freeze_signatures, vec!["did:zhtp:val1"]);
+    assert_eq!(
+        loaded.treasury_freeze_signatures,
+        vec![("did:zhtp:val1".to_string(), vec![0u8; 0])]
+    );
 
     Ok(())
 }
