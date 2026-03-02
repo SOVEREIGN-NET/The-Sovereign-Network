@@ -20,7 +20,7 @@
 
 use super::governance_types::{
     ExecutionResult, GovernanceError, ProposalId, ProposalStatus,
-    TreasuryAction, TreasuryParameter, TreasuryProposal, EXECUTION_GRACE_EPOCHS,
+    TreasuryAction, TreasuryParameter, TreasuryProposal,
 };
 use super::role_types::{IdentityId, RoleId};
 use serde::{Deserialize, Serialize};
