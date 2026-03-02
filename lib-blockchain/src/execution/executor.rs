@@ -804,11 +804,11 @@ impl BlockExecutor {
             // Oracle governance types - handled by executor
             | TransactionType::UpdateOracleCommittee
             | TransactionType::UpdateOracleConfig
-            // Oracle attestation - validated in StatefulValidator, processed as no-op here
-            | TransactionType::OracleAttestation => {
-                return Ok(());
+            // Oracle attestation - validated in StatefulValidator; no special-casing here
+            => {
+                // Fall through to the general validation flow below without
+                // treating oracle attestations as automatically valid.
             }
-        }
 
         // Basic structural checks
         match tx.transaction_type {
