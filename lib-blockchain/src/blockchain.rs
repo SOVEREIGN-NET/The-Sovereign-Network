@@ -354,6 +354,10 @@ pub struct Blockchain {
     /// Validators banned from oracle committee (key_id).
     #[serde(default)]
     pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
+    /// Last oracle epoch for which apply_pending_updates() was called.
+    /// Prevents double-application within the same epoch.
+    #[serde(default)]
+    pub last_oracle_epoch_processed: u64,
 
     // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
     /// Most recently computed decentralization snapshot.
@@ -698,6 +702,7 @@ impl BlockchainV1 {
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
+            last_oracle_epoch_processed: 0,
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
@@ -1159,6 +1164,7 @@ impl BlockchainStorageV3 {
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
+            last_oracle_epoch_processed: 0,
             // DAO Phase Transitions
             last_decentralization_snapshot: self.last_decentralization_snapshot,
             phase_transition_config: self.phase_transition_config,
@@ -1205,6 +1211,7 @@ impl BlockchainStorageV4 {
         blockchain.oracle_slash_events = self.oracle_slash_events;
         blockchain.oracle_slashing_config = self.oracle_slashing_config;
         blockchain.oracle_banned_validators = self.oracle_banned_validators;
+        blockchain.last_oracle_epoch_processed = 0;
         blockchain
     }
 }
@@ -1313,6 +1320,7 @@ impl Blockchain {
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
+            last_oracle_epoch_processed: 0,
 
             // DAO Phase Transitions
             last_decentralization_snapshot: None,
@@ -2157,6 +2165,15 @@ impl Blockchain {
         // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
+        }
+
+        // Process oracle epoch advancement
+        // Apply pending committee/config updates when epoch boundary is crossed
+        let block_epoch = self.oracle_state.epoch_id(block.header.timestamp);
+        if block_epoch > self.last_oracle_epoch_processed {
+            self.oracle_state.apply_pending_updates(block_epoch);
+            self.last_oracle_epoch_processed = block_epoch;
+            info!("🔮 Oracle advanced to epoch {} (block height {})", block_epoch, self.height);
         }
 
         // Process economic features
@@ -9473,6 +9490,17 @@ impl Blockchain {
 
         if let Err(e) = blockchain.process_approved_governance_proposals() {
             warn!("Failed to apply governance parameter updates during load_from_file: {}", e);
+        }
+
+        // Catch up oracle epoch advancement for any epochs missed while offline
+        // Use current block timestamp to determine current epoch
+        let current_epoch = blockchain.oracle_state.epoch_id(
+            blockchain.latest_block().map(|b| b.header.timestamp).unwrap_or(0)
+        );
+        if current_epoch > blockchain.last_oracle_epoch_processed {
+            blockchain.oracle_state.apply_pending_updates(current_epoch);
+            blockchain.last_oracle_epoch_processed = current_epoch;
+            info!("🔮 Oracle caught up to epoch {} during load", current_epoch);
         }
 
         // Phase 2 mempool cleanup: evict any TokenTransfer / TokenMint transactions
