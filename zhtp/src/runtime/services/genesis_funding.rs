@@ -196,6 +196,7 @@ impl GenesisFundingService {
         
         let genesis_tx = Transaction {
             version: 1,
+            oracle_attestation_data: None,
             chain_id: environment.chain_id(),
             transaction_type: lib_blockchain::types::TransactionType::Transfer,
             inputs: vec![],

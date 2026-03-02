@@ -108,6 +108,7 @@ impl TransactionBuilder {
         Ok(Transaction {
             version: 1,
             chain_id: environment.chain_id(),
+            oracle_attestation_data: None,
             transaction_type: blockchain_tx_type,
             inputs, // Empty inputs = system transaction (creates new money like mining)
             outputs,
@@ -159,6 +160,7 @@ impl TransactionBuilder {
         
         let temp_transaction = Transaction {
             version: 1,
+            oracle_attestation_data: None,
             chain_id: environment.chain_id(),
             transaction_type: tx_type,
             inputs: inputs.to_vec(),
