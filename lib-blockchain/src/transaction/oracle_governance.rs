@@ -4,6 +4,24 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Data for OracleAttestation transaction (ORACLE-9).
+/// 
+/// Validator submits a signed price attestation for the current epoch.
+/// The signature is verified during block execution.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OracleAttestationData {
+    /// Epoch being attested to (must match current block epoch).
+    pub epoch_id: u64,
+    /// SOV/USD price in fixed-point (8 decimal places, 1e8 = $1.00).
+    pub sov_usd_price: u128,
+    /// Unix timestamp when attestation was created.
+    pub timestamp: u64,
+    /// Validator's key_id (blake3 of consensus public key).
+    pub validator_pubkey: [u8; 32],
+    /// Dilithium signature over the attestation payload.
+    pub signature: Vec<u8>,
+}
+
 /// Data for UpdateOracleCommittee transaction.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OracleCommitteeUpdateData {
