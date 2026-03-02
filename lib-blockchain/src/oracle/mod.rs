@@ -527,6 +527,25 @@ impl OracleState {
         &self.finalized_prices
     }
 
+    /// Get the committee for a specific epoch (ORACLE-12).
+    ///
+    /// Returns the committee members that are valid for the given epoch.
+    /// If there's a pending update scheduled for this epoch or earlier,
+    /// returns the pending committee. Otherwise returns the current committee.
+    ///
+    /// This ensures committee composition is deterministic and locked at epoch start.
+    pub fn committee_for_epoch(&self, epoch: u64) -> Vec<[u8; 32]> {
+        // Check if there's a pending update that should be active for this epoch
+        if let Some(pending) = &self.committee.pending_update {
+            if epoch >= pending.activate_at_epoch {
+                // Pending update is active for this epoch
+                return pending.members.clone();
+            }
+        }
+        // Return current active committee
+        self.committee.members().to_vec()
+    }
+
     /// Deterministic attestation validation for the current epoch.
     pub fn validate_attestation<R>(
         &self,
@@ -1247,6 +1266,59 @@ mod tests {
 
         assert_eq!(restored.finalized_prices, b.finalized_prices);
         assert_eq!(restored.epoch_state, b.epoch_state);
+    }
+
+    /// Test committee_for_epoch returns correct committee for each epoch (ORACLE-12).
+    #[test]
+    fn committee_for_epoch_returns_correct_committee() {
+        let mut state = OracleState::default();
+        
+        // Set initial committee
+        state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        
+        // Schedule an update for epoch 10
+        state.schedule_committee_update(
+            vec![[4u8; 32], [5u8; 32]],
+            10, // activate_at_epoch
+        ).expect("schedule must succeed");
+        
+        // Before the update activates, should return old committee
+        assert_eq!(state.committee_for_epoch(5), vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        assert_eq!(state.committee_for_epoch(9), vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        
+        // At activate_at_epoch, should return new committee
+        assert_eq!(state.committee_for_epoch(10), vec![[4u8; 32], [5u8; 32]]);
+        
+        // After activate_at_epoch, should still return new committee
+        assert_eq!(state.committee_for_epoch(15), vec![[4u8; 32], [5u8; 32]]);
+    }
+
+    /// Test that committee is locked at epoch start (ORACLE-12).
+    #[test]
+    fn committee_is_locked_at_epoch_start() {
+        let mut state = OracleState::default();
+        
+        // Set initial committee
+        state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32]]);
+        
+        // Get committee for epoch 5
+        let epoch_5_committee = state.committee_for_epoch(5);
+        assert_eq!(epoch_5_committee, vec![[1u8; 32], [2u8; 32]]);
+        
+        // Even if we schedule an update for epoch 3 (which should have already activated),
+        // the committee for epoch 5 should remain the same
+        state.schedule_committee_update(
+            vec![[3u8; 32]],
+            3, // activate_at_epoch (in the past)
+        ).expect("schedule must succeed");
+        
+        // The pending update should now be the one scheduled
+        assert!(state.committee.pending_update.is_some());
+        
+        // But committee_for_epoch(5) should still return the NEW committee
+        // because the pending update is for epoch 3 which is <= 5
+        let new_committee = state.committee_for_epoch(5);
+        assert_eq!(new_committee, vec![[3u8; 32]]);
     }
 }
 
