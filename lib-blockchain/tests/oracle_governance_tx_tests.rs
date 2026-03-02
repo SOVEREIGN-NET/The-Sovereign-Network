@@ -2,6 +2,8 @@
 //!
 //! Tests for UpdateOracleCommittee and UpdateOracleConfig governance transactions.
 
+#![cfg(feature = "testing")]
+
 use lib_blockchain::{
     oracle::{OracleCommitteeState, OracleConfig, OracleState},
     transaction::{OracleCommitteeUpdateData, OracleConfigUpdateData},
@@ -106,7 +108,7 @@ fn config_update_validation_with_epoch() {
 
 /// Test that committee can be scheduled via governance path.
 #[test]
-fn schedule_committee_update_via_governance() {
+fn schedule_committee_update_for_test_via_governance() {
     let mut state = OracleState::default();
     let current_epoch = 10;
     
@@ -115,7 +117,7 @@ fn schedule_committee_update_via_governance() {
     assert_eq!(state.committee.members().len(), 2);
     
     // Schedule update (activates at current_epoch + 1)
-    let result = state.schedule_committee_update(
+    let result = state.schedule_committee_update_for_test(
         vec![[3u8; 32], [4u8; 32], [5u8; 32]],
         current_epoch + 1,
     );
@@ -136,7 +138,7 @@ fn schedule_committee_update_via_governance() {
 
 /// Test that config can be scheduled via governance path.
 #[test]
-fn schedule_config_update_via_governance() {
+fn schedule_config_update_for_test_via_governance() {
     let mut state = OracleState::default();
     let current_epoch = 10;
     
@@ -149,7 +151,7 @@ fn schedule_config_update_via_governance() {
     new_config.max_source_age_secs = 120;
     new_config.max_deviation_bps = 1000;
     
-    let result = state.schedule_config_update(
+    let result = state.schedule_config_update_for_test(
         new_config,
         current_epoch + 1,
     );
@@ -173,7 +175,7 @@ fn scheduled_update_replaces_previous() {
     let mut state = OracleState::default();
     
     // Schedule first update
-    state.schedule_committee_update(
+    state.schedule_committee_update_for_test(
         vec![[1u8; 32]],
         11,
     ).unwrap();
@@ -181,7 +183,7 @@ fn scheduled_update_replaces_previous() {
     assert_eq!(state.committee.pending_update().unwrap().members.len(), 1);
     
     // Schedule second update (should replace first)
-    state.schedule_committee_update(
+    state.schedule_committee_update_for_test(
         vec![[2u8; 32], [3u8; 32]],
         11,
     ).unwrap();
