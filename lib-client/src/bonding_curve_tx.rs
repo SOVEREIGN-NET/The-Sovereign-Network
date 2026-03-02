@@ -356,6 +356,8 @@ pub fn build_swap_tx(
         bonding_curve_buy_data: None,
         bonding_curve_sell_data: None,
         bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
     };
 
     let tx_hash = tx.signing_hash();
@@ -449,6 +451,8 @@ pub fn build_add_liquidity_tx(
         bonding_curve_buy_data: None,
         bonding_curve_sell_data: None,
         bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
     };
 
     let tx_hash = tx.signing_hash();
@@ -534,6 +538,8 @@ pub fn build_remove_liquidity_tx(
         bonding_curve_buy_data: None,
         bonding_curve_sell_data: None,
         bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
     };
 
     let tx_hash = tx.signing_hash();
