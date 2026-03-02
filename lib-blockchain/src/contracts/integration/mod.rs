@@ -277,6 +277,7 @@ impl ContractTransactionBuilder {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         };
 
         let tx_hash = temp_tx.signing_hash();
@@ -308,7 +309,8 @@ impl ContractTransactionBuilder {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
-};
+            oracle_attestation_data: None,
+        };
 
         Ok(tx)
     }
