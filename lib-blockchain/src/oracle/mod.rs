@@ -354,11 +354,11 @@ impl OracleState {
     }
 
     /// Queue a committee update for activation at the specified epoch.
-    /// 
+    ///
     /// **Authorization**: This method is `pub(crate)` to ensure it can only be called
-    /// from within `lib-blockchain`. The only production call site should be
-    /// `process_approved_governance_proposals()` when executing an approved DAO proposal.
-    /// Never call this directly from API handlers or external code.
+    /// from within `lib-blockchain`. It is intended to be invoked by governance
+    /// execution logic when applying approved DAO proposals that modify the oracle
+    /// committee. Never call this directly from API handlers or external code.
     pub(crate) fn schedule_committee_update(
         &mut self,
         members: Vec<[u8; 32]>,
