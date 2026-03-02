@@ -453,7 +453,8 @@ impl EconomicTransactionProcessor {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
-})
+            oracle_attestation_data: None,
+        })
     }
 
     /// Create cryptographic signature for blockchain transaction
@@ -498,6 +499,7 @@ impl EconomicTransactionProcessor {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         };
 
         // Create signing hash

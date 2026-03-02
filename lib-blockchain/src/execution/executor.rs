@@ -803,7 +803,9 @@ impl BlockExecutor {
             | TransactionType::BondingCurveGraduate
             // Oracle governance types - handled by executor
             | TransactionType::UpdateOracleCommittee
-            | TransactionType::UpdateOracleConfig => {
+            | TransactionType::UpdateOracleConfig
+            // Oracle attestation - validated in StatefulValidator, processed as no-op here
+            | TransactionType::OracleAttestation => {
                 return Ok(());
             }
         }
@@ -2343,6 +2345,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         }
     }
 
@@ -2377,6 +2380,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         }
     }
 
@@ -2567,6 +2571,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
 }
     }
 
@@ -2729,6 +2734,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
 }
     }
 

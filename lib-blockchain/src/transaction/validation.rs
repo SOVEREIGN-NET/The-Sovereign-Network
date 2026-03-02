@@ -281,6 +281,9 @@ impl TransactionValidator {
             | TransactionType::UpdateOracleConfig => {
                 // Oracle governance transactions - semantic validation in stateful validator
             }
+            TransactionType::OracleAttestation => {
+                // Oracle attestation - full validation in stateful validator
+            }
         }
 
         // Signature validation:
@@ -465,6 +468,9 @@ impl TransactionValidator {
             TransactionType::UpdateOracleCommittee
             | TransactionType::UpdateOracleConfig => {
                 // Oracle governance transactions - semantic validation in stateful validator
+            }
+            TransactionType::OracleAttestation => {
+                // Oracle attestation - full validation in StatefulValidator
             }
         }
 
@@ -1561,6 +1567,10 @@ impl<'a> StatefulTransactionValidator<'a> {
             | TransactionType::UpdateOracleConfig => {
                 // Oracle governance transactions - validation handled at execution layer
             }
+            TransactionType::OracleAttestation => {
+                // ORACLE-9: Validate oracle attestation at block execution time
+                self.validate_oracle_attestation_transaction(transaction)?;
+            }
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -1886,6 +1896,73 @@ impl<'a> StatefulTransactionValidator<'a> {
             .check_mint_authorization(&transaction.signature.public_key)
             .map_err(|_| ValidationError::InvalidTransaction)
     }
+
+    /// Validate OracleAttestation transaction at block execution time (ORACLE-9).
+    /// 
+    /// This performs the critical security checks:
+    /// 1. Attestation data exists
+    /// 2. Signer is in current oracle committee
+    /// 3. Epoch matches current block epoch
+    /// 4. Signature is valid
+    /// 5. No replay (validator hasn't attested for this epoch yet)
+    fn validate_oracle_attestation_transaction(
+        &self,
+        transaction: &Transaction,
+    ) -> ValidationResult {
+        // Get attestation data
+        let data = transaction
+            .oracle_attestation_data
+            .as_ref()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        // Get blockchain state
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+        let oracle_state = &blockchain.oracle_state;
+
+        // 1. Check signer is in current committee
+        if !oracle_state.committee.members().contains(&data.validator_pubkey) {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // 2. Check epoch matches current block epoch
+        // Note: We use the blockchain's last committed timestamp to determine epoch
+        let current_epoch = oracle_state.epoch_id(blockchain.last_committed_timestamp());
+        if data.epoch_id != current_epoch {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // 3. Check no replay (validator hasn't attested for this epoch yet)
+        // This is checked via oracle_state.epoch_state which tracks signers per epoch
+        if let Some(epoch_state) = oracle_state.epoch_state.get(&data.epoch_id) {
+            if epoch_state.signer_prices.contains_key(&data.validator_pubkey) {
+                return Err(ValidationError::DoubleSpend);
+            }
+        }
+
+        // 4. Verify signature
+        // Build the attestation from the transaction data
+        let attestation = crate::oracle::OraclePriceAttestation {
+            epoch_id: data.epoch_id,
+            sov_usd_price: data.sov_usd_price,
+            timestamp: data.timestamp,
+            validator_pubkey: data.validator_pubkey,
+            signature: data.signature.clone(),
+        };
+
+        // Resolve the validator's signing public key
+        let validator_key = blockchain
+            .validator_registry
+            .values()
+            .find(|v| lib_crypto::hash_blake3(&v.consensus_key) == data.validator_pubkey)
+            .ok_or(ValidationError::InvalidTransaction)?;
+
+        // Verify the signature
+        attestation
+            .verify_signature(&validator_key.consensus_key)
+            .map_err(|_| ValidationError::InvalidSignature)?;
+
+        Ok(())
+    }
 }
 
 /// Calculate minimum fee based on transaction size
@@ -1993,6 +2070,10 @@ pub mod utils {
                 // Oracle governance transactions
                 true
             }
+            TransactionType::OracleAttestation => {
+                // Oracle attestation transactions
+                true
+            }
         }
     }
 
@@ -2091,6 +2172,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         }
     }
 
@@ -2129,6 +2211,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         }
     }
 
@@ -2174,6 +2257,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         }
     }
 
@@ -2244,6 +2328,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         };
 
         assert!(!is_token_contract_execution(&mint_tx));
@@ -2346,6 +2431,7 @@ mod tests {
                 bonding_curve_graduate_data: None,
                 oracle_committee_update_data: None,
                 oracle_config_update_data: None,
+            oracle_attestation_data: None,
             };
 
             assert!(
@@ -2388,6 +2474,7 @@ mod tests {
                 bonding_curve_graduate_data: None,
                 oracle_committee_update_data: None,
                 oracle_config_update_data: None,
+            oracle_attestation_data: None,
             };
 
             assert!(
@@ -2430,6 +2517,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         };
 
         assert!(
@@ -2473,6 +2561,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         };
 
         let validator = TransactionValidator::new();
@@ -2681,6 +2770,7 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         }
     }
 

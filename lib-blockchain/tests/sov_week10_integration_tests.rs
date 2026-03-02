@@ -86,6 +86,7 @@ mod sov_week10_integration_tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         }
     }
 

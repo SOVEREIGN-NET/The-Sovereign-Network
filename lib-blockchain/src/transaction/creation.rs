@@ -207,6 +207,7 @@ impl TransactionBuilder {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         };
 
         // Sign the transaction
@@ -690,6 +691,9 @@ pub mod utils {
             }
             TransactionType::UpdateOracleConfig => {
                 // Oracle config update - validation handled at consensus layer
+            }
+            TransactionType::OracleAttestation => {
+                // Oracle price attestation - validation handled at block execution layer
             }
         }
 
