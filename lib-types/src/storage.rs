@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct StorageStats {
+pub struct ProtocolStorageStats {
     pub total_content: u64,
     pub total_size_bytes: u64,
     pub active_contracts: u64,
@@ -21,7 +21,7 @@ pub struct StorageStats {
     pub storage_duration_hours: u64,
 }
 
-impl Default for StorageStats {
+impl Default for ProtocolStorageStats {
     fn default() -> Self {
         Self {
             total_content: 0,
@@ -44,3 +44,8 @@ impl Default for StorageStats {
         }
     }
 }
+
+/// Deprecated alias for backward compatibility
+/// Use `ProtocolStorageStats` instead
+#[deprecated(since = "0.1.0", note = "Use ProtocolStorageStats instead")]
+pub type StorageStats = ProtocolStorageStats;
