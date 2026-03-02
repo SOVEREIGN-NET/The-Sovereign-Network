@@ -660,6 +660,7 @@ impl OracleState {
     /// returns the pending committee. Otherwise returns the current committee.
     ///
     /// This ensures committee composition is deterministic and locked at epoch start.
+    /// This ensures committee composition is deterministic and locked at epoch start.
     pub fn committee_for_epoch(&self, epoch: u64) -> Vec<[u8; 32]> {
         // Check if there's a pending update that should be active for this epoch
         if let Some(pending) = &self.committee.pending_update {
