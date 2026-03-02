@@ -2173,6 +2173,14 @@ impl Blockchain {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
         }
 
+        // ORACLE-7: Apply pending oracle updates at epoch boundaries
+        let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
+        if current_epoch > self.last_oracle_epoch_processed {
+            self.oracle_state.apply_pending_updates(current_epoch);
+            self.last_oracle_epoch_processed = current_epoch;
+            debug!("Oracle epoch processed: {} at block {}", current_epoch, self.height);
+        }
+
         // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
             warn!("Error processing UBI claims at height {}: {}", self.height, e);
@@ -8113,11 +8121,12 @@ impl Blockchain {
         imported_block_height: u64,
     ) -> Result<()> {
         // 1. Verify committee members are all in validator_registry (no ghost members)
+        // Precompute HashSet of validator key_ids for O(1) lookup (O(n) total instead of O(n*m))
+        let validator_key_ids: HashSet<[u8; 32]> = self.validator_registry.values()
+            .map(|v| lib_crypto::hash_blake3(&v.consensus_key))
+            .collect();
         for member_key_id in oracle_state.committee.members() {
-            let exists = self.validator_registry.values().any(|v| {
-                lib_crypto::hash_blake3(&v.consensus_key) == *member_key_id
-            });
-            if !exists {
+            if !validator_key_ids.contains(member_key_id) {
                 return Err(anyhow::anyhow!(
                     "Ghost committee member: validator with key_id {} not found in registry",
                     hex::encode(member_key_id)
@@ -8139,18 +8148,19 @@ impl Blockchain {
             prev_epoch = Some(*epoch_id);
         }
 
-        // 3. Verify no price is from a future epoch (relative to imported tip timestamp)
-        // Derive max reasonable epoch from the imported tip timestamp using the oracle config,
-        // and allow a small buffer of future epochs.
+        // 3. Verify no price is from a future epoch (relative to imported block height)
+        // Estimate max reasonable epoch from the imported block height.
+        // Assuming ~10 second blocks, timestamp ≈ height * 10 for a rough estimate.
+        let estimated_tip_timestamp = imported_block_height.saturating_mul(10);
         let max_reasonable_epoch = oracle_state
-            .epoch_id(tip_timestamp)
+            .epoch_id(estimated_tip_timestamp)
             .saturating_add(10); // Allow some buffer
 
         for (epoch_id, _price) in oracle_state.all_finalized_prices() {
             if *epoch_id > max_reasonable_epoch {
                 return Err(anyhow::anyhow!(
-                    "Future epoch price detected: epoch {} at tip timestamp {} (max reasonable epoch: {})",
-                    epoch_id, tip_timestamp, max_reasonable_epoch
+                    "Future epoch price detected: epoch {} at imported height {} (max reasonable epoch: {})",
+                    epoch_id, imported_block_height, max_reasonable_epoch
                 ));
             }
         }
