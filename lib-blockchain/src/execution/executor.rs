@@ -800,7 +800,10 @@ impl BlockExecutor {
             | TransactionType::BondingCurveDeploy
             | TransactionType::BondingCurveBuy
             | TransactionType::BondingCurveSell
-            | TransactionType::BondingCurveGraduate => {
+            | TransactionType::BondingCurveGraduate
+            // Oracle governance types - handled by executor
+            | TransactionType::UpdateOracleCommittee
+            | TransactionType::UpdateOracleConfig => {
                 return Ok(());
             }
         }
@@ -1914,7 +1917,9 @@ impl BlockExecutor {
             | TransactionType::DifficultyUpdate
             | TransactionType::UBIClaim
             | TransactionType::ProfitDeclaration
-            | TransactionType::GovernanceConfigUpdate => Ok(TxOutcome::LegacySystem),
+            | TransactionType::GovernanceConfigUpdate
+            | TransactionType::UpdateOracleCommittee
+            | TransactionType::UpdateOracleConfig => Ok(TxOutcome::LegacySystem),
 
             // Bonding curve types
             TransactionType::BondingCurveDeploy => {
@@ -2336,6 +2341,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -2368,6 +2375,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -2556,6 +2565,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -2716,6 +2727,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 

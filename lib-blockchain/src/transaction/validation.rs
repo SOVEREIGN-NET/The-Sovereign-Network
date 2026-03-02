@@ -277,6 +277,10 @@ impl TransactionValidator {
                 // AMM/Token operations - not yet fully implemented
                 // TODO: Add validation for these transaction types
             }
+            TransactionType::UpdateOracleCommittee
+            | TransactionType::UpdateOracleConfig => {
+                // Oracle governance transactions - semantic validation in stateful validator
+            }
         }
 
         // Signature validation:
@@ -457,6 +461,10 @@ impl TransactionValidator {
             | TransactionType::AddLiquidity
             | TransactionType::RemoveLiquidity => {
                 // AMM/Token operations - not yet fully implemented
+            }
+            TransactionType::UpdateOracleCommittee
+            | TransactionType::UpdateOracleConfig => {
+                // Oracle governance transactions - semantic validation in stateful validator
             }
         }
 
@@ -1549,6 +1557,10 @@ impl<'a> StatefulTransactionValidator<'a> {
             | TransactionType::RemoveLiquidity => {
                 // AMM/Token operations - not yet fully implemented
             }
+            TransactionType::UpdateOracleCommittee
+            | TransactionType::UpdateOracleConfig => {
+                // Oracle governance transactions - validation handled at execution layer
+            }
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -1976,6 +1988,11 @@ pub mod utils {
                 // AMM/Token operations - not yet fully implemented
                 true
             }
+            TransactionType::UpdateOracleCommittee
+            | TransactionType::UpdateOracleConfig => {
+                // Oracle governance transactions
+                true
+            }
         }
     }
 
@@ -2072,6 +2089,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -2108,6 +2127,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -2151,6 +2172,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -2219,6 +2242,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         };
 
         assert!(!is_token_contract_execution(&mint_tx));
@@ -2319,6 +2344,8 @@ mod tests {
                 bonding_curve_buy_data: None,
                 bonding_curve_sell_data: None,
                 bonding_curve_graduate_data: None,
+                oracle_committee_update_data: None,
+                oracle_config_update_data: None,
             };
 
             assert!(
@@ -2359,6 +2386,8 @@ mod tests {
                 bonding_curve_buy_data: None,
                 bonding_curve_sell_data: None,
                 bonding_curve_graduate_data: None,
+                oracle_committee_update_data: None,
+                oracle_config_update_data: None,
             };
 
             assert!(
@@ -2399,6 +2428,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         };
 
         assert!(
@@ -2440,6 +2471,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         };
 
         let validator = TransactionValidator::new();
@@ -2646,6 +2679,8 @@ mod tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 

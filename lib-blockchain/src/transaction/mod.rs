@@ -12,6 +12,7 @@ pub mod fee;
 pub mod contract_deployment;
 pub mod contract_execution;
 pub mod token_creation;
+pub mod oracle_governance;
 
 // Explicit re-exports from core module
 pub use core::{
@@ -36,6 +37,12 @@ pub use core::{
     BondingCurveBuyData,
     BondingCurveSellData,
     BondingCurveGraduateData,
+};
+
+// Re-exports from oracle_governance module
+pub use oracle_governance::{
+    OracleCommitteeUpdateData,
+    OracleConfigUpdateData,
 };
 
 // Explicit re-exports from creation module
