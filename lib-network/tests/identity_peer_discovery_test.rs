@@ -368,11 +368,11 @@ async fn test_node_id_storage_hash_conversion() -> Result<()> {
     let identity = create_test_identity("laptop", None)?;
     
     // Convert to storage hash
-    let storage_hash = identity.node_id.to_storage_hash();
+    let storage_hash = identity.node_id.to_bytes_array();
     assert_eq!(storage_hash.len(), 32, "Storage hash should be 32 bytes");
     
     // Convert back from storage hash
-    let restored = NodeId::from_storage_hash(&storage_hash);
+    let restored = NodeId::from_bytes_array(storage_hash);
     assert_eq!(
         identity.node_id,
         restored,
