@@ -298,6 +298,8 @@ pub fn build_contract_transaction(
         bonding_curve_buy_data: None,
         bonding_curve_sell_data: None,
         bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
     };
 
     eprintln!("[contract_tx] Chain ID: {}", chain_id);

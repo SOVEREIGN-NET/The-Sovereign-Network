@@ -548,6 +548,8 @@ impl TransactionV1 {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 }
@@ -1775,6 +1777,8 @@ impl Blockchain {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 };
 
         // Add genesis transaction to genesis block
@@ -10410,6 +10414,8 @@ mod replay_contract_execution_tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
 }
     }
 
@@ -10579,6 +10585,8 @@ mod replay_contract_execution_tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 
@@ -10624,6 +10632,8 @@ mod replay_contract_execution_tests {
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
             bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
         }
     }
 

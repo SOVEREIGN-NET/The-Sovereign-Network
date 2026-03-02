@@ -108,6 +108,10 @@ pub enum TransactionType {
     BondingCurveSell = 32,
     /// Graduate bonding curve token to AMM
     BondingCurveGraduate = 33,
+    /// Update oracle committee membership (via DAO governance)
+    UpdateOracleCommittee = 34,
+    /// Update oracle configuration parameters (via DAO governance)
+    UpdateOracleConfig = 35,
 }
 
 impl TransactionType {
@@ -170,6 +174,16 @@ impl TransactionType {
                 | TransactionType::DaoVote
                 | TransactionType::DaoExecution
                 | TransactionType::DifficultyUpdate
+                | TransactionType::UpdateOracleCommittee
+                | TransactionType::UpdateOracleConfig
+        )
+    }
+
+    /// Check if this transaction type relates to oracle governance
+    pub fn is_oracle_governance_transaction(&self) -> bool {
+        matches!(
+            self,
+            TransactionType::UpdateOracleCommittee | TransactionType::UpdateOracleConfig
         )
     }
 
@@ -212,6 +226,8 @@ impl TransactionType {
             TransactionType::BondingCurveBuy => "Buy tokens from bonding curve",
             TransactionType::BondingCurveSell => "Sell tokens back to bonding curve",
             TransactionType::BondingCurveGraduate => "Graduate bonding curve token to AMM",
+            TransactionType::UpdateOracleCommittee => "Update oracle committee membership (via DAO governance)",
+            TransactionType::UpdateOracleConfig => "Update oracle configuration parameters (via DAO governance)",
         }
     }
 
@@ -252,6 +268,8 @@ impl TransactionType {
             TransactionType::BondingCurveBuy => "bonding_curve_buy",
             TransactionType::BondingCurveSell => "bonding_curve_sell",
             TransactionType::BondingCurveGraduate => "bonding_curve_graduate",
+            TransactionType::UpdateOracleCommittee => "update_oracle_committee",
+            TransactionType::UpdateOracleConfig => "update_oracle_config",
         }
     }
 
@@ -292,6 +310,8 @@ impl TransactionType {
             "bonding_curve_buy" => Some(TransactionType::BondingCurveBuy),
             "bonding_curve_sell" => Some(TransactionType::BondingCurveSell),
             "bonding_curve_graduate" => Some(TransactionType::BondingCurveGraduate),
+            "update_oracle_committee" => Some(TransactionType::UpdateOracleCommittee),
+            "update_oracle_config" => Some(TransactionType::UpdateOracleConfig),
             _ => None,
         }
     }
