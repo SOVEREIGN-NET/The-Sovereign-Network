@@ -8139,16 +8139,18 @@ impl Blockchain {
             prev_epoch = Some(*epoch_id);
         }
 
-        // 3. Verify no price is from a future epoch (relative to imported block height)
-        // Estimate max reasonable epoch based on block height (assuming 5-minute epochs)
-        let epoch_duration_blocks = 50u64; // Approximate: 5 min epochs / 6 sec block time
-        let max_reasonable_epoch = imported_block_height / epoch_duration_blocks;
-        
+        // 3. Verify no price is from a future epoch (relative to imported tip timestamp)
+        // Derive max reasonable epoch from the imported tip timestamp using the oracle config,
+        // and allow a small buffer of future epochs.
+        let max_reasonable_epoch = oracle_state
+            .epoch_id(tip_timestamp)
+            .saturating_add(10); // Allow some buffer
+
         for (epoch_id, _price) in oracle_state.all_finalized_prices() {
-            if *epoch_id > max_reasonable_epoch + 10 { // Allow some buffer
+            if *epoch_id > max_reasonable_epoch {
                 return Err(anyhow::anyhow!(
-                    "Future epoch price detected: epoch {} at block height {} (max reasonable: {})",
-                    epoch_id, imported_block_height, max_reasonable_epoch
+                    "Future epoch price detected: epoch {} at tip timestamp {} (max reasonable epoch: {})",
+                    epoch_id, tip_timestamp, max_reasonable_epoch
                 ));
             }
         }
