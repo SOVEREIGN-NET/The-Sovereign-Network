@@ -1924,10 +1924,11 @@ impl<'a> StatefulTransactionValidator<'a> {
             return Err(ValidationError::InvalidTransaction);
         }
 
-        // 2. Check epoch matches current block epoch
-        // Note: We use the blockchain's last committed timestamp to determine epoch
-        let current_epoch = oracle_state.epoch_id(blockchain.last_committed_timestamp());
-        if data.epoch_id != current_epoch {
+        // 2. Check epoch matches the epoch implied by the attestation timestamp
+        // Note: We derive the epoch from the attested timestamp to avoid dependence on
+        // the blockchain's last committed timestamp, which may belong to a different epoch.
+        let attested_epoch = oracle_state.epoch_id(data.timestamp);
+        if data.epoch_id != attested_epoch {
             return Err(ValidationError::InvalidTransaction);
         }
 
