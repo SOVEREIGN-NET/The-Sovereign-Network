@@ -220,6 +220,7 @@ impl GenesisFundingService {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
         };
 
         // Add genesis transaction to the genesis block
