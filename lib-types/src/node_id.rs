@@ -99,7 +99,7 @@ pub fn get_network_genesis() -> Result<&'static [u8; 32]> {
 ///
 /// # Examples
 /// ```
-/// use lib_identity::types::NodeId;
+/// use lib_types::NodeId;
 ///
 /// // Valid creation
 /// let node_id = NodeId::from_did_device(
@@ -449,7 +449,7 @@ impl NodeId {
     ///
     /// # Examples
     /// ```
-    /// use lib_identity::types::NodeId;
+    /// use lib_types::NodeId;
     ///
     /// let node1 = NodeId::from_bytes([0b10000000; 32]);
     /// let node2 = NodeId::from_bytes([0b00000000; 32]);

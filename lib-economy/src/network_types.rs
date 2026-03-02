@@ -3,7 +3,7 @@
 //! These types are defined here to avoid circular dependencies with lib-network.
 //! 
 //! **Note**: These types contain economic-specific fields (transactions_per_second,
-//! mempool_size, average_fee_rate) that are not present in lib-types::network::NetworkStatistics.
+//! mempool_size, average_fee_rate) that are not present in lib-network's NetworkStatistics.
 //! The base types (BandwidthStatistics, MeshStatus, DiscoveryStatistics) overlap with
 //! lib-types but include additional legacy fields for compatibility.
 
