@@ -40,4 +40,4 @@ pub use errors::*;
 pub use fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
 pub use node_id::NodeId;
 pub use peer::PeerId;
-pub use storage::StorageStats;
+pub use storage::ProtocolStorageStats;
