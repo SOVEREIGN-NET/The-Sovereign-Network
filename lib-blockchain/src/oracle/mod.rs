@@ -354,7 +354,18 @@ impl OracleState {
     }
 
     /// Queue a committee update for activation at the specified epoch.
-    pub fn schedule_committee_update(
+    ///
+    /// **Authorization Gate**: This method is `pub(crate)` to restrict calls to
+    /// within the `lib-blockchain` crate. The authorization invariant is enforced
+    /// by visibility: external crates cannot call this method.
+    ///
+    /// **Intended Call Site**: This method is called by governance execution logic
+    /// (e.g., `process_approved_governance_proposals()`) when applying approved DAO
+    /// proposals that modify the oracle committee.
+    ///
+    /// **Warning**: Never call this directly from API handlers or external code.
+    /// Committee changes must only occur through approved governance proposals.
+    pub(crate) fn schedule_committee_update(
         &mut self,
         members: Vec<[u8; 32]>,
         activate_at_epoch: u64,
@@ -376,7 +387,18 @@ impl OracleState {
     }
 
     /// Queue an oracle config update for activation at the specified epoch.
-    pub fn schedule_config_update(
+    ///
+    /// **Authorization Gate**: This method is `pub(crate)` to restrict calls to
+    /// within the `lib-blockchain` crate. The authorization invariant is enforced
+    /// by visibility: external crates cannot call this method.
+    ///
+    /// **Intended Call Site**: This method is called by governance execution logic
+    /// (e.g., `process_approved_governance_proposals()`) when applying approved DAO
+    /// proposals that modify oracle configuration.
+    ///
+    /// **Warning**: Never call this directly from API handlers or external code.
+    /// Config changes must only occur through approved governance proposals.
+    pub(crate) fn schedule_config_update(
         &mut self,
         config: OracleConfig,
         activate_at_epoch: u64,
@@ -399,6 +421,42 @@ impl OracleState {
             config,
         });
         Ok(())
+    }
+
+    /// Test-only helper for scheduling committee updates.
+    ///
+    /// This is equivalent to [`schedule_committee_update`] and is provided
+    /// for integration tests in the `tests/` directory.
+    ///
+    /// # ⚠️ Warning
+    /// This method is only available when the `testing` feature is enabled.
+    /// Production code must NOT use this method. Committee updates must only
+    /// happen through approved governance proposals.
+    #[cfg(feature = "testing")]
+    pub fn schedule_committee_update_for_test(
+        &mut self,
+        members: Vec<[u8; 32]>,
+        activate_at_epoch: u64,
+    ) -> Result<(), String> {
+        self.schedule_committee_update(members, activate_at_epoch)
+    }
+
+    /// Test-only helper for scheduling config updates.
+    ///
+    /// This is equivalent to [`schedule_config_update`] and is provided
+    /// for integration tests in the `tests/` directory.
+    ///
+    /// # ⚠️ Warning
+    /// This method is only available when the `testing` feature is enabled.
+    /// Production code must NOT use this method. Config updates must only
+    /// happen through approved governance proposals.
+    #[cfg(feature = "testing")]
+    pub fn schedule_config_update_for_test(
+        &mut self,
+        config: OracleConfig,
+        activate_at_epoch: u64,
+    ) -> Result<(), String> {
+        self.schedule_config_update(config, activate_at_epoch)
     }
 
     /// Apply pending committee/config updates once activation epoch is reached.
