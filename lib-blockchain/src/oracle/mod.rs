@@ -463,6 +463,12 @@ impl OracleState {
         self.finalized_prices.len()
     }
 
+    /// Iterate over all finalized prices in ascending epoch order.
+    /// Used for validation during blockchain import (ORACLE-10).
+    pub fn all_finalized_prices(&self) -> &BTreeMap<u64, FinalizedOraclePrice> {
+        &self.finalized_prices
+    }
+
     /// Deterministic attestation validation for the current epoch.
     pub fn validate_attestation<R>(
         &self,
