@@ -6,6 +6,8 @@
 //! governance. The committee set is immutable within an epoch and is updated
 //! atomically at epoch boundaries using the pending update mechanism.
 
+#![cfg(feature = "testing")]
+
 use lib_blockchain::oracle::{OracleCommitteeState, OracleState, PendingCommitteeUpdate};
 
 /// Test that committee updates go through the governance path and activate at epoch boundaries.
@@ -212,8 +214,8 @@ fn committee_changes_require_governance_path() {
     state.committee = OracleCommitteeState::new(vec![[1u8; 32], [2u8; 32]], None);
     assert_eq!(state.committee.members().len(), 2);
 
-    // Post-genesis: committee changes must go through schedule_committee_update_for_test
-    // (The pub(crate) visibility of set_members_genesis_only enforces this at compile time)
+    // Post-genesis: committee changes must go through schedule_committee_update
+    // (The pub(crate) visibility enforces this at compile time for production code)
     
     // Verify the governance path works
     state

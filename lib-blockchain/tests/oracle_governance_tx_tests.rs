@@ -2,6 +2,8 @@
 //!
 //! Tests for UpdateOracleCommittee and UpdateOracleConfig governance transactions.
 
+#![cfg(feature = "testing")]
+
 use lib_blockchain::{
     oracle::{OracleCommitteeState, OracleConfig, OracleState},
     transaction::{OracleCommitteeUpdateData, OracleConfigUpdateData},
