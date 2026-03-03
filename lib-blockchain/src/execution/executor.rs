@@ -279,6 +279,10 @@ pub struct BlockExecutor {
     store: Arc<dyn BlockchainStore>,
     fee_model: FeeModelV2,
     limits: BlockLimits,
+    /// When true, skip fee validation for all transactions.
+    /// Used during catch-up sync to replay already-committed peer blocks
+    /// whose transactions were valid under older fee rules.
+    skip_fee_validation: bool,
 }
 
 /// Scope guard that ensures rollback_block is called if not disarmed.
@@ -323,6 +327,25 @@ impl BlockExecutor {
             store,
             fee_model,
             limits,
+            skip_fee_validation: false,
+        }
+    }
+
+    /// Create a block executor that skips fee validation.
+    ///
+    /// Use ONLY for replaying already-committed peer blocks during catch-up
+    /// sync.  These blocks were accepted by consensus and must be applied
+    /// regardless of the current fee schedule.
+    pub fn new_trusted_replay(
+        store: Arc<dyn BlockchainStore>,
+        fee_model: FeeModelV2,
+        limits: BlockLimits,
+    ) -> Self {
+        Self {
+            store,
+            fee_model,
+            limits,
+            skip_fee_validation: true,
         }
     }
 
@@ -333,6 +356,7 @@ impl BlockExecutor {
             store,
             fee_model,
             limits,
+            skip_fee_validation: false,
         }
     }
 
@@ -1014,6 +1038,10 @@ impl BlockExecutor {
     /// - Coinbase transactions (fee must be 0)
     /// - TokenTransfer in Phase 2 (fee must be 0, subsidized)
     fn validate_tx_fee(&self, tx: &crate::transaction::Transaction) -> Result<(), TxApplyError> {
+        // Skip fee validation entirely during trusted replay (catch-up sync).
+        if self.skip_fee_validation {
+            return Ok(());
+        }
         // Exempt transactions that don't pay fees
         match tx.transaction_type {
             TransactionType::Coinbase => return Ok(()), // Creates value, no fee
