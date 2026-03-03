@@ -646,7 +646,7 @@ impl OracleHandler {
                 Err(e) => {
                     return Ok(ZhtpResponse::error(
                         ZhtpStatus::BadRequest,
-                        format!("Invalid member hex: {}", e),
+                        e.to_string(),
                     ));
                 }
             }
