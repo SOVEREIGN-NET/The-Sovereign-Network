@@ -328,3 +328,79 @@ cargo check -p zhtp ✅ PASSING
 cargo test -p lib-blockchain --lib oracle ✅ 49/49 tests passing
 ```
 
+
+## ORACLE-16 (#1700): Comprehensive Oracle Integration Test Suite - COMPLETED ✅
+
+**Last Updated:** 2026-03-03 by Kimi
+
+### Summary
+Implemented comprehensive end-to-end integration tests for the Oracle protocol, including a reusable `OracleTestHarness` for multi-validator test scenarios.
+
+### Changes Made
+
+**lib-blockchain/tests/common/oracle_harness.rs** (new):
+- `OracleTestHarness` - Test infrastructure for oracle integration tests
+  - `new(validator_count)` - Creates blockchain with N validators in committee
+  - `mine_blocks(n)` - Advances blockchain with timestamp advancement
+  - `advance_oracle_epoch()` - Mines blocks until next epoch
+  - `produce_attestation(idx, epoch, price)` - Creates signed attestations
+  - `process_attestation(att)` - Processes attestations through oracle state
+  - `finalize_epoch(epoch, price)` - Finalizes prices with threshold attestations
+  - Helper methods: `current_epoch()`, `threshold()`, `validator_key_id()`, etc.
+- `ValidatorKeys` - Keypair management for test validators
+
+**lib-blockchain/tests/oracle_persistence_tests.rs** (new):
+- `test_oracle_state_survives_blockchain_restart` - Save/load round-trip
+- `test_oracle_state_in_blockchain_import` - Export/import (ignored, needs ORACLE-10)
+- `test_oracle_config_persists_across_restart` - Config persistence
+- `test_pending_updates_persist_across_restart` - Pending update persistence
+
+**lib-blockchain/tests/oracle_epoch_advance_integration_tests.rs** (new):
+- `test_pending_committee_activates_at_epoch_boundary`
+- `test_pending_config_activates_at_epoch_boundary`
+- `test_multiple_pending_updates_activate_correctly`
+- `test_epoch_advance_requires_multiple_blocks`
+- `test_finalized_prices_preserved_across_epoch_advance`
+- `test_committee_member_can_attest_after_epoch_advance`
+- `test_stale_price_detection_after_epoch_advance`
+
+**lib-blockchain/tests/oracle_cbe_integration_tests.rs** (new):
+- `test_cbe_graduation_blocked_without_fresh_oracle_price`
+- `test_cbe_graduation_rejected_with_stale_oracle_price`
+- `test_cbe_graduation_accepted_with_fresh_oracle_price`
+- `test_cbe_graduation_accepts_price_at_staleness_boundary`
+- `test_non_cbe_token_skips_oracle_gate`
+- `test_already_graduated_token_skips_oracle_gate`
+
+**lib-blockchain/tests/oracle_slashing_integration_tests.rs** (new):
+- `test_double_sign_is_rejected` - Conflicting attestation rejection
+- `test_slashed_validator_cannot_attest`
+- `test_slashing_preserved_across_restart`
+- `test_committee_threshold_adjusts_after_slashing`
+- `test_multiple_validators_can_finalize_after_slashing`
+- `test_slash_event_contains_correct_metadata`
+
+**lib-blockchain/tests/oracle_e2e_governance_tests.rs** (new):
+- `test_oracle_committee_update_pipeline`
+- `test_oracle_config_update_through_governance_pipeline`
+- `test_governance_proposal_rejected_for_invalid_oracle_config`
+- `test_multiple_governance_updates_queue_correctly`
+- `test_committee_member_removed_by_governance_cannot_attest`
+- `test_threshold_recalculation_after_committee_change`
+
+### Test Results
+```
+cargo test -p lib-blockchain --test oracle_persistence_tests         ✅ 7 passed, 1 ignored
+cargo test -p lib-blockchain --test oracle_epoch_advance_integration_tests ✅ 11 passed
+cargo test -p lib-blockchain --test oracle_cbe_integration_tests     ✅ 10 passed
+cargo test -p lib-blockchain --test oracle_slashing_integration_tests ✅ 10 passed
+cargo test -p lib-blockchain --test oracle_e2e_governance_tests      ✅ 10 passed
+cargo test -p lib-blockchain --test oracle_executor_tests            ✅ 6 passed
+
+Total: 54 integration tests passing (1 ignored pending ORACLE-10)
+```
+
+### Notes
+- One test (`test_oracle_state_in_blockchain_import`) is ignored pending ORACLE-10 completion (BlockchainImport oracle_state field)
+- All tests use the `OracleTestHarness` for consistent test setup
+- Config validation tests verify cross-field consistency (e.g., max_source_age < epoch_duration)
