@@ -13,10 +13,10 @@ use quinn::{Endpoint, Connection, ClientConfig};
 
 use lib_identity::ZhtpIdentity;
 use lib_protocols::wire::{
-    ZhtpRequestWire, ZhtpResponseWire,
+    ZhtpRequestWire,
     read_response, write_request,
 };
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod};
+use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
 
 use crate::handshake::{HandshakeContext, NonceCache};
 use crate::handshake::security::derive_v2_session_keys;
@@ -107,11 +107,6 @@ impl ZhtpClient {
         // Create QUIC endpoint
         let endpoint = Endpoint::client("0.0.0.0:0".parse()?)
             .context("Failed to create QUIC endpoint")?;
-
-        // Configure transport
-        let mut transport = quinn::TransportConfig::default();
-        transport.max_idle_timeout(Some(std::time::Duration::from_secs(60).try_into()?));
-        let transport = Arc::new(transport);
 
         // Create nonce cache.
         // Bootstrap mode uses a temporary path to avoid epoch-mismatch errors with any

@@ -102,6 +102,7 @@ pub struct WindowsBluetoothDevice {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 pub struct LinuxBluetoothDevice {
     address: String,
     device_path: String, // DBus object path
@@ -135,6 +136,7 @@ struct WindowsRfcommSocket {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 struct LinuxRfcommSocket {
     socket_fd: std::os::unix::io::RawFd,
     peer_addr: String,
@@ -379,7 +381,7 @@ impl RfcommStream {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        use std::os::unix::io::AsRawFd;
+        
         use nix::sys::socket::{recv, MsgFlags};
         
         // Try non-blocking read from RFCOMM socket
@@ -709,8 +711,8 @@ impl BluetoothClassicProtocol {
         info!(" Linux: Registering RFCOMM service via BlueZ");
         
         // Use sdptool to register RFCOMM service
-        let service_uuid = "6ba7b810-9dad-11d1-80b4-00c04fd430ca";
-        let service_name = "ZHTP Mesh RFCOMM";
+        let _service_uuid = "6ba7b810-9dad-11d1-80b4-00c04fd430ca";
+        let _service_name = "ZHTP Mesh RFCOMM";
         
         // Register service on channel 3 (MESH_DATA)
         let output = std::process::Command::new("sdptool")
@@ -861,9 +863,9 @@ impl BluetoothClassicProtocol {
     /// Linux: Accept incoming RFCOMM connection
     #[cfg(target_os = "linux")]
     async fn linux_accept_rfcomm(&self) -> Result<RfcommStream> {
-        use nix::sys::socket::{accept, AddressFamily, SockType, SockFlag};
-        use nix::sys::socket::{socket, bind, listen, SockaddrLike};
-        use std::os::unix::io::RawFd;
+        
+        
+        
         
         info!(" Linux: Waiting for RFCOMM connection...");
         

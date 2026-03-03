@@ -16,8 +16,7 @@
 use anyhow::{Result, Context as AnyhowContext, anyhow};
 use lib_identity::ZhtpIdentity;
 use crate::handshake::{
-    HandshakeContext, HandshakeCapabilities, HandshakeSessionInfo,
-    HandshakeResult, VerifiedPeer, PqcCapability,
+    HandshakeContext, HandshakeCapabilities, VerifiedPeer, PqcCapability,
 };
 use quinn::Connection;
 use tokio::time::{timeout, Duration};

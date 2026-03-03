@@ -31,7 +31,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use lib_consensus::validators::validator_discovery::{
-    ValidatorAnnouncement, ValidatorDiscoveryFilter, ValidatorDiscoveryTransport, ValidatorStatus,
+    ValidatorAnnouncement, ValidatorDiscoveryFilter, ValidatorDiscoveryTransport,
 };
 use lib_crypto::Hash;
 

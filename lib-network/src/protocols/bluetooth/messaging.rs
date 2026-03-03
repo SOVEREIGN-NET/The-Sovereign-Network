@@ -3,7 +3,6 @@
 use anyhow::{anyhow, Result};
 use tracing::info;
 
-use crate::constants::{BLE_MESH_DATA_CHAR_UUID, BLE_MESH_SERVICE_UUID};
 
 use super::BluetoothMeshProtocol;
 

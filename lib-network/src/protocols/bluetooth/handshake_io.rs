@@ -3,7 +3,7 @@
 #[cfg(any(target_os = "linux", target_os = "windows", any(test, feature = "ble-mock")))]
 use anyhow::{anyhow, Result};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-use tracing::{info, warn};
+use tracing::info;
 
 use super::BluetoothMeshProtocol;
 

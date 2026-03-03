@@ -596,7 +596,7 @@ impl FragmentReassemblerV2 {
     pub fn cleanup_expired_messages(&mut self, now: Instant) {
         let initial_count = self.pending.len();
 
-        self.pending.retain(|msg_seq, msg| {
+        self.pending.retain(|_msg_seq, msg| {
             if msg.is_expired(now, &self.config) {
                 self.stats.messages_expired += 1;
                 false

@@ -73,7 +73,8 @@ pub async fn discover_lorawan_gateways_with_capabilities(capabilities: &Hardware
 
 /// Discover LoRaWAN nodes (alias for discover_lorawan_gateways for compatibility)
 pub async fn discover_lorawan_nodes() -> Result<Vec<LoRaWANGatewayInfo>> {
-    discover_lorawan_gateways().await
+    let capabilities = HardwareCapabilities::detect().await?;
+    discover_lorawan_gateways_with_capabilities(&capabilities).await
 }
 
 /// Scan specific LoRaWAN frequency for gateways
@@ -95,7 +96,7 @@ async fn scan_lorawan_frequency(frequency_hz: u32) -> Result<LoRaWANGatewayInfo>
         return macos_scan_lorawan_frequency(frequency_hz).await;
     }
     
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
         // Fallback for other platforms
         Err(anyhow!("LoRaWAN scanning not supported on this platform"))
@@ -104,8 +105,8 @@ async fn scan_lorawan_frequency(frequency_hz: u32) -> Result<LoRaWANGatewayInfo>
 
 #[cfg(target_os = "linux")]
 async fn linux_scan_lorawan_frequency(frequency_hz: u32) -> Result<LoRaWANGatewayInfo> {
-    use std::process::Command;
-    use std::path::Path;
+    
+    
     
     // Check for LoRaWAN radio hardware
     if !check_lorawan_hardware().await {
