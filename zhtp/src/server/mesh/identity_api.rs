@@ -1013,7 +1013,8 @@ async fn store_wallet_private_data_in_dht(
         dht.store_content(
             "wallet.zhtp",
             &storage_path,
-            private_data_bytes
+            private_data_bytes,
+            86400 // 24 hours TTL
         ).await.map_err(|e| anyhow::anyhow!("Failed to store wallet private data in DHT: {}", e))?;
 
         info!("✅ Stored wallet private data in DHT");
@@ -1130,13 +1131,14 @@ async fn distribute_standalone_wallet_to_dht(
         let mut dht = dht_client.write().await;
 
         let wallet_info_bytes = serde_json::to_vec(&wallet_info)?;
-        let path = format!("/identity/{}/wallet/{}",
+        let path = format!("/identity/{}/wallet/{}/",
             truncate_id(&identity_id_hex, 16),
             truncate_id(&wallet_id_hex, 16));
         dht.store_content(
             "wallet.zhtp",
             &path,
-            wallet_info_bytes
+            wallet_info_bytes,
+            86400 // 24 hours TTL
         ).await?;
 
         info!("✅ Identity-wallet pair distributed to DHT");
@@ -1318,8 +1320,8 @@ async fn distribute_identity_to_dht(identity_result: &serde_json::Value) -> Resu
         // Store DID document
         let did_doc_bytes = serde_json::to_vec(&did_document)?;
         let did_path = format!("/did/{}", identity_id);
-        dht.store_content("identity.zhtp", &did_path, did_doc_bytes).await?;
-        
+        dht.store_content("identity.zhtp", &did_path, did_doc_bytes, 86400).await?;
+
         // Store wallet registry
         if let Some(citizenship_result) = identity_result.get("citizenship_result") {
             let wallet_registry = serde_json::json!({
@@ -1351,8 +1353,8 @@ async fn distribute_identity_to_dht(identity_result: &serde_json::Value) -> Resu
             
             let wallet_registry_bytes = serde_json::to_vec(&wallet_registry)?;
             let registry_path = format!("/registry/{}", identity_id);
-            dht.store_content("wallet.zhtp", &registry_path, wallet_registry_bytes).await?;
-            
+            dht.store_content("wallet.zhtp", &registry_path, wallet_registry_bytes, 86400).await?;
+
             info!("💳 Distributed wallet registry to DHT");
         }
         
