@@ -11,7 +11,7 @@
 //!
 //! # Fee Multiplier Rationale (FEES-7, FEES-8, FEES-9)
 //!
-//! ## Witness Caps (bytes)
+//! ## Witness Caps (basis points, 10000 = 1.0x)
 //! 
 //! Witness data is capped to prevent DoS attacks where transactions include
 //! excessive witness data. Caps are set based on typical use cases:
@@ -348,7 +348,7 @@ pub fn estimate_contract_call_fee(
 ///
 /// Returns (min_fee, max_fee) where:
 /// - min_fee: Fee with minimal resources
-/// - max_fee: Fee with maximum allowed witness data (`kind.witness_cap()`)
+/// - max_fee: Fee with typical resource usage
 ///
 /// # Arguments
 /// * `kind` - Transaction kind
@@ -378,7 +378,7 @@ pub fn estimate_fee_range(
         sig_count: 1,
         envelope_bytes: 500,
         payload_bytes: 256,
-        witness_bytes: kind.witness_cap(), // Use full cap for accurate upper bound
+        witness_bytes: kind.witness_cap().min(4096), // Cap at 4KB for estimation
         exec_units: match kind {
             TxKind::ContractCall => 1000,
             TxKind::DataUpload => 500,
