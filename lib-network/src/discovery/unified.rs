@@ -666,6 +666,8 @@ pub struct UnifiedDiscoveryService {
         Option<Arc<dyn Fn(DiscoveryResult) + Send + Sync>>,
     /// Whether the service is running
     running: Arc<RwLock<bool>>,
+    /// Signing context for TLS certificate pinning (Issue #739)
+    signing_ctx: Option<super::local_network::DiscoverySigningContext>,
 }
 
 impl UnifiedDiscoveryService {
@@ -686,17 +688,17 @@ impl UnifiedDiscoveryService {
         if mesh_port == 0 {
             panic!("Invalid mesh_port: 0 is not a valid port number");
         }
-        
+
         // Log warning for privileged ports (< 1024)
         if mesh_port < MIN_PORT {
             warn!("Using privileged port {} - may require elevated permissions", mesh_port);
         }
-        
+
         // Validate port is in valid range
         if mesh_port > MAX_PORT {
             warn!("Port {} exceeds maximum valid port {}", mesh_port, MAX_PORT);
         }
-        
+
         Self {
             node_id,
             mesh_port,
@@ -704,7 +706,42 @@ impl UnifiedDiscoveryService {
             discovered_peers: Arc::new(RwLock::new(HashMap::new())),
             peer_discovered_callback: None,
             running: Arc::new(RwLock::new(false)),
+            signing_ctx: None,
         }
+    }
+
+    /// Create a new unified discovery service with TLS pinning enabled (Issue #739)
+    ///
+    /// # Arguments
+    /// * `node_id` - Local node identity
+    /// * `mesh_port` - Local mesh port
+    /// * `public_key` - Local public key
+    /// * `dilithium_sk` - Dilithium secret key for signing announcements
+    /// * `dilithium_pk` - Dilithium public key
+    /// * `tls_spki_sha256` - SHA256 hash of this node's TLS certificate SPKI
+    ///
+    /// # Security
+    /// - `mesh_port` validated to be in valid range (1024-65535)
+    /// - `public_key` must match the node's actual cryptographic identity
+    /// - TLS pinning enabled for secure peer discovery
+    ///
+    /// # Panics
+    /// Panics if `mesh_port` is 0 (invalid)
+    pub fn with_tls_pinning(
+        node_id: Uuid,
+        mesh_port: u16,
+        public_key: PublicKey,
+        dilithium_sk: Vec<u8>,
+        dilithium_pk: Vec<u8>,
+        tls_spki_sha256: [u8; 32],
+    ) -> Self {
+        let mut service = Self::new(node_id, mesh_port, public_key);
+        service.signing_ctx = Some(super::local_network::DiscoverySigningContext {
+            dilithium_sk,
+            dilithium_pk,
+            tls_spki_sha256,
+        });
+        service
     }
 
     /// Set callback for new peer discoveries
@@ -758,6 +795,7 @@ impl UnifiedDiscoveryService {
         let node_id = self.node_id;
         let mesh_port = self.mesh_port;
         let public_key = self.public_key.clone();
+        let signing_ctx = self.signing_ctx.clone();
 
         tokio::spawn(async move {
             let peer_callback = Arc::new(move |addr: String, pk: PublicKey| {
@@ -769,7 +807,7 @@ impl UnifiedDiscoveryService {
                 mesh_port,
                 public_key,
                 Some(peer_callback),
-                None, // TODO: Pass signing context for TLS pinning (Issue #739)
+                signing_ctx, // Issue #739: Pass signing context for TLS pinning
             )
             .await
             {
