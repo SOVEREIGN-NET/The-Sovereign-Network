@@ -259,10 +259,10 @@ impl OracleConfig {
                 message: "must be > 0 (0 would reject all multi-source prices)".to_string(),
             });
         }
-        if self.max_deviation_bps > 2_000 {
+        if self.max_deviation_bps > 10_000 {
             return Err(OracleConfigError::InvalidField {
                 field: "max_deviation_bps".to_string(),
-                message: "must be <= 2000 (20%) — higher values defeat price aggregation".to_string(),
+                message: "must be <= 10000 (100%) — higher values defeat price aggregation".to_string(),
             });
         }
 
@@ -558,27 +558,13 @@ impl OracleState {
         activate_at_epoch: u64,
         current_epoch: u64,
         source_proposal_id: Option<[u8; 32]>,
-    ) -> Result<(), String> {
-        if config.epoch_duration_secs == 0 {
-            return Err("oracle epoch duration must be > 0".to_string());
-        }
-        if config.max_source_age_secs == 0 {
-            return Err("oracle max source age must be > 0".to_string());
-        }
-        if config.max_deviation_bps > 10_000 {
-            return Err("oracle max deviation bps must be <= 10000".to_string());
-        }
-        if config.price_scale() != ORACLE_PRICE_SCALE {
-            return Err("oracle price scale must be canonical 1e8".to_string());
-        }
-        if config.max_price_staleness_epochs == 0 {
-            return Err("oracle max price staleness epochs must be > 0".to_string());
-        }
-        if config.max_source_age_secs >= config.epoch_duration_secs {
-            return Err("oracle max source age must be less than epoch duration".to_string());
-        }
+    ) -> Result<(), OracleConfigError> {
+        config.validate()?;
         if activate_at_epoch <= current_epoch {
-            return Err("activate_at_epoch must be > current_epoch".to_string());
+            return Err(OracleConfigError::InvalidField {
+                field: "activate_at_epoch".to_string(),
+                message: "must be > current_epoch".to_string(),
+            });
         }
 
         // Calculate expiry: if not activated by activate_at_epoch + 2, auto-cancel
@@ -627,7 +613,7 @@ impl OracleState {
         &mut self,
         config: OracleConfig,
         activate_at_epoch: u64,
-    ) -> Result<(), String> {
+    ) -> Result<(), OracleConfigError> {
         // Use 0 as current_epoch and None for source_proposal_id in tests
         self.schedule_config_update(config, activate_at_epoch, 0, None)
     }
@@ -766,7 +752,6 @@ impl OracleState {
     /// If there's a pending update scheduled for this epoch or earlier,
     /// returns the pending committee. Otherwise returns the current committee.
     ///
-    /// This ensures committee composition is deterministic and locked at epoch start.
     /// This ensures committee composition is deterministic and locked at epoch start.
     pub fn committee_for_epoch(&self, epoch: u64) -> Vec<[u8; 32]> {
         // Check if there's a pending update that should be active for this epoch
@@ -1710,7 +1695,13 @@ mod tests {
         let result = state.schedule_config_update(new_config, 10, 0, None);
         
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("must be > 0"));
+        assert_eq!(
+            result.unwrap_err(),
+            OracleConfigError::InvalidField {
+                field: "max_price_staleness_epochs".to_string(),
+                message: "must be >= 1".to_string(),
+            }
+        );
     }
 
     #[test]
