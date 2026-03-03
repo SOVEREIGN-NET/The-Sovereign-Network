@@ -17,7 +17,6 @@
 //! - Integrate with blockchain for peer verification
 
 use anyhow::Result;
-use lib_crypto::Hash;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
