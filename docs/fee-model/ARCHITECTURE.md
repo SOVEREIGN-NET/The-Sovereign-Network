@@ -132,7 +132,7 @@ Transaction
 ┌─────────────────┐     ┌─────────────────┐
 │  Load           │────▶│  Validate       │
 │  FeeParams      │     │  FeeParams      │
-│  from gov       │     │  (min < max)    │
+│  from gov       │     │  (min <= max)   │
 └─────────────────┘     └─────────────────┘
     │                           │
     │                           ▼
