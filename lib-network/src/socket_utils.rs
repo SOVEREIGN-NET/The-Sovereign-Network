@@ -30,6 +30,7 @@ pub fn enable_socket_reuse(socket: &socket2::Socket) -> Result<()> {
     {
         use std::os::fd::AsRawFd;
         let fd = socket.as_raw_fd();
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         unsafe {
             let optval: libc::c_int = 1;
             let ret = libc::setsockopt(

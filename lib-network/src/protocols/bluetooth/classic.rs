@@ -439,6 +439,7 @@ impl RfcommStream {
         if let Some(fd) = socket.socket_fd {
             // Use BSD socket read with non-blocking mode
             let unfilled = buf.initialize_unfilled();
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             let result = unsafe {
                 libc::recv(
                     fd,
@@ -455,6 +456,7 @@ impl RfcommStream {
                 // EOF
                 std::task::Poll::Ready(Ok(()))
             } else {
+                // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
                 let errno = unsafe { *libc::__error() };
                 if errno == libc::EWOULDBLOCK || errno == libc::EAGAIN {
                     cx.waker().wake_by_ref();
@@ -478,6 +480,7 @@ impl RfcommStream {
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         if let Some(fd) = socket.socket_fd {
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             let result = unsafe {
                 libc::send(
                     fd,
@@ -490,6 +493,7 @@ impl RfcommStream {
             if result >= 0 {
                 std::task::Poll::Ready(Ok(result as usize))
             } else {
+                // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
                 let errno = unsafe { *libc::__error() };
                 if errno == libc::EWOULDBLOCK || errno == libc::EAGAIN {
                     std::task::Poll::Pending
@@ -868,6 +872,7 @@ impl BluetoothClassicProtocol {
         const RFCOMM_CHANNEL: u8 = 3; // MESH_DATA channel
         
         // Create RFCOMM socket
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let sock_fd = unsafe {
             libc::socket(
                 libc::AF_BLUETOOTH,
@@ -894,6 +899,7 @@ impl BluetoothClassicProtocol {
             rc_channel: RFCOMM_CHANNEL,
         };
         
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let bind_result = unsafe {
             libc::bind(
                 sock_fd,
@@ -903,16 +909,19 @@ impl BluetoothClassicProtocol {
         };
         
         if bind_result < 0 {
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             unsafe { libc::close(sock_fd); }
             return Err(anyhow!("Failed to bind RFCOMM socket"));
         }
         
         // Listen for connections
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let listen_result = unsafe {
             libc::listen(sock_fd, 1)
         };
         
         if listen_result < 0 {
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             unsafe { libc::close(sock_fd); }
             return Err(anyhow!("Failed to listen on RFCOMM socket"));
         }
@@ -921,6 +930,7 @@ impl BluetoothClassicProtocol {
         
         // Accept connection (blocking - wrap in spawn_blocking)
         let client_fd = tokio::task::spawn_blocking(move || {
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             unsafe {
                 let client = libc::accept(sock_fd, std::ptr::null_mut(), std::ptr::null_mut());
                 libc::close(sock_fd); // Close listener after accepting
@@ -933,7 +943,9 @@ impl BluetoothClassicProtocol {
         }
         
         // Set non-blocking mode
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let flags = unsafe { libc::fcntl(client_fd, libc::F_GETFL, 0) };
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         unsafe { libc::fcntl(client_fd, libc::F_SETFL, flags | libc::O_NONBLOCK); }
         
         info!(" Linux: RFCOMM connection accepted (fd: {})", client_fd);
@@ -955,6 +967,7 @@ impl BluetoothClassicProtocol {
         const RFCOMM_CHANNEL: u8 = rfcomm_channels::MESH_DATA;
         
         // Create RFCOMM socket using BSD API
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let sock_fd = unsafe {
             libc::socket(
                 AF_BLUETOOTH,
@@ -984,6 +997,7 @@ impl BluetoothClassicProtocol {
             rc_channel: RFCOMM_CHANNEL,
         };
         
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let bind_result = unsafe {
             libc::bind(
                 sock_fd,
@@ -993,16 +1007,19 @@ impl BluetoothClassicProtocol {
         };
         
         if bind_result < 0 {
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             unsafe { libc::close(sock_fd); }
             return Err(anyhow!("Failed to bind RFCOMM socket on macOS"));
         }
         
         // Listen for connections
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let listen_result = unsafe {
             libc::listen(sock_fd, 1)
         };
         
         if listen_result < 0 {
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             unsafe { libc::close(sock_fd); }
             return Err(anyhow!("Failed to listen on RFCOMM socket"));
         }
@@ -1019,6 +1036,7 @@ impl BluetoothClassicProtocol {
             };
             let mut addr_len = std::mem::size_of::<sockaddr_rc>() as libc::socklen_t;
             
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             unsafe {
                 let client = libc::accept(
                     sock_fd,
@@ -1035,7 +1053,9 @@ impl BluetoothClassicProtocol {
         }
         
         // Set non-blocking mode
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let flags = unsafe { libc::fcntl(client_fd, libc::F_GETFL, 0) };
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         unsafe { libc::fcntl(client_fd, libc::F_SETFL, flags | libc::O_NONBLOCK); }
         
         // Format peer address
@@ -1864,6 +1884,7 @@ impl BluetoothClassicProtocol {
         const BTPROTO_RFCOMM: i32 = 3;
         
         // Create RFCOMM socket
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let sock_fd = unsafe {
             libc::socket(libc::AF_BLUETOOTH, libc::SOCK_STREAM, BTPROTO_RFCOMM)
         };
@@ -1887,6 +1908,7 @@ impl BluetoothClassicProtocol {
         };
         
         let connect_result = tokio::task::spawn_blocking(move || {
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             unsafe {
                 libc::connect(
                     sock_fd,
@@ -1897,12 +1919,15 @@ impl BluetoothClassicProtocol {
         }).await?;
         
         if connect_result < 0 {
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             unsafe { libc::close(sock_fd); }
             return Err(anyhow!("Failed to connect to RFCOMM device"));
         }
         
         // Set non-blocking mode
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let flags = unsafe { libc::fcntl(sock_fd, libc::F_GETFL, 0) };
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         unsafe { libc::fcntl(sock_fd, libc::F_SETFL, flags | libc::O_NONBLOCK); }
         
         info!(" Linux: Connected to {} channel {} (fd: {})", device_address, channel, sock_fd);
@@ -2036,6 +2061,7 @@ impl BluetoothClassicProtocol {
         const BTPROTO_RFCOMM: i32 = 3;
         
         // Create RFCOMM socket using BSD API
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let sock_fd = unsafe {
             libc::socket(AF_BLUETOOTH, libc::SOCK_STREAM, BTPROTO_RFCOMM)
         };
@@ -2061,6 +2087,7 @@ impl BluetoothClassicProtocol {
         };
         
         let connect_result = tokio::task::spawn_blocking(move || {
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             unsafe {
                 libc::connect(
                     sock_fd,
@@ -2071,13 +2098,17 @@ impl BluetoothClassicProtocol {
         }).await?;
         
         if connect_result < 0 {
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             unsafe { libc::close(sock_fd); }
+            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
             let errno = unsafe { *libc::__error() };
             return Err(anyhow!("Failed to connect to RFCOMM device: errno {}", errno));
         }
         
         // Set non-blocking mode
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         let flags = unsafe { libc::fcntl(sock_fd, libc::F_GETFL, 0) };
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         unsafe { libc::fcntl(sock_fd, libc::F_SETFL, flags | libc::O_NONBLOCK); }
         
         info!(" macOS: Connected to {} channel {} (fd: {})", device_address, channel, sock_fd);

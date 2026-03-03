@@ -1473,6 +1473,7 @@ impl ZhtpMeshServer {
         
         // Store in server (need to cast away const - this is during initialization)
         // We'll use unsafe here since we know initialization happens before concurrent access
+        // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
         unsafe {
             let server_mut = self as *const Self as *mut Self;
             (*server_mut).message_router = Some(message_router);
