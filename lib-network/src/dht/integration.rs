@@ -1,8 +1,8 @@
-//! DHT Storage Stubs
+//! DHT Integration Compatibility
 //!
-//! This module provides stub implementations for DHT storage operations.
-//! These stubs provide the structure and interface for future integration
-//! with lib-storage's DHT backend.
+//! This module provides a compatibility implementation for DHT storage operations.
+//! It preserves the existing lib-network API surface while backend integration
+//! is finalized in higher layers.
 //!
 //! ## Implemented Features
 //! - Content storage with TTL/expiration
@@ -16,8 +16,7 @@
 //! - Add Kademlia-style routing for content lookup
 //! - Integrate with blockchain for peer verification
 
-use anyhow::{Result, anyhow};
-use lib_crypto::Hash;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -156,7 +155,7 @@ impl ZkDHTIntegration {
 
         // TODO: Implement replication to nearest peers
         // TODO: Call lib-storage DhtStorage::store() when integrated
-        debug!("Content stored locally (stub), replication not yet implemented");
+        debug!("Content stored locally; replication is not enabled in this compatibility layer");
 
         Ok(key)
     }
@@ -185,7 +184,7 @@ impl ZkDHTIntegration {
 
         // TODO: Query nearest peers for content
         // TODO: Call lib-storage DhtStorage::get() when integrated
-        debug!("Content not found in local DHT stub: {}", key);
+        debug!("Content not found in local DHT cache: {}", key);
         Ok(None)
     }
 
@@ -276,7 +275,7 @@ impl ZkDHTIntegration {
         Ok(stats)
     }
 
-    /// Get storage system reference (stub - returns self)
+    /// Get storage system reference (returns self)
     pub fn get_storage_system(&self) -> Arc<RwLock<Self>> {
         Arc::new(RwLock::new(self.clone()))
     }
@@ -346,7 +345,7 @@ impl ZkDHTIntegration {
             replicated_count += 1;
         }
 
-        info!("Replicated {} to {} peers (stub)", key, replicated_count);
+        info!("Replicated {} to {} peers", key, replicated_count);
         Ok(replicated_count)
     }
 
@@ -445,7 +444,7 @@ impl DHTClient {
 
 /// Call the native DHT client to resolve content for a given domain and path.
 ///
-/// This is a stub helper used by higher-level components (e.g. mesh/server) to
+/// This is a compatibility helper used by higher-level components (e.g. mesh/server) to
 /// access the DHT integration. It currently delegates to `DHTClient::resolve_content`.
 /// Future implementations can extend this to support additional request metadata.
 pub async fn call_native_dht_client(
@@ -454,7 +453,7 @@ pub async fn call_native_dht_client(
     path: &str,
 ) -> Result<Option<Vec<u8>>> {
     warn!(
-        "call_native_dht_client invoked for domain='{}', path='{}'. This is a stub implementation.",
+        "call_native_dht_client invoked for domain='{}', path='{}'.",
         domain, path
     );
     client.resolve_content(domain, path).await

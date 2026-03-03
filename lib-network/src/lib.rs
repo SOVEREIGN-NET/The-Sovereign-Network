@@ -142,8 +142,6 @@ pub mod socket_utils;
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
 pub mod transport;
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
-pub mod dht_stub;
-#[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
 pub mod dht;
 #[cfg(any(feature = "quic", feature = "mdns", feature = "lorawan", feature = "full"))]
 pub mod web4;

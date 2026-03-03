@@ -6,12 +6,12 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{RwLock, OnceCell};
-use lib_network::dht::ZkDHTIntegration;
 use lib_identity::ZhtpIdentity;
 use tracing::{info, debug};
+use crate::integration::dht_adapter::DhtIntegrationAdapter;
 
 /// Global DHT instance manager - wrapped in RwLock for mutable access
-static GLOBAL_DHT: OnceCell<Arc<RwLock<Option<Arc<RwLock<ZkDHTIntegration>>>>>> = OnceCell::const_new();
+static GLOBAL_DHT: OnceCell<Arc<RwLock<Option<Arc<RwLock<DhtIntegrationAdapter>>>>>> = OnceCell::const_new();
 
 /// Initialize the global DHT instance (singleton with proper guards)
 /// This should be called once at application startup
@@ -31,7 +31,7 @@ pub async fn initialize_global_dht(identity: ZhtpIdentity) -> Result<()> {
     info!("Initializing global DHT client instance (singleton)");
     
     // Create the DHT client (uses lib-storage backend)
-    let mut dht_client = ZkDHTIntegration::new();
+    let mut dht_client = DhtIntegrationAdapter::new();
     dht_client.initialize(identity).await?;
     
     // Store in global container wrapped in Arc<RwLock<_>> for mutable access
@@ -53,13 +53,13 @@ pub async fn initialize_global_dht_safe(identity: ZhtpIdentity) -> Result<()> {
 
 /// Get a reference to the global DHT instance
 /// Returns None if not yet initialized
-pub async fn get_global_dht() -> Option<Arc<RwLock<Option<Arc<RwLock<ZkDHTIntegration>>>>>> {
+pub async fn get_global_dht() -> Option<Arc<RwLock<Option<Arc<RwLock<DhtIntegrationAdapter>>>>>> {
     GLOBAL_DHT.get().cloned()
 }
 
 /// Get a clone of the DHT client for use in operations
-/// Returns Arc<RwLock<ZkDHTIntegration>> to allow mutable access when needed
-pub async fn get_dht_client() -> Result<Arc<RwLock<ZkDHTIntegration>>> {
+/// Returns Arc<RwLock<DhtIntegrationAdapter>> to allow mutable access when needed
+pub async fn get_dht_client() -> Result<Arc<RwLock<DhtIntegrationAdapter>>> {
     let dht_container = get_global_dht().await
         .ok_or_else(|| anyhow::anyhow!("DHT not initialized - call initialize_global_dht() first"))?;
     
