@@ -4087,11 +4087,7 @@ impl Blockchain {
     /// Create a synthetic PublicKey keyed by wallet_id for SOV balances.
     /// This uses an empty keypair and the wallet_id bytes as key_id.
     fn wallet_key_for_sov(wallet_id: &[u8; 32]) -> PublicKey {
-        PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
-            key_id: *wallet_id,
-        }
+        crate::contracts::utils::wallet_key_for_sov(*wallet_id)
     }
 
     /// Initialize Treasury Kernel with SOV token authority.
@@ -4176,7 +4172,7 @@ impl Blockchain {
     }
 
     /// Find the Primary wallet_id for a signer key_id, if available.
-    fn primary_wallet_for_signer(&self, signer_key_id: &[u8; 32]) -> Option<[u8; 32]> {
+    pub fn primary_wallet_for_signer(&self, signer_key_id: &[u8; 32]) -> Option<[u8; 32]> {
         for (wallet_id, wallet) in &self.wallet_registry {
             if wallet.wallet_type != "Primary" {
                 continue;
@@ -4519,7 +4515,7 @@ impl Blockchain {
                         // Persist updated SOV token contract so the immediate balance survives restarts.
                         // This mirrors the behavior in process_wallet_transactions(), which calls put_token_contract.
                         if let Some(store) = &self.store {
-                            if let Err(e) = store.put_token_contract(&sov_token_id, &*token) {
+                            if let Err(e) = store.put_token_contract(&*token) {
                                 warn!(
                                     "register_wallet: failed to persist SOV token contract for wallet {}: {}",
                                     &wallet_id_str[..16.min(wallet_id_str.len())],

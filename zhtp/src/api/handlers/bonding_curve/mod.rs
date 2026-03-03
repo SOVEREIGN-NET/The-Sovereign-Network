@@ -1391,6 +1391,7 @@ fn integer_sqrt(n: u128) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_blockchain::Blockchain;
 
     #[test]
     fn test_integer_sqrt() {
@@ -1415,5 +1416,214 @@ mod tests {
         let threshold: Threshold = req.into();
         assert!(threshold.is_met(1_000_000, 0, 0));
         assert!(!threshold.is_met(999_999, 0, 0));
+    }
+
+    // =========================================================================
+    // handle_deploy gate tests
+    // =========================================================================
+
+    /// Build a minimal authenticated deploy request for the given requester key_id.
+    fn make_deploy_request(requester_key_id: [u8; 32]) -> ZhtpRequest {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "name": "TestToken",
+            "symbol": "TST",
+            "curve_type": {"type": "linear", "base_price": 100, "slope": 10},
+            "threshold": {"type": "reserve_amount", "min_reserve": 1_000_000},
+            "sell_enabled": true
+        }))
+        .expect("body must serialize");
+
+        ZhtpRequest {
+            method: ZhtpMethod::Post,
+            uri: "/api/v1/curve/deploy".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers: lib_protocols::types::ZhtpHeaders::default(),
+            body,
+            timestamp: 0,
+            requester: Some(Hash::from_bytes(&requester_key_id)),
+            auth_proof: None,
+        }
+    }
+
+    /// Register a minimal identity with an empty public key so that Gate 1 passes.
+    ///
+    /// `get_requester_key` always produces `dilithium_pk: vec![]` from the request hash,
+    /// so `get_identity_by_public_key(&[])` must find an entry with `public_key: vec![]`.
+    fn add_identity(bc: &mut Blockchain) {
+        use lib_blockchain::IdentityTransactionData;
+        let did = "did:zhtp:test".to_string();
+        let identity = IdentityTransactionData {
+            did: did.clone(),
+            display_name: "Test".to_string(),
+            public_key: vec![], // must match creator.dilithium_pk (always empty)
+            ownership_proof: vec![],
+            identity_type: "human".to_string(),
+            did_document_hash: lib_blockchain::Hash::default(),
+            created_at: 0,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+        };
+        // Key by DID, matching production identity_registry insertion convention.
+        bc.identity_registry.insert(did, identity);
+    }
+
+    /// Add a Primary wallet whose dilithium public key is `wallet_dilithium` and whose
+    /// wallet_id is `wallet_id_bytes`, then insert a SOV token balance for that wallet.
+    ///
+    /// Returns the requester key_id that must be put in the request so that
+    /// `primary_wallet_for_signer` matches this wallet.
+    fn add_primary_wallet_with_sov(
+        bc: &mut Blockchain,
+        wallet_dilithium: Vec<u8>,
+        wallet_id_bytes: [u8; 32],
+        sov_atomic: u64,
+    ) -> [u8; 32] {
+        use lib_blockchain::{WalletTransactionData, contracts::TokenContract, contracts::utils::generate_lib_token_id};
+        use lib_crypto::hash_blake3;
+
+        // key_id derived by get_requester_key from the requester hash, which must equal
+        // hash_blake3(wallet.public_key) for primary_wallet_for_signer to match.
+        let requester_key_id = hash_blake3(&wallet_dilithium);
+
+        // Insert Primary wallet keyed by hex-encoded wallet_id.
+        let wallet_id_hex = hex::encode(wallet_id_bytes);
+        bc.wallet_registry.insert(
+            wallet_id_hex,
+            WalletTransactionData {
+                wallet_id: lib_blockchain::Hash::new(wallet_id_bytes),
+                wallet_type: "Primary".to_string(),
+                wallet_name: "Test Wallet".to_string(),
+                alias: None,
+                public_key: wallet_dilithium,
+                owner_identity_id: None,
+                seed_commitment: lib_blockchain::Hash::default(),
+                created_at: 0,
+                registration_fee: 0,
+                capabilities: 0,
+                initial_balance: 0,
+            },
+        );
+
+        // Insert SOV token with the requested balance keyed by wallet_key_for_sov.
+        let sov_id = generate_lib_token_id();
+        let mut sov_token = TokenContract::new_sov_native();
+        // wallet_key_for_sov uses an empty dilithium_pk and wallet_id_bytes as key_id.
+        let sov_wallet_key = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: wallet_id_bytes,
+        };
+        sov_token.balances.insert(sov_wallet_key, sov_atomic);
+        bc.token_contracts.insert(sov_id, sov_token);
+
+        requester_key_id
+    }
+
+    /// Gate 1: missing on-chain identity → 401 Unauthorized.
+    #[tokio::test]
+    async fn test_deploy_missing_identity_returns_401() {
+        let key_id = [1u8; 32]; // arbitrary; no identity registered for any key
+        let bc = Blockchain::new().expect("blockchain init");
+        let handler = CurveHandler {
+            blockchain: Arc::new(RwLock::new(bc)),
+        };
+
+        let response = handler
+            .handle_deploy(make_deploy_request(key_id))
+            .await
+            .expect("handle_deploy must not error");
+
+        assert_eq!(
+            response.status,
+            ZhtpStatus::Unauthorized,
+            "expected 401 when no identity is registered"
+        );
+    }
+
+    /// Gate 2a: identity registered but no primary wallet → 401 Unauthorized.
+    #[tokio::test]
+    async fn test_deploy_missing_primary_wallet_returns_401() {
+        let key_id = [1u8; 32];
+        let mut bc = Blockchain::new().expect("blockchain init");
+        add_identity(&mut bc); // Gate 1 passes
+
+        let handler = CurveHandler {
+            blockchain: Arc::new(RwLock::new(bc)),
+        };
+
+        let response = handler
+            .handle_deploy(make_deploy_request(key_id))
+            .await
+            .expect("handle_deploy must not error");
+
+        assert_eq!(
+            response.status,
+            ZhtpStatus::Unauthorized,
+            "expected 401 when no primary wallet is registered"
+        );
+    }
+
+    /// Gate 2b: identity registered, wallet registered, but SOV balance < 100 → 401 Unauthorized.
+    #[tokio::test]
+    async fn test_deploy_insufficient_sov_returns_401() {
+        let wallet_dilithium = vec![2u8; 32];
+        let wallet_id_bytes = [3u8; 32];
+
+        let mut bc = Blockchain::new().expect("blockchain init");
+        add_identity(&mut bc); // Gate 1 passes
+        let key_id = add_primary_wallet_with_sov(
+            &mut bc,
+            wallet_dilithium,
+            wallet_id_bytes,
+            50 * 100_000_000, // 50 SOV – below the 100 SOV minimum
+        );
+
+        let handler = CurveHandler {
+            blockchain: Arc::new(RwLock::new(bc)),
+        };
+
+        let response = handler
+            .handle_deploy(make_deploy_request(key_id))
+            .await
+            .expect("handle_deploy must not error");
+
+        assert_eq!(
+            response.status,
+            ZhtpStatus::Unauthorized,
+            "expected 401 when SOV balance is below 100 SOV"
+        );
+    }
+
+    /// Gates pass: identity registered, primary wallet with ≥ 100 SOV → 200 OK.
+    #[tokio::test]
+    async fn test_deploy_sufficient_sov_succeeds() {
+        let wallet_dilithium = vec![4u8; 32];
+        let wallet_id_bytes = [5u8; 32];
+
+        let mut bc = Blockchain::new().expect("blockchain init");
+        add_identity(&mut bc); // Gate 1 passes
+        let key_id = add_primary_wallet_with_sov(
+            &mut bc,
+            wallet_dilithium,
+            wallet_id_bytes,
+            200 * 100_000_000, // 200 SOV – above the 100 SOV minimum
+        );
+
+        let handler = CurveHandler {
+            blockchain: Arc::new(RwLock::new(bc)),
+        };
+
+        let response = handler
+            .handle_deploy(make_deploy_request(key_id))
+            .await
+            .expect("handle_deploy must not error");
+
+        assert_eq!(
+            response.status,
+            ZhtpStatus::Ok,
+            "expected 200 OK when both gates pass"
+        );
     }
 }
