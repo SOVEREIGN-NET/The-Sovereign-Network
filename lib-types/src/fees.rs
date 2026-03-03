@@ -2,7 +2,9 @@
 //!
 //! Pure data types for fee calculation. Behavior (computation logic) lives in lib-fees.
 //!
-//! Rule: These types must remain behavior-free and serialization-stable.
+//! Rule: These types must remain serialization-stable. Lightweight, side-effect-free
+//! validation helpers (e.g., `FeeParams::validate()`) are permitted to enforce data
+//! invariants, but fee computation and domain-level business rules must live in lib-fees.
 
 use serde::{Deserialize, Serialize};
 
@@ -118,6 +120,8 @@ pub enum FeeParamsError {
     ZeroFeePerStateRead,
     /// Fee per state write is zero
     ZeroFeePerStateWrite,
+    /// Fee per byte written to state is zero
+    ZeroFeePerStateWriteByte,
     /// Fee per signature is zero
     ZeroFeePerSignature,
     /// Fee per execution unit is zero
@@ -133,6 +137,9 @@ impl std::fmt::Display for FeeParamsError {
             FeeParamsError::ZeroBaseFeePerByte => write!(f, "base_fee_per_byte must be > 0"),
             FeeParamsError::ZeroFeePerStateRead => write!(f, "fee_per_state_read must be > 0"),
             FeeParamsError::ZeroFeePerStateWrite => write!(f, "fee_per_state_write must be > 0"),
+            FeeParamsError::ZeroFeePerStateWriteByte => {
+                write!(f, "fee_per_state_write_byte must be > 0")
+            }
             FeeParamsError::ZeroFeePerSignature => write!(f, "fee_per_signature must be > 0"),
             FeeParamsError::ZeroFeePerExecUnit => write!(f, "fee_per_exec_unit must be > 0"),
         }
@@ -179,6 +186,9 @@ impl FeeParams {
         }
         if self.fee_per_state_write == 0 {
             return Err(FeeParamsError::ZeroFeePerStateWrite);
+        }
+        if self.fee_per_state_write_byte == 0 {
+            return Err(FeeParamsError::ZeroFeePerStateWriteByte);
         }
         if self.fee_per_signature == 0 {
             return Err(FeeParamsError::ZeroFeePerSignature);
@@ -308,6 +318,16 @@ mod tests {
         };
         let err = params.validate().unwrap_err();
         assert!(matches!(err, FeeParamsError::ZeroFeePerStateRead));
+    }
+
+    #[test]
+    fn test_fee_params_validation_zero_state_write_byte() {
+        let params = FeeParams {
+            fee_per_state_write_byte: 0,
+            ..FeeParams::default()
+        };
+        let err = params.validate().unwrap_err();
+        assert!(matches!(err, FeeParamsError::ZeroFeePerStateWriteByte));
     }
 
     #[test]
