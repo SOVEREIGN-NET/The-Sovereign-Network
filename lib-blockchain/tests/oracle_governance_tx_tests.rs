@@ -194,8 +194,10 @@ fn schedule_committee_update_for_test_via_governance() {
     assert_eq!(state.committee.members().len(), 2);
 
     // Schedule update (activates at current_epoch + 1)
-    let result =
-        state.schedule_committee_update(vec![[3u8; 32], [4u8; 32], [5u8; 32]], current_epoch + 1);
+    let result = state.schedule_committee_update_for_test(
+        vec![[3u8; 32], [4u8; 32], [5u8; 32]],
+        current_epoch + 1,
+    );
     assert!(result.is_ok());
 
     // Committee unchanged until activation
