@@ -53,8 +53,8 @@ The ZHTP Fee Model v2 provides pure, deterministic fee computation for all trans
 │   ├─ DataUpload       │  │   ├─ fee_per_signature│  │   blockchain()        │
 │   ├─ Governance       │  │   ├─ minimum_fee      │  │                       │
 │   ├─ Staking          │  │   ├─ maximum_fee      │  │   Validation:         │
-│   ├─ Unstaking        │  │   └─ validate()       │  │   min < max, etc.     │
-│   ├─ ValidatorReg     │  │                       │  │                       │
+│   ├─ Unstaking        │  │   └─ validate()       │  │   min <= max, etc.    │
+│   ├─ ValidatorRegistration│  │                       │  │                       │
 │   └─ ValidatorExit    │  │   FeeDeficit          │  │                       │
 │                       │  │   FeeInput            │  │                       │
 │   SigScheme           │  │                       │  │                       │
