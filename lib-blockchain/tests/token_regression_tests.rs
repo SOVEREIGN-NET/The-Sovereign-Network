@@ -103,6 +103,7 @@ fn wallet_registration_tx(
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
     }
 }
 
@@ -170,6 +171,7 @@ fn token_transfer_tx_with_nonce(
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
     }
 }
 
@@ -211,6 +213,7 @@ fn token_mint_tx(
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
     }
 }
 
@@ -253,6 +256,7 @@ fn contract_execution_tx(
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
     }
 }
 

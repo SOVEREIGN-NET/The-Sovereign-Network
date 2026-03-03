@@ -805,7 +805,9 @@ impl BlockExecutor {
             | TransactionType::UpdateOracleCommittee
             | TransactionType::UpdateOracleConfig
             // Oracle attestation - validated in StatefulValidator; no special-casing here
-            | TransactionType::OracleAttestation => {
+            // Cancel oracle update - validated in stateful validator, applied as no-op here
+            | TransactionType::OracleAttestation
+            | TransactionType::CancelOracleUpdate => {
                 // Fall through to the general validation flow below without
                 // treating oracle attestations as automatically valid.
             }
@@ -2347,6 +2349,7 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -2382,6 +2385,7 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -2573,7 +2577,8 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
-}
+            cancel_oracle_update_data: None,
+        }
     }
 
     fn create_contract_deployment_tx() -> Transaction {
@@ -2736,7 +2741,8 @@ mod tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
-}
+            cancel_oracle_update_data: None,
+        }
     }
 
     /// TokenCreation canonical path: token is created and minted to creator.
