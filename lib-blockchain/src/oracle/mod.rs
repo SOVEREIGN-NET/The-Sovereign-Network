@@ -188,6 +188,30 @@ where
     Ok(value)
 }
 
+/// Oracle configuration validation error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OracleConfigError {
+    /// Individual field validation failure.
+    InvalidField { field: String, message: String },
+    /// Cross-field consistency failure.
+    Inconsistent { fields: Vec<String>, message: String },
+}
+
+impl std::fmt::Display for OracleConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OracleConfigError::InvalidField { field, message } => {
+                write!(f, "Invalid {}: {}", field, message)
+            }
+            OracleConfigError::Inconsistent { fields, message } => {
+                write!(f, "Inconsistent fields {:?}: {}", fields, message)
+            }
+        }
+    }
+}
+
+impl std::error::Error for OracleConfigError {}
+
 impl OracleConfig {
     pub fn price_scale(&self) -> u128 {
         self.price_scale
@@ -195,6 +219,85 @@ impl OracleConfig {
 
     pub fn max_price_staleness_epochs(&self) -> u64 {
         self.max_price_staleness_epochs
+    }
+
+    /// Validate oracle configuration parameters.
+    ///
+    /// Checks both individual bounds and cross-field consistency.
+    /// Returns `Ok(())` if valid, `Err(OracleConfigError)` otherwise.
+    pub fn validate(&self) -> Result<(), OracleConfigError> {
+        // Individual bounds
+        if self.epoch_duration_secs < 60 {
+            return Err(OracleConfigError::InvalidField {
+                field: "epoch_duration_secs".to_string(),
+                message: "must be >= 60 seconds".to_string(),
+            });
+        }
+        if self.epoch_duration_secs > 86_400 {
+            return Err(OracleConfigError::InvalidField {
+                field: "epoch_duration_secs".to_string(),
+                message: "must be <= 86400 seconds (24h)".to_string(),
+            });
+        }
+
+        if self.max_source_age_secs == 0 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_source_age_secs".to_string(),
+                message: "must be > 0".to_string(),
+            });
+        }
+        if self.max_source_age_secs < 10 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_source_age_secs".to_string(),
+                message: "must be >= 10 to give validators time to fetch prices".to_string(),
+            });
+        }
+
+        if self.max_deviation_bps == 0 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_deviation_bps".to_string(),
+                message: "must be > 0 (0 would reject all multi-source prices)".to_string(),
+            });
+        }
+        if self.max_deviation_bps > 2_000 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_deviation_bps".to_string(),
+                message: "must be <= 2000 (20%) — higher values defeat price aggregation".to_string(),
+            });
+        }
+
+        if self.max_price_staleness_epochs == 0 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_price_staleness_epochs".to_string(),
+                message: "must be >= 1".to_string(),
+            });
+        }
+        if self.max_price_staleness_epochs > 100 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_price_staleness_epochs".to_string(),
+                message: "must be <= 100".to_string(),
+            });
+        }
+
+        if self.price_scale() != ORACLE_PRICE_SCALE {
+            return Err(OracleConfigError::InvalidField {
+                field: "price_scale".to_string(),
+                message: format!("must be {} (ORACLE_PRICE_SCALE)", ORACLE_PRICE_SCALE),
+            });
+        }
+
+        // Cross-field consistency
+        if self.max_source_age_secs >= self.epoch_duration_secs {
+            return Err(OracleConfigError::Inconsistent {
+                fields: vec!["max_source_age_secs".to_string(), "epoch_duration_secs".to_string()],
+                message: format!(
+                    "max_source_age_secs ({}) must be < epoch_duration_secs ({}) — otherwise sources are always considered stale",
+                    self.max_source_age_secs, self.epoch_duration_secs
+                ),
+            });
+        }
+
+        Ok(())
     }
 }
 

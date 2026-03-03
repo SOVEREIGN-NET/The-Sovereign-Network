@@ -272,3 +272,59 @@ PRs must be merged in this order (dependencies):
 3. Only touch files in the PR you're fixing
 4. Run `cargo check` before pushing
 5. Leave `[READY FOR REVIEW]` comment when done
+
+## ORACLE-15: Oracle Config Parameter Validation - COMPLETED ✅
+
+**Last Updated:** 2026-03-03 by Kimi
+
+### Summary
+Implemented comprehensive parameter validation for `OracleConfig` to prevent insane configurations (e.g., `max_price_staleness_epochs = 0`, `max_source_age_secs >= epoch_duration_secs`).
+
+### Changes Made
+
+**lib-blockchain/src/oracle/mod.rs:**
+- Added `OracleConfigError` enum with two variants:
+  - `InvalidField { field, message }` - Individual field validation failures
+  - `Inconsistent { fields, message }` - Cross-field consistency failures
+- Implemented `Display` and `Error` traits for `OracleConfigError`
+- Added `OracleConfig::validate()` method with comprehensive bounds checking:
+  - `epoch_duration_secs`: 60..=86_400 (1 minute to 24 hours)
+  - `max_source_age_secs`: 10.. (minimum 10 seconds for fetch time)
+  - `max_deviation_bps`: 1..=2000 (0.01% to 20%, prevents rejection of all prices)
+  - `max_price_staleness_epochs`: 1..=100 (at least 1 epoch, at most 100)
+  - `price_scale`: Must equal `ORACLE_PRICE_SCALE` (1_000_000_000_000_000_000)
+- Cross-field validation:
+  - `max_source_age_secs < epoch_duration_secs` (source age must fit within epoch)
+- Updated `schedule_config_update()` to call `validate()` and return `OracleConfigError`
+- Added 13 unit tests for validation (all passing)
+
+**lib-blockchain/src/lib.rs:**
+- Exported `OracleConfigError` in public API
+
+**zhtp/src/api/handlers/oracle/mod.rs:**
+- Added import for `OracleConfigError`
+- Updated `handle_propose_config()` to validate proposed config before DAO proposal
+- Returns 400 Bad Request with detailed error message on validation failure
+
+### Tests Added
+- `default_oracle_config_is_valid` - Ensures default config passes validation
+- `config_rejects_epoch_duration_too_small` - min 60 seconds
+- `config_rejects_epoch_duration_too_large` - max 86400 seconds
+- `config_rejects_max_source_age_zero` - must be > 0
+- `config_rejects_max_source_age_too_small` - min 10 seconds
+- `config_rejects_max_deviation_bps_zero` - 0 would reject all prices
+- `config_rejects_max_deviation_bps_too_large` - max 2000 (20%)
+- `config_rejects_max_price_staleness_epochs_zero` - must be >= 1
+- `config_rejects_max_price_staleness_epochs_too_large` - max 100 epochs
+- `config_rejects_cross_field_source_age_gte_epoch_duration` - source age must fit in epoch
+- `config_accepts_boundary_values` - tests min/max boundary acceptance
+- `config_accepts_valid_cross_field_combination` - tests valid cross-field combinations
+- `schedule_config_update_uses_validation` - tests validation in state updates
+
+### Build Status
+```
+cargo check -p lib-blockchain ✅ PASSING
+cargo check -p zhtp ✅ PASSING
+cargo test -p lib-blockchain --lib oracle ✅ 49/49 tests passing
+```
+
