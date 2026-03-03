@@ -71,7 +71,6 @@ pub struct KademliaRouter {
     local_id: NodeId,
     /// Internal peer registry (for standalone/legacy use only)
     /// In production, use unified registry directly via DhtPeerRegistryTrait
-    #[cfg_attr(test, allow(dead_code))]
     pub(crate) registry: DhtPeerRegistry,
     /// K-bucket size (standard Kademlia K value)
     k: usize,
@@ -821,7 +820,7 @@ mod tests {
             let _ = router.add_node(test_node).await; // May fail if bucket full
         }
         
-        let stats = router.get_stats();
+        let _stats = router.get_stats();
         // Verify no individual bucket exceeds k
         for bucket_idx in 0..160 {
             let bucket_nodes = router.get_bucket_nodes(bucket_idx);
@@ -891,7 +890,7 @@ mod tests {
     async fn test_bucket_refresh() {
         use lib_identity::ZhtpIdentity;
         use lib_identity::types::IdentityType;
-        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
+        use crate::types::dht_types::build_peer_identity;
         
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut router = KademliaRouter::new(local_id.clone(), 20);

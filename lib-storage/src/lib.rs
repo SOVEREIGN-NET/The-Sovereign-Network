@@ -1152,6 +1152,9 @@ mod tests {
         // Verify enums work correctly
         assert_eq!(storage_tier, StorageTier::Hot);
         assert_eq!(access_level, AccessLevel::Private);
+        assert!(matches!(encryption_level, EncryptionLevel::QuantumResistant));
+        assert!(matches!(access_pattern, AccessPattern::Frequent));
+        assert!(matches!(penalty_type, PenaltyType::DataLoss));
         
         // Test type constants
         assert_eq!(STORAGE_PRICE_PER_GB_DAY, 100);
@@ -1244,9 +1247,7 @@ mod tests {
     }
 
     #[tokio::test]
-    // TODO: Create a GitHub issue to track re-enabling this test.
-    // It is currently ignored because ZhtpIdentity secure deserialization is restricted,
-    // and a solution needs to be implemented and verified.
+    // Ignored until secure ZhtpIdentity deserialization is available in test context.
     #[ignore = "ZhtpIdentity secure deserialization currently restricted"]
     async fn test_unified_storage_identity_integration() {
         let config = UnifiedStorageConfig::default();

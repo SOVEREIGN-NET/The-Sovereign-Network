@@ -67,10 +67,6 @@ impl LatencyMetrics {
         self.percentile(99.0)
     }
 
-    fn count(&self) -> usize {
-        self.samples.lock().len()
-    }
-
     fn mean(&self) -> Duration {
         let samples = self.samples.lock();
         if samples.is_empty() {

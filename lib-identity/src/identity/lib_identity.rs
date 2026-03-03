@@ -1,7 +1,7 @@
 //! ZHTP Identity implementation from the original identity.rs
 
 use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
+use serde::{Serialize, Deserialize, Serializer};
 use std::collections::HashMap;
 use lib_crypto::{Hash, PublicKey, PrivateKey};
 use lib_proofs::ZeroKnowledgeProof;
@@ -30,19 +30,6 @@ mod credentials_serde {
         ser_map.end()
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<CredentialType, ZkCredential>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let string_map: HashMap<String, ZkCredential> = HashMap::deserialize(deserializer)?;
-        let mut result = HashMap::new();
-        for (k, v) in string_map {
-            if let Ok(key) = serde_json::from_str(&k) {
-                result.insert(key, v);
-            }
-        }
-        Ok(result)
-    }
 }
 
 /// ZHTP Identity with zero-knowledge privacy and integrated quantum wallet management
@@ -148,7 +135,7 @@ pub struct ZhtpIdentity {
     /// Wallet master seed (64 bytes - raw derived seed)
     /// Derived from private key - never serialized
     /// SECURITY: Always zero after deserialization - MUST call rederive_secrets()
-    #[serde(skip, default = "default_wallet_seed")]
+    #[serde(skip)]
     pub wallet_master_seed: [u8; 64],
     /// DAO member identifier
     pub dao_member_id: String,
@@ -158,12 +145,6 @@ pub struct ZhtpIdentity {
     pub citizenship_verified: bool,
     /// Jurisdiction (optional)
     pub jurisdiction: Option<String>,
-}
-
-// Default functions for deserialization of secret fields
-// SECURITY: These explicitly return zero values - secrets MUST be re-derived after deserialization
-fn default_wallet_seed() -> [u8; 64] {
-    [0u8; 64]
 }
 
 impl PartialEq for ZhtpIdentity {

@@ -531,7 +531,7 @@ mod tests {
 
         // This test would need proper setup of market manager and pricing engine
         // For now, just test that the function exists and has correct signature
-        let result = manager.process_storage_request(request).await;
+        let _result = manager.process_storage_request(request).await;
         // Test completed - full implementation would verify quote details and provider matching
     }
 
