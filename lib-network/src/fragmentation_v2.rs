@@ -620,13 +620,11 @@ impl FragmentReassemblerV2 {
     /// Reassemble a complete message from its fragments
     fn reassemble_inner(&self, msg: &InFlightMessage) -> Result<Vec<u8>> {
         // Calculate total size, ensuring all fragments are present
-        let total_size: usize = msg.received.iter()
+        let fragments: Vec<&Vec<u8>> = msg.received.iter()
             .map(|f| f.as_ref()
                 .ok_or_else(|| anyhow!("Internal error: incomplete fragment in complete message")))
-            .collect::<Result<Vec<_>, _>>()?
-            .iter()
-            .map(|data| data.len())
-            .sum();
+            .collect::<Result<Vec<_>>>()?;
+        let total_size: usize = fragments.iter().map(|data| data.len()).sum();
 
         let mut reassembled = Vec::with_capacity(total_size);
 
