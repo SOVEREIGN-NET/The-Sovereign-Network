@@ -431,43 +431,7 @@ async fn catchup_sync_from_peer(
         return Ok(0); // Peer is not ahead of us — nothing to download.
     }
 
-    // Download at most 200 blocks per request to keep payloads manageable.
-    let start = our_height + 1;
-    let end = tip.height.min(our_height + 200);
-
-    info!(
-        "⬇️  Catch-up: fetching blocks {}-{} from {} (peer tip={})",
-        start, end, peer_addr, tip.height
-    );
-
-    let blocks_url = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
-    let blocks_resp = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        client.get(&blocks_url),
-    )
-    .await
-    .context("blocks request timed out")?
-    .context("blocks request failed")?;
-
-    if !blocks_resp.status.is_success() {
-        return Err(anyhow::anyhow!(
-            "blocks {}-{} request returned {}",
-            start,
-            end,
-            blocks_resp.status_message
-        ));
-    }
-
-    let blocks: Vec<lib_blockchain::Block> =
-        bincode::deserialize(&blocks_resp.body).context("failed to deserialize blocks")?;
-
-    if blocks.is_empty() {
-        return Ok(0);
-    }
-
-    // Apply each block to the local blockchain.
-    // Acquire the write lock per block so that other readers (e.g. consensus
-    // height queries) can interleave.
+    // Resolve the blockchain arc once before the loop.
     let slot = blockchain_slot.read().await;
     let blockchain_arc = slot
         .as_ref()
@@ -475,37 +439,103 @@ async fn catchup_sync_from_peer(
         .ok_or_else(|| anyhow::anyhow!("blockchain not available during catch-up sync"))?;
     drop(slot);
 
-    let mut applied = 0usize;
-    for block in blocks {
-        let height = block.height();
-        let mut bc = blockchain_arc.write().await;
-        // Idempotent: skip blocks already committed.
-        if height <= bc.height {
-            debug!(
-                "Catch-up: block {} already present (local height {}), skipping",
-                height, bc.height
-            );
-            drop(bc);
-            continue;
+    let mut current_height = our_height;
+    let mut total_applied = 0usize;
+
+    // Loop until we reach the peer's tip or make no further progress.
+    // Each iteration downloads at most 200 blocks to keep request payloads manageable.
+    // We sync to the tip height queried at the start of this function; any blocks
+    // the peer accumulates during the loop will be picked up by the next trigger.
+    loop {
+        if current_height >= tip.height {
+            break;
         }
-        match bc.apply_block_trusted_for_sync(block).await {
-            Ok(()) => {
-                applied += 1;
-                info!("📦 Catch-up: applied block {}", height);
+
+        let start = current_height + 1;
+        let end = tip.height.min(current_height + 200);
+
+        info!(
+            "⬇️  Catch-up: fetching blocks {}-{} from {} (peer tip={})",
+            start, end, peer_addr, tip.height
+        );
+
+        let blocks_url = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
+        let blocks_resp = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            client.get(&blocks_url),
+        )
+        .await
+        .context("blocks request timed out")?
+        .context("blocks request failed")?;
+
+        if !blocks_resp.status.is_success() {
+            return Err(anyhow::anyhow!(
+                "blocks {}-{} request returned {}",
+                start,
+                end,
+                blocks_resp.status_message
+            ));
+        }
+
+        let blocks: Vec<lib_blockchain::Block> =
+            bincode::deserialize(&blocks_resp.body).context("failed to deserialize blocks")?;
+
+        if blocks.is_empty() {
+            // Peer returned no blocks despite claiming a higher tip — stop to
+            // avoid an infinite loop.
+            break;
+        }
+
+        // Apply each block to the local blockchain.
+        // Acquire the write lock per block so that other readers (e.g. consensus
+        // height queries) can interleave.
+        let mut batch_max_height = current_height;
+        for block in blocks {
+            let height = block.height();
+            // Track the highest height seen in this batch regardless of whether
+            // the block is applied or skipped, so `current_height` advances
+            // correctly and redundant re-fetches are avoided.
+            if height > batch_max_height {
+                batch_max_height = height;
             }
-            Err(e) => {
-                warn!(
-                    "Catch-up: failed to apply block {} — stopping batch: {}",
-                    height, e
+            let mut bc = blockchain_arc.write().await;
+            // Idempotent: skip blocks already committed.
+            if height <= bc.height {
+                debug!(
+                    "Catch-up: block {} already present (local height {}), skipping",
+                    height, bc.height
                 );
                 drop(bc);
-                break;
+                continue;
             }
+            match bc.apply_block_trusted_for_sync(block).await {
+                Ok(()) => {
+                    total_applied += 1;
+                    info!("📦 Catch-up: applied block {}", height);
+                }
+                Err(e) => {
+                    warn!(
+                        "Catch-up: failed to apply block {} — stopping batch: {}",
+                        height, e
+                    );
+                    drop(bc);
+                    // Return what we have so far; the caller can retry later.
+                    return Ok(total_applied);
+                }
+            }
+            drop(bc);
         }
-        drop(bc);
+
+        if batch_max_height <= current_height {
+            // No forward progress despite a non-empty response — stop to avoid
+            // looping indefinitely.
+            break;
+        }
+
+        current_height = batch_max_height;
     }
 
-    Ok(applied)
+    Ok(total_applied)
 }
 
 /// Adapter that provides blockchain data to the consensus engine for block production
