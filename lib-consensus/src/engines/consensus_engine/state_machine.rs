@@ -1223,15 +1223,20 @@ impl ConsensusEngine {
         // This is a hard gate: fork proposals are never stored, never voted on,
         // and never forwarded to peers.
         if let Err(e) = self.validate_no_fork_proposal(proposal.height, &proposal.id) {
-            tracing::error!(
+            // Stale or out-of-order proposal — discard and continue.
+            // This is expected when a lagging node (e.g. late joiner) proposes for a height
+            // that the local node has already committed past.  It is NOT a Byzantine fault:
+            // the consensus engine already committed that height and the proposal is simply
+            // irrelevant.  Crashing here would take down the consensus loop unnecessarily.
+            tracing::warn!(
                 "FORK REJECTED: Proposal {:?} from proposer {} at height {} \
-                 rejected as invalid fork: {}",
+                 rejected as invalid fork: {} — discarding (not crashing)",
                 proposal.id,
                 proposal.proposer,
                 proposal.height,
                 e,
             );
-            return Err(e);
+            return Ok(());
         }
 
         if !self.is_proposal_relevant(&proposal) {
@@ -1548,9 +1553,137 @@ impl ConsensusEngine {
                 self.enter_commit_step().await?;
             }
             ConsensusStep::Commit => {
-                self.advance_to_next_round();
+                // Sync height with blockchain before advancing. This prevents the consensus
+                // round counter from drifting far ahead of the actual blockchain height when
+                // no blocks are being committed (no quorum reached).
+                //
+                // sync_height_with_blockchain() sets current_round.height = blockchain_height + 1.
+                // We then reset round state at that correct height without adding +1 again.
+                if let Err(e) = self.sync_height_with_blockchain().await {
+                    tracing::warn!(
+                        "Commit timeout: failed to sync blockchain height ({}), using height+1 fallback",
+                        e
+                    );
+                    // Fallback: advance normally if we can't read the blockchain
+                    self.advance_to_next_round();
+                    self.snapshot_validator_set(self.current_round.height);
+                } else {
+                    // Reset round state at the synced height (no +1, sync already set it)
+                    self.current_round.round = 0;
+                    self.current_round.step = ConsensusStep::Propose;
+                    self.current_round.start_time = self.current_round.height;
+                    self.current_round.proposer = None;
+                    self.current_round.proposals.clear();
+                    self.current_round.votes.clear();
+                    self.current_round.timed_out = false;
+                    self.current_round.locked_proposal = None;
+                    self.current_round.valid_proposal = None;
+                    // Snapshot the validator set at the new height so that vote validation
+                    // can find the correct validator membership for this height.
+                    self.snapshot_validator_set(self.current_round.height);
+                }
+                // Start the propose step for the synced/advanced height.
+                if let Err(e) = self.enter_propose_step().await {
+                    tracing::warn!(
+                        "Failed to enter propose step at height {} round {}: {}",
+                        self.current_round.height,
+                        self.current_round.round,
+                        e
+                    );
+                }
             }
             ConsensusStep::NewRound => {}
+        }
+
+        Ok(())
+    }
+
+    /// Enter the propose step: select proposer and create/broadcast proposal if we're it.
+    ///
+    /// Called at the start of each new height/round (from `run_consensus_loop()` and
+    /// from `on_round_timeout(Commit)` after `advance_to_next_round()`).
+    ///
+    /// All nodes must call this so `current_round.proposer` is set before any
+    /// incoming proposals are processed by `on_proposal()`.
+    pub(super) async fn enter_propose_step(&mut self) -> ConsensusResult<()> {
+        // Select proposer for this height/round (deterministic round-robin)
+        let proposer = self
+            .validator_manager
+            .select_proposer(self.current_round.height, self.current_round.round);
+
+        if let Some(proposer) = proposer {
+            self.current_round.proposer = Some(proposer.identity.clone());
+
+            tracing::info!(
+                "🎯 Proposer for height {} round {}: {:?}",
+                self.current_round.height,
+                self.current_round.round,
+                proposer.identity
+            );
+
+            // If we are the proposer, create and broadcast the proposal.
+            let is_local_proposer = self
+                .validator_identity
+                .as_ref()
+                .map(|id| *id == proposer.identity)
+                .unwrap_or(false);
+
+            if is_local_proposer {
+                tracing::info!(
+                    "👑 We are the proposer for height {} round {}",
+                    self.current_round.height,
+                    self.current_round.round
+                );
+
+                match self.create_proposal().await {
+                    Ok(proposal) => {
+                        self.current_round.proposals.push(proposal.id.clone());
+                        self.pending_proposals.push_back(proposal.clone());
+
+                        let validator_id_str = self
+                            .validator_identity
+                            .as_ref()
+                            .map(|id| format!("{:?}", id))
+                            .unwrap_or_else(|| "local".to_string());
+
+                        log_consensus_event(
+                            self.current_round.height,
+                            self.current_round.round,
+                            ConsensusStep::Propose,
+                            "proposal_created",
+                            &validator_id_str,
+                        );
+
+                        let msg = ValidatorMessage::Propose { proposal };
+                        let validator_ids = self.get_active_validator_ids();
+
+                        if let Err(e) = self
+                            .broadcaster
+                            .broadcast_to_validators(msg, &validator_ids)
+                            .await
+                        {
+                            tracing::debug!(
+                                "Failed to broadcast proposal (CE-ENG-4): {}",
+                                e
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to create proposal at height {} round {}: {}",
+                            self.current_round.height,
+                            self.current_round.round,
+                            e
+                        );
+                    }
+                }
+            }
+        } else {
+            tracing::warn!(
+                "No proposer selected for height {} round {} (no active validators?)",
+                self.current_round.height,
+                self.current_round.round
+            );
         }
 
         Ok(())
