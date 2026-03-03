@@ -431,40 +431,6 @@ async fn catchup_sync_from_peer(
         return Ok(0); // Peer is not ahead of us — nothing to download.
     }
 
-    // Download at most 200 blocks per request to keep payloads manageable.
-    let start = our_height + 1;
-    let end = tip.height.min(our_height + 200);
-
-    info!(
-        "⬇️  Catch-up: fetching blocks {}-{} from {} (peer tip={})",
-        start, end, peer_addr, tip.height
-    );
-
-    let blocks_url = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
-    let blocks_resp = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        client.get(&blocks_url),
-    )
-    .await
-    .context("blocks request timed out")?
-    .context("blocks request failed")?;
-
-    if !blocks_resp.status.is_success() {
-        return Err(anyhow::anyhow!(
-            "blocks {}-{} request returned {}",
-            start,
-            end,
-            blocks_resp.status_message
-        ));
-    }
-
-    let blocks: Vec<lib_blockchain::Block> =
-        bincode::deserialize(&blocks_resp.body).context("failed to deserialize blocks")?;
-
-    if blocks.is_empty() {
-        return Ok(0);
-    }
-
     // Resolve the blockchain arc once before the loop.
     let slot = blockchain_slot.read().await;
     let blockchain_arc = slot
