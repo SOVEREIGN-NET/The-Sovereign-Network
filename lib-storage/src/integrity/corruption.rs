@@ -7,7 +7,6 @@ use lib_crypto::hashing::hash_blake3;
 /// Corruption detector
 pub struct CorruptionDetector {
     /// Detection sensitivity (0.0 to 1.0)
-    #[allow(dead_code)]
     sensitivity: f64,
 }
 
@@ -61,12 +60,20 @@ impl CorruptionDetector {
         }
 
         if diff_count > 0 {
+            let threshold = (1.0 - self.sensitivity).clamp(0.0, 1.0);
+            let min_changed = (original.len() as f64 * threshold).ceil() as usize;
+            if diff_count < min_changed {
+                return None;
+            }
             Some(CorruptionIssue {
                 issue_type: CorruptionType::BitCorruption,
                 block_index: 0,
                 expected_checksum: None,
                 actual_checksum: None,
-                details: format!("{} bytes differ", diff_count),
+                details: format!(
+                    "{} bytes differ (sensitivity {:.2}, threshold {})",
+                    diff_count, self.sensitivity, min_changed
+                ),
             })
         } else {
             None

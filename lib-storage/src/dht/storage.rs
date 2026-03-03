@@ -25,20 +25,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
-use serde::{Serialize, Deserialize};
 use tracing::{trace, debug, warn, info, error, instrument};
-
-/// Versioned container for persisted DHT storage
-#[derive(Serialize, Deserialize)]
-#[allow(dead_code)]
-struct PersistedDhtStorage {
-    /// Version for future migrations
-    version: u32,
-    /// Entries sorted by key for deterministic serialization
-    entries: Vec<(String, StorageEntry)>,
-    /// Contract index for fast discovery (sorted for deterministic serialization)
-    contract_index: Vec<(String, Vec<String>)>,
-}
 
 /// DHT storage manager with networking
 ///
@@ -2602,11 +2589,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sequence_tracking_replay_rejection() {
-        use crate::dht::network::DhtNetwork;
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
+        use crate::types::dht_types::build_peer_identity;
         use lib_identity::{ZhtpIdentity, IdentityType};
-        use std::net::SocketAddr;
 
         // Create a storage instance
         let node_id = NodeId::from_bytes([1u8; 32]);
@@ -2671,7 +2656,7 @@ mod tests {
     #[tokio::test]
     async fn test_sequence_tracking_increments_replay_counter() {
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
+        use crate::types::dht_types::build_peer_identity;
         use lib_identity::{ZhtpIdentity, IdentityType};
 
         // Create a storage instance
@@ -2738,7 +2723,7 @@ mod tests {
     #[tokio::test]
     async fn test_sequence_wraparound_in_storage() {
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
+        use crate::types::dht_types::build_peer_identity;
         use lib_identity::{ZhtpIdentity, IdentityType};
 
         // Create a storage instance

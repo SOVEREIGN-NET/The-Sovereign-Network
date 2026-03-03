@@ -175,10 +175,7 @@ impl IntegrityMetadata {
 }
 
 /// Integrity manager for coordinating integrity operations
-#[allow(dead_code)]
 pub struct IntegrityManager {
-    /// Checksum manager
-    checksum_manager: ChecksumManager,
     /// Corruption detector
     corruption_detector: CorruptionDetector,
     /// Self-healing system
@@ -193,7 +190,6 @@ impl IntegrityManager {
     /// Create a new integrity manager
     pub fn new(check_interval: u64) -> Self {
         Self {
-            checksum_manager: ChecksumManager::new(),
             corruption_detector: CorruptionDetector::new(),
             self_healing: SelfHealing::new(),
             metadata: HashMap::new(),
@@ -253,22 +249,10 @@ impl IntegrityManager {
             }]));
         }
 
-        // Verify each block
-        let mut issues = Vec::new();
-        for (i, block) in blocks.iter().enumerate() {
-            let expected_checksum = metadata.block_checksums[i];
-            let actual_checksum = hash_blake3(block);
-
-            if actual_checksum != expected_checksum {
-                issues.push(CorruptionIssue {
-                    issue_type: CorruptionType::ChecksumMismatch,
-                    block_index: i,
-                    expected_checksum: Some(expected_checksum),
-                    actual_checksum: Some(actual_checksum),
-                    details: format!("Block {} checksum mismatch", i),
-                });
-            }
-        }
+        // Verify each block through the corruption detector.
+        let issues = self
+            .corruption_detector
+            .detect_corruption(blocks, &metadata.block_checksums);
 
         // Update last check time
         if let Some(meta) = self.metadata.get_mut(content_id) {

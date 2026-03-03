@@ -257,7 +257,7 @@ mod tests {
         let n1 = node(1);
         let n2 = node(2);
         let mut reg_a = LWWRegister::new("a", n1);
-        let mut reg_b = LWWRegister::new("b", n2);
+        let reg_b = LWWRegister::new("b", n2);
 
         reg_a.merge(&reg_b);
         assert_eq!(reg_a.get(), &"b");

@@ -1152,6 +1152,9 @@ mod tests {
         // Verify enums work correctly
         assert_eq!(storage_tier, StorageTier::Hot);
         assert_eq!(access_level, AccessLevel::Private);
+        assert!(matches!(encryption_level, EncryptionLevel::QuantumResistant));
+        assert!(matches!(access_pattern, AccessPattern::Frequent));
+        assert!(matches!(penalty_type, PenaltyType::DataLoss));
         
         // Test type constants
         assert_eq!(STORAGE_PRICE_PER_GB_DAY, 100);
