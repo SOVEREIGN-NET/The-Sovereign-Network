@@ -490,6 +490,74 @@ where
 }
 
 // ============================================================================
+// Graceful Shutdown Helper for Duplex Streams
+// ============================================================================
+
+/// Gracefully shutdown a duplex stream to avoid race conditions
+///
+/// This ensures both sides of the stream have finished reading before closing.
+/// The shutdown sequence:
+/// 1. Flush to ensure all data is written
+/// 2. Shutdown the write side
+/// 3. Read until EOF to drain any remaining data (with timeout)
+///
+/// # Arguments
+/// * `stream` - The duplex stream to shutdown
+/// * `timeout_secs` - Maximum time to wait for graceful shutdown (default: 5)
+///
+/// # Returns
+/// * `Ok(())` if shutdown completed successfully
+/// * `Err(...)` if shutdown failed or timed out
+async fn graceful_shutdown<S>(stream: &mut S, timeout_secs: u64) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    use tokio::time::{timeout, Duration};
+    
+    // Step 1: Flush to ensure all buffered data is written
+    stream.flush().await?;
+    
+    // Step 2: Shutdown the write side
+    stream.shutdown().await?;
+    
+    // Step 3: Drain any remaining data with timeout (prevents hanging)
+    let drain_result = timeout(
+        Duration::from_secs(timeout_secs),
+        drain_stream(stream)
+    ).await;
+    
+    match drain_result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            // Drain error is not fatal - the shutdown already succeeded
+            debug!("Graceful shutdown: drain completed with error (non-fatal): {}", e);
+            Ok(())
+        }
+        Err(_) => {
+            // Timeout is not fatal - the shutdown already succeeded
+            debug!("Graceful shutdown: drain timed out after {}s (non-fatal)", timeout_secs);
+            Ok(())
+        }
+    }
+}
+
+/// Helper to drain a stream until EOF
+async fn drain_stream<S>(stream: &mut S) -> Result<()>
+where
+    S: AsyncRead + Unpin,
+{
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = stream.read(&mut buf).await?;
+        if n == 0 {
+            break; // EOF reached
+        }
+        // Continue reading to drain
+    }
+    Ok(())
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -511,9 +579,7 @@ mod tests {
     }
 
     /// Test: Happy path - successful handshake between initiator and responder
-    /// TODO: Fix race condition in tokio duplex streams causing UnexpectedEof
     #[tokio::test]
-    #[ignore]
     async fn test_happy_path_handshake() {
         // Create identities
         let client_identity = create_test_identity("client-device");
@@ -529,30 +595,36 @@ mod tests {
         // Create in-memory duplex streams (16MB buffer for UHP messages)
         let (mut client_stream, mut server_stream) = duplex(16 * 1024 * 1024);
 
-        // Run client and server concurrently
+        // Run client and server concurrently with graceful shutdown
         let client_ctx = ctx.clone();
         let server_ctx = ctx.clone();
 
         let (client_result, server_result) = tokio::try_join!(
             async {
-                handshake_as_initiator(
+                let result = handshake_as_initiator(
                     &mut client_stream,
                     &client_ctx,
                     &client_identity,
                     HandshakeCapabilities::default(),
                 )
-                .await
+                .await;
+                // Graceful shutdown to avoid race condition
+                let _ = graceful_shutdown(&mut client_stream, 5).await;
+                result
             },
             async {
-                handshake_as_responder(
+                let result = handshake_as_responder(
                     &mut server_stream,
                     &server_ctx,
                     &server_identity,
                     HandshakeCapabilities::default(),
                 )
-                .await
+                .await;
+                // Graceful shutdown to avoid race condition
+                let _ = graceful_shutdown(&mut server_stream, 5).await;
+                result
             }
-        ).unwrap();
+        ).expect("Handshake should complete successfully");
 
         // Verify session keys match
         assert_eq!(client_result.session_key, server_result.session_key);
@@ -563,9 +635,7 @@ mod tests {
     }
 
     /// Test: Replay attack detection
-    /// TODO: Fix race condition in tokio duplex streams causing UnexpectedEof
     #[tokio::test]
-    #[ignore]
     async fn test_replay_attack_prevention() {
         let client_identity = create_test_identity("client-replay");
         let server_identity = create_test_identity("server-replay");
@@ -583,22 +653,26 @@ mod tests {
 
             let result = tokio::try_join!(
                 async {
-                    handshake_as_initiator(
+                    let result = handshake_as_initiator(
                         &mut client_stream,
                         &client_ctx,
                         &client_identity_clone,
                         HandshakeCapabilities::default(),
                     )
-                    .await
+                    .await;
+                    let _ = graceful_shutdown(&mut client_stream, 5).await;
+                    result
                 },
                 async {
-                    handshake_as_responder(
+                    let result = handshake_as_responder(
                         &mut server_stream,
                         &server_ctx,
                         &server_identity_clone,
                         HandshakeCapabilities::default(),
                     )
-                    .await
+                    .await;
+                    let _ = graceful_shutdown(&mut server_stream, 5).await;
+                    result
                 }
             );
 
@@ -621,6 +695,10 @@ mod tests {
             // Now try to use it again - should be detected as replay
             let result = ctx.nonce_cache.check_and_store(&client_hello.challenge_nonce, client_hello.timestamp);
             assert!(result.is_err());
+            
+            // Cleanup streams
+            let _ = graceful_shutdown(&mut client_stream, 5).await;
+            let _ = graceful_shutdown(&mut server_stream, 5).await;
         }
     }
 
@@ -651,11 +729,14 @@ mod tests {
 
         // Send from client
         tokio::spawn(async move {
-            send_message(&mut client, &message).await.unwrap();
+            let result = send_message(&mut client, &message).await;
+            let _ = graceful_shutdown(&mut client, 5).await;
+            result.unwrap();
         });
 
         // Receive on server
         let received = recv_message(&mut server).await.unwrap();
+        let _ = graceful_shutdown(&mut server, 5).await;
 
         // Verify message type
         match received.payload {
@@ -673,12 +754,15 @@ mod tests {
 
         // Send a length that exceeds the limit
         tokio::spawn(async move {
-            client.write_u32(2_000_000).await.unwrap(); // 2MB > 1MB limit
-            client.flush().await.unwrap();
+            let _ = client.write_u32(2_000_000).await; // 2MB > 1MB limit
+            let _ = client.flush().await;
+            let _ = graceful_shutdown(&mut client, 5).await;
         });
 
         // Server should reject
         let result = recv_message(&mut server).await;
+        let _ = graceful_shutdown(&mut server, 5).await;
+        
         assert!(result.is_err());
         match result.unwrap_err() {
             HandshakeIoError::Protocol(msg) => assert!(msg.contains("too large")),
