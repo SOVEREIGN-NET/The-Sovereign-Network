@@ -138,9 +138,11 @@ impl FeeModelV2 {
             TransactionType::IdentityRegistration
             | TransactionType::IdentityUpdate
             | TransactionType::IdentityRevocation => TxKind::Governance,
-            TransactionType::ValidatorRegistration
-            | TransactionType::ValidatorUpdate
-            | TransactionType::DaoProposal
+            TransactionType::ValidatorRegistration | TransactionType::ValidatorUpdate => {
+                TxKind::ValidatorRegistration
+            }
+            TransactionType::ValidatorUnregister => TxKind::ValidatorExit,
+            TransactionType::DaoProposal
             | TransactionType::DaoVote
             | TransactionType::DaoExecution
             | TransactionType::GovernanceConfigUpdate => TxKind::Governance,

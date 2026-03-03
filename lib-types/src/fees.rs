@@ -118,6 +118,8 @@ pub enum FeeParamsError {
     ZeroFeePerStateRead,
     /// Fee per state write is zero
     ZeroFeePerStateWrite,
+    /// Fee per byte written to state is zero
+    ZeroFeePerStateWriteByte,
     /// Fee per signature is zero
     ZeroFeePerSignature,
     /// Fee per execution unit is zero
@@ -133,6 +135,9 @@ impl std::fmt::Display for FeeParamsError {
             FeeParamsError::ZeroBaseFeePerByte => write!(f, "base_fee_per_byte must be > 0"),
             FeeParamsError::ZeroFeePerStateRead => write!(f, "fee_per_state_read must be > 0"),
             FeeParamsError::ZeroFeePerStateWrite => write!(f, "fee_per_state_write must be > 0"),
+            FeeParamsError::ZeroFeePerStateWriteByte => {
+                write!(f, "fee_per_state_write_byte must be > 0")
+            }
             FeeParamsError::ZeroFeePerSignature => write!(f, "fee_per_signature must be > 0"),
             FeeParamsError::ZeroFeePerExecUnit => write!(f, "fee_per_exec_unit must be > 0"),
         }
@@ -142,11 +147,29 @@ impl std::fmt::Display for FeeParamsError {
 impl std::error::Error for FeeParamsError {}
 
 impl FeeParams {
-    /// Create params for testing with realistic values
-    /// 
-    /// These values are lower than production but still maintain
-    /// realistic ratios between different fee components.
+    /// Create params for testing with minimal fees.
+    ///
+    /// All rates are set to 1 and minimum_fee is 0, so any non-zero fee passes
+    /// validation. Use [`for_realistic_testing`] when tests need production-like
+    /// fee ratios.
     pub fn for_testing() -> Self {
+        Self {
+            base_fee_per_byte: 1,
+            fee_per_exec_unit: 1,
+            fee_per_state_read: 1,
+            fee_per_state_write: 1,
+            fee_per_state_write_byte: 1,
+            fee_per_signature: 1,
+            minimum_fee: 0,
+            maximum_fee: u64::MAX,
+        }
+    }
+
+    /// Create params for testing with realistic production-like values.
+    ///
+    /// These values maintain realistic ratios between different fee components
+    /// and are suitable for tests that need to verify fee amounts.
+    pub fn for_realistic_testing() -> Self {
         Self {
             base_fee_per_byte: 1,
             fee_per_exec_unit: 10,
@@ -162,7 +185,7 @@ impl FeeParams {
     /// Validate fee parameters for consistency
     ///
     /// # Checks performed
-    /// - minimum_fee < maximum_fee
+    /// - minimum_fee <= maximum_fee
     /// - All fee rates are non-zero (prevents free operations)
     pub fn validate(&self) -> Result<(), FeeParamsError> {
         if self.minimum_fee > self.maximum_fee {
@@ -179,6 +202,9 @@ impl FeeParams {
         }
         if self.fee_per_state_write == 0 {
             return Err(FeeParamsError::ZeroFeePerStateWrite);
+        }
+        if self.fee_per_state_write_byte == 0 {
+            return Err(FeeParamsError::ZeroFeePerStateWriteByte);
         }
         if self.fee_per_signature == 0 {
             return Err(FeeParamsError::ZeroFeePerSignature);
@@ -251,7 +277,19 @@ mod tests {
     #[test]
     fn test_fee_params_for_testing() {
         let params = FeeParams::for_testing();
-        // Updated for realistic testing values (FEES-11)
+        // Minimal values: all rates = 1, minimum_fee = 0
+        assert_eq!(params.minimum_fee, 0);
+        assert_eq!(params.maximum_fee, u64::MAX);
+        assert_eq!(params.base_fee_per_byte, 1);
+        assert_eq!(params.fee_per_exec_unit, 1);
+        assert_eq!(params.fee_per_state_read, 1);
+        assert_eq!(params.fee_per_state_write, 1);
+        assert_eq!(params.fee_per_signature, 1);
+    }
+
+    #[test]
+    fn test_fee_params_for_realistic_testing() {
+        let params = FeeParams::for_realistic_testing();
         assert_eq!(params.minimum_fee, 1_000);
         assert_eq!(params.maximum_fee, 100_000_000);
         assert_eq!(params.base_fee_per_byte, 1);
@@ -318,6 +356,16 @@ mod tests {
         };
         let err = params.validate().unwrap_err();
         assert!(matches!(err, FeeParamsError::ZeroFeePerStateWrite));
+    }
+
+    #[test]
+    fn test_fee_params_validation_zero_state_write_byte() {
+        let params = FeeParams {
+            fee_per_state_write_byte: 0,
+            ..FeeParams::default()
+        };
+        let err = params.validate().unwrap_err();
+        assert!(matches!(err, FeeParamsError::ZeroFeePerStateWriteByte));
     }
 
     #[test]
