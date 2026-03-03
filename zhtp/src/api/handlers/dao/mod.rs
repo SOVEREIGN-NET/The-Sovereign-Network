@@ -18,7 +18,10 @@ use lib_consensus::{
     DaoProposalType, DaoVoteChoice,
 };
 use lib_blockchain::contracts::{DAORegistry, DAOEntry, TokenContract, derive_dao_id};
-use lib_blockchain::transaction::{DaoExecutionData, DaoProposalData, DaoVoteData, Transaction};
+use lib_blockchain::transaction::{
+    DaoExecutionData, DaoProposalData, DaoVoteData, OracleCommitteeUpdateData,
+    OracleConfigUpdateData, Transaction,
+};
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::types::Hash as BcHash;
 use lib_blockchain::types::dao::DAOType;
@@ -113,6 +116,13 @@ struct CreateProposalRequest {
     description: String,
     proposal_type: Option<String>,
     voting_period_days: Option<u32>,
+    activate_at_epoch: Option<u64>,
+    reason: Option<String>,
+    oracle_committee_members: Option<Vec<String>>,
+    oracle_epoch_duration_secs: Option<u64>,
+    oracle_max_source_age_secs: Option<u64>,
+    oracle_max_deviation_bps: Option<u32>,
+    oracle_max_price_staleness_epochs: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,8 +268,28 @@ impl DaoHandler {
             "community_funding" => Ok(DaoProposalType::CommunityFunding),
             "research_grants" => Ok(DaoProposalType::ResearchGrants),
             "difficulty_parameter_update" => Ok(DaoProposalType::DifficultyParameterUpdate),
+            "update_oracle_committee" | "oracle_committee_update" => {
+                Ok(DaoProposalType::GovernanceRules)
+            }
+            "update_oracle_config" | "oracle_config_update" => {
+                Ok(DaoProposalType::GovernanceRules)
+            }
             _ => Err(anyhow::anyhow!("Invalid proposal type: {}", type_str)),
         }
+    }
+
+    fn is_oracle_committee_proposal_type(proposal_type_raw: &str) -> bool {
+        matches!(
+            proposal_type_raw.to_ascii_lowercase().as_str(),
+            "update_oracle_committee" | "oracle_committee_update"
+        )
+    }
+
+    fn is_oracle_config_proposal_type(proposal_type_raw: &str) -> bool {
+        matches!(
+            proposal_type_raw.to_ascii_lowercase().as_str(),
+            "update_oracle_config" | "oracle_config_update"
+        )
     }
 
     /// Parse vote choice from string
@@ -600,6 +630,18 @@ impl DaoHandler {
         }
     }
 
+    fn proposal_quorum_required_for_request(
+        proposal_type_raw: &str,
+        proposal_type: &DaoProposalType,
+    ) -> u8 {
+        if Self::is_oracle_committee_proposal_type(proposal_type_raw)
+            || Self::is_oracle_config_proposal_type(proposal_type_raw)
+        {
+            return 30;
+        }
+        Self::proposal_quorum_required(proposal_type)
+    }
+
     /// Converts a `DaoProposalType` enum value to its canonical string representation
     /// used for storage in blockchain transactions.
     fn proposal_type_to_string(proposal_type: &DaoProposalType) -> String {
@@ -618,6 +660,121 @@ impl DaoHandler {
             DaoProposalType::WelfareAllocation => "welfare_allocation".to_string(),
             DaoProposalType::MintBurnAuthorization => "mint_burn_authorization".to_string(),
         }
+    }
+
+    fn proposal_type_storage_string(proposal_type_raw: &str, proposal_type: &DaoProposalType) -> String {
+        if Self::is_oracle_committee_proposal_type(proposal_type_raw) {
+            return "update_oracle_committee".to_string();
+        }
+        if Self::is_oracle_config_proposal_type(proposal_type_raw) {
+            return "update_oracle_config".to_string();
+        }
+        Self::proposal_type_to_string(proposal_type)
+    }
+
+    fn current_oracle_epoch(blockchain: &lib_blockchain::Blockchain) -> u64 {
+        let reference_timestamp = blockchain
+            .latest_block()
+            .map(|b| b.header.timestamp)
+            .unwrap_or(0);
+        blockchain.oracle_state.epoch_id(reference_timestamp)
+    }
+
+    fn parse_oracle_members(members: &[String]) -> Result<Vec<[u8; 32]>> {
+        if members.is_empty() {
+            return Err(anyhow::anyhow!("oracle_committee_members cannot be empty"));
+        }
+        members
+            .iter()
+            .map(|member| Self::parse_hex_32(member, "oracle_committee_members[]"))
+            .collect()
+    }
+
+    fn build_oracle_execution_params(
+        proposal_type_raw: &str,
+        request_data: &CreateProposalRequest,
+        blockchain: &lib_blockchain::Blockchain,
+    ) -> Result<Option<Vec<u8>>> {
+        if Self::is_oracle_committee_proposal_type(proposal_type_raw) {
+            let activate_at_epoch = request_data
+                .activate_at_epoch
+                .ok_or_else(|| anyhow::anyhow!("activate_at_epoch is required for oracle committee updates"))?;
+            let members_raw = request_data.oracle_committee_members.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "oracle_committee_members is required for oracle committee updates"
+                )
+            })?;
+            let new_members = Self::parse_oracle_members(members_raw)?;
+            let reason = request_data
+                .reason
+                .clone()
+                .unwrap_or_else(|| "Oracle committee update".to_string());
+
+            let current_epoch = Self::current_oracle_epoch(blockchain);
+            let data = OracleCommitteeUpdateData {
+                new_members,
+                activate_at_epoch,
+                reason,
+            };
+            data.validate(current_epoch)
+                .map_err(|e| anyhow::anyhow!("Invalid oracle committee update payload: {}", e))?;
+
+            let active_validator_key_ids: std::collections::HashSet<[u8; 32]> = blockchain
+                .validator_registry
+                .values()
+                .filter(|v| v.status == "active")
+                .map(|v| {
+                    v.oracle_key_id
+                        .unwrap_or_else(|| lib_blockchain::blake3_hash(&v.consensus_key).as_array())
+                })
+                .collect();
+
+            for member in &data.new_members {
+                if !active_validator_key_ids.contains(member) {
+                    return Err(anyhow::anyhow!(
+                        "oracle committee member {} is not an active validator key_id",
+                        hex::encode(member)
+                    ));
+                }
+            }
+
+            return Ok(Some(bincode::serialize(&data)?));
+        }
+
+        if Self::is_oracle_config_proposal_type(proposal_type_raw) {
+            let activate_at_epoch = request_data
+                .activate_at_epoch
+                .ok_or_else(|| anyhow::anyhow!("activate_at_epoch is required for oracle config updates"))?;
+            let reason = request_data
+                .reason
+                .clone()
+                .unwrap_or_else(|| "Oracle config update".to_string());
+
+            let data = OracleConfigUpdateData {
+                epoch_duration_secs: request_data
+                    .oracle_epoch_duration_secs
+                    .ok_or_else(|| anyhow::anyhow!("oracle_epoch_duration_secs is required"))?,
+                max_source_age_secs: request_data
+                    .oracle_max_source_age_secs
+                    .ok_or_else(|| anyhow::anyhow!("oracle_max_source_age_secs is required"))?,
+                max_deviation_bps: request_data
+                    .oracle_max_deviation_bps
+                    .ok_or_else(|| anyhow::anyhow!("oracle_max_deviation_bps is required"))?,
+                max_price_staleness_epochs: request_data
+                    .oracle_max_price_staleness_epochs
+                    .ok_or_else(|| anyhow::anyhow!("oracle_max_price_staleness_epochs is required"))?,
+                activate_at_epoch,
+                reason,
+            };
+
+            let current_epoch = Self::current_oracle_epoch(blockchain);
+            data.validate(current_epoch)
+                .map_err(|e| anyhow::anyhow!("Invalid oracle config update payload: {}", e))?;
+
+            return Ok(Some(bincode::serialize(&data)?));
+        }
+
+        Ok(None)
     }
 
     /// Deterministically generates a proposal ID by concatenating and hashing the provided byte slices.
@@ -680,12 +837,27 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let mut blockchain = blockchain_arc.write().await;
         let current_height = blockchain.get_height();
+        let proposal_type_storage =
+            Self::proposal_type_storage_string(proposal_type_raw, &proposal_type);
+        let execution_params = match Self::build_oracle_execution_params(
+            proposal_type_raw,
+            &request_data,
+            &blockchain,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    e.to_string(),
+                ))
+            }
+        };
 
         let proposal_id = BcHash::from_slice(&lib_crypto::hash_blake3(&[
             authenticated_identity_id.as_bytes(),
             request_data.title.as_bytes(),
             request_data.description.as_bytes(),
-            Self::proposal_type_to_string(&proposal_type).as_bytes(),
+            proposal_type_storage.as_bytes(),
             &now.to_le_bytes(),
         ].concat()));
 
@@ -694,10 +866,10 @@ impl DaoHandler {
             proposer: proposer_identity.did.clone(),
             title: request_data.title.clone(),
             description: request_data.description.clone(),
-            proposal_type: Self::proposal_type_to_string(&proposal_type),
+            proposal_type: proposal_type_storage,
             voting_period_blocks: (request_data.voting_period_days.unwrap_or(7) as u64).saturating_mul(14_400),
-            quorum_required: Self::proposal_quorum_required(&proposal_type),
-            execution_params: None,
+            quorum_required: Self::proposal_quorum_required_for_request(proposal_type_raw, &proposal_type),
+            execution_params,
             created_at: now,
             created_at_height: current_height,
         };
@@ -1568,6 +1740,13 @@ impl DaoHandler {
             ),
             proposal_type: Some("treasury_allocation".to_string()),
             voting_period_days: Some(7),
+            activate_at_epoch: None,
+            reason: None,
+            oracle_committee_members: None,
+            oracle_epoch_duration_secs: None,
+            oracle_max_source_age_secs: None,
+            oracle_max_deviation_bps: None,
+            oracle_max_price_staleness_epochs: None,
         };
 
         self.handle_create_proposal_from_identity(authenticated_identity_id, create_request).await
@@ -2364,8 +2543,9 @@ mod tests {
     use super::{CastVoteRequest, CreateProposalRequest, DaoHandler, DAOType};
     use lib_blockchain::contracts::{derive_dao_id, DAORegistry, TokenContract};
     use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
-    use lib_blockchain::transaction::{DaoExecutionData, Transaction};
+    use lib_blockchain::transaction::{DaoExecutionData, OracleCommitteeUpdateData, OracleConfigUpdateData, Transaction};
     use lib_blockchain::types::Hash as BcHash;
+    use lib_blockchain::{Blockchain, ValidatorInfo};
     use serde_json::json;
 
     fn test_public_key(seed: u8) -> PublicKey {
@@ -2434,6 +2614,138 @@ mod tests {
         let parsed: CreateProposalRequest = serde_json::from_str(body).expect("canonical propose payload should parse");
         assert_eq!(parsed.proposal_type.as_deref(), Some("treasury_allocation"));
         assert_eq!(parsed.voting_period_days, Some(7));
+    }
+
+    #[test]
+    fn create_proposal_accepts_oracle_committee_shape() {
+        let body = format!(
+            r#"{{
+                "title":"Oracle committee update",
+                "description":"Rotate committee",
+                "proposal_type":"update_oracle_committee",
+                "activate_at_epoch":9,
+                "reason":"Rotate committee",
+                "oracle_committee_members":["{}","{}"]
+            }}"#,
+            "11".repeat(32),
+            "22".repeat(32)
+        );
+        let parsed: CreateProposalRequest = serde_json::from_str(&body).expect("oracle committee payload should parse");
+        assert_eq!(parsed.proposal_type.as_deref(), Some("update_oracle_committee"));
+        assert_eq!(parsed.activate_at_epoch, Some(9));
+        assert_eq!(parsed.oracle_committee_members.as_ref().map(|m| m.len()), Some(2));
+    }
+
+    #[test]
+    fn create_proposal_accepts_oracle_config_shape() {
+        let body = r#"{
+            "title":"Oracle config update",
+            "description":"Tune config",
+            "proposal_type":"update_oracle_config",
+            "activate_at_epoch":9,
+            "reason":"Tune config",
+            "oracle_epoch_duration_secs":600,
+            "oracle_max_source_age_secs":120,
+            "oracle_max_deviation_bps":900,
+            "oracle_max_price_staleness_epochs":10
+        }"#;
+        let parsed: CreateProposalRequest = serde_json::from_str(body).expect("oracle config payload should parse");
+        assert_eq!(parsed.proposal_type.as_deref(), Some("update_oracle_config"));
+        assert_eq!(parsed.oracle_epoch_duration_secs, Some(600));
+        assert_eq!(parsed.oracle_max_source_age_secs, Some(120));
+        assert_eq!(parsed.oracle_max_deviation_bps, Some(900));
+    }
+
+    fn insert_active_validator(blockchain: &mut Blockchain, did: &str, key_id: [u8; 32]) {
+        blockchain.validator_registry.insert(
+            did.to_string(),
+            ValidatorInfo {
+                identity_id: did.to_string(),
+                stake: 10_000,
+                storage_provided: 0,
+                consensus_key: key_id.to_vec(),
+                networking_key: Vec::new(),
+                rewards_key: Vec::new(),
+                network_address: "127.0.0.1:0".to_string(),
+                commission_rate: 0,
+                status: "active".to_string(),
+                registered_at: 0,
+                last_activity: 0,
+                blocks_validated: 0,
+                slash_count: 0,
+                admission_source: "test".to_string(),
+                governance_proposal_id: None,
+                oracle_key_id: Some(key_id),
+            },
+        );
+    }
+
+    #[test]
+    fn oracle_execution_params_encode_committee_update() {
+        let mut blockchain = Blockchain::new().expect("genesis");
+        insert_active_validator(&mut blockchain, "did:zhtp:a", [0x11; 32]);
+        insert_active_validator(&mut blockchain, "did:zhtp:b", [0x22; 32]);
+        let activate_at_epoch = DaoHandler::current_oracle_epoch(&blockchain) + 1;
+
+        let request = CreateProposalRequest {
+            proposer_identity_id: None,
+            title: "Oracle committee".to_string(),
+            description: "Rotate".to_string(),
+            proposal_type: Some("update_oracle_committee".to_string()),
+            voting_period_days: Some(7),
+            activate_at_epoch: Some(activate_at_epoch),
+            reason: Some("Rotate".to_string()),
+            oracle_committee_members: Some(vec!["11".repeat(32), "22".repeat(32)]),
+            oracle_epoch_duration_secs: None,
+            oracle_max_source_age_secs: None,
+            oracle_max_deviation_bps: None,
+            oracle_max_price_staleness_epochs: None,
+        };
+
+        let encoded = DaoHandler::build_oracle_execution_params(
+            "update_oracle_committee",
+            &request,
+            &blockchain,
+        )
+        .expect("committee params")
+        .expect("committee params present");
+        let decoded: OracleCommitteeUpdateData =
+            bincode::deserialize(&encoded).expect("decode committee params");
+        assert_eq!(decoded.new_members.len(), 2);
+        assert_eq!(decoded.activate_at_epoch, activate_at_epoch);
+    }
+
+    #[test]
+    fn oracle_execution_params_encode_config_update() {
+        let blockchain = Blockchain::new().expect("genesis");
+        let activate_at_epoch = DaoHandler::current_oracle_epoch(&blockchain) + 1;
+        let request = CreateProposalRequest {
+            proposer_identity_id: None,
+            title: "Oracle config".to_string(),
+            description: "Tune".to_string(),
+            proposal_type: Some("update_oracle_config".to_string()),
+            voting_period_days: Some(7),
+            activate_at_epoch: Some(activate_at_epoch),
+            reason: Some("Tune".to_string()),
+            oracle_committee_members: None,
+            oracle_epoch_duration_secs: Some(600),
+            oracle_max_source_age_secs: Some(120),
+            oracle_max_deviation_bps: Some(900),
+            oracle_max_price_staleness_epochs: Some(10),
+        };
+
+        let encoded = DaoHandler::build_oracle_execution_params(
+            "update_oracle_config",
+            &request,
+            &blockchain,
+        )
+        .expect("config params")
+        .expect("config params present");
+        let decoded: OracleConfigUpdateData =
+            bincode::deserialize(&encoded).expect("decode config params");
+        assert_eq!(decoded.epoch_duration_secs, 600);
+        assert_eq!(decoded.max_source_age_secs, 120);
+        assert_eq!(decoded.max_deviation_bps, 900);
     }
 
     #[test]

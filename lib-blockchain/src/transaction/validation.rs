@@ -277,9 +277,9 @@ impl TransactionValidator {
                 // AMM/Token operations - not yet fully implemented
                 // TODO: Add validation for these transaction types
             }
-            TransactionType::UpdateOracleCommittee
-            | TransactionType::UpdateOracleConfig => {
-                // Oracle governance transactions - semantic validation in stateful validator
+            TransactionType::UpdateOracleCommittee | TransactionType::UpdateOracleConfig => {
+                // Oracle governance transactions require chain-state checks.
+                // Run in stateful validator only.
             }
             TransactionType::OracleAttestation => {
                 // Oracle attestation - full validation in stateful validator
@@ -468,9 +468,9 @@ impl TransactionValidator {
             | TransactionType::RemoveLiquidity => {
                 // AMM/Token operations - not yet fully implemented
             }
-            TransactionType::UpdateOracleCommittee
-            | TransactionType::UpdateOracleConfig => {
-                // Oracle governance transactions - semantic validation in stateful validator
+            TransactionType::UpdateOracleCommittee | TransactionType::UpdateOracleConfig => {
+                // Oracle governance transactions require chain-state checks.
+                // Run in stateful validator only.
             }
             TransactionType::OracleAttestation => {
                 // Oracle attestation - full validation in StatefulValidator
@@ -1569,9 +1569,8 @@ impl<'a> StatefulTransactionValidator<'a> {
             | TransactionType::RemoveLiquidity => {
                 // AMM/Token operations - not yet fully implemented
             }
-            TransactionType::UpdateOracleCommittee
-            | TransactionType::UpdateOracleConfig => {
-                // Oracle governance transactions - validation handled at execution layer
+            TransactionType::UpdateOracleCommittee | TransactionType::UpdateOracleConfig => {
+                self.validate_oracle_governance_transaction(transaction)?
             }
             TransactionType::OracleAttestation => {
                 // ORACLE-9: Validate oracle attestation at block execution time
@@ -1862,6 +1861,70 @@ impl<'a> StatefulTransactionValidator<'a> {
         Ok(())
     }
 
+    fn current_oracle_epoch(&self, blockchain: &crate::blockchain::Blockchain) -> u64 {
+        let reference_timestamp = blockchain
+            .latest_block()
+            .map(|b| b.header.timestamp)
+            .unwrap_or(0);
+        blockchain.oracle_state.epoch_id(reference_timestamp)
+    }
+
+    fn validate_oracle_governance_transaction(
+        &self,
+        transaction: &Transaction,
+    ) -> ValidationResult {
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+
+        if transaction.version < crate::transaction::core::TX_VERSION_V4 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        match transaction.transaction_type {
+            TransactionType::UpdateOracleCommittee => {
+                let data = transaction
+                    .oracle_committee_update_data
+                    .as_ref()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+
+                let current_epoch = self.current_oracle_epoch(blockchain);
+                data.validate(current_epoch)
+                    .map_err(|_| ValidationError::InvalidTransaction)?;
+
+                let active_validator_key_ids: std::collections::HashSet<[u8; 32]> = blockchain
+                    .validator_registry
+                    .values()
+                    .filter(|v| v.status == "active")
+                    .map(|v| {
+                        v.oracle_key_id.unwrap_or_else(|| {
+                            crate::types::hash::blake3_hash(&v.consensus_key).as_array()
+                        })
+                    })
+                    .collect();
+
+                if data
+                    .new_members
+                    .iter()
+                    .any(|member| !active_validator_key_ids.contains(member))
+                {
+                    return Err(ValidationError::InvalidTransaction);
+                }
+            }
+            TransactionType::UpdateOracleConfig => {
+                let data = transaction
+                    .oracle_config_update_data
+                    .as_ref()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+
+                let current_epoch = self.current_oracle_epoch(blockchain);
+                data.validate(current_epoch)
+                    .map_err(|_| ValidationError::InvalidTransaction)?;
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     /// Stateful TokenMint authorization parity with execution path.
     ///
     /// This enforces token existence and signer authorization at mempool/precheck time
@@ -2076,8 +2139,7 @@ pub mod utils {
                 // AMM/Token operations - not yet fully implemented
                 true
             }
-            TransactionType::UpdateOracleCommittee
-            | TransactionType::UpdateOracleConfig => {
+            TransactionType::UpdateOracleCommittee | TransactionType::UpdateOracleConfig => {
                 // Oracle governance transactions
                 true
             }
