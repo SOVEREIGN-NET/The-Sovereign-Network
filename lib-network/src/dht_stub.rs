@@ -336,8 +336,13 @@ impl ZkDHTIntegration {
             return Err(anyhow::anyhow!("Content not found for replication: {}", key));
         };
 
-        // Find closest peers
-        let closest_peers = self.find_closest_peers(&self.local_node_id, replication_factor as usize).await;
+        // Derive a 32-byte key ID by hashing the content key so that replication
+        // targets the neighbourhood of the content key in the DHT keyspace, not
+        // the neighbourhood of the local node (Kademlia semantics).
+        let key_id: [u8; 32] = *blake3::hash(key.as_bytes()).as_bytes();
+
+        // Find closest peers to the content key
+        let closest_peers = self.find_closest_peers(&key_id, replication_factor as usize).await;
         
         let mut replicated_count = 0u8;
         for _peer in closest_peers {
