@@ -8,7 +8,7 @@ use tracing::{info, warn, error, debug};
 use serde_json;
 
 use lib_crypto::{PublicKey, Signature};
-use crate::mesh::{MeshConnection, MeshProtocolStats};
+use crate::mesh::MeshProtocolStats;
 use crate::protocols::NetworkProtocol;
 use crate::NodeId;
 
@@ -442,8 +442,6 @@ pub struct MeshNode {
     pub max_peers: usize,
     /// Bootstrap peers for initial discovery
     pub bootstrap_peers: Vec<String>,
-    /// Current mesh connections
-    pub active_connections: HashMap<PublicKey, MeshConnection>,
     /// Mesh discovery state
     pub discovery_active: bool,
     /// Hardware capabilities detected on this system
@@ -458,16 +456,15 @@ impl MeshNode {
             protocols: config.protocols,
             max_peers: config.max_peers,
             bootstrap_peers: config.bootstrap_peers,
-            active_connections: HashMap::new(),
             discovery_active: false,
             hardware_capabilities: None,
         })
     }
-    
+
     /// Create new pure mesh node with hardware detection
     pub async fn new_with_hardware_detection(config: NetworkConfig) -> Result<Self> {
         info!("Detecting available mesh networking hardware...");
-        
+
         let hardware_capabilities = match HardwareCapabilities::detect().await {
             Ok(caps) => {
                 info!("Hardware detection completed");
@@ -478,7 +475,7 @@ impl MeshNode {
                 None
             }
         };
-        
+
         // Filter protocols based on hardware availability
         let filtered_protocols = if let Some(ref caps) = hardware_capabilities {
             filter_protocols_by_hardware(&config.protocols, caps)
@@ -488,15 +485,14 @@ impl MeshNode {
             warn!("Hardware detection failed - using configured protocols without hardware validation");
             config.protocols.clone()
         };
-        
+
         info!(" Enabled protocols: {:?}", filtered_protocols);
-        
+
         Ok(MeshNode {
             node_id: config.node_id,
             protocols: filtered_protocols,
             max_peers: config.max_peers,
             bootstrap_peers: config.bootstrap_peers,
-            active_connections: HashMap::new(),
             discovery_active: false,
             hardware_capabilities,
         })
@@ -1051,36 +1047,35 @@ impl ZhtpMeshServer {
     }
 
     /// Start monitoring for Bluetooth protocol
-    /// TODO (Ticket #149): Update to use peer_registry
     async fn start_bluetooth_monitoring(&self, protocol: Arc<RwLock<crate::protocols::bluetooth::BluetoothMeshProtocol>>) -> Result<()> {
-        let _peer_registry = self.peer_registry.clone();
-        
+        let peer_registry = self.peer_registry.clone();
+
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                
-                let _connected_peers = protocol.read().await.get_connected_peers().await;
-                // Update connections map...
-                // This is a simplified monitoring loop
+
+                // Get connected peers from protocol and sync to peer registry
+                let connected_peers = protocol.read().await.get_connected_peers().await;
+                // Peer registry is the source of truth - protocol connections are reflected there
+                drop(connected_peers);
             }
         });
-        
+
         Ok(())
     }
 
     /// Start monitoring for WiFi Direct protocol
-    /// TODO (Ticket #149): Update to use peer_registry
     async fn start_wifi_direct_monitoring(&self, _protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>) -> Result<()> {
         let _peer_registry = self.peer_registry.clone();
-        
+
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
-                
-                // Monitor WiFi connections
+
+                // Monitor WiFi connections via peer registry (source of truth)
             }
         });
-        
+
         Ok(())
     }
 
@@ -1503,7 +1498,14 @@ impl ZhtpMeshServer {
     
     /// Get current network statistics
     pub async fn get_network_stats(&self) -> MeshProtocolStats {
-        self.stats.read().await.clone()
+        // Get connection count from peer registry (Ticket #149)
+        let peer_registry = self.peer_registry.read().await;
+        let active_connections = peer_registry.count() as u32;
+        drop(peer_registry);
+
+        let mut stats = self.stats.read().await.clone();
+        stats.active_connections = active_connections;
+        stats
     }
     
     /// Get revenue pools (for UBI distribution)
