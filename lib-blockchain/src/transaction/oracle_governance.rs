@@ -50,6 +50,28 @@ pub struct OracleConfigUpdateData {
     pub reason: String,
 }
 
+/// Data for CancelOracleUpdate transaction (ORACLE-11).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CancelOracleUpdateData {
+    /// Cancel pending committee update.
+    pub cancel_committee_update: bool,
+    /// Cancel pending config update.
+    pub cancel_config_update: bool,
+    /// Reason for cancellation.
+    pub reason: String,
+}
+
+impl CancelOracleUpdateData {
+    /// Validate the cancellation data.
+    /// At least one of the flags must be true.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.cancel_committee_update && !self.cancel_config_update {
+            return Err("must specify at least one update to cancel".to_string());
+        }
+        Ok(())
+    }
+}
+
 impl OracleCommitteeUpdateData {
     /// Validate the committee update data.
     pub fn validate(&self, current_epoch: u64) -> Result<(), String> {

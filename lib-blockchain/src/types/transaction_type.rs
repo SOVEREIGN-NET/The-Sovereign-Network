@@ -114,6 +114,8 @@ pub enum TransactionType {
     UpdateOracleConfig = 35,
     /// Oracle price attestation (validator submits price for epoch)
     OracleAttestation = 36,
+    /// Cancel pending oracle update (via DAO governance)
+    CancelOracleUpdate = 37,
 }
 
 impl TransactionType {
@@ -236,6 +238,7 @@ impl TransactionType {
             TransactionType::UpdateOracleCommittee => "Update oracle committee membership (via DAO governance)",
             TransactionType::UpdateOracleConfig => "Update oracle configuration parameters (via DAO governance)",
             TransactionType::OracleAttestation => "Oracle price attestation (validator submits price for epoch)",
+            TransactionType::CancelOracleUpdate => "Cancel pending oracle update (via DAO governance)",
         }
     }
 
@@ -279,6 +282,7 @@ impl TransactionType {
             TransactionType::UpdateOracleCommittee => "update_oracle_committee",
             TransactionType::UpdateOracleConfig => "update_oracle_config",
             TransactionType::OracleAttestation => "oracle_attestation",
+            TransactionType::CancelOracleUpdate => "cancel_oracle_update",
         }
     }
 
@@ -322,6 +326,7 @@ impl TransactionType {
             "update_oracle_committee" => Some(TransactionType::UpdateOracleCommittee),
             "update_oracle_config" => Some(TransactionType::UpdateOracleConfig),
             "oracle_attestation" => Some(TransactionType::OracleAttestation),
+            "cancel_oracle_update" => Some(TransactionType::CancelOracleUpdate),
             _ => None,
         }
     }

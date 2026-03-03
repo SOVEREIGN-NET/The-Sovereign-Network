@@ -180,6 +180,8 @@ fn genesis_bootstrap_creates_initial_committee() {
         .schedule_committee_update_for_test(
             vec![[0x01; 32], [0x02; 32], [0x05; 32]], // Add validator 5, remove 3 and 4
             1, // Activate at epoch 1
+            0, // Current epoch
+            None, // No source proposal
         )
         .expect("schedule must succeed");
 
@@ -241,7 +243,7 @@ fn test_oracle_updates_activate_once_at_epoch_boundary() {
     
     // Schedule committee update for epoch 2 (members get sorted)
     let new_committee = vec![[8u8; 32], [9u8; 32]];
-    state.schedule_committee_update(new_committee.clone(), 2)
+    state.schedule_committee_update(new_committee.clone(), 2, 0, None)
         .expect("schedule must succeed");
     
     // Verify update is pending but not active
@@ -273,7 +275,7 @@ fn test_epoch_tracking_prevents_double_application() {
     state.committee = OracleCommitteeState::new(vec![[1u8; 32]], None);
     
     // Schedule update for epoch 2
-    state.schedule_committee_update(vec![[2u8; 32], [3u8; 32]], 2)
+    state.schedule_committee_update(vec![[2u8; 32], [3u8; 32]], 2, 0, None)
         .expect("schedule must succeed");
     
     let epoch_duration_secs = 300u64; // Default epoch duration

@@ -63,6 +63,7 @@ fn wallet_registration_tx(wallet_id: [u8; 32], owner_pubkey: &PublicKey) -> Tran
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
     }
 }
 
@@ -116,6 +117,7 @@ fn token_transfer_tx(
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
     }
 }
 

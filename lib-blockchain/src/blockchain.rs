@@ -555,7 +555,9 @@ impl TransactionV1 {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
+
     }
 }
 
@@ -1799,7 +1801,9 @@ impl Blockchain {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         };
+
 
         // Add genesis transaction to genesis block
         genesis_block.transactions.push(genesis_tx.clone());
@@ -6952,9 +6956,96 @@ impl Blockchain {
             }
         }
 
+        // ORACLE-11: Process cancel oracle update proposals
+        let cancel_oracle_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
+            .iter()
+            .filter(|p| p.proposal_type == "cancel_oracle_update")
+            .map(|p| (p.proposal_id.clone(), p.quorum_required))
+            .collect();
+
+        for (proposal_id, quorum_required) in cancel_oracle_proposals {
+            if self.executed_dao_proposals.contains(&proposal_id) {
+                continue;
+            }
+
+            match self.has_proposal_passed(&proposal_id, quorum_required as u32) {
+                Ok(true) => {
+                    match self.apply_cancel_oracle_update(proposal_id.clone()) {
+                        Ok(()) => {
+                            info!(
+                                "✅ Successfully executed cancel oracle update proposal {:?}",
+                                proposal_id
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to execute cancel oracle update proposal {:?}: {}",
+                                proposal_id, e
+                            );
+                        }
+                    }
+                }
+                Ok(false) => {
+                    debug!(
+                        "Cancel oracle update proposal {:?} has not passed voting yet",
+                        proposal_id
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to check cancel oracle update proposal {:?}: {}", proposal_id, e);
+                }
+            }
+        }
+
         Ok(())
     }
 
+    /// Apply a cancel oracle update proposal (ORACLE-11).
+    fn apply_cancel_oracle_update(&mut self, proposal_id: Hash) -> Result<()> {
+        // Get the proposal data
+        let proposal = self.get_dao_proposals()
+            .iter()
+            .find(|p| p.proposal_id == proposal_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Proposal not found"))?;
+
+        // Parse the cancel data from proposal execution_params
+        let cancel_data: crate::transaction::CancelOracleUpdateData = 
+            match &proposal.execution_params {
+                Some(params) => bincode::deserialize(params)
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize cancel data: {}", e))?,
+                None => return Err(anyhow::anyhow!("Missing execution_params in cancel proposal")),
+            };
+
+        // Validate the cancel data
+        cancel_data.validate()
+            .map_err(|e| anyhow::anyhow!("Invalid cancel data: {}", e))?;
+
+        // Apply the cancellation
+        let cancelled = self.oracle_state.cancel_pending_updates(
+            cancel_data.cancel_committee_update,
+            cancel_data.cancel_config_update
+        );
+
+        if cancelled {
+            self.executed_dao_proposals.insert(proposal_id);
+            info!(
+                "🔮 Cancelled oracle updates by proposal {:?}: committee={}, config={}",
+                proposal_id,
+                cancel_data.cancel_committee_update,
+                cancel_data.cancel_config_update
+            );
+        } else {
+            info!(
+                "🔮 No pending oracle updates to cancel for proposal {:?}",
+                proposal_id
+            );
+            // Still mark as executed to avoid reprocessing
+            self.executed_dao_proposals.insert(proposal_id);
+        }
+
+        Ok(())
+    }
 
     // ============================================================================
     // WELFARE SERVICE REGISTRY METHODS
@@ -10568,7 +10659,8 @@ mod replay_contract_execution_tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
-}
+            cancel_oracle_update_data: None,
+        }
     }
 
     #[test]
@@ -10740,6 +10832,7 @@ mod replay_contract_execution_tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -10788,6 +10881,7 @@ mod replay_contract_execution_tests {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 

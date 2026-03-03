@@ -41,6 +41,7 @@ pub use core::{
 
 // Re-exports from oracle_governance module
 pub use oracle_governance::{
+    CancelOracleUpdateData,
     OracleAttestationData,
     OracleCommitteeUpdateData,
     OracleConfigUpdateData,

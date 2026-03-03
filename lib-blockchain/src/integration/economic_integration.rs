@@ -454,6 +454,7 @@ impl EconomicTransactionProcessor {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         })
     }
 
@@ -500,6 +501,7 @@ impl EconomicTransactionProcessor {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         };
 
         // Create signing hash
