@@ -166,7 +166,7 @@ impl TrustDb {
 
             // Owner must be current user
             let uid = meta.uid();
-            // SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
+            // SAFETY: `geteuid` has no preconditions beyond libc availability and does not dereference Rust-managed memory.
             let current_uid = unsafe { libc::geteuid() } as u32;
             if uid != current_uid {
                 return Err(anyhow!(

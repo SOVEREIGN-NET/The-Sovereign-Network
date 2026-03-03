@@ -308,7 +308,7 @@ impl std::error::Error for NSErrorInfo {}
 /// # Safety
 /// The error pointer must be a valid NSError object or null
 #[cfg(target_os = "macos")]
-// SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
+// SAFETY: NSError parsing assumes `error` is either null or a valid Objective-C NSError-compatible object; selectors used here are standard NSError accessors.
 pub unsafe fn parse_nserror(error: *mut AnyObject) -> Option<NSErrorInfo> {
     if error.is_null() {
         return None;
@@ -363,7 +363,7 @@ pub unsafe fn parse_nserror(error: *mut AnyObject) -> Option<NSErrorInfo> {
 /// # Safety
 /// The error pointer must be a valid NSError object or null
 #[cfg(target_os = "macos")]
-// SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
+// SAFETY: NSError parsing assumes `error` is either null or a valid Objective-C NSError-compatible object; selectors used here are standard NSError accessors.
 pub unsafe fn check_nserror(error: *mut AnyObject) -> Result<()> {
     if let Some(error_info) = parse_nserror(error) {
         error_info.into_result()
@@ -378,7 +378,7 @@ pub unsafe fn check_nserror(error: *mut AnyObject) -> Result<()> {
 /// # Safety
 /// The error pointer must be a valid NSError object or null
 #[cfg(target_os = "macos")]
-// SAFETY: This operation crosses an unsafe boundary; pointer/object validity, ownership, and lifetime invariants are upheld by surrounding construction and control flow.
+// SAFETY: NSError parsing assumes `error` is either null or a valid Objective-C NSError-compatible object; selectors used here are standard NSError accessors.
 pub unsafe fn log_nserror(error: *mut AnyObject, context: &str) -> bool {
     if let Some(error_info) = parse_nserror(error) {
         use tracing::error;
