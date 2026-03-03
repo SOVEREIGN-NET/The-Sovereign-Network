@@ -16,8 +16,8 @@
 //! - Add Kademlia-style routing for content lookup
 //! - Integrate with blockchain for peer verification
 
-use anyhow::{Result, anyhow};
-use lib_crypto::Hash;
+use anyhow::Result;
+use lib_crypto::hash_blake3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -236,9 +236,14 @@ impl ZkDHTIntegration {
     pub async fn connect_to_peer(&self, peer_addr: &str) -> Result<()> {
         let addr: std::net::SocketAddr = peer_addr.parse()?;
         
+        // Derive a unique stub node_id by hashing the peer address string.
+        // When a real identity handshake is implemented this will be replaced
+        // with the peer's actual node id.
+        let node_id = hash_blake3(peer_addr.as_bytes());
+
         // Create a peer entry
         let peer_info = DhtPeerInfo {
-            node_id: [0u8; 32], // Would be derived from peer identity
+            node_id: node_id,
             address: Some(addr),
             capabilities: vec!["dht".to_string()],
             last_seen: std::time::SystemTime::now()
@@ -443,6 +448,22 @@ impl DHTClient {
     }
 }
 
+/// Call the native DHT client to resolve content for a given domain and path.
+///
+/// This is a stub helper used by higher-level components (e.g. mesh/server) to
+/// access the DHT integration. It currently delegates to `DHTClient::resolve_content`.
+/// Future implementations can extend this to support additional request metadata.
+pub async fn call_native_dht_client(
+    client: &DHTClient,
+    domain: &str,
+    path: &str,
+) -> Result<Option<Vec<u8>>> {
+    warn!(
+        "call_native_dht_client invoked for domain='{}', path='{}'. This is a stub implementation.",
+        domain, path
+    );
+    client.resolve_content(domain, path).await
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,6 +546,20 @@ mod tests {
         let peers = dht.discover_peers().await.unwrap();
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0], "127.0.0.1:9334");
+    }
+
+    #[tokio::test]
+    async fn test_peer_discovery_multiple_peers() {
+        let dht = ZkDHTIntegration::new();
+
+        // Add two different peers
+        dht.connect_to_peer("127.0.0.1:9334").await.unwrap();
+        dht.connect_to_peer("127.0.0.1:9335").await.unwrap();
+
+        let peers = dht.discover_peers().await.unwrap();
+        assert_eq!(peers.len(), 2);
+        assert!(peers.contains(&"127.0.0.1:9334".to_string()));
+        assert!(peers.contains(&"127.0.0.1:9335".to_string()));
     }
 
     #[tokio::test]
