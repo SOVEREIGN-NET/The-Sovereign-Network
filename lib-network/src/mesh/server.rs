@@ -1047,35 +1047,16 @@ impl ZhtpMeshServer {
     }
 
     /// Start monitoring for Bluetooth protocol
-    async fn start_bluetooth_monitoring(&self, protocol: Arc<RwLock<crate::protocols::bluetooth::BluetoothMeshProtocol>>) -> Result<()> {
-        let peer_registry = self.peer_registry.clone();
-
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-
-                // Get connected peers from protocol and sync to peer registry
-                let connected_peers = protocol.read().await.get_connected_peers().await;
-                // Peer registry is the source of truth - protocol connections are reflected there
-                drop(connected_peers);
-            }
-        });
-
+    async fn start_bluetooth_monitoring(&self, _protocol: Arc<RwLock<crate::protocols::bluetooth::BluetoothMeshProtocol>>) -> Result<()> {
+        // Peer registry is updated directly by protocol handshake handlers as peers
+        // connect/disconnect. No separate monitoring loop is needed.
         Ok(())
     }
 
     /// Start monitoring for WiFi Direct protocol
     async fn start_wifi_direct_monitoring(&self, _protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>) -> Result<()> {
-        let _peer_registry = self.peer_registry.clone();
-
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(10)).await;
-
-                // Monitor WiFi connections via peer registry (source of truth)
-            }
-        });
-
+        // Peer registry is updated directly by protocol handshake handlers as peers
+        // connect/disconnect. No separate monitoring loop is needed.
         Ok(())
     }
 
@@ -2086,22 +2067,13 @@ impl ZhtpMeshServer {
     /// Serve Web4 content via zkDHT
     pub async fn serve_web4_content(&self, domain: &str, path: &str) -> Result<Vec<u8>> {
         info!("Serving Web4 content: {}{}", domain, path);
-        
-        // Resolve content hash via DHT
-        let content_hash = self.dht.write().await
-            .resolve_content(domain, path).await?;
 
-        info!("Resolved content hash: {:?}", content_hash);
+        // Resolve and fetch content bytes from DHT
+        let maybe_content = self.dht.read().await
+            .resolve_content(domain, path)
+            .await?;
 
-        // Fetch the actual content bytes from the DHT using the resolved hash
-        let content_bytes = {
-            let dht = self.dht.read().await;
-            dht.get_value(&content_hash)
-                .await
-                .map_err(|e| anyhow!("Failed to fetch Web4 content for {}{}: {}", domain, path, e))?
-        };
-
-        Ok(content_bytes)
+        maybe_content.ok_or_else(|| anyhow!("Web4 content not found for {}{}", domain, path))
     }
     
     /// Get DHT network status
