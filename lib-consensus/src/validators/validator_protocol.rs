@@ -266,10 +266,10 @@ pub struct ValidatorProtocolConfig {
     /// Allow Trust-On-First-Use (TOFU) registration of unknown validators.
     ///
     /// When `true`, messages from validators not yet in the discovery cache are
-    /// accepted on first contact and the public key provided in that initial
-    /// message is cached as-is, without performing an additional cryptographic
-    /// signature verification step at bootstrap time. Subsequent messages are
-    /// then verified against the key learned on first use.
+    /// accepted on first contact provided the signature is cryptographically
+    /// valid (i.e. the sender proves it controls the declared public key).
+    /// The validated public key is then cached and used to verify all
+    /// subsequent messages from that validator.
     ///
     /// This is intended only for bootstrap/development networks where validators
     /// start simultaneously and haven't yet exchanged formal announcements. In
@@ -895,17 +895,20 @@ impl ValidatorProtocol {
                     debug!("Bootstrap: forwarding unsigned message from {} (empty key)", signer);
                     return Ok(());
                 }
-                // Has a key but not yet in discovery.  Register the validator's self-declared
-                // key and accept the message.  The consensus engine performs its own
-                // signature verification in validate_committed_block(), providing the real
-                // security guarantee.  Attempting to re-verify here would fail because the
-                // consensus engine signs raw proposal/vote data whereas this layer constructs
-                // a different payload (ProposeSigningPayload / VoteSigningPayload) — the
-                // two signing paths are intentionally decoupled.
+                // Cryptographically verify the signature before registering the key.
+                // This ensures the sender actually controls the declared public key,
+                // preventing arbitrary peers from injecting validator identities into
+                // the discovery cache.
+                let bytes = Self::signing_bytes(domain, payload);
+                let ok = signature.public_key.verify(&bytes, signature)
+                    .map_err(|e| anyhow!("Bootstrap TOFU: signature verification failed for {}: {}", signer, e))?;
+                if !ok {
+                    return Err(anyhow!("Bootstrap TOFU: invalid signature from unknown validator {}", signer));
+                }
                 self.discovery
                     .populate_trusted(signer.clone(), signature.public_key.clone(), vec![], 0)
                     .await;
-                info!("🔑 Bootstrap TOFU: accepted message from new validator {} (key registered)", signer);
+                info!("🔑 Bootstrap TOFU: accepted message from new validator {} (signature verified, key registered)", signer);
                 return Ok(());
             }
             None => {
