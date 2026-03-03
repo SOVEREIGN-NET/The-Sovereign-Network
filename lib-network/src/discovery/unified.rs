@@ -61,9 +61,6 @@ const MAX_ADDRESSES_PER_PEER: usize = 10;
 /// Maximum number of discovered peers to cache (DoS protection)
 const MAX_DISCOVERED_PEERS: usize = 1000;
 
-/// Bounded channel capacity for peer discovery events
-const DISCOVERY_CHANNEL_CAPACITY: usize = 100;
-
 /// Nonce expiration window in seconds (replay attack protection)
 const NONCE_EXPIRATION_SECS: u64 = 300; // 5 minutes
 

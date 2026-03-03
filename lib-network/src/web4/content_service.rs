@@ -32,7 +32,7 @@ use crate::zdns::{ZdnsResolver, Web4Record};
 
 // Stub types when ZDNS is not available
 #[cfg(not(feature = "storage-integration"))]
-struct ZdnsResolver;
+pub struct ZdnsResolver;
 
 #[cfg(not(feature = "storage-integration"))]
 impl ZdnsResolver {

@@ -1071,6 +1071,7 @@ impl ClientHello {
         }
 
         // 6. CRITICAL: Check nonce cache - prevent replay attacks (VULN-001 FIX)
+        #[allow(deprecated)]
         if let Err(e) = ctx.nonce_cache.check_and_store(&self.challenge_nonce, self.timestamp) {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
             ctx.observer.on_event(HandshakeEvent::ReplayAttackDetected, Some(metrics.clone()));
@@ -1371,6 +1372,7 @@ impl ServerHello {
         validate_timestamp(self.timestamp, &ctx.timestamp_config)?;
 
         // 6. CRITICAL: Check nonce cache - prevent replay attacks (VULN-001 FIX)
+        #[allow(deprecated)]
         ctx.nonce_cache.check_and_store(&self.response_nonce, self.timestamp)?;
 
         // 7. CRITICAL: Enforce required capabilities

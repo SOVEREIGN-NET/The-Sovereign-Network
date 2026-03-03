@@ -166,6 +166,7 @@ impl TrustDb {
 
             // Owner must be current user
             let uid = meta.uid();
+            // SAFETY: `geteuid` has no preconditions beyond libc availability and does not dereference Rust-managed memory.
             let current_uid = unsafe { libc::geteuid() } as u32;
             if uid != current_uid {
                 return Err(anyhow!(

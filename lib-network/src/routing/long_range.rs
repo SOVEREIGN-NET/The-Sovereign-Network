@@ -676,6 +676,7 @@ impl LongRangeRoutingManager {
 
                 // Convert global relay hops to route hops
                 // **MIGRATION (Ticket #146):** RouteHop now uses UnifiedPeerId
+                #[allow(deprecated)]
                 let route_hops: Vec<RouteHop> = best_path.relay_hops.iter()
                     .map(|global_hop| {
                         // Generate a temporary PublicKey for relay identification

@@ -147,7 +147,7 @@ mod core {
         session_id: &[u8; 32],
         sequence: u64,
     ) -> Result<Vec<u8>> {
-        let nonce = derive_nonce(session_id, sequence, 0x00)?; // direction = send
+        let _nonce = derive_nonce(session_id, sequence, 0x00)?; // direction = send
         let aad = build_aad(session_id, sequence);
 
         // Encrypt with the functional core
@@ -161,7 +161,7 @@ mod core {
         session_id: &[u8; 32],
         sequence: u64,
     ) -> Result<Vec<u8>> {
-        let nonce = derive_nonce(session_id, sequence, 0x01)?; // direction = recv
+        let _nonce = derive_nonce(session_id, sequence, 0x01)?; // direction = recv
         let aad = build_aad(session_id, sequence);
 
         // Decrypt with the functional core

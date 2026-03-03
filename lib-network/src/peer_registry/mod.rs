@@ -600,7 +600,9 @@ impl PeerRegistry {
     
     /// Register an observer for peer change notifications (Ticket #151)
     pub async fn register_observer(&self, observer: Arc<dyn sync::PeerRegistryObserver>) {
-        self.observers.register(observer).await;
+        if let Err(e) = self.observers.register(observer).await {
+            warn!("Failed to register observer: {}", e);
+        }
     }
     
     /// Unregister an observer by name (Ticket #151)
@@ -805,9 +807,12 @@ impl PeerRegistry {
 
         // TICKET #151: Dispatch event to observers atomically
         let event = if is_update {
+            let old = old_entry.ok_or_else(|| {
+                anyhow!("Internal error: is_update=true but old_entry is None")
+            })?;
             sync::PeerRegistryEvent::PeerUpdated {
                 peer_id,
-                old_entry: old_entry.unwrap(),
+                old_entry: old,
                 new_entry: entry.clone(),
             }
         } else {

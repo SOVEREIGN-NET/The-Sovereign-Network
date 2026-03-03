@@ -280,7 +280,7 @@ impl ContentPublisher {
     async fn verify_publishing_authorization(
         &self,
         request: &ContentPublishRequest,
-        domain_record: &DomainRecord,
+        _domain_record: &DomainRecord,
     ) -> Result<bool> {
         // In production, this would verify ZK proofs for delegated publishing
         // For now, just verify the ownership proof is valid format
