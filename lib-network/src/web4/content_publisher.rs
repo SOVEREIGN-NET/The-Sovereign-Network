@@ -110,7 +110,7 @@ impl ContentPublisher {
                 drop(dht_client_guard);
                 let mut dht_client_mut = self.dht_client.write().await;
                 if let Some(dht) = dht_client_mut.as_mut() {
-                    dht.store_content(&request.domain, &request.path, request.content.clone()).await?;
+                    dht.store_content(&request.domain, &request.path, request.content.clone(), 86400).await?;
                     // Return content hash after storing
                     let hash = lib_crypto::hash_blake3(&request.content);
                     hex::encode(hash)
