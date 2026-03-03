@@ -124,7 +124,7 @@ impl LinuxBluetoothOps {
     }
     
     /// Enable notifications on a characteristic
-    pub async fn enable_notifications(&self, device_address: &str, char_uuid: &str) -> Result<()> {
+    pub async fn enable_notifications(&self, _device_address: &str, _char_uuid: &str) -> Result<()> {
         #[cfg(feature = "linux-dbus")]
         if let Some(ref client) = self.dbus_client {
             return client.enable_notifications(device_address, char_uuid);
@@ -260,8 +260,8 @@ impl LinuxBluetoothOps {
         Ok(())
     }
     
-    async fn cli_read_gatt_characteristic(&self, device_address: &str, char_uuid: &str) -> Result<Vec<u8>> {
-        use std::process::Command;
+    async fn cli_read_gatt_characteristic(&self, _device_address: &str, char_uuid: &str) -> Result<Vec<u8>> {
+        
         
         debug!(" Reading GATT characteristic {} via gatttool", char_uuid);
         
@@ -272,8 +272,8 @@ impl LinuxBluetoothOps {
         Err(anyhow!("GATT read via CLI requires characteristic handle"))
     }
     
-    async fn cli_write_gatt_characteristic(&self, device_address: &str, char_uuid: &str, data: &[u8]) -> Result<()> {
-        use std::process::Command;
+    async fn cli_write_gatt_characteristic(&self, _device_address: &str, char_uuid: &str, _data: &[u8]) -> Result<()> {
+        
         
         debug!(" Writing GATT characteristic {} via gatttool", char_uuid);
         

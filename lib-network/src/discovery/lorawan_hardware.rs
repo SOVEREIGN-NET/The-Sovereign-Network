@@ -1,6 +1,7 @@
 //! LoRaWAN hardware detection and initialization
 //!
 //! Detects and initializes LoRaWAN radio hardware for mesh networking
+#![allow(dead_code)]
 
 use anyhow::Result;
 use tracing::{info, warn, debug};

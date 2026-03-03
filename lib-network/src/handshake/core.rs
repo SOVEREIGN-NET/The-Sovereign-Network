@@ -31,10 +31,10 @@ use super::{
     HandshakeCapabilities,
     decapsulate_pqc, verify_pqc_offer, compute_transcript_hash,
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use lib_identity::ZhtpIdentity;
 use lib_crypto::KeyPair;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{trace, debug, error};
 
 // Use orchestrator helpers to reduce duplication
@@ -127,6 +127,7 @@ impl<'a> NonceTracker<'a> {
     /// Returns `Ok(())` if nonce is new (first time seen)
     /// Returns `Err(HandshakeIoError::ReplayDetected)` if nonce was already seen
     pub fn register(&self, nonce: &[u8; 32], timestamp: u64) -> Result<(), HandshakeIoError> {
+        #[allow(deprecated)]
         self.cache
             .check_and_store(nonce, timestamp)
             .map_err(|_| HandshakeIoError::ReplayDetected)

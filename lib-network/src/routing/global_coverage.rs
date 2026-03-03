@@ -175,13 +175,11 @@ impl GlobalCoverageAnalyzer {
         
         let mut total_population_served = 0u64;
         let mut total_coverage_area = 0.0f64;
-        let mut total_relays = 0u32;
         
         // Sum up continental coverage
         for coverage in self.coverage_map.continental_coverage.values() {
             total_population_served += coverage.population_served;
             total_coverage_area += coverage.coverage_area_km2;
-            total_relays += coverage.active_relays;
         }
         
         // Account for satellite global coverage (prevents double counting)

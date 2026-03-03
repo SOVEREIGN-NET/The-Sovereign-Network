@@ -178,7 +178,7 @@ impl SatelliteMeshProtocol {
     async fn start_inter_satellite_routing(&self) -> Result<()> {
         info!("🛰️ Starting inter-satellite routing...");
         
-        let node_id = self.node_id;
+        let _node_id = self.node_id;
         tokio::spawn(async move {
             loop {
                 // In production, would listen for global mesh messages

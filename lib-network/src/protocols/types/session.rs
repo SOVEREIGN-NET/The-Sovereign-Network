@@ -596,11 +596,13 @@ impl ProtocolSession {
     }
 
     /// Get session keys (crate-internal only)
+    #[allow(dead_code)]
     pub(crate) fn session_keys(&self) -> &SessionKeys {
         &self.session_keys
     }
 
     /// Get mutable session keys (crate-internal only, for rekeying)
+    #[allow(dead_code)]
     pub(crate) fn session_keys_mut(&mut self) -> &mut SessionKeys {
         &mut self.session_keys
     }
