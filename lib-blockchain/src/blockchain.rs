@@ -6840,6 +6840,159 @@ impl Blockchain {
         Ok(())
     }
 
+    fn current_oracle_epoch(&self) -> u64 {
+        let reference_timestamp = self
+            .latest_block()
+            .map(|b| b.header.timestamp)
+            .unwrap_or(0);
+        self.oracle_state.epoch_id(reference_timestamp)
+    }
+
+    fn is_oracle_committee_proposal_type(proposal_type: &str) -> bool {
+        matches!(
+            proposal_type,
+            "update_oracle_committee" | "oracle_committee_update" | "UpdateOracleCommittee"
+        )
+    }
+
+    fn is_oracle_config_proposal_type(proposal_type: &str) -> bool {
+        matches!(
+            proposal_type,
+            "update_oracle_config" | "oracle_config_update" | "UpdateOracleConfig"
+        )
+    }
+
+    pub fn apply_oracle_committee_update(&mut self, proposal_id: Hash) -> Result<()> {
+        if self.executed_dao_proposals.contains(&proposal_id) {
+            debug!(
+                "Oracle committee proposal {:?} already executed, skipping",
+                proposal_id
+            );
+            return Ok(());
+        }
+
+        let proposal = self
+            .get_dao_proposal(&proposal_id)
+            .ok_or_else(|| anyhow::anyhow!("InvalidProposal: Oracle committee proposal {:?} not found", proposal_id))?;
+
+        if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
+            return Err(anyhow::anyhow!(
+                "InvalidProposal: Proposal {:?} has not passed voting",
+                proposal_id
+            ));
+        }
+
+        let execution_params = proposal.execution_params.ok_or_else(|| {
+            anyhow::anyhow!(
+                "InvalidProposal: Oracle committee proposal {:?} has no execution parameters",
+                proposal_id
+            )
+        })?;
+
+        let update_data: crate::transaction::OracleCommitteeUpdateData =
+            bincode::deserialize(&execution_params).map_err(|e| {
+                anyhow::anyhow!(
+                    "ParameterValidationError: Failed to decode oracle committee update params: {}",
+                    e
+                )
+            })?;
+
+        let current_epoch = self.current_oracle_epoch();
+        update_data.validate(current_epoch).map_err(|e| {
+            anyhow::anyhow!("ParameterValidationError: Invalid oracle committee update: {}", e)
+        })?;
+
+        let active_validator_key_ids: HashSet<[u8; 32]> = self
+            .validator_registry
+            .values()
+            .filter(|v| v.status == "active")
+            .map(|v| {
+                v.oracle_key_id
+                    .unwrap_or_else(|| crate::types::hash::blake3_hash(&v.consensus_key).as_array())
+            })
+            .collect();
+
+        for member in &update_data.new_members {
+            if !active_validator_key_ids.contains(member) {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: committee member {} is not an active validator key_id",
+                    hex::encode(member)
+                ));
+            }
+        }
+
+        self.oracle_state
+            .schedule_committee_update(
+                update_data.new_members.clone(),
+                update_data.activate_at_epoch,
+                current_epoch,
+                Some(proposal_id.as_array()),
+            )
+            .map_err(|e| anyhow::anyhow!("ParameterValidationError: Failed to schedule committee update: {}", e))?;
+
+        self.executed_dao_proposals.insert(proposal_id);
+        Ok(())
+    }
+
+    pub fn apply_oracle_config_update(&mut self, proposal_id: Hash) -> Result<()> {
+        if self.executed_dao_proposals.contains(&proposal_id) {
+            debug!(
+                "Oracle config proposal {:?} already executed, skipping",
+                proposal_id
+            );
+            return Ok(());
+        }
+
+        let proposal = self
+            .get_dao_proposal(&proposal_id)
+            .ok_or_else(|| anyhow::anyhow!("InvalidProposal: Oracle config proposal {:?} not found", proposal_id))?;
+
+        if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
+            return Err(anyhow::anyhow!(
+                "InvalidProposal: Proposal {:?} has not passed voting",
+                proposal_id
+            ));
+        }
+
+        let execution_params = proposal.execution_params.ok_or_else(|| {
+            anyhow::anyhow!(
+                "InvalidProposal: Oracle config proposal {:?} has no execution parameters",
+                proposal_id
+            )
+        })?;
+
+        let update_data: crate::transaction::OracleConfigUpdateData =
+            bincode::deserialize(&execution_params).map_err(|e| {
+                anyhow::anyhow!(
+                    "ParameterValidationError: Failed to decode oracle config update params: {}",
+                    e
+                )
+            })?;
+
+        let current_epoch = self.current_oracle_epoch();
+        update_data.validate(current_epoch).map_err(|e| {
+            anyhow::anyhow!("ParameterValidationError: Invalid oracle config update: {}", e)
+        })?;
+
+        let mut next_config = crate::oracle::OracleConfig::default();
+        next_config.epoch_duration_secs = update_data.epoch_duration_secs;
+        next_config.max_source_age_secs = update_data.max_source_age_secs;
+        next_config.max_deviation_bps = update_data.max_deviation_bps;
+        next_config.max_price_staleness_epochs = update_data.max_price_staleness_epochs;
+
+        self.oracle_state
+            .schedule_config_update(
+                next_config,
+                update_data.activate_at_epoch,
+                current_epoch,
+                Some(proposal_id.as_array()),
+            )
+            .map_err(|e| anyhow::anyhow!("ParameterValidationError: Failed to schedule config update: {}", e))?;
+
+        self.executed_dao_proposals.insert(proposal_id);
+        Ok(())
+    }
+
     /// Process all approved governance proposals that haven't been executed yet.
     /// This is called during block processing to execute any passed proposals.
     ///
@@ -6877,6 +7030,20 @@ impl Blockchain {
         let fee_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
             .iter()
             .filter(|p| p.proposal_type == "fee_structure" || p.proposal_type == "FeeStructure")
+            .map(|p| (p.proposal_id.clone(), p.quorum_required))
+            .collect();
+
+        let oracle_committee_proposals: Vec<(Hash, u8)> = self
+            .get_dao_proposals()
+            .iter()
+            .filter(|p| Self::is_oracle_committee_proposal_type(&p.proposal_type))
+            .map(|p| (p.proposal_id.clone(), p.quorum_required))
+            .collect();
+
+        let oracle_config_proposals: Vec<(Hash, u8)> = self
+            .get_dao_proposals()
+            .iter()
+            .filter(|p| Self::is_oracle_config_proposal_type(&p.proposal_type))
             .map(|p| (p.proposal_id.clone(), p.quorum_required))
             .collect();
 
@@ -6957,8 +7124,79 @@ impl Blockchain {
             }
         }
 
-        // ORACLE-11: Process cancel oracle update proposals
-        let cancel_oracle_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
+        for (proposal_id, quorum_required) in oracle_committee_proposals {
+            if self.executed_dao_proposals.contains(&proposal_id) {
+                continue;
+            }
+
+            match self.has_proposal_passed(&proposal_id, quorum_required as u32) {
+                Ok(true) => match self.apply_oracle_committee_update(proposal_id) {
+                    Ok(()) => {
+                        info!(
+                            "✅ Successfully executed oracle committee update proposal {:?}",
+                            proposal_id
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to execute oracle committee update proposal {:?}: {}",
+                            proposal_id, e
+                        );
+                    }
+                },
+                Ok(false) => {
+                    debug!(
+                        "Oracle committee proposal {:?} has not passed voting yet",
+                        proposal_id
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to check oracle committee proposal {:?}: {}",
+                        proposal_id, e
+                    );
+                }
+            }
+        }
+
+        for (proposal_id, quorum_required) in oracle_config_proposals {
+            if self.executed_dao_proposals.contains(&proposal_id) {
+                continue;
+            }
+
+            match self.has_proposal_passed(&proposal_id, quorum_required as u32) {
+                Ok(true) => match self.apply_oracle_config_update(proposal_id) {
+                    Ok(()) => {
+                        info!(
+                            "✅ Successfully executed oracle config update proposal {:?}",
+                            proposal_id
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to execute oracle config update proposal {:?}: {}",
+                            proposal_id, e
+                        );
+                    }
+                },
+                Ok(false) => {
+                    debug!(
+                        "Oracle config proposal {:?} has not passed voting yet",
+                        proposal_id
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to check oracle config proposal {:?}: {}",
+                        proposal_id, e
+                    );
+                }
+            }
+        }
+
+        // ORACLE-11: Process cancel oracle update proposals.
+        let cancel_oracle_proposals: Vec<(Hash, u8)> = self
+            .get_dao_proposals()
             .iter()
             .filter(|p| p.proposal_type == "cancel_oracle_update")
             .map(|p| (p.proposal_id.clone(), p.quorum_required))
@@ -6970,22 +7208,20 @@ impl Blockchain {
             }
 
             match self.has_proposal_passed(&proposal_id, quorum_required as u32) {
-                Ok(true) => {
-                    match self.apply_cancel_oracle_update(proposal_id.clone()) {
-                        Ok(()) => {
-                            info!(
-                                "✅ Successfully executed cancel oracle update proposal {:?}",
-                                proposal_id
-                            );
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to execute cancel oracle update proposal {:?}: {}",
-                                proposal_id, e
-                            );
-                        }
+                Ok(true) => match self.apply_cancel_oracle_update(proposal_id.clone()) {
+                    Ok(()) => {
+                        info!(
+                            "✅ Successfully executed cancel oracle update proposal {:?}",
+                            proposal_id
+                        );
                     }
-                }
+                    Err(e) => {
+                        warn!(
+                            "Failed to execute cancel oracle update proposal {:?}: {}",
+                            proposal_id, e
+                        );
+                    }
+                },
                 Ok(false) => {
                     debug!(
                         "Cancel oracle update proposal {:?} has not passed voting yet",
@@ -6993,7 +7229,10 @@ impl Blockchain {
                     );
                 }
                 Err(e) => {
-                    warn!("Failed to check cancel oracle update proposal {:?}: {}", proposal_id, e);
+                    warn!(
+                        "Failed to check cancel oracle update proposal {:?}: {}",
+                        proposal_id, e
+                    );
                 }
             }
         }
