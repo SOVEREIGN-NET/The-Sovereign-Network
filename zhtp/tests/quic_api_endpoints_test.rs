@@ -479,3 +479,47 @@ async fn test_all_api_endpoints() -> Result<()> {
         Ok(())
     }
 }
+
+#[tokio::test]
+#[ignore] // Run with: cargo test --test quic_api_endpoints_test oracle_committee_update -- --ignored --nocapture
+async fn oracle_committee_update_proposal_endpoint_accepts_payload_shape() -> Result<()> {
+    let connection = connect_quic().await?;
+    let body = r#"{
+        "title":"Oracle Committee Update",
+        "description":"Rotate oracle committee",
+        "proposal_type":"update_oracle_committee",
+        "voting_period_days":7,
+        "activate_at_epoch":10,
+        "reason":"Rotate oracle committee",
+        "oracle_committee_members":[
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222222222222222222222222222"
+        ]
+    }"#;
+
+    let status = test_endpoint(&connection, "POST", "/api/v1/dao/proposal/create", Some(body)).await?;
+    assert!(status != 404 && status < 500, "unexpected status for oracle committee payload: {status}");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // Run with: cargo test --test quic_api_endpoints_test oracle_config_update -- --ignored --nocapture
+async fn oracle_config_update_proposal_endpoint_accepts_payload_shape() -> Result<()> {
+    let connection = connect_quic().await?;
+    let body = r#"{
+        "title":"Oracle Config Update",
+        "description":"Tune oracle config",
+        "proposal_type":"update_oracle_config",
+        "voting_period_days":7,
+        "activate_at_epoch":10,
+        "reason":"Tune oracle config",
+        "oracle_epoch_duration_secs":600,
+        "oracle_max_source_age_secs":120,
+        "oracle_max_deviation_bps":900,
+        "oracle_max_price_staleness_epochs":10
+    }"#;
+
+    let status = test_endpoint(&connection, "POST", "/api/v1/dao/proposal/create", Some(body)).await?;
+    assert!(status != 404 && status < 500, "unexpected status for oracle config payload: {status}");
+    Ok(())
+}

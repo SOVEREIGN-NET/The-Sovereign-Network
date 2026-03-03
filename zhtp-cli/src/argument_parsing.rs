@@ -55,6 +55,9 @@ pub enum ZhtpCommand {
     /// DAO operations (orchestrated)
     Dao(DaoArgs),
 
+    /// Oracle governance proposal operations
+    Oracle(OracleArgs),
+
     /// Citizen management (orchestrated)
     Citizen(CitizenArgs),
 
@@ -233,6 +236,68 @@ pub enum WalletAction {
 pub struct DaoArgs {
     #[command(subcommand)]
     pub action: DaoAction,
+}
+
+/// Oracle governance commands
+#[derive(Args, Debug, Clone)]
+pub struct OracleArgs {
+    #[command(subcommand)]
+    pub action: OracleAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum OracleAction {
+    /// Submit oracle committee update governance proposal
+    CommitteeUpdate {
+        /// New committee members as 32-byte hex key_ids (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        members: Vec<String>,
+        /// Activation epoch (must be in the future)
+        #[arg(long)]
+        activate_epoch: u64,
+        /// Human-readable proposal reason
+        #[arg(long, default_value = "Oracle committee update")]
+        reason: String,
+        /// Optional proposal title
+        #[arg(long)]
+        title: Option<String>,
+        /// Optional proposal description
+        #[arg(long)]
+        description: Option<String>,
+        /// Voting period in days
+        #[arg(long)]
+        voting_period_days: Option<u32>,
+    },
+    /// Submit oracle config update governance proposal
+    ConfigUpdate {
+        /// Oracle epoch duration in seconds
+        #[arg(long)]
+        epoch_duration: u64,
+        /// Maximum source age in seconds
+        #[arg(long)]
+        max_source_age: u64,
+        /// Maximum deviation in basis points (<= 10000)
+        #[arg(long)]
+        max_deviation_bps: u32,
+        /// Maximum consumer staleness in epochs
+        #[arg(long, default_value_t = 10)]
+        max_price_staleness_epochs: u64,
+        /// Activation epoch (must be in the future)
+        #[arg(long)]
+        activate_epoch: u64,
+        /// Human-readable proposal reason
+        #[arg(long, default_value = "Oracle config update")]
+        reason: String,
+        /// Optional proposal title
+        #[arg(long)]
+        title: Option<String>,
+        /// Optional proposal description
+        #[arg(long)]
+        description: Option<String>,
+        /// Voting period in days
+        #[arg(long)]
+        voting_period_days: Option<u32>,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1327,6 +1392,7 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Node(args) => commands::node::handle_node_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Wallet(args) => commands::wallet::handle_wallet_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Dao(args) => commands::dao::handle_dao_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Oracle(args) => commands::oracle::handle_oracle_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Citizen(args) => commands::citizen::handle_citizen_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Ubi(args) => commands::ubi::handle_ubi_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Identity(args) => commands::identity::handle_identity_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
@@ -1423,4 +1489,91 @@ impl InteractiveShell {
 /// Start interactive shell
 pub async fn start_interactive_shell() -> Result<InteractiveShell> {
     InteractiveShell::new().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_oracle_committee_update_command() {
+        let parsed = ZhtpCli::try_parse_from([
+            "zhtp-cli",
+            "oracle",
+            "committee-update",
+            "--members",
+            "11aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,22bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "--activate-epoch",
+            "9",
+            "--reason",
+            "Rotate",
+            "--voting-period-days",
+            "7",
+        ])
+        .expect("oracle committee command should parse");
+
+        match parsed.command {
+            ZhtpCommand::Oracle(OracleArgs {
+                action:
+                    OracleAction::CommitteeUpdate {
+                        members,
+                        activate_epoch,
+                        reason,
+                        voting_period_days,
+                        ..
+                    },
+            }) => {
+                assert_eq!(members.len(), 2);
+                assert_eq!(activate_epoch, 9);
+                assert_eq!(reason, "Rotate");
+                assert_eq!(voting_period_days, Some(7));
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_oracle_config_update_command() {
+        let parsed = ZhtpCli::try_parse_from([
+            "zhtp-cli",
+            "oracle",
+            "config-update",
+            "--epoch-duration",
+            "600",
+            "--max-source-age",
+            "120",
+            "--max-deviation-bps",
+            "900",
+            "--max-price-staleness-epochs",
+            "10",
+            "--activate-epoch",
+            "9",
+            "--reason",
+            "Tune",
+        ])
+        .expect("oracle config command should parse");
+
+        match parsed.command {
+            ZhtpCommand::Oracle(OracleArgs {
+                action:
+                    OracleAction::ConfigUpdate {
+                        epoch_duration,
+                        max_source_age,
+                        max_deviation_bps,
+                        max_price_staleness_epochs,
+                        activate_epoch,
+                        reason,
+                        ..
+                    },
+            }) => {
+                assert_eq!(epoch_duration, 600);
+                assert_eq!(max_source_age, 120);
+                assert_eq!(max_deviation_bps, 900);
+                assert_eq!(max_price_staleness_epochs, 10);
+                assert_eq!(activate_epoch, 9);
+                assert_eq!(reason, "Tune");
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
 }
