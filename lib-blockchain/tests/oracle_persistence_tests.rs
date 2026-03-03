@@ -54,10 +54,40 @@ fn test_oracle_state_survives_blockchain_restart() {
 }
 
 #[test]
-#[ignore = "BlockchainImport does not yet include oracle_state - requires ORACLE-10"]
 fn test_oracle_state_in_blockchain_import() {
-    // This test is ignored until ORACLE-10 adds oracle_state to BlockchainImport
-    // See: https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/1694
+    // ORACLE-10: Verify oracle_state is included in BlockchainImport/export
+    let mut harness = OracleTestHarness::new(4);
+    
+    // Finalize prices for current epoch and next epoch
+    let epoch1 = harness.current_epoch();
+    harness.finalize_epoch(epoch1, 100_000_000);
+    
+    harness.advance_oracle_epoch();
+    let epoch2 = harness.current_epoch();
+    harness.finalize_epoch(epoch2, 101_000_000);
+    
+    // Verify prices are finalized
+    assert_eq!(harness.blockchain.oracle_state.finalized_prices_len(), 2, "should have 2 finalized prices before export");
+    
+    // Export blockchain state
+    let exported = harness.blockchain.export_chain().expect("export should succeed");
+    
+    // Deserialize and verify oracle state is present
+    let import: lib_blockchain::BlockchainImport = bincode::deserialize(&exported)
+        .expect("deserialize should succeed");
+    
+    assert!(import.oracle_state.is_some(), "oracle_state should be in export");
+    let oracle_state = import.oracle_state.unwrap();
+    assert_eq!(oracle_state.finalized_prices_len(), 2, "should have 2 finalized prices in import");
+    
+    // Verify specific prices are present
+    let price1 = oracle_state.finalized_price(epoch1);
+    assert!(price1.is_some(), "price for epoch {} should exist", epoch1);
+    assert_eq!(price1.unwrap().sov_usd_price, 100_000_000);
+    
+    let price2 = oracle_state.finalized_price(epoch2);
+    assert!(price2.is_some(), "price for epoch {} should exist", epoch2);
+    assert_eq!(price2.unwrap().sov_usd_price, 101_000_000);
 }
 
 #[test]

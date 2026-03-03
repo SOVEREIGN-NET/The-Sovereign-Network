@@ -8306,8 +8306,9 @@ impl Blockchain {
                 return Ok(lib_consensus::ChainMergeResult::LocalKept);
             }
             let imported_height = import.blocks.len() as u64 - 1;
-            info!("Local chain is empty - directly adopting imported chain (height={}, identities={}, validators={})",
-                  imported_height, import.identity_registry.len(), import.validator_registry.len());
+            info!("Local chain is empty - directly adopting imported chain (height={}, identities={}, validators={}, oracle_prices={})",
+                  imported_height, import.identity_registry.len(), import.validator_registry.len(),
+                  import.oracle_state.as_ref().map(|s| s.finalized_prices_len()).unwrap_or(0));
             self.blocks = import.blocks;
             self.height = imported_height;
             self.utxo_set = import.utxo_set;
@@ -8318,6 +8319,13 @@ impl Blockchain {
             self.web4_contracts = import.web4_contracts;
             self.contract_blocks = import.contract_blocks;
             self.dao_registry_index = import.dao_registry_index;
+            // Import oracle state if present (ORACLE-10)
+            if let Some(oracle_state) = import.oracle_state {
+                self.oracle_state = oracle_state;
+                info!("Imported oracle state with {} finalized prices", self.oracle_state.finalized_prices_len());
+            } else {
+                warn!("Imported chain has no oracle state - using default");
+            }
             self.rebuild_dao_registry_index();
             
             // ORACLE-10: Import oracle state if present
@@ -8451,6 +8459,10 @@ impl Blockchain {
                             self.web4_contracts = import.web4_contracts;
                             self.contract_blocks = import.contract_blocks;
                             self.dao_registry_index = import.dao_registry_index;
+                            // Import oracle state if present (ORACLE-10)
+                            if let Some(oracle_state) = import.oracle_state {
+                                self.oracle_state = oracle_state;
+                            }
                             self.rebuild_dao_registry_index();
                             Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
                         }
@@ -8469,6 +8481,10 @@ impl Blockchain {
                     self.web4_contracts = import.web4_contracts;
                     self.contract_blocks = import.contract_blocks;
                     self.dao_registry_index = import.dao_registry_index;
+                    // Import oracle state if present (ORACLE-10)
+                    if let Some(oracle_state) = import.oracle_state {
+                        self.oracle_state = oracle_state;
+                    }
                     self.rebuild_dao_registry_index();
                     
                     // Clear nullifier set and rebuild from new chain
