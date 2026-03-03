@@ -154,7 +154,7 @@ impl Web4Handler {
 
         // Store content in DHT
         let mut dht = dht_client.write().await;
-        let _dht_result = dht.store_content(&api_request.domain, &api_request.path, content.clone()).await
+        let _dht_result = dht.store_content(&api_request.domain, &api_request.path, content.clone(), 86400).await
             .map_err(|e| anyhow!("Failed to store content in DHT: {}", e))?;
         drop(dht); // Release DHT lock
 
@@ -366,7 +366,7 @@ impl Web4Handler {
 
         // Update content in DHT (same as store)
         let mut dht = dht_client.write().await;
-        let _dht_result = dht.store_content(domain, &content_path, content.clone()).await
+        let _dht_result = dht.store_content(domain, &content_path, content.clone(), 86400).await
             .map_err(|e| anyhow!("Failed to update content in DHT: {}", e))?;
         drop(dht); // Release DHT lock
 

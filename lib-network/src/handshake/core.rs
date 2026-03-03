@@ -513,20 +513,21 @@ async fn graceful_shutdown<S>(stream: &mut S, timeout_secs: u64) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    use tokio::io::{AsyncWriteExt, AsyncReadExt};
     use tokio::time::{timeout, Duration};
-    
+
     // Step 1: Flush to ensure all buffered data is written
     stream.flush().await?;
-    
+
     // Step 2: Shutdown the write side
     stream.shutdown().await?;
-    
+
     // Step 3: Drain any remaining data with timeout (prevents hanging)
     let drain_result = timeout(
         Duration::from_secs(timeout_secs),
         drain_stream(stream)
     ).await;
-    
+
     match drain_result {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => {
@@ -547,6 +548,7 @@ async fn drain_stream<S>(stream: &mut S) -> Result<()>
 where
     S: AsyncRead + Unpin,
 {
+    use tokio::io::AsyncReadExt;
     let mut buf = [0u8; 1024];
     loop {
         let n = stream.read(&mut buf).await?;
