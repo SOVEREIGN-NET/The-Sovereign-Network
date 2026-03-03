@@ -66,6 +66,24 @@ impl ConsensusEngine {
                 self.current_round.round,
                 self.current_round.step
             );
+            // Kick off the initial propose step: select proposer and create proposal if we're it.
+            // This must happen before the select! loop so current_round.proposer is set before
+            // any incoming proposals are processed by on_proposal().
+            if let Err(e) = self.enter_propose_step().await {
+                tracing::warn!("Failed to enter initial propose step: {}", e);
+            }
+            // Re-arm timer: enter_propose_step doesn't change step, so token stays valid.
+            // Re-arm anyway to get a fresh deadline from the current state.
+            timer_token = TimerToken::new(
+                self.current_round.height,
+                self.current_round.round,
+                &self.current_round.step,
+            );
+            timer_fut.set(self.round_timer.next_deadline(
+                self.current_round.height,
+                self.current_round.round,
+                &self.current_round.step,
+            ));
         } else {
             tracing::info!(
                 "⛏️ Starting consensus loop in BOOTSTRAP MODE ({} validators, need ≥{} for BFT) at height {}",
@@ -101,18 +119,30 @@ impl ConsensusEngine {
                             if let Err(e) = self.sync_height_with_blockchain().await {
                                 tracing::warn!("Failed to sync height during mode transition: {}", e);
                             }
-                            // Update timer token for new height
-                            timer_token = TimerToken::new(
-                                self.current_round.height,
-                                self.current_round.round,
-                                &self.current_round.step,
-                            );
+                            // Snapshot validator set for the new height
+                            self.snapshot_validator_set(self.current_round.height);
                             // Emit mode transition event
                             self.emit_liveness_event(ConsensusEvent::ModeTransitionToBft {
                                 validator_count,
                                 height: self.current_round.height,
                                 timestamp,
                             });
+                            // Kick off the propose step: select proposer and create/broadcast
+                            // proposal if this node is the designated proposer.
+                            if let Err(e) = self.enter_propose_step().await {
+                                tracing::warn!("Failed to enter propose step on BFT transition: {}", e);
+                            }
+                            // Re-arm timer for the (potentially new) height/step
+                            timer_token = TimerToken::new(
+                                self.current_round.height,
+                                self.current_round.round,
+                                &self.current_round.step,
+                            );
+                            timer_fut.set(self.round_timer.next_deadline(
+                                self.current_round.height,
+                                self.current_round.round,
+                                &self.current_round.step,
+                            ));
                         } else {
                             // Transitioning TO Bootstrap mode (degraded)
                             tracing::warn!(
@@ -294,6 +324,20 @@ impl ConsensusEngine {
                                     total_validators: self.liveness_monitor.total_validators as usize,
                                     timestamp,
                                 });
+
+                                // Trigger catch-up sync unconditionally on stall — we may be
+                                // behind peers and unable to receive their higher-height votes
+                                // because of the height divergence itself.  This breaks the
+                                // deadlock: detection → action, no in-band message required.
+                                let our_blockchain_height =
+                                    self.current_round.height.saturating_sub(1);
+                                if let Some(ref trigger) = self.catch_up_sync_trigger {
+                                    tracing::info!(
+                                        "🔄 Stall detected — triggering catch-up sync from height {}",
+                                        our_blockchain_height
+                                    );
+                                    trigger.trigger(our_blockchain_height);
+                                }
                             } else {
                                 let timestamp = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)

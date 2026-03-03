@@ -4474,9 +4474,28 @@ impl Blockchain {
         self.wallet_registry.insert(wallet_id_str.clone(), wallet_data.clone());
         self.wallet_blocks.insert(wallet_id_str.clone(), self.height + 1);
 
-        // NOTE: Do not mint SOV here. Wallet registration is persisted via block processing,
-        // and SOV initial_balance is minted during process_wallet_transactions to ensure
-        // block-authoritative, durable token balances.
+        // Mint SOV immediately in-memory so the balance is available regardless of whether
+        // the WalletRegistration tx ever lands in a block (e.g. when consensus is stalled).
+        // process_wallet_transactions() guards with `balance_of > 0` so it will skip
+        // wallets that are already credited, preventing double-minting on block commit.
+        if wallet_data.initial_balance > 0 {
+            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+            self.ensure_sov_token_contract();
+            let mut wallet_id_bytes_arr = [0u8; 32];
+            wallet_id_bytes_arr.copy_from_slice(wallet_data.wallet_id.as_bytes());
+            let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes_arr);
+            if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
+                if token.balance_of(&recipient_pk) == 0 {
+                    if let Err(e) = token.mint(&recipient_pk, wallet_data.initial_balance) {
+                        warn!("register_wallet: failed to mint {} SOV for {}: {}",
+                            wallet_data.initial_balance, &wallet_id_str[..16.min(wallet_id_str.len())], e);
+                    } else {
+                        info!("💰 register_wallet: minted {} SOV for wallet {} (in-memory)",
+                            wallet_data.initial_balance, &wallet_id_str[..16.min(wallet_id_str.len())]);
+                    }
+                }
+            }
+        }
 
         Ok(registration_tx.hash())
     }
