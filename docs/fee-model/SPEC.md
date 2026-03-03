@@ -108,9 +108,8 @@ Fee parameters must satisfy:
 2. `base_fee_per_byte > 0`
 3. `fee_per_state_read > 0`
 4. `fee_per_state_write > 0`
-5. `fee_per_state_write_byte > 0`
-6. `fee_per_signature > 0`
-7. `fee_per_exec_unit > 0`
+5. `fee_per_signature > 0`
+6. `fee_per_exec_unit > 0`
 
 ## Examples
 
