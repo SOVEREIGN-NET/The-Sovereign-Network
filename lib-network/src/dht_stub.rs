@@ -16,8 +16,8 @@
 //! - Add Kademlia-style routing for content lookup
 //! - Integrate with blockchain for peer verification
 
-use anyhow::{Result, anyhow};
-use lib_crypto::Hash;
+use anyhow::Result;
+use lib_crypto::hash_blake3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -55,11 +55,10 @@ pub struct DhtContentEntry {
 
 impl DhtContentEntry {
     pub fn new(key: String, value: Vec<u8>, ttl_secs: u64) -> Self {
-        let now_secs = std::time::SystemTime::now()
+        let expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let expires_at = now_secs.saturating_add(ttl_secs);
+            .unwrap()
+            .as_secs() + ttl_secs;
 
         Self {
             key,
@@ -72,7 +71,7 @@ impl DhtContentEntry {
     pub fn is_expired(&self) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
+            .unwrap()
             .as_secs();
         now > self.expires_at
     }
@@ -146,19 +145,6 @@ impl ZkDHTIntegration {
         if current_usage + content.len() as u64 > self.max_storage_bytes {
             warn!("DHT storage limit reached, cleaning up expired entries");
             self.cleanup_expired().await?;
-
-            // Recompute usage after cleanup and reject if still over limit
-            let usage_after_cleanup = {
-                let store = self.content_store.read().await;
-                store.values().map(|e| e.value.len() as u64).sum::<u64>()
-            };
-            if usage_after_cleanup + content.len() as u64 > self.max_storage_bytes {
-                return Err(anyhow!(
-                    "DHT storage limit exceeded: {} bytes needed, {} bytes available",
-                    content.len(),
-                    self.max_storage_bytes.saturating_sub(usage_after_cleanup)
-                ));
-            }
         }
 
         // Store in memory
@@ -249,18 +235,20 @@ impl ZkDHTIntegration {
     /// Connect to a peer
     pub async fn connect_to_peer(&self, peer_addr: &str) -> Result<()> {
         let addr: std::net::SocketAddr = peer_addr.parse()?;
-
-        // Derive a deterministic unique key from the peer's socket address
-        let node_id = socket_addr_to_peer_key(&addr);
+        
+        // Derive a unique stub node_id by hashing the peer address string.
+        // When a real identity handshake is implemented this will be replaced
+        // with the peer's actual node id.
+        let node_id = hash_blake3(peer_addr.as_bytes());
 
         // Create a peer entry
         let peer_info = DhtPeerInfo {
-            node_id,
+            node_id: node_id,
             address: Some(addr),
             capabilities: vec!["dht".to_string()],
             last_seen: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
+                .unwrap()
                 .as_secs(),
         };
 
@@ -311,7 +299,7 @@ impl ZkDHTIntegration {
             capabilities,
             last_seen: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
+                .unwrap()
                 .as_secs(),
         };
 
@@ -404,30 +392,6 @@ fn xor_distance(a: &[u8; 32], b: &[u8; 32]) -> u128 {
     distance
 }
 
-/// Derive a deterministic 32-byte peer key from a SocketAddr.
-///
-/// IPv4 addresses occupy bytes 0-3 (IP) and 4-5 (port).
-/// IPv6 addresses occupy bytes 0-15 (IP) and 16-17 (port).
-/// Remaining bytes are zero-padded.
-///
-/// NOTE: This is a stub implementation for local in-memory tracking only.
-/// Production code must derive peer keys from authenticated DID/identity
-/// rather than network addresses to prevent peer impersonation.
-fn socket_addr_to_peer_key(addr: &std::net::SocketAddr) -> [u8; 32] {
-    let mut key = [0u8; 32];
-    match addr {
-        std::net::SocketAddr::V4(v4) => {
-            key[..4].copy_from_slice(&v4.ip().octets());
-            key[4..6].copy_from_slice(&v4.port().to_le_bytes());
-        }
-        std::net::SocketAddr::V6(v6) => {
-            key[..16].copy_from_slice(&v6.ip().octets());
-            key[16..18].copy_from_slice(&v6.port().to_le_bytes());
-        }
-    }
-    key
-}
-
 /// DHT Client wrapper
 pub struct DHTClient {
     inner: ZkDHTIntegration,
@@ -484,6 +448,22 @@ impl DHTClient {
     }
 }
 
+/// Call the native DHT client to resolve content for a given domain and path.
+///
+/// This is a stub helper used by higher-level components (e.g. mesh/server) to
+/// access the DHT integration. It currently delegates to `DHTClient::resolve_content`.
+/// Future implementations can extend this to support additional request metadata.
+pub async fn call_native_dht_client(
+    client: &DHTClient,
+    domain: &str,
+    path: &str,
+) -> Result<Option<Vec<u8>>> {
+    warn!(
+        "call_native_dht_client invoked for domain='{}', path='{}'. This is a stub implementation.",
+        domain, path
+    );
+    client.resolve_content(domain, path).await
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -566,6 +546,20 @@ mod tests {
         let peers = dht.discover_peers().await.unwrap();
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0], "127.0.0.1:9334");
+    }
+
+    #[tokio::test]
+    async fn test_peer_discovery_multiple_peers() {
+        let dht = ZkDHTIntegration::new();
+
+        // Add two different peers
+        dht.connect_to_peer("127.0.0.1:9334").await.unwrap();
+        dht.connect_to_peer("127.0.0.1:9335").await.unwrap();
+
+        let peers = dht.discover_peers().await.unwrap();
+        assert_eq!(peers.len(), 2);
+        assert!(peers.contains(&"127.0.0.1:9334".to_string()));
+        assert!(peers.contains(&"127.0.0.1:9335".to_string()));
     }
 
     #[tokio::test]
