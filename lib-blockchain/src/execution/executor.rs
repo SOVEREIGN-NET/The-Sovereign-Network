@@ -1530,22 +1530,11 @@ impl BlockExecutor {
         })?;
         // did_hash is the canonical on-chain identifier; encode as hex for storage.
         let creator_did = format!("did:zhtp:{}", hex::encode(creator_identity.did_hash));
-
-        // Gate 2: creator must hold at least CBE_DEPLOY_MIN_SOV SOV.
-        const CBE_DEPLOY_MIN_SOV: u64 = 100 * 100_000_000; // 100 SOV in atomic units
-        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        let sov_balance = mutator
-            .get_token_balance(&TokenId::new(sov_token_id), &creator_addr)
-            .map_err(|e| TxApplyError::InvalidType(
-                format!("BondingCurveDeploy: SOV balance check failed: {}", e)
-            ))?;
-        if sov_balance < CBE_DEPLOY_MIN_SOV {
-            return Err(TxApplyError::InvalidType(format!(
-                "BondingCurveDeploy: creator must hold at least 100 SOV to deploy a token (balance: {} atomic units)",
-                sov_balance,
-            )));
-        }
-
+        // NOTE: SOV balance gating for CBE deployment must be enforced against the
+        // authoritative SOV ledger (e.g. token_contracts / wallet_key_for_sov) or
+        // earlier in the pipeline. The executor's Phase-2 store ledger is keyed by
+        // creator key_id and does not currently reflect wallet-registration SOV
+        // credits, so enforcing the gate here would incorrectly reject valid txs.
         // Generate token ID from name, symbol, and creator
         use lib_crypto::hash_blake3;
         let input = format!("{}:{}:{}", data.name, data.symbol, hex::encode(&data.creator));
