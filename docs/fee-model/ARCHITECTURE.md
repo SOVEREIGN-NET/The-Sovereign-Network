@@ -95,7 +95,7 @@ The ZHTP Fee Model v2 provides pure, deterministic fee computation for all trans
 **Invariants**:
 - All types are `Serialize + Deserialize`
 - All types are `Clone + PartialEq + Eq`
-- No fee computation or domain-level business rules; only data types and lightweight, side-effect-free validation helpers (e.g., `FeeParams::validate()`)
+- No business logic, only data
 
 ### lib-fees
 
@@ -132,7 +132,7 @@ Transaction
 ┌─────────────────┐     ┌─────────────────┐
 │  Load           │────▶│  Validate       │
 │  FeeParams      │     │  FeeParams      │
-│  from gov       │     │  (min <= max)   │
+│  from gov       │     │  (min < max)    │
 └─────────────────┘     └─────────────────┘
     │                           │
     │                           ▼
