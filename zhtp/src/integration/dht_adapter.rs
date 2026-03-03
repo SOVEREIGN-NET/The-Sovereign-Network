@@ -126,7 +126,7 @@ impl DhtIntegrationAdapter {
 
     pub async fn initialize(&mut self, identity: ZhtpIdentity) -> Result<()> {
         self.local_node_id = *identity.node_id.as_bytes();
-        let node_id = NodeId::from_bytes(self.local_node_id);
+        let node_id = identity.node_id.clone();
         let persist_path = Self::default_persist_path();
 
         if let Some(parent) = persist_path.parent() {
