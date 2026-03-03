@@ -3,7 +3,7 @@
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-use tracing::info;
+use tracing::{info, warn};
 
 use super::BluetoothMeshProtocol;
 
