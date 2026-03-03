@@ -454,6 +454,12 @@ pub struct ConsensusEngine {
     /// When BFT consensus achieves 2/3+1 commit votes, this callback commits
     /// the finalized block to the actual blockchain storage layer.
     block_commit_callback: Option<Arc<dyn crate::types::BlockCommitCallback>>,
+    /// Catch-up sync trigger for height-divergence recovery.
+    ///
+    /// Called when consensus receives a vote for a height > local consensus height,
+    /// indicating that the local blockchain is behind peer nodes.  The trigger
+    /// fires a background block-download task in the runtime layer.
+    catch_up_sync_trigger: Option<Arc<dyn crate::types::CatchUpSyncTrigger>>,
 }
 
 impl ConsensusEngine {
@@ -516,6 +522,7 @@ impl ConsensusEngine {
             storage_proof_provider: None,
             blockchain_provider: None,
             block_commit_callback: None,
+            catch_up_sync_trigger: None,
         })
     }
 
@@ -550,6 +557,17 @@ impl ConsensusEngine {
     pub fn set_block_commit_callback(&mut self, callback: Arc<dyn crate::types::BlockCommitCallback>) {
         self.block_commit_callback = Some(callback);
         tracing::info!("🔗 Block commit callback connected to consensus engine");
+    }
+
+    /// Set the catch-up sync trigger for height-divergence recovery.
+    ///
+    /// When the consensus engine detects that a remote peer is voting at a
+    /// higher block height than the local chain, it calls
+    /// `trigger.trigger(our_blockchain_height)` so the runtime can schedule
+    /// a background block-download task.
+    pub fn set_catch_up_sync_trigger(&mut self, trigger: Arc<dyn crate::types::CatchUpSyncTrigger>) {
+        self.catch_up_sync_trigger = Some(trigger);
+        tracing::info!("🔄 Catch-up sync trigger connected to consensus engine");
     }
 
     /// Synchronize consensus engine height with blockchain

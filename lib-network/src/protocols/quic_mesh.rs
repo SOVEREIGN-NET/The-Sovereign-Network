@@ -741,6 +741,18 @@ impl QuicMeshProtocol {
         self.connections.iter().map(|entry| entry.key().clone()).collect()
     }
 
+    /// Return the socket address of every currently-connected peer.
+    ///
+    /// Used by the catch-up sync task to find candidate peers to download missing
+    /// blocks from.  The returned addresses include the port so they can be passed
+    /// directly to [`ZhtpClient::connect`].
+    pub fn get_connected_peer_addrs(&self) -> Vec<std::net::SocketAddr> {
+        self.connections
+            .iter()
+            .map(|entry| entry.value().peer_addr)
+            .collect()
+    }
+
     /// Get a peer's session key (for external decryption, e.g. QuicHandler).
     pub fn get_peer_session_key(&self, node_id: &[u8]) -> Option<[u8; 32]> {
         self.connections.get(node_id).and_then(|entry| entry.session_key)
@@ -760,6 +772,8 @@ impl QuicMeshProtocol {
             .collect();
 
         if peers.is_empty() {
+            // No live peers — try to restore connectivity to bootstrap peers.
+            self.try_reconnect_to_bootstrap().await;
             return Ok(0);
         }
 
@@ -798,13 +812,45 @@ impl QuicMeshProtocol {
         }
         if !dead_peers.is_empty() {
             info!(removed = dead_peers.len(), "Reaped dead peers after broadcast");
+            // If all peers died, immediately attempt to reconnect to bootstrap peers.
+            if self.connections.is_empty() {
+                self.try_reconnect_to_bootstrap().await;
+            }
         }
 
         Ok(success)
     }
 
+    /// Try to reconnect to all configured bootstrap peers that are not currently connected.
+    ///
+    /// Called after broadcast finds 0 live peers to restore connectivity.
+    /// Errors are logged as warnings and do not propagate — this is best-effort.
+    pub async fn try_reconnect_to_bootstrap(&self) {
+        let addrs = self.verifier.get_bootstrap_addrs();
+        if addrs.is_empty() {
+            return;
+        }
+        let connected: std::collections::HashSet<String> = self.connections
+            .iter()
+            .map(|e| {
+                let pc = e.value();
+                pc.peer_addr.to_string()
+            })
+            .collect();
+
+        for addr in addrs {
+            if connected.contains(&addr.to_string()) {
+                continue; // already connected
+            }
+            info!(peer = %addr, "Attempting reconnect to bootstrap peer");
+            if let Err(e) = self.connect_to_peer(addr).await {
+                warn!(peer = %addr, error = %e, "Bootstrap reconnect failed");
+            }
+        }
+    }
+
     /// Encrypt and send a message to a single QUIC connection via UNI stream.
-    /// 
+    ///
     /// Made public for Issue #846 - allows direct sending to specific peers
     /// from external code that has access to a Connection and session key.
     pub async fn send_encrypted_to(conn: &Connection, session_key: &[u8; 32], message: &[u8]) -> Result<()> {

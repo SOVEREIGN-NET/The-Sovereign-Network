@@ -1257,7 +1257,13 @@ impl RuntimeOrchestrator {
         let is_edge_node = *self.is_edge_node.read().await;
         let network_info = self.discover_network_with_retry(is_edge_node).await.ok().flatten();
 
-        let joined_existing_network = network_info.is_some();
+        // Only join an existing network if at least one peer has committed blocks (height > 0).
+        // When all nodes start fresh simultaneously (e.g. full wipe) every peer reports height 0.
+        // In that case treat it as a new network and let this node create genesis.
+        let joined_existing_network = network_info
+            .as_ref()
+            .map(|ni| ni.blockchain_height > 0)
+            .unwrap_or(false);
         self.set_joined_existing_network(joined_existing_network).await?;
 
         // Phase 3: Use SledStore for persistent blockchain storage
@@ -1396,11 +1402,15 @@ impl RuntimeOrchestrator {
                 if let Some(bc) = synced_blockchain {
                     (bc, true)
                 } else {
-                if network_info.is_some() {
-                    return Err(anyhow::anyhow!(
-                        "Initial sync failed while peers are available - refusing to create a new genesis"
-                    ));
-                }
+                // Note: we attempted peer sync above (try_initial_sync_from_peer).
+                // If synced_blockchain is still None here it means either:
+                //   a) No blockchain.dat backup, AND all peers timed out (fresh network start), OR
+                //   b) Peers were reachable but had no chain data yet.
+                // In both cases creating a local genesis is correct — if a chain existed
+                // elsewhere, try_initial_sync_from_peer would have returned it.
+                // The old hard-error here caused all nodes to crash-loop when restarting
+                // simultaneously from wiped state (every node refused genesis because its
+                // *configured* peers existed but were unreachable mid-startup).
                 info!("📂 SledStore is empty - creating new blockchain");
                 let mut bc = lib_blockchain::Blockchain::new()?;
                 bc.set_store(store.clone());
@@ -3422,7 +3432,13 @@ impl RuntimeOrchestrator {
         
         // PHASE 3: Setup identity and blockchain
         info!("🔑 Phase 3: Setting up identity and blockchain...");
-        if let Some(ref net_info) = network_info {
+        // Only join if peers have actual blocks (height > 0). If all peers are at height 0,
+        // treat this as a fresh network and allow this node to create genesis.
+        let peers_have_blocks = network_info
+            .as_ref()
+            .map(|ni| ni.blockchain_height > 0)
+            .unwrap_or(false);
+        if let Some(ref net_info) = network_info.filter(|_| peers_have_blocks) {
             // Joining existing network
             orchestrator.set_joined_existing_network(true).await?;
             orchestrator.start_blockchain_sync(net_info).await?;

@@ -449,6 +449,31 @@ impl ConsensusBlockchainProvider for NoOpBlockchainProvider {
     }
 }
 
+/// Trigger for asynchronous catch-up block sync.
+///
+/// Implemented by the runtime layer and injected into `ConsensusEngine` via
+/// [`ConsensusEngine::set_catch_up_sync_trigger`].  When consensus detects that
+/// a peer is voting at a higher block height than the local chain, it calls
+/// [`CatchUpSyncTrigger::trigger`] so the runtime can schedule a block download.
+///
+/// # Contract
+///
+/// - Implementations MUST be **non-blocking** — fire-and-forget semantics.
+/// - Implementations SHOULD rate-limit internally to avoid hammering peers.
+/// - The `our_height` argument is the local *blockchain* height (not the
+///   consensus round height which is `blockchain_height + 1`).
+pub trait CatchUpSyncTrigger: Send + Sync {
+    /// Signal that a catch-up sync is needed starting from `our_height + 1`.
+    fn trigger(&self, our_height: u64);
+}
+
+/// No-op catch-up sync trigger — used in tests and standalone mode.
+pub struct NoOpCatchUpSyncTrigger;
+
+impl CatchUpSyncTrigger for NoOpCatchUpSyncTrigger {
+    fn trigger(&self, _our_height: u64) {}
+}
+
 /// Callback for committing finalized blocks to the blockchain
 ///
 /// When BFT consensus achieves 2/3+1 commit votes on a proposal, this callback

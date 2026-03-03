@@ -2060,6 +2060,30 @@ impl Blockchain {
         self.process_and_commit_block(block).await
     }
 
+    /// Apply a block received via catch-up sync, bypassing fee validation.
+    ///
+    /// These blocks were already committed by a quorum of peers.  We must
+    /// replay them exactly as-is regardless of the current fee schedule.
+    pub async fn apply_block_trusted_for_sync(&mut self, block: Block) -> Result<()> {
+        if let Some(ref exec_arc) = self.executor {
+            // Build a temporary fee-skipping executor sharing the same store.
+            use crate::execution::executor::BlockExecutor;
+            let trusted_exec = std::sync::Arc::new(BlockExecutor::new_trusted_replay(
+                std::sync::Arc::clone(exec_arc.store()),
+                exec_arc.fee_model().clone(),
+                Default::default(),
+            ));
+            // Temporarily swap in the trusted executor, apply, restore.
+            let original = self.executor.replace(trusted_exec);
+            let result = self.process_and_commit_block(block).await;
+            self.executor = original;
+            result
+        } else {
+            // No executor configured — legacy path has no fee check.
+            self.process_and_commit_block(block).await
+        }
+    }
+
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
@@ -4063,11 +4087,7 @@ impl Blockchain {
     /// Create a synthetic PublicKey keyed by wallet_id for SOV balances.
     /// This uses an empty keypair and the wallet_id bytes as key_id.
     fn wallet_key_for_sov(wallet_id: &[u8; 32]) -> PublicKey {
-        PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
-            key_id: *wallet_id,
-        }
+        crate::contracts::utils::wallet_key_for_sov(*wallet_id)
     }
 
     /// Initialize Treasury Kernel with SOV token authority.
@@ -4152,7 +4172,7 @@ impl Blockchain {
     }
 
     /// Find the Primary wallet_id for a signer key_id, if available.
-    fn primary_wallet_for_signer(&self, signer_key_id: &[u8; 32]) -> Option<[u8; 32]> {
+    pub fn primary_wallet_for_signer(&self, signer_key_id: &[u8; 32]) -> Option<[u8; 32]> {
         for (wallet_id, wallet) in &self.wallet_registry {
             if wallet.wallet_type != "Primary" {
                 continue;
@@ -4474,9 +4494,39 @@ impl Blockchain {
         self.wallet_registry.insert(wallet_id_str.clone(), wallet_data.clone());
         self.wallet_blocks.insert(wallet_id_str.clone(), self.height + 1);
 
-        // NOTE: Do not mint SOV here. Wallet registration is persisted via block processing,
-        // and SOV initial_balance is minted during process_wallet_transactions to ensure
-        // block-authoritative, durable token balances.
+        // Mint SOV immediately in-memory so the balance is available regardless of whether
+        // the WalletRegistration tx ever lands in a block (e.g. when consensus is stalled).
+        // process_wallet_transactions() guards with `balance_of > 0` so it will skip
+        // wallets that are already credited, preventing double-minting on block commit.
+        if wallet_data.initial_balance > 0 {
+            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+            self.ensure_sov_token_contract();
+            let mut wallet_id_bytes_arr = [0u8; 32];
+            wallet_id_bytes_arr.copy_from_slice(wallet_data.wallet_id.as_bytes());
+            let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes_arr);
+            if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
+                if token.balance_of(&recipient_pk) == 0 {
+                    if let Err(e) = token.mint(&recipient_pk, wallet_data.initial_balance) {
+                        warn!("register_wallet: failed to mint {} SOV for {}: {}",
+                            wallet_data.initial_balance, &wallet_id_str[..16.min(wallet_id_str.len())], e);
+                    } else {
+                        info!("💰 register_wallet: minted {} SOV for wallet {} (in-memory)",
+                            wallet_data.initial_balance, &wallet_id_str[..16.min(wallet_id_str.len())]);
+                        // Persist updated SOV token contract so the immediate balance survives restarts.
+                        // This mirrors the behavior in process_wallet_transactions(), which calls put_token_contract.
+                        if let Some(store) = &self.store {
+                            if let Err(e) = store.put_token_contract(&*token) {
+                                warn!(
+                                    "register_wallet: failed to persist SOV token contract for wallet {}: {}",
+                                    &wallet_id_str[..16.min(wallet_id_str.len())],
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(registration_tx.hash())
     }
@@ -11847,6 +11897,7 @@ mod cbe_graduation_oracle_gate_tests {
             sell_enabled: true,
             amm_pool_id: None,
             creator: PublicKey::new(vec![1u8; 32]),
+            creator_did: None,
             deployed_at_block: 1,
             deployed_at_timestamp: 1,
         }
