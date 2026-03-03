@@ -16,7 +16,7 @@
 //! - Add Kademlia-style routing for content lookup
 //! - Integrate with blockchain for peer verification
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use lib_crypto::Hash;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
