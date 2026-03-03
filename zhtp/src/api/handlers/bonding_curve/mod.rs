@@ -365,7 +365,6 @@ impl CurveHandler {
             threshold,
             deploy_req.sell_enabled,
             creator,
-            creator_did,
             self.get_current_block().await?,
             self.get_current_timestamp().await?,
         ).map_err(|e| anyhow::anyhow!("Deploy failed: {}", e))?;

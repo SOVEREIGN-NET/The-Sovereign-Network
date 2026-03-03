@@ -84,7 +84,6 @@ impl BondingCurveToken {
         threshold: Threshold,
         sell_enabled: bool,
         creator: PublicKey,
-        creator_did: String,
         deployed_at_block: u64,
         deployed_at_timestamp: u64,
     ) -> Result<Self, CurveError> {
