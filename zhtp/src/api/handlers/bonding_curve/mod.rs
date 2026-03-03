@@ -321,14 +321,25 @@ impl CurveHandler {
             const CBE_DEPLOY_MIN_SOV: u64 = 100 * 100_000_000; // 100 SOV atomic
             let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
             let sov_token = blockchain.token_contracts.get(&sov_id);
-            let creator_pk = lib_blockchain::integration::crypto_integration::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
-                key_id: creator.key_id,
+
+            // Resolve the creator's primary wallet and check SOV balance against the wallet-based key.
+            let sov_balance = match sov_token {
+                Some(token) => {
+                    let primary_wallet_id = match blockchain.primary_wallet_for_signer(&creator.key_id) {
+                        Some(wallet_id) => wallet_id,
+                        None => {
+                            return Ok(create_error_response(
+                                ZhtpStatus::Unauthorized,
+                                "Deployer must have a primary wallet registered to hold SOV before deploying a token".to_string(),
+                            ));
+                        }
+                    };
+                    let sov_wallet_key =
+                        lib_blockchain::contracts::utils::wallet_key_for_sov(primary_wallet_id);
+                    token.balance_of(&sov_wallet_key)
+                }
+                None => 0,
             };
-            let sov_balance = sov_token
-                .map(|t| t.balance_of(&creator_pk))
-                .unwrap_or(0);
             if sov_balance < CBE_DEPLOY_MIN_SOV {
                 return Ok(create_error_response(
                     ZhtpStatus::Unauthorized,
