@@ -1,25 +1,41 @@
 //! Oracle API Handler
 //!
 //! Endpoints:
-//!   GET /api/v1/oracle/price   — latest finalized SOV/USD price
-//!   GET /api/v1/oracle/status  — committee state, epoch, last finalized height
-//!   GET /api/v1/oracle/config  — all operating parameters (epoch cadence, thresholds, deviation limits)
+//!   GET /api/v1/oracle/price              — latest finalized SOV/USD price
+//!   GET /api/v1/oracle/status             — committee state, epoch, last finalized height
+//!   GET /api/v1/oracle/config             — all operating parameters
+//!   GET /api/v1/oracle/pending-updates    — pending committee/config updates
+//!   GET /api/v1/oracle/slashing-events    — last 100 oracle slash events
+//!   GET /api/v1/oracle/banned-validators  — currently banned validator key_ids
+//!   GET /api/v1/oracle/attestations/{epoch_id} — attestation status for epoch
+//!   
+//!   POST /api/v1/oracle/committee/propose — submit DAO proposal for committee change
+//!   POST /api/v1/oracle/config/propose    — submit DAO proposal for config change
+//!   POST /api/v1/oracle/updates/cancel    — submit DAO proposal to cancel pending updates
+//!   POST /api/v1/oracle/attest            — submit oracle attestation (testnet only)
 
 use std::sync::Arc;
 
 use anyhow::Result;
-use lib_blockchain::oracle::ORACLE_PRICE_SCALE;
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use lib_blockchain::oracle::{ORACLE_PRICE_SCALE, OracleSlashReason};
+use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
+use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::RwLock;
-use tracing::warn;
+use tracing::{warn, debug};
 
-pub struct OracleHandler;
+pub struct OracleHandler {
+    is_testnet: bool,
+}
 
 impl OracleHandler {
     pub fn new() -> Self {
-        Self
+        Self {
+            is_testnet: std::env::var("ZHTP_NETWORK")
+                .map(|v| v == "testnet" || v == "dev")
+                .unwrap_or(false),
+        }
     }
 
     async fn get_blockchain(
@@ -28,6 +44,22 @@ impl OracleHandler {
         crate::runtime::blockchain_provider::get_global_blockchain()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to access blockchain: {}", e))
+    }
+
+    /// Parse hex string to [u8; 32]
+    fn parse_hex_32(&self, value: &str, field_name: &str) -> Result<[u8; 32]> {
+        let hex_str = value.strip_prefix("0x").unwrap_or(value);
+        let bytes = hex::decode(hex_str)
+            .map_err(|e| anyhow::anyhow!("Invalid {} hex: {}", field_name, e))?;
+        if bytes.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "{} must be exactly 32 bytes (64 hex chars)",
+                field_name
+            ));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        Ok(out)
     }
 }
 
@@ -43,10 +75,42 @@ impl ZhtpRequestHandler for OracleHandler {
         let uri_no_query = uri.splitn(2, '?').next().unwrap_or(uri);
         let path_parts: Vec<&str> = uri_no_query.trim_start_matches('/').split('/').collect();
 
-        match path_parts.as_slice() {
-            ["api", "v1", "oracle", "price"] => self.handle_get_price().await,
-            ["api", "v1", "oracle", "status"] => self.handle_get_status().await,
-            ["api", "v1", "oracle", "config"] => self.handle_get_config().await,
+        match (request.method.clone(), path_parts.as_slice()) {
+            // Existing read endpoints
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "price"]) => self.handle_get_price().await,
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "status"]) => self.handle_get_status().await,
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "config"]) => self.handle_get_config().await,
+            
+            // ORACLE-14: New read endpoints
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "pending-updates"]) => {
+                self.handle_get_pending_updates().await
+            }
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "slashing-events"]) => {
+                self.handle_get_slashing_events().await
+            }
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "banned-validators"]) => {
+                self.handle_get_banned_validators().await
+            }
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "attestations", epoch_str]) => {
+                self.handle_get_attestations(epoch_str).await
+            }
+            
+            // ORACLE-14: New write endpoints (governance proposals)
+            (ZhtpMethod::Post, ["api", "v1", "oracle", "committee", "propose"]) => {
+                self.handle_propose_committee(&request).await
+            }
+            (ZhtpMethod::Post, ["api", "v1", "oracle", "config", "propose"]) => {
+                self.handle_propose_config(&request).await
+            }
+            (ZhtpMethod::Post, ["api", "v1", "oracle", "updates", "cancel"]) => {
+                self.handle_cancel_update(&request).await
+            }
+            
+            // ORACLE-14: Testnet-only attestation endpoint
+            (ZhtpMethod::Post, ["api", "v1", "oracle", "attest"]) => {
+                self.handle_manual_attest(&request).await
+            }
+            
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 format!("Oracle endpoint not found: {}", uri_no_query),
@@ -58,6 +122,44 @@ impl ZhtpRequestHandler for OracleHandler {
         100
     }
 }
+
+// ============================================================================
+// Request/Response Types for ORACLE-14
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+struct ProposeCommitteeRequest {
+    new_members: Vec<String>, // hex-encoded key_ids
+    activate_at_epoch: u64,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProposeConfigRequest {
+    epoch_duration_secs: Option<u64>,
+    max_source_age_secs: Option<u64>,
+    max_deviation_bps: Option<u32>,
+    max_price_staleness_epochs: Option<u64>,
+    activate_at_epoch: u64,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CancelUpdateRequest {
+    cancel_committee_update: bool,
+    cancel_config_update: bool,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManualAttestRequest {
+    epoch_id: u64,
+    sov_usd_price_atomic: String, // u128 as string
+}
+
+// ============================================================================
+// Handler Implementations
+// ============================================================================
 
 impl OracleHandler {
     /// GET /api/v1/oracle/price
@@ -268,6 +370,443 @@ impl OracleHandler {
             bytes,
             "application/json".to_string(),
             None,
+        ))
+    }
+
+    /// GET /api/v1/oracle/pending-updates
+    ///
+    /// Returns current pending committee and config updates with activation epoch,
+    /// scheduled epoch, expiry, and source proposal ID.
+    async fn handle_get_pending_updates(&self) -> ZhtpResult<ZhtpResponse> {
+        let bc_arc = match self.get_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                warn!("Oracle pending-updates API: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    e.to_string(),
+                ));
+            }
+        };
+
+        let bc = bc_arc.read().await;
+        let block_timestamp = bc.last_committed_timestamp();
+        let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+        let _config = &bc.oracle_state.config;
+
+        // Return only fields that are actually tracked in oracle state
+        let pending_committee = bc.oracle_state.committee.pending_update().map(|u| {
+            let n = u.members.len() as u64;
+            let new_threshold = (2 * n) / 3 + 1;
+            json!({
+                "activate_at_epoch": u.activate_at_epoch,
+                "new_member_count": u.members.len(),
+                "new_members": u.members.iter().map(hex::encode).collect::<Vec<_>>(),
+                "new_threshold": new_threshold,
+            })
+        });
+
+        let pending_config = bc.oracle_state.pending_config_update.as_ref().map(|u| {
+            json!({
+                "activate_at_epoch": u.activate_at_epoch,
+                "epoch_duration_secs": u.config.epoch_duration_secs,
+                "max_source_age_secs": u.config.max_source_age_secs,
+                "max_deviation_bps": u.config.max_deviation_bps,
+                "max_price_staleness_epochs": u.config.max_price_staleness_epochs(),
+            })
+        });
+
+        let body = json!({
+            "current_epoch": current_epoch,
+            "pending_committee_update": pending_committee,
+            "pending_config_update": pending_config,
+        });
+
+        let bytes = match serde_json::to_vec(&body) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("Oracle pending-updates API: failed to serialize response: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    "Failed to serialize response".to_string(),
+                ));
+            }
+        };
+        Ok(ZhtpResponse::success_with_content_type(
+            bytes,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// GET /api/v1/oracle/slashing-events
+    ///
+    /// Returns last 100 oracle slash events.
+    async fn handle_get_slashing_events(&self) -> ZhtpResult<ZhtpResponse> {
+        let bc_arc = match self.get_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                warn!("Oracle slashing-events API: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    e.to_string(),
+                ));
+            }
+        };
+
+        let bc = bc_arc.read().await;
+        
+        // Get last 100 events (or fewer if less exist)
+        let events: Vec<_> = bc.oracle_slash_events
+            .iter()
+            .rev()
+            .take(100)
+            .map(|e| {
+                let reason_str = match e.reason {
+                    OracleSlashReason::ConflictingAttestation => "conflicting_attestation",
+                    OracleSlashReason::WrongEpoch => "wrong_epoch",
+                };
+                json!({
+                    "validator_key_id": hex::encode(e.validator_key_id),
+                    "reason": reason_str,
+                    "epoch_id": e.epoch_id,
+                    "slash_amount": e.slash_amount,
+                    "slashed_at_height": e.slashed_at_height,
+                })
+            })
+            .collect();
+
+        let body = json!({
+            "events": events,
+            "total_events": bc.oracle_slash_events.len(),
+            "banned_validator_count": bc.oracle_banned_validators.len(),
+        });
+
+        let bytes = match serde_json::to_vec(&body) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("Oracle slashing-events API: failed to serialize response: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    "Failed to serialize response".to_string(),
+                ));
+            }
+        };
+        Ok(ZhtpResponse::success_with_content_type(
+            bytes,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// GET /api/v1/oracle/banned-validators
+    ///
+    /// Returns all currently banned validator key_ids.
+    async fn handle_get_banned_validators(&self) -> ZhtpResult<ZhtpResponse> {
+        let bc_arc = match self.get_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                warn!("Oracle banned-validators API: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    e.to_string(),
+                ));
+            }
+        };
+
+        let bc = bc_arc.read().await;
+        
+        let banned: Vec<_> = bc.oracle_banned_validators
+            .iter()
+            .map(hex::encode)
+            .collect();
+
+        let body = json!({
+            "banned": banned,
+            "count": banned.len(),
+        });
+
+        let bytes = match serde_json::to_vec(&body) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("Oracle banned-validators API: failed to serialize response: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    "Failed to serialize response".to_string(),
+                ));
+            }
+        };
+        Ok(ZhtpResponse::success_with_content_type(
+            bytes,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// GET /api/v1/oracle/attestations/{epoch_id}
+    ///
+    /// Returns attestation status for a given epoch.
+    async fn handle_get_attestations(&self, epoch_str: &str) -> ZhtpResult<ZhtpResponse> {
+        let epoch_id: u64 = match epoch_str.parse() {
+            Ok(e) => e,
+            Err(_) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Invalid epoch_id - must be a positive integer".to_string(),
+                ));
+            }
+        };
+
+        let bc_arc = match self.get_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                warn!("Oracle attestations API: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    e.to_string(),
+                ));
+            }
+        };
+
+        let bc = bc_arc.read().await;
+        let committee_size = bc.oracle_state.committee.members().len();
+        let threshold = bc.oracle_state.committee.threshold();
+        
+        // Check if epoch is finalized
+        let finalized = bc.oracle_state.finalized_price(epoch_id);
+        
+        // Get current epoch to calculate attestations needed
+        let block_timestamp = bc.last_committed_timestamp();
+        let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+        
+        // Per-epoch attestation tracking is not yet implemented.
+        // We can only report whether the epoch is finalized or not.
+        let is_finalized = finalized.is_some();
+
+        let body = json!({
+            "epoch_id": epoch_id,
+            "current_epoch": current_epoch,
+            "committee_size": committee_size,
+            "threshold": threshold,
+            "finalized": is_finalized,
+            "note": "Per-epoch attestation tracking is not yet implemented",
+            "finalized_price": finalized.map(|p| {
+                let price_usd = p.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64;
+                json!({
+                    "sov_usd_price": price_usd,
+                    "sov_usd_price_atomic": p.sov_usd_price.to_string(),
+                })
+            }),
+        });
+
+        let bytes = match serde_json::to_vec(&body) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("Oracle attestations API: failed to serialize response: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    "Failed to serialize response".to_string(),
+                ));
+            }
+        };
+        Ok(ZhtpResponse::success_with_content_type(
+            bytes,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// POST /api/v1/oracle/committee/propose
+    ///
+    /// Submits a DAO proposal for oracle committee change.
+    /// Note: Full implementation requires governance transaction creation.
+    async fn handle_propose_committee(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let req: ProposeCommitteeRequest = match serde_json::from_slice(&request.body) {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid request body: {}", e),
+                ));
+            }
+        };
+
+        // Validate new_members
+        if req.new_members.is_empty() {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "new_members cannot be empty".to_string(),
+            ));
+        }
+
+        let mut member_ids = Vec::new();
+        for member_hex in &req.new_members {
+            match self.parse_hex_32(member_hex, "member") {
+                Ok(id) => member_ids.push(id),
+                Err(e) => {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::BadRequest,
+                        format!("Invalid member hex: {}", e),
+                    ));
+                }
+            }
+        }
+
+        // DAO proposal creation for oracle committee updates is not yet implemented.
+        debug!(
+            "Oracle committee proposal received but governance submission is not implemented; \
+             {} members, activate_at_epoch={}",
+            member_ids.len(), req.activate_at_epoch
+        );
+
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "DAO proposal creation for oracle committee updates is not yet implemented".to_string(),
+        ))
+    }
+
+    /// POST /api/v1/oracle/config/propose
+    ///
+    /// Submits a DAO proposal for oracle config change.
+    async fn handle_propose_config(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let req: ProposeConfigRequest = match serde_json::from_slice(&request.body) {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid request body: {}", e),
+                ));
+            }
+        };
+
+        // Build proposed config (start with current, apply changes)
+        let bc_arc = match self.get_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    e.to_string(),
+                ));
+            }
+        };
+
+        let bc = bc_arc.read().await;
+        let current_config = &bc.oracle_state.config;
+        
+        // Build proposed config by modifying current config fields
+        let mut proposed_config = current_config.clone();
+        if let Some(epoch_duration) = req.epoch_duration_secs {
+            proposed_config.epoch_duration_secs = epoch_duration;
+        }
+        if let Some(max_source_age) = req.max_source_age_secs {
+            proposed_config.max_source_age_secs = max_source_age;
+        }
+        if let Some(max_deviation) = req.max_deviation_bps {
+            proposed_config.max_deviation_bps = max_deviation;
+        }
+        if let Some(max_staleness) = req.max_price_staleness_epochs {
+            proposed_config.max_price_staleness_epochs = max_staleness;
+        }
+
+        // Validate the proposed config (ORACLE-15)
+        if let Err(e) = proposed_config.validate() {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                format!("Invalid oracle config: {}", e),
+            ));
+        }
+
+        // DAO proposal creation for oracle config updates is not yet implemented.
+        debug!(
+            "Oracle config proposal received but governance submission is not implemented; \
+             requested activate_at_epoch={}",
+            req.activate_at_epoch
+        );
+
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "DAO proposal creation for oracle config updates is not yet implemented".to_string(),
+        ))
+    }
+
+    /// POST /api/v1/oracle/updates/cancel
+    ///
+    /// Submits a DAO proposal to cancel pending oracle updates.
+    async fn handle_cancel_update(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let req: CancelUpdateRequest = match serde_json::from_slice(&request.body) {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid request body: {}", e),
+                ));
+            }
+        };
+
+        if !req.cancel_committee_update && !req.cancel_config_update {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "At least one of cancel_committee_update or cancel_config_update must be true".to_string(),
+            ));
+        }
+
+        // DAO proposal creation for oracle update cancellation is not yet implemented.
+        warn!(
+            "Oracle cancel update proposal requested but DAO governance submission is not implemented yet: \
+             committee_cancel={}, config_cancel={}",
+            req.cancel_committee_update,
+            req.cancel_config_update
+        );
+
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "Oracle update cancellation via DAO governance is not implemented yet".to_string(),
+        ))
+    }
+
+    /// POST /api/v1/oracle/attest
+    ///
+    /// Manually submit an oracle attestation (testnet only).
+    /// Disabled on mainnet.
+    async fn handle_manual_attest(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Check if on testnet
+        if !self.is_testnet {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Manual attestation is only available on testnet".to_string(),
+            ));
+        }
+
+        let req: ManualAttestRequest = match serde_json::from_slice(&request.body) {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid request body: {}", e),
+                ));
+            }
+        };
+
+        // Parse price from string
+        let sov_usd_price: u128 = match req.sov_usd_price_atomic.parse() {
+            Ok(p) => p,
+            Err(_) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Invalid sov_usd_price_atomic - must be a valid u128".to_string(),
+                ));
+            }
+        };
+
+        // Manual attestation submission is not yet implemented.
+        debug!(
+            "Manual attestation received (NOT IMPLEMENTED): epoch_id={}, price={}",
+            req.epoch_id, sov_usd_price
+        );
+
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "Manual attestation submission is not yet implemented".to_string(),
         ))
     }
 }

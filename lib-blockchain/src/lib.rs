@@ -104,6 +104,8 @@ pub use oracle::{
     PendingConfigUpdate, FinalizedOraclePrice, OracleEpochState, OracleState,
     // ORACLE-4: Slashing
     OracleSlashEvent, OracleSlashReason, OracleSlashingConfig,
+    // ORACLE-15: Config validation
+    OracleConfigError,
 };
 
 // Exchange module re-exports (ORACLE-3)
