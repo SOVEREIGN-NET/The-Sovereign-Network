@@ -145,6 +145,20 @@ impl ZkDHTIntegration {
         if current_usage + content.len() as u64 > self.max_storage_bytes {
             warn!("DHT storage limit reached, cleaning up expired entries");
             self.cleanup_expired().await?;
+
+            // Re-check after cleanup; reject if still over limit
+            let usage_after_cleanup = {
+                let store = self.content_store.read().await;
+                store.values().map(|e| e.value.len() as u64).sum::<u64>()
+            };
+            if usage_after_cleanup + content.len() as u64 > self.max_storage_bytes {
+                anyhow::bail!(
+                    "DHT storage limit exceeded: {} bytes used, {} bytes limit, {} bytes requested",
+                    usage_after_cleanup,
+                    self.max_storage_bytes,
+                    content.len()
+                );
+            }
         }
 
         // Store in memory
