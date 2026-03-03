@@ -6922,7 +6922,12 @@ impl Blockchain {
         }
 
         self.oracle_state
-            .schedule_committee_update(update_data.new_members.clone(), update_data.activate_at_epoch)
+            .schedule_committee_update(
+                update_data.new_members.clone(),
+                update_data.activate_at_epoch,
+                current_epoch,
+                proposal_id,
+            )
             .map_err(|e| anyhow::anyhow!("ParameterValidationError: Failed to schedule committee update: {}", e))?;
 
         self.executed_dao_proposals.insert(proposal_id);
