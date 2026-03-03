@@ -51,6 +51,19 @@ impl ConsensusEngine {
             &self.current_round.step,
         ));
 
+        // Track the last time our blockchain height advanced, so we can trigger
+        // a catch-up sync even in bootstrap mode (< 4 validators) where the
+        // HeartbeatTracker has no entries and the stall detector never fires.
+        let mut last_height_seen: u64 = self.current_round.height;
+        let mut last_height_advance_secs: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        /// After this many seconds at the same height without a stall event,
+        /// fire catch-up anyway.  Short enough to recover quickly; long enough
+        /// not to spam the sync layer.
+        const BOOTSTRAP_CATCHUP_TIMEOUT_SECS: u64 = 30;
+
         // Ensure validator membership snapshot is initialized for the current height
         self.snapshot_validator_set(self.current_round.height);
 
@@ -66,6 +79,24 @@ impl ConsensusEngine {
                 self.current_round.round,
                 self.current_round.step
             );
+            // Kick off the initial propose step: select proposer and create proposal if we're it.
+            // This must happen before the select! loop so current_round.proposer is set before
+            // any incoming proposals are processed by on_proposal().
+            if let Err(e) = self.enter_propose_step().await {
+                tracing::warn!("Failed to enter initial propose step: {}", e);
+            }
+            // Re-arm timer: enter_propose_step doesn't change step, so token stays valid.
+            // Re-arm anyway to get a fresh deadline from the current state.
+            timer_token = TimerToken::new(
+                self.current_round.height,
+                self.current_round.round,
+                &self.current_round.step,
+            );
+            timer_fut.set(self.round_timer.next_deadline(
+                self.current_round.height,
+                self.current_round.round,
+                &self.current_round.step,
+            ));
         } else {
             tracing::info!(
                 "⛏️ Starting consensus loop in BOOTSTRAP MODE ({} validators, need ≥{} for BFT) at height {}",
@@ -101,18 +132,30 @@ impl ConsensusEngine {
                             if let Err(e) = self.sync_height_with_blockchain().await {
                                 tracing::warn!("Failed to sync height during mode transition: {}", e);
                             }
-                            // Update timer token for new height
-                            timer_token = TimerToken::new(
-                                self.current_round.height,
-                                self.current_round.round,
-                                &self.current_round.step,
-                            );
+                            // Snapshot validator set for the new height
+                            self.snapshot_validator_set(self.current_round.height);
                             // Emit mode transition event
                             self.emit_liveness_event(ConsensusEvent::ModeTransitionToBft {
                                 validator_count,
                                 height: self.current_round.height,
                                 timestamp,
                             });
+                            // Kick off the propose step: select proposer and create/broadcast
+                            // proposal if this node is the designated proposer.
+                            if let Err(e) = self.enter_propose_step().await {
+                                tracing::warn!("Failed to enter propose step on BFT transition: {}", e);
+                            }
+                            // Re-arm timer for the (potentially new) height/step
+                            timer_token = TimerToken::new(
+                                self.current_round.height,
+                                self.current_round.round,
+                                &self.current_round.step,
+                            );
+                            timer_fut.set(self.round_timer.next_deadline(
+                                self.current_round.height,
+                                self.current_round.round,
+                                &self.current_round.step,
+                            ));
                         } else {
                             // Transitioning TO Bootstrap mode (degraded)
                             tracing::warn!(
@@ -191,6 +234,17 @@ impl ConsensusEngine {
                     match maybe_msg {
                         Some(msg) => {
                             self.on_message(msg).await?;
+
+                            // If height advanced, record the time so the
+                            // bootstrap catch-up timer resets correctly.
+                            let h_now = self.current_round.height;
+                            if h_now != last_height_seen {
+                                last_height_seen = h_now;
+                                last_height_advance_secs = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs();
+                            }
 
                             // Re-arm timer if state changed
                             let state_changed = !timer_token.matches(
@@ -294,6 +348,20 @@ impl ConsensusEngine {
                                     total_validators: self.liveness_monitor.total_validators as usize,
                                     timestamp,
                                 });
+
+                                // Trigger catch-up sync unconditionally on stall — we may be
+                                // behind peers and unable to receive their higher-height votes
+                                // because of the height divergence itself.  This breaks the
+                                // deadlock: detection → action, no in-band message required.
+                                let our_blockchain_height =
+                                    self.current_round.height.saturating_sub(1);
+                                if let Some(ref trigger) = self.catch_up_sync_trigger {
+                                    tracing::info!(
+                                        "🔄 Stall detected — triggering catch-up sync from height {}",
+                                        our_blockchain_height
+                                    );
+                                    trigger.trigger(our_blockchain_height);
+                                }
                             } else {
                                 let timestamp = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
@@ -339,6 +407,32 @@ impl ConsensusEngine {
                         // - Round timeout acceleration
                         // - Proposer rotation
                         // - Emergency validator set update
+                    }
+
+                    // Bootstrap-mode / height-0 catch-up: if the node has been
+                    // stuck at the same blockchain height for ≥30 s and no
+                    // stall event fired (because there are no tracked validators
+                    // yet), nudge the sync layer unconditionally.  This covers
+                    // the case where a node restarts after a wipe and has no
+                    // peers' votes to trigger the normal height-divergence path.
+                    let h = self.current_round.height;
+                    if h != last_height_seen {
+                        last_height_seen = h;
+                        last_height_advance_secs = current_time;
+                    } else if current_time.saturating_sub(last_height_advance_secs)
+                        >= BOOTSTRAP_CATCHUP_TIMEOUT_SECS
+                    {
+                        let our_blockchain_height = h.saturating_sub(1);
+                        if let Some(ref trigger) = self.catch_up_sync_trigger {
+                            tracing::info!(
+                                "🔄 Height {} stuck for {}s — triggering catch-up sync (bootstrap/partition recovery)",
+                                h,
+                                current_time.saturating_sub(last_height_advance_secs)
+                            );
+                            trigger.trigger(our_blockchain_height);
+                        }
+                        // Reset timer so we don't spam every 5 s
+                        last_height_advance_secs = current_time;
                     }
                 }
             }

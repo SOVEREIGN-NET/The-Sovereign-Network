@@ -279,6 +279,10 @@ pub struct BlockExecutor {
     store: Arc<dyn BlockchainStore>,
     fee_model: FeeModelV2,
     limits: BlockLimits,
+    /// When true, skip fee validation for all transactions.
+    /// Used during catch-up sync to replay already-committed peer blocks
+    /// whose transactions were valid under older fee rules.
+    skip_fee_validation: bool,
 }
 
 /// Scope guard that ensures rollback_block is called if not disarmed.
@@ -323,6 +327,25 @@ impl BlockExecutor {
             store,
             fee_model,
             limits,
+            skip_fee_validation: false,
+        }
+    }
+
+    /// Create a block executor that skips fee validation.
+    ///
+    /// Use ONLY for replaying already-committed peer blocks during catch-up
+    /// sync.  These blocks were accepted by consensus and must be applied
+    /// regardless of the current fee schedule.
+    pub fn new_trusted_replay(
+        store: Arc<dyn BlockchainStore>,
+        fee_model: FeeModelV2,
+        limits: BlockLimits,
+    ) -> Self {
+        Self {
+            store,
+            fee_model,
+            limits,
+            skip_fee_validation: true,
         }
     }
 
@@ -333,6 +356,7 @@ impl BlockExecutor {
             store,
             fee_model,
             limits,
+            skip_fee_validation: false,
         }
     }
 
@@ -1014,6 +1038,10 @@ impl BlockExecutor {
     /// - Coinbase transactions (fee must be 0)
     /// - TokenTransfer in Phase 2 (fee must be 0, subsidized)
     fn validate_tx_fee(&self, tx: &crate::transaction::Transaction) -> Result<(), TxApplyError> {
+        // Skip fee validation entirely during trusted replay (catch-up sync).
+        if self.skip_fee_validation {
+            return Ok(());
+        }
         // Exempt transactions that don't pay fees
         match tx.transaction_type {
             TransactionType::Coinbase => return Ok(()), // Creates value, no fee
@@ -1493,6 +1521,20 @@ impl BlockExecutor {
             ));
         }
 
+        // Gate 1: creator must have a registered on-chain identity (DID).
+        let creator_addr = Address::new(data.creator);
+        let creator_identity = mutator.get_identity_by_owner(&creator_addr)?.ok_or_else(|| {
+            TxApplyError::InvalidType(
+                "BondingCurveDeploy: creator must have a registered identity (DID) on-chain".to_string(),
+            )
+        })?;
+        // did_hash is the canonical on-chain identifier; encode as hex for storage.
+        let creator_did = format!("did:zhtp:{}", hex::encode(creator_identity.did_hash));
+        // NOTE: SOV balance gating for CBE deployment must be enforced against the
+        // authoritative SOV ledger (e.g. token_contracts / wallet_key_for_sov) or
+        // earlier in the pipeline. The executor's Phase-2 store ledger is keyed by
+        // creator key_id and does not currently reflect wallet-registration SOV
+        // credits, so enforcing the gate here would incorrectly reject valid txs.
         // Generate token ID from name, symbol, and creator
         use lib_crypto::hash_blake3;
         let input = format!("{}:{}:{}", data.name, data.symbol, hex::encode(&data.creator));
@@ -1554,6 +1596,7 @@ impl BlockExecutor {
                 kyber_pk: vec![],
                 key_id: data.creator,
             },
+            creator_did: Some(creator_did),
             deployed_at_block: block_height,
             deployed_at_timestamp: block_timestamp,
         };
@@ -3427,6 +3470,7 @@ mod tests {
             threshold: Threshold::ReserveAmount(1_000_000),
             sell_enabled: false, amm_pool_id: None,
             creator: lib_crypto::PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: creator_key },
+            creator_did: None,
             deployed_at_block: 0, deployed_at_timestamp: 12345,
         };
 
@@ -3461,6 +3505,7 @@ mod tests {
             threshold: Threshold::ReserveAmount(1_000_000),
             sell_enabled: false, amm_pool_id: None,
             creator: lib_crypto::PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: key },
+            creator_did: None,
             deployed_at_block: block, deployed_at_timestamp: block * 1000,
         };
         tx_apply::apply_bonding_curve_deploy(

@@ -2732,6 +2732,8 @@ mod tests {
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 

@@ -285,21 +285,31 @@ impl ConsensusEngine {
             .get_validator(validator_id)
             .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
 
-        let provider = self
-            .storage_proof_provider
-            .as_ref()
-            .ok_or_else(|| {
-                ConsensusError::ProofVerificationFailed(
-                    "No storage proof provider configured".to_string(),
-                )
-            })?;
-
-        let unsigned = provider
-            .capacity_attestation(&Hash::from_bytes(validator_id.as_bytes()))
-            .await
-            .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
-
         let keypair = self.local_signing_keypair(validator)?;
+
+        if let Some(ref provider) = self.storage_proof_provider {
+            let unsigned = provider
+                .capacity_attestation(&Hash::from_bytes(validator_id.as_bytes()))
+                .await
+                .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+
+            let attestation = unsigned
+                .sign(keypair)
+                .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+
+            return Ok(attestation);
+        }
+
+        // No storage proof provider — emit a signed stub attestation (0 capacity, no challenges).
+        // This allows consensus to proceed on dev/testnet nodes that don't provide storage.
+        // Production (Mainnet) deployments should always configure a real provider.
+        let validator_hash = Hash::from_bytes(validator_id.as_bytes());
+        let unsigned = crate::proofs::StorageCapacityAttestation::new(
+            validator_hash,
+            0,   // storage_capacity: none
+            0,   // utilization: 0%
+            vec![], // no challenge results
+        );
         let attestation = unsigned
             .sign(keypair)
             .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
