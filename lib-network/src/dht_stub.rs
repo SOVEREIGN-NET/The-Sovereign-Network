@@ -528,6 +528,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_peer_discovery_multiple_peers() {
+        let dht = ZkDHTIntegration::new();
+
+        // Add two different peers
+        dht.connect_to_peer("127.0.0.1:9334").await.unwrap();
+        dht.connect_to_peer("127.0.0.1:9335").await.unwrap();
+
+        let peers = dht.discover_peers().await.unwrap();
+        assert_eq!(peers.len(), 2);
+        assert!(peers.contains(&"127.0.0.1:9334".to_string()));
+        assert!(peers.contains(&"127.0.0.1:9335".to_string()));
+    }
+
+    #[tokio::test]
     async fn test_cleanup_expired() {
         let dht = ZkDHTIntegration::new();
         
