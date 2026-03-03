@@ -3,12 +3,12 @@
 //! ZHTP uses only Kyber1024 (NIST Level 5) and Dilithium5 (highest security).
 //! Kyber512 is NOT supported - do not add it.
 //!
-//! This is the SINGLE SOURCE OF TRUTH for all PQ constants.
-//! Re-exported from: pqc_kyber, pqcrypto_dilithium, crystals-dilithium
+//! This is the SINGLE SOURCE OF TRUTH for all PQ constants used in this workspace.
+//! Numeric values are copied from, and expected to match: pqc_kyber, pqcrypto_dilithium, crystals-dilithium.
 
 /// CRYSTALS-Kyber1024 constants (NIST post-quantum standard - Level 5, highest security)
 /// This is the ONLY Kyber variant supported by ZHTP.
-/// Re-exported from pqc_kyber crate for consistency.
+/// Values are copied from the pqc_kyber crate and MUST remain in sync with its definitions.
 pub const KYBER1024_CIPHERTEXT_BYTES: usize = 1568;
 pub const KYBER1024_PUBLICKEY_BYTES: usize = 1568;
 pub const KYBER1024_SECRETKEY_BYTES: usize = 3168;
