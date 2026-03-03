@@ -36,6 +36,7 @@ fn create_test_cbe_token(reserve_micro_usd: u64) -> BondingCurveToken {
         sell_enabled: true,
         amm_pool_id: None,
         creator: PublicKey::new(vec![1u8; 32]),
+        creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
     }
