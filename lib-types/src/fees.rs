@@ -2,7 +2,9 @@
 //!
 //! Pure data types for fee calculation. Behavior (computation logic) lives in lib-fees.
 //!
-//! Rule: These types must remain behavior-free and serialization-stable.
+//! Rule: These types must remain serialization-stable. Lightweight, side-effect-free
+//! validation helpers (e.g., `FeeParams::validate()`) are permitted to enforce data
+//! invariants, but fee computation and domain-level business rules must live in lib-fees.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +26,10 @@ pub enum TxKind {
     Staking = 5,
     /// Unstaking (withdrawal)
     Unstaking = 6,
+    /// Validator registration
+    ValidatorRegistration = 7,
+    /// Validator exit
+    ValidatorExit = 8,
 }
 
 /// Cryptographic signature scheme used
@@ -103,19 +109,94 @@ impl Default for FeeParams {
     }
 }
 
+/// Validation errors for FeeParams
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FeeParamsError {
+    /// Minimum fee exceeds maximum fee
+    MinExceedsMax { min: u64, max: u64 },
+    /// Base fee per byte is zero
+    ZeroBaseFeePerByte,
+    /// Fee per state read is zero
+    ZeroFeePerStateRead,
+    /// Fee per state write is zero
+    ZeroFeePerStateWrite,
+    /// Fee per byte written to state is zero
+    ZeroFeePerStateWriteByte,
+    /// Fee per signature is zero
+    ZeroFeePerSignature,
+    /// Fee per execution unit is zero
+    ZeroFeePerExecUnit,
+}
+
+impl std::fmt::Display for FeeParamsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FeeParamsError::MinExceedsMax { min, max } => {
+                write!(f, "minimum_fee ({}) exceeds maximum_fee ({})", min, max)
+            }
+            FeeParamsError::ZeroBaseFeePerByte => write!(f, "base_fee_per_byte must be > 0"),
+            FeeParamsError::ZeroFeePerStateRead => write!(f, "fee_per_state_read must be > 0"),
+            FeeParamsError::ZeroFeePerStateWrite => write!(f, "fee_per_state_write must be > 0"),
+            FeeParamsError::ZeroFeePerStateWriteByte => {
+                write!(f, "fee_per_state_write_byte must be > 0")
+            }
+            FeeParamsError::ZeroFeePerSignature => write!(f, "fee_per_signature must be > 0"),
+            FeeParamsError::ZeroFeePerExecUnit => write!(f, "fee_per_exec_unit must be > 0"),
+        }
+    }
+}
+
+impl std::error::Error for FeeParamsError {}
+
 impl FeeParams {
-    /// Create params for testing (lower fees)
+    /// Create params for testing with realistic values
+    /// 
+    /// These values are lower than production but still maintain
+    /// realistic ratios between different fee components.
     pub fn for_testing() -> Self {
         Self {
             base_fee_per_byte: 1,
-            fee_per_exec_unit: 1,
-            fee_per_state_read: 1,
-            fee_per_state_write: 1,
-            fee_per_state_write_byte: 1,
-            fee_per_signature: 1,
-            minimum_fee: 0,
-            maximum_fee: u64::MAX,
+            fee_per_exec_unit: 10,
+            fee_per_state_read: 100,
+            fee_per_state_write: 500,
+            fee_per_state_write_byte: 10,
+            fee_per_signature: 1_000,
+            minimum_fee: 1_000,
+            maximum_fee: 100_000_000,
         }
+    }
+
+    /// Validate fee parameters for consistency
+    ///
+    /// # Checks performed
+    /// - minimum_fee <= maximum_fee
+    /// - All fee rates are non-zero (prevents free operations)
+    pub fn validate(&self) -> Result<(), FeeParamsError> {
+        if self.minimum_fee > self.maximum_fee {
+            return Err(FeeParamsError::MinExceedsMax {
+                min: self.minimum_fee,
+                max: self.maximum_fee,
+            });
+        }
+        if self.base_fee_per_byte == 0 {
+            return Err(FeeParamsError::ZeroBaseFeePerByte);
+        }
+        if self.fee_per_state_read == 0 {
+            return Err(FeeParamsError::ZeroFeePerStateRead);
+        }
+        if self.fee_per_state_write == 0 {
+            return Err(FeeParamsError::ZeroFeePerStateWrite);
+        }
+        if self.fee_per_state_write_byte == 0 {
+            return Err(FeeParamsError::ZeroFeePerStateWriteByte);
+        }
+        if self.fee_per_signature == 0 {
+            return Err(FeeParamsError::ZeroFeePerSignature);
+        }
+        if self.fee_per_exec_unit == 0 {
+            return Err(FeeParamsError::ZeroFeePerExecUnit);
+        }
+        Ok(())
     }
 }
 
@@ -156,6 +237,8 @@ mod tests {
         assert_eq!(TxKind::Governance as u8, 4);
         assert_eq!(TxKind::Staking as u8, 5);
         assert_eq!(TxKind::Unstaking as u8, 6);
+        assert_eq!(TxKind::ValidatorRegistration as u8, 7);
+        assert_eq!(TxKind::ValidatorExit as u8, 8);
     }
 
     #[test]
@@ -178,8 +261,14 @@ mod tests {
     #[test]
     fn test_fee_params_for_testing() {
         let params = FeeParams::for_testing();
-        assert_eq!(params.minimum_fee, 0);
-        assert_eq!(params.maximum_fee, u64::MAX);
+        // Updated for realistic testing values (FEES-11)
+        assert_eq!(params.minimum_fee, 1_000);
+        assert_eq!(params.maximum_fee, 100_000_000);
+        assert_eq!(params.base_fee_per_byte, 1);
+        assert_eq!(params.fee_per_exec_unit, 10);
+        assert_eq!(params.fee_per_state_read, 100);
+        assert_eq!(params.fee_per_state_write, 500);
+        assert_eq!(params.fee_per_signature, 1_000);
     }
 
     #[test]
@@ -192,6 +281,83 @@ mod tests {
         let msg = format!("{}", deficit);
         assert!(msg.contains("1000"));
         assert!(msg.contains("500"));
+    }
+
+    #[test]
+    fn test_fee_params_validation_success() {
+        let params = FeeParams::default();
+        assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn test_fee_params_validation_min_exceeds_max() {
+        let params = FeeParams {
+            minimum_fee: 1000,
+            maximum_fee: 500,
+            ..FeeParams::default()
+        };
+        let err = params.validate().unwrap_err();
+        assert!(matches!(err, FeeParamsError::MinExceedsMax { min: 1000, max: 500 }));
+    }
+
+    #[test]
+    fn test_fee_params_validation_zero_base_fee() {
+        let params = FeeParams {
+            base_fee_per_byte: 0,
+            ..FeeParams::default()
+        };
+        let err = params.validate().unwrap_err();
+        assert!(matches!(err, FeeParamsError::ZeroBaseFeePerByte));
+    }
+
+    #[test]
+    fn test_fee_params_validation_zero_state_read() {
+        let params = FeeParams {
+            fee_per_state_read: 0,
+            ..FeeParams::default()
+        };
+        let err = params.validate().unwrap_err();
+        assert!(matches!(err, FeeParamsError::ZeroFeePerStateRead));
+    }
+
+    #[test]
+    fn test_fee_params_validation_zero_state_write_byte() {
+        let params = FeeParams {
+            fee_per_state_write_byte: 0,
+            ..FeeParams::default()
+        };
+        let err = params.validate().unwrap_err();
+        assert!(matches!(err, FeeParamsError::ZeroFeePerStateWriteByte));
+    }
+
+    #[test]
+    fn test_fee_params_validation_zero_state_write() {
+        let params = FeeParams {
+            fee_per_state_write: 0,
+            ..FeeParams::default()
+        };
+        let err = params.validate().unwrap_err();
+        assert!(matches!(err, FeeParamsError::ZeroFeePerStateWrite));
+    }
+
+    #[test]
+    fn test_fee_params_validation_zero_signature() {
+        let params = FeeParams {
+            fee_per_signature: 0,
+            ..FeeParams::default()
+        };
+        let err = params.validate().unwrap_err();
+        assert!(matches!(err, FeeParamsError::ZeroFeePerSignature));
+    }
+
+    #[test]
+    fn test_fee_params_validation_zero_exec_unit() {
+        let params = FeeParams {
+            fee_per_exec_unit: 0,
+            ..FeeParams::default()
+        };
+        let err = params.validate().unwrap_err();
+        assert!(matches!(err, FeeParamsError::ZeroFeePerExecUnit));
     }
 
     #[test]

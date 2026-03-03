@@ -412,10 +412,10 @@ mod tests {
     }
 
     // =========================================================================
-    // GOLDEN VECTOR: Testing Params (Zero Minimum)
+    // GOLDEN VECTOR: Testing Params (Non-Zero Minimum)
     // =========================================================================
 
-    /// Golden vector: Using for_testing() params (all 1s, no minimum)
+    /// Golden vector: Using for_testing() params (realistic values)
     #[test]
     fn golden_testing_params() {
         let input = FeeInput {
@@ -435,14 +435,20 @@ mod tests {
 
         let fee = compute_fee_v2(&input, &params);
 
-        // GOLDEN VECTOR: With testing params (all 1)
+        // GOLDEN VECTOR: With testing params (realistic values)
+        // total_bytes: 100 + 50 + 64 = 214
         // byte_fee: 214 * 1 = 214
-        // exec_fee: 100 * 1 = 100
-        // state_fee: 2 + 2 + 32 = 36
-        // sig_fee: 1 * 10000 / 10000 = 1
-        // base_fee: 214 + 100 + 36 + 1 = 351
-        // adjusted: 351 * 10000 / 10000 = 351
-        assert_eq!(fee, 351, "Golden vector mismatch: testing_params");
+        // exec_fee: 100 * 10 = 1000
+        // state_read_fee: 2 * 100 = 200
+        // state_write_fee: 2 * 500 = 1000
+        // state_write_byte_fee: 32 * 10 = 320
+        // state_fee: 200 + 1000 + 320 = 1520
+        // sig_base_fee: 1 * 1000 = 1000
+        // sig_fee: 1000 * 10000 / 10000 = 1000
+        // base_fee: 214 + 1000 + 1520 + 1000 = 3734
+        // adjusted: 3734 * 10000 / 10000 = 3734
+        // clamped: max(3734, 1000) = 3734
+        assert_eq!(fee, 3734, "Golden vector mismatch: testing_params");
     }
 
     // =========================================================================

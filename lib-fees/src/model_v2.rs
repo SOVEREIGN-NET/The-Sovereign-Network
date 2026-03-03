@@ -9,6 +9,49 @@
 //! - u128 arithmetic internally to prevent overflow
 //! - Deterministic across all platforms
 //!
+//! # Fee Multiplier Rationale (FEES-7, FEES-8, FEES-9)
+//!
+//! ## Witness Caps (bytes)
+//! 
+//! Witness data is capped to prevent DoS attacks where transactions include
+//! excessive witness data. Caps are set based on typical use cases:
+//!
+//! | TxKind | Cap | Rationale |
+//! |--------|-----|-----------|
+//! | NativeTransfer | 1KB | Simple Ed25519 signatures (64 bytes) |
+//! | TokenTransfer | 2KB | Token proofs + signatures |
+//! | ContractCall | 64KB | Complex contract proofs with multiple signatures |
+//! | DataUpload | 128KB | Large data proofs with attestations |
+//! | Governance | 4KB | Governance proofs, typically multisig |
+//! | Staking/Unstaking | 2KB | Delegation proofs |
+//! | ValidatorRegistration | 4KB | Validator key material + proofs |
+//! | ValidatorExit | 2KB | Exit proofs |
+//!
+//! ## Base Multipliers (basis points, 10000 = 1.0x)
+//!
+//! Multipliers adjust fees based on transaction complexity and resource usage:
+//!
+//! | TxKind | Multiplier | Rationale |
+//! |--------|------------|-----------|
+//! | NativeTransfer | 1.0x | Baseline, simplest operation |
+//! | TokenTransfer | 1.2x | Token validation overhead |
+//! | ContractCall | 1.5x | Computation cost + VM overhead |
+//! | DataUpload | 2.0x | Storage commitment cost |
+//! | Governance | 0.5x | Subsidized to encourage participation |
+//! | Staking/Unstaking | 1.2x | Similar complexity to token transfers |
+//! | ValidatorRegistration | 1.3x | Key validation + registry updates |
+//! | ValidatorExit | 1.2x | Registry updates + cleanup |
+//!
+//! ## Signature Scheme Multipliers (FEES-8)
+//!
+//! Larger signatures cost more to verify and store:
+//!
+//! | Scheme | Multiplier | Size |
+//! |--------|------------|------|
+//! | Ed25519 | 1.0x | 64 bytes |
+//! | Dilithium5 | 5.0x | 4,627 bytes (post-quantum) |
+//! | Hybrid | 5.5x | 4,691 bytes (Ed25519 + Dilithium5) |
+//!
 //! # BlockExecutor Integration
 //!
 //! BlockExecutor MUST reject: `tx.fee < compute_fee_v2(...)`
@@ -41,6 +84,8 @@ impl TxKindExt for TxKind {
             TxKind::Governance => 4_096,          // 4KB - governance proofs
             TxKind::Staking => 2_048,             // 2KB - staking proofs
             TxKind::Unstaking => 2_048,           // 2KB - unstaking proofs
+            TxKind::ValidatorRegistration => 4_096, // 4KB - validator key material
+            TxKind::ValidatorExit => 2_048,       // 2KB - exit proofs
         }
     }
 
@@ -56,6 +101,8 @@ impl TxKindExt for TxKind {
             TxKind::Governance => 5_000,        // 0.5x - subsidized
             TxKind::Staking => 12_000,          // 1.2x - similar to token transfer
             TxKind::Unstaking => 12_000,        // 1.2x - similar to staking
+            TxKind::ValidatorRegistration => 13_000, // 1.3x - key validation
+            TxKind::ValidatorExit => 12_000,    // 1.2x - registry cleanup
         }
     }
 }
@@ -241,6 +288,115 @@ pub fn verify_fee(input: &FeeInput, params: &FeeParams, paid_fee: u64) -> Result
             deficit: required - paid_fee,
         })
     }
+}
+
+// =============================================================================
+// FEE ESTIMATION HELPERS (FEES-12)
+// =============================================================================
+
+/// Estimate fee for a native transfer transaction
+///
+/// # Arguments
+/// * `sig_scheme` - Signature scheme to use
+/// * `params` - Fee parameters
+pub fn estimate_native_transfer_fee(sig_scheme: SigScheme, params: &FeeParams) -> u64 {
+    let input = FeeInput::native_transfer(200, sig_scheme);
+    compute_fee_v2(&input, params)
+}
+
+/// Estimate fee for a token transfer transaction
+///
+/// # Arguments
+/// * `sig_scheme` - Signature scheme to use
+/// * `params` - Fee parameters
+pub fn estimate_token_transfer_fee(sig_scheme: SigScheme, params: &FeeParams) -> u64 {
+    let mut input = FeeInput::native_transfer(250, sig_scheme);
+    input.kind = TxKind::TokenTransfer;
+    input.payload_bytes = 64; // token_id + amount
+    input.state_reads = 3; // sender + recipient + token contract
+    input.state_writes = 3;
+    compute_fee_v2(&input, params)
+}
+
+/// Estimate fee for a contract call transaction
+///
+/// # Arguments
+/// * `sig_scheme` - Signature scheme to use
+/// * `exec_units` - Estimated execution units
+/// * `params` - Fee parameters
+pub fn estimate_contract_call_fee(
+    sig_scheme: SigScheme,
+    exec_units: u32,
+    params: &FeeParams,
+) -> u64 {
+    let input = FeeInput {
+        kind: TxKind::ContractCall,
+        sig_scheme,
+        sig_count: 1,
+        envelope_bytes: 300,
+        payload_bytes: 256, // contract call data
+        witness_bytes: sig_scheme.signature_size(),
+        exec_units,
+        state_reads: 5,
+        state_writes: 3,
+        state_write_bytes: 128,
+    };
+    compute_fee_v2(&input, params)
+}
+
+/// Estimate fee range for a transaction kind
+///
+/// Returns (min_fee, max_fee) where:
+/// - min_fee: Fee with minimal resources
+/// - max_fee: Fee with maximum allowed witness data (`kind.witness_cap()`)
+///
+/// # Arguments
+/// * `kind` - Transaction kind
+/// * `sig_scheme` - Signature scheme to use
+/// * `params` - Fee parameters
+pub fn estimate_fee_range(
+    kind: TxKind,
+    sig_scheme: SigScheme,
+    params: &FeeParams,
+) -> (u64, u64) {
+    let min_input = FeeInput {
+        kind,
+        sig_scheme,
+        sig_count: 1,
+        envelope_bytes: 100,
+        payload_bytes: 32,
+        witness_bytes: sig_scheme.signature_size(),
+        exec_units: 0,
+        state_reads: 2,
+        state_writes: 2,
+        state_write_bytes: 32,
+    };
+
+    let max_input = FeeInput {
+        kind,
+        sig_scheme,
+        sig_count: 1,
+        envelope_bytes: 500,
+        payload_bytes: 256,
+        witness_bytes: kind.witness_cap(), // Use full cap for accurate upper bound
+        exec_units: match kind {
+            TxKind::ContractCall => 1000,
+            TxKind::DataUpload => 500,
+            _ => 0,
+        },
+        state_reads: 10,
+        state_writes: 5,
+        state_write_bytes: 256,
+    };
+
+    let min_fee = compute_fee_v2(&min_input, params);
+    let max_fee = compute_fee_v2(&max_input, params);
+
+    // Clamp to min/max fee limits
+    let clamped_min = min_fee.max(params.minimum_fee).min(params.maximum_fee);
+    let clamped_max = max_fee.max(params.minimum_fee).min(params.maximum_fee);
+
+    (clamped_min, clamped_max)
 }
 
 // =============================================================================
@@ -536,6 +692,42 @@ mod tests {
         assert_eq!(TxKind::Governance as u8, 4);
         assert_eq!(TxKind::Staking as u8, 5);
         assert_eq!(TxKind::Unstaking as u8, 6);
+        assert_eq!(TxKind::ValidatorRegistration as u8, 7);
+        assert_eq!(TxKind::ValidatorExit as u8, 8);
+    }
+
+    #[test]
+    fn test_validator_registration_fee() {
+        let params = FeeParams::default();
+
+        let mut transfer = FeeInput::native_transfer(200, SigScheme::Ed25519);
+        let mut validator_reg = transfer.clone();
+        validator_reg.kind = TxKind::ValidatorRegistration;
+
+        let transfer_fee = compute_fee_v2(&transfer, &params);
+        let validator_reg_fee = compute_fee_v2(&validator_reg, &params);
+
+        // Validator registration should be higher than transfer (1.3x multiplier)
+        assert!(validator_reg_fee > transfer_fee);
+        assert_eq!(TxKind::ValidatorRegistration.base_multiplier_bps(), 13_000);
+        assert_eq!(TxKind::ValidatorRegistration.witness_cap(), 4_096);
+    }
+
+    #[test]
+    fn test_validator_exit_fee() {
+        let params = FeeParams::default();
+
+        let mut transfer = FeeInput::native_transfer(200, SigScheme::Ed25519);
+        let mut validator_exit = transfer.clone();
+        validator_exit.kind = TxKind::ValidatorExit;
+
+        let transfer_fee = compute_fee_v2(&transfer, &params);
+        let validator_exit_fee = compute_fee_v2(&validator_exit, &params);
+
+        // Validator exit should be slightly higher than transfer (1.2x multiplier)
+        assert!(validator_exit_fee > transfer_fee);
+        assert_eq!(TxKind::ValidatorExit.base_multiplier_bps(), 12_000);
+        assert_eq!(TxKind::ValidatorExit.witness_cap(), 2_048);
     }
 
     #[test]
@@ -544,5 +736,177 @@ mod tests {
         assert_eq!(SigScheme::Ed25519 as u8, 0);
         assert_eq!(SigScheme::Dilithium5 as u8, 1);
         assert_eq!(SigScheme::Hybrid as u8, 2);
+    }
+
+    // =============================================================================
+    // PROPERTY-BASED TESTS FOR FEE MONOTONICITY (FEES-14)
+    // =============================================================================
+
+    /// Fee should be monotonic with respect to envelope_bytes
+    #[test]
+    fn test_fee_monotonic_with_envelope_bytes() {
+        let params = FeeParams::for_testing();
+        let mut prev_fee = 0;
+
+        for envelope_bytes in [100, 200, 500, 1000, 2000] {
+            let input = FeeInput {
+                kind: TxKind::NativeTransfer,
+                sig_scheme: SigScheme::Ed25519,
+                sig_count: 1,
+                envelope_bytes,
+                payload_bytes: 32,
+                witness_bytes: 64,
+                exec_units: 0,
+                state_reads: 2,
+                state_writes: 2,
+                state_write_bytes: 32,
+            };
+            let fee = compute_fee_v2(&input, &params);
+            assert!(
+                fee >= prev_fee,
+                "Fee should increase with envelope_bytes: {} >= {}",
+                fee,
+                prev_fee
+            );
+            prev_fee = fee;
+        }
+    }
+
+    /// Fee should be monotonic with respect to exec_units
+    #[test]
+    fn test_fee_monotonic_with_exec_units() {
+        let params = FeeParams::for_testing();
+        let mut prev_fee = 0;
+
+        for exec_units in [0, 100, 500, 1000, 5000] {
+            let input = FeeInput {
+                kind: TxKind::ContractCall,
+                sig_scheme: SigScheme::Ed25519,
+                sig_count: 1,
+                envelope_bytes: 200,
+                payload_bytes: 256,
+                witness_bytes: 64,
+                exec_units,
+                state_reads: 2,
+                state_writes: 2,
+                state_write_bytes: 32,
+            };
+            let fee = compute_fee_v2(&input, &params);
+            assert!(
+                fee >= prev_fee,
+                "Fee should increase with exec_units: {} >= {}",
+                fee,
+                prev_fee
+            );
+            prev_fee = fee;
+        }
+    }
+
+    /// Fee should be monotonic with respect to state_reads
+    #[test]
+    fn test_fee_monotonic_with_state_reads() {
+        let params = FeeParams::for_testing();
+        let mut prev_fee = 0;
+
+        for state_reads in [1, 2, 5, 10, 20] {
+            let input = FeeInput {
+                kind: TxKind::ContractCall,
+                sig_scheme: SigScheme::Ed25519,
+                sig_count: 1,
+                envelope_bytes: 200,
+                payload_bytes: 256,
+                witness_bytes: 64,
+                exec_units: 100,
+                state_reads,
+                state_writes: 2,
+                state_write_bytes: 32,
+            };
+            let fee = compute_fee_v2(&input, &params);
+            assert!(
+                fee >= prev_fee,
+                "Fee should increase with state_reads: {} >= {}",
+                fee,
+                prev_fee
+            );
+            prev_fee = fee;
+        }
+    }
+
+    /// Fee should be monotonic with respect to sig_count
+    #[test]
+    fn test_fee_monotonic_with_sig_count() {
+        let params = FeeParams::for_testing();
+        let mut prev_fee = 0;
+
+        for sig_count in [1, 2, 5, 10] {
+            let input = FeeInput {
+                kind: TxKind::NativeTransfer,
+                sig_scheme: SigScheme::Ed25519,
+                sig_count,
+                envelope_bytes: 200,
+                payload_bytes: 32,
+                witness_bytes: 64 * sig_count as u32,
+                exec_units: 0,
+                state_reads: 2,
+                state_writes: 2,
+                state_write_bytes: 32,
+            };
+            let fee = compute_fee_v2(&input, &params);
+            assert!(
+                fee >= prev_fee,
+                "Fee should increase with sig_count: {} >= {}",
+                fee,
+                prev_fee
+            );
+            prev_fee = fee;
+        }
+    }
+
+    // =============================================================================
+    // FEE ESTIMATION TESTS (FEES-12)
+    // =============================================================================
+
+    #[test]
+    fn test_estimate_native_transfer_fee() {
+        let params = FeeParams::for_testing();
+        let fee = estimate_native_transfer_fee(SigScheme::Ed25519, &params);
+        assert!(fee >= params.minimum_fee);
+        assert!(fee <= params.maximum_fee);
+    }
+
+    #[test]
+    fn test_estimate_token_transfer_fee() {
+        let params = FeeParams::for_testing();
+        let fee = estimate_token_transfer_fee(SigScheme::Ed25519, &params);
+        assert!(fee >= params.minimum_fee);
+        assert!(fee <= params.maximum_fee);
+    }
+
+    #[test]
+    fn test_estimate_contract_call_fee() {
+        let params = FeeParams::for_testing();
+        let fee = estimate_contract_call_fee(SigScheme::Ed25519, 1000, &params);
+        assert!(fee >= params.minimum_fee);
+        assert!(fee <= params.maximum_fee);
+    }
+
+    #[test]
+    fn test_estimate_fee_range() {
+        let params = FeeParams::for_testing();
+        let (min_fee, max_fee) = estimate_fee_range(TxKind::ContractCall, SigScheme::Ed25519, &params);
+        assert!(min_fee <= max_fee);
+        assert!(min_fee >= params.minimum_fee);
+        assert!(max_fee <= params.maximum_fee);
+    }
+
+    #[test]
+    fn test_fee_estimation_consistency() {
+        let params = FeeParams::for_testing();
+
+        // Native transfer estimation should match direct computation
+        let estimated = estimate_native_transfer_fee(SigScheme::Ed25519, &params);
+        let input = FeeInput::native_transfer(200, SigScheme::Ed25519);
+        let computed = compute_fee_v2(&input, &params);
+        assert_eq!(estimated, computed);
     }
 }

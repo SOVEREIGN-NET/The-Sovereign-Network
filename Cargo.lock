@@ -3281,6 +3281,7 @@ dependencies = [
 name = "lib-fees"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "lib-types",
  "proptest",
  "serde",

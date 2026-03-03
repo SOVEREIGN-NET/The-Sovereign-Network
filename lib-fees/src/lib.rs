@@ -42,7 +42,12 @@ pub mod model_v2;
 mod golden_vectors;
 
 // Re-export pure data types from lib-types (canonical location)
-pub use lib_types::fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
+pub use lib_types::fees::{FeeDeficit, FeeInput, FeeParams, FeeParamsError, SigScheme, TxKind};
 
 // Re-export computation functions, logic, and extension traits from model_v2
-pub use model_v2::{compute_fee_v2, verify_fee, FeeInputExt, SigSchemeExt, TxKindExt};
+pub use model_v2::{
+    compute_fee_v2, verify_fee, FeeInputExt, SigSchemeExt, TxKindExt,
+    // Fee estimation helpers (FEES-12)
+    estimate_native_transfer_fee, estimate_token_transfer_fee, estimate_contract_call_fee,
+    estimate_fee_range,
+};
