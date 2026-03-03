@@ -162,5 +162,4 @@ fn test_slash_event_contains_correct_metadata() {
     assert!(matches!(event.reason, OracleSlashReason::ConflictingAttestation));
     assert!(event.epoch_id >= epoch);
     // slashed_at_height may be 0 in test harness since we don't mine actual blocks
-    assert!(event.slash_amount == 0 || event.slash_amount > 0); // Just verify field exists
 }
