@@ -807,9 +807,12 @@ impl PeerRegistry {
 
         // TICKET #151: Dispatch event to observers atomically
         let event = if is_update {
+            let old = old_entry.ok_or_else(|| {
+                anyhow!("Internal error: is_update=true but old_entry is None")
+            })?;
             sync::PeerRegistryEvent::PeerUpdated {
                 peer_id,
-                old_entry: old_entry.unwrap(),
+                old_entry: old,
                 new_entry: entry.clone(),
             }
         } else {

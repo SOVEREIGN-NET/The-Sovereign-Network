@@ -22,6 +22,7 @@
 //! - **Persistence**: Pins stored in node DB, survives restarts
 //! - **No silent rollover**: Mismatches are hard failures
 
+use anyhow::{Result as AnyResult, anyhow};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
@@ -68,13 +69,13 @@ impl SyncPinStore {
     }
 
     /// Add or update a pin
-    pub fn insert(&self, node_id: NodeIdKey, spki_hash: [u8; 32]) {
+    pub fn insert(&self, node_id: NodeIdKey, spki_hash: [u8; 32]) -> AnyResult<()> {
         let mut spki_to_node = self.spki_to_node.write()
-            .expect("Failed to acquire write lock on spki_to_node");
+            .map_err(|e| anyhow!("Lock poisoned: spki_to_node: {}", e))?;
         let mut node_to_spki = self.node_to_spki.write()
-            .expect("Failed to acquire write lock on node_to_spki");
+            .map_err(|e| anyhow!("Lock poisoned: node_to_spki: {}", e))?;
         let mut pinned_nodes = self.pinned_nodes.write()
-            .expect("Failed to acquire write lock on pinned_nodes");
+            .map_err(|e| anyhow!("Lock poisoned: pinned_nodes: {}", e))?;
 
         // Remove old SPKI mapping if exists
         if let Some(old_spki) = node_to_spki.get(&node_id) {
@@ -84,58 +85,60 @@ impl SyncPinStore {
         spki_to_node.insert(spki_hash, node_id);
         node_to_spki.insert(node_id, spki_hash);
         pinned_nodes.insert(node_id);
+
+        Ok(())
     }
 
     /// Check if a NodeId has a pinned certificate
-    pub fn has_pin(&self, node_id: &NodeIdKey) -> bool {
-        self.pinned_nodes.read()
-            .expect("Failed to acquire read lock on pinned_nodes")
-            .contains(node_id)
+    pub fn has_pin(&self, node_id: &NodeIdKey) -> AnyResult<bool> {
+        Ok(self.pinned_nodes.read()
+            .map_err(|e| anyhow!("Lock poisoned: pinned_nodes: {}", e))?
+            .contains(node_id))
     }
 
     /// Get the pinned SPKI for a NodeId
-    pub fn get_pin(&self, node_id: &NodeIdKey) -> Option<[u8; 32]> {
-        self.node_to_spki.read()
-            .expect("Failed to acquire read lock on node_to_spki")
-            .get(node_id).copied()
+    pub fn get_pin(&self, node_id: &NodeIdKey) -> AnyResult<Option<[u8; 32]>> {
+        Ok(self.node_to_spki.read()
+            .map_err(|e| anyhow!("Lock poisoned: node_to_spki: {}", e))?
+            .get(node_id).copied())
     }
 
     /// Verify a certificate's SPKI against the pin for a NodeId
-    pub fn verify_spki(&self, node_id: &NodeIdKey, presented_spki: &[u8; 32]) -> Option<bool> {
+    pub fn verify_spki(&self, node_id: &NodeIdKey, presented_spki: &[u8; 32]) -> AnyResult<Option<bool>> {
         let node_to_spki = self.node_to_spki.read()
-            .expect("Failed to acquire read lock on node_to_spki");
-        node_to_spki.get(node_id).map(|pinned| pinned == presented_spki)
+            .map_err(|e| anyhow!("Lock poisoned: node_to_spki: {}", e))?;
+        Ok(node_to_spki.get(node_id).map(|pinned| pinned == presented_spki))
     }
 
     /// Find the NodeId associated with an SPKI hash (for lookup by cert)
-    pub fn find_node_by_spki(&self, spki_hash: &[u8; 32]) -> Option<NodeIdKey> {
-        self.spki_to_node.read()
-            .expect("Failed to acquire read lock on spki_to_node")
-            .get(spki_hash).copied()
+    pub fn find_node_by_spki(&self, spki_hash: &[u8; 32]) -> AnyResult<Option<NodeIdKey>> {
+        Ok(self.spki_to_node.read()
+            .map_err(|e| anyhow!("Lock poisoned: spki_to_node: {}", e))?
+            .get(spki_hash).copied())
     }
 
     /// Get the number of pins stored
-    pub fn len(&self) -> usize {
-        self.pinned_nodes.read()
-            .expect("Failed to acquire read lock on pinned_nodes")
-            .len()
+    pub fn len(&self) -> AnyResult<usize> {
+        Ok(self.pinned_nodes.read()
+            .map_err(|e| anyhow!("Lock poisoned: pinned_nodes: {}", e))?
+            .len())
     }
 
     /// Check if the store is empty
-    pub fn is_empty(&self) -> bool {
-        self.pinned_nodes.read()
-            .expect("Failed to acquire read lock on pinned_nodes")
-            .is_empty()
+    pub fn is_empty(&self) -> AnyResult<bool> {
+        Ok(self.pinned_nodes.read()
+            .map_err(|e| anyhow!("Lock poisoned: pinned_nodes: {}", e))?
+            .is_empty())
     }
 
     /// Sync from the async TlsPinCache
-    pub fn sync_from_entries(&self, entries: &[PinCacheEntry]) {
+    pub fn sync_from_entries(&self, entries: &[PinCacheEntry]) -> AnyResult<()> {
         let mut spki_to_node = self.spki_to_node.write()
-            .expect("Failed to acquire write lock on spki_to_node");
+            .map_err(|e| anyhow!("Lock poisoned: spki_to_node: {}", e))?;
         let mut node_to_spki = self.node_to_spki.write()
-            .expect("Failed to acquire write lock on node_to_spki");
+            .map_err(|e| anyhow!("Lock poisoned: node_to_spki: {}", e))?;
         let mut pinned_nodes = self.pinned_nodes.write()
-            .expect("Failed to acquire write lock on pinned_nodes");
+            .map_err(|e| anyhow!("Lock poisoned: pinned_nodes: {}", e))?;
 
         // Clear existing entries
         spki_to_node.clear();
@@ -150,6 +153,8 @@ impl SyncPinStore {
         }
 
         debug!("SyncPinStore: synced {} pins from async cache", entries.len());
+
+        Ok(())
     }
 }
 
@@ -170,7 +175,10 @@ impl Clone for PinnedVerifierConfig {
         Self {
             bootstrap_peers: RwLock::new(
                 self.bootstrap_peers.read()
-                    .expect("Failed to acquire read lock on bootstrap_peers")
+                    .unwrap_or_else(|poisoned| {
+                        // Recover from poisoned lock by taking the inner data
+                        poisoned.into_inner()
+                    })
                     .clone()
             ),
             allow_unknown_peers: self.allow_unknown_peers,
@@ -378,13 +386,13 @@ impl PinnedCertVerifier {
     }
 
     /// Sync pins from the async TlsPinCache
-    pub fn sync_from_cache(&self, entries: &[PinCacheEntry]) {
-        self.pin_store.sync_from_entries(entries);
+    pub fn sync_from_cache(&self, entries: &[PinCacheEntry]) -> AnyResult<()> {
+        self.pin_store.sync_from_entries(entries)
     }
 
     /// Add a pin directly (for testing or manual pinning)
-    pub fn add_pin(&self, node_id: NodeIdKey, spki_hash: [u8; 32]) {
-        self.pin_store.insert(node_id, spki_hash);
+    pub fn add_pin(&self, node_id: NodeIdKey, spki_hash: [u8; 32]) -> AnyResult<()> {
+        self.pin_store.insert(node_id, spki_hash)
     }
 
     /// Check if an address is in the bootstrap allowlist
@@ -437,12 +445,20 @@ impl PinnedCertVerifier {
         };
 
         // Path 1: Check if this SPKI is already pinned
-        if let Some(node_id) = self.pin_store.find_node_by_spki(&spki_hash) {
-            debug!(
-                "Certificate SPKI matches pinned node {:?}",
-                &node_id[..8]
-            );
-            return VerificationResult::PinMatched;
+        match self.pin_store.find_node_by_spki(&spki_hash) {
+            Ok(Some(node_id)) => {
+                debug!(
+                    "Certificate SPKI matches pinned node {:?}",
+                    &node_id[..8]
+                );
+                return VerificationResult::PinMatched;
+            }
+            Ok(None) => {} // Not pinned, continue to other checks
+            Err(e) => {
+                // Lock poisoning or internal error - treat as hard failure
+                warn!("Pin store lookup failed (possible lock poisoning): {}", e);
+                return VerificationResult::UnknownPeer;
+            }
         }
 
         // Path 2: Check if this is a bootstrap peer
@@ -724,18 +740,18 @@ mod tests {
     #[test]
     fn test_sync_pin_store_basic() {
         let store = SyncPinStore::new();
-        assert!(store.is_empty());
+        assert!(store.is_empty().unwrap());
 
         let node_id: NodeIdKey = [1u8; 32];
         let spki_hash = [42u8; 32];
 
-        store.insert(node_id, spki_hash);
+        store.insert(node_id, spki_hash).unwrap();
 
-        assert!(!store.is_empty());
-        assert_eq!(store.len(), 1);
-        assert!(store.has_pin(&node_id));
-        assert_eq!(store.get_pin(&node_id), Some(spki_hash));
-        assert_eq!(store.find_node_by_spki(&spki_hash), Some(node_id));
+        assert!(!store.is_empty().unwrap());
+        assert_eq!(store.len().unwrap(), 1);
+        assert!(store.has_pin(&node_id).unwrap());
+        assert_eq!(store.get_pin(&node_id).unwrap(), Some(spki_hash));
+        assert_eq!(store.find_node_by_spki(&spki_hash).unwrap(), Some(node_id));
     }
 
     #[test]
@@ -745,17 +761,17 @@ mod tests {
         let correct_spki = [42u8; 32];
         let wrong_spki = [99u8; 32];
 
-        store.insert(node_id, correct_spki);
+        store.insert(node_id, correct_spki).unwrap();
 
         // Correct SPKI should match
-        assert_eq!(store.verify_spki(&node_id, &correct_spki), Some(true));
+        assert_eq!(store.verify_spki(&node_id, &correct_spki).unwrap(), Some(true));
 
         // Wrong SPKI should not match
-        assert_eq!(store.verify_spki(&node_id, &wrong_spki), Some(false));
+        assert_eq!(store.verify_spki(&node_id, &wrong_spki).unwrap(), Some(false));
 
         // Unknown node should return None
         let unknown_node: NodeIdKey = [2u8; 32];
-        assert_eq!(store.verify_spki(&unknown_node, &correct_spki), None);
+        assert_eq!(store.verify_spki(&unknown_node, &correct_spki).unwrap(), None);
     }
 
     #[test]
@@ -789,11 +805,11 @@ mod tests {
         let spki_hash = [42u8; 32];
 
         // Add a pin
-        verifier.add_pin(node_id, spki_hash);
+        verifier.add_pin(node_id, spki_hash).unwrap();
 
         // Verify the pin store has it
-        assert!(verifier.pin_store.has_pin(&node_id));
-        assert_eq!(verifier.pin_store.find_node_by_spki(&spki_hash), Some(node_id));
+        assert!(verifier.pin_store.has_pin(&node_id).unwrap());
+        assert_eq!(verifier.pin_store.find_node_by_spki(&spki_hash).unwrap(), Some(node_id));
     }
 
     #[test]
@@ -833,13 +849,13 @@ mod tests {
         let verifier = PinnedCertVerifier::new(PinnedVerifierConfig::default());
         let node_id: NodeIdKey = [10u8; 32];
         let spki_hash = [42u8; 32];
-        
+
         // Add a known pin
-        verifier.add_pin(node_id, spki_hash);
-        
+        verifier.add_pin(node_id, spki_hash).unwrap();
+
         // Verify the pin exists
-        assert!(verifier.pin_store.has_pin(&node_id));
-        assert_eq!(verifier.pin_store.find_node_by_spki(&spki_hash), Some(node_id));
+        assert!(verifier.pin_store.has_pin(&node_id).unwrap());
+        assert_eq!(verifier.pin_store.find_node_by_spki(&spki_hash).unwrap(), Some(node_id));
     }
 
     /// Test verify_certificate: Unknown peer rejection
@@ -847,13 +863,13 @@ mod tests {
     fn test_verify_certificate_unknown_peer_reject() {
         let verifier = PinnedCertVerifier::new(PinnedVerifierConfig::default());
         let unknown_addr: SocketAddr = "192.168.99.99:9334".parse().unwrap();
-        
+
         // Not a bootstrap peer, no pin cached
         assert!(!verifier.is_bootstrap(&unknown_addr));
-        
+
         // An unknown SPKI should not be found
         let unknown_spki = [123u8; 32];
-        assert_eq!(verifier.pin_store.find_node_by_spki(&unknown_spki), None);
+        assert_eq!(verifier.pin_store.find_node_by_spki(&unknown_spki).unwrap(), None);
     }
 
     /// Test ConnectionVerifier: Per-connection isolation
@@ -890,22 +906,22 @@ mod tests {
         // Add some pins
         let node_id1: NodeIdKey = [1u8; 32];
         let spki_hash1 = [10u8; 32];
-        verifier.add_pin(node_id1, spki_hash1);
+        verifier.add_pin(node_id1, spki_hash1).unwrap();
 
         let node_id2: NodeIdKey = [2u8; 32];
         let spki_hash2 = [20u8; 32];
-        verifier.add_pin(node_id2, spki_hash2);
+        verifier.add_pin(node_id2, spki_hash2).unwrap();
 
         // Verify pins exist
-        assert_eq!(verifier.pin_store.len(), 2);
+        assert_eq!(verifier.pin_store.len().unwrap(), 2);
 
         // Update bootstrap peers (new signature with optional pins)
         verifier.update_bootstrap_peers(vec![(bootstrap_addr2, None)]);
 
         // Pins should still exist
-        assert_eq!(verifier.pin_store.len(), 2);
-        assert!(verifier.pin_store.has_pin(&node_id1));
-        assert!(verifier.pin_store.has_pin(&node_id2));
+        assert_eq!(verifier.pin_store.len().unwrap(), 2);
+        assert!(verifier.pin_store.has_pin(&node_id1).unwrap());
+        assert!(verifier.pin_store.has_pin(&node_id2).unwrap());
 
         // New bootstrap peer should be recognized
         assert!(verifier.is_bootstrap(&bootstrap_addr2));
@@ -915,7 +931,7 @@ mod tests {
     #[test]
     fn test_sync_from_cache() {
         let verifier = PinnedCertVerifier::new(PinnedVerifierConfig::default());
-        
+
         // Create mock cache entries
         let entries = vec![
             PinCacheEntry {
@@ -935,16 +951,16 @@ mod tests {
                 endpoints: vec![],
             },
         ];
-        
+
         // Sync from cache
-        verifier.sync_from_cache(&entries);
+        verifier.sync_from_cache(&entries).unwrap();
         
         // Verify pins were loaded
-        assert_eq!(verifier.pin_store.len(), 2);
-        assert!(verifier.pin_store.has_pin(&[1u8; 32]));
-        assert!(verifier.pin_store.has_pin(&[2u8; 32]));
-        assert_eq!(verifier.pin_store.get_pin(&[1u8; 32]), Some([10u8; 32]));
-        assert_eq!(verifier.pin_store.get_pin(&[2u8; 32]), Some([20u8; 32]));
+        assert_eq!(verifier.pin_store.len().unwrap(), 2);
+        assert!(verifier.pin_store.has_pin(&[1u8; 32]).unwrap());
+        assert!(verifier.pin_store.has_pin(&[2u8; 32]).unwrap());
+        assert_eq!(verifier.pin_store.get_pin(&[1u8; 32]).unwrap(), Some([10u8; 32]));
+        assert_eq!(verifier.pin_store.get_pin(&[2u8; 32]).unwrap(), Some([20u8; 32]));
     }
 
     /// Test TOFU callback invocation

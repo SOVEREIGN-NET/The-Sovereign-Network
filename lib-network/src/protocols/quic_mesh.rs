@@ -416,9 +416,9 @@ impl QuicMeshProtocol {
     pub async fn sync_pins_from_cache(&self) -> Result<()> {
         let pin_cache = global_pin_cache();
         let entries = pin_cache.get_all_entries().await;
-        
+
         if !entries.is_empty() {
-            self.verifier.sync_from_cache(&entries);
+            self.verifier.sync_from_cache(&entries)?;
             info!(
                 "Synced {} certificate pins from discovery cache to verifier",
                 entries.len()
@@ -426,7 +426,7 @@ impl QuicMeshProtocol {
         } else {
             debug!("No certificate pins in discovery cache to sync");
         }
-        
+
         Ok(())
     }
 
