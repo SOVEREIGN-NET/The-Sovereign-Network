@@ -162,7 +162,7 @@ impl FeeParams {
     /// Validate fee parameters for consistency
     ///
     /// # Checks performed
-    /// - minimum_fee < maximum_fee
+    /// - minimum_fee <= maximum_fee
     /// - All fee rates are non-zero (prevents free operations)
     pub fn validate(&self) -> Result<(), FeeParamsError> {
         if self.minimum_fee > self.maximum_fee {
