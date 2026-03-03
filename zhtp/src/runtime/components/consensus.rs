@@ -450,7 +450,6 @@ async fn catchup_sync_from_peer(
         if current_height >= tip.height {
             break;
         }
-
         let start = current_height + 1;
         let end = tip.height.min(current_height + 200);
 
