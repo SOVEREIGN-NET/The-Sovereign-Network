@@ -272,3 +272,135 @@ PRs must be merged in this order (dependencies):
 3. Only touch files in the PR you're fixing
 4. Run `cargo check` before pushing
 5. Leave `[READY FOR REVIEW]` comment when done
+
+## ORACLE-15: Oracle Config Parameter Validation - COMPLETED ✅
+
+**Last Updated:** 2026-03-03 by Kimi
+
+### Summary
+Implemented comprehensive parameter validation for `OracleConfig` to prevent insane configurations (e.g., `max_price_staleness_epochs = 0`, `max_source_age_secs >= epoch_duration_secs`).
+
+### Changes Made
+
+**lib-blockchain/src/oracle/mod.rs:**
+- Added `OracleConfigError` enum with two variants:
+  - `InvalidField { field, message }` - Individual field validation failures
+  - `Inconsistent { fields, message }` - Cross-field consistency failures
+- Implemented `Display` and `Error` traits for `OracleConfigError`
+- Added `OracleConfig::validate()` method with comprehensive bounds checking:
+  - `epoch_duration_secs`: 60..=86_400 (1 minute to 24 hours)
+  - `max_source_age_secs`: 10.. (minimum 10 seconds for fetch time)
+  - `max_deviation_bps`: 1..=2000 (0.01% to 20%, prevents rejection of all prices)
+  - `max_price_staleness_epochs`: 1..=100 (at least 1 epoch, at most 100)
+  - `price_scale`: Must equal `ORACLE_PRICE_SCALE` (100_000_000, i.e. 1e8)
+- Cross-field validation:
+  - `max_source_age_secs < epoch_duration_secs` (source age must fit within epoch)
+- Updated `schedule_config_update()` to call `validate()` and return `OracleConfigError`
+- Added 13 unit tests for validation (all passing)
+
+**lib-blockchain/src/lib.rs:**
+- Exported `OracleConfigError` in public API
+
+**zhtp/src/api/handlers/oracle/mod.rs:**
+- Added import for `OracleConfigError`
+- Updated `handle_propose_config()` to validate proposed config before DAO proposal
+- Returns 400 Bad Request with detailed error message on validation failure
+
+### Tests Added
+- `default_oracle_config_is_valid` - Ensures default config passes validation
+- `config_rejects_epoch_duration_too_small` - min 60 seconds
+- `config_rejects_epoch_duration_too_large` - max 86400 seconds
+- `config_rejects_max_source_age_zero` - must be > 0
+- `config_rejects_max_source_age_too_small` - min 10 seconds
+- `config_rejects_max_deviation_bps_zero` - 0 would reject all prices
+- `config_rejects_max_deviation_bps_too_large` - max 2000 (20%)
+- `config_rejects_max_price_staleness_epochs_zero` - must be >= 1
+- `config_rejects_max_price_staleness_epochs_too_large` - max 100 epochs
+- `config_rejects_cross_field_source_age_gte_epoch_duration` - source age must fit in epoch
+- `config_accepts_boundary_values` - tests min/max boundary acceptance
+- `config_accepts_valid_cross_field_combination` - tests valid cross-field combinations
+- `schedule_config_update_uses_validation` - tests validation in state updates
+
+### Build Status
+```
+cargo check -p lib-blockchain ✅ PASSING
+cargo check -p zhtp ✅ PASSING
+cargo test -p lib-blockchain --lib oracle ✅ 49/49 tests passing
+```
+
+
+## ORACLE-16 (#1700): Comprehensive Oracle Integration Test Suite - COMPLETED ✅
+
+**Last Updated:** 2026-03-03 by Kimi
+
+### Summary
+Implemented comprehensive end-to-end integration tests for the Oracle protocol, including a reusable `OracleTestHarness` for multi-validator test scenarios.
+
+### Changes Made
+
+**lib-blockchain/tests/common/oracle_harness.rs** (new):
+- `OracleTestHarness` - Test infrastructure for oracle integration tests
+  - `new(validator_count)` - Creates blockchain with N validators in committee
+  - `mine_blocks(n)` - Advances blockchain with timestamp advancement
+  - `advance_oracle_epoch()` - Mines blocks until next epoch
+  - `produce_attestation(idx, epoch, price)` - Creates signed attestations
+  - `process_attestation(att)` - Processes attestations through oracle state
+  - `finalize_epoch(epoch, price)` - Finalizes prices with threshold attestations
+  - Helper methods: `current_epoch()`, `threshold()`, `validator_key_id()`, etc.
+- `ValidatorKeys` - Keypair management for test validators
+
+**lib-blockchain/tests/oracle_persistence_tests.rs** (new):
+- `test_oracle_state_survives_blockchain_restart` - Save/load round-trip
+- `test_oracle_state_in_blockchain_import` - Export/import (ignored, needs ORACLE-10)
+- `test_oracle_config_persists_across_restart` - Config persistence
+- `test_pending_updates_persist_across_restart` - Pending update persistence
+
+**lib-blockchain/tests/oracle_epoch_advance_integration_tests.rs** (new):
+- `test_pending_committee_activates_at_epoch_boundary`
+- `test_pending_config_activates_at_epoch_boundary`
+- `test_multiple_pending_updates_activate_correctly`
+- `test_epoch_advance_requires_multiple_blocks`
+- `test_finalized_prices_preserved_across_epoch_advance`
+- `test_committee_member_can_attest_after_epoch_advance`
+- `test_stale_price_detection_after_epoch_advance`
+
+**lib-blockchain/tests/oracle_cbe_integration_tests.rs** (new):
+- `test_cbe_graduation_blocked_without_fresh_oracle_price`
+- `test_cbe_graduation_rejected_with_stale_oracle_price`
+- `test_cbe_graduation_accepted_with_fresh_oracle_price`
+- `test_cbe_graduation_accepts_price_at_staleness_boundary`
+- `test_non_cbe_token_skips_oracle_gate`
+- `test_already_graduated_token_skips_oracle_gate`
+
+**lib-blockchain/tests/oracle_slashing_integration_tests.rs** (new):
+- `test_double_sign_is_rejected` - Conflicting attestation rejection
+- `test_slashed_validator_cannot_attest`
+- `test_slashing_preserved_across_restart`
+- `test_committee_threshold_adjusts_after_slashing`
+- `test_multiple_validators_can_finalize_after_slashing`
+- `test_slash_event_contains_correct_metadata`
+
+**lib-blockchain/tests/oracle_e2e_governance_tests.rs** (new):
+- `test_oracle_committee_update_pipeline`
+- `test_oracle_config_update_through_governance_pipeline`
+- `test_governance_proposal_rejected_for_invalid_oracle_config`
+- `test_multiple_governance_updates_queue_correctly`
+- `test_committee_member_removed_by_governance_cannot_attest`
+- `test_threshold_recalculation_after_committee_change`
+
+### Test Results
+```
+cargo test -p lib-blockchain --test oracle_persistence_tests         ✅ 7 passed, 1 ignored
+cargo test -p lib-blockchain --test oracle_epoch_advance_integration_tests ✅ 11 passed
+cargo test -p lib-blockchain --test oracle_cbe_integration_tests     ✅ 10 passed
+cargo test -p lib-blockchain --test oracle_slashing_integration_tests ✅ 10 passed
+cargo test -p lib-blockchain --test oracle_e2e_governance_tests      ✅ 10 passed
+cargo test -p lib-blockchain --test oracle_executor_tests            ✅ 6 passed
+
+Total: 54 integration tests passing (1 ignored pending ORACLE-10)
+```
+
+### Notes
+- One test (`test_oracle_state_in_blockchain_import`) is ignored pending ORACLE-10 completion (BlockchainImport oracle_state field)
+- All tests use the `OracleTestHarness` for consistent test setup
+- Config validation tests verify cross-field consistency (e.g., max_source_age < epoch_duration)

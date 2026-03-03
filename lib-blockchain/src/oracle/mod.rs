@@ -188,6 +188,30 @@ where
     Ok(value)
 }
 
+/// Oracle configuration validation error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OracleConfigError {
+    /// Individual field validation failure.
+    InvalidField { field: String, message: String },
+    /// Cross-field consistency failure.
+    Inconsistent { fields: Vec<String>, message: String },
+}
+
+impl std::fmt::Display for OracleConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OracleConfigError::InvalidField { field, message } => {
+                write!(f, "Invalid {}: {}", field, message)
+            }
+            OracleConfigError::Inconsistent { fields, message } => {
+                write!(f, "Inconsistent fields {:?}: {}", fields, message)
+            }
+        }
+    }
+}
+
+impl std::error::Error for OracleConfigError {}
+
 impl OracleConfig {
     pub fn price_scale(&self) -> u128 {
         self.price_scale
@@ -195,6 +219,85 @@ impl OracleConfig {
 
     pub fn max_price_staleness_epochs(&self) -> u64 {
         self.max_price_staleness_epochs
+    }
+
+    /// Validate oracle configuration parameters.
+    ///
+    /// Checks both individual bounds and cross-field consistency.
+    /// Returns `Ok(())` if valid, `Err(OracleConfigError)` otherwise.
+    pub fn validate(&self) -> Result<(), OracleConfigError> {
+        // Individual bounds
+        if self.epoch_duration_secs < 60 {
+            return Err(OracleConfigError::InvalidField {
+                field: "epoch_duration_secs".to_string(),
+                message: "must be >= 60 seconds".to_string(),
+            });
+        }
+        if self.epoch_duration_secs > 86_400 {
+            return Err(OracleConfigError::InvalidField {
+                field: "epoch_duration_secs".to_string(),
+                message: "must be <= 86400 seconds (24h)".to_string(),
+            });
+        }
+
+        if self.max_source_age_secs == 0 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_source_age_secs".to_string(),
+                message: "must be > 0".to_string(),
+            });
+        }
+        if self.max_source_age_secs < 10 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_source_age_secs".to_string(),
+                message: "must be >= 10 to give validators time to fetch prices".to_string(),
+            });
+        }
+
+        if self.max_deviation_bps == 0 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_deviation_bps".to_string(),
+                message: "must be > 0 (0 would reject all multi-source prices)".to_string(),
+            });
+        }
+        if self.max_deviation_bps > 2_000 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_deviation_bps".to_string(),
+                message: "must be <= 2000 (20%) — higher values defeat price aggregation".to_string(),
+            });
+        }
+
+        if self.max_price_staleness_epochs == 0 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_price_staleness_epochs".to_string(),
+                message: "must be >= 1".to_string(),
+            });
+        }
+        if self.max_price_staleness_epochs > 100 {
+            return Err(OracleConfigError::InvalidField {
+                field: "max_price_staleness_epochs".to_string(),
+                message: "must be <= 100".to_string(),
+            });
+        }
+
+        if self.price_scale() != ORACLE_PRICE_SCALE {
+            return Err(OracleConfigError::InvalidField {
+                field: "price_scale".to_string(),
+                message: format!("must be {} (ORACLE_PRICE_SCALE)", ORACLE_PRICE_SCALE),
+            });
+        }
+
+        // Cross-field consistency
+        if self.max_source_age_secs >= self.epoch_duration_secs {
+            return Err(OracleConfigError::Inconsistent {
+                fields: vec!["max_source_age_secs".to_string(), "epoch_duration_secs".to_string()],
+                message: format!(
+                    "max_source_age_secs ({}) must be < epoch_duration_secs ({}) — otherwise sources are always considered stale",
+                    self.max_source_age_secs, self.epoch_duration_secs
+                ),
+            });
+        }
+
+        Ok(())
     }
 }
 
@@ -249,6 +352,7 @@ pub struct OracleCommitteeState {
     #[serde(default, deserialize_with = "deserialize_members_sorted_dedup")]
     members: Vec<[u8; 32]>,
     /// Pending update, if scheduled.
+    #[serde(default)]
     pending_update: Option<PendingCommitteeUpdate>,
 }
 
@@ -397,7 +501,7 @@ impl OracleState {
     /// * `activate_at_epoch` - Epoch when update becomes active (must be > current_epoch)
     /// * `current_epoch` - Current oracle epoch (for tracking scheduled_at_epoch)
     /// * `source_proposal_id` - Optional governance proposal ID that triggered this update
-    pub(crate) fn schedule_committee_update(
+    pub fn schedule_committee_update(
         &mut self,
         members: Vec<[u8; 32]>,
         activate_at_epoch: u64,
@@ -448,7 +552,7 @@ impl OracleState {
     /// * `activate_at_epoch` - Epoch when update becomes active (must be > current_epoch)
     /// * `current_epoch` - Current oracle epoch (for tracking scheduled_at_epoch)
     /// * `source_proposal_id` - Optional governance proposal ID that triggered this update
-    pub(crate) fn schedule_config_update(
+    pub fn schedule_config_update(
         &mut self,
         config: OracleConfig,
         activate_at_epoch: u64,
@@ -469,6 +573,9 @@ impl OracleState {
         }
         if config.max_price_staleness_epochs == 0 {
             return Err("oracle max price staleness epochs must be > 0".to_string());
+        }
+        if config.max_source_age_secs >= config.epoch_duration_secs {
+            return Err("oracle max source age must be less than epoch duration".to_string());
         }
         if activate_at_epoch <= current_epoch {
             return Err("activate_at_epoch must be > current_epoch".to_string());
@@ -659,6 +766,7 @@ impl OracleState {
     /// If there's a pending update scheduled for this epoch or earlier,
     /// returns the pending committee. Otherwise returns the current committee.
     ///
+    /// This ensures committee composition is deterministic and locked at epoch start.
     /// This ensures committee composition is deterministic and locked at epoch start.
     pub fn committee_for_epoch(&self, epoch: u64) -> Vec<[u8; 32]> {
         // Check if there's a pending update that should be active for this epoch
@@ -1603,6 +1711,28 @@ mod tests {
         
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must be > 0"));
+    }
+
+    #[test]
+    fn test_pending_committee_update_bincode_serialization() {
+        let mut state = OracleState::default();
+        state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
+        
+        // Schedule update
+        let result = state.schedule_committee_update(vec![[5u8; 32], [6u8; 32], [7u8; 32]], 10, 0, None);
+        assert!(result.is_ok());
+        
+        println!("Before: pending_update = {:?}", state.committee.pending_update());
+        
+        // Serialize to bincode (like save_to_file does)
+        let encoded = bincode::serialize(&state).unwrap();
+        println!("Serialized {} bytes", encoded.len());
+        
+        // Deserialize
+        let decoded: OracleState = bincode::deserialize(&encoded).unwrap();
+        println!("After: pending_update = {:?}", decoded.committee.pending_update());
+        
+        assert!(decoded.committee.pending_update().is_some(), "pending_update should survive bincode serialization");
     }
 }
 

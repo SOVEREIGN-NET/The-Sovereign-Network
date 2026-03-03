@@ -1212,7 +1212,8 @@ impl BlockchainStorageV4 {
 
     fn to_blockchain(self) -> Blockchain {
         let mut blockchain = self.v3.to_blockchain();
-        blockchain.last_oracle_epoch_processed = 0;
+        // Note: Do NOT reset last_oracle_epoch_processed to 0 here.
+        // The correct value is set at the end of this function from self.last_oracle_epoch_processed.
         blockchain.oracle_state = self.oracle_state;
         blockchain.exchange_state = self.exchange_state;
         blockchain.oracle_slash_events = self.oracle_slash_events;
@@ -8306,8 +8307,9 @@ impl Blockchain {
                 return Ok(lib_consensus::ChainMergeResult::LocalKept);
             }
             let imported_height = import.blocks.len() as u64 - 1;
-            info!("Local chain is empty - directly adopting imported chain (height={}, identities={}, validators={})",
-                  imported_height, import.identity_registry.len(), import.validator_registry.len());
+            info!("Local chain is empty - directly adopting imported chain (height={}, identities={}, validators={}, oracle_prices={})",
+                  imported_height, import.identity_registry.len(), import.validator_registry.len(),
+                  import.oracle_state.as_ref().map(|s| s.finalized_prices_len()).unwrap_or(0));
             self.blocks = import.blocks;
             self.height = imported_height;
             self.utxo_set = import.utxo_set;
@@ -8451,6 +8453,10 @@ impl Blockchain {
                             self.web4_contracts = import.web4_contracts;
                             self.contract_blocks = import.contract_blocks;
                             self.dao_registry_index = import.dao_registry_index;
+                            // Import oracle state if present (ORACLE-10)
+                            if let Some(oracle_state) = import.oracle_state {
+                                self.oracle_state = oracle_state;
+                            }
                             self.rebuild_dao_registry_index();
                             Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
                         }
@@ -8469,6 +8475,10 @@ impl Blockchain {
                     self.web4_contracts = import.web4_contracts;
                     self.contract_blocks = import.contract_blocks;
                     self.dao_registry_index = import.dao_registry_index;
+                    // Import oracle state if present (ORACLE-10)
+                    if let Some(oracle_state) = import.oracle_state {
+                        self.oracle_state = oracle_state;
+                    }
                     self.rebuild_dao_registry_index();
                     
                     // Clear nullifier set and rebuild from new chain
@@ -11077,6 +11087,56 @@ mod oracle_storage_migration_tests {
             "v3 payloads must load with default oracle state"
         );
     }
+
+    #[test]
+    fn test_blockchain_storage_v4_oracle_pending_update() {
+        let mut bc = Blockchain::new().unwrap();
+        bc.oracle_state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
+        
+        // Schedule update
+        let result = bc.oracle_state.schedule_committee_update(vec![[5u8; 32], [6u8; 32], [7u8; 32]], 10, 0, None);
+        assert!(result.is_ok());
+        
+        println!("Before: pending_update = {:?}", bc.oracle_state.committee.pending_update());
+        
+        // Convert to storage V4 and back
+        let storage = BlockchainStorageV4::from_blockchain(&bc);
+        println!("Storage: pending_update = {:?}", storage.oracle_state.committee.pending_update());
+        
+        let bc2 = storage.to_blockchain();
+        println!("After: pending_update = {:?}", bc2.oracle_state.committee.pending_update());
+        
+        assert!(bc2.oracle_state.committee.pending_update().is_some(), "pending_update should survive V4 round-trip");
+    }
+
+    #[test]
+    fn test_blockchain_save_load_oracle_pending_update() {
+        let mut bc = Blockchain::new().unwrap();
+        bc.oracle_state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
+        
+        // Schedule update for a future epoch
+        let result = bc.oracle_state.schedule_committee_update(vec![[5u8; 32], [6u8; 32], [7u8; 32]], 10, 0, None);
+        assert!(result.is_ok());
+        
+        // Set last_oracle_epoch_processed to current timestamp to prevent apply_pending_updates
+        // from activating the update during load (since genesis timestamp >> 0)
+        bc.last_oracle_epoch_processed = bc.last_committed_timestamp();
+        
+        // Save to temp file
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("test.dat");
+        
+        #[allow(deprecated)]
+        bc.save_to_file(&path).expect("save should succeed");
+        
+        // Load from file
+        #[allow(deprecated)]
+        let bc2 = Blockchain::load_from_file(&path).expect("load should succeed");
+        
+        // Verify pending update survived
+        assert!(bc2.oracle_state.committee.pending_update().is_some(), 
+            "pending_update should survive save/load, got: {:?}", bc2.oracle_state.committee.pending_update());
+    }
 }
 
 // =============================================================================
@@ -11272,12 +11332,14 @@ impl Blockchain {
 
     /// Validates CBE (Community Bonding Engine) graduation oracle gate (ORACLE-5, ORACLE-13).
     ///
-    /// Enforces:
-    /// - A fresh finalized oracle price must exist (staleness-checked via `latest_fresh_price`)
-    /// - `token.reserve_balance` (already in micro-USD) must meet or exceed 269,000 USD threshold
+    /// Validates CBE graduation can proceed for the given token.
     ///
-    /// Note: Reserve balance is stored in micro-USD (1 USD = 1,000,000 micro-USD) and compared
-    /// directly against the threshold. No oracle price multiplication is performed.
+    /// Enforces (Oracle Spec v1 §11):
+    /// - A fresh (non-stale) oracle price must exist for the current epoch
+    /// - Token reserve balance (in micro-USD, stablecoin) must meet the $269K threshold
+    ///
+    /// Note: The oracle price is checked for freshness but not used in the value calculation
+    /// because the reserve is already denominated in USD-pegged stablecoin.
     ///
     /// Called unconditionally in both BlockExecutor and legacy paths (ORACLE-13).
     pub fn validate_cbe_graduation_oracle_gate(
