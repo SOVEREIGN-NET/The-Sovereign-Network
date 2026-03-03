@@ -1559,6 +1559,7 @@ impl ConsensusEngine {
                 //
                 // sync_height_with_blockchain() sets current_round.height = blockchain_height + 1.
                 // We then reset round state at that correct height without adding +1 again.
+                let height_before_sync = self.current_round.height;
                 if let Err(e) = self.sync_height_with_blockchain().await {
                     tracing::warn!(
                         "Commit timeout: failed to sync blockchain height ({}), using height+1 fallback",
@@ -1568,8 +1569,19 @@ impl ConsensusEngine {
                     self.advance_to_next_round();
                     self.snapshot_validator_set(self.current_round.height);
                 } else {
-                    // Reset round state at the synced height (no +1, sync already set it)
-                    self.current_round.round = 0;
+                    let height_after_sync = self.current_round.height;
+                    // If the blockchain height didn't advance (no commit), increment the round
+                    // instead of resetting to 0.  Reusing round 0 with the same validators
+                    // causes spurious equivocation: the old vote-pool entries for (H, R=0)
+                    // still contain votes for the previous proposal, and any new vote for a
+                    // freshly-proposed block at the same (H, R=0) triggers equivocation
+                    // detection → vote rejected → consensus never commits.
+                    let next_round = if height_after_sync == height_before_sync {
+                        self.current_round.round + 1
+                    } else {
+                        0 // Height advanced: fresh start at round 0
+                    };
+                    self.current_round.round = next_round;
                     self.current_round.step = ConsensusStep::Propose;
                     self.current_round.start_time = self.current_round.height;
                     self.current_round.proposer = None;
