@@ -34,7 +34,7 @@ use super::{
 use anyhow::Result;
 use lib_identity::ZhtpIdentity;
 use lib_crypto::KeyPair;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use tracing::{trace, debug, error};
 
 // Use orchestrator helpers to reduce duplication
