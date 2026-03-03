@@ -241,6 +241,15 @@ impl PinnedVerifierConfig {
             .copied()
     }
 
+    /// Return all configured bootstrap peer addresses.
+    pub fn get_bootstrap_addrs(&self) -> Vec<SocketAddr> {
+        self.bootstrap_peers.read()
+            .expect("Failed to acquire read lock on bootstrap_peers")
+            .keys()
+            .copied()
+            .collect()
+    }
+
     /// Update the bootstrap peers with optional pins (replaces existing set)
     pub fn set_bootstrap_peers(&self, peers: Vec<(SocketAddr, Option<[u8; 32]>)>) {
         let new_peers: HashMap<SocketAddr, Option<[u8; 32]>> = peers.into_iter().collect();
@@ -398,6 +407,11 @@ impl PinnedCertVerifier {
     /// Check if an address is in the bootstrap allowlist
     pub fn is_bootstrap(&self, addr: &SocketAddr) -> bool {
         self.config.is_bootstrap(addr)
+    }
+
+    /// Return all configured bootstrap peer addresses.
+    pub fn get_bootstrap_addrs(&self) -> Vec<SocketAddr> {
+        self.config.get_bootstrap_addrs()
     }
 
     /// Update the bootstrap peers with optional SPKI pins without recreating the verifier.
