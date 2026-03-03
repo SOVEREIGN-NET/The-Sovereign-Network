@@ -3,10 +3,13 @@
 //! implementation wrappers from crypto.rs for CRYSTALS-Kyber
 
 use anyhow::Result;
-use pqc_kyber::{self, KYBER_CIPHERTEXTBYTES, KYBER_PUBLICKEYBYTES, KYBER_SECRETKEYBYTES};
+use pqc_kyber;
 use sha3::Sha3_256;
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
+
+// Re-export Kyber constants from single source of truth for backward compatibility
+pub use super::constants::{KYBER1024_CIPHERTEXT_BYTES as KYBER_CIPHERTEXTBYTES, KYBER1024_PUBLICKEY_BYTES as KYBER_PUBLICKEYBYTES, KYBER1024_SECRETKEY_BYTES as KYBER_SECRETKEYBYTES};
 
 /// Generate Kyber1024 keypair (highest security, larger keys)
 pub fn kyber1024_keypair() -> (Vec<u8>, Vec<u8>) {
