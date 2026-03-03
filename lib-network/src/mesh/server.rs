@@ -1051,13 +1051,13 @@ impl ZhtpMeshServer {
     /// Start monitoring for Bluetooth protocol
     /// TODO (Ticket #149): Update to use peer_registry
     async fn start_bluetooth_monitoring(&self, protocol: Arc<RwLock<crate::protocols::bluetooth::BluetoothMeshProtocol>>) -> Result<()> {
-        let peer_registry = self.peer_registry.clone();
+        let _peer_registry = self.peer_registry.clone();
         
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 
-                let connected_peers = protocol.read().await.get_connected_peers().await;
+                let _connected_peers = protocol.read().await.get_connected_peers().await;
                 // Update connections map...
                 // This is a simplified monitoring loop
             }
@@ -1068,8 +1068,8 @@ impl ZhtpMeshServer {
 
     /// Start monitoring for WiFi Direct protocol
     /// TODO (Ticket #149): Update to use peer_registry
-    async fn start_wifi_direct_monitoring(&self, protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>) -> Result<()> {
-        let peer_registry = self.peer_registry.clone();
+    async fn start_wifi_direct_monitoring(&self, _protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>) -> Result<()> {
+        let _peer_registry = self.peer_registry.clone();
         
         tokio::spawn(async move {
             loop {
@@ -1122,7 +1122,7 @@ impl ZhtpMeshServer {
         let stats = Arc::new(RwLock::new(MeshProtocolStats::default()));
 
         // Create participant tracking for UBI
-        let ubi_participants = Arc::new(RwLock::new(HashMap::<String, String>::new()));
+        let _ubi_participants = Arc::new(RwLock::new(HashMap::<String, String>::new()));
 
         // Initialize health monitor (Ticket #149: update to use peer_registry)
         let health_monitor = HealthMonitor::new(
@@ -1439,7 +1439,7 @@ impl ZhtpMeshServer {
         
         // Set protocol handlers in router
         {
-            let router_guard = message_router.write().await;
+            let _router_guard = message_router.write().await;
             
             // TODO: Wire up protocol handlers when available
             // Currently the BluetoothMeshProtocol doesn't match the expected BluetoothClassicProtocol type
@@ -1473,6 +1473,7 @@ impl ZhtpMeshServer {
         
         // Store in server (need to cast away const - this is during initialization)
         // We'll use unsafe here since we know initialization happens before concurrent access
+        // SAFETY: This cast mutates self only during one-time initialization before concurrent readers are started; no aliased mutable access occurs concurrently.
         unsafe {
             let server_mut = self as *const Self as *mut Self;
             (*server_mut).message_router = Some(message_router);
@@ -1513,8 +1514,8 @@ impl ZhtpMeshServer {
         &self,
         method: String,
         uri: String,
-        headers: HashMap<String, String>,
-        body: Vec<u8>,
+        _headers: HashMap<String, String>,
+        _body: Vec<u8>,
     ) -> Result<ZhtpApiResponse> {
         info!("Processing native ZHTP request: {} {}", method, uri);
         
@@ -2052,7 +2053,7 @@ impl ZhtpMeshServer {
         warn!("WiFi sharing discovery is disabled for legal compliance");
         
         // WiFi sharing removed for legal compliance
-        let server_id = self.server_id;
+        let _server_id = self.server_id;
         let hardware_caps = self.hardware_capabilities.clone();
         
         tokio::spawn(async move {
@@ -2120,7 +2121,9 @@ impl ZhtpMeshServer {
     
     /// Clear DHT cache
     pub async fn clear_dht_cache(&self) {
-        self.dht.write().await.clear_cache().await;
+        if let Err(e) = self.dht.write().await.clear_cache().await {
+            warn!("Failed to clear DHT cache: {}", e);
+        }
     }
 }
 

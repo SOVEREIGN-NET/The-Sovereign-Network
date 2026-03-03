@@ -169,7 +169,7 @@ use anyhow::{Result, Context as AnyhowContext};
 use lib_crypto::symmetric::chacha20::{encrypt_data_with_ad_nonce, decrypt_data_with_ad_nonce};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::debug;
 
 // Re-export handshake types for convenience
 pub use crate::handshake::{HandshakeSessionInfo, HandshakeRole};

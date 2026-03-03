@@ -314,12 +314,12 @@ impl LoRaWANMeshProtocol {
         let mut hasher = Sha256::new();
         hasher.update(&self.app_key);
         hasher.update(b"NwkSKey");
-        let nwk_s_key = hasher.finalize();
+        let _nwk_s_key = hasher.finalize();
         
         let mut hasher = Sha256::new();
         hasher.update(&self.app_key);
         hasher.update(b"AppSKey");
-        let app_s_key = hasher.finalize();
+        let _app_s_key = hasher.finalize();
         
         info!("Network Session Key derived");
         info!("Application Session Key derived");
@@ -374,7 +374,7 @@ impl LoRaWANMeshProtocol {
     async fn start_message_listening(&self) -> Result<()> {
         info!("Starting LoRaWAN message listening...");
         
-        let node_id = self.node_id;
+        let _node_id = self.node_id;
         tokio::spawn(async move {
             loop {
                 // In production, would listen on LoRaWAN radio
@@ -532,7 +532,7 @@ impl LoRaWANMeshProtocol {
         hasher.finish() as u32
     }
     
-    async fn encrypt_payload(&self, payload: &[u8], frame_counter: u16) -> Result<Vec<u8>> {
+    async fn encrypt_payload(&self, payload: &[u8], _frame_counter: u16) -> Result<Vec<u8>> {
         // SECURITY: ChaCha20Poly1305 AEAD encryption (unified across all protocols)
         // Replaces LoRaWAN 1.0.4 AES-128-CTR for stronger security and mobile performance
         // 

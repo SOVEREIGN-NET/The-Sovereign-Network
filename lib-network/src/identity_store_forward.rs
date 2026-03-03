@@ -1,6 +1,6 @@
 //! Store-and-forward queue for identity envelopes (Phase 3 baseline)
 
-use lib_protocols::types::{IdentityEnvelope, MessageTtl, DeliveryReceipt};
+use lib_protocols::types::{IdentityEnvelope, DeliveryReceipt};
 use lib_protocols::identity_messaging::verify_pouw_stamp_with_sender_did;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

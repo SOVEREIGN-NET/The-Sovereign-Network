@@ -712,6 +712,7 @@ impl MultiHopRouter {
 
             if let Some(edge) = graph.edges.get(&(from.clone(), to.clone())) {
                 // Convert PublicKey to UnifiedPeerId for RouteHop (Ticket #146)
+                #[allow(deprecated)]
                 let unified_peer = UnifiedPeerId::from_public_key_legacy(to.clone());
                 route_hops.push(RouteHop {
                     peer_id: unified_peer,
@@ -912,6 +913,7 @@ impl MultiHopRouter {
 
 /// Network conditions for adaptive routing
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct NetworkConditions {
     pub high_congestion: bool,
     pub low_connectivity: bool,

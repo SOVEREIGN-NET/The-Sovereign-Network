@@ -855,8 +855,8 @@ impl DomainRegistry {
     /// Verify transfer proof
     async fn verify_transfer_proof(
         &self,
-        from_owner: &ZhtpIdentity,
-        to_owner: &ZhtpIdentity,
+        _from_owner: &ZhtpIdentity,
+        _to_owner: &ZhtpIdentity,
         domain: &str,
         proof: &ZeroKnowledgeProof,
     ) -> Result<bool> {
@@ -1353,7 +1353,7 @@ impl DomainRegistry {
     }
 
     /// Rollback domain to a previous version
-    pub async fn rollback_domain(&self, domain: &str, target_version: u64, owner_did: &str) -> Result<DomainUpdateResponse> {
+    pub async fn rollback_domain(&self, domain: &str, target_version: u64, _owner_did: &str) -> Result<DomainUpdateResponse> {
         // Get the target manifest
         let manifests = self.manifest_history.read().await;
         let domain_manifests = manifests.get(domain)

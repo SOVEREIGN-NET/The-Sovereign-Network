@@ -403,6 +403,7 @@ impl MeshMessageHandler {
     }
     
     /// Handle peer discovery message
+    #[allow(deprecated)]
     pub async fn handle_peer_discovery(
         &self, 
         peer: PublicKey, 
@@ -592,7 +593,7 @@ impl MeshMessageHandler {
         // Deserialize and verify the proof
         // The proof format depends on the UBI distribution circuit implementation
         let verification_result = match bincode::deserialize::<lib_proofs::ZkProof>(&proof) {
-            Ok(zk_proof) => {
+            Ok(_zk_proof) => {
                 // Use the recursive verifier for chain proofs (UBI is a chain operation)
                 let verifier = lib_proofs::verifiers::RecursiveProofAggregator::new()?;
                 
@@ -879,6 +880,7 @@ impl MeshMessageHandler {
     
     /// Get protocol being used for peer (NEW - Phase 3)
     /// TODO (Ticket #149): Migrated to peer_registry
+    #[allow(dead_code)]
     async fn get_protocol_for_peer(&self, peer_id: &PublicKey) -> Result<NetworkProtocol> {
         let registry = self.peer_registry.read().await;
         // Find connection by PublicKey
@@ -891,6 +893,7 @@ impl MeshMessageHandler {
     }
     
     /// Chunk blockchain data for protocol (NEW - Phase 3)
+    #[allow(dead_code)]
     fn chunk_blockchain_data(
         &self,
         sender: PublicKey,
@@ -1043,8 +1046,8 @@ impl MeshMessageHandler {
     /// 3. Track UTXOs for their addresses
     pub async fn handle_bootstrap_proof_response(
         &self,
-        request_id: u64,
-        proof_data: Vec<u8>,
+        _request_id: u64,
+        _proof_data: Vec<u8>,
         proof_height: u64,
         headers: Vec<Vec<u8>>,
     ) -> Result<()> {
@@ -1126,7 +1129,7 @@ impl MeshMessageHandler {
     /// 3. Validate incoming payments instantly
     pub async fn handle_headers_response(
         &self,
-        request_id: u64,
+        _request_id: u64,
         headers: Vec<Vec<u8>>,
         start_height: u64,
     ) -> Result<()> {
@@ -1144,7 +1147,7 @@ impl MeshMessageHandler {
     // Note: These are protocol-level handlers. Actual DHT logic is in lib-storage.
     // The application layer (zhtp) should handle DHT operations through ZkDHTIntegration.
     
-    async fn handle_dht_store(&self, requester: PublicKey, request_id: u64, key: Vec<u8>, value: Vec<u8>, ttl: u64, _signature: Vec<u8>) -> Result<()> {
+    async fn handle_dht_store(&self, requester: PublicKey, _request_id: u64, key: Vec<u8>, value: Vec<u8>, ttl: u64, _signature: Vec<u8>) -> Result<()> {
         info!("DHT Store request from {:?}: key={} bytes, value={} bytes, ttl={}", 
               requester, key.len(), value.len(), ttl);
         
@@ -1165,7 +1168,7 @@ impl MeshMessageHandler {
         Ok(())
     }
     
-    async fn handle_dht_find_value(&self, requester: PublicKey, request_id: u64, key: Vec<u8>, max_hops: u8) -> Result<()> {
+    async fn handle_dht_find_value(&self, requester: PublicKey, _request_id: u64, key: Vec<u8>, max_hops: u8) -> Result<()> {
         info!("DHT Find Value from {:?}: key={} bytes, max_hops={}", 
               requester, key.len(), max_hops);
         
@@ -1185,7 +1188,7 @@ impl MeshMessageHandler {
         Ok(())
     }
     
-    async fn handle_dht_find_node(&self, requester: PublicKey, request_id: u64, target_id: Vec<u8>, max_hops: u8) -> Result<()> {
+    async fn handle_dht_find_node(&self, requester: PublicKey, _request_id: u64, target_id: Vec<u8>, max_hops: u8) -> Result<()> {
         info!("DHT Find Node from {:?}: target_id={} bytes, max_hops={}", 
               requester, target_id.len(), max_hops);
         
