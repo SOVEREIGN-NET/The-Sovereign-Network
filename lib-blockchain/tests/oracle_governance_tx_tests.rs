@@ -120,6 +120,8 @@ fn schedule_committee_update_for_test_via_governance() {
     let result = state.schedule_committee_update_for_test(
         vec![[3u8; 32], [4u8; 32], [5u8; 32]],
         current_epoch + 1,
+        current_epoch,
+        None,
     );
     assert!(result.is_ok());
     
@@ -154,6 +156,8 @@ fn schedule_config_update_for_test_via_governance() {
     let result = state.schedule_config_update_for_test(
         new_config,
         current_epoch + 1,
+        current_epoch,
+        None,
     );
     assert!(result.is_ok());
     
@@ -178,6 +182,8 @@ fn scheduled_update_replaces_previous() {
     state.schedule_committee_update_for_test(
         vec![[1u8; 32]],
         11,
+        0,
+        None,
     ).unwrap();
     
     assert_eq!(state.committee.pending_update().unwrap().members.len(), 1);
@@ -186,6 +192,8 @@ fn scheduled_update_replaces_previous() {
     state.schedule_committee_update_for_test(
         vec![[2u8; 32], [3u8; 32]],
         11,
+        0,
+        None,
     ).unwrap();
     
     assert_eq!(state.committee.pending_update().unwrap().members.len(), 2);
