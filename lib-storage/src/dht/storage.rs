@@ -464,31 +464,9 @@ impl<B: StorageBackend> DhtStorage<B> {
         self.contract_index.retain(|_tag, ids| !ids.is_empty());
     }
 
-    /// Verify signature from a DHT node (Acceptance Criteria: PublicKey-based verification)
+    /// Set the ZK verification configuration.
     ///
-    /// **MIGRATION (Ticket #145):** Uses `node.peer.public_key()` for signature verification
-    ///
-    /// # Security
-    ///
-    /// - Uses CRYSTALS-Dilithium post-quantum signatures
-    /// - Returns `Ok(false)` for invalid signatures (not error)
-    /// - Returns `Err(...)` for cryptographic/format errors
-    ///
-    /// # Performance (MED-8)
-    ///
-    /// **TODO:** Add timeout wrapper to prevent DoS via slow verification.
-    /// Dilithium2 verification is typically <1ms, but malformed inputs could
-    /// cause longer processing. Consider:
-    ///
-    /// ```rust,ignore
-    /// tokio::time::timeout(
-    ///     Duration::from_millis(100),
-    ///     async { lib_crypto::verification::verify_signature(...) }
-    /// ).await
-    /// ```
-    /// Set the ZK verification configuration
-    ///
-    /// [DB-002] Allows runtime configuration of verification timeouts
+    /// [DB-002] Allows runtime configuration of verification timeouts.
     pub fn set_zk_verification_config(&mut self, config: ZkVerificationConfig) {
         self.zk_verification_config = config;
     }

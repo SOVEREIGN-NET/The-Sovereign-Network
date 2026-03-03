@@ -1244,9 +1244,7 @@ mod tests {
     }
 
     #[tokio::test]
-    // TODO: Create a GitHub issue to track re-enabling this test.
-    // It is currently ignored because ZhtpIdentity secure deserialization is restricted,
-    // and a solution needs to be implemented and verified.
+    // Ignored until secure ZhtpIdentity deserialization is available in test context.
     #[ignore = "ZhtpIdentity secure deserialization currently restricted"]
     async fn test_unified_storage_identity_integration() {
         let config = UnifiedStorageConfig::default();
