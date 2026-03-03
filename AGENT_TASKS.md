@@ -292,7 +292,7 @@ Implemented comprehensive parameter validation for `OracleConfig` to prevent ins
   - `max_source_age_secs`: 10.. (minimum 10 seconds for fetch time)
   - `max_deviation_bps`: 1..=2000 (0.01% to 20%, prevents rejection of all prices)
   - `max_price_staleness_epochs`: 1..=100 (at least 1 epoch, at most 100)
-  - `price_scale`: Must equal `ORACLE_PRICE_SCALE` (1_000_000_000_000_000_000)
+  - `price_scale`: Must equal `ORACLE_PRICE_SCALE` (100_000_000, i.e. 1e8)
 - Cross-field validation:
   - `max_source_age_secs < epoch_duration_secs` (source age must fit within epoch)
 - Updated `schedule_config_update()` to call `validate()` and return `OracleConfigError`

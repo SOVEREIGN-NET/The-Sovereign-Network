@@ -17,10 +17,10 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use lib_blockchain::oracle::{ORACLE_PRICE_SCALE, OracleSlashReason, OracleConfigError};
+use lib_blockchain::oracle::{ORACLE_PRICE_SCALE, OracleSlashReason};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::RwLock;
 use tracing::{warn, debug};
@@ -60,23 +60,6 @@ impl OracleHandler {
         let mut out = [0u8; 32];
         out.copy_from_slice(&bytes);
         Ok(out)
-    }
-
-    /// Extract client IP from request
-    fn extract_client_ip(&self, request: &ZhtpRequest) -> String {
-        request
-            .headers
-            .get("X-Real-IP")
-            .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| f.split(',').next().map(|s| s.trim().to_string())))
-            .unwrap_or_else(|| "unknown".to_string())
-    }
-
-    /// Extract user agent from request
-    fn extract_user_agent(&self, request: &ZhtpRequest) -> String {
-        request
-            .headers
-            .get("User-Agent")
-            .unwrap_or_else(|| "unknown".to_string())
     }
 }
 
@@ -411,32 +394,25 @@ impl OracleHandler {
         let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
         let _config = &bc.oracle_state.config;
 
+        // Return only fields that are actually tracked in oracle state
         let pending_committee = bc.oracle_state.committee.pending_update().map(|u| {
             let n = u.members.len() as u64;
             let new_threshold = (2 * n) / 3 + 1;
-            let expires_at_epoch = u.activate_at_epoch.saturating_add(2); // expires 2 epochs after activation
             json!({
                 "activate_at_epoch": u.activate_at_epoch,
-                "scheduled_at_epoch": u.activate_at_epoch.saturating_sub(1),
-                "expires_at_epoch": expires_at_epoch,
                 "new_member_count": u.members.len(),
                 "new_members": u.members.iter().map(hex::encode).collect::<Vec<_>>(),
                 "new_threshold": new_threshold,
-                "source_proposal_id": null, // Would need to track this in oracle state
             })
         });
 
         let pending_config = bc.oracle_state.pending_config_update.as_ref().map(|u| {
-            let expires_at_epoch = u.activate_at_epoch.saturating_add(2);
             json!({
                 "activate_at_epoch": u.activate_at_epoch,
-                "scheduled_at_epoch": u.activate_at_epoch.saturating_sub(1),
-                "expires_at_epoch": expires_at_epoch,
                 "epoch_duration_secs": u.config.epoch_duration_secs,
                 "max_source_age_secs": u.config.max_source_age_secs,
                 "max_deviation_bps": u.config.max_deviation_bps,
                 "max_price_staleness_epochs": u.config.max_price_staleness_epochs(),
-                "source_proposal_id": null,
             })
         });
 
@@ -603,21 +579,17 @@ impl OracleHandler {
         let block_timestamp = bc.last_committed_timestamp();
         let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
         
-        // Count attestations received for this epoch (this is a placeholder - 
-        // the actual implementation would need to track attestations per epoch)
-        // For now, we return finalized status or pending
-        let attestations_received = if finalized.is_some() { threshold } else { 0 };
+        // Per-epoch attestation tracking is not yet implemented.
+        // We can only report whether the epoch is finalized or not.
         let is_finalized = finalized.is_some();
-        let attestations_needed = if is_finalized { 0 } else { threshold.saturating_sub(attestations_received) };
 
         let body = json!({
             "epoch_id": epoch_id,
             "current_epoch": current_epoch,
             "committee_size": committee_size,
             "threshold": threshold,
-            "attestations_received": attestations_received,
-            "attestations_needed": attestations_needed,
             "finalized": is_finalized,
+            "note": "Per-epoch attestation tracking is not yet implemented",
             "finalized_price": finalized.map(|p| {
                 let price_usd = p.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64;
                 json!({
@@ -680,33 +652,16 @@ impl OracleHandler {
             }
         }
 
-        // TODO: Create and submit DAO governance transaction
-        // For now, return a success response indicating the proposal would be created
-        debug!("Oracle committee proposal received: {} members, activate at epoch {}", 
-               member_ids.len(), req.activate_at_epoch);
+        // DAO proposal creation for oracle committee updates is not yet implemented.
+        debug!(
+            "Oracle committee proposal received but governance submission is not implemented; \
+             {} members, activate_at_epoch={}",
+            member_ids.len(), req.activate_at_epoch
+        );
 
-        let body = json!({
-            "status": "pending",
-            "proposal_id": null,
-            "new_member_count": member_ids.len(),
-            "activate_at_epoch": req.activate_at_epoch,
-            "reason": req.reason,
-            "message": "DAO proposal creation for oracle committee updates not yet fully implemented",
-        });
-
-        let bytes = match serde_json::to_vec(&body) {
-            Ok(b) => b,
-            Err(e) => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("Failed to serialize response: {}", e),
-                ));
-            }
-        };
-        Ok(ZhtpResponse::success_with_content_type(
-            bytes,
-            "application/json".to_string(),
-            None,
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "DAO proposal creation for oracle committee updates is not yet implemented".to_string(),
         ))
     }
 
@@ -761,36 +716,16 @@ impl OracleHandler {
             ));
         }
 
-        // TODO: Create and submit DAO governance transaction
-        debug!("Oracle config proposal received: activate at epoch {}", req.activate_at_epoch);
+        // DAO proposal creation for oracle config updates is not yet implemented.
+        debug!(
+            "Oracle config proposal received but governance submission is not implemented; \
+             requested activate_at_epoch={}",
+            req.activate_at_epoch
+        );
 
-        let body = json!({
-            "status": "pending",
-            "proposal_id": null,
-            "proposed_config": {
-                "epoch_duration_secs": proposed_config.epoch_duration_secs,
-                "max_source_age_secs": proposed_config.max_source_age_secs,
-                "max_deviation_bps": proposed_config.max_deviation_bps,
-                "max_price_staleness_epochs": proposed_config.max_price_staleness_epochs(),
-            },
-            "activate_at_epoch": req.activate_at_epoch,
-            "reason": req.reason,
-            "message": "DAO proposal creation for oracle config updates not yet fully implemented",
-        });
-
-        let bytes = match serde_json::to_vec(&body) {
-            Ok(b) => b,
-            Err(e) => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("Failed to serialize response: {}", e),
-                ));
-            }
-        };
-        Ok(ZhtpResponse::success_with_content_type(
-            bytes,
-            "application/json".to_string(),
-            None,
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "DAO proposal creation for oracle config updates is not yet implemented".to_string(),
         ))
     }
 
@@ -815,32 +750,17 @@ impl OracleHandler {
             ));
         }
 
-        // TODO: Create and submit DAO governance transaction
-        debug!("Oracle cancel update proposal received: committee={}, config={}", 
-               req.cancel_committee_update, req.cancel_config_update);
+        // DAO proposal creation for oracle update cancellation is not yet implemented.
+        warn!(
+            "Oracle cancel update proposal requested but DAO governance submission is not implemented yet: \
+             committee_cancel={}, config_cancel={}",
+            req.cancel_committee_update,
+            req.cancel_config_update
+        );
 
-        let body = json!({
-            "status": "pending",
-            "proposal_id": null,
-            "cancel_committee_update": req.cancel_committee_update,
-            "cancel_config_update": req.cancel_config_update,
-            "reason": req.reason,
-            "message": "DAO proposal creation for oracle update cancellation not yet fully implemented",
-        });
-
-        let bytes = match serde_json::to_vec(&body) {
-            Ok(b) => b,
-            Err(e) => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("Failed to serialize response: {}", e),
-                ));
-            }
-        };
-        Ok(ZhtpResponse::success_with_content_type(
-            bytes,
-            "application/json".to_string(),
-            None,
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "Oracle update cancellation via DAO governance is not implemented yet".to_string(),
         ))
     }
 
@@ -878,31 +798,15 @@ impl OracleHandler {
             }
         };
 
-        // TODO: Create and submit attestation transaction
-        // This would require the node's validator keypair to sign the attestation
-        debug!("Manual attestation received: epoch_id={}, price={}", 
-               req.epoch_id, sov_usd_price);
+        // Manual attestation submission is not yet implemented.
+        debug!(
+            "Manual attestation received (NOT IMPLEMENTED): epoch_id={}, price={}",
+            req.epoch_id, sov_usd_price
+        );
 
-        let body = json!({
-            "status": "pending",
-            "epoch_id": req.epoch_id,
-            "sov_usd_price_atomic": sov_usd_price.to_string(),
-            "message": "Manual attestation submission not yet fully implemented",
-        });
-
-        let bytes = match serde_json::to_vec(&body) {
-            Ok(b) => b,
-            Err(e) => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("Failed to serialize response: {}", e),
-                ));
-            }
-        };
-        Ok(ZhtpResponse::success_with_content_type(
-            bytes,
-            "application/json".to_string(),
-            None,
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::NotImplemented,
+            "Manual attestation submission is not yet implemented".to_string(),
         ))
     }
 }

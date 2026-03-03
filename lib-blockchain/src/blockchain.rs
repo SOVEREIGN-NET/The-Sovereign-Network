@@ -11288,12 +11288,14 @@ impl Blockchain {
 
     /// Validates CBE (Community Bonding Engine) graduation oracle gate (ORACLE-5, ORACLE-13).
     ///
-    /// Enforces:
-    /// - A fresh finalized oracle price must exist (staleness-checked via `latest_fresh_price`)
-    /// - `token.reserve_balance` (already in micro-USD) must meet or exceed 269,000 USD threshold
+    /// Validates CBE graduation can proceed for the given token.
     ///
-    /// Note: Reserve balance is stored in micro-USD (1 USD = 1,000,000 micro-USD) and compared
-    /// directly against the threshold. No oracle price multiplication is performed.
+    /// Enforces (Oracle Spec v1 §11):
+    /// - A fresh (non-stale) oracle price must exist for the current epoch
+    /// - Token reserve balance (in micro-USD, stablecoin) must meet the $269K threshold
+    ///
+    /// Note: The oracle price is checked for freshness but not used in the value calculation
+    /// because the reserve is already denominated in USD-pegged stablecoin.
     ///
     /// Called unconditionally in both BlockExecutor and legacy paths (ORACLE-13).
     pub fn validate_cbe_graduation_oracle_gate(
