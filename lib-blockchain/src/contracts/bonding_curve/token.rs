@@ -54,6 +54,9 @@ pub struct BondingCurveToken {
     // === Metadata ===
     /// Creator address
     pub creator: PublicKey,
+    /// Creator DID (populated when deployer has a registered on-chain identity)
+    #[serde(default)]
+    pub creator_did: Option<String>,
     /// Block height at deployment
     pub deployed_at_block: u64,
     /// Timestamp at deployment
@@ -108,6 +111,7 @@ impl BondingCurveToken {
             sell_enabled,
             amm_pool_id: None,
             creator,
+            creator_did: None,
             deployed_at_block,
             deployed_at_timestamp,
         })

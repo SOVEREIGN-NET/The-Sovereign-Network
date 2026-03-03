@@ -1,4 +1,5 @@
 use blake3;
+use crate::integration::crypto_integration::PublicKey;
 
 /// General purpose data hashing function
 pub fn hash_data(data: &[u8]) -> [u8; 32] {
@@ -131,6 +132,19 @@ pub fn generate_time_based_id(additional_entropy: &[u8]) -> [u8; 32] {
     data.extend_from_slice(additional_entropy);
     
     blake3::hash(&data).into()
+}
+
+/// Create the synthetic `PublicKey` used to key native SOV balances for a Primary wallet.
+///
+/// SOV balances in `token_contracts` are keyed by a `PublicKey` with an empty
+/// Dilithium key and the wallet's 32-byte `wallet_id` as the `key_id`.
+/// This mirrors `Blockchain::wallet_key_for_sov`.
+pub fn wallet_key_for_sov(wallet_id: [u8; 32]) -> PublicKey {
+    PublicKey {
+        dilithium_pk: Vec::new(),
+        kyber_pk: Vec::new(),
+        key_id: wallet_id,
+    }
 }
 
 #[cfg(test)]

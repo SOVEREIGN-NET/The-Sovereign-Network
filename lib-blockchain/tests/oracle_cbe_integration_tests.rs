@@ -33,6 +33,7 @@ fn create_test_cbe_token(token_id: [u8; 32], reserve_micro_usd: u64) -> BondingC
         sell_enabled: true,
         amm_pool_id: None,
         creator: PublicKey::new(vec![1u8; 32]),
+        creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
     }

@@ -172,11 +172,29 @@ fn convert_to_network_message(msg: &ValidatorMessage) -> lib_consensus::validato
                 vote_counts: BTreeMap::new(),
             };
             NetworkValidatorMessage::Vote(VoteMessage {
-                message_id: vote.id.clone(),
+                message_id: {
+                    // Use a unique per-broadcast ID so the dedup cache never silently
+                    // drops re-broadcasts of the same vote (vote.id is deterministic
+                    // per height+round+voter, which caused 3600s suppression).
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos();
+                    let nonce = lib_crypto::generate_nonce();
+                    let mut data = format!("vote_bcast_{}", ts).into_bytes();
+                    data.extend_from_slice(&nonce);
+                    lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&data))
+                },
                 voter: vote.voter.clone(),
                 vote: vote.clone(),
                 consensus_state: state_view,
-                timestamp: vote.timestamp,
+                // Use real wall-clock timestamp for network freshness checks.
+                // The consensus engine uses a deterministic value internally, but the
+                // validator-protocol layer rejects messages with stale/future timestamps.
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
                 signature: vote.signature.clone(),
             })
         }
@@ -237,6 +255,288 @@ impl lib_consensus::validators::ValidatorInfo for BlockchainValidatorAdapter {
 /// This allows the consensus engine to start before the blockchain is wired,
 /// and access it once it becomes available.
 pub type SharedBlockchainSlot = Arc<RwLock<Option<Arc<RwLock<Blockchain>>>>>;
+
+// ── Catch-up Sync ──────────────────────────────────────────────────────────
+//
+// When the consensus engine detects that a peer is voting at a higher block
+// height than the local chain, it calls `CatchUpSyncChannel::trigger()`.
+// This fires a message to `run_catch_up_sync_task`, which downloads missing
+// blocks from a connected peer and applies them to the local blockchain.
+
+/// `CatchUpSyncTrigger` implementation that sends a signal via mpsc channel.
+///
+/// `try_send` is non-blocking: if the channel is full (a sync is already
+/// pending), the trigger is silently dropped — the in-flight sync covers it.
+struct CatchUpSyncChannel {
+    tx: tokio::sync::mpsc::Sender<u64>,
+}
+
+impl lib_consensus::types::CatchUpSyncTrigger for CatchUpSyncChannel {
+    fn trigger(&self, our_height: u64) {
+        let _ = self.tx.try_send(our_height);
+    }
+}
+
+/// Background task: receives catch-up triggers and downloads missing blocks.
+async fn run_catch_up_sync_task(
+    mut rx: tokio::sync::mpsc::Receiver<u64>,
+    blockchain_slot: SharedBlockchainSlot,
+) {
+    const COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30);
+    let mut last_sync_at: Option<tokio::time::Instant> = None;
+
+    while let Some(_trigger_height) = rx.recv().await {
+        // Drain any duplicate triggers buffered while we were processing.
+        while rx.try_recv().is_ok() {}
+
+        // Rate-limit: skip if a sync ran recently.
+        if let Some(t) = last_sync_at {
+            if t.elapsed() < COOLDOWN {
+                debug!(
+                    "Catch-up sync cooldown ({:.1}s remaining), skipping",
+                    (COOLDOWN - t.elapsed()).as_secs_f32()
+                );
+                continue;
+            }
+        }
+
+        // Read current local blockchain height (may have advanced since trigger).
+        let from_height = {
+            let slot = blockchain_slot.read().await;
+            match slot.as_ref() {
+                Some(bc_arc) => bc_arc.read().await.height,
+                None => {
+                    warn!("Catch-up sync: blockchain slot not populated yet");
+                    continue;
+                }
+            }
+        };
+
+        info!("🔄 Catch-up sync: local blockchain height={}, downloading newer blocks", from_height);
+
+        let peer_addrs = catchup_get_peer_addrs().await;
+        if peer_addrs.is_empty() {
+            warn!("Catch-up sync: no connected peers available");
+            continue;
+        }
+
+        let mut synced_any = false;
+        for peer_addr in &peer_addrs {
+            match catchup_sync_from_peer(peer_addr, from_height, &blockchain_slot).await {
+                Ok(0) => {
+                    debug!("Catch-up sync: peer {} at same height ({})", peer_addr, from_height);
+                }
+                Ok(n) => {
+                    info!(
+                        "✅ Catch-up sync: applied {} block(s) from {} (local height now ~{})",
+                        n, peer_addr, from_height + n as u64
+                    );
+                    synced_any = true;
+                    break;
+                }
+                Err(e) => {
+                    warn!("Catch-up sync from {} failed: {}", peer_addr, e);
+                }
+            }
+        }
+
+        if synced_any {
+            last_sync_at = Some(tokio::time::Instant::now());
+        }
+    }
+
+    info!("Catch-up sync task exited");
+}
+
+/// Return socket addresses of all peers currently connected to the QUIC mesh.
+async fn catchup_get_peer_addrs() -> Vec<String> {
+    let mesh_router = match crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+        Ok(mr) => mr,
+        Err(_) => return Vec::new(),
+    };
+    let quic_guard = mesh_router.quic_protocol.read().await;
+    match quic_guard.as_ref() {
+        Some(qp) => qp
+            .get_connected_peer_addrs()
+            .into_iter()
+            .map(|addr| addr.to_string())
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Download blocks after `our_height` from `peer_addr` and apply them locally.
+///
+/// Returns the number of blocks successfully applied, or an error.
+async fn catchup_sync_from_peer(
+    peer_addr: &str,
+    our_height: u64,
+    blockchain_slot: &SharedBlockchainSlot,
+) -> anyhow::Result<usize> {
+    use anyhow::Context;
+    use lib_network::client::{ZhtpClient, ZhtpClientConfig};
+
+    // Build a short-lived bootstrap identity for this sync connection.
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let temp_identity = lib_identity::ZhtpIdentity::new_unified(
+        lib_identity::IdentityType::Device,
+        None, None,
+        &format!("catchup-sync-{}", ts),
+        None,
+    )
+    .context("failed to create temp identity for catch-up sync")?;
+
+    let mut client = ZhtpClient::new_bootstrap_with_config(
+        temp_identity,
+        ZhtpClientConfig { allow_bootstrap: true },
+    )
+    .await
+    .context("failed to create QUIC client for catch-up sync")?;
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.connect(peer_addr),
+    )
+    .await
+    .context("catch-up connect timed out")?
+    .context("catch-up connect failed")?;
+
+    // Query the peer's current chain tip.
+    let tip_resp = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.get("/api/v1/blockchain/tip"),
+    )
+    .await
+    .context("chain tip request timed out")?
+    .context("chain tip request failed")?;
+
+    if !tip_resp.status.is_success() {
+        return Err(anyhow::anyhow!(
+            "chain tip request returned {}",
+            tip_resp.status_message
+        ));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct TipInfo {
+        height: u64,
+    }
+    let tip: TipInfo =
+        serde_json::from_slice(&tip_resp.body).context("failed to deserialize chain tip")?;
+
+    if tip.height <= our_height {
+        return Ok(0); // Peer is not ahead of us — nothing to download.
+    }
+
+    // Resolve the blockchain arc once before the loop.
+    let slot = blockchain_slot.read().await;
+    let blockchain_arc = slot
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("blockchain not available during catch-up sync"))?;
+    drop(slot);
+
+    let mut current_height = our_height;
+    let mut total_applied = 0usize;
+
+    // Loop until we reach the peer's tip or make no further progress.
+    // Each iteration downloads at most 200 blocks to keep request payloads manageable.
+    // We sync to the tip height queried at the start of this function; any blocks
+    // the peer accumulates during the loop will be picked up by the next trigger.
+    loop {
+        if current_height >= tip.height {
+            break;
+        }
+
+        let start = current_height + 1;
+        let end = tip.height.min(current_height + 200);
+
+        info!(
+            "⬇️  Catch-up: fetching blocks {}-{} from {} (peer tip={})",
+            start, end, peer_addr, tip.height
+        );
+
+        let blocks_url = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
+        let blocks_resp = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            client.get(&blocks_url),
+        )
+        .await
+        .context("blocks request timed out")?
+        .context("blocks request failed")?;
+
+        if !blocks_resp.status.is_success() {
+            return Err(anyhow::anyhow!(
+                "blocks {}-{} request returned {}",
+                start,
+                end,
+                blocks_resp.status_message
+            ));
+        }
+
+        let blocks: Vec<lib_blockchain::Block> =
+            bincode::deserialize(&blocks_resp.body).context("failed to deserialize blocks")?;
+
+        if blocks.is_empty() {
+            // Peer returned no blocks despite claiming a higher tip — stop to
+            // avoid an infinite loop.
+            break;
+        }
+
+        // Apply each block to the local blockchain.
+        // Acquire the write lock per block so that other readers (e.g. consensus
+        // height queries) can interleave.
+        let mut batch_max_height = current_height;
+        for block in blocks {
+            let height = block.height();
+            // Track the highest height seen in this batch regardless of whether
+            // the block is applied or skipped, so `current_height` advances
+            // correctly and redundant re-fetches are avoided.
+            if height > batch_max_height {
+                batch_max_height = height;
+            }
+            let mut bc = blockchain_arc.write().await;
+            // Idempotent: skip blocks already committed.
+            if height <= bc.height {
+                debug!(
+                    "Catch-up: block {} already present (local height {}), skipping",
+                    height, bc.height
+                );
+                drop(bc);
+                continue;
+            }
+            match bc.apply_block_trusted_for_sync(block).await {
+                Ok(()) => {
+                    total_applied += 1;
+                    info!("📦 Catch-up: applied block {}", height);
+                }
+                Err(e) => {
+                    warn!(
+                        "Catch-up: failed to apply block {} — stopping batch: {}",
+                        height, e
+                    );
+                    drop(bc);
+                    // Return what we have so far; the caller can retry later.
+                    return Ok(total_applied);
+                }
+            }
+            drop(bc);
+        }
+
+        if batch_max_height <= current_height {
+            // No forward progress despite a non-empty response — stop to avoid
+            // looping indefinitely.
+            break;
+        }
+
+        current_height = batch_max_height;
+    }
+
+    Ok(total_applied)
+}
 
 /// Adapter that provides blockchain data to the consensus engine for block production
 ///
@@ -563,11 +863,15 @@ fn derive_key_from_identity(identity_id: &str, domain: &[u8]) -> Vec<u8> {
 
 /// Adapter that implements lib-consensus ValidatorInfo for bootstrap config entries.
 /// Uses deterministic key derivation so no keys need to be stored in config files.
+/// For the local validator, `actual_consensus_key` carries the real Dilithium2 public key
+/// loaded from the keystore so that `ConsensusEngine::set_validator_keypair()` can match it.
 struct BootstrapValidatorAdapter {
     identity_id: String,
     stake: u64,
     storage_provided: u64,
     commission_rate: u8,
+    /// Real Dilithium2 public key for the local validator; `None` for remote peers.
+    actual_consensus_key: Option<Vec<u8>>,
 }
 
 impl lib_consensus::validators::ValidatorInfo for BootstrapValidatorAdapter {
@@ -587,7 +891,11 @@ impl lib_consensus::validators::ValidatorInfo for BootstrapValidatorAdapter {
     fn storage_provided(&self) -> u64 { self.storage_provided }
 
     fn consensus_key(&self) -> Vec<u8> {
-        derive_key_from_identity(&self.identity_id, b"consensus")
+        // Use the real Dilithium2 public key when available (local validator).
+        // For remote peers we fall back to the deterministic placeholder so the
+        // validator set stays populated until their signed announcements arrive.
+        self.actual_consensus_key.clone()
+            .unwrap_or_else(|| derive_key_from_identity(&self.identity_id, b"consensus"))
     }
     fn networking_key(&self) -> Vec<u8> {
         derive_key_from_identity(&self.identity_id, b"networking")
@@ -759,6 +1067,7 @@ impl ConsensusComponent {
                 stake: bv.stake.max(1), // ensure non-zero for admission
                 storage_provided: bv.storage_provided,
                 commission_rate: (bv.commission_rate.min(100)) as u8,
+                actual_consensus_key: None, // local keypair not available here
             })
             .collect();
 
@@ -1021,14 +1330,83 @@ impl Component for ConsensusComponent {
         consensus_engine.set_message_receiver(consensus_msg_rx);
 
         // Load the persistent local validator signing keypair from the keystore.
-        // The keypair is stored on self; it will be passed to the consensus engine later in
-        // sync_validators_from_blockchain(), after the validator set is populated, because
-        // set_validator_keypair() requires the identity to be registered in the validator set.
         let (local_validator_id, local_validator_keypair) = load_local_validator_from_keystore().await?;
 
         // Clone for ValidatorProtocol middleware before moving into self
         let vp_keypair = local_validator_keypair.clone();
         let vp_identity = local_validator_id.clone();
+
+        // Seed bootstrap validators directly into the consensus engine so it enters BFT mode
+        // immediately on startup without waiting for on-chain ValidatorRegistration txs.
+        // CRITICAL: This must happen before the engine is spawned into the consensus loop.
+        // Previously, validators were only seeded into self.validator_manager (a separate object),
+        // so the running consensus engine never received them and stayed in Bootstrap mode forever.
+        if !self.bootstrap_validators.is_empty() {
+            // Build bootstrap adapters.  For the local validator, supply the actual
+            // Dilithium2 public key so that ConsensusEngine::set_validator_keypair()
+            // can match it against the registered consensus_key.  For remote peers
+            // we leave actual_consensus_key as None (falls back to the derived placeholder)
+            // until their signed validator announcements arrive via TOFU registration.
+            let bootstrap_adapters: Vec<BootstrapValidatorAdapter> = self.bootstrap_validators
+                .iter()
+                .map(|bv| {
+                    let adapter_id = {
+                        let hex = bv.identity_id
+                            .strip_prefix("did:zhtp:")
+                            .unwrap_or(&bv.identity_id);
+                        if let Ok(bytes) = hex::decode(hex) {
+                            if bytes.len() >= 32 {
+                                lib_crypto::Hash::from_bytes(&bytes[..32])
+                            } else {
+                                lib_crypto::Hash(lib_crypto::hash_blake3(bv.identity_id.as_bytes()))
+                            }
+                        } else {
+                            lib_crypto::Hash(lib_crypto::hash_blake3(bv.identity_id.as_bytes()))
+                        }
+                    };
+                    let actual_consensus_key = if adapter_id == local_validator_id {
+                        // This entry represents the local node — use the real key.
+                        Some(local_validator_keypair.public_key.dilithium_pk.clone())
+                    } else {
+                        None
+                    };
+                    BootstrapValidatorAdapter {
+                        identity_id: bv.identity_id.clone(),
+                        stake: bv.stake.max(1),
+                        storage_provided: bv.storage_provided,
+                        commission_rate: (bv.commission_rate.min(100)) as u8,
+                        actual_consensus_key,
+                    }
+                })
+                .collect();
+            match consensus_engine.sync_validators_from_list(bootstrap_adapters) {
+                Ok((added, skipped)) => {
+                    info!(
+                        "🌱 Seeded {} bootstrap validator(s) into consensus engine ({} added, {} skipped)",
+                        self.bootstrap_validators.len(), added, skipped
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to seed consensus engine with bootstrap validators: {}", e);
+                }
+            }
+
+            // Set local validator identity and keypair now that the validator set is populated.
+            // set_validator_keypair() requires the identity to already be in the validator set,
+            // so this must come AFTER sync_validators_from_list().
+            if self.node_role.can_validate() {
+                match consensus_engine.set_local_validator_identity(local_validator_id.clone()) {
+                    Ok(()) => {
+                        info!("🔑 Local validator identity set on consensus engine");
+                        match consensus_engine.set_validator_keypair(local_validator_keypair.clone()) {
+                            Ok(()) => info!("🔑 Validator keypair set on consensus engine"),
+                            Err(e) => warn!("Could not set validator keypair on engine: {}", e),
+                        }
+                    }
+                    Err(e) => warn!("Could not set local validator identity on engine: {}", e),
+                }
+            }
+        }
 
         *self.local_validator_identity.write().await = Some(local_validator_id);
         *self.local_validator_keypair.write().await = Some(local_validator_keypair);
@@ -1045,8 +1423,20 @@ impl Component for ConsensusComponent {
             // Create discovery protocol for signature verification lookups
             let discovery = Arc::new(ValidatorDiscoveryProtocol::new(3600));
 
+            // Enable TOFU in non-Mainnet environments so bootstrap validators can accept
+            // each other's signed messages before formal on-chain announcements have been
+            // exchanged.  The first valid self-signed message from an unknown validator
+            // populates the discovery cache; subsequent messages are verified against that
+            // registered key.  Disabled on Mainnet where only on-chain-registered keys
+            // may participate.
+            let is_mainnet = matches!(self.environment, crate::config::Environment::Mainnet);
+            let vp_config = lib_consensus::validators::ValidatorProtocolConfig {
+                bootstrap_tofu: !is_mainnet,
+                ..Default::default()
+            };
+
             // Create ValidatorProtocol and wire it
-            let mut validator_protocol = ValidatorProtocol::new(discovery, None);
+            let mut validator_protocol = ValidatorProtocol::new(discovery, Some(vp_config));
             validator_protocol.set_validator_keypair(vp_keypair);
             validator_protocol.set_validator_identity(vp_identity).await;
             validator_protocol.set_consensus_forwarder(consensus_msg_tx.clone());
@@ -1144,6 +1534,20 @@ impl Component for ConsensusComponent {
         let blockchain_adapter = ConsensusBlockchainAdapter::new(self.blockchain.clone());
         consensus_engine.set_blockchain_provider(Arc::new(blockchain_adapter));
         info!("📦 Blockchain provider wired to consensus engine");
+
+        // Wire catch-up sync trigger.
+        // Channel capacity of 2 means triggers are coalesced: if two divergence
+        // events fire before the task drains the channel, only one sync runs.
+        {
+            let (catch_up_tx, catch_up_rx) = tokio::sync::mpsc::channel::<u64>(2);
+            let trigger = Arc::new(CatchUpSyncChannel { tx: catch_up_tx });
+            consensus_engine.set_catch_up_sync_trigger(trigger);
+            let blockchain_slot_for_sync = self.blockchain.clone();
+            tokio::spawn(async move {
+                run_catch_up_sync_task(catch_up_rx, blockchain_slot_for_sync).await;
+            });
+            info!("🔄 Catch-up sync trigger wired (height-divergence recovery active)");
+        }
 
         // Wire block commit callback for BFT-finalized blocks
         // This is the critical bridge that commits blocks when BFT achieves 2/3+1 votes

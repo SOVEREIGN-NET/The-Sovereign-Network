@@ -357,6 +357,7 @@ mod tests {
             Threshold::ReserveAmount(10_000_000), // 100 USD threshold
             true,
             creator,
+            "did:zhtp:test".to_string(),
             0,
             1_600_000_000,
         ).expect("Failed to deploy token");

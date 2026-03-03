@@ -514,6 +514,15 @@ impl<'a> StateMutator<'a> {
             None => Ok(None),
         }
     }
+
+    /// Read the token balance for an address without mutating state.
+    pub fn get_token_balance(&self, token: &TokenId, addr: &Address) -> TxApplyResult<u64> {
+        let balance = self.store.get_token_balance(token, addr)
+            .map_err(|e| TxApplyError::Storage(e.to_string()))?;
+        let balance_u64 = u64::try_from(balance)
+            .map_err(|_| TxApplyError::Storage("token balance exceeds u64::MAX".to_string()))?;
+        Ok(balance_u64)
+    }
 }
 
 // =============================================================================
