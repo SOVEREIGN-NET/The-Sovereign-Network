@@ -2,9 +2,9 @@
 //!
 //! Handles WiFi Direct mesh networking for medium-range peer connections
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
