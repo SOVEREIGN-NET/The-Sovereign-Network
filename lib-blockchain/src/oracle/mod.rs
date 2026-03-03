@@ -352,6 +352,7 @@ pub struct OracleCommitteeState {
     #[serde(default, deserialize_with = "deserialize_members_sorted_dedup")]
     members: Vec<[u8; 32]>,
     /// Pending update, if scheduled.
+    #[serde(default)]
     pending_update: Option<PendingCommitteeUpdate>,
 }
 
@@ -500,7 +501,7 @@ impl OracleState {
     /// * `activate_at_epoch` - Epoch when update becomes active (must be > current_epoch)
     /// * `current_epoch` - Current oracle epoch (for tracking scheduled_at_epoch)
     /// * `source_proposal_id` - Optional governance proposal ID that triggered this update
-    pub(crate) fn schedule_committee_update(
+    pub fn schedule_committee_update(
         &mut self,
         members: Vec<[u8; 32]>,
         activate_at_epoch: u64,
@@ -551,7 +552,7 @@ impl OracleState {
     /// * `activate_at_epoch` - Epoch when update becomes active (must be > current_epoch)
     /// * `current_epoch` - Current oracle epoch (for tracking scheduled_at_epoch)
     /// * `source_proposal_id` - Optional governance proposal ID that triggered this update
-    pub(crate) fn schedule_config_update(
+    pub fn schedule_config_update(
         &mut self,
         config: OracleConfig,
         activate_at_epoch: u64,
@@ -572,6 +573,9 @@ impl OracleState {
         }
         if config.max_price_staleness_epochs == 0 {
             return Err("oracle max price staleness epochs must be > 0".to_string());
+        }
+        if config.max_source_age_secs >= config.epoch_duration_secs {
+            return Err("oracle max source age must be less than epoch duration".to_string());
         }
         if activate_at_epoch <= current_epoch {
             return Err("activate_at_epoch must be > current_epoch".to_string());
@@ -1707,6 +1711,28 @@ mod tests {
         
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must be > 0"));
+    }
+
+    #[test]
+    fn test_pending_committee_update_bincode_serialization() {
+        let mut state = OracleState::default();
+        state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
+        
+        // Schedule update
+        let result = state.schedule_committee_update(vec![[5u8; 32], [6u8; 32], [7u8; 32]], 10, 0, None);
+        assert!(result.is_ok());
+        
+        println!("Before: pending_update = {:?}", state.committee.pending_update());
+        
+        // Serialize to bincode (like save_to_file does)
+        let encoded = bincode::serialize(&state).unwrap();
+        println!("Serialized {} bytes", encoded.len());
+        
+        // Deserialize
+        let decoded: OracleState = bincode::deserialize(&encoded).unwrap();
+        println!("After: pending_update = {:?}", decoded.committee.pending_update());
+        
+        assert!(decoded.committee.pending_update().is_some(), "pending_update should survive bincode serialization");
     }
 }
 

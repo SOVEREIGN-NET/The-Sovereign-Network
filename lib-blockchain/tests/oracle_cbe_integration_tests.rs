@@ -56,8 +56,8 @@ fn test_cbe_graduation_blocked_without_fresh_oracle_price() {
     assert!(result.is_err(), "should reject when no oracle price exists");
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("no fresh oracle price"),
-        "expected 'no fresh oracle price' error, got: {}",
+        err_msg.contains("no fresh finalized oracle price"),
+        "expected 'no fresh finalized oracle price' error, got: {}",
         err_msg
     );
 }

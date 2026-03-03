@@ -294,7 +294,8 @@ impl OracleTestHarness {
         members: Vec<[u8; 32]>,
         activate_at_epoch: u64,
     ) -> Result<(), String> {
-        self.blockchain.oracle_state.schedule_committee_update(members, activate_at_epoch)
+        let current_epoch = self.blockchain.oracle_state.epoch_id(self.current_timestamp);
+        self.blockchain.oracle_state.schedule_committee_update(members, activate_at_epoch, current_epoch, None)
     }
     
     /// Schedule a config update
@@ -302,8 +303,10 @@ impl OracleTestHarness {
         &mut self,
         config: OracleConfig,
         activate_at_epoch: u64,
-    ) -> Result<(), lib_blockchain::oracle::OracleConfigError> {
-        self.blockchain.oracle_state.schedule_config_update(config, activate_at_epoch)
+    ) -> Result<(), String> {
+        let current_epoch = self.blockchain.oracle_state.epoch_id(self.current_timestamp);
+        self.blockchain.oracle_state.schedule_config_update(config, activate_at_epoch, current_epoch, None)
+            .map_err(|e| e.to_string())
     }
 }
 

@@ -24,6 +24,9 @@ fn test_oracle_state_survives_blockchain_restart() {
     assert_eq!(harness.blockchain.oracle_state.finalized_prices_len(), 1);
     let committee_before = harness.blockchain.oracle_state.committee.members().to_vec();
     
+    // Set last_oracle_epoch_processed to prevent apply_pending_updates during load
+    harness.blockchain.last_oracle_epoch_processed = harness.blockchain.last_committed_timestamp();
+    
     // Save to temp file
     let dir = tempdir().unwrap();
     let path = dir.path().join("test.dat");
@@ -101,13 +104,13 @@ fn test_oracle_config_persists_across_restart() {
     custom_config.max_deviation_bps = 500;
     custom_config.max_price_staleness_epochs = 5;
     
-    // Schedule config update for immediate activation
+    // Schedule config update for future activation
     let current_epoch = harness.current_epoch();
-    harness.schedule_config_update(custom_config.clone(), current_epoch)
+    harness.schedule_config_update(custom_config.clone(), current_epoch + 1)
         .expect("config update should be valid");
     
-    // Apply the update
-    harness.blockchain.oracle_state.apply_pending_updates(current_epoch);
+    // Apply the update at the target epoch
+    harness.blockchain.oracle_state.apply_pending_updates(current_epoch + 1);
     
     // Verify config changed
     assert_eq!(harness.blockchain.oracle_state.config().epoch_duration_secs, 600);
@@ -147,6 +150,10 @@ fn test_pending_updates_persist_across_restart() {
     
     // Verify pending update exists
     assert!(harness.blockchain.oracle_state.committee.pending_update().is_some());
+    
+    // Set last_oracle_epoch_processed to prevent apply_pending_updates during load
+    // (the genesis timestamp creates a large epoch, which would auto-activate pending updates)
+    harness.blockchain.last_oracle_epoch_processed = harness.blockchain.last_committed_timestamp();
     
     // Save and reload
     let dir = tempdir().unwrap();
