@@ -6926,7 +6926,7 @@ impl Blockchain {
                 update_data.new_members.clone(),
                 update_data.activate_at_epoch,
                 current_epoch,
-                proposal_id,
+                Some(proposal_id.as_array()),
             )
             .map_err(|e| anyhow::anyhow!("ParameterValidationError: Failed to schedule committee update: {}", e))?;
 
@@ -6985,7 +6985,7 @@ impl Blockchain {
                 next_config,
                 update_data.activate_at_epoch,
                 current_epoch,
-                proposal_id,
+                Some(proposal_id.as_array()),
             )
             .map_err(|e| anyhow::anyhow!("ParameterValidationError: Failed to schedule config update: {}", e))?;
 
