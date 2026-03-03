@@ -57,7 +57,7 @@ use pqcrypto_traits::{
     sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey},
 };
 use crate::types::{PublicKey, PrivateKey};
-use pqc_kyber as kyber1024;
+use pqc_kyber;
 
 /// quantum-resistant key pair with secure memory management
 #[derive(Debug, Clone)]
@@ -80,7 +80,7 @@ impl KeyPair {
         let (dilithium_pk, dilithium_sk) = dilithium5::keypair();
         
         // Generate CRYSTALS-Kyber key pair (NIST post-quantum standard)
-        let kyber_keys = kyber1024::keypair(&mut rng)
+        let kyber_keys = pqc_kyber::keypair(&mut rng)
             .map_err(|e| anyhow::anyhow!("Kyber1024 keypair generation failed: {:?}", e))?;
         
         // Calculate unique key ID from post-quantum public keys only
