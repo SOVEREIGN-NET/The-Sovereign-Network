@@ -916,7 +916,9 @@ impl ZhtpMeshServer {
         let identity = Arc::new(create_default_mesh_identity());
 
         // Bind to configured QUIC mesh port (PQC encrypted)
-        let bind_addr = format!("0.0.0.0:{}", self.config.mesh_port).parse().unwrap();
+        let bind_addr = format!("0.0.0.0:{}", self.config.mesh_port)
+            .parse()
+            .map_err(|e| anyhow!("Failed to parse QUIC bind address: {}", e))?;
 
         // Initialize QUIC mesh protocol with UHP v2 authentication
         let mut quic_protocol = QuicMeshProtocol::new(identity, bind_addr)?;

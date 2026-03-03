@@ -22,6 +22,7 @@
 //! - **Persistence**: Pins stored in node DB, survives restarts
 //! - **No silent rollover**: Mismatches are hard failures
 
+use anyhow::{Result, anyhow};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
@@ -68,13 +69,13 @@ impl SyncPinStore {
     }
 
     /// Add or update a pin
-    pub fn insert(&self, node_id: NodeIdKey, spki_hash: [u8; 32]) {
+    pub fn insert(&self, node_id: NodeIdKey, spki_hash: [u8; 32]) -> Result<()> {
         let mut spki_to_node = self.spki_to_node.write()
-            .expect("Failed to acquire write lock on spki_to_node");
+            .map_err(|e| anyhow!("Lock poisoned: spki_to_node: {}", e))?;
         let mut node_to_spki = self.node_to_spki.write()
-            .expect("Failed to acquire write lock on node_to_spki");
+            .map_err(|e| anyhow!("Lock poisoned: node_to_spki: {}", e))?;
         let mut pinned_nodes = self.pinned_nodes.write()
-            .expect("Failed to acquire write lock on pinned_nodes");
+            .map_err(|e| anyhow!("Lock poisoned: pinned_nodes: {}", e))?;
 
         // Remove old SPKI mapping if exists
         if let Some(old_spki) = node_to_spki.get(&node_id) {
@@ -84,58 +85,60 @@ impl SyncPinStore {
         spki_to_node.insert(spki_hash, node_id);
         node_to_spki.insert(node_id, spki_hash);
         pinned_nodes.insert(node_id);
+
+        Ok(())
     }
 
     /// Check if a NodeId has a pinned certificate
-    pub fn has_pin(&self, node_id: &NodeIdKey) -> bool {
-        self.pinned_nodes.read()
-            .expect("Failed to acquire read lock on pinned_nodes")
-            .contains(node_id)
+    pub fn has_pin(&self, node_id: &NodeIdKey) -> Result<bool> {
+        Ok(self.pinned_nodes.read()
+            .map_err(|e| anyhow!("Lock poisoned: pinned_nodes: {}", e))?
+            .contains(node_id))
     }
 
     /// Get the pinned SPKI for a NodeId
-    pub fn get_pin(&self, node_id: &NodeIdKey) -> Option<[u8; 32]> {
-        self.node_to_spki.read()
-            .expect("Failed to acquire read lock on node_to_spki")
-            .get(node_id).copied()
+    pub fn get_pin(&self, node_id: &NodeIdKey) -> Result<Option<[u8; 32]>> {
+        Ok(self.node_to_spki.read()
+            .map_err(|e| anyhow!("Lock poisoned: node_to_spki: {}", e))?
+            .get(node_id).copied())
     }
 
     /// Verify a certificate's SPKI against the pin for a NodeId
-    pub fn verify_spki(&self, node_id: &NodeIdKey, presented_spki: &[u8; 32]) -> Option<bool> {
+    pub fn verify_spki(&self, node_id: &NodeIdKey, presented_spki: &[u8; 32]) -> Result<Option<bool>> {
         let node_to_spki = self.node_to_spki.read()
-            .expect("Failed to acquire read lock on node_to_spki");
-        node_to_spki.get(node_id).map(|pinned| pinned == presented_spki)
+            .map_err(|e| anyhow!("Lock poisoned: node_to_spki: {}", e))?;
+        Ok(node_to_spki.get(node_id).map(|pinned| pinned == presented_spki))
     }
 
     /// Find the NodeId associated with an SPKI hash (for lookup by cert)
-    pub fn find_node_by_spki(&self, spki_hash: &[u8; 32]) -> Option<NodeIdKey> {
-        self.spki_to_node.read()
-            .expect("Failed to acquire read lock on spki_to_node")
-            .get(spki_hash).copied()
+    pub fn find_node_by_spki(&self, spki_hash: &[u8; 32]) -> Result<Option<NodeIdKey>> {
+        Ok(self.spki_to_node.read()
+            .map_err(|e| anyhow!("Lock poisoned: spki_to_node: {}", e))?
+            .get(spki_hash).copied())
     }
 
     /// Get the number of pins stored
-    pub fn len(&self) -> usize {
-        self.pinned_nodes.read()
-            .expect("Failed to acquire read lock on pinned_nodes")
-            .len()
+    pub fn len(&self) -> Result<usize> {
+        Ok(self.pinned_nodes.read()
+            .map_err(|e| anyhow!("Lock poisoned: pinned_nodes: {}", e))?
+            .len())
     }
 
     /// Check if the store is empty
-    pub fn is_empty(&self) -> bool {
-        self.pinned_nodes.read()
-            .expect("Failed to acquire read lock on pinned_nodes")
-            .is_empty()
+    pub fn is_empty(&self) -> Result<bool> {
+        Ok(self.pinned_nodes.read()
+            .map_err(|e| anyhow!("Lock poisoned: pinned_nodes: {}", e))?
+            .is_empty())
     }
 
     /// Sync from the async TlsPinCache
-    pub fn sync_from_entries(&self, entries: &[PinCacheEntry]) {
+    pub fn sync_from_entries(&self, entries: &[PinCacheEntry]) -> Result<()> {
         let mut spki_to_node = self.spki_to_node.write()
-            .expect("Failed to acquire write lock on spki_to_node");
+            .map_err(|e| anyhow!("Lock poisoned: spki_to_node: {}", e))?;
         let mut node_to_spki = self.node_to_spki.write()
-            .expect("Failed to acquire write lock on node_to_spki");
+            .map_err(|e| anyhow!("Lock poisoned: node_to_spki: {}", e))?;
         let mut pinned_nodes = self.pinned_nodes.write()
-            .expect("Failed to acquire write lock on pinned_nodes");
+            .map_err(|e| anyhow!("Lock poisoned: pinned_nodes: {}", e))?;
 
         // Clear existing entries
         spki_to_node.clear();
@@ -150,6 +153,8 @@ impl SyncPinStore {
         }
 
         debug!("SyncPinStore: synced {} pins from async cache", entries.len());
+
+        Ok(())
     }
 }
 
@@ -170,7 +175,7 @@ impl Clone for PinnedVerifierConfig {
         Self {
             bootstrap_peers: RwLock::new(
                 self.bootstrap_peers.read()
-                    .expect("Failed to acquire read lock on bootstrap_peers")
+                    .unwrap_or_else(|e| panic!("Lock poisoned: bootstrap_peers: {}", e))
                     .clone()
             ),
             allow_unknown_peers: self.allow_unknown_peers,
@@ -378,13 +383,13 @@ impl PinnedCertVerifier {
     }
 
     /// Sync pins from the async TlsPinCache
-    pub fn sync_from_cache(&self, entries: &[PinCacheEntry]) {
-        self.pin_store.sync_from_entries(entries);
+    pub fn sync_from_cache(&self, entries: &[PinCacheEntry]) -> Result<()> {
+        self.pin_store.sync_from_entries(entries)
     }
 
     /// Add a pin directly (for testing or manual pinning)
-    pub fn add_pin(&self, node_id: NodeIdKey, spki_hash: [u8; 32]) {
-        self.pin_store.insert(node_id, spki_hash);
+    pub fn add_pin(&self, node_id: NodeIdKey, spki_hash: [u8; 32]) -> Result<()> {
+        self.pin_store.insert(node_id, spki_hash)
     }
 
     /// Check if an address is in the bootstrap allowlist
@@ -437,7 +442,7 @@ impl PinnedCertVerifier {
         };
 
         // Path 1: Check if this SPKI is already pinned
-        if let Some(node_id) = self.pin_store.find_node_by_spki(&spki_hash) {
+        if let Ok(Some(node_id)) = self.pin_store.find_node_by_spki(&spki_hash) {
             debug!(
                 "Certificate SPKI matches pinned node {:?}",
                 &node_id[..8]

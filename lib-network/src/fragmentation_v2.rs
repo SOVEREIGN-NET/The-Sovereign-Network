@@ -542,7 +542,8 @@ impl FragmentReassemblerV2 {
                 .insert(message_seq, InFlightMessage::new(total_fragments));
         }
 
-        let msg = self.pending.get_mut(&message_seq).unwrap();
+        let msg = self.pending.get_mut(&message_seq)
+            .ok_or_else(|| anyhow!("Internal error: message entry not found after insertion"))?;
 
         // Validate total_fragments consistency
         if msg.received.len() != total_fragments {
@@ -570,7 +571,8 @@ impl FragmentReassemblerV2 {
         // Check if complete
         if msg.is_complete() {
             // Move complete message out of pending
-            let complete = self.pending.remove(&message_seq).unwrap();
+            let complete = self.pending.remove(&message_seq)
+                .ok_or_else(|| anyhow!("Internal error: complete message not found in pending"))?;
 
             // Reassemble (shouldn't fail given our invariants, but handle anyway)
             let reassembled = self.reassemble_inner(&complete)?;
@@ -617,7 +619,14 @@ impl FragmentReassemblerV2 {
 
     /// Reassemble a complete message from its fragments
     fn reassemble_inner(&self, msg: &InFlightMessage) -> Result<Vec<u8>> {
-        let total_size: usize = msg.received.iter().map(|f| f.as_ref().unwrap().len()).sum();
+        // Calculate total size, ensuring all fragments are present
+        let total_size: usize = msg.received.iter()
+            .map(|f| f.as_ref()
+                .ok_or_else(|| anyhow!("Internal error: incomplete fragment in complete message")))
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .map(|data| data.len())
+            .sum();
 
         let mut reassembled = Vec::with_capacity(total_size);
 
