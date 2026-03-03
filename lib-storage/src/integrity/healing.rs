@@ -8,7 +8,6 @@ use crate::erasure::ErasureCoding;
 /// Self-healing system
 pub struct SelfHealing {
     /// Maximum repair attempts
-    #[allow(dead_code)]
     max_repair_attempts: usize,
 }
 
@@ -29,6 +28,14 @@ impl SelfHealing {
     ) -> Result<HealingResult> {
         if corrupted_indices.is_empty() {
             return Ok(HealingResult::NoHealingNeeded);
+        }
+
+        if corrupted_indices.len() > self.max_repair_attempts {
+            return Ok(HealingResult::Failed(format!(
+                "Exceeded max repair attempts: {} requested, limit {}",
+                corrupted_indices.len(),
+                self.max_repair_attempts
+            )));
         }
 
         // Check if we can recover
@@ -69,7 +76,7 @@ impl SelfHealing {
                 
                 Ok(HealingResult::Healed {
                     repaired_blocks: corrupted_indices.len(),
-                    attempts: 1,
+                    attempts: corrupted_indices.len(),
                 })
             }
             Err(e) => Ok(HealingResult::Failed(format!("Repair failed: {}", e))),

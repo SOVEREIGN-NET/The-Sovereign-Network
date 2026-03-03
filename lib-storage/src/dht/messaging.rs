@@ -185,7 +185,7 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
-    /// - Caller should sign message before sending (Issue #676)
+    /// - Signature is applied by the network layer before transport
     fn create_pong_response(&mut self, ping: &DhtMessage) -> Result<DhtMessage> {
         Ok(DhtMessage {
             message_id: generate_response_id(&ping.message_id),
@@ -199,7 +199,7 @@ impl DhtMessaging {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
             sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
+            signature: None, // Signed by network.send_message() before transport
         })
     }
 
@@ -208,7 +208,7 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
-    /// - Caller should sign message before sending (Issue #676)
+    /// - Signature is applied by the network layer before transport
     fn create_find_node_response(&mut self, find_node: &DhtMessage) -> Result<DhtMessage> {
         // In a implementation, this would query the routing table
         // For now, return empty node list
@@ -224,7 +224,7 @@ impl DhtMessaging {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
             sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
+            signature: None, // Signed by network.send_message() before transport
         })
     }
 
@@ -233,7 +233,7 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
-    /// - Caller should sign message before sending (Issue #676)
+    /// - Signature is applied by the network layer before transport
     fn create_find_value_response(&mut self, find_value: &DhtMessage) -> Result<DhtMessage> {
         // In a implementation, this would check local storage
         Ok(DhtMessage {
@@ -248,7 +248,7 @@ impl DhtMessaging {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
             sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
+            signature: None, // Signed by network.send_message() before transport
         })
     }
 
@@ -257,7 +257,7 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
-    /// - Caller should sign message before sending (Issue #676)
+    /// - Signature is applied by the network layer before transport
     fn create_store_response(&mut self, store: &DhtMessage) -> Result<DhtMessage> {
         Ok(DhtMessage {
             message_id: generate_response_id(&store.message_id),
@@ -271,7 +271,7 @@ impl DhtMessaging {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
             sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
+            signature: None, // Signed by network.send_message() before transport
         })
     }
     

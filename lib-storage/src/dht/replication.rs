@@ -128,9 +128,8 @@ impl DhtReplication {
             return Err(anyhow!("Target node reputation too low: {}", target_node.reputation));
         }
 
-        // Create DHT store message for replication
-        // SECURITY: Includes nonce and sequence_number for replay protection
-        // Issue #676: Message should be signed by caller using MessageSigner
+        // Create a representative STORE message for local simulation/metrics.
+        // In the real network path, signing is handled by DhtNetwork::send_message().
         let _message = crate::types::dht_types::DhtMessage {
             message_id: hex::encode(&blake3::hash(&[key.as_bytes(), value, target_node.peer.node_id().as_bytes()].concat()).as_bytes()[..8]),
             message_type: crate::types::dht_types::DhtMessageType::Store,
@@ -152,7 +151,7 @@ impl DhtReplication {
                 nonce
             },
             sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
+            signature: None, // Set during real network send path
         };
 
         // Send replication message to target node

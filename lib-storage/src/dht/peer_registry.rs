@@ -553,7 +553,7 @@ pub fn new_shared_dht_registry_with_config(
 mod tests {
     use super::*;
     use lib_identity::{ZhtpIdentity, IdentityType};
-    use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
+    use crate::types::dht_types::build_peer_identity;
 
     fn create_test_node(device_name: &str, port: u16) -> DhtNode {
         let identity = ZhtpIdentity::new_unified(

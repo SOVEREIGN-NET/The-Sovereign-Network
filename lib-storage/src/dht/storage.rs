@@ -25,20 +25,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
-use serde::{Serialize, Deserialize};
 use tracing::{trace, debug, warn, info, error, instrument};
-
-/// Versioned container for persisted DHT storage
-#[derive(Serialize, Deserialize)]
-#[allow(dead_code)]
-struct PersistedDhtStorage {
-    /// Version for future migrations
-    version: u32,
-    /// Entries sorted by key for deterministic serialization
-    entries: Vec<(String, StorageEntry)>,
-    /// Contract index for fast discovery (sorted for deterministic serialization)
-    contract_index: Vec<(String, Vec<String>)>,
-}
 
 /// DHT storage manager with networking
 ///
@@ -113,37 +100,46 @@ impl DhtStorage<HashMapBackend> {
         }
     }
 
-    /// Create a new DHT storage manager with persistence enabled
-    /// **DEPRECATED in DB-010**: Use `new_persistent()` instead or just `new()` for in-memory
-    #[deprecated(note = "Use new() for in-memory or new_persistent() for persistent storage")]
+    /// Legacy compatibility constructor for callers that previously passed a persistence path.
+    ///
+    /// Migration path:
+    /// - use `new_persistent()` / `new_persistent_with_config()` for persistent storage
+    /// - use `new()` / `new_with_config()` for in-memory storage
+    ///
+    /// Note: `persist_path` is ignored in this compatibility wrapper.
     pub fn new_with_persistence(local_node_id: NodeId, max_storage_size: u64, persist_path: PathBuf) -> Self {
-        error!(
-            "DEPRECATED: new_with_persistence() no longer provides persistence. \
-             Path {:?} is ignored. Use new_persistent() for persistent storage or new() for in-memory.",
+        warn!(
+            "new_with_persistence() compatibility wrapper: path {:?} is ignored; \
+             use new_persistent() for persistence or new() for in-memory",
             persist_path
         );
         Self::new_with_config(local_node_id, max_storage_size, ZkVerificationConfig::default())
     }
 
-    /// Create a new DHT storage manager with persistence and custom ZK verification config
-    /// **DEPRECATED in DB-010**: Use `new_persistent()` instead
-    #[deprecated(note = "Use new() for in-memory or new_persistent() for persistent storage")]
+    /// Legacy compatibility constructor with custom ZK config.
+    ///
+    /// Migration path:
+    /// - use `new_persistent_with_config()` for persistent storage
+    /// - use `new_with_config()` for in-memory storage
+    ///
+    /// Note: `persist_path` is ignored in this compatibility wrapper.
     pub fn new_with_persistence_and_config(
         local_node_id: NodeId,
         max_storage_size: u64,
         persist_path: PathBuf,
         zk_config: ZkVerificationConfig,
     ) -> Self {
-        error!(
-            "DEPRECATED: new_with_persistence_and_config() no longer provides persistence. \
-             Path {:?} is ignored. Use new_persistent_with_config() for persistent storage.",
+        warn!(
+            "new_with_persistence_and_config() compatibility wrapper: path {:?} is ignored; \
+             use new_persistent_with_config() for persistence",
             persist_path
         );
         Self::new_with_config(local_node_id, max_storage_size, zk_config)
     }
 
-    /// Set the persistence path (DEPRECATED in DB-010 - no-op)
-    #[deprecated(note = "Persistence is now handled automatically by the backend")]
+    /// Legacy no-op for older code that expected runtime persistence path mutation.
+    ///
+    /// Persistence backend is selected at construction time by the `new_*` constructor used.
     pub fn set_persist_path(&mut self, _path: PathBuf) {
         // No-op - persistence is backend-specific
     }
@@ -348,28 +344,28 @@ impl<B: StorageBackend> DhtStorage<B> {
             .map_err(|e| anyhow!("Failed to deserialize entry: {}", e))
     }
 
-    /// Save storage state to disk (versioned, deterministic format)
-    /// **DEPRECATED in DB-010**: Persistence is now handled automatically by the storage backend
-    /// This method is kept for backward compatibility but is a no-op.
-    #[deprecated(note = "Persistence is handled automatically by backend. Use new_persistent() for persistent storage.")]
+    /// Legacy compatibility no-op for callers that explicitly triggered persistence.
+    ///
+    /// Persistence is now handled automatically by the selected backend.
     pub async fn save_to_file(&self, _path: &Path) -> Result<()> {
-        warn!("save_to_file() is deprecated - persistence handled by storage backend");
-        Ok(())
+        // Keep call shape for compatibility with older callers.
+        self.maybe_persist().await
     }
 
-    /// Load storage state from disk
-    /// **DEPRECATED in DB-010**: Use `new_persistent()` constructor instead to automatically load from backend
-    /// This method is no longer supported for the generic storage backend.
-    #[deprecated(note = "Use new_persistent() constructor to automatically load from persistent backend")]
+    /// Legacy compatibility API kept to provide a clear migration error.
+    ///
+    /// Use `new_persistent()` / `new_persistent_with_config()` constructors, which
+    /// load from persistent backends during initialization.
     pub async fn load_from_file(&mut self, _path: &Path) -> Result<()> {
-        warn!("load_from_file() is deprecated - use new_persistent() constructor instead");
-        Err(anyhow!("load_from_file() is deprecated - use new_persistent() constructor"))
+        Err(anyhow!(
+            "load_from_file() is no longer supported; use new_persistent() constructor"
+        ))
     }
 
-    /// Persist storage if needed (no-op in DB-010)
-    /// **DEPRECATED**: Persistence is now handled automatically by the storage backend
+    /// Compatibility shim for legacy explicit-save call sites.
+    ///
+    /// No-op: persistence is handled automatically by the storage backend.
     async fn maybe_persist(&self) -> Result<()> {
-        // No-op: persistence is handled automatically by backend on each mutation
         Ok(())
     }
 
@@ -464,31 +460,9 @@ impl<B: StorageBackend> DhtStorage<B> {
         self.contract_index.retain(|_tag, ids| !ids.is_empty());
     }
 
-    /// Verify signature from a DHT node (Acceptance Criteria: PublicKey-based verification)
+    /// Set the ZK verification configuration.
     ///
-    /// **MIGRATION (Ticket #145):** Uses `node.peer.public_key()` for signature verification
-    ///
-    /// # Security
-    ///
-    /// - Uses CRYSTALS-Dilithium post-quantum signatures
-    /// - Returns `Ok(false)` for invalid signatures (not error)
-    /// - Returns `Err(...)` for cryptographic/format errors
-    ///
-    /// # Performance (MED-8)
-    ///
-    /// **TODO:** Add timeout wrapper to prevent DoS via slow verification.
-    /// Dilithium2 verification is typically <1ms, but malformed inputs could
-    /// cause longer processing. Consider:
-    ///
-    /// ```rust,ignore
-    /// tokio::time::timeout(
-    ///     Duration::from_millis(100),
-    ///     async { lib_crypto::verification::verify_signature(...) }
-    /// ).await
-    /// ```
-    /// Set the ZK verification configuration
-    ///
-    /// [DB-002] Allows runtime configuration of verification timeouts
+    /// [DB-002] Allows runtime configuration of verification timeouts.
     pub fn set_zk_verification_config(&mut self, config: ZkVerificationConfig) {
         self.zk_verification_config = config;
     }
@@ -2615,11 +2589,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sequence_tracking_replay_rejection() {
-        use crate::dht::network::DhtNetwork;
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
+        use crate::types::dht_types::build_peer_identity;
         use lib_identity::{ZhtpIdentity, IdentityType};
-        use std::net::SocketAddr;
 
         // Create a storage instance
         let node_id = NodeId::from_bytes([1u8; 32]);
@@ -2684,7 +2656,7 @@ mod tests {
     #[tokio::test]
     async fn test_sequence_tracking_increments_replay_counter() {
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
+        use crate::types::dht_types::build_peer_identity;
         use lib_identity::{ZhtpIdentity, IdentityType};
 
         // Create a storage instance
@@ -2751,7 +2723,7 @@ mod tests {
     #[tokio::test]
     async fn test_sequence_wraparound_in_storage() {
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
+        use crate::types::dht_types::build_peer_identity;
         use lib_identity::{ZhtpIdentity, IdentityType};
 
         // Create a storage instance
@@ -2944,6 +2916,58 @@ mod tests {
 
         // Average should be (100 + 200 + 300) / 3 = 200
         assert!((metrics.avg_verification_time_ms - 200.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_legacy_persistence_compat_constructors_use_in_memory_mode() {
+        let node_id = NodeId::from_bytes([9u8; 32]);
+        let compat = DhtStorage::new_with_persistence(
+            node_id.clone(),
+            1024 * 1024,
+            PathBuf::from("/tmp/ignored-path"),
+        );
+        assert_eq!(compat.local_node_id, node_id);
+        assert_eq!(compat.storage_cache.len(), 0);
+
+        let zk_cfg = ZkVerificationConfig {
+            timeout: Duration::from_secs(7),
+            enable_metrics: false,
+        };
+        let compat_with_cfg = DhtStorage::new_with_persistence_and_config(
+            NodeId::from_bytes([10u8; 32]),
+            1024 * 1024,
+            PathBuf::from("/tmp/ignored-path-2"),
+            zk_cfg.clone(),
+        );
+        assert_eq!(compat_with_cfg.zk_verification_config.timeout, zk_cfg.timeout);
+        assert_eq!(
+            compat_with_cfg.zk_verification_config.enable_metrics,
+            zk_cfg.enable_metrics
+        );
+    }
+
+    #[tokio::test]
+    async fn test_legacy_save_and_load_compat_methods() {
+        let node_id = NodeId::from_bytes([11u8; 32]);
+        let mut storage = DhtStorage::new(node_id, 1024 * 1024);
+
+        storage
+            .save_to_file(Path::new("/tmp/ignored-storage-path"))
+            .await
+            .expect("legacy save compatibility method should succeed");
+
+        let err = storage
+            .load_from_file(Path::new("/tmp/ignored-storage-path"))
+            .await
+            .expect_err("legacy load compatibility method should return migration error");
+        assert!(
+            err.to_string().contains("new_persistent() constructor"),
+            "unexpected migration error: {}",
+            err
+        );
+
+        // Compatibility no-op should not alter state or panic.
+        storage.set_persist_path(PathBuf::from("/tmp/ignored-storage-path-2"));
     }
 
     #[tokio::test]

@@ -9,7 +9,6 @@ use crate::types::economic_types::{EconomicManagerConfig, PaymentSchedule, Dispu
                                    QualityRequirements, BudgetConstraints, EconomicStorageRequest, 
                                    PaymentPreferences, EscrowPreferences}; // Explicit import
 use crate::dht::storage::DhtStorage;
-use crate::economic::manager::EconomicStorageManager;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -22,9 +21,6 @@ use log::info;
 pub struct ContentManager {
     /// DHT storage backend
     dht_storage: DhtStorage,
-    /// Economic manager for contracts
-    #[allow(dead_code)]
-    economic_manager: EconomicStorageManager,
     /// Content metadata
     content_metadata: HashMap<ContentHash, ContentMetadata>,
     /// Access control lists
@@ -154,7 +150,7 @@ impl ContentManager {
     /// Create new content manager with encryption capabilities
     pub fn new(
         dht_storage: DhtStorage,
-        economic_config: EconomicManagerConfig,
+        _economic_config: EconomicManagerConfig,
     ) -> Result<Self> {
         // Generate master keypair for this storage node
         let master_keypair = KeyPair::generate()
@@ -167,7 +163,6 @@ impl ContentManager {
         
         Ok(Self {
             dht_storage,
-            economic_manager: EconomicStorageManager::new(economic_config),
             content_metadata: HashMap::new(),
             access_control: HashMap::new(),
             content_versions: HashMap::new(),
@@ -182,13 +177,12 @@ impl ContentManager {
     /// Create new content manager with existing keypair
     pub fn new_with_keypair(
         dht_storage: DhtStorage,
-        economic_config: EconomicManagerConfig,
+        _economic_config: EconomicManagerConfig,
         master_keypair: KeyPair,
         key_derivation_salt: [u8; 32],
     ) -> Self {
         Self {
             dht_storage,
-            economic_manager: EconomicStorageManager::new(economic_config),
             content_metadata: HashMap::new(),
             access_control: HashMap::new(),
             content_versions: HashMap::new(),

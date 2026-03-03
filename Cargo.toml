@@ -71,3 +71,7 @@ inherits = "dev"
 opt-level = 1           # Minimal optimization
 incremental = true
 debug = true
+
+[profile.release.package.explorer]
+# Preserve explorer's size-optimized release behavior at workspace root.
+opt-level = "s"
