@@ -259,10 +259,10 @@ impl OracleConfig {
                 message: "must be > 0 (0 would reject all multi-source prices)".to_string(),
             });
         }
-        if self.max_deviation_bps > 2_000 {
+        if self.max_deviation_bps > 10_000 {
             return Err(OracleConfigError::InvalidField {
                 field: "max_deviation_bps".to_string(),
-                message: "must be <= 2000 (20%) — higher values defeat price aggregation".to_string(),
+                message: "must be <= 10000 (100%) — higher values defeat price aggregation".to_string(),
             });
         }
 
