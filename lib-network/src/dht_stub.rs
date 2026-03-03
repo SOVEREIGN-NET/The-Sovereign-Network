@@ -243,7 +243,7 @@ impl ZkDHTIntegration {
 
         // Create a peer entry
         let peer_info = DhtPeerInfo {
-            node_id,
+            node_id: node_id,
             address: Some(addr),
             capabilities: vec!["dht".to_string()],
             last_seen: std::time::SystemTime::now()
