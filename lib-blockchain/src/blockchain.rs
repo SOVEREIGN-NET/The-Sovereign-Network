@@ -6976,7 +6976,12 @@ impl Blockchain {
         next_config.max_price_staleness_epochs = update_data.max_price_staleness_epochs;
 
         self.oracle_state
-            .schedule_config_update(next_config, update_data.activate_at_epoch)
+            .schedule_config_update(
+                next_config,
+                update_data.activate_at_epoch,
+                current_epoch,
+                proposal_id,
+            )
             .map_err(|e| anyhow::anyhow!("ParameterValidationError: Failed to schedule config update: {}", e))?;
 
         self.executed_dao_proposals.insert(proposal_id);
