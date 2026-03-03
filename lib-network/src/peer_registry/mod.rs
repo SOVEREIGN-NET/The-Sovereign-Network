@@ -627,6 +627,14 @@ impl PeerRegistry {
         self.observers.get_stats().await
     }
 
+    /// Get the number of peers in the registry
+    ///
+    /// # Returns
+    /// The total number of registered peers
+    pub fn count(&self) -> usize {
+        self.peers.len()
+    }
+
     /// Validate DID format before indexing
     ///
     /// # Security
