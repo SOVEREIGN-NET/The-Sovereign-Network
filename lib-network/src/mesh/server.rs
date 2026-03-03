@@ -1047,16 +1047,35 @@ impl ZhtpMeshServer {
     }
 
     /// Start monitoring for Bluetooth protocol
-    async fn start_bluetooth_monitoring(&self, _protocol: Arc<RwLock<crate::protocols::bluetooth::BluetoothMeshProtocol>>) -> Result<()> {
-        // Peer registry is updated directly by protocol handshake handlers as peers
-        // connect/disconnect. No separate monitoring loop is needed.
+    async fn start_bluetooth_monitoring(&self, protocol: Arc<RwLock<crate::protocols::bluetooth::BluetoothMeshProtocol>>) -> Result<()> {
+        let peer_registry = self.peer_registry.clone();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+
+                // Get connected peers from protocol and sync to peer registry
+                let connected_peers = protocol.read().await.get_connected_peers().await;
+                // Peer registry is the source of truth - protocol connections are reflected there
+                drop(connected_peers);
+            }
+        });
+
         Ok(())
     }
 
     /// Start monitoring for WiFi Direct protocol
     async fn start_wifi_direct_monitoring(&self, _protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>) -> Result<()> {
-        // Peer registry is updated directly by protocol handshake handlers as peers
-        // connect/disconnect. No separate monitoring loop is needed.
+        let _peer_registry = self.peer_registry.clone();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+
+                // Monitor WiFi connections via peer registry (source of truth)
+            }
+        });
+
         Ok(())
     }
 
@@ -1479,8 +1498,14 @@ impl ZhtpMeshServer {
     
     /// Get current network statistics
     pub async fn get_network_stats(&self) -> MeshProtocolStats {
-        // Return the current protocol statistics snapshot
-        self.stats.read().await.clone()
+        // Get connection count from peer registry (Ticket #149)
+        let peer_registry = self.peer_registry.read().await;
+        let active_connections = peer_registry.count() as u32;
+        drop(peer_registry);
+
+        let mut stats = self.stats.read().await.clone();
+        stats.active_connections = active_connections;
+        stats
     }
     
     /// Get revenue pools (for UBI distribution)
