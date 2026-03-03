@@ -50,7 +50,7 @@ use tokio::sync::RwLock;
 
 use lib_network::protocols::quic_mesh::{QuicMeshProtocol, PqcQuicConnection, PeerConnection};
 use lib_network::protocols::quic_handshake::{self};
-use lib_network::handshake::{HandshakeContext, NonceCache, ClientHello};
+use lib_network::handshake::{HandshakeContext, ClientHello};
 use lib_network::messaging::message_handler::MeshMessageHandler;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
 use lib_crypto::PublicKey;

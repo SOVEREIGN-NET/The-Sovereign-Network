@@ -11,7 +11,7 @@ use crate::argument_parsing::{TokenArgs, TokenAction, ZhtpCli, format_output};
 use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
-use lib_blockchain::{ContractCall, CallPermissions, ContractTransactionBuilder, Transaction, TransactionOutput, Hash};
+use lib_blockchain::{ContractCall, ContractTransactionBuilder, Transaction, TransactionOutput, Hash};
 use lib_blockchain::transaction::{TokenCreationPayloadV1, TokenMintData, TokenTransferData};
 use lib_blockchain::types::TransactionType;
 use lib_network::client::ZhtpClient;

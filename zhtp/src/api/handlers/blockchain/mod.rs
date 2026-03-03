@@ -17,12 +17,11 @@ use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 // Blockchain imports
 use lib_blockchain::types::Hash;
 use lib_blockchain::Blockchain;
-use lib_blockchain::integration::crypto_integration::Signature as BlockchainSignature;
 use lib_blockchain::transaction::{
     ContractDeploymentPayloadV1, DecodedContractExecutionMemo, Transaction,
     CONTRACT_DEPLOYMENT_MEMO_PREFIX,
 };
-use lib_blockchain::types::{transaction_type::TransactionType, ContractCall, ContractType};
+use lib_blockchain::types::{transaction_type::TransactionType, ContractType};
 
 /// Clean blockchain handler implementation
 ///

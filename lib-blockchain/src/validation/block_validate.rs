@@ -10,7 +10,7 @@
 //! 3. **Semantic** - Merkle root, difficulty (not full consensus)
 
 use crate::block::Block;
-use crate::fees::{classify_transaction, FeeParamsV2, SigScheme};
+use crate::fees::{classify_transaction, FeeParamsV2};
 use crate::storage::{BlockchainStore, BlockHash};
 use crate::types::Hash;
 

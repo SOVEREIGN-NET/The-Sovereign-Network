@@ -83,7 +83,7 @@ impl MeshRouter {
                         };
                         
                         // Serialize message
-                        let serialized = match bincode::serialize(&message) {
+                        let _serialized = match bincode::serialize(&message) {
                             Ok(data) => data,
                             Err(e) => {
                                 error!("Failed to serialize NewBlock message: {}", e);
@@ -163,7 +163,7 @@ impl MeshRouter {
                         };
                         
                         // Serialize message
-                        let serialized = match bincode::serialize(&message) {
+                        let _serialized = match bincode::serialize(&message) {
                             Ok(data) => data,
                             Err(e) => {
                                 error!("Failed to serialize NewTransaction message: {}", e);

@@ -1752,7 +1752,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                     // Convert the owner_identity_hash to hex string to match against DID format
                     let owner_id_hex = hex::encode(owner_identity_hash.as_bytes());
 
-                    for (did, identity_data) in blockchain.get_all_identities() {
+                    for (did, _identity_data) in blockchain.get_all_identities() {
                         // Extract the hex part from the DID (format: did:zhtp:HEX)
                         let did_hex = if did.starts_with("did:zhtp:") {
                             &did[9..] // Skip "did:zhtp:" prefix

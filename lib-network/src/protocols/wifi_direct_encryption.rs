@@ -244,7 +244,7 @@ mod shell {
 
         fn reset_stats(&mut self) {
             match &mut self.state {
-                WiFiDirectEncryptionState::EndToEndAead(enc) => {
+                WiFiDirectEncryptionState::EndToEndAead(_enc) => {
                     // Note: would need mutable access, which the trait provides
                     // This is a limitation of the current trait design
                 }

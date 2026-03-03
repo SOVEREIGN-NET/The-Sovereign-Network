@@ -22,7 +22,7 @@
 //! of their inputs.
 
 use super::role_types::{
-    Assignment, AssignmentError, AssignmentId, AssignmentStatus, IdentityId,
+    Assignment, AssignmentId, AssignmentStatus, IdentityId,
     RoleDefinition, RoleId, RoleRegistryError,
 };
 use serde::{Deserialize, Serialize};

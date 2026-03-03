@@ -22,7 +22,7 @@ use super::governance_types::{
     ExecutionResult, GovernanceError, ProposalId, ProposalStatus,
     TreasuryAction, TreasuryParameter, TreasuryProposal,
 };
-use super::role_types::{IdentityId, RoleId};
+use super::role_types::IdentityId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

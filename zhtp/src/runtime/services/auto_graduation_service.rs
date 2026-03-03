@@ -24,7 +24,7 @@ use tokio::time::{Duration, interval};
 use tracing::{info, warn, debug, error};
 
 use lib_blockchain::Blockchain;
-use lib_blockchain::contracts::bonding_curve::{Phase, Threshold};
+use lib_blockchain::contracts::bonding_curve::Phase;
 use lib_blockchain::contracts::sov_swap::SovSwapPool;
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::types::dao::DAOType;
@@ -309,7 +309,7 @@ impl AutoGraduationService {
 
     /// Manually trigger graduation check (for testing or API)
     pub async fn manual_check(&self) -> Result<Vec<([u8; 32], String)>> {
-        let mut blockchain_guard = self.blockchain.write().await;
+        let blockchain_guard = self.blockchain.write().await;
         
         let current_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

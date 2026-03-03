@@ -10,7 +10,6 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant, interval};
 use tracing::{info, warn, error, debug};
 
-use crate::runtime::components::create_default_storage_config;
 
 /// Metrics collector for ZHTP components
 pub struct MetricsCollector {

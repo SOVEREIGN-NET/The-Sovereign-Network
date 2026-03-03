@@ -12,7 +12,6 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use base64::Engine as _;
 
 // ZHTP protocol imports
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};

@@ -1000,7 +1000,7 @@ async fn store_wallet_private_data_in_dht(
     let wallet_id_hex = hex::encode(&wallet_id.0);
 
     if let Ok(dht_client) = crate::runtime::shared_dht::get_dht_client().await {
-        let mut dht = dht_client.write().await;
+        let dht = dht_client.write().await;
 
         // Serialize and encrypt the private data
         let private_data_bytes = bincode::serialize(private_data)
@@ -1128,7 +1128,7 @@ async fn distribute_standalone_wallet_to_dht(
 
     // Also store in shared DHT for backwards compatibility
     if let Ok(dht_client) = crate::runtime::shared_dht::get_dht_client().await {
-        let mut dht = dht_client.write().await;
+        let dht = dht_client.write().await;
 
         let wallet_info_bytes = serde_json::to_vec(&wallet_info)?;
         let path = format!("/identity/{}/wallet/{}/",
@@ -1290,7 +1290,7 @@ async fn distribute_identity_to_dht(identity_result: &serde_json::Value) -> Resu
     info!("📡 Distributing identity to DHT network...");
     
     if let Ok(dht_client) = crate::runtime::shared_dht::get_dht_client().await {
-        let mut dht = dht_client.write().await;
+        let dht = dht_client.write().await;
         
         let identity_id = identity_result.get("identity_id")
             .ok_or_else(|| anyhow::anyhow!("Missing identity_id"))?;

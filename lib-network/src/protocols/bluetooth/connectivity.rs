@@ -1,6 +1,6 @@
 //! Connectivity helpers for Bluetooth mesh protocol.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tracing::info;
 
 use super::device::MeshPeer;

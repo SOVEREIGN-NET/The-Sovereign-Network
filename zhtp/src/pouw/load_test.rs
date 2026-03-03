@@ -7,10 +7,7 @@ use crate::pouw::types::{
     DEFAULT_CHALLENGE_TTL_SECS, DEFAULT_MAX_RECEIPTS, DEFAULT_MAX_BYTES_TOTAL,
     DEFAULT_MIN_BYTES_PER_RECEIPT, POUW_VERSION,
 };
-use crate::pouw::{ChallengeGenerator, ReceiptValidator};
 use rand::{Rng, thread_rng};
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::time::{Duration, Instant};
 
 /// Configuration for load test generation

@@ -248,7 +248,7 @@ pub async fn bridge_bluetooth_to_dht(message_data: &[u8], source_addr: &SocketAd
 
             // Get mutable access to DHT client for store operation
             if let Ok(dht_client) = crate::runtime::shared_dht::get_dht_client().await {
-                let mut dht = dht_client.write().await;
+                let dht = dht_client.write().await;
                 if let Err(e) = dht.store_content(domain, path, value.to_vec(), 86400).await {
                     warn!("Failed to store DHT content via Bluetooth bridge: {}", e);
                 } else {
@@ -266,7 +266,7 @@ pub async fn bridge_bluetooth_to_dht(message_data: &[u8], source_addr: &SocketAd
             
             // Retrieve from DHT network
             if let Ok(dht_client) = crate::runtime::shared_dht::get_dht_client().await {
-                let mut dht = dht_client.write().await;
+                let dht = dht_client.write().await;
                 match dht.fetch_content(key).await {
                     Ok(Some(data)) => {
                         info!("✅ Retrieved DHT data via Bluetooth bridge: {} bytes", data.len());

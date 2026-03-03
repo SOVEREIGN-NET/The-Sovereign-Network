@@ -2057,7 +2057,7 @@ impl UbiClaimData {
     ///
     /// This ensures each claimant can only claim once per month with a unique identifier.
     /// In production, this would hash the claimant identity + month to produce a deterministic claim ID.
-    pub fn compute_claim_id(claimant_identity: &str, month_index: u64) -> Hash {
+    pub fn compute_claim_id(_claimant_identity: &str, _month_index: u64) -> Hash {
         // Stub implementation for Week 7
         // Production: Use actual cryptographic hash function
         // For now, return default hash - will be overridden by actual claim_id in transaction

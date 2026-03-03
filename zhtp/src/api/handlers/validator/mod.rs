@@ -260,7 +260,7 @@ impl ValidatorHandler {
                 .cloned()
                 .unwrap_or_else(|| existing_validator.network_address.clone()),
             commission_rate: request.commission_rate
-                .map(|rate| (rate.min(100) as u8))
+                .map(|rate| rate.min(100) as u8 )
                 .unwrap_or(existing_validator.commission_rate),
             status: existing_validator.status.clone(),
             registered_at: existing_validator.registered_at,

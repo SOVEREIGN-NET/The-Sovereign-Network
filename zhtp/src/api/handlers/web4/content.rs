@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, error};
 use anyhow::anyhow;
 use base64::{Engine as _, engine::general_purpose};
-use std::collections::HashMap;
 
 use super::Web4Handler;
 
@@ -153,7 +152,7 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Failed to get DHT client: {}", e))?;
 
         // Store content in DHT
-        let mut dht = dht_client.write().await;
+        let dht = dht_client.write().await;
         let _dht_result = dht.store_content(&api_request.domain, &api_request.path, content.clone(), 86400).await
             .map_err(|e| anyhow!("Failed to store content in DHT: {}", e))?;
         drop(dht); // Release DHT lock
@@ -365,7 +364,7 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Failed to get DHT client: {}", e))?;
 
         // Update content in DHT (same as store)
-        let mut dht = dht_client.write().await;
+        let dht = dht_client.write().await;
         let _dht_result = dht.store_content(domain, &content_path, content.clone(), 86400).await
             .map_err(|e| anyhow!("Failed to update content in DHT: {}", e))?;
         drop(dht); // Release DHT lock

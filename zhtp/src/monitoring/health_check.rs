@@ -8,10 +8,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tokio::sync::RwLock;
 use tokio::time::{Duration, interval};
-use tracing::{info, warn, error, debug};
+use tracing::{info, error, debug};
 
 use super::alerting::{Alert, AlertLevel, AlertManager};
-use crate::runtime::components::create_default_storage_config;
 
 /// storage stats from lib-storage
 struct StorageStats {

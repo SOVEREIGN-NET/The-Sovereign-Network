@@ -5,7 +5,6 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 use uuid::Uuid;
 use tracing::{info, warn, error, debug};
-use serde_json;
 
 use lib_crypto::{PublicKey, Signature};
 use crate::mesh::MeshProtocolStats;
@@ -1048,7 +1047,7 @@ impl ZhtpMeshServer {
 
     /// Start monitoring for Bluetooth protocol
     async fn start_bluetooth_monitoring(&self, protocol: Arc<RwLock<crate::protocols::bluetooth::BluetoothMeshProtocol>>) -> Result<()> {
-        let peer_registry = self.peer_registry.clone();
+        let _peer_registry = self.peer_registry.clone();
 
         tokio::spawn(async move {
             loop {

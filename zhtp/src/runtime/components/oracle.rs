@@ -244,7 +244,7 @@ impl OracleComponent {
 
             // Get block timestamp for epoch derivation (Oracle Spec v1 §4.1)
             // Wall clock MUST NOT be used to determine epoch_id.
-            let (block_timestamp, current_epoch) = {
+            let (_block_timestamp, current_epoch) = {
                 let bc = blockchain.read().await;
                 let ts = bc.last_committed_timestamp();
                 (ts, bc.oracle_state.epoch_id(ts))
@@ -297,7 +297,7 @@ impl OracleComponent {
                     Self::gossip_attestation(&attestation).await;
 
                     // Process locally (our own vote counts).
-                    let payload = match bincode::serialize(&attestation) {
+                    let _payload = match bincode::serialize(&attestation) {
                         Ok(b) => b,
                         Err(e) => {
                             warn!("Oracle: failed to serialize own attestation: {}", e);

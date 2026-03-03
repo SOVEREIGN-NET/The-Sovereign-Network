@@ -36,7 +36,7 @@
 //! - New owner must explicitly revoke to change delegation
 
 use super::types::{
-    hash_name, normalize_name, DelegateTarget, GovernanceDelegation, GovernancePointer,
+    hash_name, normalize_name, GovernanceDelegation, GovernancePointer,
     GovernanceResolution, GovernanceStatus, NameHash, NameRecord, NameStatus, ResolutionResult,
     Timestamp,
 };

@@ -78,7 +78,7 @@ impl TreasuryRegistry {
     pub fn init(
         authorized_admin: PublicKey,
         authorized_fee_collector: PublicKey,
-        mut sector_treasury_map: HashMap<String, PublicKey>,
+        sector_treasury_map: HashMap<String, PublicKey>,
     ) -> Result<Self, String> {
         // Validate admin is non-zero
         if authorized_admin.as_bytes().iter().all(|b| *b == 0) {

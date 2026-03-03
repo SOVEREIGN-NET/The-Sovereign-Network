@@ -55,7 +55,7 @@ impl ActionQueue {
             Ok(()) => {
                 debug!("✓ Action enqueued");
             }
-            Err(e) => {
+            Err(_e) => {
                 error!("⚠️ Action queue full or closed - dropping action");
                 // Remove from dedup set since we couldn't queue it
                 self.dedup_set.write().await.remove(&action_id);

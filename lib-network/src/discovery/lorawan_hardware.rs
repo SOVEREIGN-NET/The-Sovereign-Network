@@ -648,7 +648,7 @@ async fn test_macos_usb_lorawan(device_path: &str) -> Result<LoRaWANHardware> {
 
 // Hardware testing functions
 async fn test_spi_lorawan_hardware(hardware: &LoRaWANHardware) -> Result<bool> {
-    if let Some(device_path) = &hardware.device_path {
+    if let Some(_device_path) = &hardware.device_path {
         #[cfg(target_os = "linux")]
         {
             use std::fs::OpenOptions;

@@ -5,7 +5,6 @@
 //!
 //! For state mutations, use tx_apply.rs primitives.
 
-use std::sync::Arc;
 
 use crate::storage::{
     AccountState, Address, BlockHash, BlockchainStore, OutPoint, StorageResult, TokenId, Utxo,

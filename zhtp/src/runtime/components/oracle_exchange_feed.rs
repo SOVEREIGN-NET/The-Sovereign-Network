@@ -8,7 +8,6 @@
 //!
 //! All prices are returned in ORACLE_PRICE_SCALE (1e8) atomic units.
 
-use lib_blockchain::ORACLE_PRICE_SCALE;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};

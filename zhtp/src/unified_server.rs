@@ -486,7 +486,7 @@ impl ZhtpUnifiedServer {
 
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
         let zhtp_router_arc = Arc::new(zhtp_router);
-        let mut quic_handler = QuicHandler::new(
+        let quic_handler = QuicHandler::new(
             Arc::new(RwLock::new((*zhtp_router_arc).clone())),  // Native ZhtpRouter wrapped in RwLock
             quic_arc.clone(),                    // QuicMeshProtocol for transport
             identity_manager.clone(),            // Identity manager for auto-registration
@@ -1095,7 +1095,7 @@ impl ZhtpUnifiedServer {
         
         // Create callback for discovery coordinator (Phase 3 integration)
         let coordinator_for_callback = self.discovery_coordinator.clone();
-        let peer_discovered_callback = Arc::new(move |peer_addr: String, _peer_pubkey: lib_crypto::PublicKey| {
+        let _peer_discovered_callback = Arc::new(move |peer_addr: String, _peer_pubkey: lib_crypto::PublicKey| {
             let coordinator = coordinator_for_callback.clone();
             let addr = peer_addr.clone();
             

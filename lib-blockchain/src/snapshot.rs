@@ -22,11 +22,9 @@ use thiserror::Error;
 
 use crate::block::Block;
 use crate::storage::{
-    Address, BlockchainStore, BlockHash, OutPoint, SledStore, StorageError,
-    TokenId, TxHash, Utxo,
+    BlockchainStore, SledStore, StorageError,
 };
 use crate::types::hash::blake3_hash;
-use crate::types::Hash;
 
 use lib_types::BlockHeight;
 

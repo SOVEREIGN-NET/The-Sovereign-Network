@@ -402,7 +402,7 @@ impl WalletHandler {
         match wallet_summaries.iter().find(|w| w.wallet_type == wallet_type) {
             Some(summary) => {
                 // Get full wallet details from identity's wallet_manager
-                let (mut available_balance, mut staked_balance, mut pending_rewards, created_at) =
+                let (mut available_balance, staked_balance, pending_rewards, created_at) =
                     if let Some(wallet) = identity.wallet_manager.get_wallet(&summary.id) {
                         (
                             wallet.balance.saturating_sub(wallet.staked_balance),
