@@ -2093,11 +2093,15 @@ impl ZhtpMeshServer {
 
         info!("Resolved content hash: {:?}", content_hash);
 
-        // TODO: Implement actual content retrieval from DHT storage
-        // For now, return a placeholder response
-        let content = format!("<h1>Content from {}{}</h1><p>DHT integration pending</p>", domain, path);
+        // Fetch the actual content bytes from the DHT using the resolved hash
+        let content_bytes = {
+            let dht = self.dht.read().await;
+            dht.get_value(&content_hash)
+                .await
+                .map_err(|e| anyhow!("Failed to fetch Web4 content for {}{}: {}", domain, path, e))?
+        };
 
-        Ok(content.as_bytes().to_vec())
+        Ok(content_bytes)
     }
     
     /// Get DHT network status
