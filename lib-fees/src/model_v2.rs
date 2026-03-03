@@ -11,7 +11,7 @@
 //!
 //! # Fee Multiplier Rationale (FEES-7, FEES-8, FEES-9)
 //!
-//! ## Witness Caps (basis points, 10000 = 1.0x)
+//! ## Witness Caps (bytes)
 //! 
 //! Witness data is capped to prevent DoS attacks where transactions include
 //! excessive witness data. Caps are set based on typical use cases:
