@@ -11,3 +11,8 @@ lib-types = { path = "../lib-types" }
 
 [dev-dependencies]
 proptest = "1.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "fee_computation"
+harness = false
