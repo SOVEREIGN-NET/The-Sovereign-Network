@@ -90,6 +90,8 @@ pub use crate::validator_discovery_transport::MeshValidatorDiscoveryTransport;
 pub mod network_utils;
 pub use crate::network_utils::{get_local_ip, get_local_ip_with_config, LocalIpConfig};
 
+// Panic recovery utilities for network services (always available)
+pub mod panic_recovery;
 
 // Core modules (always available)
 pub mod types;

@@ -1045,11 +1045,12 @@ impl QuicMeshProtocol {
 
                                     conns.insert(peer_id_vec.clone(), peer_conn);
 
-                                    // Spawn UNI receive loop for this peer
+                                    // Spawn UNI receive loop for this peer with panic recovery
                                     let conns_for_loop = conns.clone();
                                     let handler_for_loop = handler.clone();
                                     let node_id_for_loop = peer_id_vec.clone();
                                     let node_id_hex = hex::encode(&peer_id_vec[..8.min(peer_id_vec.len())]);
+                                    let node_id_hex_panic = node_id_hex.clone();
 
                                     tokio::spawn(async move {
                                         loop {
@@ -1066,8 +1067,24 @@ impl QuicMeshProtocol {
                                                                             }
                                                                             if let Some(ref h) = handler_for_loop {
                                                                                 let peer_pk = PublicKey::new(node_id_for_loop.clone());
-                                                                                if let Err(e) = h.read().await.handle_mesh_message(message, peer_pk).await {
-                                                                                    error!("Error handling message: {}", e);
+                                                                                let handler_clone = Arc::clone(h);
+                                                                                // Wrap message handling with panic recovery
+                                                                                match crate::panic_recovery::catch_unwind_handler(
+                                                                                    "quic_message_handler",
+                                                                                    async move {
+                                                                                        handler_clone.read().await.handle_mesh_message(message, peer_pk).await
+                                                                                    },
+                                                                                    |panic_msg| {
+                                                                                        error!("QUIC message handler for {} panicked: {}", node_id_hex_panic, panic_msg);
+                                                                                    }
+                                                                                ).await {
+                                                                                    crate::panic_recovery::PanicCatchResult::Success(Ok(())) => {}
+                                                                                    crate::panic_recovery::PanicCatchResult::Success(Err(e)) => {
+                                                                                        error!("Error handling message: {}", e);
+                                                                                    }
+                                                                                    crate::panic_recovery::PanicCatchResult::Panicked(_) => {
+                                                                                        // Panic already logged
+                                                                                    }
                                                                                 }
                                                                             }
                                                                         }

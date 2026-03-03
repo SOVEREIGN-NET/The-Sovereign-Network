@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
+use tracing::{info, warn, debug, error};
 use serde::{Serialize, Deserialize};
 
 use lib_crypto::PublicKey;
@@ -2501,11 +2501,28 @@ impl BluetoothClassicProtocol {
                         let stream_arc = Arc::new(RwLock::new(stream));
                         streams.write().await.insert(peer_addr.clone(), stream_arc.clone());
                         
-                        // Spawn message handler for this connection
+                        // Spawn message handler for this connection with panic recovery
                         let handler_clone = self_clone.clone();
+                        let peer_addr_clone = peer_addr.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = handler_clone.handle_incoming_messages(stream_arc).await {
-                                warn!("Message handler error for {}: {}", peer_addr, e);
+                            match crate::panic_recovery::catch_unwind_handler(
+                                "bluetooth_message_handler",
+                                async move {
+                                    handler_clone.handle_incoming_messages(stream_arc).await
+                                },
+                                move |panic_msg| {
+                                    error!("Bluetooth message handler for {} panicked: {}", peer_addr_clone, panic_msg);
+                                }
+                            ).await {
+                                crate::panic_recovery::PanicCatchResult::Success(Ok(())) => {
+                                    debug!("Bluetooth message handler for {} completed normally", peer_addr);
+                                }
+                                crate::panic_recovery::PanicCatchResult::Success(Err(e)) => {
+                                    warn!("Bluetooth message handler for {} error: {}", peer_addr, e);
+                                }
+                                crate::panic_recovery::PanicCatchResult::Panicked(_) => {
+                                    // Panic already logged by catch_unwind_handler
+                                }
                             }
                         });
                     }
