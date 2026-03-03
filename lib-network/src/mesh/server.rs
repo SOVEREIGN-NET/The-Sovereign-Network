@@ -1498,14 +1498,8 @@ impl ZhtpMeshServer {
     
     /// Get current network statistics
     pub async fn get_network_stats(&self) -> MeshProtocolStats {
-        // Get connection count from peer registry (Ticket #149)
-        let peer_registry = self.peer_registry.read().await;
-        let active_connections = peer_registry.count() as u32;
-        drop(peer_registry);
-
-        let mut stats = self.stats.read().await.clone();
-        stats.active_connections = active_connections;
-        stats
+        // Return the current protocol statistics snapshot
+        self.stats.read().await.clone()
     }
     
     /// Get revenue pools (for UBI distribution)
