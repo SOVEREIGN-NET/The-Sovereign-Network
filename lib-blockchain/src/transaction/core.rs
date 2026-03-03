@@ -5,7 +5,7 @@
 use crate::integration::crypto_integration::{PublicKey, Signature};
 use crate::integration::zk_integration::ZkTransactionProof;
 use crate::types::{transaction_type::TransactionType, Hash};
-use crate::transaction::oracle_governance::{OracleAttestationData, OracleCommitteeUpdateData, OracleConfigUpdateData};
+use crate::transaction::oracle_governance::{CancelOracleUpdateData, OracleAttestationData, OracleCommitteeUpdateData, OracleConfigUpdateData};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Zero-knowledge transaction with identity support
@@ -77,6 +77,9 @@ pub struct Transaction {
     /// Oracle attestation data (ORACLE-9)
     /// Required for TransactionType::OracleAttestation
     pub oracle_attestation_data: Option<OracleAttestationData>,
+    /// Oracle cancel update data (ORACLE-11)
+    /// Required for TransactionType::CancelOracleUpdate
+    pub cancel_oracle_update_data: Option<crate::transaction::oracle_governance::CancelOracleUpdateData>,
 }
 
 /// Version constants for the `Transaction` wire format.
@@ -87,24 +90,28 @@ pub const TX_VERSION_V2: u32 = 2; // +token_mint_data → 19 fields
 pub const TX_VERSION_V3: u32 = 3; // +bonding_curve_*_data → 23 fields
 pub const TX_VERSION_V4: u32 = 4; // +oracle_*_data → 25 fields
 pub const TX_VERSION_V5: u32 = 5; // +oracle_attestation_data → 26 fields
+pub const TX_VERSION_V6: u32 = 6; // +cancel_oracle_update_data → 27 fields
 
 /// V1 has 18 fields (no token_mint_data). V2 has 19 (token_mint_data between
 /// token_transfer_data and governance_config_data). V3 adds bonding curve data.
-/// V4 adds oracle governance data. V5 adds oracle attestation data.
+/// V4 adds oracle governance data. V5 adds oracle attestation data. V6 adds cancel oracle update data.
 /// Serialization writes the field count matching the version so old blocks stay byte-identical.
-/// Deserialization requests V5 slots (the max); for older versions we read
+/// Deserialization requests V6 slots (the max); for older versions we read
 /// only as many fields as the version declares.
 const TX_FIELD_COUNT_V1: usize = 18;
 const TX_FIELD_COUNT_V2: usize = 19;
 const TX_FIELD_COUNT_V3: usize = 23; // Added bonding curve data fields
 const TX_FIELD_COUNT_V4: usize = 25; // Added oracle governance data fields
 const TX_FIELD_COUNT_V5: usize = 26; // Added oracle attestation data
+const TX_FIELD_COUNT_V6: usize = 27; // Added cancel oracle update data
 
 impl Serialize for Transaction {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeTuple;
 
-        let field_count = if self.version >= TX_VERSION_V5 {
+        let field_count = if self.version >= TX_VERSION_V6 {
+            TX_FIELD_COUNT_V6
+        } else if self.version >= TX_VERSION_V5 {
             TX_FIELD_COUNT_V5
         } else if self.version >= TX_VERSION_V4 {
             TX_FIELD_COUNT_V4
@@ -150,6 +157,9 @@ impl Serialize for Transaction {
         }
         if self.version >= TX_VERSION_V5 {
             tup.serialize_element(&self.oracle_attestation_data)?;
+        }
+        if self.version >= TX_VERSION_V6 {
+            tup.serialize_element(&self.cancel_oracle_update_data)?;
         }
 
         tup.end()
@@ -235,6 +245,12 @@ impl<'de> Deserialize<'de> for Transaction {
                 } else {
                     None
                 };
+                // V6 added cancel oracle update data field
+                let cancel_oracle_update_data: Option<CancelOracleUpdateData> = if version >= TX_VERSION_V6 {
+                    next!("cancel_oracle_update_data")
+                } else {
+                    None
+                };
 
                 Ok(Transaction {
                     version,
@@ -263,13 +279,14 @@ impl<'de> Deserialize<'de> for Transaction {
                     oracle_committee_update_data,
                     oracle_config_update_data,
                     oracle_attestation_data,
+                    cancel_oracle_update_data,
                 })
             }
         }
 
-        // Request V5 field count (the maximum). For older versions the visitor reads
+        // Request V6 field count (the maximum). For older versions the visitor reads
         // fewer elements; leftover slots are never consumed.
-        deserializer.deserialize_tuple(TX_FIELD_COUNT_V5, TxVisitor)
+        deserializer.deserialize_tuple(TX_FIELD_COUNT_V6, TxVisitor)
     }
 }
 
@@ -836,6 +853,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -874,6 +892,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -914,6 +933,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -970,6 +990,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1008,6 +1029,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1063,6 +1085,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1110,6 +1133,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1156,6 +1180,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1197,6 +1222,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1235,6 +1261,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1275,6 +1302,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1315,6 +1343,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1355,6 +1384,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1395,6 +1425,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1435,6 +1466,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1487,6 +1519,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1546,6 +1579,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
 }
     }
 
@@ -1603,6 +1637,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -1698,6 +1733,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -1735,6 +1771,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -1772,6 +1809,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -1809,6 +1847,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -1846,6 +1885,7 @@ impl Transaction {
             oracle_committee_update_data: Some(oracle_committee_update_data),
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 
@@ -1883,6 +1923,7 @@ impl Transaction {
             oracle_committee_update_data: None,
             oracle_config_update_data: Some(oracle_config_update_data),
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         }
     }
 }

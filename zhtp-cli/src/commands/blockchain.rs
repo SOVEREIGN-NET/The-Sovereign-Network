@@ -162,6 +162,8 @@ fn build_signed_contract_deploy_tx(
             bonding_curve_graduate_data: None,
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
     };
     tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
     tx.signature = keypair

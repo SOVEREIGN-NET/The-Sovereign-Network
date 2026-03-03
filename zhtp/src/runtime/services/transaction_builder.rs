@@ -132,6 +132,7 @@ impl TransactionBuilder {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         })
     }
 
@@ -189,6 +190,7 @@ impl TransactionBuilder {
             oracle_committee_update_data: None,
             oracle_config_update_data: None,
             oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
         };
 
         // Create signing hash using the exact same method as blockchain validation
