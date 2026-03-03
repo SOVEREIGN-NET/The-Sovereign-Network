@@ -8,7 +8,7 @@ use tracing::{info, warn, error, debug};
 use serde_json;
 
 use lib_crypto::{PublicKey, Signature};
-use crate::mesh::{MeshConnection, MeshProtocolStats};
+use crate::mesh::MeshProtocolStats;
 use crate::protocols::NetworkProtocol;
 use crate::NodeId;
 
@@ -442,8 +442,6 @@ pub struct MeshNode {
     pub max_peers: usize,
     /// Bootstrap peers for initial discovery
     pub bootstrap_peers: Vec<String>,
-    /// Current mesh connections
-    pub active_connections: HashMap<PublicKey, MeshConnection>,
     /// Mesh discovery state
     pub discovery_active: bool,
     /// Hardware capabilities detected on this system
@@ -458,16 +456,15 @@ impl MeshNode {
             protocols: config.protocols,
             max_peers: config.max_peers,
             bootstrap_peers: config.bootstrap_peers,
-            active_connections: HashMap::new(),
             discovery_active: false,
             hardware_capabilities: None,
         })
     }
-    
+
     /// Create new pure mesh node with hardware detection
     pub async fn new_with_hardware_detection(config: NetworkConfig) -> Result<Self> {
         info!("Detecting available mesh networking hardware...");
-        
+
         let hardware_capabilities = match HardwareCapabilities::detect().await {
             Ok(caps) => {
                 info!("Hardware detection completed");
@@ -478,7 +475,7 @@ impl MeshNode {
                 None
             }
         };
-        
+
         // Filter protocols based on hardware availability
         let filtered_protocols = if let Some(ref caps) = hardware_capabilities {
             filter_protocols_by_hardware(&config.protocols, caps)
@@ -488,15 +485,14 @@ impl MeshNode {
             warn!("Hardware detection failed - using configured protocols without hardware validation");
             config.protocols.clone()
         };
-        
+
         info!(" Enabled protocols: {:?}", filtered_protocols);
-        
+
         Ok(MeshNode {
             node_id: config.node_id,
             protocols: filtered_protocols,
             max_peers: config.max_peers,
             bootstrap_peers: config.bootstrap_peers,
-            active_connections: HashMap::new(),
             discovery_active: false,
             hardware_capabilities,
         })
@@ -1051,36 +1047,16 @@ impl ZhtpMeshServer {
     }
 
     /// Start monitoring for Bluetooth protocol
-    /// TODO (Ticket #149): Update to use peer_registry
-    async fn start_bluetooth_monitoring(&self, protocol: Arc<RwLock<crate::protocols::bluetooth::BluetoothMeshProtocol>>) -> Result<()> {
-        let _peer_registry = self.peer_registry.clone();
-        
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                
-                let _connected_peers = protocol.read().await.get_connected_peers().await;
-                // Update connections map...
-                // This is a simplified monitoring loop
-            }
-        });
-        
+    async fn start_bluetooth_monitoring(&self, _protocol: Arc<RwLock<crate::protocols::bluetooth::BluetoothMeshProtocol>>) -> Result<()> {
+        // Peer registry is updated directly by protocol handshake handlers as peers
+        // connect/disconnect. No separate monitoring loop is needed.
         Ok(())
     }
 
     /// Start monitoring for WiFi Direct protocol
-    /// TODO (Ticket #149): Update to use peer_registry
     async fn start_wifi_direct_monitoring(&self, _protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>) -> Result<()> {
-        let _peer_registry = self.peer_registry.clone();
-        
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                
-                // Monitor WiFi connections
-            }
-        });
-        
+        // Peer registry is updated directly by protocol handshake handlers as peers
+        // connect/disconnect. No separate monitoring loop is needed.
         Ok(())
     }
 
@@ -1503,6 +1479,7 @@ impl ZhtpMeshServer {
     
     /// Get current network statistics
     pub async fn get_network_stats(&self) -> MeshProtocolStats {
+        // Return the current protocol statistics snapshot
         self.stats.read().await.clone()
     }
     
@@ -2090,25 +2067,13 @@ impl ZhtpMeshServer {
     /// Serve Web4 content via zkDHT
     pub async fn serve_web4_content(&self, domain: &str, path: &str) -> Result<Vec<u8>> {
         info!("Serving Web4 content: {}{}", domain, path);
-        
-        // Resolve content hash via DHT
-        let content_hash = self.dht.write().await
-            .resolve_content(domain, path).await?;
-        
-        info!("Resolved content hash: {:?}", content_hash);
-        
-        // Use native binary DHT protocol instead of JavaScript
-        let response = crate::dht::call_native_dht_client("loadPage", &serde_json::json!({
-            "url": format!("zhtp://{}{}", domain, path)
-        })).await?;
-        
-        // Extract content from response
-        let content = response.get("content")
-            .and_then(|c| c.get("html"))
-            .and_then(|h| h.as_str())
-            .unwrap_or("<h1>Content not found</h1>");
-        
-        Ok(content.as_bytes().to_vec())
+
+        // Resolve and fetch content bytes from DHT
+        let maybe_content = self.dht.read().await
+            .resolve_content(domain, path)
+            .await?;
+
+        maybe_content.ok_or_else(|| anyhow!("Web4 content not found for {}{}", domain, path))
     }
     
     /// Get DHT network status

@@ -631,7 +631,7 @@ impl DhtHandler {
         };
 
         let mut dht = client.write().await;
-        match dht.store_content(&store_request.domain, &store_request.path, store_request.content).await {
+        match dht.store_content(&store_request.domain, &store_request.path, store_request.content, 86400).await {
             Ok(content_hash) => {
                 let response = DhtStoreResponse {
                     content_hash: content_hash.clone(),
