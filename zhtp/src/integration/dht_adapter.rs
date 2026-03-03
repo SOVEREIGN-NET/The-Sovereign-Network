@@ -71,10 +71,10 @@ impl StorageBackend {
         }
     }
 
-    async fn remove(&mut self, key: &str) -> Result<bool> {
+    async fn clear_all(&mut self) -> Result<()> {
         match self {
-            StorageBackend::Persistent(s) => s.remove(key).await,
-            StorageBackend::Memory(s) => s.remove(key).await,
+            StorageBackend::Persistent(s) => s.clear_all().await,
+            StorageBackend::Memory(s) => s.clear_all().await,
         }
     }
 
@@ -82,13 +82,6 @@ impl StorageBackend {
         match self {
             StorageBackend::Persistent(s) => s.cleanup_expired().await,
             StorageBackend::Memory(s) => s.cleanup_expired().await,
-        }
-    }
-
-    fn list_keys(&self) -> Vec<String> {
-        match self {
-            StorageBackend::Persistent(s) => s.list_keys(),
-            StorageBackend::Memory(s) => s.list_keys(),
         }
     }
 
@@ -112,7 +105,7 @@ impl DhtIntegrationAdapter {
     pub fn new() -> Self {
         let node_id = [0u8; 32];
         let storage = StorageBackend::Memory(DhtStorage::new(
-            NodeId::from_bytes(node_id),
+            NodeId::default(),
             DEFAULT_MAX_STORAGE_BYTES,
         ));
 
@@ -125,17 +118,18 @@ impl DhtIntegrationAdapter {
     }
 
     pub async fn initialize(&mut self, identity: ZhtpIdentity) -> Result<()> {
-        self.local_node_id = *identity.node_id.as_bytes();
         let node_id = identity.node_id.clone();
+        self.local_node_id = *node_id.as_bytes();
         let persist_path = Self::default_persist_path();
 
         if let Some(parent) = persist_path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 warn!(
-                    "Failed to create DHT persistent storage directory {:?}: {}. Proceeding with persistent backend initialization and possible in-memory fallback.",
-                    parent,
-                    e
+                    "Unable to create DHT persistence dir {:?} ({}), falling back to in-memory backend",
+                    parent, e
                 );
+                self.storage = StorageBackend::Memory(DhtStorage::new(node_id, self.max_storage_bytes));
+                return Ok(());
             }
         }
 
@@ -210,11 +204,7 @@ impl DhtIntegrationAdapter {
     }
 
     pub async fn clear_cache(&mut self) -> Result<()> {
-        let keys = self.storage.list_keys();
-        for key in keys {
-            let _ = self.storage.remove(&key).await?;
-        }
-        Ok(())
+        self.storage.clear_all().await
     }
 
     pub async fn connect_to_peer(&mut self, peer_addr: &str) -> Result<()> {

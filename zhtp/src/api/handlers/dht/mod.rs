@@ -322,14 +322,17 @@ impl DhtHandler {
 
         info!(" Connecting to DHT peer: {}", connect_request.peer_address);
 
-        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> = self.dht_client.read().await;
-        let client: &Arc<RwLock<DhtIntegrationAdapter>> = match dht_client_guard.as_ref() {
-            Some(client) => client,
-            None => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::ServiceUnavailable,
-                    "DHT client not initialized".to_string(),
-                ));
+        let client = {
+            let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> =
+                self.dht_client.read().await;
+            match dht_client_guard.as_ref() {
+                Some(client) => Arc::clone(client),
+                None => {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::ServiceUnavailable,
+                        "DHT client not initialized".to_string(),
+                    ));
+                }
             }
         };
 
@@ -619,14 +622,17 @@ impl DhtHandler {
 
         info!(" Storing content for {}{}", store_request.domain, store_request.path);
 
-        let mut dht_client_guard: tokio::sync::RwLockWriteGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> = self.dht_client.write().await;
-        let client: &mut Arc<RwLock<DhtIntegrationAdapter>> = match dht_client_guard.as_mut() {
-            Some(client) => client,
-            None => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::ServiceUnavailable,
-                    "DHT client not initialized".to_string(),
-                ));
+        let client = {
+            let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> =
+                self.dht_client.read().await;
+            match dht_client_guard.as_ref() {
+                Some(client) => Arc::clone(client),
+                None => {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::ServiceUnavailable,
+                        "DHT client not initialized".to_string(),
+                    ));
+                }
             }
         };
 
