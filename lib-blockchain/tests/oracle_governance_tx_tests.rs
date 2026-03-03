@@ -228,7 +228,13 @@ fn schedule_config_update_for_test_via_governance() {
     new_config.max_source_age_secs = 120;
     new_config.max_deviation_bps = 1000;
 
-    let result = state.schedule_config_update(new_config, current_epoch + 1);
+    let source_proposal_id = Hash::default();
+    let result = state.schedule_config_update(
+        new_config,
+        current_epoch + 1,
+        current_epoch,
+        source_proposal_id,
+    );
     assert!(result.is_ok());
 
     // Config unchanged until activation
