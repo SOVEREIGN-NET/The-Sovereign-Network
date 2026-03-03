@@ -488,7 +488,7 @@ async fn catchup_sync_from_peer(
             drop(bc);
             continue;
         }
-        match bc.add_block_from_network(block).await {
+        match bc.apply_block_trusted_for_sync(block).await {
             Ok(()) => {
                 applied += 1;
                 info!("📦 Catch-up: applied block {}", height);
