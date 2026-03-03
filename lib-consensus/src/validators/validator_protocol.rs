@@ -266,12 +266,13 @@ pub struct ValidatorProtocolConfig {
     /// Allow Trust-On-First-Use (TOFU) registration of unknown validators.
     ///
     /// When `true`, messages from validators not yet in the discovery cache are
-    /// accepted if their self-contained signature is cryptographically valid.
-    /// The validator is then added to the discovery cache so subsequent messages
-    /// are verified against the registered key.
+    /// accepted on first contact and the public key provided in that initial
+    /// message is cached as-is, without performing an additional cryptographic
+    /// signature verification step at bootstrap time. Subsequent messages are
+    /// then verified against the key learned on first use.
     ///
-    /// This is safe for bootstrap/development networks where validators start
-    /// simultaneously and haven't yet exchanged formal announcements.  In
+    /// This is intended only for bootstrap/development networks where validators
+    /// start simultaneously and haven't yet exchanged formal announcements. In
     /// production (Mainnet) this MUST be `false` so that only validators whose
     /// keys are registered on-chain can participate in consensus.
     pub bootstrap_tofu: bool,
