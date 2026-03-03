@@ -80,6 +80,7 @@ fn cbe_graduation_blocked_with_stale_price() {
         sell_enabled: true,
         amm_pool_id: None,
         creator: PublicKey::new(vec![1u8; 32]),
+        creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
     };
@@ -130,6 +131,7 @@ fn cbe_graduation_proceeds_with_fresh_price() {
         sell_enabled: true,
         amm_pool_id: None,
         creator: PublicKey::new(vec![1u8; 32]),
+        creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
     };
