@@ -1451,8 +1451,9 @@ mod tests {
     /// so `get_identity_by_public_key(&[])` must find an entry with `public_key: vec![]`.
     fn add_identity(bc: &mut Blockchain) {
         use lib_blockchain::IdentityTransactionData;
+        let did = "did:zhtp:test".to_string();
         let identity = IdentityTransactionData {
-            did: "did:zhtp:test".to_string(),
+            did: did.clone(),
             display_name: "Test".to_string(),
             public_key: vec![], // must match creator.dilithium_pk (always empty)
             ownership_proof: vec![],
@@ -1464,8 +1465,8 @@ mod tests {
             controlled_nodes: vec![],
             owned_wallets: vec![],
         };
-        bc.identity_registry
-            .insert("test_identity".to_string(), identity);
+        // Key by DID, matching production identity_registry insertion convention.
+        bc.identity_registry.insert(did, identity);
     }
 
     /// Add a Primary wallet whose dilithium public key is `wallet_dilithium` and whose
