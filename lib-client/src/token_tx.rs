@@ -281,7 +281,6 @@ pub fn build_contract_transaction(
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
-        oracle_attestation_data: None,
         memo: memo.clone(),
         // ALL optional fields must be present (even if None)
         identity_data: None,
@@ -643,7 +642,6 @@ pub fn build_create_token_tx(
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         },
-        oracle_attestation_data: None,
         memo,
     );
 
