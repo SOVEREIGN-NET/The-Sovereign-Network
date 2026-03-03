@@ -1,7 +1,7 @@
 //! Core Bluetooth initialization helpers for macOS.
 
-use anyhow::Result;
 use std::sync::Arc;
+use anyhow::Result;
 use tracing::info;
 
 use super::BluetoothMeshProtocol;
