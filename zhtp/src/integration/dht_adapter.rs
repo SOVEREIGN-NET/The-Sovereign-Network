@@ -130,7 +130,13 @@ impl DhtIntegrationAdapter {
         let persist_path = Self::default_persist_path();
 
         if let Some(parent) = persist_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                warn!(
+                    "Failed to create DHT persistent storage directory {:?}: {}. Proceeding with persistent backend initialization and possible in-memory fallback.",
+                    parent,
+                    e
+                );
+            }
         }
 
         self.storage = match DhtStorage::<SledBackend>::new_persistent(
