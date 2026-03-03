@@ -1596,7 +1596,7 @@ impl BlockExecutor {
                 kyber_pk: vec![],
                 key_id: data.creator,
             },
-            creator_did,
+            creator_did: Some(creator_did),
             deployed_at_block: block_height,
             deployed_at_timestamp: block_timestamp,
         };
@@ -3470,6 +3470,7 @@ mod tests {
             threshold: Threshold::ReserveAmount(1_000_000),
             sell_enabled: false, amm_pool_id: None,
             creator: lib_crypto::PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: creator_key },
+            creator_did: None,
             deployed_at_block: 0, deployed_at_timestamp: 12345,
         };
 
@@ -3504,6 +3505,7 @@ mod tests {
             threshold: Threshold::ReserveAmount(1_000_000),
             sell_enabled: false, amm_pool_id: None,
             creator: lib_crypto::PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: key },
+            creator_did: None,
             deployed_at_block: block, deployed_at_timestamp: block * 1000,
         };
         tx_apply::apply_bonding_curve_deploy(

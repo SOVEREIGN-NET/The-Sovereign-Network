@@ -357,7 +357,7 @@ impl CurveHandler {
         let curve_type: CurveType = deploy_req.curve_type.into();
         let threshold: Threshold = deploy_req.threshold.into();
 
-        let token = BondingCurveToken::deploy(
+        let mut token = BondingCurveToken::deploy(
             token_id,
             deploy_req.name.clone(),
             deploy_req.symbol.clone(),
@@ -365,10 +365,10 @@ impl CurveHandler {
             threshold,
             deploy_req.sell_enabled,
             creator,
-            creator_did,
             self.get_current_block().await?,
             self.get_current_timestamp().await?,
         ).map_err(|e| anyhow::anyhow!("Deploy failed: {}", e))?;
+        token.creator_did = Some(creator_did);
 
         // Register in blockchain
         {
