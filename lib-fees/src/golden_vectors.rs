@@ -412,7 +412,7 @@ mod tests {
     }
 
     // =========================================================================
-    // GOLDEN VECTOR: Testing Params (Zero Minimum)
+    // GOLDEN VECTOR: Testing Params (Non-Zero Minimum)
     // =========================================================================
 
     /// Golden vector: Using for_testing() params (realistic values)
