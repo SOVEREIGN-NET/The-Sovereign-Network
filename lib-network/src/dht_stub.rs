@@ -443,6 +443,22 @@ impl DHTClient {
     }
 }
 
+/// Call the native DHT client to resolve content for a given domain and path.
+///
+/// This is a stub helper used by higher-level components (e.g. mesh/server) to
+/// access the DHT integration. It currently delegates to `DHTClient::resolve_content`.
+/// Future implementations can extend this to support additional request metadata.
+pub async fn call_native_dht_client(
+    client: &DHTClient,
+    domain: &str,
+    path: &str,
+) -> Result<Option<Vec<u8>>> {
+    warn!(
+        "call_native_dht_client invoked for domain='{}', path='{}'. This is a stub implementation.",
+        domain, path
+    );
+    client.resolve_content(domain, path).await
+}
 #[cfg(test)]
 mod tests {
     use super::*;
