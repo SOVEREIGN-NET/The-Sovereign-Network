@@ -118,7 +118,7 @@ impl ZkDHTIntegration {
     }
 
     pub async fn initialize(&mut self, identity: lib_identity::ZhtpIdentity) -> Result<()> {
-        self.local_node_id = identity.node_id.to_bytes().clone();
+        self.local_node_id = identity.node_id.as_bytes().clone();
         info!("DHT integration initialized with node ID: {:?}", &self.local_node_id[..8]);
         Ok(())
     }
@@ -394,7 +394,7 @@ pub struct DHTClient {
 
 impl DHTClient {
     pub async fn new(identity: lib_identity::ZhtpIdentity) -> Result<Self> {
-        let node_id = identity.node_id.to_bytes().clone();
+        let node_id = identity.node_id.as_bytes().clone();
         let mut integration = ZkDHTIntegration::with_node_id(node_id, 1024 * 1024 * 1024);
         integration.initialize(identity).await?;
         Ok(Self { inner: integration })
