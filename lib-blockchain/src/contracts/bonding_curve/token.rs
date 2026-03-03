@@ -430,6 +430,7 @@ mod tests {
             Threshold::ReserveAmount(100_000_000), // $1M
             true,
             test_pubkey(1),
+            String::new(),
             100,
             1_600_000_000,
         );
@@ -455,6 +456,7 @@ mod tests {
             Threshold::ReserveAmount(1_000_000_000),
             true,
             test_pubkey(1),
+            String::new(),
             100,
             1_600_000_000,
         )
@@ -492,6 +494,7 @@ mod tests {
             Threshold::ReserveAmount(100), // Very low threshold
             true,
             test_pubkey(1),
+            String::new(),
             100,
             1_600_000_000,
         )
@@ -522,6 +525,7 @@ mod tests {
             Threshold::ReserveAmount(1_000_000_000), // $10M
             true,
             test_pubkey(1),
+            String::new(),
             100,
             1_600_000_000,
         )
@@ -554,6 +558,7 @@ mod tests {
             Threshold::ReserveAmount(100),
             true,
             test_pubkey(1),
+            String::new(),
             100,
             1_600_000_000,
         )
@@ -584,6 +589,7 @@ mod tests {
             Threshold::ReserveAmount(1_000_000),
             true,
             test_pubkey(1),
+            String::new(),
             100,
             1_600_000_000,
         )
@@ -611,6 +617,7 @@ mod tests {
             Threshold::ReserveAmount(5_000_000_000), // $5,000 graduation threshold
             true, // Sell enabled
             test_pubkey(1),
+            String::new(),
             100,           // deployed_at_block
             1_700_000_000, // deployed_at_timestamp
         )
@@ -712,6 +719,7 @@ mod tests {
             Threshold::ReserveAmount(10_000_000_000), // High threshold
             true, // Sell ENABLED
             test_pubkey(1),
+            String::new(),
             100,
             1_600_000_000,
         )
@@ -758,6 +766,7 @@ mod tests {
             Threshold::ReserveAmount(10_000_000_000),
             false, // Sell DISABLED
             test_pubkey(1),
+            String::new(),
             100,
             1_600_000_000,
         )

@@ -84,9 +84,9 @@ fn cbe_graduation_blocked_with_stale_price() {
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
     };
-    
+
     blockchain.bonding_curve_registry.register(token).unwrap();
-    
+
     // Set a finalized price at epoch 0
     blockchain.oracle_state.try_finalize_price(FinalizedOraclePrice {
         epoch_id: 0,
@@ -106,7 +106,7 @@ fn cbe_graduation_blocked_with_stale_price() {
     
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("stale"), "Expected stale error, got: {}", err_msg);
+    assert!(err_msg.contains("no fresh finalized oracle price available"), "Expected stale error, got: {}", err_msg);
 }
 
 /// Test CBE graduation proceeds with fresh price.
@@ -135,9 +135,9 @@ fn cbe_graduation_proceeds_with_fresh_price() {
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
     };
-    
+
     blockchain.bonding_curve_registry.register(token).unwrap();
-    
+
     // Set finalized price at epoch 8
     blockchain.oracle_state.try_finalize_price(FinalizedOraclePrice {
         epoch_id: 8,

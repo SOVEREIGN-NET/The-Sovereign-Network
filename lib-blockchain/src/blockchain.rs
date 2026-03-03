@@ -4171,6 +4171,15 @@ impl Blockchain {
         Some(arr)
     }
 
+    /// Return the SOV balance for the given signer's primary wallet, or `None` if no primary
+    /// wallet is registered for that signer key_id.
+    pub fn sov_balance_for_signer(&self, signer_key_id: &[u8; 32]) -> Option<u64> {
+        let wallet_id = self.primary_wallet_for_signer(signer_key_id)?;
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let token = self.token_contracts.get(&sov_token_id)?;
+        Some(token.balance_of(&Self::wallet_key_for_sov(&wallet_id)))
+    }
+
     /// Find the Primary wallet_id for a signer key_id, if available.
     pub fn primary_wallet_for_signer(&self, signer_key_id: &[u8; 32]) -> Option<[u8; 32]> {
         for (wallet_id, wallet) in &self.wallet_registry {

@@ -75,7 +75,7 @@ fn test_validate_cbe_graduation_oracle_gate_uses_latest_fresh_price() {
     let result = blockchain.validate_cbe_graduation_oracle_gate(token_id, stale_timestamp);
     assert!(result.is_err(), "Should reject stale price");
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("no fresh oracle price available"), "Expected fresh price error: {}", err_msg);
+    assert!(err_msg.contains("no fresh finalized oracle price available"), "Expected fresh price error: {}", err_msg);
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn test_cbe_graduation_rejects_missing_price() {
     
     assert!(result.is_err(), "Should reject when no price exists");
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("no fresh oracle price available"), "Expected no fresh price error: {}", err_msg);
+    assert!(err_msg.contains("no fresh finalized oracle price available"), "Expected no fresh price error: {}", err_msg);
 }
 
 #[test]
