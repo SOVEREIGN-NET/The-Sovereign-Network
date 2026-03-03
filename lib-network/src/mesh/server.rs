@@ -2094,20 +2094,13 @@ impl ZhtpMeshServer {
         // Resolve content hash via DHT
         let content_hash = self.dht.write().await
             .resolve_content(domain, path).await?;
-        
+
         info!("Resolved content hash: {:?}", content_hash);
-        
-        // Use native binary DHT protocol instead of JavaScript
-        let response = crate::dht::call_native_dht_client("loadPage", &serde_json::json!({
-            "url": format!("zhtp://{}{}", domain, path)
-        })).await?;
-        
-        // Extract content from response
-        let content = response.get("content")
-            .and_then(|c| c.get("html"))
-            .and_then(|h| h.as_str())
-            .unwrap_or("<h1>Content not found</h1>");
-        
+
+        // TODO: Implement actual content retrieval from DHT storage
+        // For now, return a placeholder response
+        let content = format!("<h1>Content from {}{}</h1><p>DHT integration pending</p>", domain, path);
+
         Ok(content.as_bytes().to_vec())
     }
     
