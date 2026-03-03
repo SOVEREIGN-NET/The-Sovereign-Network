@@ -348,7 +348,7 @@ pub fn estimate_contract_call_fee(
 ///
 /// Returns (min_fee, max_fee) where:
 /// - min_fee: Fee with minimal resources
-/// - max_fee: Fee with typical resource usage
+/// - max_fee: Fee with maximum allowed witness data (`kind.witness_cap()`)
 ///
 /// # Arguments
 /// * `kind` - Transaction kind
@@ -378,7 +378,7 @@ pub fn estimate_fee_range(
         sig_count: 1,
         envelope_bytes: 500,
         payload_bytes: 256,
-        witness_bytes: kind.witness_cap().min(4096), // Cap at 4KB for estimation
+        witness_bytes: kind.witness_cap(), // Use full cap for accurate upper bound
         exec_units: match kind {
             TxKind::ContractCall => 1000,
             TxKind::DataUpload => 500,

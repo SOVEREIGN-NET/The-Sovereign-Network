@@ -42,7 +42,7 @@ pub mod model_v2;
 mod golden_vectors;
 
 // Re-export pure data types from lib-types (canonical location)
-pub use lib_types::fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
+pub use lib_types::fees::{FeeDeficit, FeeInput, FeeParams, FeeParamsError, SigScheme, TxKind};
 
 // Re-export computation functions, logic, and extension traits from model_v2
 pub use model_v2::{
