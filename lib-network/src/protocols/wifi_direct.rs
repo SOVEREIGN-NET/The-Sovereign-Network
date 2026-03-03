@@ -2597,8 +2597,8 @@ impl WiFiDirectMeshProtocol {
             let browser = daemon.browse("_zhtp._tcp.local.")?;
             
             let discovered_peers = self.discovered_peers.clone();
-            let connected_devices = self.connected_devices.clone();
-            let is_group_owner = self.group_owner;
+            let _connected_devices = self.connected_devices.clone();
+            let _is_group_owner = self.group_owner;
             let peer_discovery_tx_clone = self.peer_discovery_tx.clone();
             
             tokio::spawn(async move {
@@ -3378,12 +3378,10 @@ impl WiFiDirectMeshProtocol {
                             // Modify MAC for P2P: Set locally administered bit and derive from network name
                             let mac_bytes: Vec<&str> = mac_part.split(':').collect();
                             if mac_bytes.len() == 6 {
-                                let mut p2p_mac = format!("02:{}", &mac_bytes[1..].join(":"));
-                                
                                 // Incorporate network name into MAC
                                 let name_hash = network_name.chars().map(|c| c as u32).sum::<u32>();
                                 let hash_byte = (name_hash % 256) as u8;
-                                p2p_mac = format!("02:{:02x}:{}", hash_byte, &mac_bytes[2..].join(":"));
+                                let p2p_mac = format!("02:{:02x}:{}", hash_byte, &mac_bytes[2..].join(":"));
                                 
                                 return Ok(p2p_mac);
                             }

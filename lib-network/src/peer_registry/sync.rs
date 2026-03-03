@@ -154,7 +154,7 @@ impl PeerRegistryObserver for DhtObserver {
                 Ok(())
             }
             
-            PeerRegistryEvent::PeerUpdated { peer_id, old_entry: _, new_entry } => {
+            PeerRegistryEvent::PeerUpdated { peer_id, old_entry: _, new_entry: _ } => {
                 tracing::debug!(
                     observer = %self.name,
                     peer_id = %peer_id.node_id(),
@@ -225,7 +225,7 @@ impl PeerRegistryObserver for MeshObserver {
                 Ok(())
             }
             
-            PeerRegistryEvent::PeerUpdated { peer_id, old_entry: _, new_entry } => {
+            PeerRegistryEvent::PeerUpdated { peer_id, old_entry: _, new_entry: _ } => {
                 tracing::debug!(
                     observer = %self.name,
                     peer_id = %peer_id.node_id(),
@@ -283,7 +283,7 @@ impl BlockchainObserver {
 impl PeerRegistryObserver for BlockchainObserver {
     async fn on_peer_event(&self, event: PeerRegistryEvent) -> Result<()> {
         match event {
-            PeerRegistryEvent::PeerAdded { peer_id, entry } => {
+            PeerRegistryEvent::PeerAdded { peer_id, entry: _ } => {
                 tracing::debug!(
                     observer = %self.name,
                     peer_id = %peer_id.node_id(),
@@ -294,7 +294,7 @@ impl PeerRegistryObserver for BlockchainObserver {
                 Ok(())
             }
             
-            PeerRegistryEvent::PeerUpdated { peer_id, old_entry: _, new_entry } => {
+            PeerRegistryEvent::PeerUpdated { peer_id, old_entry: _, new_entry: _ } => {
                 tracing::debug!(
                     observer = %self.name,
                     peer_id = %peer_id.node_id(),
@@ -597,7 +597,7 @@ impl BatchUpdate {
     }
     
     /// Get references to batch operations
-    pub fn operations(&self) -> BatchOperations {
+    pub fn operations(&self) -> BatchOperations<'_> {
         BatchOperations {
             added: &self.added,
             updated: &self.updated,

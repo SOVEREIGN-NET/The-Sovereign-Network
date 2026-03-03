@@ -204,7 +204,7 @@ impl HealthMonitor {
                 for peer_id in unhealthy_connections {
                     info!(" Removing unhealthy connection: {}",
                           hex::encode(&peer_id.public_key().key_id[0..4]));
-                    registry_write.remove(&peer_id);
+                    registry_write.remove(&peer_id).await;
                 }
                 let active_count = registry_write.all_peers().count();
                 drop(registry_write);
@@ -275,7 +275,7 @@ impl HealthMonitor {
     async fn start_coverage_analysis(&self) -> Result<()> {
         let long_range_relays = self.long_range_relays.clone();
         let peer_registry = self.peer_registry.clone();
-        let stats = self.stats.clone();
+        let _stats = self.stats.clone();
         let monitoring_active = self.monitoring_active.clone();
         
         tokio::spawn(async move {
@@ -292,8 +292,6 @@ impl HealthMonitor {
                 // Analyze network coverage (Ticket #149: using peer_registry)
                 let relays = long_range_relays.read().await;
                 let registry = peer_registry.read().await;
-                let network_stats = stats.write().await;
-                
                 // Calculate coverage metrics
                 let has_satellite = relays.values()
                     .any(|relay| matches!(relay.relay_type, crate::types::relay_type::LongRangeRelayType::Satellite));

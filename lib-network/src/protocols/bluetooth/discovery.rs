@@ -3,9 +3,6 @@
 use anyhow::{anyhow, Result};
 use tracing::{info, warn};
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use crate::constants::BLE_MESH_SERVICE_UUID;
 
 use super::device::{BleDevice, MeshPeer};
 use super::BluetoothMeshProtocol;

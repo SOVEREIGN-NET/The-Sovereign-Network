@@ -73,7 +73,8 @@ pub async fn discover_satellite_uplinks_with_capabilities(_capabilities: &Hardwa
 
 /// Discover satellite nodes (alias for discover_satellite_uplinks for compatibility)
 pub async fn discover_satellite_nodes() -> Result<Vec<SatelliteInfo>> {
-    discover_satellite_uplinks().await
+    let capabilities = HardwareCapabilities::detect().await?;
+    discover_satellite_uplinks_with_capabilities(&capabilities).await
 }
 
 /// Check for satellite modem hardware

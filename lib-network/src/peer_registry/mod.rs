@@ -600,7 +600,9 @@ impl PeerRegistry {
     
     /// Register an observer for peer change notifications (Ticket #151)
     pub async fn register_observer(&self, observer: Arc<dyn sync::PeerRegistryObserver>) {
-        self.observers.register(observer).await;
+        if let Err(e) = self.observers.register(observer).await {
+            warn!("Failed to register observer: {}", e);
+        }
     }
     
     /// Unregister an observer by name (Ticket #151)

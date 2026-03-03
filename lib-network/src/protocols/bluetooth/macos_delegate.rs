@@ -25,6 +25,7 @@ static REGISTER_DELEGATES: Once = Once::new();
 
 /// Register all custom Core Bluetooth delegate classes
 #[cfg(target_os = "macos")]
+// SAFETY: Delegate class registration/instantiation touches Objective-C runtime APIs; class names are process-global and ivar pointers originate from Box::into_raw with ownership transferred intentionally.
 pub unsafe fn register_delegate_classes() {
     REGISTER_DELEGATES.call_once(|| {
         register_central_manager_delegate();
@@ -36,6 +37,7 @@ pub unsafe fn register_delegate_classes() {
 
 /// Register ZhtpCBCentralManagerDelegate class
 #[cfg(target_os = "macos")]
+// SAFETY: Delegate class registration/instantiation touches Objective-C runtime APIs; class names are process-global and ivar pointers originate from Box::into_raw with ownership transferred intentionally.
 unsafe fn register_central_manager_delegate() {
     let superclass = AnyClass::get(c"NSObject").expect("NSObject class not found");
     let mut decl = ClassBuilder::new(c"ZhtpCBCentralManagerDelegate", superclass)
@@ -282,6 +284,7 @@ unsafe fn register_central_manager_delegate() {
 
 /// Register ZhtpCBPeripheralManagerDelegate class
 #[cfg(target_os = "macos")]
+// SAFETY: Delegate class registration/instantiation touches Objective-C runtime APIs; class names are process-global and ivar pointers originate from Box::into_raw with ownership transferred intentionally.
 unsafe fn register_peripheral_manager_delegate() {
     let superclass = AnyClass::get(c"NSObject").expect("NSObject class not found");
     let mut decl = ClassBuilder::new(c"ZhtpCBPeripheralManagerDelegate", superclass)
@@ -572,6 +575,7 @@ unsafe fn register_peripheral_manager_delegate() {
 
 /// Register ZhtpCBPeripheralDelegate class for GATT operations
 #[cfg(target_os = "macos")]
+// SAFETY: Delegate class registration/instantiation touches Objective-C runtime APIs; class names are process-global and ivar pointers originate from Box::into_raw with ownership transferred intentionally.
 unsafe fn register_peripheral_delegate() {
     let superclass = AnyClass::get(c"NSObject").expect("NSObject class not found");
     let mut decl = ClassBuilder::new(c"ZhtpCBPeripheralDelegate", superclass)
@@ -903,6 +907,7 @@ unsafe fn register_peripheral_delegate() {
 /// Create an instance of ZhtpCBCentralManagerDelegate with event sender
 #[cfg(target_os = "macos")]
 #[allow(invalid_reference_casting)]
+// SAFETY: Delegate class registration/instantiation touches Objective-C runtime APIs; class names are process-global and ivar pointers originate from Box::into_raw with ownership transferred intentionally.
 pub unsafe fn create_central_manager_delegate_instance(
     event_sender: tokio::sync::mpsc::UnboundedSender<CoreBluetoothEvent>
 ) -> *mut AnyObject {
@@ -933,6 +938,7 @@ pub unsafe fn create_central_manager_delegate_instance(
 /// Create an instance of ZhtpCBPeripheralManagerDelegate with event sender
 #[cfg(target_os = "macos")]
 #[allow(invalid_reference_casting)]
+// SAFETY: Delegate class registration/instantiation touches Objective-C runtime APIs; class names are process-global and ivar pointers originate from Box::into_raw with ownership transferred intentionally.
 pub unsafe fn create_peripheral_manager_delegate_instance(
     event_sender: tokio::sync::mpsc::UnboundedSender<CoreBluetoothEvent>
 ) -> *mut AnyObject {
@@ -962,6 +968,7 @@ pub unsafe fn create_peripheral_manager_delegate_instance(
 /// Create an instance of ZhtpCBPeripheralDelegate with event sender
 #[cfg(target_os = "macos")]
 #[allow(invalid_reference_casting)]
+// SAFETY: Delegate class registration/instantiation touches Objective-C runtime APIs; class names are process-global and ivar pointers originate from Box::into_raw with ownership transferred intentionally.
 pub unsafe fn create_peripheral_delegate_instance(
     event_sender: tokio::sync::mpsc::UnboundedSender<CoreBluetoothEvent>
 ) -> *mut AnyObject {

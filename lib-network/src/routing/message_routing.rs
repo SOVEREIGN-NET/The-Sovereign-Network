@@ -431,7 +431,9 @@ impl MeshMessageRouter {
         }
 
         // Convert PublicKey to UnifiedPeerId for route finding
+        #[allow(deprecated)]
         let dest_unified = UnifiedPeerId::from_public_key_legacy(destination.clone());
+        #[allow(deprecated)]
         let sender_unified = UnifiedPeerId::from_public_key_legacy(sender.clone());
 
         // Find optimal route to destination
@@ -681,7 +683,7 @@ impl MeshMessageRouter {
             }
         }
         
-        if let Some((relay_id, relay)) = best_relay {
+        if let Some((relay_id, _relay)) = best_relay {
             info!("Selected relay {} for long-range routing (score: {:.2})", 
                   relay_id, best_score);
             
@@ -840,8 +842,8 @@ impl MeshMessageRouter {
     async fn route_via_satellite(
         &self,
         message_id: u64,
-        message: &ZhtpMeshMessage,
-        hop: &RouteHop,
+        _message: &ZhtpMeshMessage,
+        _hop: &RouteHop,
     ) -> Result<()> {
         info!("🛰️ GLOBAL satellite routing: message {} to ANYWHERE on Earth", message_id);
         
@@ -865,7 +867,7 @@ impl MeshMessageRouter {
     async fn route_via_long_range(
         &self,
         message_id: u64,
-        message: &ZhtpMeshMessage,
+        _message: &ZhtpMeshMessage,
         hop: &RouteHop,
     ) -> Result<()> {
         info!("Long-range relay routing: message {}", message_id);
@@ -1097,6 +1099,7 @@ impl MeshMessageRouter {
         info!(" Created envelope {} (TTL: {})", message_id, envelope.ttl);
 
         // Convert destination PublicKey to UnifiedPeerId for routing (Ticket #146)
+        #[allow(deprecated)]
         let dest_unified = UnifiedPeerId::from_public_key_legacy(destination.clone());
 
         // Find next hop

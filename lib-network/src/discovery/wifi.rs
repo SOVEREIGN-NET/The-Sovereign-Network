@@ -135,7 +135,7 @@ async fn scan_wifi_channel(channel: u8) -> Result<Vec<WiFiNetworkInfo>> {
         return macos_scan_wifi_channel(channel).await;
     }
     
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
         // Fallback for other platforms
         Ok(vec![])
