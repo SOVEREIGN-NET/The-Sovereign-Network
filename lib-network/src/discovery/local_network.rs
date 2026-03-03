@@ -550,12 +550,12 @@ async fn listen_for_announcements(
 /// Discover ZHTP nodes on local network immediately
 pub async fn discover_local_peers() -> Result<Vec<NodeAnnouncement>> {
     info!("Scanning for ZHTP peers on local network...");
-    
+
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
     socket.set_broadcast(true)?;
-    
+
     let multicast_addr: SocketAddr = format!("{}:{}", ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT).parse()?;
-    
+
     // Send discovery request
     let discovery_request = serde_json::json!({
         "type": "discovery_request",
@@ -564,12 +564,50 @@ pub async fn discover_local_peers() -> Result<Vec<NodeAnnouncement>> {
             .unwrap()
             .as_secs()
     });
-    
+
     socket.send_to(discovery_request.to_string().as_bytes(), multicast_addr).await?;
-    
+
     // Listen for responses (simplified - in implementation would be more sophisticated)
     tokio::time::sleep(Duration::from_secs(3)).await;
-    
+
     // TODO: Collect actual responses
     Ok(vec![])
+}
+
+/// Helper to create signing context from ZhtpIdentity and TLS certificate
+/// This enables TLS certificate pinning for secure peer discovery (Issue #739)
+///
+/// # Arguments
+/// * `identity` - The node's ZHTP identity containing Dilithium keys
+/// * `tls_cert_der` - The node's TLS certificate in DER format
+///
+/// # Returns
+/// * `Ok(DiscoverySigningContext)` - Context for signing discovery announcements
+/// * `Err(...)` - If SPKI extraction fails
+pub fn create_signing_context(
+    identity: &lib_identity::ZhtpIdentity,
+    tls_cert_der: &[u8],
+) -> Result<DiscoverySigningContext> {
+    use crate::pinned_verifier::PinnedCertVerifier;
+    use rustls::pki_types::CertificateDer;
+
+    // Extract Dilithium keys from identity
+    let dilithium_sk = identity.private_key
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Identity missing private key"))?
+        .dilithium_sk
+        .clone();
+
+    let dilithium_pk = identity.public_key.dilithium_pk.clone();
+
+    // Extract TLS certificate SPKI hash
+    let cert_der = CertificateDer::from(tls_cert_der.to_vec());
+    let tls_spki_sha256 = PinnedCertVerifier::extract_spki_hash(&cert_der)
+        .map_err(|e| anyhow::anyhow!("Failed to extract TLS SPKI hash: {}", e))?;
+
+    Ok(DiscoverySigningContext {
+        dilithium_sk,
+        dilithium_pk,
+        tls_spki_sha256,
+    })
 }

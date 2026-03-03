@@ -513,7 +513,7 @@ async fn graceful_shutdown<S>(stream: &mut S, timeout_secs: u64) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    use tokio::io::{AsyncWriteExt, AsyncReadExt};
+    use tokio::io::AsyncWriteExt;
     use tokio::time::{timeout, Duration};
 
     // Step 1: Flush to ensure all buffered data is written

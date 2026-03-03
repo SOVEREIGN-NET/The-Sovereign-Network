@@ -16,8 +16,8 @@
 //! - Add Kademlia-style routing for content lookup
 //! - Integrate with blockchain for peer verification
 
-use anyhow::Result;
-use lib_crypto::hash_blake3;
+use anyhow::{Result, anyhow};
+use lib_crypto::Hash;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -236,14 +236,9 @@ impl ZkDHTIntegration {
     pub async fn connect_to_peer(&self, peer_addr: &str) -> Result<()> {
         let addr: std::net::SocketAddr = peer_addr.parse()?;
         
-        // Derive a unique stub node_id by hashing the peer address string.
-        // When a real identity handshake is implemented this will be replaced
-        // with the peer's actual node id.
-        let node_id = hash_blake3(peer_addr.as_bytes());
-
         // Create a peer entry
         let peer_info = DhtPeerInfo {
-            node_id: node_id,
+            node_id: [0u8; 32], // Would be derived from peer identity
             address: Some(addr),
             capabilities: vec!["dht".to_string()],
             last_seen: std::time::SystemTime::now()
