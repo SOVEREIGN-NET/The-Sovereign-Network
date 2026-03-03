@@ -4516,6 +4516,17 @@ impl Blockchain {
                     } else {
                         info!("💰 register_wallet: minted {} SOV for wallet {} (in-memory)",
                             wallet_data.initial_balance, &wallet_id_str[..16.min(wallet_id_str.len())]);
+                        // Persist updated SOV token contract so the immediate balance survives restarts.
+                        // This mirrors the behavior in process_wallet_transactions(), which calls put_token_contract.
+                        if let Some(store) = &self.store {
+                            if let Err(e) = store.put_token_contract(&sov_token_id, &*token) {
+                                warn!(
+                                    "register_wallet: failed to persist SOV token contract for wallet {}: {}",
+                                    &wallet_id_str[..16.min(wallet_id_str.len())],
+                                    e
+                                );
+                            }
+                        }
                     }
                 }
             }
