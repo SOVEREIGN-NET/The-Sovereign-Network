@@ -110,7 +110,7 @@ pub struct ZhtpUnifiedServer {
     economic_model: Arc<RwLock<EconomicModel>>,
     
     // Session management
-    session_manager: Arc<SessionManager>,
+    _session_manager: Arc<SessionManager>,
 
     // Discovery coordinator (Phase 3 fix)
     discovery_coordinator: Arc<crate::discovery_coordinator::DiscoveryCoordinator>,
@@ -147,6 +147,7 @@ pub struct ZhtpUnifiedServer {
 impl ZhtpUnifiedServer {
     /// Check if an address is a self-connection from our own node trying to connect to itself
     /// This prevents multi-NIC self-loops but ALLOWS browser connections from localhost
+    #[allow(dead_code)]
     fn is_self_connection(addr: &std::net::SocketAddr) -> bool {
         let ip = addr.ip();
         
@@ -343,8 +344,8 @@ impl ZhtpUnifiedServer {
         info!("Discovery port: {}, QUIC port: {}", discovery_port, quic_port);
         
         // Initialize session manager first
-        let session_manager = Arc::new(SessionManager::new());
-        session_manager.start_cleanup_task();
+        let _session_manager = Arc::new(SessionManager::new());
+        _session_manager.start_cleanup_task();
         
         // Initialize discovery coordinator (Phase 3 consolidation)
         // Create DiscoveryConfig from runtime bootstrap peers (ARCHITECTURE: Runtime topology, not Environment defaults)
@@ -363,7 +364,7 @@ impl ZhtpUnifiedServer {
         
         // Initialize protocol routers
         let mut zhtp_router = crate::server::zhtp::ZhtpRouter::new();  // Native ZHTP router for QUIC - ONLY ROUTER NEEDED
-        let mut mesh_router = MeshRouter::new(server_id, session_manager.clone());
+        let mut mesh_router = MeshRouter::new(server_id, _session_manager.clone());
         let wifi_router = WiFiRouter::new_with_peer_notification(peer_discovery_tx);
         let bluetooth_router = BluetoothRouter::new();
         let bluetooth_classic_router = BluetoothClassicRouter::new();
@@ -476,7 +477,7 @@ impl ZhtpUnifiedServer {
             storage.clone(),
             identity_manager.clone(),
             economic_model.clone(),
-            session_manager.clone(),
+            _session_manager.clone(),
             dht_handler,
             domain_registry.clone(),
             content_publisher.clone(),
@@ -486,7 +487,7 @@ impl ZhtpUnifiedServer {
 
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
         let zhtp_router_arc = Arc::new(zhtp_router);
-        let mut quic_handler = QuicHandler::new(
+        let quic_handler = QuicHandler::new(
             Arc::new(RwLock::new((*zhtp_router_arc).clone())),  // Native ZhtpRouter wrapped in RwLock
             quic_arc.clone(),                    // QuicMeshProtocol for transport
             identity_manager.clone(),            // Identity manager for auto-registration
@@ -555,7 +556,7 @@ impl ZhtpUnifiedServer {
             storage,
             identity_manager,
             economic_model,
-            session_manager,
+            _session_manager,
             discovery_coordinator,
             domain_registry,
             runtime,
@@ -1095,7 +1096,7 @@ impl ZhtpUnifiedServer {
         
         // Create callback for discovery coordinator (Phase 3 integration)
         let coordinator_for_callback = self.discovery_coordinator.clone();
-        let peer_discovered_callback = Arc::new(move |peer_addr: String, _peer_pubkey: lib_crypto::PublicKey| {
+        let _peer_discovered_callback = Arc::new(move |peer_addr: String, _peer_pubkey: lib_crypto::PublicKey| {
             let coordinator = coordinator_for_callback.clone();
             let addr = peer_addr.clone();
             

@@ -222,6 +222,7 @@ mod consensus_audit_log_tests {
 /// This constant mirrors [`lib_blockchain::blockchain::CHECKPOINT_INTERVAL_BLOCKS`]
 /// and is defined here so the consensus engine can enforce the invariant without
 /// depending on the blockchain crate at compile time.
+#[allow(dead_code)]
 pub const CHECKPOINT_INTERVAL_BLOCKS: u64 = 1000;
 
 /// Maximum number of consecutive committed blocks without a UTXO snapshot.
@@ -232,6 +233,7 @@ pub const CHECKPOINT_INTERVAL_BLOCKS: u64 = 1000;
 /// that reorg recovery is always possible within a bounded replay window.
 ///
 /// This constant mirrors [`lib_blockchain::blockchain::MAX_BLOCKS_WITHOUT_SNAPSHOT`].
+#[allow(dead_code)]
 pub const MAX_BLOCKS_WITHOUT_SNAPSHOT: u64 = 10_000;
 
 // ============================================================================

@@ -12,7 +12,7 @@ use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, C
 pub struct StorageComponent {
     status: Arc<RwLock<ComponentStatus>>,
     start_time: Arc<RwLock<Option<Instant>>>,
-    storage_system: Arc<RwLock<Option<lib_storage::PersistentStorageSystem>>>,
+    _storage_system: Arc<RwLock<Option<lib_storage::PersistentStorageSystem>>>,
 }
 
 impl StorageComponent {
@@ -20,7 +20,7 @@ impl StorageComponent {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
-            storage_system: Arc::new(RwLock::new(None)),
+            _storage_system: Arc::new(RwLock::new(None)),
         }
     }
 }

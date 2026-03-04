@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use sled::{Batch, Db, IVec, Tree};
 
 use super::{
-    keys, AccountState, Address, AddressExt, Amount, BlockHash, BlockHeight, BlockchainStore,
+    keys, AccountState, Address, Amount, BlockHash, BlockHeight, BlockchainStore,
     IdentityConsensus, IdentityMetadata, OutPoint, StorageError, StorageResult, TokenId,
     TokenStateSnapshot, Utxo,
 };
@@ -1451,7 +1451,7 @@ mod tests {
         let store = SledStore::open_temporary().unwrap();
 
         let outpoint = OutPoint::new(TxHash([0; 32]), 0);
-        let utxo = Utxo::native(100, Address::ZERO, 0);
+        let utxo = Utxo::native(100, Address::zero(), 0);
 
         // All write operations should fail without transaction
         assert!(matches!(
@@ -1463,11 +1463,11 @@ mod tests {
             Err(StorageError::NoActiveTransaction)
         ));
         assert!(matches!(
-            store.put_account(&Address::ZERO, &AccountState::new(Address::ZERO)),
+            store.put_account(&Address::zero(), &AccountState::new(Address::zero())),
             Err(StorageError::NoActiveTransaction)
         ));
         assert!(matches!(
-            store.set_token_balance(&TokenId::NATIVE, &Address::ZERO, 0),
+            store.set_token_balance(&TokenId::NATIVE, &Address::zero(), 0),
             Err(StorageError::NoActiveTransaction)
         ));
     }

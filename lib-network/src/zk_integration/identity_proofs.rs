@@ -51,6 +51,7 @@ impl IdentityCircuit {
         }
     }
     
+    #[allow(dead_code)]
     fn generate_constraints(&self) -> Result<Vec<u8>> {
         // Generate constraints for identity verification
         // This would be the actual circuit definition in a implementation
@@ -61,6 +62,7 @@ impl IdentityCircuit {
         Ok(circuit_description.into_bytes())
     }
     
+    #[allow(dead_code)]
     fn get_public_inputs(&self) -> IdentityPublicInputs {
         IdentityPublicInputs {
             age_valid: self.age >= 18, // Default minimum age

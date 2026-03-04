@@ -2,9 +2,9 @@
 //!
 //! Handles WiFi Direct mesh networking for medium-range peer connections
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
@@ -227,6 +227,7 @@ pub enum WiFiDirectDeviceType {
     Unknown,
 }
 
+#[allow(dead_code)]
 impl WiFiDirectMeshProtocol {
     /// Create new WiFi Direct mesh protocol
     pub fn new(node_id: [u8; 32]) -> Result<Self> {
@@ -553,6 +554,7 @@ impl WiFiDirectMeshProtocol {
         Ok(())
     }
     
+    #[allow(dead_code)]
     /// Start P2P device discovery
     async fn start_p2p_discovery(&self) -> Result<()> {
         info!("Starting WiFi Direct P2P discovery...");
@@ -2438,7 +2440,7 @@ impl WiFiDirectMeshProtocol {
     }
     
     #[cfg(target_os = "macos")]
-    async fn macos_join_active_group(&self, invitation: &P2PInvitationRequest) -> Result<()> {
+    async fn macos_join_active_group(&self, _invitation: &P2PInvitationRequest) -> Result<()> {
         info!("🍎 macOS joining active P2P group (via system preferences)");
         // macOS would require CoreWLAN framework integration
         Ok(())

@@ -13,7 +13,7 @@ use crate::{
 };
 use crate::contracts::utils::{generate_storage_key, generate_contract_id};
 use crate::contracts::files::SharedFile;
-use crate::contracts::runtime::{RuntimeFactory, RuntimeConfig, RuntimeContext, ContractRuntime};
+use crate::contracts::runtime::{RuntimeFactory, RuntimeConfig, RuntimeContext};
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;

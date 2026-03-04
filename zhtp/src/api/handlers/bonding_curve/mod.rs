@@ -24,7 +24,7 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{info, warn, debug};
+use tracing::{info, warn};
 
 // ZHTP protocol imports
 use lib_protocols::zhtp::ZhtpRequestHandler;
@@ -33,13 +33,10 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 // Blockchain imports
 use lib_blockchain::Blockchain;
 use lib_blockchain::contracts::bonding_curve::{
-    BondingCurveToken, BondingCurveRegistry, BondingCurveEvent,
-    Phase, CurveType, Threshold, CurveStats, Valuation, PriceSource, ConfidenceLevel,
-    CurveError, ReserveUpdateReason,
+    BondingCurveToken,
+    Phase, CurveType, Threshold, Valuation, PriceSource, ConfidenceLevel,
 };
-use lib_blockchain::contracts::sov_swap::{SovSwapPool, SwapResult, SwapError, SimulationResult};
 use lib_blockchain::integration::crypto_integration::PublicKey;
-use lib_crypto::Hash;
 
 /// Helper function to create JSON responses
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -410,7 +407,7 @@ impl CurveHandler {
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         // Execute buy (contract enforces phase == Curve)
-        let (token_amount, event) = token.buy(
+        let (token_amount, _event) = token.buy(
             buyer,
             buy_req.stable_amount,
             block_height,

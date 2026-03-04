@@ -56,25 +56,24 @@ impl Signature {
         }
     }
 
-    /// Create a Signature from raw bytes (for backward compatibility)
+    /// Create a Signature from raw bytes only, using a default (empty) public key.
     ///
-    /// # Warning
-    /// This creates a signature with an empty public key. You should use
-    /// `from_bytes_with_key` when the public key is available.
-    #[deprecated(note = "Use from_bytes_with_key instead when public key is available")]
+    /// # Deprecated
+    /// This constructor is ambiguous because the resulting `Signature` carries no
+    /// meaningful public key. Use [`Signature::from_bytes_with_key`] instead, which
+    /// requires an explicit `PublicKey` and produces a fully-valid `Signature`.
+    ///
+    /// This shim is retained for backwards compatibility and will be removed in a
+    /// future major release.
+    #[deprecated(
+        since = "0.0.0",
+        note = "Use `Signature::from_bytes_with_key` instead; \
+                `from_bytes` leaves the public key empty and cannot be used for verification."
+    )]
     pub fn from_bytes(signature_bytes: &[u8]) -> Self {
         Signature {
             signature: signature_bytes.to_vec(),
-            public_key: PublicKey {
-                dilithium_pk: Vec::new(),
-                kyber_pk: Vec::new(),
-                key_id: [0u8; 32],
-            },
-            algorithm: SignatureAlgorithm::Dilithium2,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            ..Default::default()
         }
     }
 

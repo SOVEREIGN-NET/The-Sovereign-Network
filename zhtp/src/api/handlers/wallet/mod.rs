@@ -402,7 +402,7 @@ impl WalletHandler {
         match wallet_summaries.iter().find(|w| w.wallet_type == wallet_type) {
             Some(summary) => {
                 // Get full wallet details from identity's wallet_manager
-                let (mut available_balance, mut staked_balance, mut pending_rewards, created_at) =
+                let (mut available_balance, staked_balance, pending_rewards, created_at) =
                     if let Some(wallet) = identity.wallet_manager.get_wallet(&summary.id) {
                         (
                             wallet.balance.saturating_sub(wallet.staked_balance),
@@ -1308,6 +1308,7 @@ impl WalletHandler {
     }
 
     /// Generate wallet ID based on wallet type and identity
+    #[allow(dead_code)]
     fn generate_wallet_id(&self, wallet_type: &lib_identity::wallets::WalletType, identity_id: &str) -> String {
         match wallet_type {
             lib_identity::wallets::WalletType::Primary => format!("wallet_{}", &identity_id[..12]),
@@ -1322,6 +1323,7 @@ impl WalletHandler {
     }
 
     /// Convert wallet permissions to API format
+    #[allow(dead_code)]
     fn convert_permissions(&self, permissions: &lib_economy::wallets::multi_wallet::WalletPermissions) -> WalletPermissionsInfo {
         WalletPermissionsInfo {
             can_transfer_external: permissions.can_transfer_external,

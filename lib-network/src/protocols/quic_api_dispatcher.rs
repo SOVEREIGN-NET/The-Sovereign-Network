@@ -93,6 +93,7 @@ struct ActiveConnection {
     peer_addr: SocketAddr,
 
     /// Peer's verified DID
+    #[allow(dead_code)]
     peer_did: String,
 
     /// QUIC connection

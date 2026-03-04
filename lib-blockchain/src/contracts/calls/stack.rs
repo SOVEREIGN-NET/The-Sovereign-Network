@@ -3,7 +3,7 @@
 //! Tracks the call chain to enforce maximum recursion depth and prevent infinite loops.
 //! The call depth is a critical parameter in recorded intents for deterministic replay validation.
 
-use super::errors::{CalleeErrorCode, CrossContractError, ContractId};
+use super::errors::{CrossContractError, ContractId};
 use anyhow::{anyhow, Result};
 
 /// Maximum allowed recursion depth for cross-contract calls (hard limit)
@@ -113,6 +113,7 @@ impl Default for CallStack {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::calls::errors::CalleeErrorCode;
 
     #[test]
     fn test_new_call_stack_empty() {

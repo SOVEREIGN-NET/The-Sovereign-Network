@@ -96,6 +96,7 @@ pub struct Web4Client {
     trust_verifier: Option<Arc<ZhtpTrustVerifier>>,
 
     /// Client configuration
+    #[allow(dead_code)]
     config: Web4ClientConfig,
 }
 
@@ -105,6 +106,7 @@ struct AuthenticatedConnection {
     quic_conn: Connection,
 
     /// Session key for symmetric encryption (from UHP v2 handshake)
+    #[allow(dead_code)]
     session_key: [u8; 32],
 
     /// Application-layer MAC key (derived from session_key)

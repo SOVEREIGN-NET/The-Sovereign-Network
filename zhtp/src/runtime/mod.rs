@@ -3035,9 +3035,9 @@ impl RuntimeOrchestrator {
     /// 5. Blockchain will consume UTXOs and create new outputs
     pub async fn create_wallet_payment_transaction(
         &self,
-        identity_id: &lib_identity::IdentityId,
+        _identity_id: &lib_identity::IdentityId,
         wallet_pubkey: &[u8],
-        recipient_pubkey: &[u8],
+        _recipient_pubkey: &[u8],
         amount: u64,
         purpose: &str,
     ) -> Result<lib_blockchain::Hash> {
@@ -3326,7 +3326,7 @@ impl RuntimeOrchestrator {
         &self,
         runtime_arc: Arc<RuntimeOrchestrator>
     ) -> Result<()> {
-        use std::any::Any;
+        
 
         // Get ProtocolsComponent from the components HashMap
         let components = self.components.read().await;

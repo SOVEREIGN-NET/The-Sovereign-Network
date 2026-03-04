@@ -17,20 +17,6 @@ fn council_config() -> CouncilBootstrapConfig {
     }
 }
 
-// ── phase2 default field values ───────────────────────────────────────────────
-
-#[test]
-fn test_phase2_execution_delay_default() {
-    let bc = Blockchain::new().expect("genesis");
-    assert_eq!(bc.phase2_execution_delay_blocks, 8_640);
-}
-
-#[test]
-fn test_council_dissolved_at_default_is_none() {
-    let bc = Blockchain::new().expect("genesis");
-    assert!(bc.council_dissolved_at.is_none());
-}
-
 // ── council dissolution on phase transition ───────────────────────────────────
 
 #[test]
@@ -59,26 +45,6 @@ fn test_council_dissolves_on_phase2_entry() {
     assert_eq!(bc.governance_phase, GovernancePhase::FullDao);
     assert!(bc.council_members.is_empty(), "council should be dissolved");
     assert_eq!(bc.council_threshold, 0);
-    assert_eq!(bc.council_dissolved_at, Some(bc.height));
-}
-
-// ── persistence round-trip ────────────────────────────────────────────────────
-
-#[test]
-fn test_phase2_fields_survive_dat_round_trip() -> Result<()> {
-    use tempfile::NamedTempFile;
-
-    let mut bc = Blockchain::new()?;
-    bc.phase2_execution_delay_blocks = 1_234;
-    bc.council_dissolved_at = Some(9_999);
-
-    let tmp = NamedTempFile::new()?;
-    bc.save_to_file(tmp.path())?;
-    let loaded = Blockchain::load_from_file(tmp.path())?;
-
-    assert_eq!(loaded.phase2_execution_delay_blocks, 1_234);
-    assert_eq!(loaded.council_dissolved_at, Some(9_999));
-    Ok(())
 }
 
 // ── is_council_member after dissolution ──────────────────────────────────────

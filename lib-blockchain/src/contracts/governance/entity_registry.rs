@@ -378,7 +378,7 @@ impl EntityRegistry {
     /// - `Err(...)` if transfer violates treasury isolation
     pub fn validate_transfer(
         &self,
-        from: &PublicKey,
+        _from: &PublicKey,
         to: &PublicKey,
         is_nonprofit_earning: bool,
     ) -> Result<(), EntityRegistryError> {

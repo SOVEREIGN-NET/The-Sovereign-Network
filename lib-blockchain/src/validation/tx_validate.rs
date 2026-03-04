@@ -29,7 +29,7 @@ use crate::fees::{
     classify_transaction, compute_fee_v2, validate_block_limits,
     FeeParamsV2,
 };
-use crate::storage::{BlockchainStore, OutPoint, TxHash, Address, TokenId};
+use crate::storage::{BlockchainStore, OutPoint, TxHash};
 use crate::transaction::Transaction;
 use crate::types::TransactionType;
 
@@ -251,7 +251,7 @@ fn validate_transfer_stateful(
 
 /// Stateful validation for TokenTransfer transactions
 fn validate_token_transfer_stateful(
-    tx: &Transaction,
+    _tx: &Transaction,
     _store: &dyn BlockchainStore,
 ) -> TxValidateResult<()> {
     // For Phase 2, we do basic validation here

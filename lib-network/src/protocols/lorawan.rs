@@ -191,6 +191,7 @@ impl LoRaWANMeshProtocol {
         Ok(())
     }
     
+    #[allow(dead_code)]
     async fn configure_eu868_parameters(&self) -> Result<()> {
         info!("🇪🇺 Configuring EU868 frequency plan...");
         

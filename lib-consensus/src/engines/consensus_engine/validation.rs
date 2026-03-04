@@ -81,6 +81,7 @@ use lib_crypto::PostQuantumSignature;
 ///
 /// Panics if the two result hashes differ, indicating that the transition is
 /// non-deterministic.
+#[allow(dead_code)]
 pub fn assert_deterministic_state_transition(
     label: &str,
     prev_state_hash: &[u8; 32],
@@ -111,6 +112,7 @@ pub fn assert_deterministic_state_transition(
 /// This module provides runtime checks to detect nondeterministic behavior
 /// during consensus execution. Nondeterministic operations like system time
 /// access or random number generation during consensus can lead to chain splits.
+#[allow(dead_code)]
 pub(super) mod determinism_guard {
     use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -22,6 +22,7 @@ pub struct ContentPublisher {
     /// DHT client for content storage and retrieval (optional - uses registry's DHT if None)
     dht_client: Arc<RwLock<Option<ZkDHTIntegration>>>,
     /// Storage backend (trait-based, injected by composition root)
+    #[allow(dead_code)]
     storage: Arc<dyn UnifiedStorage>,
     /// Content statistics
     stats: Arc<RwLock<ContentPublishingStats>>,

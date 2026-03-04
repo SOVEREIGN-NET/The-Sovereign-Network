@@ -118,13 +118,13 @@ pub struct MeshSyncProofResponse {
 
 /// Mesh blockchain handler implementation
 pub struct MeshHandler {
-    runtime: Arc<RuntimeOrchestrator>,
+    _runtime: Arc<RuntimeOrchestrator>,
 }
 
 impl MeshHandler {
     pub fn new(runtime: Arc<RuntimeOrchestrator>) -> Self {
         info!("Initializing MeshHandler for mesh blockchain API endpoints");
-        Self { runtime }
+        Self { _runtime: runtime }
     }
 
     /// POST /api/v1/mesh/create - Create a new mesh blockchain

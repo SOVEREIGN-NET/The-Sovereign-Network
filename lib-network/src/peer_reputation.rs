@@ -55,6 +55,7 @@ pub struct PeerReputation {
     /// Whether this peer is banned (prevents reconnection)
     is_banned: bool,
     /// Track event counts for idempotence verification
+    #[allow(dead_code)]
     event_counts: HashMap<String, u32>,
 }
 

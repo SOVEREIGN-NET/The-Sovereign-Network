@@ -55,7 +55,7 @@ impl Default for StorageRewardConfig {
 /// it creates a reward transaction and adds it to the blockchain.
 pub struct StorageRewardProcessor {
     network_component: Arc<NetworkComponent>,
-    blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+    _blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
     environment: crate::config::Environment,
     config: StorageRewardConfig,
 }
@@ -64,12 +64,12 @@ impl StorageRewardProcessor {
     /// Create a new storage reward processor with default configuration
     pub fn new(
         network_component: Arc<NetworkComponent>,
-        blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+        _blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
         environment: crate::config::Environment,
     ) -> Self {
         Self {
             network_component,
-            blockchain_arc,
+            _blockchain_arc,
             environment,
             config: StorageRewardConfig::default(),
         }
@@ -78,13 +78,13 @@ impl StorageRewardProcessor {
     /// Create with custom configuration
     pub fn with_config(
         network_component: Arc<NetworkComponent>,
-        blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+        _blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
         environment: crate::config::Environment,
         config: StorageRewardConfig,
     ) -> Self {
         Self {
             network_component,
-            blockchain_arc,
+            _blockchain_arc,
             environment,
             config,
         }

@@ -11,7 +11,7 @@ use crate::argument_parsing::{TokenArgs, TokenAction, ZhtpCli, format_output};
 use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
-use lib_blockchain::{ContractCall, CallPermissions, ContractTransactionBuilder, Transaction, TransactionOutput, Hash};
+use lib_blockchain::{ContractCall, ContractTransactionBuilder, Transaction, TransactionOutput, Hash};
 use lib_blockchain::transaction::{TokenCreationPayloadV1, TokenMintData, TokenTransferData};
 use lib_blockchain::types::TransactionType;
 use lib_network::client::ZhtpClient;
@@ -80,6 +80,7 @@ fn parse_public_key(address: &str) -> CliResult<lib_crypto::PublicKey> {
     Ok(lib_crypto::PublicKey::new(bytes))
 }
 
+#[allow(dead_code)]
 fn build_signed_token_tx(keypair: &KeyPair, call: ContractCall) -> CliResult<Transaction> {
     let call_bytes = bincode::serialize(&call)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize call: {}", e)))?;

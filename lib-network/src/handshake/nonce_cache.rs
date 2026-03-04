@@ -379,6 +379,7 @@ struct PersistentNonceEntry {
     /// Unix timestamp when nonce was first seen
     first_seen_unix: i64,
     /// Message timestamp from handshake (for audit)
+    #[allow(dead_code)]
     message_timestamp: u64,
 }
 
@@ -391,6 +392,7 @@ struct MemoryNonceEntry {
     /// Unix timestamp when nonce was first seen (consistent with disk)
     first_seen_unix: i64,
     /// Message timestamp from handshake (for audit)
+    #[allow(dead_code)]
     message_timestamp: u64,
 }
 

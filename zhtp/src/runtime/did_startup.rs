@@ -1118,7 +1118,7 @@ impl WalletStartupManager {
         println!("Connecting to mesh network via DHT...");
         
         // Create temporary identity for DHT operations
-        let discovery_identity = Self::create_discovery_identity().await?;
+        let _discovery_identity = Self::create_discovery_identity().await?;
         
         // Initialize storage system for DHT operations
         let storage_config = UnifiedStorageConfig::default();
@@ -1475,7 +1475,7 @@ impl WalletStartupManager {
     }
 
     /// Set password for a wallet
-    async fn set_wallet_password(_wallet_id: &WalletId, password: &str) -> Result<()> {
+    async fn set_wallet_password(_wallet_id: &WalletId, _password: &str) -> Result<()> {
         // Note: WalletPasswordManager was merged into IdentityWallets (Step 6 refactoring)
         // Wallet password functionality is now available through IdentityWallets methods:
         // - set_wallet_password()

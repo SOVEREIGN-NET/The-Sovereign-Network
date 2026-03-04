@@ -19,7 +19,7 @@ pub async fn generate_ubi_proof(
     let zk_system = ZkProofSystem::new()?;
     
     // Verify recipient eligibility through identity system
-    let identity_manager = IdentityManager::new();
+    let _identity_manager = IdentityManager::new();
     // For now, assume all recipients are eligible (basic implementation)
     let is_eligible = true; // identity_manager.verify_ubi_eligibility(recipient).await?;
     

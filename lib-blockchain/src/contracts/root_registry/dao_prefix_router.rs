@@ -36,7 +36,7 @@
 //! - New owner must explicitly revoke to change delegation
 
 use super::types::{
-    hash_name, normalize_name, DelegateTarget, GovernanceDelegation, GovernancePointer,
+    hash_name, normalize_name, GovernanceDelegation, GovernancePointer,
     GovernanceResolution, GovernanceStatus, NameHash, NameRecord, NameStatus, ResolutionResult,
     Timestamp,
 };
@@ -297,7 +297,7 @@ impl DaoPrefixRouter {
 mod tests {
     use super::*;
     use crate::contracts::root_registry::types::{
-        NameClassification, NameStatus, SuspensionReason, VerificationLevel, timing,
+        NameClassification, NameStatus, SuspensionReason, VerificationLevel, timing, DelegateTarget,
     };
 
     fn make_test_record(name: &str, status: NameStatus) -> NameRecord {

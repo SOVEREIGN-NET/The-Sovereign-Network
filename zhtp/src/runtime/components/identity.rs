@@ -93,7 +93,7 @@ impl Component for IdentityComponent {
         *self.status.write().await = ComponentStatus::Starting;
 
         let genesis_ids = self.genesis_identities.read().await.clone();
-        let genesis_private = self.genesis_private_data.read().await.clone();
+        let _genesis_private = self.genesis_private_data.read().await.clone();
 
         let mut identity_manager = lib_identity::initialize_identity_system().await?;
 

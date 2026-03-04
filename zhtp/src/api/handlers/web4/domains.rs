@@ -1535,7 +1535,7 @@ impl Web4Handler {
         #[derive(Deserialize)]
         struct RollbackRequest {
             to_version: u64,
-            signature: Option<String>,
+            _signature: Option<String>,
         }
 
         // Extract domain from path

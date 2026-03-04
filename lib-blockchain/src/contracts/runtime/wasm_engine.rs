@@ -189,7 +189,7 @@ impl ContractRuntime for WasmEngine {
             let params_len = params.len() as i32;
             
             // Create timeout future
-            let timeout_duration = config.max_execution_time;
+            let _timeout_duration = config.max_execution_time;
             
             // Execute the function (this would need async runtime in implementation)
             contract_func.call(&mut store, (params_ptr as i32, params_len))
@@ -215,7 +215,7 @@ impl ContractRuntime for WasmEngine {
                 memory.read(&store, result_ptr as usize, &mut result_data)?;
                 
                 // Get host function stats
-                let host_stats = store.data().get_stats();
+                let _host_stats = store.data().get_stats();
                 
                 // Update statistics
                 self.stats.contracts_executed += 1;
