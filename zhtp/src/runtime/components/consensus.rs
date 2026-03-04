@@ -235,7 +235,6 @@ impl ValidatorNetworkTransport for QuicValidatorTransport {
 fn convert_to_network_message(
     msg: &ValidatorMessage,
 ) -> lib_consensus::validators::ValidatorMessage {
-    use lib_consensus::types::HeartbeatMessage;
     use lib_consensus::validators::{
         ConsensusStateView, ProposeMessage, ValidatorMessage as NetworkValidatorMessage,
         VoteMessage,

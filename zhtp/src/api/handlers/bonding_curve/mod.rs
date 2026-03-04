@@ -365,7 +365,6 @@ impl CurveHandler {
             self.get_current_block().await?,
             self.get_current_timestamp().await?,
         ).map_err(|e| anyhow::anyhow!("Deploy failed: {}", e))?;
-        token.creator_did = Some(creator_did);
 
         // Register in blockchain
         {
@@ -1389,6 +1388,7 @@ fn integer_sqrt(n: u128) -> u128 {
 mod tests {
     use super::*;
     use lib_blockchain::Blockchain;
+    use lib_crypto::Hash;
 
     #[test]
     fn test_integer_sqrt() {

@@ -28,7 +28,6 @@ use lib_blockchain::contracts::bonding_curve::Phase;
 use lib_blockchain::contracts::sov_swap::SovSwapPool;
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::types::dao::DAOType;
-use lib_blockchain::Blockchain;
 
 /// Configuration for auto-graduation service
 #[derive(Debug, Clone)]
