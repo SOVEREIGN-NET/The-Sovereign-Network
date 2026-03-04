@@ -20,14 +20,15 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::time::{Duration, interval};
-use tracing::{info, warn, debug, error};
+use tokio::time::{interval, Duration};
+use tracing::{debug, error, info, warn};
 
 use lib_blockchain::Blockchain;
 use lib_blockchain::contracts::bonding_curve::Phase;
 use lib_blockchain::contracts::sov_swap::SovSwapPool;
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::types::dao::DAOType;
+use lib_blockchain::Blockchain;
 
 /// Configuration for auto-graduation service
 #[derive(Debug, Clone)]
@@ -69,10 +70,7 @@ pub struct AutoGraduationService {
 
 impl AutoGraduationService {
     /// Create a new auto-graduation service
-    pub fn new(
-        blockchain: Arc<RwLock<Blockchain>>,
-        config: AutoGraduationConfig,
-    ) -> Self {
+    pub fn new(blockchain: Arc<RwLock<Blockchain>>, config: AutoGraduationConfig) -> Self {
         Self {
             blockchain,
             config,
@@ -128,10 +126,7 @@ impl AutoGraduationService {
     }
 
     /// Main graduation loop
-    async fn graduation_loop(
-        blockchain: Arc<RwLock<Blockchain>>,
-        config: AutoGraduationConfig,
-    ) {
+    async fn graduation_loop(blockchain: Arc<RwLock<Blockchain>>, config: AutoGraduationConfig) {
         let mut ticker = interval(Duration::from_secs(config.check_interval_seconds));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -152,7 +147,7 @@ impl AutoGraduationService {
         config: &AutoGraduationConfig,
     ) -> Result<()> {
         let mut blockchain_guard = blockchain.write().await;
-        
+
         // Get current timestamp
         let current_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -162,7 +157,8 @@ impl AutoGraduationService {
         // Get tokens ready to graduate
         let tokens_to_graduate: Vec<([u8; 32], String)> = {
             let registry = &blockchain_guard.bonding_curve_registry;
-            registry.get_ready_to_graduate(current_timestamp)
+            registry
+                .get_ready_to_graduate(current_timestamp)
                 .into_iter()
                 .map(|token| (token.token_id, token.symbol.clone()))
                 .collect()
@@ -176,7 +172,10 @@ impl AutoGraduationService {
         info!(
             "Found {} token(s) ready to graduate: {:?}",
             tokens_to_graduate.len(),
-            tokens_to_graduate.iter().map(|(_, symbol)| symbol).collect::<Vec<_>>()
+            tokens_to_graduate
+                .iter()
+                .map(|(_, symbol)| symbol)
+                .collect::<Vec<_>>()
         );
 
         for (token_id, symbol) in tokens_to_graduate {
@@ -186,7 +185,9 @@ impl AutoGraduationService {
                 &symbol,
                 config,
                 current_timestamp,
-            ).await {
+            )
+            .await
+            {
                 Ok(pool_id) => {
                     info!(
                         "Successfully graduated token '{}' with pool {}",
@@ -211,17 +212,23 @@ impl AutoGraduationService {
         config: &AutoGraduationConfig,
         current_timestamp: u64,
     ) -> Result<[u8; 32]> {
-        info!("Graduating token '{}' ({})...", symbol, hex::encode(&token_id[..8]));
+        info!(
+            "Graduating token '{}' ({})...",
+            symbol,
+            hex::encode(&token_id[..8])
+        );
 
         // Get token details before graduation
         let (reserve_balance, total_supply) = {
-            let token = blockchain.bonding_curve_registry.get(token_id)
+            let token = blockchain
+                .bonding_curve_registry
+                .get(token_id)
                 .ok_or_else(|| anyhow::anyhow!("Token not found in registry"))?;
-            
+
             if !token.phase.is_curve_active() {
                 return Err(anyhow::anyhow!("Token not in curve phase"));
             }
-            
+
             // Double-check graduation eligibility
             if !token.can_graduate(current_timestamp) {
                 return Err(anyhow::anyhow!("Token not eligible for graduation"));
@@ -231,14 +238,18 @@ impl AutoGraduationService {
         };
 
         // Transition token to Graduated phase
-        blockchain.bonding_curve_registry.update_phase(token_id, Phase::Graduated)?;
+        blockchain
+            .bonding_curve_registry
+            .update_phase(token_id, Phase::Graduated)?;
 
         // Generate pool ID deterministically
         let pool_id = Self::derive_pool_id(token_id);
 
         // Update token with pool ID
         {
-            let token = blockchain.bonding_curve_registry.get_mut(token_id)
+            let token = blockchain
+                .bonding_curve_registry
+                .get_mut(token_id)
                 .ok_or_else(|| anyhow::anyhow!("Token not found after phase update"))?;
             token.amm_pool_id = Some(pool_id);
         }
@@ -249,9 +260,13 @@ impl AutoGraduationService {
         let seed_tokens = total_supply.max(config.min_seed_liquidity_token);
 
         // Use provided governance/treasury or create defaults
-        let governance = config.pool_governance_address.clone()
+        let governance = config
+            .pool_governance_address
+            .clone()
             .unwrap_or_else(|| Self::default_governance_address());
-        let treasury = config.pool_treasury_address.clone()
+        let treasury = config
+            .pool_treasury_address
+            .clone()
             .unwrap_or_else(|| Self::default_treasury_address());
 
         // Create the pool
@@ -268,7 +283,9 @@ impl AutoGraduationService {
         blockchain.amm_pools.insert(pool_id, pool);
 
         // Transition to AMM phase
-        blockchain.bonding_curve_registry.update_phase(token_id, Phase::AMM)?;
+        blockchain
+            .bonding_curve_registry
+            .update_phase(token_id, Phase::AMM)?;
 
         info!(
             "Token '{}' graduated: pool_id={}, seed_sov={}, seed_tokens={}",
@@ -284,11 +301,11 @@ impl AutoGraduationService {
     /// Derive deterministic pool ID from token ID
     fn derive_pool_id(token_id: &[u8; 32]) -> [u8; 32] {
         use blake3::Hasher;
-        
+
         let mut hasher = Hasher::new();
         hasher.update(b"SOV_SWAP_POOL_V1");
         hasher.update(token_id);
-        
+
         let hash = hasher.finalize();
         let mut pool_id = [0u8; 32];
         pool_id.copy_from_slice(hash.as_bytes());
@@ -310,7 +327,6 @@ impl AutoGraduationService {
     /// Manually trigger graduation check (for testing or API)
     pub async fn manual_check(&self) -> Result<Vec<([u8; 32], String)>> {
         let blockchain_guard = self.blockchain.write().await;
-        
         let current_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -318,7 +334,8 @@ impl AutoGraduationService {
 
         let tokens_to_graduate: Vec<([u8; 32], String)> = {
             let registry = &blockchain_guard.bonding_curve_registry;
-            registry.get_ready_to_graduate(current_timestamp)
+            registry
+                .get_ready_to_graduate(current_timestamp)
                 .into_iter()
                 .map(|token| (token.token_id, token.symbol.clone()))
                 .collect()
@@ -345,32 +362,38 @@ mod tests {
     async fn test_auto_graduation_service() {
         // Create blockchain with a token ready to graduate
         let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         let creator = test_key(1);
         let token_id = test_token_id(1);
-        
+
         let mut token = BondingCurveToken::deploy(
             token_id,
             "Test Token".to_string(),
             "TEST".to_string(),
-            CurveType::Linear { base_price: 1_000_000, slope: 100 },
+            CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 100,
+            },
             Threshold::ReserveAmount(10_000_000), // 100 USD threshold
             true,
             creator,
             "did:zhtp:test".to_string(),
             0,
             1_600_000_000,
-        ).expect("Failed to deploy token");
-        
+        )
+        .expect("Failed to deploy token");
+
         // Set token to threshold
         token.reserve_balance = 10_000_000;
         token.total_supply = 1_000_000;
-        
-        blockchain.bonding_curve_registry.register(token)
+
+        blockchain
+            .bonding_curve_registry
+            .register(token)
             .expect("Failed to register token");
-        
+
         let blockchain_arc = Arc::new(RwLock::new(blockchain));
-        
+
         // Create service
         let config = AutoGraduationConfig {
             enabled: true,
@@ -379,14 +402,14 @@ mod tests {
             min_seed_liquidity_token: 1_000,
             ..Default::default()
         };
-        
+
         let service = AutoGraduationService::new(blockchain_arc.clone(), config);
-        
+
         // Manual check should find the token
         let ready = service.manual_check().await.expect("Check failed");
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].1, "TEST");
-        
+
         println!("✅ Auto-graduation service test passed!");
     }
 }
