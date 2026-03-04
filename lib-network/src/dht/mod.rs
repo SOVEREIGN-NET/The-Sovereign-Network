@@ -1,7 +1,8 @@
-//! Temporary DHT stub to decouple lib-network from lib-storage.
-//! TODO (relocation pass): move real DHT/backend wiring to the integration layer.
+//! DHT integration compatibility surface for lib-network.
+//! TODO (relocation pass): complete backend wiring in integration layer.
 
 pub mod protocol;
+pub mod integration;
 
-pub use crate::dht_stub::*;
+pub use integration::*;
 pub use lib_types::dht::*;

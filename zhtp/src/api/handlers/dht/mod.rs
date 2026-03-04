@@ -14,7 +14,7 @@ use uuid;
 
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus};
-use lib_network::dht::ZkDHTIntegration;
+use crate::integration::dht_adapter::DhtIntegrationAdapter;
 // Removed unused ZhtpHeaders, NetworkStatus
 use lib_identity::ZhtpIdentity;
 
@@ -184,7 +184,7 @@ pub struct ErrorResponse {
 /// DHT API Handler implementation
 pub struct DhtHandler {
     /// DHT client instance (has blockchain-verified identity + Dilithium2 signing)
-    dht_client: Arc<RwLock<Option<Arc<RwLock<ZkDHTIntegration>>>>>,
+    dht_client: Arc<RwLock<Option<Arc<RwLock<DhtIntegrationAdapter>>>>>,
     /// Handler statistics
     stats: Arc<RwLock<DhtHandlerStats>>,
     /// Storage system (where Web4 content is actually stored)
@@ -322,18 +322,21 @@ impl DhtHandler {
 
         info!(" Connecting to DHT peer: {}", connect_request.peer_address);
 
-        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<ZkDHTIntegration>>>> = self.dht_client.read().await;
-        let client: &Arc<RwLock<ZkDHTIntegration>> = match dht_client_guard.as_ref() {
-            Some(client) => client,
-            None => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::ServiceUnavailable,
-                    "DHT client not initialized".to_string(),
-                ));
+        let client = {
+            let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> =
+                self.dht_client.read().await;
+            match dht_client_guard.as_ref() {
+                Some(client) => Arc::clone(client),
+                None => {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::ServiceUnavailable,
+                        "DHT client not initialized".to_string(),
+                    ));
+                }
             }
         };
 
-        let dht = client.write().await;
+        let mut dht = client.write().await;
         match dht.connect_to_peer(&connect_request.peer_address).await {
             Ok(()) => {
                 let response = serde_json::json!({
@@ -363,8 +366,8 @@ impl DhtHandler {
     async fn discover_peers(&self) -> ZhtpResult<ZhtpResponse> {
         info!(" Discovering DHT peers...");
 
-        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<ZkDHTIntegration>>>> = self.dht_client.read().await;
-        let client: &Arc<RwLock<ZkDHTIntegration>> = match dht_client_guard.as_ref() {
+        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> = self.dht_client.read().await;
+        let client: &Arc<RwLock<DhtIntegrationAdapter>> = match dht_client_guard.as_ref() {
             Some(client) => client,
             None => {
                 return Ok(ZhtpResponse::error(
@@ -413,8 +416,8 @@ impl DhtHandler {
 
         info!(" Resolving content for {}{}", resolve_request.domain, resolve_request.path);
 
-        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<ZkDHTIntegration>>>> = self.dht_client.read().await;
-        let client: &Arc<RwLock<ZkDHTIntegration>> = match dht_client_guard.as_ref() {
+        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> = self.dht_client.read().await;
+        let client: &Arc<RwLock<DhtIntegrationAdapter>> = match dht_client_guard.as_ref() {
             Some(client) => client,
             None => {
                 return Ok(ZhtpResponse::error(
@@ -619,14 +622,17 @@ impl DhtHandler {
 
         info!(" Storing content for {}{}", store_request.domain, store_request.path);
 
-        let mut dht_client_guard: tokio::sync::RwLockWriteGuard<Option<Arc<RwLock<ZkDHTIntegration>>>> = self.dht_client.write().await;
-        let client: &mut Arc<RwLock<ZkDHTIntegration>> = match dht_client_guard.as_mut() {
-            Some(client) => client,
-            None => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::ServiceUnavailable,
-                    "DHT client not initialized".to_string(),
-                ));
+        let client = {
+            let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> =
+                self.dht_client.read().await;
+            match dht_client_guard.as_ref() {
+                Some(client) => Arc::clone(client),
+                None => {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::ServiceUnavailable,
+                        "DHT client not initialized".to_string(),
+                    ));
+                }
             }
         };
 
@@ -676,8 +682,8 @@ impl DhtHandler {
 
         info!(" Sending DHT query...");
 
-        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<ZkDHTIntegration>>>> = self.dht_client.read().await;
-        let client: &Arc<RwLock<ZkDHTIntegration>> = match dht_client_guard.as_ref() {
+        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> = self.dht_client.read().await;
+        let client: &Arc<RwLock<DhtIntegrationAdapter>> = match dht_client_guard.as_ref() {
             Some(client) => client,
             None => {
                 return Ok(ZhtpResponse::error(
@@ -731,8 +737,8 @@ impl DhtHandler {
     async fn get_dht_statistics(&self) -> ZhtpResult<ZhtpResponse> {
         info!(" Getting DHT statistics...");
 
-        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<ZkDHTIntegration>>>> = self.dht_client.read().await;
-        let client: &Arc<RwLock<ZkDHTIntegration>> = match dht_client_guard.as_ref() {
+        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> = self.dht_client.read().await;
+        let client: &Arc<RwLock<DhtIntegrationAdapter>> = match dht_client_guard.as_ref() {
             Some(client) => client,
             None => {
                 return Ok(ZhtpResponse::error(
@@ -842,7 +848,7 @@ impl DhtHandler {
     async fn list_dht_contracts(&self) -> ZhtpResult<ZhtpResponse> {
         info!(" Listing contracts in DHT network...");
 
-        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<ZkDHTIntegration>>>> = self.dht_client.read().await;
+        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> = self.dht_client.read().await;
         match dht_client_guard.as_ref() {
             Some(_client) => {},
             None => {
@@ -931,8 +937,8 @@ impl DhtHandler {
     async fn get_dht_status(&self) -> ZhtpResult<ZhtpResponse> {
         debug!(" Getting DHT status...");
 
-        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<ZkDHTIntegration>>>> = self.dht_client.read().await;
-        let client: &Arc<RwLock<ZkDHTIntegration>> = match dht_client_guard.as_ref() {
+        let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<DhtIntegrationAdapter>>>> = self.dht_client.read().await;
+        let client: &Arc<RwLock<DhtIntegrationAdapter>> = match dht_client_guard.as_ref() {
             Some(client) => client,
             None => {
                 let response = DhtStatusResponse {

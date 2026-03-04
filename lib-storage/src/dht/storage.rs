@@ -1048,6 +1048,20 @@ impl<B: StorageBackend> DhtStorage<B> {
             Ok(false)
         }
     }
+
+    /// Remove all keys with a single backend flush for better clear-cache performance.
+    pub async fn clear_all(&mut self) -> Result<()> {
+        let backend_keys = self.backend.keys()?;
+        for key in backend_keys {
+            let _ = self.backend.remove(&key)?;
+        }
+        self.backend.flush()?;
+
+        self.storage_cache.clear();
+        self.contract_index.clear();
+        self.current_usage = 0;
+        Ok(())
+    }
     
     /// Get storage entry metadata
     pub fn get_metadata(&self, key: &str) -> Option<&ChunkMetadata> {
@@ -2392,6 +2406,22 @@ mod tests {
         let retrieved = storage.get(&key).await.unwrap();
         assert_eq!(retrieved, None);
         
+        let stats = storage.get_storage_stats();
+        assert_eq!(stats.total_entries, 0);
+        assert_eq!(stats.total_size, 0);
+    }
+
+    #[tokio::test]
+    async fn test_clear_all() {
+        let node_id = NodeId::from_bytes([1u8; 32]);
+        let mut storage = DhtStorage::new(node_id, 1024 * 1024);
+
+        storage.store("k1".to_string(), b"v1".to_vec(), None).await.unwrap();
+        storage.store("k2".to_string(), b"v2".to_vec(), None).await.unwrap();
+
+        storage.clear_all().await.unwrap();
+
+        assert!(storage.list_keys().is_empty());
         let stats = storage.get_storage_stats();
         assert_eq!(stats.total_entries, 0);
         assert_eq!(stats.total_size, 0);
