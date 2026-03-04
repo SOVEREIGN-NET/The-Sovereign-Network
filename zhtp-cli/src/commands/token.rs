@@ -80,6 +80,7 @@ fn parse_public_key(address: &str) -> CliResult<lib_crypto::PublicKey> {
     Ok(lib_crypto::PublicKey::new(bytes))
 }
 
+#[allow(dead_code)]
 fn build_signed_token_tx(keypair: &KeyPair, call: ContractCall) -> CliResult<Transaction> {
     let call_bytes = bincode::serialize(&call)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize call: {}", e)))?;
