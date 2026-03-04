@@ -1065,6 +1065,16 @@ impl BlockExecutor {
             TransactionType::TokenMint => return Ok(()), // Phase 2: system mint
             _ => {}
         }
+        // System transactions (empty inputs, excluding typed token ops that must pay fees)
+        // are fee-exempt. Mirrors TransactionValidator::validate_transaction() logic.
+        if tx.inputs.is_empty()
+            && !matches!(
+                tx.transaction_type,
+                TransactionType::TokenTransfer | TransactionType::TokenCreation
+            )
+        {
+            return Ok(());
+        }
 
         // Convert transaction to FeeInput
         let fee_input = FeeModelV2::tx_to_fee_input(tx);

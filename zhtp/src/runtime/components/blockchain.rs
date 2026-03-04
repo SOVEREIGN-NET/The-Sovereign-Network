@@ -289,9 +289,7 @@ impl BlockchainComponent {
             }
         }
 
-        if blockchain.pending_transactions.is_empty() && ubi_txs.is_empty() {
-            return Err(anyhow::anyhow!("No pending transactions to mine"));
-        }
+        // Allow mining empty blocks so the chain never stalls waiting for transactions.
 
         info!(
             "Mining block with {} pending txs + {} UBI mints",
@@ -312,9 +310,7 @@ impl BlockchainComponent {
             );
         }
 
-        if transactions_for_block.is_empty() {
-            return Err(anyhow::anyhow!("No valid transactions for block"));
-        }
+        // Empty transaction list is allowed — heartbeat/empty blocks keep the chain advancing.
 
         let has_system_transactions = transactions_for_block.iter().any(|tx| tx.inputs.is_empty());
 
