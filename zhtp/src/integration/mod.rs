@@ -9,6 +9,7 @@ pub mod dependency_injection;
 pub mod dht_dispatcher;
 pub mod dht_integration;
 pub mod dht_payload_handler;
+pub mod dht_adapter;
 
 use anyhow::{Result, Context};
 use std::future::Future;
@@ -23,6 +24,7 @@ pub use dependency_injection::*;
 pub use dht_dispatcher::*;
 pub use dht_integration::*;
 pub use dht_payload_handler::*;
+pub use dht_adapter::*;
 
 use crate::runtime::{ComponentId, Component};
 
