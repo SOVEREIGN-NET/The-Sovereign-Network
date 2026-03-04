@@ -18,6 +18,7 @@ use crate::runtime::RuntimeOrchestrator;
 
 // Constants
 const CONTENT_TYPE_JSON: &str = "application/json";
+#[allow(dead_code)]
 const API_VERSION: &str = "1.0";
 
 /// Standardized error response format (Issue #11)
@@ -288,6 +289,7 @@ impl NetworkHandler {
     }
 
     /// Create standardized JSON error response (Issue #11)
+    #[allow(dead_code)]
     fn json_error(&self, status: ZhtpStatus, message: impl Into<String>) -> ZhtpResult<ZhtpResponse> {
         let code = match status {
             ZhtpStatus::BadRequest => 400,

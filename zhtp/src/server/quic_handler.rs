@@ -63,6 +63,7 @@ use super::zhtp::serialization::ZHTP_MAGIC;
 const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Connection idle timeout for authenticated peer connections (5 minutes)
+#[allow(dead_code)]
 const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Maximum protocol detection buffer size
@@ -72,15 +73,19 @@ const PROTOCOL_DETECT_SIZE: usize = 1024;
 const PROTOCOL_DETECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Maximum number of concurrent PQC peer connections
+#[allow(dead_code)]
 const MAX_PQC_CONNECTIONS: usize = 10_000;
 
 /// Maximum age for PQC connections before requiring re-authentication
+#[allow(dead_code)]
 const MAX_CONNECTION_AGE: Duration = Duration::from_secs(3600); // 1 hour
 
 /// Maximum handshake size (16KB)
+#[allow(dead_code)]
 const MAX_HANDSHAKE_SIZE: u64 = 16 * 1024;
 
 /// Maximum mesh message size (1MB)
+#[allow(dead_code)]
 const MAX_MESSAGE_SIZE: u64 = 1024 * 1024;
 
 /// Per-IP rate limit for PQC handshakes
@@ -135,15 +140,15 @@ impl ConnectionMode {
 #[derive(Debug)]
 enum ProtocolType {
     /// PQC handshake initiation (mesh peer connecting)
-    PqcHandshake(Vec<u8>),
+    PqcHandshake(#[allow(dead_code)] Vec<u8>),
     /// Native ZHTP protocol (API request)
     NativeZhtp(Vec<u8>),
     /// Legacy HTTP request-line payload over QUIC (unsupported compatibility mode)
-    LegacyHttp(Vec<u8>),
+    LegacyHttp(#[allow(dead_code)] Vec<u8>),
     /// Encrypted mesh message (post-handshake)
-    MeshMessage(Vec<u8>),
+    MeshMessage(#[allow(dead_code)] Vec<u8>),
     /// Unknown/unsupported protocol
-    Unknown(Vec<u8>),
+    Unknown(#[allow(dead_code)] Vec<u8>),
 }
 
 /// Buffered stream that prepends already-read data before reading from underlying stream
@@ -164,6 +169,7 @@ impl BufferedStream {
     }
 
     /// Read data, first draining prepended buffer, then from underlying stream
+    #[allow(dead_code)]
     async fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
         if self.offset < self.prepended_data.len() {
             // Still have prepended data to drain
@@ -1051,6 +1057,7 @@ impl QuicHandler {
     }
 
     /// Handle the first stream of a connection - determines connection type
+    #[allow(dead_code)]
     async fn handle_first_stream(
         &self,
         mut recv: RecvStream,
@@ -1142,6 +1149,7 @@ impl QuicHandler {
     }
 
     /// Handle subsequent streams (after first stream established connection type)
+    #[allow(dead_code)]
     async fn handle_subsequent_stream(
         &self,
         mut recv: RecvStream,
@@ -1184,6 +1192,7 @@ impl QuicHandler {
     /// - Replay attack prevention via nonce cache
     /// - Post-quantum security via Kyber1024 KEM bound to UHP transcript
     /// - Master key derived from both UHP session key and Kyber shared secret
+    #[allow(dead_code)]
     async fn handle_pqc_handshake_stream(
         &self,
         _initial_data: Vec<u8>, // Not used - UHP handles its own message flow
@@ -1252,6 +1261,7 @@ impl QuicHandler {
     /// Handle encrypted mesh message stream from authenticated peer
     ///
     /// Uses the master key derived from UHP+Kyber handshake for decryption
+    #[allow(dead_code)]
     async fn handle_mesh_message_stream(
         &self,
         initial_data: Vec<u8>,

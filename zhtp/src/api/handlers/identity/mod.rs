@@ -935,7 +935,7 @@ impl IdentityHandler {
         #[derive(Deserialize)]
         struct RestoreSeedRequest {
             seed_phrase: String,  // Space-separated 20 or 24 words (BIP39)
-            display_name: Option<String>,
+            _display_name: Option<String>,
         }
 
         let req_data: RestoreSeedRequest = serde_json::from_slice(&request.body)
@@ -1297,7 +1297,7 @@ impl IdentityHandler {
         struct SigninWithIdentityRequest {
             identity_id: String,
             #[serde(default)]
-            signature: Option<String>,  // Optional signature proof
+            _signature: Option<String>,  // Optional signature proof
         }
 
         let req_data: SigninWithIdentityRequest = serde_json::from_slice(&request.body)

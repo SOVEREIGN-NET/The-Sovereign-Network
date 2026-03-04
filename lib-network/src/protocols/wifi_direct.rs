@@ -227,6 +227,7 @@ pub enum WiFiDirectDeviceType {
     Unknown,
 }
 
+#[allow(dead_code)]
 impl WiFiDirectMeshProtocol {
     /// Create new WiFi Direct mesh protocol
     pub fn new(node_id: [u8; 32]) -> Result<Self> {
@@ -553,6 +554,7 @@ impl WiFiDirectMeshProtocol {
         Ok(())
     }
     
+    #[allow(dead_code)]
     /// Start P2P device discovery
     async fn start_p2p_discovery(&self) -> Result<()> {
         info!("Starting WiFi Direct P2P discovery...");

@@ -231,6 +231,7 @@ impl DhtHandler {
     }
 
     /// Create standardized JSON error response (Issue #11)
+    #[allow(dead_code)]
     fn json_error(&self, status: ZhtpStatus, message: impl Into<String>) -> ZhtpResult<ZhtpResponse> {
         let code = match status {
             ZhtpStatus::BadRequest => 400,
@@ -780,6 +781,7 @@ impl DhtHandler {
     }
 
     /// Send smart contract DHT packet - Direct blockchain integration
+    #[allow(dead_code)]
     async fn send_contract_packet(&self, _request_body: Vec<u8>) -> ZhtpResult<ZhtpResponse> {
         info!(" Processing contract deployment via direct blockchain integration");
         
@@ -1036,6 +1038,7 @@ impl DhtHandler {
     /// - "SYSTEM_CONTRACT_DEPLOYER" as public key (not real)
     /// 
     /// This would be REJECTED by blockchain validation.
+    #[allow(dead_code)]
     async fn deploy_smart_contract_to_blockchain(&self, _contract_id: String, _operation: &str) -> Result<String, anyhow::Error> {
         Err(anyhow::anyhow!(
             "Smart contract deployment via DHT disabled: requires proper deployer identity and signature. \
@@ -1045,6 +1048,7 @@ impl DhtHandler {
     }
 
     /// Store contract metadata in DHT for Web4 accessibility
+    #[allow(dead_code)]
     async fn store_contract_in_dht(&self, contract_id: &str, blockchain_tx_hash: &str) -> Result<(), anyhow::Error> {
         info!(" Storing contract {} metadata in DHT with blockchain reference: {}", contract_id, blockchain_tx_hash);
 

@@ -200,6 +200,7 @@ impl MeshMessageBroadcaster {
             .collect()
     }
 
+    #[allow(dead_code)]
     /// Get current timestamp in seconds
     fn current_timestamp() -> u64 {
         std::time::SystemTime::now()

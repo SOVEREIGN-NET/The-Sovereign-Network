@@ -140,6 +140,7 @@ mod core {
         aad
     }
 
+    #[allow(dead_code)]
     /// Pure encryption without side effects (FUNCTIONAL CORE)
     pub fn encrypt_core(
         plaintext: &[u8],
@@ -154,6 +155,7 @@ mod core {
         enc.encrypt(plaintext, &aad)
     }
 
+    #[allow(dead_code)]
     /// Pure decryption without side effects (FUNCTIONAL CORE)
     pub fn decrypt_core(
         ciphertext: &[u8],

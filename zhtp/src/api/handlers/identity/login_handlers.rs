@@ -153,7 +153,7 @@ struct AuthAuditLog {
     timestamp: u64,
     ip_address: String,
     success: bool,
-    identity_exists: bool,
+    _identity_exists: bool,
     failure_reason: Option<String>,
 }
 
@@ -271,7 +271,7 @@ pub async fn handle_signin_with_ip(
             timestamp: now,
             ip_address: client_ip.to_string(),
             success: false,
-            identity_exists: false,
+            _identity_exists: false,
             failure_reason: Some("rate_limit_exceeded".to_string()),
         }.log();
 
@@ -297,7 +297,7 @@ pub async fn handle_signin_with_ip(
                         timestamp: now,
                         ip_address: client_ip.to_string(),
                         success: false,
-                        identity_exists: false,
+                        _identity_exists: false,
                         failure_reason: Some("invalid_did_format".to_string()),
                     }.log();
 
@@ -312,7 +312,7 @@ pub async fn handle_signin_with_ip(
                     timestamp: now,
                     ip_address: client_ip.to_string(),
                     success: false,
-                    identity_exists: false,
+                    _identity_exists: false,
                     failure_reason: Some("missing_did_prefix".to_string()),
                 }.log();
 
@@ -328,7 +328,7 @@ pub async fn handle_signin_with_ip(
                 timestamp: now,
                 ip_address: client_ip.to_string(),
                 success: false,
-                identity_exists: false,
+                _identity_exists: false,
                 failure_reason: Some("missing_identifier".to_string()),
             }.log();
 
@@ -350,7 +350,7 @@ pub async fn handle_signin_with_ip(
             timestamp: now,
             ip_address: client_ip.to_string(),
             success: false,
-            identity_exists: false,
+            _identity_exists: false,
             failure_reason: Some("account_locked_out".to_string()),
         }.log();
 
@@ -410,7 +410,7 @@ pub async fn handle_signin_with_ip(
                 timestamp: now,
                 ip_address: client_ip.to_string(),
                 success: false,
-                identity_exists: false,
+                _identity_exists: false,
                 failure_reason: Some("invalid_credentials".to_string()),
             }.log();
 
@@ -442,7 +442,7 @@ pub async fn handle_signin_with_ip(
         timestamp: now,
         ip_address: client_ip.to_string(),
         success: true,
-        identity_exists: true,
+        _identity_exists: true,
         failure_reason: None,
     }.log();
 

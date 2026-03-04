@@ -74,6 +74,7 @@ pub struct ZhtpAuthManager {
     /// This node's Dilithium keypair
     node_dilithium_keypair: (Vec<u8>, Vec<u8>), // (public_key, secret_key)
     /// This node's blockchain public key
+    #[allow(dead_code)]
     node_blockchain_pubkey: PublicKey,
     /// Active challenges (challenge_id -> challenge)
     active_challenges: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, ZhtpAuthChallenge>>>,

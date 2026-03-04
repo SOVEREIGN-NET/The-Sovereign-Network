@@ -115,7 +115,7 @@ impl GenesisFundingService {
         ]);
         
         // Add user primary wallet funding (welcome bonus: 5,000 SOV)
-        let mut genesis_sov_credit: Option<([u8; 32], u64)> = None;
+        let _genesis_sov_credit: Option<([u8; 32], u64)> = None;
         if let Some((wallet_id, _wallet_public_key)) = user_primary_wallet_id.as_ref() {
             let wallet_id_hex = hex::encode(&wallet_id.0[..8]);
             info!(" Funding genesis user primary wallet: {} with {} SOV welcome bonus", wallet_id_hex, SOV_WELCOME_BONUS_SOV);
@@ -173,7 +173,7 @@ impl GenesisFundingService {
             blockchain.wallet_registry.insert(hex::encode(&wallet_id.0), wallet_data);
 
             // Defer TokenMint creation until genesis block assembly is complete
-            genesis_sov_credit = Some((wallet_id.0, SOV_WELCOME_BONUS));
+            let _ = (wallet_id.0, SOV_WELCOME_BONUS);  // Placeholder for future TokenMint creation
 
             info!(" Genesis user wallet funded and registered: {} SOV", SOV_WELCOME_BONUS_SOV);
             info!("   - Wallet ID: {}", hex::encode(&wallet_id.0));

@@ -1308,6 +1308,7 @@ impl WalletHandler {
     }
 
     /// Generate wallet ID based on wallet type and identity
+    #[allow(dead_code)]
     fn generate_wallet_id(&self, wallet_type: &lib_identity::wallets::WalletType, identity_id: &str) -> String {
         match wallet_type {
             lib_identity::wallets::WalletType::Primary => format!("wallet_{}", &identity_id[..12]),
@@ -1322,6 +1323,7 @@ impl WalletHandler {
     }
 
     /// Convert wallet permissions to API format
+    #[allow(dead_code)]
     fn convert_permissions(&self, permissions: &lib_economy::wallets::multi_wallet::WalletPermissions) -> WalletPermissionsInfo {
         WalletPermissionsInfo {
             can_transfer_external: permissions.can_transfer_external,

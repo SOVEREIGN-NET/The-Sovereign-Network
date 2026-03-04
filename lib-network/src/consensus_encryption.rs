@@ -237,6 +237,7 @@ pub struct ConsensusAead {
     /// Ensures no nonce collision even if counters restart across session boundaries
     nonce_prefix_send: [u8; 4],
     /// Nonce prefix for recv direction (4 bytes, derived from root per-direction)
+    #[allow(dead_code)]
     nonce_prefix_recv: [u8; 4],
     /// Base AAD (context-bound: network_id, protocol_id, codec_version)
     /// Sender and receiver DIDs added per message (build_send_aad, build_recv_aad)
@@ -246,6 +247,7 @@ pub struct ConsensusAead {
     /// Peer DID (for constructing AAD in send path)
     peer_did: String,
     /// Direction (determines which key is send vs recv, and AAD ordering)
+    #[allow(dead_code)]
     direction: RoleDirection,
 }
 

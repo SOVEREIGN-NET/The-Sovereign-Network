@@ -515,8 +515,8 @@ struct ContractStateResponse {
 #[derive(Deserialize)]
 struct FeeEstimateRequest {
     transaction_size: Option<usize>,
-    amount: u64,
-    priority: Option<String>, // "low", "medium", "high"
+    _amount: u64,
+    _priority: Option<String>, // "low", "medium", "high"
     is_system_transaction: Option<bool>,
 }
 

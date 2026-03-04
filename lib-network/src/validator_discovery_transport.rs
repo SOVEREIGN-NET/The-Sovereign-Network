@@ -107,6 +107,7 @@ impl MeshValidatorDiscoveryTransport {
         format!("{}{}", VALIDATOR_KEY_PREFIX, hex::encode(identity_id.as_bytes())).into_bytes()
     }
 
+    #[allow(dead_code)]
     /// Extract identity hash from DHT key
     fn parse_dht_key(key: &[u8]) -> Option<Hash> {
         let key_str = std::str::from_utf8(key).ok()?;

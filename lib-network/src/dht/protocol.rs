@@ -389,6 +389,7 @@ pub struct DhtProtocolHandler {
     /// UDP socket for DHT communications (shared with background receiver)
     socket: Option<Arc<tokio::net::UdpSocket>>,
     /// Pending requests (packet_id -> response_channel)
+    #[allow(dead_code)]
     pending_requests: std::collections::HashMap<[u8; 16], tokio::sync::oneshot::Sender<DhtPacket>>,
 }
 
