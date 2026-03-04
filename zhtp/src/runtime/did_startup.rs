@@ -1133,7 +1133,7 @@ impl WalletStartupManager {
         
         // Search for wallet records in DHT
         let wallet_query_key = "zhtp:wallets:available";
-        let dht = dht_client.write().await;
+        let mut dht = dht_client.write().await;
         match dht.fetch_content(wallet_query_key).await {
             Ok(Some(wallet_data)) => {
                 // Parse discovered wallet records
@@ -1350,7 +1350,7 @@ impl WalletStartupManager {
         // Request wallet import from mesh network
         let import_request_key = format!("zhtp:wallet:import:{}", wallet_name);
         
-        let dht = dht_client.write().await;
+        let mut dht = dht_client.write().await;
         match dht.fetch_content(&import_request_key).await {
             Ok(Some(wallet_data)) => {
                 // Parse encrypted wallet data and recover

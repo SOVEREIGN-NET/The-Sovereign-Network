@@ -428,7 +428,7 @@ impl DhtHandler {
             }
         };
 
-        let dht = client.write().await; // Need write for resolve_content
+        let mut dht = client.write().await; // Need write for resolve_content
         match dht.resolve_content(&resolve_request.domain, &resolve_request.path).await {
             Ok(Some(content)) => {
                 // Convert content to hex string for the hash
@@ -501,7 +501,7 @@ impl DhtHandler {
         
         // Second try: Global shared DHT
         if let Ok(client) = crate::runtime::shared_dht::get_dht_client().await {
-            let dht = client.write().await;
+            let mut dht = client.write().await;
             match dht.fetch_content(content_hash).await {
                 Ok(Some(content)) => {
                     info!("  Content found in global shared DHT: {} bytes", content.len());
@@ -519,7 +519,7 @@ impl DhtHandler {
             let client = Arc::clone(client);
             drop(dht_client_guard);
             
-            let dht = client.write().await;
+            let mut dht = client.write().await;
             match dht.fetch_content(content_hash).await {
                 Ok(Some(content)) => {
                     info!("  Content found in handler's DHT: {} bytes", content.len());
@@ -637,7 +637,7 @@ impl DhtHandler {
             }
         };
 
-        let dht = client.write().await;
+        let mut dht = client.write().await;
         match dht.store_content(&store_request.domain, &store_request.path, store_request.content, 86400).await {
             Ok(content_hash) => {
                 let response = DhtStoreResponse {
