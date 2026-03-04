@@ -449,6 +449,7 @@ impl Default for GovernanceExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::treasury_kernel::role_types::RoleId;
     use super::super::governance_types::MintReason;
 
     fn test_proposal_id(n: u8) -> ProposalId {

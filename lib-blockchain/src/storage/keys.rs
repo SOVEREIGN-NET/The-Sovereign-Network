@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn test_token_balance_key_length() {
-        let key = token_balance_key(&TokenId::NATIVE, &Address::ZERO);
+        let key = token_balance_key(&TokenId::NATIVE, &Address::zero());
         assert_eq!(key.len(), 64);
     }
 

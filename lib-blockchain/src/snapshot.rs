@@ -658,6 +658,8 @@ mod tests {
     use crate::block::{Block, BlockHeader};
     use crate::storage::BlockchainStore;
     use crate::types::{Hash, Difficulty};
+    use lib_types::{Address, TokenId, TxHash};
+    use crate::storage::{OutPoint, Utxo};
     use std::sync::Arc;
     use tempfile::TempDir;
 

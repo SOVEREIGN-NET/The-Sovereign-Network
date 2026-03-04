@@ -113,6 +113,7 @@ impl Default for CallStack {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::calls::errors::CalleeErrorCode;
 
     #[test]
     fn test_new_call_stack_empty() {

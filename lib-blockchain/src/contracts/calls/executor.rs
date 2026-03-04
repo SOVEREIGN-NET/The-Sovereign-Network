@@ -285,6 +285,7 @@ impl CallExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::calls::errors::CalleeErrorCode;
 
     fn create_test_executor() -> CallExecutor {
         CallExecutor::new(100)
