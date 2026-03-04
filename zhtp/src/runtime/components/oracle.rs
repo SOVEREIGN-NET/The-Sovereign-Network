@@ -244,7 +244,7 @@ impl OracleComponent {
 
             // Get block timestamp for epoch derivation (Oracle Spec v1 §4.1)
             // Wall clock MUST NOT be used to determine epoch_id.
-            let (block_timestamp, current_epoch) = {
+            let (_block_timestamp, current_epoch) = {
                 let bc = blockchain.read().await;
                 let ts = bc.last_committed_timestamp();
                 (ts, bc.oracle_state.epoch_id(ts))
@@ -297,7 +297,7 @@ impl OracleComponent {
                     Self::gossip_attestation(&attestation).await;
 
                     // Process locally (our own vote counts).
-                    let payload = match bincode::serialize(&attestation) {
+                    let _payload = match bincode::serialize(&attestation) {
                         Ok(b) => b,
                         Err(e) => {
                             warn!("Oracle: failed to serialize own attestation: {}", e);
@@ -422,6 +422,7 @@ fn unix_now() -> u64 {
 }
 
 /// Build a shared `reqwest::Client` with a 10-second overall timeout.
+#[allow(dead_code)]
 fn exchange_http_client() -> Option<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -430,6 +431,7 @@ fn exchange_http_client() -> Option<reqwest::Client> {
 }
 
 /// Fetch SOV/USD from CoinGecko (scaffolding — SOV not yet listed).
+#[allow(dead_code)]
 async fn fetch_coingecko_sov_usd(now: u64) -> Option<OracleFetchedPrice> {
     // CoinGecko simple price API.  Replace `sov-token` with the actual CoinGecko ID once listed.
     let url = "https://api.coingecko.com/api/v3/simple/price?ids=sov-token&vs_currencies=usd";
@@ -446,6 +448,7 @@ async fn fetch_coingecko_sov_usd(now: u64) -> Option<OracleFetchedPrice> {
 }
 
 /// Fetch SOV/USDT from Binance (scaffolding — SOV not yet listed).
+#[allow(dead_code)]
 async fn fetch_binance_sov_usdt(now: u64) -> Option<OracleFetchedPrice> {
     let url = "https://api.binance.com/api/v3/ticker/price?symbol=SOVUSDT";
     let client = exchange_http_client()?;

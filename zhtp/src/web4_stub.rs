@@ -698,14 +698,14 @@ pub struct ContentResult {
 
 #[derive(Clone)]
 pub struct Web4ContentService {
-    registry: Arc<DomainRegistry>,
+    _registry: Arc<DomainRegistry>,
     _zdns: Option<ZdnsResolver>,
 }
 
 impl std::fmt::Debug for Web4ContentService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Web4ContentService")
-            .field("registry", &"<DomainRegistry>")
+            .field("_registry", &"<DomainRegistry>")
             .field("_zdns", &self._zdns)
             .finish()
     }
@@ -713,12 +713,12 @@ impl std::fmt::Debug for Web4ContentService {
 
 impl Web4ContentService {
     pub fn new(registry: Arc<DomainRegistry>) -> Self {
-        Self { registry, _zdns: None }
+        Self { _registry: registry, _zdns: None }
     }
 
     pub fn with_zdns(registry: Arc<DomainRegistry>, zdns_resolver: Arc<ZdnsResolver>) -> Self {
         Self {
-            registry,
+            _registry: registry,
             _zdns: Some((*zdns_resolver).clone()),
         }
     }
@@ -746,14 +746,14 @@ pub struct Web4Capability;
 // ----------------------------- Client stub -----------------------------
 #[derive(Debug, Clone)]
 pub struct Web4Client {
-    trust: TrustConfig,
+    _trust: TrustConfig,
     peer: Option<String>,
 }
 
 impl Web4Client {
     pub async fn new_with_trust(_identity: ZhtpIdentity, trust: TrustConfig) -> Result<Self> {
         Ok(Self {
-            trust,
+            _trust: trust,
             peer: None,
         })
     }

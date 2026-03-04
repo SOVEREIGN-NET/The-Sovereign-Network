@@ -59,7 +59,7 @@ pub struct DnsHandler {
 /// Domain record in registry
 #[derive(Debug, Clone)]
 struct DomainRecord {
-    domain: String,
+    _domain: String,
     content_hash: String,
     contract_address: String,
     owner: String,
@@ -318,7 +318,7 @@ impl DnsHandler {
         
         let current_time = chrono::Utc::now().timestamp() as u64;
         let record = DomainRecord {
-            domain: domain.clone(),
+            _domain: domain.clone(),
             content_hash,
             contract_address,
             owner: metadata.owner.clone(),

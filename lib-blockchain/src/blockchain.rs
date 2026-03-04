@@ -7711,9 +7711,6 @@ impl Blockchain {
             None => return service.reputation_score, // Return existing score if no performance data
         };
         
-        // Start with base score from service
-        let mut score = service.reputation_score as f64;
-        
         // Factor 1: Beneficiary satisfaction (0-100 scale, weight 30%)
         let satisfaction_score = (performance.beneficiary_satisfaction * 0.3).min(30.0);
         
@@ -7733,7 +7730,7 @@ impl Blockchain {
         let longevity_score = ((blocks_active as f64 / 100_000.0) * 15.0).min(15.0);
         
         // Calculate final score
-        score = satisfaction_score + utilization_score + cost_score + success_score + longevity_score;
+        let score = satisfaction_score + utilization_score + cost_score + success_score + longevity_score;
         
         // Clamp to 0-100 range
         score.max(0.0).min(100.0) as u8
@@ -9036,11 +9033,11 @@ impl Blockchain {
         }
         
         // Merge contract deployment heights (for tracking)
-        let mut new_contract_blocks = 0;
+        let mut _new_contract_blocks = 0;
         for (contract_id, block_height) in &import.contract_blocks {
             if !self.contract_blocks.contains_key(contract_id as &[u8; 32]) {
                 self.contract_blocks.insert(*contract_id, *block_height);
-                new_contract_blocks += 1;
+                _new_contract_blocks += 1;
             }
         }
         
@@ -9490,11 +9487,11 @@ impl Blockchain {
         }
         
         // Merge contract deployment records
-        let mut new_contract_blocks = 0;
+        let mut _new_contract_blocks = 0;
         for (contract_id, block_height) in &import.contract_blocks {
             if !self.contract_blocks.contains_key(contract_id as &[u8; 32]) {
                 self.contract_blocks.insert(*contract_id, *block_height);
-                new_contract_blocks += 1;
+                _new_contract_blocks += 1;
             }
         }
         self.rebuild_dao_registry_index();
@@ -10737,10 +10734,9 @@ impl Blockchain {
 
             // Calculate payout amount with remainder handling
             let mut payout = entry.daily_amount;
-            let mut new_remainder = entry.remainder_balance + (entry.monthly_amount % 30);
+            let new_remainder = entry.remainder_balance + (entry.monthly_amount % 30);
             if new_remainder >= 30 {
                 payout += new_remainder / 30;
-                new_remainder %= 30;
             }
 
             let wallet_id = entry.ubi_wallet_id.clone();

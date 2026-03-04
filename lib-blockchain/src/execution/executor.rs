@@ -50,7 +50,7 @@ use crate::types::TransactionType;
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
 use super::tx_apply::{self, CoinbaseOutcome, StateMutator, TransferOutcome};
 
-use crate::protocol::{fee_model, ProtocolParams};
+use crate::protocol::ProtocolParams;
 use crate::resources::{BlockAccumulator, BlockLimits};
 
 // Re-export lib-fees types for convenience
@@ -1124,7 +1124,7 @@ impl BlockExecutor {
     /// This is used by BlockAccumulator to track cumulative resource usage
     /// and reject the block if any limit is exceeded.
     fn calculate_tx_resources(&self, tx: &crate::transaction::Transaction) -> (u64, u64, u64, u64) {
-        use crate::transaction::Transaction;
+        
 
         // Payload bytes: serialized tx size (excluding witnesses)
         // Approximation: tx size minus signature/proof data

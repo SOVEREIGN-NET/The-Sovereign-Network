@@ -7,12 +7,12 @@
 //!
 //! Reference: docs/dapps_auth/pouw-protocol-spec.md Section 9
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use super::types::ProofType;
 use super::validation::ValidatedReceipt;

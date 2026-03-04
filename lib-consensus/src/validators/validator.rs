@@ -281,15 +281,16 @@ impl Validator {
             .as_secs();
 
         self.status = ValidatorStatus::Jailed;
+        let jail_timestamp = current_time + duration_seconds;
         #[allow(deprecated)]
         {
-            self.jail_until = Some(current_time + duration_seconds);
+            self.jail_until = Some(jail_timestamp);
         }
 
         tracing::warn!(
             " Validator {:?} jailed until timestamp {}",
             self.identity,
-            self.jail_until.unwrap()
+            jail_timestamp
         );
     }
 

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::integration::crypto_integration::PublicKey;
 use super::{
     types::{CurveError, CurveStats, CurveType, Phase, Threshold},
-    events::{BondingCurveEvent, ReserveUpdateReason},
+    events::BondingCurveEvent,
 };
 
 /// Bonding Curve Token

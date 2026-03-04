@@ -175,7 +175,7 @@ impl<'a> StateMutator<'a> {
         amount: u128,
     ) -> TxApplyResult<()> {
         // Check if token is deflationary and apply burn if needed
-        let burn_amount = if let Ok(Some(contract)) = self.store.get_token_contract(token) {
+        let _burn_amount = if let Ok(Some(contract)) = self.store.get_token_contract(token) {
             if contract.is_deflationary && contract.burn_rate > 0 {
                 // burn_rate is in basis points (1/10000)
                 let burn = (amount * contract.burn_rate as u128 / 10_000) as u64;
@@ -797,10 +797,9 @@ pub fn apply_coinbase(
 
     // Phase 3C: Validate fee sink output if fees were collected
     let mut fee_sink_output_found = false;
-    let mut fee_sink_output_amount: u64 = 0;
 
     // First pass: validate structure and find fee sink output
-    for (index, output) in tx.outputs.iter().enumerate() {
+    for (_index, output) in tx.outputs.iter().enumerate() {
         // Convert recipient public key to address bytes
         // Note: In first pass we can use unwrap_or for checking fee sink,
         // but the second pass (below) will properly error on conversion failure
@@ -809,9 +808,6 @@ pub fn apply_coinbase(
 
         if &output_address == fee_sink_address {
             fee_sink_output_found = true;
-            // For coinbase, amount is in the commitment or we derive from expected
-            // Since we're distributing, we'll track the fee sink output
-            fee_sink_output_amount = fees_collected;
         }
     }
 

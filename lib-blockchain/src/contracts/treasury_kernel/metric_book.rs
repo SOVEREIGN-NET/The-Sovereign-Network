@@ -18,7 +18,7 @@ use super::metric_types::{
 };
 use super::role_types::AssignmentId;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// Metric Book - append-only work metric storage
 ///

@@ -131,7 +131,7 @@ impl ZhtpRequestHandler for OracleHandler {
 struct ProposeCommitteeRequest {
     new_members: Vec<String>, // hex-encoded key_ids
     activate_at_epoch: u64,
-    reason: Option<String>,
+    _reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,14 +141,14 @@ struct ProposeConfigRequest {
     max_deviation_bps: Option<u32>,
     max_price_staleness_epochs: Option<u64>,
     activate_at_epoch: u64,
-    reason: Option<String>,
+    _reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CancelUpdateRequest {
     cancel_committee_update: bool,
     cancel_config_update: bool,
-    reason: Option<String>,
+    _reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, error};
 use anyhow::anyhow;
 use base64::{Engine as _, engine::general_purpose};
-use std::collections::HashMap;
 
 use super::Web4Handler;
 

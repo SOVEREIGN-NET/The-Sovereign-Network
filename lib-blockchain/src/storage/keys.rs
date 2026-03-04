@@ -16,7 +16,7 @@
 //! - Hashes are raw bytes (32 bytes)
 //! - Composite keys use fixed-width fields (no delimiters needed)
 
-use super::{Address, AddressExt, BlockHash, OutPoint, TokenId, TxHash};
+use super::{Address, BlockHash, OutPoint, TokenId, TxHash};
 
 // =============================================================================
 // BLOCK KEYS
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn test_token_balance_key_length() {
-        let key = token_balance_key(&TokenId::NATIVE, &Address::ZERO);
+        let key = token_balance_key(&TokenId::NATIVE, &Address::zero());
         assert_eq!(key.len(), 64);
     }
 

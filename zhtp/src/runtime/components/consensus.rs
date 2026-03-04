@@ -130,7 +130,7 @@ fn convert_to_network_message(msg: &ValidatorMessage) -> lib_consensus::validato
         ValidatorMessage as NetworkValidatorMessage,
         ProposeMessage, VoteMessage, ConsensusStateView,
     };
-    use lib_consensus::types::HeartbeatMessage;
+    
     use std::collections::BTreeMap;
 
     match msg {

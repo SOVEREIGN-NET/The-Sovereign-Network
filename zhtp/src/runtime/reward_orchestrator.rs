@@ -207,9 +207,9 @@ impl From<&RewardsConfig> for RewardOrchestratorConfig {
 /// Manages both routing and storage reward processors with a single interface.
 /// Simplifies lifecycle management and provides aggregated metrics.
 pub struct RewardOrchestrator {
-    network_component: Arc<NetworkComponent>,
-    blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
-    environment: crate::config::Environment,
+    _network_component: Arc<NetworkComponent>,
+    _blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+    _environment: crate::config::Environment,
     config: RewardOrchestratorConfig,
     
     // Processor instances
@@ -228,12 +228,12 @@ impl RewardOrchestrator {
     /// Create a new unified reward orchestrator with default configuration
     pub fn new(
         network_component: Arc<NetworkComponent>,
-        blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+        _blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
         environment: crate::config::Environment,
     ) -> Self {
         Self::with_config(
             network_component,
-            blockchain_arc,
+            _blockchain_arc,
             environment,
             RewardOrchestratorConfig::default(),
         )
@@ -242,21 +242,21 @@ impl RewardOrchestrator {
     /// Create with custom configuration
     pub fn with_config(
         network_component: Arc<NetworkComponent>,
-        blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+        _blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
         environment: crate::config::Environment,
         config: RewardOrchestratorConfig,
     ) -> Self {
         // Create processor instances
         let routing_processor = Arc::new(RoutingRewardProcessor::with_config(
             network_component.clone(),
-            blockchain_arc.clone(),
+            _blockchain_arc.clone(),
             environment.clone(),
             config.routing_config.clone(),
         ));
         
         let storage_processor = Arc::new(StorageRewardProcessor::with_config(
             network_component.clone(),
-            blockchain_arc.clone(),
+            _blockchain_arc.clone(),
             environment.clone(),
             config.storage_config.clone(),
         ));
@@ -268,9 +268,9 @@ impl RewardOrchestrator {
         )));
         
         Self {
-            network_component,
-            blockchain_arc,
-            environment,
+            _network_component: network_component,
+            _blockchain_arc: _blockchain_arc,
+            _environment: environment,
             config,
             routing_processor,
             storage_processor,

@@ -54,7 +54,7 @@ pub struct Web4Handler {
     /// Read-only name resolver
     name_resolver: Arc<NameResolver>,
     /// Content publisher for publishing content
-    content_publisher: Arc<ContentPublisher>,
+    _content_publisher: Arc<ContentPublisher>,
     /// Content service for serving Web4 content
     content_service: Arc<Web4ContentService>,
     /// Wallet-content ownership manager
@@ -94,7 +94,7 @@ impl Web4Handler {
         Ok(Self {
             domain_registry,
             name_resolver,
-            content_publisher,
+            _content_publisher: content_publisher,
             content_service: Arc::new(content_service),
             wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
             identity_manager,
