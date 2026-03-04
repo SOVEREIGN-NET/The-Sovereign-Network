@@ -797,7 +797,6 @@ pub fn apply_coinbase(
 
     // Phase 3C: Validate fee sink output if fees were collected
     let mut fee_sink_output_found = false;
-    let mut fee_sink_output_amount: u64 = 0;
 
     // First pass: validate structure and find fee sink output
     for (_index, output) in tx.outputs.iter().enumerate() {
@@ -809,9 +808,6 @@ pub fn apply_coinbase(
 
         if &output_address == fee_sink_address {
             fee_sink_output_found = true;
-            // For coinbase, amount is in the commitment or we derive from expected
-            // Since we're distributing, we'll track the fee sink output
-            fee_sink_output_amount = fees_collected;
         }
     }
 
