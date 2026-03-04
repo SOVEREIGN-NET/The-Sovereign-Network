@@ -359,10 +359,10 @@ impl BlockchainComponent {
         Ok(())
     }
     
-    /// Minimum validators required for BFT consensus mode
-    /// With fewer validators, direct mining is allowed (bootstrap mode)
-    /// With 4+ validators, all block production must go through BFT consensus
-    const MIN_BFT_VALIDATORS: usize = 4;
+    /// Minimum validators required for BFT consensus mode.
+    /// Set to 1 so BFT is active from the first validator onward.
+    /// Matches MIN_BFT_VALIDATORS in lib-types and lib-consensus.
+    const MIN_BFT_VALIDATORS: usize = 1;
 
     /// Real mining loop with consensus coordination
     ///
