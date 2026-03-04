@@ -4185,6 +4185,16 @@ impl Blockchain {
         None
     }
 
+    /// Public accessor: find the Primary wallet ID bytes for a given signer key_id.
+    pub fn primary_wallet_id_for_signer(&self, signer_key_id: &[u8; 32]) -> Option<[u8; 32]> {
+        self.primary_wallet_for_signer(signer_key_id)
+    }
+
+    /// Public accessor: build the SOV-ledger lookup key for a wallet ID.
+    pub fn sov_key_from_wallet_id(wallet_id: &[u8; 32]) -> PublicKey {
+        Self::wallet_key_for_sov(wallet_id)
+    }
+
     /// Migrate legacy SOV balances keyed by public-key key_id into Primary wallet_id entries.
     fn migrate_sov_key_balances_to_wallets(&mut self) {
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
@@ -4515,7 +4525,7 @@ impl Blockchain {
                         // Persist updated SOV token contract so the immediate balance survives restarts.
                         // This mirrors the behavior in process_wallet_transactions(), which calls put_token_contract.
                         if let Some(store) = &self.store {
-                            if let Err(e) = store.put_token_contract(&sov_token_id, &*token) {
+                            if let Err(e) = store.put_token_contract(&*token) {
                                 warn!(
                                     "register_wallet: failed to persist SOV token contract for wallet {}: {}",
                                     &wallet_id_str[..16.min(wallet_id_str.len())],

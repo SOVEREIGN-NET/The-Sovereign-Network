@@ -788,6 +788,18 @@ impl Component for BlockchainComponent {
             }
         }
 
+        // All nodes run a periodic sync loop to stay caught up with peers.
+        // Validators need this just as much as observers: the startup sync window
+        // closes before the gap is fully filled when the leading node has moved
+        // ahead, and the mining loop has no built-in gap-fill mechanism.
+        if !self.bootstrap_peers.is_empty() {
+            let peers = self.bootstrap_peers.clone();
+            tokio::spawn(Self::observer_sync_loop(peers));
+            info!("✓ Peer sync loop started ({} bootstrap peer(s))", self.bootstrap_peers.len());
+        } else {
+            info!("⚠️ No bootstrap peers configured — peer sync loop disabled");
+        }
+
         // Check if this node can mine before starting the mining loop
         // Only FullValidator nodes should participate in block mining
         if !self.node_role.can_mine() {
@@ -801,16 +813,6 @@ impl Component for BlockchainComponent {
                 *self.node_role,
                 role_desc
             );
-
-            // Observer nodes run a periodic sync loop to catch up when behind validators.
-            // This handles the gap created by startup backfill blocks on the validator.
-            if !self.bootstrap_peers.is_empty() {
-                let peers = self.bootstrap_peers.clone();
-                tokio::spawn(Self::observer_sync_loop(peers));
-                info!("✓ Observer sync loop started ({} bootstrap peer(s))", self.bootstrap_peers.len());
-            } else {
-                info!("⚠️ No bootstrap peers configured — observer sync loop disabled");
-            }
 
             *self.status.write().await = ComponentStatus::Running;
             return Ok(());

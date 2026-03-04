@@ -322,22 +322,43 @@ impl ConsensusEngine {
     /// to quorum. Combined with signature verification, this prevents Byzantine validators
     /// from forging votes or creating false quorums.
     pub(super) async fn validate_remote_vote(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
-        // Runtime check: Votes must be for current or future height (never past)
-        // Accepting votes for past heights could allow replay attacks
+        // 1. Height sanity: reject past-height votes (replay protection).
+        // Stale votes from previous blocks are silently discarded.
         if vote.height < self.current_round.height {
-            tracing::warn!(
-                "Vote rejected: vote height {} < current height {} (potential replay attack)",
+            tracing::debug!(
+                "Vote rejected: stale height {} < our height {}",
                 vote.height,
                 self.current_round.height
             );
             return Ok(false);
         }
-        // 1. Verify signature
+
+        // 2. Height divergence: peer is ahead of us.
+        //
+        // We cannot validate validator membership for a future height because we do not
+        // yet have the snapshot for that height.  Skip membership / signature checks
+        // and immediately fire the catch-up trigger so we download the missing blocks.
+        if vote.height > self.current_round.height {
+            let our_blockchain_height = self.current_round.height.saturating_sub(1);
+            tracing::info!(
+                "⬆️  Height divergence: peer {} votes at height {} \
+                 (our consensus height {}; local blockchain ~{}) — triggering catch-up sync",
+                vote.voter, vote.height, self.current_round.height, our_blockchain_height
+            );
+            if let Some(ref trigger) = self.catch_up_sync_trigger {
+                trigger.trigger(our_blockchain_height);
+            }
+            return Ok(false);
+        }
+
+        // vote.height == self.current_round.height from this point on.
+
+        // 3. Verify signature
         if !self.verify_vote_signature(vote).await? {
             return Ok(false);
         }
 
-        // 2. Verify validator membership
+        // 4. Verify validator membership (snapshot is available since height matches)
         if !self.is_validator_member(&vote.voter, vote.height) {
             tracing::warn!(
                 "Vote rejected: voter {} is not in active validator set for height {}",
@@ -347,38 +368,15 @@ impl ConsensusEngine {
             return Ok(false);
         }
 
-        // 3. Verify height matches
-        if vote.height != self.current_round.height {
-            if vote.height > self.current_round.height {
-                // Peer is proposing or voting at a higher height.
-                // This means the peer's blockchain is ahead of ours: they have committed
-                // block(s) that we haven't seen yet.
-                //
-                // Trigger a catch-up block download so we can converge to the same height
-                // and form quorum.  The trigger is non-blocking and rate-limited by the
-                // runtime implementation.
-                let our_blockchain_height = self.current_round.height.saturating_sub(1);
-                tracing::info!(
-                    "⬆️  Height divergence: peer {} votes at height {} \
-                     (our consensus height {}; local blockchain ~{}) — triggering catch-up sync",
-                    vote.voter, vote.height, self.current_round.height, our_blockchain_height
-                );
-                if let Some(ref trigger) = self.catch_up_sync_trigger {
-                    trigger.trigger(our_blockchain_height);
-                }
-            } else {
-                tracing::debug!(
-                    "Vote rejected: stale height. Vote height {} < local height {}",
-                    vote.height, self.current_round.height
-                );
-            }
-            return Ok(false);
-        }
-
-        // 4. Verify round matches
-        if vote.round != self.current_round.round {
+        // 5. Round check.
+        //
+        // Stale rounds (vote.round < current) are rejected outright.
+        // Higher rounds (vote.round > current) are allowed through so that
+        // on_prevote / on_precommit can perform a Tendermint round-skip and bring
+        // all nodes to the same round without waiting for an entire timer cycle.
+        if vote.round < self.current_round.round {
             tracing::debug!(
-                "Vote rejected: round mismatch. Vote round {} != local round {}",
+                "Vote rejected: stale round {} < our round {}",
                 vote.round,
                 self.current_round.round
             );

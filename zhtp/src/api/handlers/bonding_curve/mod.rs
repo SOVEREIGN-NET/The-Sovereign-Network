@@ -321,7 +321,7 @@ impl CurveHandler {
             // Resolve the creator's primary wallet and check SOV balance against the wallet-based key.
             let sov_balance = match sov_token {
                 Some(token) => {
-                    let primary_wallet_id = match blockchain.primary_wallet_for_signer(&creator.key_id) {
+                    let primary_wallet_id = match blockchain.primary_wallet_id_for_signer(&creator.key_id) {
                         Some(wallet_id) => wallet_id,
                         None => {
                             return Ok(create_error_response(
@@ -331,7 +331,7 @@ impl CurveHandler {
                         }
                     };
                     let sov_wallet_key =
-                        lib_blockchain::contracts::utils::wallet_key_for_sov(primary_wallet_id);
+                        lib_blockchain::Blockchain::sov_key_from_wallet_id(&primary_wallet_id);
                     token.balance_of(&sov_wallet_key)
                 }
                 None => 0,

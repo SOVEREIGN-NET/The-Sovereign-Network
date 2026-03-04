@@ -871,6 +871,7 @@ pub mod testing {
             id: proposal_id,
             proposer,
             height,
+            round: 0,
             previous_hash,
             block_data: vec![1, 2, 3, 4], // Test block data
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),

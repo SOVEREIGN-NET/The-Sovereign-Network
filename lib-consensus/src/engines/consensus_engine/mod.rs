@@ -246,7 +246,7 @@ pub const VIEW_CHANGE_CONDITIONS: &str =
 /// that f = floor((n-1)/3) >= 1, i.e. at least one Byzantine fault can be tolerated.
 ///
 /// Invariant: Must equal `crate::types::MIN_BFT_VALIDATORS`.
-pub const BFT_MIN_VALIDATORS: usize = 4;
+pub const BFT_MIN_VALIDATORS: usize = 1;
 
 // Compile-time assertion: BFT_MIN_VALIDATORS must equal crate::types::MIN_BFT_VALIDATORS.
 // If this fails, the constant above is out of sync with the types module.

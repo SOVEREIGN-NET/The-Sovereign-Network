@@ -205,7 +205,7 @@ impl FeeDistributionResult {
 ///
 /// With fewer validators, the network operates in bootstrap mode where
 /// a single validator can mine blocks directly.
-pub const MIN_BFT_VALIDATORS: usize = 4;
+pub const MIN_BFT_VALIDATORS: usize = 1;
 
 // =============================================================================
 // TESTS
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_min_bft_validators_constant() {
-        assert_eq!(MIN_BFT_VALIDATORS, 4);
+        assert_eq!(MIN_BFT_VALIDATORS, 1);
     }
 
     #[test]

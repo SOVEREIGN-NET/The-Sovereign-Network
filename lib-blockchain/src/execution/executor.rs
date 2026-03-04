@@ -360,6 +360,22 @@ impl BlockExecutor {
         }
     }
 
+    /// Create with legacy ExecutorConfig for trusted peer block replay.
+    ///
+    /// Identical to `from_config` but sets `skip_fee_validation = true`.
+    /// Use this when importing already-committed peer blocks during catch-up
+    /// sync; those blocks passed consensus and must be applied regardless of
+    /// the local fee schedule.
+    pub fn from_config_trusted_replay(store: Arc<dyn BlockchainStore>, config: ExecutorConfig) -> Self {
+        let (fee_model, limits) = config.to_fee_model_and_limits();
+        Self {
+            store,
+            fee_model,
+            limits,
+            skip_fee_validation: true,
+        }
+    }
+
     /// Create with default fee model and limits
     pub fn with_store(store: Arc<dyn BlockchainStore>) -> Self {
         Self::new(store, FeeModelV2::default(), BlockLimits::default())
