@@ -360,9 +360,9 @@ impl BlockchainComponent {
     }
     
     /// Minimum validators required for BFT consensus mode.
-    /// Set to 1 so BFT is active from the first validator onward.
+    /// Keep at 4 so bootstrap mining is available while the validator set is forming.
     /// Matches MIN_BFT_VALIDATORS in lib-types and lib-consensus.
-    const MIN_BFT_VALIDATORS: usize = 1;
+    const MIN_BFT_VALIDATORS: usize = 4;
 
     /// Real mining loop with consensus coordination
     ///
@@ -719,6 +719,14 @@ impl BlockchainComponent {
             }
         }
     }
+
+    fn should_run_peer_sync_loop(
+        bootstrap_peers_count: usize,
+        joined_existing_network: bool,
+        can_mine: bool,
+    ) -> bool {
+        bootstrap_peers_count > 0 && (joined_existing_network || !can_mine)
+    }
 }
 
 #[async_trait::async_trait]
@@ -788,16 +796,24 @@ impl Component for BlockchainComponent {
             }
         }
 
-        // All nodes run a periodic sync loop to stay caught up with peers.
-        // Validators need this just as much as observers: the startup sync window
-        // closes before the gap is fully filled when the leading node has moved
-        // ahead, and the mining loop has no built-in gap-fill mechanism.
-        if !self.bootstrap_peers.is_empty() {
+        // Run periodic gap-fill sync for joiners and non-mining nodes.
+        // The bootstrap leader with local chain data should not run this loop.
+        let should_run_peer_sync_loop = Self::should_run_peer_sync_loop(
+            self.bootstrap_peers.len(),
+            self.joined_existing_network,
+            self.node_role.can_mine(),
+        );
+        if should_run_peer_sync_loop {
             let peers = self.bootstrap_peers.clone();
             tokio::spawn(Self::observer_sync_loop(peers));
             info!("✓ Peer sync loop started ({} bootstrap peer(s))", self.bootstrap_peers.len());
         } else {
-            info!("⚠️ No bootstrap peers configured — peer sync loop disabled");
+            info!(
+                "ℹ️ Peer sync loop disabled (bootstrap_peers={}, joined_existing_network={}, can_mine={})",
+                self.bootstrap_peers.len(),
+                self.joined_existing_network,
+                self.node_role.can_mine(),
+            );
         }
 
         // Check if this node can mine before starting the mining loop
@@ -1066,3 +1082,23 @@ impl Component for BlockchainComponent {
 
 // Export helper type
 pub use crate::runtime::components::consensus::BlockchainValidatorAdapter;
+
+#[cfg(test)]
+mod tests {
+    use super::BlockchainComponent;
+
+    #[test]
+    fn should_run_peer_sync_loop_for_joining_validator() {
+        assert!(BlockchainComponent::should_run_peer_sync_loop(1, true, true));
+    }
+
+    #[test]
+    fn should_not_run_peer_sync_loop_for_bootstrap_leader_validator() {
+        assert!(!BlockchainComponent::should_run_peer_sync_loop(1, false, true));
+    }
+
+    #[test]
+    fn should_run_peer_sync_loop_for_non_mining_nodes() {
+        assert!(BlockchainComponent::should_run_peer_sync_loop(1, false, false));
+    }
+}

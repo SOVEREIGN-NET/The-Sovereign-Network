@@ -937,6 +937,67 @@ impl RuntimeOrchestrator {
             Err(_) => Ok(0)
         }
     }
+
+    /// Returns true when this node matches the first bootstrap validator identity.
+    async fn is_local_bootstrap_leader(&self) -> Result<bool> {
+        let leader_did = match self.config.network_config.bootstrap_validators.first() {
+            Some(v) => v.identity_id.clone(),
+            None => return Ok(false),
+        };
+
+        let keystore_path = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+            .join(".zhtp")
+            .join("keystore");
+
+        let local_identity =
+            crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await?;
+        let Some(identity) = local_identity else {
+            return Ok(false);
+        };
+
+        Ok(identity.did == leader_did)
+    }
+
+    /// Returns true if local persistent chain artifacts already exist.
+    fn has_local_chain_data(&self) -> bool {
+        let dat_path = std::path::PathBuf::from(self.config.environment.blockchain_data_path());
+        if dat_path.exists() {
+            return true;
+        }
+
+        let data_dir = self.config.environment.data_directory();
+        let sled_path = std::path::Path::new(&data_dir).join("sled");
+        if !sled_path.exists() {
+            return false;
+        }
+
+        match std::fs::read_dir(sled_path) {
+            Ok(mut entries) => entries.next().is_some(),
+            Err(_) => false,
+        }
+    }
+
+    fn should_skip_startup_sync(local_is_bootstrap_leader: bool, has_local_chain_data: bool) -> bool {
+        local_is_bootstrap_leader && has_local_chain_data
+    }
+
+    fn validate_validator_endpoint(network_address: &str) -> Result<()> {
+        if network_address.trim().is_empty() {
+            return Err(anyhow::anyhow!("Validator endpoint is empty"));
+        }
+
+        if let Ok(socket_addr) = network_address.parse::<std::net::SocketAddr>() {
+            if socket_addr.ip().is_unspecified() {
+                return Err(anyhow::anyhow!(
+                    "Validator endpoint {} is not reachable by peers. Configure a concrete host/IP, not 0.0.0.0.",
+                    network_address
+                ));
+            }
+        }
+
+        Ok(())
+    }
     
     /// Wait for initial blockchain sync to reach at least height 1
     pub async fn wait_for_initial_sync(&self, timeout: std::time::Duration) -> Result<()> {
@@ -2123,15 +2184,20 @@ impl RuntimeOrchestrator {
             &[ks.dilithium_pk.as_slice(), b"rewards"].concat()
         ).to_vec();
 
-        // Use the configured QUIC port for the network address so peers can dial this validator.
-        // The API port (HTTP) is not the right address for consensus/P2P traffic.
-        // Look up this node's endpoint from bootstrap_validators config if available,
-        // otherwise fall back to the configured QUIC port.
-        let quic_port = self.config.protocols_config.quic_port;
+        // Use explicit endpoint configuration so peers can dial this validator.
+        // Priority:
+        //   1) bootstrap_validators[].endpoints for this DID
+        //   2) ZHTP_VALIDATOR_ENDPOINT env var
         let network_address = self.config.network_config.bootstrap_validators.iter()
             .find(|bv| bv.identity_id == node_did)
             .and_then(|bv| bv.endpoints.first().cloned())
-            .unwrap_or_else(|| format!("0.0.0.0:{}", quic_port));
+            .or_else(|| std::env::var("ZHTP_VALIDATOR_ENDPOINT").ok())
+            .ok_or_else(|| anyhow::anyhow!(
+                "No validator endpoint configured for {}. Set bootstrap_validators[].endpoints or ZHTP_VALIDATOR_ENDPOINT.",
+                node_did
+            ))?;
+
+        Self::validate_validator_endpoint(&network_address)?;
 
         let validator_data = lib_blockchain::transaction::ValidatorTransactionData {
             identity_id: node_did.clone(),
@@ -3432,13 +3498,30 @@ impl RuntimeOrchestrator {
         
         // PHASE 3: Setup identity and blockchain
         info!("🔑 Phase 3: Setting up identity and blockchain...");
+        // Skip startup sync for the bootstrap leader when local chain data exists.
+        // This keeps G1 independent on restart and avoids pointless sync waits.
+        let local_is_bootstrap_leader = match orchestrator.is_local_bootstrap_leader().await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to determine bootstrap leader identity from keystore: {}", e);
+                false
+            }
+        };
+        let leader_has_local_data = Self::should_skip_startup_sync(
+            local_is_bootstrap_leader,
+            orchestrator.has_local_chain_data(),
+        );
+
         // Only join if peers have actual blocks (height > 0). If all peers are at height 0,
         // treat this as a fresh network and allow this node to create genesis.
         let peers_have_blocks = network_info
             .as_ref()
             .map(|ni| ni.blockchain_height > 0)
             .unwrap_or(false);
-        if let Some(ref net_info) = network_info.filter(|_| peers_have_blocks) {
+        if leader_has_local_data {
+            orchestrator.set_joined_existing_network(false).await?;
+            info!("🌱 Bootstrap leader with local chain data detected - skipping startup sync");
+        } else if let Some(ref net_info) = network_info.filter(|_| peers_have_blocks) {
             // Joining existing network
             orchestrator.set_joined_existing_network(true).await?;
             orchestrator.start_blockchain_sync(net_info).await?;
@@ -3668,6 +3751,31 @@ impl RuntimeOrchestrator {
     /// Check if node joined an existing network
     pub async fn get_joined_existing_network(&self) -> bool {
         *self.joined_existing_network.read().await
+    }
+}
+
+#[cfg(test)]
+mod runtime_orchestrator_tests {
+    use super::RuntimeOrchestrator;
+
+    #[test]
+    fn should_skip_startup_sync_only_for_leader_with_local_data() {
+        assert!(RuntimeOrchestrator::should_skip_startup_sync(true, true));
+        assert!(!RuntimeOrchestrator::should_skip_startup_sync(true, false));
+        assert!(!RuntimeOrchestrator::should_skip_startup_sync(false, true));
+        assert!(!RuntimeOrchestrator::should_skip_startup_sync(false, false));
+    }
+
+    #[test]
+    fn validate_validator_endpoint_rejects_unspecified_ip() {
+        let result = RuntimeOrchestrator::validate_validator_endpoint("0.0.0.0:9334");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_validator_endpoint_accepts_reachable_formats() {
+        assert!(RuntimeOrchestrator::validate_validator_endpoint("10.1.2.3:9334").is_ok());
+        assert!(RuntimeOrchestrator::validate_validator_endpoint("validator-g2.example.net:9334").is_ok());
     }
 }
 
