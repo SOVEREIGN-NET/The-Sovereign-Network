@@ -56,6 +56,27 @@ impl Signature {
         }
     }
 
+    /// Create a Signature from raw bytes only, using a default (empty) public key.
+    ///
+    /// # Deprecated
+    /// This constructor is ambiguous because the resulting `Signature` carries no
+    /// meaningful public key. Use [`Signature::from_bytes_with_key`] instead, which
+    /// requires an explicit `PublicKey` and produces a fully-valid `Signature`.
+    ///
+    /// This shim is retained for backwards compatibility and will be removed in a
+    /// future major release.
+    #[deprecated(
+        since = "0.0.0",
+        note = "Use `Signature::from_bytes_with_key` instead; \
+                `from_bytes` leaves the public key empty and cannot be used for verification."
+    )]
+    pub fn from_bytes(signature_bytes: &[u8]) -> Self {
+        Signature {
+            signature: signature_bytes.to_vec(),
+            ..Default::default()
+        }
+    }
+
     /// Get the raw signature bytes
     pub fn as_bytes(&self) -> &[u8] {
         &self.signature
