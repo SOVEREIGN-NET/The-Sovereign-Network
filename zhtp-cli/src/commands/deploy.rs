@@ -152,6 +152,7 @@ async fn post_bytes(
         .map_err(|e| CliError::ConfigError(format!("Invalid JSON response: {}", e)))
 }
 
+#[allow(dead_code)]
 async fn post_raw(
     client: &ZhtpClient,
     path: &str,
@@ -623,6 +624,7 @@ async fn handle_deploy_command_impl(
     }
 }
 
+#[allow(dead_code)]
 async fn fetch_manifest_impl(
     cid: &str,
     keystore: Option<&str>,

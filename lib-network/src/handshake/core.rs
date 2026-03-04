@@ -34,7 +34,7 @@ use super::{
 use anyhow::Result;
 use lib_identity::ZhtpIdentity;
 use lib_crypto::KeyPair;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{trace, debug, error};
 
 // Use orchestrator helpers to reduce duplication
@@ -494,6 +494,7 @@ where
 // Graceful Shutdown Helper for Duplex Streams
 // ============================================================================
 
+#[allow(dead_code)]
 /// Gracefully shutdown a duplex stream to avoid race conditions
 ///
 /// This ensures both sides of the stream have finished reading before closing.
@@ -543,6 +544,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 /// Helper to drain a stream until EOF
 async fn drain_stream<S>(stream: &mut S) -> Result<()>
 where

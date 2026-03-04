@@ -7,7 +7,7 @@
 //! - Handling errors in a wrapped, deterministic format
 
 use super::call::CrossContractCall;
-use super::errors::{CalleeErrorCode, ContractId, CrossContractError};
+use super::errors::{ContractId, CrossContractError};
 use super::stack::{CallStack, MAX_RECURSION_DEPTH};
 use super::validator::{CallValidator, MethodSignature};
 use anyhow::{anyhow, Result};
@@ -285,6 +285,7 @@ impl CallExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::calls::errors::CalleeErrorCode;
 
     fn create_test_executor() -> CallExecutor {
         CallExecutor::new(100)

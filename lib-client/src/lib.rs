@@ -67,6 +67,7 @@ pub use request::{
     ZhtpRequest, ZhtpResponse,
 };
 pub use session::Session;
+#[allow(deprecated)]
 pub use token_tx::{
     // Token-specific
     build_burn_tx,
@@ -1398,6 +1399,7 @@ pub extern "C" fn zhtp_client_build_token_burn(
 /// - content_cid: Optional content CID (null-terminated C string, can be NULL)
 /// - chain_id: Network chain ID
 #[no_mangle]
+#[allow(deprecated)]
 pub extern "C" fn zhtp_client_build_domain_register(
     handle: *const IdentityHandle,
     domain: *const std::ffi::c_char,
@@ -1444,6 +1446,7 @@ pub extern "C" fn zhtp_client_build_domain_register(
 /// - content_cid: Content CID (null-terminated C string)
 /// - chain_id: Network chain ID
 #[no_mangle]
+#[allow(deprecated)]
 pub extern "C" fn zhtp_client_build_domain_update(
     handle: *const IdentityHandle,
     domain: *const std::ffi::c_char,
@@ -1487,6 +1490,7 @@ pub extern "C" fn zhtp_client_build_domain_update(
 /// - to_pubkey: New owner's public key bytes (32 bytes)
 /// - chain_id: Network chain ID
 #[no_mangle]
+#[allow(deprecated)]
 pub extern "C" fn zhtp_client_build_domain_transfer(
     handle: *const IdentityHandle,
     domain: *const std::ffi::c_char,

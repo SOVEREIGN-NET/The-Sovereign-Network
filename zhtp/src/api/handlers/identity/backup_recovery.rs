@@ -1016,7 +1016,7 @@ pub async fn handle_migrate_identity(
         let mut short_key_max_len: Option<usize> = None;
         let mut short_key_backfill_total: u64 = 0;
         let mut movable_balance_total: u64 = 0;
-        let mut has_token_contract = false;
+        let _has_token_contract: bool;
 
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(shared_blockchain) => {
@@ -1024,7 +1024,7 @@ pub async fn handle_migrate_identity(
                 let old_identity_id_chain = lib_blockchain::Hash::from_slice(old_identity.id.as_bytes());
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
                 let token_opt = blockchain.token_contracts.get(&sov_token_id);
-                has_token_contract = token_opt.is_some();
+                _has_token_contract = token_opt.is_some();
 
                 for (wallet_id_str, wallet_data) in blockchain.wallet_registry.iter() {
                     if wallet_data.owner_identity_id == Some(old_identity_id_chain.clone()) {
@@ -1068,7 +1068,7 @@ pub async fn handle_migrate_identity(
             MIN_DILITHIUM_PK_LEN,
             short_key_backfill_total,
             movable_balance_total,
-            has_token_contract
+            _has_token_contract
         );
 
         let response = MigrateIdentityResponse {

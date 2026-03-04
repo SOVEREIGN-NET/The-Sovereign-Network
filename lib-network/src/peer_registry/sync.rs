@@ -144,7 +144,7 @@ impl DhtObserver {
 impl PeerRegistryObserver for DhtObserver {
     async fn on_peer_event(&self, event: PeerRegistryEvent) -> Result<()> {
         match event {
-            PeerRegistryEvent::PeerAdded { peer_id, entry } => {
+            PeerRegistryEvent::PeerAdded { peer_id, entry: _ } => {
                 tracing::debug!(
                     observer = %self.name,
                     peer_id = %peer_id.node_id(),

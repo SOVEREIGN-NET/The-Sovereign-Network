@@ -305,6 +305,7 @@ async fn list_identities_impl(cli: &ZhtpCli, output: &dyn Output) -> CliResult<(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn migrate_identity_impl(
     display_name: &str,
     device_id: &str,
@@ -470,6 +471,7 @@ async fn migrate_identity_impl(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn register_identity_impl(
     display_name: &str,
     device_id: &str,

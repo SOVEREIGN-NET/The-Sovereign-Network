@@ -89,7 +89,7 @@ pub struct MonitoringSystem {
     metrics_collector: Arc<MetricsCollector>,
     health_monitor: Arc<HealthMonitor>,
     alert_manager: Arc<AlertManager>,
-    dashboard_server: Option<Arc<DashboardServer>>,
+    _dashboard_server: Option<Arc<DashboardServer>>,
 }
 
 impl MonitoringSystem {
@@ -107,7 +107,7 @@ impl MonitoringSystem {
             metrics_collector,
             health_monitor,
             alert_manager,
-            dashboard_server: None,
+            _dashboard_server: None,
         })
     }
 

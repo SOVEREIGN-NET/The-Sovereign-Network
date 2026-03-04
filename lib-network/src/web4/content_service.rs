@@ -532,6 +532,7 @@ impl Web4ContentService {
         }
     }
 
+    #[allow(dead_code)]
     /// Check if a path looks like a navigation route (not an asset)
     ///
     /// Navigation routes are paths that don't have file extensions,

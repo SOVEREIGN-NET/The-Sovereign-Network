@@ -9,7 +9,7 @@ use std::thread::{sleep, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rlibbencode::variables::bencode_bytes::BencodeBytes;
 use rlibbencode::variables::bencode_object::{BencodeObject, GetObject, ObjectOptions};
-use rlibbencode::variables::inter::bencode_variable::{BencodeVariable, FromBencode, ToBencode};
+use rlibbencode::variables::inter::bencode_variable::{FromBencode, ToBencode};
 use crate::kad::kademlia_base::KademliaBase;
 use crate::messages::error_response::ErrorResponse;
 use crate::messages::inter::message_base::{MessageBase, TID_KEY};
@@ -103,7 +103,7 @@ impl Server {
                     match rx_sender_pool.try_recv() {
                         Ok((data, dst_addr)) => {
                             if !kademlia.get_server().lock().unwrap().sender_throttle.test(dst_addr.ip()) {
-                                server.send_to(data.as_slice(), dst_addr);
+                                let _ = server.send_to(data.as_slice(), dst_addr);
                             }
                         }
                         Err(TryRecvError::Empty) => {}

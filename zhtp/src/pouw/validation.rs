@@ -19,7 +19,7 @@ use super::session_log::SharedSessionLog;
 
 use super::challenge::ChallengeGenerator;
 use super::types::{
-    ChallengeIssue, ChallengeToken, Policy, ProofType, Receipt, ReceiptBatch, SignedReceipt,
+    ChallengeIssue, Policy, ProofType, Receipt, ReceiptBatch, SignedReceipt,
     POUW_VERSION,
 };
 

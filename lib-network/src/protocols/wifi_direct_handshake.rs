@@ -442,6 +442,7 @@ pub async fn handshake_as_responder(
 /// # Errors
 ///
 /// - `Err(...)` if serialization fails or write fails
+#[allow(dead_code)]
 async fn send_message<T: serde::Serialize>(stream: &mut TcpStream, message: &T) -> Result<()> {
     // Serialize message
     let bytes = bincode::serialize(message)
@@ -519,6 +520,7 @@ async fn send_message_with_bytes<T: serde::Serialize>(stream: &mut TcpStream, me
 /// # Errors
 ///
 /// - `Err(...)` if read fails, message too large, or deserialization fails
+#[allow(dead_code)]
 async fn receive_message<T: serde::de::DeserializeOwned>(stream: &mut TcpStream) -> Result<T> {
     // SECURITY (CRIT-1 FIX): Use big-endian (network byte order) to match TCP bootstrap and core UHP
     // This ensures WiFi Direct clients can communicate with TCP bootstrap servers

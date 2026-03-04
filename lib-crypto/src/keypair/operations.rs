@@ -9,7 +9,11 @@ use pqcrypto_dilithium::{dilithium2, dilithium5};
 use pqcrypto_traits::{
     sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey, SignedMessage},
 };
-use pqc_kyber as kyber1024;
+use pqc_kyber;
+use crate::post_quantum::constants::{
+    KYBER1024_CIPHERTEXT_BYTES, KYBER1024_PUBLICKEY_BYTES, KYBER1024_SECRETKEY_BYTES,
+    DILITHIUM2_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES_CRYSTALS,
+};
 // Ed25519 imports removed - pure post-quantum only
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
@@ -20,11 +24,6 @@ use crate::random::generate_nonce;
 use crate::advanced::ring_signature::{verify_ring_signature, RingSignature};
 use super::KeyPair;
 
-// Constants for CRYSTALS key sizes (from pqcrypto_dilithium)
-const KYBER1024_CIPHERTEXT_BYTES: usize = kyber1024::KYBER_CIPHERTEXTBYTES;
-const DILITHIUM2_SECRETKEY_BYTES: usize = 2560; // Actual pqcrypto_dilithium size
-const DILITHIUM5_SECRETKEY_BYTES: usize = 4896; // pqcrypto-dilithium
-const DILITHIUM5_SECRETKEY_BYTES_CRYSTALS: usize = 4864; // crystals-dilithium (seed-derived)
 
 /// The only valid signature scheme for BFT consensus votes and commits.
 ///
@@ -238,12 +237,12 @@ impl KeyPair {
 
     /// Encapsulate a shared secret using CRYSTALS-Kyber
     pub fn encapsulate(&self) -> Result<Encapsulation> {
-        let pk: [u8; kyber1024::KYBER_PUBLICKEYBYTES] = self.public_key.kyber_pk
+        let pk: [u8; KYBER1024_PUBLICKEY_BYTES] = self.public_key.kyber_pk
             .as_slice()
             .try_into()
             .map_err(|_| anyhow::anyhow!("Invalid Kyber public key (len={})", self.public_key.kyber_pk.len()))?;
 
-        let (ciphertext, shared_secret_bytes) = kyber1024::encapsulate(&pk, &mut rand::rngs::OsRng)
+        let (ciphertext, shared_secret_bytes) = pqc_kyber::encapsulate(&pk, &mut rand::rngs::OsRng)
             .map_err(|e| anyhow::anyhow!("Kyber encapsulation failed: {:?}", e))?;
         
         // Derive a 32-byte key using HKDF-SHA3
@@ -262,17 +261,17 @@ impl KeyPair {
 
     /// Decapsulate a shared secret using CRYSTALS-Kyber
     pub fn decapsulate(&self, encapsulation: &Encapsulation) -> Result<[u8; 32]> {
-        let sk: [u8; kyber1024::KYBER_SECRETKEYBYTES] = self.private_key.kyber_sk
+        let sk: [u8; KYBER1024_SECRETKEY_BYTES] = self.private_key.kyber_sk
             .as_slice()
             .try_into()
             .map_err(|_| anyhow::anyhow!("Invalid Kyber secret key (len={})", self.private_key.kyber_sk.len()))?;
 
-        let ct: [u8; kyber1024::KYBER_CIPHERTEXTBYTES] = encapsulation.ciphertext
+        let ct: [u8; KYBER1024_CIPHERTEXT_BYTES] = encapsulation.ciphertext
             .as_slice()
             .try_into()
             .map_err(|_| anyhow::anyhow!("Invalid Kyber ciphertext (len={})", encapsulation.ciphertext.len()))?;
 
-        let shared_secret_bytes = kyber1024::decapsulate(&ct, &sk)
+        let shared_secret_bytes = pqc_kyber::decapsulate(&ct, &sk)
             .map_err(|e| anyhow::anyhow!("Kyber decapsulation failed: {:?}", e))?;
         
         // Derive the same 32-byte key using HKDF-SHA3
@@ -376,7 +375,7 @@ pub fn encrypt_with_public_key(
         return Err(anyhow::anyhow!("Recipient public key missing Kyber component"));
     }
 
-    let kyber_pk: [u8; kyber1024::KYBER_PUBLICKEYBYTES] = public_key
+    let kyber_pk: [u8; KYBER1024_PUBLICKEY_BYTES] = public_key
         .kyber_pk
         .as_slice()
         .try_into()
@@ -384,7 +383,7 @@ pub fn encrypt_with_public_key(
 
     // pqc_kyber::encapsulate returns (ciphertext, shared_secret), requires an RNG
     let (ciphertext, shared_secret_bytes) =
-        kyber1024::encapsulate(&kyber_pk, &mut rand::rngs::OsRng)
+        pqc_kyber::encapsulate(&kyber_pk, &mut rand::rngs::OsRng)
             .map_err(|e| anyhow::anyhow!("Kyber encapsulation failed: {:?}", e))?;
 
     let hk = Hkdf::<Sha3_256>::new(None, &shared_secret_bytes);

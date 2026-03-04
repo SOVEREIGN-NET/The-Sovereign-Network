@@ -29,6 +29,7 @@ fn estimate_bandwidth_from_signal(signal_dbm: i32) -> u32 {
     }
 }
 
+#[allow(dead_code)]
 /// Estimate WiFi channel from signal strength
 /// Returns a default channel estimate based on signal strength
 fn estimate_channel_from_signal(signal_dbm: i32) -> u8 {

@@ -36,7 +36,7 @@ impl RefreshHandler {
 
         self.running.store(true, Ordering::Relaxed);
 
-        let handle = thread::spawn({
+        let _handle = thread::spawn({
             let tasks = self.tasks.clone();
             let refresh_time = Arc::clone(&self.refresh_time);
             let running = Arc::clone(&self.running);

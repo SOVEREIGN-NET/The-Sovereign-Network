@@ -22,11 +22,9 @@ use thiserror::Error;
 
 use crate::block::Block;
 use crate::storage::{
-    Address, BlockchainStore, BlockHash, OutPoint, SledStore, StorageError,
-    TokenId, TxHash, Utxo,
+    BlockchainStore, SledStore, StorageError,
 };
 use crate::types::hash::blake3_hash;
-use crate::types::Hash;
 
 use lib_types::BlockHeight;
 
@@ -660,6 +658,8 @@ mod tests {
     use crate::block::{Block, BlockHeader};
     use crate::storage::BlockchainStore;
     use crate::types::{Hash, Difficulty};
+    use lib_types::{Address, TokenId, TxHash};
+    use crate::storage::{OutPoint, Utxo};
     use std::sync::Arc;
     use tempfile::TempDir;
 

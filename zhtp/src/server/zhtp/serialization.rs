@@ -11,7 +11,7 @@
 
 use anyhow::{Result, Context};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// ZHTP protocol magic bytes
 pub const ZHTP_MAGIC: &[u8; 4] = b"ZHTP";
