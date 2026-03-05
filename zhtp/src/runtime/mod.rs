@@ -688,15 +688,16 @@ impl RuntimeOrchestrator {
             let genesis_identities = self.genesis_identities.read().await.clone();
             let genesis_private_data = self.genesis_private_data.read().await.clone();
             let node_role_for_identity = self.node_role.read().await.clone();
+            let is_bootstrap_leader = self.is_local_bootstrap_leader().await.unwrap_or(false);
 
             if genesis_identities.is_empty() {
                 info!("Registering Identity component without genesis identities");
-                self.register_component(Arc::new(IdentityComponent::new(node_role_for_identity))).await?;
+                self.register_component(Arc::new(IdentityComponent::new(node_role_for_identity, is_bootstrap_leader))).await?;
             } else {
                 info!(" Registering Identity component with {} genesis identities and {} private keys",
                     genesis_identities.len(), genesis_private_data.len());
                 self.register_component(Arc::new(
-                    IdentityComponent::new_with_identities_and_private_data(node_role_for_identity, genesis_identities, genesis_private_data)
+                    IdentityComponent::new_with_identities_and_private_data(node_role_for_identity, genesis_identities, genesis_private_data, is_bootstrap_leader)
                 )).await?;
             }
         }
@@ -1724,8 +1725,9 @@ impl RuntimeOrchestrator {
         let genesis_ids = self.genesis_identities.read().await.clone();
         let genesis_private = self.genesis_private_data.read().await.clone();
         let node_role_for_identity = self.node_role.read().await.clone();
+        let is_bootstrap_leader = self.is_local_bootstrap_leader().await.unwrap_or(false);
         self.register_component(
-            Arc::new(IdentityComponent::new_with_identities_and_private_data(node_role_for_identity, genesis_ids, genesis_private))
+            Arc::new(IdentityComponent::new_with_identities_and_private_data(node_role_for_identity, genesis_ids, genesis_private, is_bootstrap_leader))
         ).await?;
 
         self.register_component(Arc::new(StorageComponent::new())).await?;
