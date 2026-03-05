@@ -452,6 +452,12 @@ impl ByzantineFaultDetector {
         round: u32,
         current_time: u64,
     ) -> Option<PartitionSuspectedEvidence> {
+        // Single-validator bootstrap mode cannot form a "partition" in BFT terms.
+        // Emitting partition evidence for 1/1 timed out is noisy and misleading.
+        if liveness_monitor.total_validators <= 1 {
+            return None;
+        }
+
         // Rate limiting: only check every partition_check_interval_secs
         if current_time < self.last_partition_check + self.partition_check_interval_secs {
             return None;
