@@ -73,7 +73,38 @@ async fn handle_oracle_command_impl(
             output.info("Submitting oracle config governance proposal...")?;
             submit_proposal(&client, cli, output, request, "Oracle Config Update").await
         }
+        OracleAction::Status => fetch_oracle(&client, cli, output, "/api/v1/oracle/status", "Oracle Status").await,
+        OracleAction::Price => fetch_oracle(&client, cli, output, "/api/v1/oracle/price", "Oracle Price").await,
+        OracleAction::Config => fetch_oracle(&client, cli, output, "/api/v1/oracle/config", "Oracle Config").await,
+        OracleAction::PendingUpdates => fetch_oracle(&client, cli, output, "/api/v1/oracle/pending-updates", "Oracle Pending Updates").await,
+        OracleAction::SlashingEvents => fetch_oracle(&client, cli, output, "/api/v1/oracle/slashing-events", "Oracle Slashing Events").await,
+        OracleAction::BannedValidators => fetch_oracle(&client, cli, output, "/api/v1/oracle/banned-validators", "Oracle Banned Validators").await,
     }
+}
+
+async fn fetch_oracle(
+    client: &ZhtpClient,
+    cli: &ZhtpCli,
+    output: &dyn crate::output::Output,
+    endpoint: &str,
+    title: &str,
+) -> CliResult<()> {
+    let response = client.get(endpoint).await.map_err(|e| CliError::ApiCallFailed {
+        endpoint: endpoint.to_string(),
+        status: 0,
+        reason: e.to_string(),
+    })?;
+
+    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
+        CliError::ApiCallFailed {
+            endpoint: endpoint.to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {e}"),
+        }
+    })?;
+    output.header(title)?;
+    output.print(&format_output(&result, &cli.format)?)?;
+    Ok(())
 }
 
 fn build_committee_update_request(

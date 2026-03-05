@@ -930,6 +930,17 @@ async fn bootstrap_identities_from_dht(
 async fn run_post_bootstrap_sov_backfill(can_mine: bool) -> Result<()> {
     let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
 
+    // Only the genesis node (height == 0) creates backfill transactions.
+    // Non-genesis nodes already have SOV balances from syncing G1's mined blocks.
+    // Allowing all nodes to create TokenMint txs floods the mempool with 4× duplicates.
+    {
+        let bc = blockchain_arc.read().await;
+        if bc.height != 0 {
+            info!("🪙 Synced chain (height {}): skipping SOV backfill — balances already in chain", bc.height);
+            return Ok(());
+        }
+    }
+
     // First, ensure all wallets in the registry are registered on-chain before minting.
     // This prevents TokenMint blocks from referencing wallets unknown to other nodes.
     {

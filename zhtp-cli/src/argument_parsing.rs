@@ -298,6 +298,18 @@ pub enum OracleAction {
         #[arg(long)]
         voting_period_days: Option<u32>,
     },
+    /// Get oracle committee status and epoch info
+    Status,
+    /// Get latest finalized SOV/USD price
+    Price,
+    /// Get oracle operating config
+    Config,
+    /// Get pending oracle committee/config updates
+    PendingUpdates,
+    /// Get oracle slashing events
+    SlashingEvents,
+    /// Get banned oracle validators
+    BannedValidators,
 }
 
 #[derive(Subcommand, Debug, Clone)]
