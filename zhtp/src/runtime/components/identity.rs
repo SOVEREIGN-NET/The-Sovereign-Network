@@ -970,13 +970,19 @@ async fn run_post_bootstrap_sov_backfill(can_mine: bool) -> Result<()> {
             .pending_transactions
             .iter()
             .any(|tx| matches!(tx.transaction_type, lib_blockchain::TransactionType::WalletRegistration));
+        // Only mine startup blocks on the genesis node (height == 0).
+        // On all other nodes the chain was synced from the leader; startup transactions
+        // stay in the mempool and get mined by the leader's next block.
+        let is_genesis_node = bc.height == 0;
         if pending_wallet_regs {
-            if can_mine {
+            if can_mine && is_genesis_node {
                 if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await {
                     warn!("🪙 Failed to mine wallet registration block before backfill: {}", e);
                 } else {
                     info!("🪙 Mined wallet registration block before SOV backfill");
                 }
+            } else if can_mine {
+                info!("🪙 Synced chain: deferring wallet registrations to leader's mining loop");
             } else {
                 info!("🪙 Observer node: skipping startup mine for wallet registrations (validator will broadcast)");
             }
@@ -1022,12 +1028,15 @@ async fn run_post_bootstrap_sov_backfill(can_mine: bool) -> Result<()> {
         return Ok(());
     }
 
-    if can_mine {
+    let is_genesis_node = bc.height == 0;
+    if can_mine && is_genesis_node {
         if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await {
             warn!("🪙 Failed to mine SOV backfill block: {}", e);
         } else {
             info!("🪙 Mined SOV backfill block with {} TokenMint txs", queued);
         }
+    } else if can_mine {
+        info!("🪙 Synced chain: deferring SOV backfill to leader's mining loop");
     } else {
         info!("🪙 Observer node: skipping startup mine for SOV backfill (validator will broadcast)");
     }

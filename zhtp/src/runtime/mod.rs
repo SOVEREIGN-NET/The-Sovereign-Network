@@ -64,7 +64,7 @@ pub use node_runtime::{
 pub use node_runtime_orchestrator::NodeRuntimeOrchestrator;
 pub use shared_blockchain::*;
 pub use shared_dht::*;
-pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_blockchain, is_global_blockchain_available};
+pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_blockchain, is_global_blockchain_available, set_global_catchup_trigger, trigger_global_catchup};
 pub use identity_manager_provider::{initialize_global_identity_manager_provider, set_global_identity_manager, get_global_identity_manager};
 pub use network_blockchain_provider::ZhtpBlockchainProvider;
 pub use mesh_router_provider::{initialize_global_mesh_router_provider, set_global_mesh_router, get_broadcast_metrics};
@@ -1557,11 +1557,67 @@ impl RuntimeOrchestrator {
                     }
                 }
 
+                // ─────────────────────────────────────────────────────────────
+                // GENESIS GATE: only the bootstrap leader may create genesis.
+                //
+                // If we have no synced chain AND we are not the designated leader,
+                // the leader hasn't mined block 1 yet (or we haven't found peers).
+                // Keep retrying until we either sync a chain from a peer or the
+                // process is killed.  This prevents every node from spawning its
+                // own incompatible genesis when all nodes start simultaneously.
+                // ─────────────────────────────────────────────────────────────
+                if synced_blockchain.is_none() && !local_is_bootstrap_leader {
+                    let retry_peers: Vec<_> = network_info
+                        .as_ref()
+                        .map(|ni| ni.bootstrap_peers.clone())
+                        .unwrap_or_default();
+
+                    loop {
+                        info!(
+                            "⏳ Not bootstrap leader — waiting for leader to mine genesis. \
+                             Retrying peer sync in 30s (peers: {})...",
+                            retry_peers.len()
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+                        if retry_peers.is_empty() {
+                            info!("No peers known yet; waiting for discovery...");
+                            continue;
+                        }
+
+                        match try_initial_sync_from_peer(store.clone(), &retry_peers).await {
+                            Ok(true) => {
+                                if let Some(bc) =
+                                    lib_blockchain::Blockchain::load_from_store(store.clone())?
+                                {
+                                    info!(
+                                        "📂 Non-leader successfully synced from leader \
+                                         (height: {})",
+                                        bc.height
+                                    );
+                                    synced_blockchain = Some(bc);
+                                    break;
+                                }
+                            }
+                            Ok(false) => {
+                                info!(
+                                    "⏳ Bootstrap leader peers still at height 0; \
+                                     leader hasn't mined yet..."
+                                );
+                            }
+                            Err(e) => {
+                                warn!("⚠️  Non-leader sync retry failed: {}; will retry...", e);
+                            }
+                        }
+                    }
+                }
+
                 if let Some(bc) = synced_blockchain {
                     (bc, true)
                 } else {
-                // All peers at height 0 or unreachable — create local genesis.
-                info!("📂 SledStore is empty - creating new blockchain");
+                // Bootstrap leader — all peers at height 0 or no peers at all.
+                // This node is the designated genesis creator.
+                info!("📂 SledStore is empty - creating new blockchain (bootstrap leader)");
                 let mut bc = lib_blockchain::Blockchain::new()?;
                 bc.set_store(store.clone());
 

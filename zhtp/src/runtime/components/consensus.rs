@@ -460,6 +460,7 @@ impl lib_consensus::types::CatchUpSyncTrigger for CatchUpSyncChannel {
 async fn run_catch_up_sync_task(
     mut rx: tokio::sync::mpsc::Receiver<u64>,
     blockchain_slot: SharedBlockchainSlot,
+    sled_path: std::path::PathBuf,
 ) {
     const FAST_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(3);
     const NORMAL_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
@@ -506,6 +507,7 @@ async fn run_catch_up_sync_task(
 
         let prioritized_peers = prioritize_catchup_peers(peers, &blockchain_slot).await;
         let mut synced_blocks = 0usize;
+        let mut wrong_chain_peers = 0usize;
         for peer in &prioritized_peers {
             match catchup_sync_from_peer(&peer.addr, from_height, &blockchain_slot).await {
                 Ok(0) => {
@@ -525,9 +527,29 @@ async fn run_catch_up_sync_task(
                     break;
                 }
                 Err(e) => {
-                    warn!("Catch-up sync from {} failed: {}", peer.addr, e);
+                    let err_str = e.to_string();
+                    warn!("Catch-up sync from {} failed: {}", peer.addr, err_str);
+                    if err_str.contains("Invalid previous block hash") {
+                        wrong_chain_peers += 1;
+                    }
                 }
             }
+        }
+
+        // If every peer reports a chain mismatch at the first block, we're on the
+        // wrong chain entirely. Wipe local state and restart — systemd will bring
+        // us back up and we'll sync the correct chain from genesis.
+        if wrong_chain_peers > 0 && wrong_chain_peers == prioritized_peers.len() && from_height > 0 {
+            error!(
+                "❌ WRONG CHAIN DETECTED: all {} peer(s) reject our block {} — local chain is incompatible. Wiping sled and restarting.",
+                wrong_chain_peers, from_height + 1
+            );
+            if let Err(e) = std::fs::remove_dir_all(&sled_path) {
+                error!("Failed to wipe sled at {:?}: {}", sled_path, e);
+            } else {
+                info!("🗑️  Sled wiped at {:?}", sled_path);
+            }
+            std::process::exit(1);
         }
 
         next_allowed_at = tokio::time::Instant::now()
@@ -1841,11 +1863,14 @@ impl Component for ConsensusComponent {
         // events fire before the task drains the channel, only one sync runs.
         {
             let (catch_up_tx, catch_up_rx) = tokio::sync::mpsc::channel::<u64>(2);
+            // Register the sender globally so mesh event receivers can fire catch-up.
+            crate::runtime::blockchain_provider::set_global_catchup_trigger(catch_up_tx.clone());
             let trigger = Arc::new(CatchUpSyncChannel { tx: catch_up_tx });
             consensus_engine.set_catch_up_sync_trigger(trigger);
             let blockchain_slot_for_sync = self.blockchain.clone();
+            let sled_path_for_sync = std::path::Path::new(&self.environment.data_directory()).join("sled");
             tokio::spawn(async move {
-                run_catch_up_sync_task(catch_up_rx, blockchain_slot_for_sync).await;
+                run_catch_up_sync_task(catch_up_rx, blockchain_slot_for_sync, sled_path_for_sync).await;
             });
             info!("🔄 Catch-up sync trigger wired (height-divergence recovery active)");
         }
