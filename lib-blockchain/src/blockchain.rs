@@ -2099,7 +2099,41 @@ impl Blockchain {
             // Note: executor.apply_block() handles begin_block/commit_block internally
             match executor.apply_block(&block) {
                 Ok(_outcome) => {
-                    // Block applied successfully through executor
+                    // Block applied successfully through executor.
+                    // Sync in-memory token_contracts from SledStore for all addresses
+                    // touched by this block (transfers debit/credit, mints credit).
+                    // This keeps the in-memory HashMap authoritative for balance queries
+                    // without a second source of truth.
+                    if let Some(store) = &self.store {
+                        let sov_id = crate::contracts::utils::generate_lib_token_id();
+                        let storage_sov_id = crate::storage::TokenId(sov_id);
+                        let mut addrs_to_sync: Vec<[u8; 32]> = Vec::new();
+                        for tx in &block.transactions {
+                            match tx.transaction_type {
+                                TransactionType::TokenTransfer => {
+                                    if let Some(d) = &tx.token_transfer_data {
+                                        addrs_to_sync.push(d.from);
+                                        addrs_to_sync.push(d.to);
+                                    }
+                                }
+                                TransactionType::TokenMint => {
+                                    if let Some(d) = &tx.token_mint_data {
+                                        addrs_to_sync.push(d.to);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        for addr_bytes in addrs_to_sync {
+                            let addr = crate::storage::Address::new(addr_bytes);
+                            if let Ok(balance) = store.get_token_balance(&storage_sov_id, &addr) {
+                                if let Some(token) = self.token_contracts.get_mut(&sov_id) {
+                                    let pk = Self::wallet_key_for_sov(&addr_bytes);
+                                    token.balances.insert(pk, balance as u64);
+                                }
+                            }
+                        }
+                    }
 
                     // Update blockchain metadata
                     self.blocks.push(block.clone());
