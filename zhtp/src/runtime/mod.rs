@@ -1348,10 +1348,32 @@ impl RuntimeOrchestrator {
         // Only join an existing network if at least one peer has committed blocks (height > 0).
         // When all nodes start fresh simultaneously (e.g. full wipe) every peer reports height 0.
         // In that case treat it as a new network and let this node create genesis.
-        let joined_existing_network = network_info
-            .as_ref()
-            .map(|ni| ni.blockchain_height > 0)
-            .unwrap_or(false);
+        //
+        // Bootstrap leader with local chain data must NOT wait on peer startup/sync.
+        // This keeps G1 deterministic across restarts and avoids startup races.
+        let local_is_bootstrap_leader = match self.is_local_bootstrap_leader().await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    "Failed to determine bootstrap leader identity from keystore: {}",
+                    e
+                );
+                false
+            }
+        };
+        let leader_has_local_data = Self::should_skip_startup_sync(
+            local_is_bootstrap_leader,
+            self.has_local_chain_data(),
+        );
+        let joined_existing_network = if leader_has_local_data {
+            info!("🌱 Bootstrap leader with local chain data detected - skipping startup sync");
+            false
+        } else {
+            network_info
+                .as_ref()
+                .map(|ni| ni.blockchain_height > 0)
+                .unwrap_or(false)
+        };
         self.set_joined_existing_network(joined_existing_network).await?;
 
         // Phase 3: Use SledStore for persistent blockchain storage

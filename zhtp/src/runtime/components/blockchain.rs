@@ -147,6 +147,29 @@ impl BlockchainComponent {
         (*self.node_role).clone()
     }
 
+    fn normalize_did(did: &str) -> &str {
+        did.strip_prefix("did:zhtp:").unwrap_or(did)
+    }
+
+    async fn is_bootstrap_mining_authority(&self) -> bool {
+        // No explicit bootstrap validator list: allow local mining behavior.
+        let bootstrap_validators = self._bootstrap_validators.read().await;
+        if bootstrap_validators.is_empty() {
+            return true;
+        }
+
+        let leader_did = Self::normalize_did(&bootstrap_validators[0].identity_id).to_string();
+        drop(bootstrap_validators);
+
+        let wallet_guard = self.user_wallet.read().await;
+        let Some(wallet) = wallet_guard.as_ref() else {
+            warn!("Bootstrap mining authority check failed: wallet identity not available");
+            return false;
+        };
+        let local_did = Self::normalize_did(&wallet.user_identity.did);
+        local_did == leader_did
+    }
+
     pub async fn set_validator_manager(&self, validator_manager: Arc<RwLock<ValidatorManager>>) {
         *self.validator_manager.write().await = Some(validator_manager);
     }
@@ -420,6 +443,7 @@ impl BlockchainComponent {
         node_identity_arc: Arc<RwLock<Option<IdentityId>>>,
         env_for_persist: crate::config::Environment,
         node_role: Arc<NodeRole>,
+        bootstrap_mining_authority: bool,
     ) {
         // CRITICAL: Enforce runtime guard - only FullValidator nodes should run mining loop
         // This replaces debug_assert to catch issues in release builds
@@ -480,7 +504,17 @@ impl BlockchainComponent {
                         continue;
                     }
 
-                    // BOOTSTRAP MODE: Direct mining allowed
+                    // BOOTSTRAP MODE: only bootstrap authority may mine.
+                    if !bootstrap_mining_authority {
+                        debug!(
+                            "⛏️ BOOTSTRAP MODE: mining disabled on non-authority validator (height={}, pending={})",
+                            current_height, pending_count
+                        );
+                        drop(blockchain_guard);
+                        continue;
+                    }
+
+                    // BOOTSTRAP MODE: authority node may mine
                     info!(
                         "⛏️ BOOTSTRAP MODE: {} validators (need ≥{} for BFT)",
                         validator_count,
@@ -624,10 +658,10 @@ impl BlockchainComponent {
                 Err(_) => {
                     // CRITICAL GUARD: Check node role again before using fallback path
                     // This prevents edge nodes or observers from mining even if global provider fails
-                    if !node_role.can_mine() {
+                    if !node_role.can_mine() || !bootstrap_mining_authority {
                         error!(
-                            "CRITICAL BUG: Non-mining node {:?} tried to use fallback mining path - config/component initialization bug",
-                            *node_role
+                            "CRITICAL BUG: node {:?} without bootstrap mining authority tried to use fallback mining path",
+                            *node_role,
                         );
                         // Skip mining on this iteration to avoid producing invalid blocks
                     } else if let Some(ref mut local_blockchain) = blockchain.write().await.as_mut()
@@ -993,6 +1027,13 @@ impl Component for BlockchainComponent {
             *self.node_role
         );
 
+        let bootstrap_mining_authority = self.is_bootstrap_mining_authority().await;
+        if !bootstrap_mining_authority {
+            info!(
+                "⛏️ Bootstrap mining disabled for this validator (non-bootstrap authority node)"
+            );
+        }
+
         // Start mining loop
         // CRITICAL FIX: Pass None for local blockchain to force using global provider
         // This ensures the mining loop always sees the latest state from Genesis/Sync
@@ -1013,6 +1054,7 @@ impl Component for BlockchainComponent {
                 node_identity_arc,
                 env_for_persist,
                 node_role_for_loop,
+                bootstrap_mining_authority,
             )
             .await;
         });
@@ -1326,5 +1368,13 @@ mod tests {
         assert!(BlockchainComponent::should_run_peer_sync_loop(
             1, false, false
         ));
+    }
+
+    #[test]
+    fn normalize_did_supports_prefixed_and_raw_forms() {
+        let raw = "abc123";
+        let prefixed = "did:zhtp:abc123";
+        assert_eq!(BlockchainComponent::normalize_did(raw), "abc123");
+        assert_eq!(BlockchainComponent::normalize_did(prefixed), "abc123");
     }
 }
