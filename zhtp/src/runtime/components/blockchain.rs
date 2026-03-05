@@ -151,23 +151,32 @@ impl BlockchainComponent {
         did.strip_prefix("did:zhtp:").unwrap_or(did)
     }
 
+    fn local_did_is_bootstrap_validator(
+        local_did: &str,
+        bootstrap_validators: &[BootstrapValidator],
+    ) -> bool {
+        let bootstrap_validator_dids: std::collections::HashSet<String> = bootstrap_validators
+            .iter()
+            .map(|validator| Self::normalize_did(&validator.identity_id).to_ascii_lowercase())
+            .collect();
+        bootstrap_validator_dids.contains(&Self::normalize_did(local_did).to_ascii_lowercase())
+    }
+
     async fn is_bootstrap_mining_authority(&self) -> bool {
         // No explicit bootstrap validator list: allow local mining behavior.
-        let bootstrap_validators = self._bootstrap_validators.read().await;
-        if bootstrap_validators.is_empty() {
+        let bootstrap_validators_guard = self._bootstrap_validators.read().await;
+        if bootstrap_validators_guard.is_empty() {
             return true;
         }
-
-        let leader_did = Self::normalize_did(&bootstrap_validators[0].identity_id).to_string();
-        drop(bootstrap_validators);
+        let bootstrap_validators = bootstrap_validators_guard.clone();
+        drop(bootstrap_validators_guard);
 
         let wallet_guard = self.user_wallet.read().await;
         let Some(wallet) = wallet_guard.as_ref() else {
             warn!("Bootstrap mining authority check failed: wallet identity not available");
             return false;
         };
-        let local_did = Self::normalize_did(&wallet.user_identity.did);
-        local_did == leader_did
+        Self::local_did_is_bootstrap_validator(&wallet.user_identity.did, &bootstrap_validators)
     }
 
     pub async fn set_validator_manager(&self, validator_manager: Arc<RwLock<ValidatorManager>>) {
@@ -1348,6 +1357,7 @@ pub use crate::runtime::components::consensus::BlockchainValidatorAdapter;
 #[cfg(test)]
 mod tests {
     use super::BlockchainComponent;
+    use crate::config::aggregation::BootstrapValidator;
 
     #[test]
     fn should_run_peer_sync_loop_for_joining_validator() {
@@ -1376,5 +1386,66 @@ mod tests {
         let prefixed = "did:zhtp:abc123";
         assert_eq!(BlockchainComponent::normalize_did(raw), "abc123");
         assert_eq!(BlockchainComponent::normalize_did(prefixed), "abc123");
+    }
+
+    #[test]
+    fn bootstrap_authority_allows_any_listed_validator() {
+        let validators = vec![
+            BootstrapValidator {
+                identity_id: "did:zhtp:leader01".to_string(),
+                consensus_key: String::new(),
+                stake: 1000,
+                storage_provided: 0,
+                commission_rate: 0,
+                endpoints: Vec::new(),
+            },
+            BootstrapValidator {
+                identity_id: "did:zhtp:validator02".to_string(),
+                consensus_key: String::new(),
+                stake: 1000,
+                storage_provided: 0,
+                commission_rate: 0,
+                endpoints: Vec::new(),
+            },
+        ];
+
+        assert!(BlockchainComponent::local_did_is_bootstrap_validator(
+            "did:zhtp:validator02",
+            &validators
+        ));
+    }
+
+    #[test]
+    fn bootstrap_authority_check_is_case_insensitive() {
+        let validators = vec![BootstrapValidator {
+            identity_id: "did:zhtp:ABCDEF1234".to_string(),
+            consensus_key: String::new(),
+            stake: 1000,
+            storage_provided: 0,
+            commission_rate: 0,
+            endpoints: Vec::new(),
+        }];
+
+        assert!(BlockchainComponent::local_did_is_bootstrap_validator(
+            "did:zhtp:abcdef1234",
+            &validators
+        ));
+    }
+
+    #[test]
+    fn bootstrap_authority_rejects_unlisted_validator() {
+        let validators = vec![BootstrapValidator {
+            identity_id: "did:zhtp:leader01".to_string(),
+            consensus_key: String::new(),
+            stake: 1000,
+            storage_provided: 0,
+            commission_rate: 0,
+            endpoints: Vec::new(),
+        }];
+
+        assert!(!BlockchainComponent::local_did_is_bootstrap_validator(
+            "did:zhtp:outsider99",
+            &validators
+        ));
     }
 }
