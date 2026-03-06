@@ -710,8 +710,8 @@ async fn catchup_sync_from_peer(
     let mut cursor = our_height;
     let mut total_applied = 0usize;
     let mut pages = 0usize;
-    const MAX_BLOCKS_PER_PAGE: u64 = 200;
-    const MAX_PAGES_PER_SYNC: usize = 20;
+    const MAX_BLOCKS_PER_PAGE: u64 = 50;
+    const MAX_PAGES_PER_SYNC: usize = 80;
 
     while cursor < tip.height && pages < MAX_PAGES_PER_SYNC {
         let start = cursor + 1;
@@ -1096,6 +1096,9 @@ pub struct ConsensusComponent {
     environment: crate::config::Environment,
     // Consensus safety parameters are config-driven; keep them immutable once constructed.
     min_stake: u64,
+    propose_timeout_ms: u64,
+    prevote_timeout_ms: u64,
+    precommit_timeout_ms: u64,
     // Local validator identity and signing keypair (loaded from keystore when validator-enabled).
     local_validator_identity: Arc<RwLock<Option<IdentityId>>>,
     local_validator_keypair: Arc<RwLock<Option<lib_crypto::KeyPair>>>,
@@ -1135,16 +1138,31 @@ fn derive_key_from_identity(identity_id: &str, domain: &[u8]) -> Vec<u8> {
     lib_crypto::hash_blake3(&input).to_vec()
 }
 
+fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<Vec<u8>> {
+    let trimmed = consensus_key_hex.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let normalized = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+
+    hex::decode(normalized).ok().filter(|k| !k.is_empty())
+}
+
 /// Adapter that implements lib-consensus ValidatorInfo for bootstrap config entries.
-/// Uses deterministic key derivation so no keys need to be stored in config files.
 /// For the local validator, `actual_consensus_key` carries the real Dilithium2 public key
 /// loaded from the keystore so that `ConsensusEngine::set_validator_keypair()` can match it.
+/// For remote validators, `actual_consensus_key` carries the decoded `consensus_key` from
+/// bootstrap TOML when present; otherwise it falls back to deterministic derivation.
 struct BootstrapValidatorAdapter {
     identity_id: String,
     stake: u64,
     storage_provided: u64,
     commission_rate: u8,
-    /// Real Dilithium2 public key for the local validator; `None` for remote peers.
+    /// Real consensus public key, either local keystore key or decoded bootstrap TOML key.
     actual_consensus_key: Option<Vec<u8>>,
 }
 
@@ -1196,7 +1214,15 @@ impl ConsensusComponent {
         node_role: NodeRole,
         min_stake: u64,
     ) -> Self {
-        Self::new_with_bootstrap_validators(environment, node_role, min_stake, Vec::new())
+        Self::new_with_bootstrap_validators(
+            environment,
+            node_role,
+            min_stake,
+            Vec::new(),
+            crate::config::aggregation::default_consensus_propose_timeout_ms(),
+            crate::config::aggregation::default_consensus_prevote_timeout_ms(),
+            crate::config::aggregation::default_consensus_precommit_timeout_ms(),
+        )
     }
 
     /// Create a new ConsensusComponent with bootstrap validators pre-seeded.
@@ -1205,6 +1231,9 @@ impl ConsensusComponent {
         node_role: NodeRole,
         min_stake: u64,
         bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
+        propose_timeout_ms: u64,
+        prevote_timeout_ms: u64,
+        precommit_timeout_ms: u64,
     ) -> Self {
         Self::new_with_bootstrap_validators_and_oracle(
             environment,
@@ -1212,6 +1241,9 @@ impl ConsensusComponent {
             min_stake,
             bootstrap_validators,
             None,
+            propose_timeout_ms,
+            prevote_timeout_ms,
+            precommit_timeout_ms,
         )
     }
 
@@ -1221,6 +1253,9 @@ impl ConsensusComponent {
         min_stake: u64,
         bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
         oracle_mock_sov_usd_price: Option<u64>,
+        propose_timeout_ms: u64,
+        prevote_timeout_ms: u64,
+        precommit_timeout_ms: u64,
     ) -> Self {
         let development_mode = matches!(environment, crate::config::Environment::Development);
 
@@ -1235,6 +1270,9 @@ impl ConsensusComponent {
             blockchain: Arc::new(RwLock::new(None)),
             environment,
             min_stake,
+            propose_timeout_ms: propose_timeout_ms.max(1),
+            prevote_timeout_ms: prevote_timeout_ms.max(1),
+            precommit_timeout_ms: precommit_timeout_ms.max(1),
             local_validator_identity: Arc::new(RwLock::new(None)),
             local_validator_keypair: Arc::new(RwLock::new(None)),
             node_role: Arc::new(node_role),
@@ -1361,7 +1399,7 @@ impl ConsensusComponent {
                 stake: bv.stake.max(1), // ensure non-zero for admission
                 storage_provided: bv.storage_provided,
                 commission_rate: (bv.commission_rate.min(100)) as u8,
-                actual_consensus_key: None, // local keypair not available here
+                actual_consensus_key: decode_bootstrap_consensus_key(&bv.consensus_key),
             })
             .collect();
 
@@ -1603,8 +1641,27 @@ impl Component for ConsensusComponent {
         let mut config = ConsensusConfig::default();
 
         // Keep this node's consensus parameters aligned with zhtp configuration.
-        // Determinism requirement: all validators on the same chain must share these values.
+        //
+        // IMPORTANT DETERMINISM REQUIREMENT:
+        //   All validators participating in consensus on the same chain MUST use identical values
+        //   for propose / prevote / precommit timeouts and min_stake. These values are currently
+        //   loaded from each node's local configuration; misaligned settings across validators
+        //   can cause liveness issues (e.g. some validators timing out and advancing rounds while
+        //   others are still waiting), leading to unnecessary round rotations and slower block
+        //   times. Operators SHOULD ensure these parameters are kept in sync across all validators
+        //   for a given network.
         config.min_stake = self.min_stake;
+        config.propose_timeout = self.propose_timeout_ms;
+        config.prevote_timeout = self.prevote_timeout_ms;
+        config.precommit_timeout = self.precommit_timeout_ms;
+
+        // Surface current timeout configuration prominently so operators and monitoring can
+        // verify alignment across validators.
+        warn!(
+            "Consensus timeout configuration (must match across all validators on this chain): \
+             propose_timeout_ms = {}, prevote_timeout_ms = {}, precommit_timeout_ms = {}",
+            config.propose_timeout, config.prevote_timeout, config.precommit_timeout
+        );
         // Storage is optional for validators in zhtp; do not block consensus on storage capacity.
         config.min_storage = 0;
         // Allow non-mainnet to run with <4 validators while still enforcing real signatures.
@@ -1657,11 +1714,10 @@ impl Component for ConsensusComponent {
         // Previously, validators were only seeded into self.validator_manager (a separate object),
         // so the running consensus engine never received them and stayed in Bootstrap mode forever.
         if !self.bootstrap_validators.is_empty() {
-            // Build bootstrap adapters.  For the local validator, supply the actual
+            // Build bootstrap adapters. For the local validator, supply the actual
             // Dilithium2 public key so that ConsensusEngine::set_validator_keypair()
-            // can match it against the registered consensus_key.  For remote peers
-            // we leave actual_consensus_key as None (falls back to the derived placeholder)
-            // until their signed validator announcements arrive via TOFU registration.
+            // can match it against the registered consensus_key. For remote peers,
+            // use bootstrap TOML `consensus_key` when provided.
             let bootstrap_adapters: Vec<BootstrapValidatorAdapter> = self
                 .bootstrap_validators
                 .iter()
@@ -1685,7 +1741,7 @@ impl Component for ConsensusComponent {
                         // This entry represents the local node — use the real key.
                         Some(local_validator_keypair.public_key.dilithium_pk.clone())
                     } else {
-                        None
+                        decode_bootstrap_consensus_key(&bv.consensus_key)
                     };
                     BootstrapValidatorAdapter {
                         identity_id: bv.identity_id.clone(),
@@ -2135,6 +2191,22 @@ mod tests {
         let prefixed = format!("0x{}", plain);
         assert_eq!(decode_node_id_hex(&plain), Some(node.to_vec()));
         assert_eq!(decode_node_id_hex(&prefixed), Some(node.to_vec()));
+    }
+
+    #[test]
+    fn test_decode_bootstrap_consensus_key_accepts_plain_and_prefixed_hex() {
+        let key = vec![0x42u8; 16];
+        let plain = hex::encode(&key);
+        let prefixed = format!("0x{}", plain);
+        assert_eq!(decode_bootstrap_consensus_key(&plain), Some(key.clone()));
+        assert_eq!(decode_bootstrap_consensus_key(&prefixed), Some(key));
+    }
+
+    #[test]
+    fn test_decode_bootstrap_consensus_key_rejects_invalid_or_empty() {
+        assert_eq!(decode_bootstrap_consensus_key(""), None);
+        assert_eq!(decode_bootstrap_consensus_key("0x"), None);
+        assert_eq!(decode_bootstrap_consensus_key("not-hex"), None);
     }
 
     #[test]
