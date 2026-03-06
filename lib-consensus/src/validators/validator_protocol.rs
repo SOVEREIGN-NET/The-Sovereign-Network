@@ -412,7 +412,10 @@ impl ValidatorProtocol {
     }
 
     /// Set the consensus forwarder channel for delivering verified messages to the ConsensusEngine.
-    pub fn set_consensus_forwarder(&mut self, tx: tokio::sync::mpsc::Sender<crate::types::ValidatorMessage>) {
+    pub fn set_consensus_forwarder(
+        &mut self,
+        tx: tokio::sync::mpsc::Sender<crate::types::ValidatorMessage>,
+    ) {
         self.consensus_forwarder = Some(tx);
     }
 
@@ -704,7 +707,8 @@ impl ValidatorProtocol {
         };
         let bytes = bincode::serialize(&payload)
             .map_err(|e| anyhow!("ProposeSigningPayload encode failed: {e}"))?;
-        self.local_keypair()?.sign(&Self::signing_bytes(SIGNING_DOMAIN_PROPOSE, &bytes))
+        self.local_keypair()?
+            .sign(&Self::signing_bytes(SIGNING_DOMAIN_PROPOSE, &bytes))
     }
 
     fn sign_vote_message(&self, message: &VoteMessage) -> Result<PostQuantumSignature> {
@@ -717,7 +721,8 @@ impl ValidatorProtocol {
         };
         let bytes = bincode::serialize(&payload)
             .map_err(|e| anyhow!("VoteSigningPayload encode failed: {e}"))?;
-        self.local_keypair()?.sign(&Self::signing_bytes(SIGNING_DOMAIN_VOTE, &bytes))
+        self.local_keypair()?
+            .sign(&Self::signing_bytes(SIGNING_DOMAIN_VOTE, &bytes))
     }
 
     fn sign_commit_message(&self, message: &CommitMessage) -> Result<PostQuantumSignature> {
@@ -732,10 +737,14 @@ impl ValidatorProtocol {
         };
         let bytes = bincode::serialize(&payload)
             .map_err(|e| anyhow!("CommitSigningPayload encode failed: {e}"))?;
-        self.local_keypair()?.sign(&Self::signing_bytes(SIGNING_DOMAIN_COMMIT, &bytes))
+        self.local_keypair()?
+            .sign(&Self::signing_bytes(SIGNING_DOMAIN_COMMIT, &bytes))
     }
 
-    fn sign_round_change_message(&self, message: &RoundChangeMessage) -> Result<PostQuantumSignature> {
+    fn sign_round_change_message(
+        &self,
+        message: &RoundChangeMessage,
+    ) -> Result<PostQuantumSignature> {
         let payload = RoundChangeSigningPayload {
             message_id: message.message_id.clone(),
             validator: message.validator.clone(),
@@ -747,7 +756,8 @@ impl ValidatorProtocol {
         };
         let bytes = bincode::serialize(&payload)
             .map_err(|e| anyhow!("RoundChangeSigningPayload encode failed: {e}"))?;
-        self.local_keypair()?.sign(&Self::signing_bytes(SIGNING_DOMAIN_ROUND_CHANGE, &bytes))
+        self.local_keypair()?
+            .sign(&Self::signing_bytes(SIGNING_DOMAIN_ROUND_CHANGE, &bytes))
     }
 
     fn sign_heartbeat_message(&self, message: &HeartbeatMessage) -> Result<PostQuantumSignature> {
@@ -762,7 +772,8 @@ impl ValidatorProtocol {
         };
         let bytes = bincode::serialize(&payload)
             .map_err(|e| anyhow!("HeartbeatSigningPayload encode failed: {e}"))?;
-        self.local_keypair()?.sign(&Self::signing_bytes(SIGNING_DOMAIN_HEARTBEAT, &bytes))
+        self.local_keypair()?
+            .sign(&Self::signing_bytes(SIGNING_DOMAIN_HEARTBEAT, &bytes))
     }
 
     fn verify_timestamp_fresh(&self, timestamp: u64) -> Result<()> {
@@ -791,8 +802,14 @@ impl ValidatorProtocol {
                 };
                 let bytes = bincode::serialize(&payload)
                     .map_err(|e| anyhow!("ProposeSigningPayload encode failed: {e}"))?;
-                self.verify_signed(&m.proposer, &m.signature, m.timestamp, SIGNING_DOMAIN_PROPOSE, &bytes)
-                    .await
+                self.verify_signed(
+                    &m.proposer,
+                    &m.signature,
+                    m.timestamp,
+                    SIGNING_DOMAIN_PROPOSE,
+                    &bytes,
+                )
+                .await
             }
             ValidatorMessage::Vote(m) => {
                 let payload = VoteSigningPayload {
@@ -804,8 +821,14 @@ impl ValidatorProtocol {
                 };
                 let bytes = bincode::serialize(&payload)
                     .map_err(|e| anyhow!("VoteSigningPayload encode failed: {e}"))?;
-                self.verify_signed(&m.voter, &m.signature, m.timestamp, SIGNING_DOMAIN_VOTE, &bytes)
-                    .await
+                self.verify_signed(
+                    &m.voter,
+                    &m.signature,
+                    m.timestamp,
+                    SIGNING_DOMAIN_VOTE,
+                    &bytes,
+                )
+                .await
             }
             ValidatorMessage::Commit(m) => {
                 let payload = CommitSigningPayload {
@@ -819,8 +842,14 @@ impl ValidatorProtocol {
                 };
                 let bytes = bincode::serialize(&payload)
                     .map_err(|e| anyhow!("CommitSigningPayload encode failed: {e}"))?;
-                self.verify_signed(&m.committer, &m.signature, m.timestamp, SIGNING_DOMAIN_COMMIT, &bytes)
-                    .await
+                self.verify_signed(
+                    &m.committer,
+                    &m.signature,
+                    m.timestamp,
+                    SIGNING_DOMAIN_COMMIT,
+                    &bytes,
+                )
+                .await
             }
             ValidatorMessage::RoundChange(m) => {
                 let payload = RoundChangeSigningPayload {
@@ -834,8 +863,14 @@ impl ValidatorProtocol {
                 };
                 let bytes = bincode::serialize(&payload)
                     .map_err(|e| anyhow!("RoundChangeSigningPayload encode failed: {e}"))?;
-                self.verify_signed(&m.validator, &m.signature, m.timestamp, SIGNING_DOMAIN_ROUND_CHANGE, &bytes)
-                    .await
+                self.verify_signed(
+                    &m.validator,
+                    &m.signature,
+                    m.timestamp,
+                    SIGNING_DOMAIN_ROUND_CHANGE,
+                    &bytes,
+                )
+                .await
             }
             ValidatorMessage::Heartbeat(m) => {
                 let payload = HeartbeatSigningPayload {
@@ -849,8 +884,14 @@ impl ValidatorProtocol {
                 };
                 let bytes = bincode::serialize(&payload)
                     .map_err(|e| anyhow!("HeartbeatSigningPayload encode failed: {e}"))?;
-                self.verify_signed(&m.validator, &m.signature, m.timestamp, SIGNING_DOMAIN_HEARTBEAT, &bytes)
-                    .await
+                self.verify_signed(
+                    &m.validator,
+                    &m.signature,
+                    m.timestamp,
+                    SIGNING_DOMAIN_HEARTBEAT,
+                    &bytes,
+                )
+                .await
             }
         }
     }
@@ -892,7 +933,10 @@ impl ValidatorProtocol {
                     // these are forwarded as advisory liveness signals without verification.
                     // The comment in heartbeat.rs explicitly marks these as "placeholder —
                     // real signing happens in the validator protocol layer."
-                    debug!("Bootstrap: forwarding unsigned message from {} (empty key)", signer);
+                    debug!(
+                        "Bootstrap: forwarding unsigned message from {} (empty key)",
+                        signer
+                    );
                     return Ok(());
                 }
                 // Cryptographically verify the signature before registering the key.
@@ -919,7 +963,10 @@ impl ValidatorProtocol {
         let bytes = Self::signing_bytes(domain, payload);
         let ok = signature.public_key.verify(&bytes, signature)?;
         if !ok {
-            return Err(anyhow!("Invalid signature for validator message from {}", signer));
+            return Err(anyhow!(
+                "Invalid signature for validator message from {}",
+                signer
+            ));
         }
 
         Ok(())
@@ -931,15 +978,17 @@ impl ValidatorProtocol {
     /// known active validators (excluding self). Falls back to peer_connections
     /// if discovery has no entries.
     async fn broadcast_message(&self, message: ValidatorMessage) -> Result<()> {
-        let transport = self.network_transport.as_ref()
-            .ok_or_else(|| anyhow!("Network transport not set - call set_network_transport() first"))?;
+        let transport = self.network_transport.as_ref().ok_or_else(|| {
+            anyhow!("Network transport not set - call set_network_transport() first")
+        })?;
 
         // Collect recipient validator IDs from discovery (all known validators except self)
-        let validators = self.discovery.discover_validators(Default::default()).await?;
-        let mut recipients: Vec<IdentityId> = validators
-            .iter()
-            .map(|v| v.identity_id.clone())
-            .collect();
+        let validators = self
+            .discovery
+            .discover_validators(Default::default())
+            .await?;
+        let mut recipients: Vec<IdentityId> =
+            validators.iter().map(|v| v.identity_id.clone()).collect();
 
         // Filter out self
         if let Some(ref local_id) = self.validator_identity {
@@ -959,7 +1008,9 @@ impl ValidatorProtocol {
             recipients.len()
         );
 
-        transport.broadcast_to_validators(message, &recipients).await
+        transport
+            .broadcast_to_validators(message, &recipients)
+            .await
     }
 
     /// Forward a verified message to the consensus engine.
@@ -967,11 +1018,16 @@ impl ValidatorProtocol {
     /// Returns an error if the consensus forwarder channel is not set or the
     /// receiver has been dropped (engine shut down).
     async fn forward_to_consensus(&self, msg: crate::types::ValidatorMessage) -> Result<()> {
-        let tx = self.consensus_forwarder.as_ref()
-            .ok_or_else(|| anyhow!("Consensus forwarder not set - call set_consensus_forwarder() first"))?;
+        let tx = self.consensus_forwarder.as_ref().ok_or_else(|| {
+            anyhow!("Consensus forwarder not set - call set_consensus_forwarder() first")
+        })?;
 
-        tx.send(msg).await
-            .map_err(|e| anyhow!("Failed to forward to consensus engine (receiver dropped): {}", e))
+        tx.send(msg).await.map_err(|e| {
+            anyhow!(
+                "Failed to forward to consensus engine (receiver dropped): {}",
+                e
+            )
+        })
     }
 
     /// Handle incoming proposal message: forward to consensus engine as `Propose`.
@@ -983,7 +1039,8 @@ impl ValidatorProtocol {
 
         self.forward_to_consensus(crate::types::ValidatorMessage::Propose {
             proposal: message.proposal,
-        }).await
+        })
+        .await
     }
 
     /// Handle incoming vote message: forward to consensus engine as `Vote`.
@@ -993,9 +1050,8 @@ impl ValidatorProtocol {
             message.voter, message.vote.proposal_id
         );
 
-        self.forward_to_consensus(crate::types::ValidatorMessage::Vote {
-            vote: message.vote,
-        }).await
+        self.forward_to_consensus(crate::types::ValidatorMessage::Vote { vote: message.vote })
+            .await
     }
 
     /// Handle incoming commit message: synthesize a `Vote` with `VoteType::Commit`
@@ -1019,9 +1075,8 @@ impl ValidatorProtocol {
             signature: message.signature,
         };
 
-        self.forward_to_consensus(crate::types::ValidatorMessage::Vote {
-            vote: commit_vote,
-        }).await
+        self.forward_to_consensus(crate::types::ValidatorMessage::Vote { vote: commit_vote })
+            .await
     }
 
     /// Handle round change request: convert to a heartbeat-like message to
@@ -1049,9 +1104,8 @@ impl ValidatorProtocol {
             signature: message.signature,
         };
 
-        self.forward_to_consensus(crate::types::ValidatorMessage::Heartbeat {
-            message: heartbeat,
-        }).await
+        self.forward_to_consensus(crate::types::ValidatorMessage::Heartbeat { message: heartbeat })
+            .await
     }
 
     /// Handle heartbeat message
@@ -1140,7 +1194,9 @@ pub struct ValidatorNetworkStats {
 mod tests {
     use super::*;
     use crate::types::{ConsensusProof, ConsensusType};
-    use crate::validators::validator_discovery::{ValidatorAnnouncement, ValidatorEndpoint, ValidatorStatus};
+    use crate::validators::validator_discovery::{
+        ValidatorAnnouncement, ValidatorEndpoint, ValidatorStatus,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Mock transport that counts broadcasts for testing.
@@ -1155,7 +1211,8 @@ mod tests {
             _message: ValidatorMessage,
             recipients: &[IdentityId],
         ) -> Result<()> {
-            self.broadcast_count.fetch_add(recipients.len(), Ordering::SeqCst);
+            self.broadcast_count
+                .fetch_add(recipients.len(), Ordering::SeqCst);
             Ok(())
         }
     }
@@ -1237,6 +1294,7 @@ mod tests {
                 id: Hash::from_bytes(&[1u8; 32]),
                 proposer: signer.clone(),
                 height: 1,
+                round: 0,
                 previous_hash: Hash::from_bytes(&[2u8; 32]),
                 block_data: b"block".to_vec(),
                 timestamp: now,
@@ -1325,7 +1383,9 @@ mod tests {
             signature: PostQuantumSignature::default(),
         };
 
-        protocol.broadcast_message(ValidatorMessage::Heartbeat(msg)).await?;
+        protocol
+            .broadcast_message(ValidatorMessage::Heartbeat(msg))
+            .await?;
 
         // Transport should have been called with 1 recipient (remote_id, self excluded)
         assert_eq!(count.load(Ordering::SeqCst), 1);
@@ -1345,6 +1405,7 @@ mod tests {
                 id: Hash::from_bytes(&[1u8; 32]),
                 proposer: signer.clone(),
                 height: 1,
+                round: 0,
                 previous_hash: Hash::from_bytes(&[2u8; 32]),
                 block_data: b"block".to_vec(),
                 timestamp: now,
@@ -1365,7 +1426,9 @@ mod tests {
         msg.signature = protocol.sign_propose_message(&msg)?;
 
         // handle_message should verify and forward
-        protocol.handle_message(ValidatorMessage::Propose(msg)).await?;
+        protocol
+            .handle_message(ValidatorMessage::Propose(msg))
+            .await?;
 
         // Should receive the forwarded message on the consensus channel
         let forwarded = rx.try_recv().expect("Expected forwarded message");
@@ -1438,6 +1501,7 @@ mod tests {
                 id: Hash::from_bytes(&[1u8; 32]),
                 proposer: signer.clone(),
                 height: 1,
+                round: 0,
                 previous_hash: Hash::from_bytes(&[2u8; 32]),
                 block_data: b"block".to_vec(),
                 timestamp: now,
@@ -1461,11 +1525,16 @@ mod tests {
         msg.proposal.height = 999;
 
         // Should fail verification
-        let result = protocol.handle_message(ValidatorMessage::Propose(msg)).await;
+        let result = protocol
+            .handle_message(ValidatorMessage::Propose(msg))
+            .await;
         assert!(result.is_err());
 
         // Nothing should have been forwarded
-        assert!(rx.try_recv().is_err(), "Tampered message should not be forwarded");
+        assert!(
+            rx.try_recv().is_err(),
+            "Tampered message should not be forwarded"
+        );
 
         Ok(())
     }

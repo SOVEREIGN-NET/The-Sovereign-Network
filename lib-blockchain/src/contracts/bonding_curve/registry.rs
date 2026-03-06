@@ -210,6 +210,7 @@ mod tests {
                 kyber_pk: vec![],
                 key_id: [id; 32],
             },
+            String::new(),
             100,
             1_600_000_000,
         )

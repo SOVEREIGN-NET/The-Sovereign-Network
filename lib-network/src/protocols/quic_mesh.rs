@@ -38,37 +38,37 @@
 //! 4. Master key derivation: HKDF(uhp_session_key || kyber_secret || transcript_hash || peer_node_id)
 //! 5. Application messaging using master key
 
-use anyhow::{Result, Context, anyhow};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug, error};
+use tracing::{debug, error, info, warn};
 
-use quinn::{Endpoint, Connection, ServerConfig, ClientConfig};
+use quinn::{ClientConfig, Connection, Endpoint, ServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 // Import cryptographic primitives
 use lib_crypto::{
+    symmetric::chacha20::{decrypt_data, encrypt_data},
     PublicKey,
-    symmetric::chacha20::{encrypt_data, decrypt_data},
 };
 
 // Import identity for UHP handshake
 use lib_identity::ZhtpIdentity;
 
 // Import UHP handshake framework
-use crate::handshake::{HandshakeContext, NonceCache, NodeIdentity, NegotiatedCapabilities};
+use crate::handshake::{HandshakeContext, NegotiatedCapabilities, NodeIdentity, NonceCache};
 
 // Import QUIC transport adapter for UHP v2
 use super::quic_handshake;
 
-use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::messaging::message_handler::MeshMessageHandler;
+use crate::types::mesh_message::ZhtpMeshMessage;
 
 // Import TLS pin cache for certificate pinning (Issue #739)
 use crate::discovery::global_pin_cache;
@@ -202,25 +202,41 @@ pub struct PeerConnection {
     pub last_activity: Arc<AtomicU64>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConnectedAuthenticatedPeer {
+    pub node_id: Vec<u8>,
+    pub did: String,
+    pub peer_addr: SocketAddr,
+    pub bootstrap_mode: bool,
+}
+
 impl PeerConnection {
     /// Send an encrypted message to this peer via a UNI stream.
     ///
     /// Uses ChaCha20-Poly1305 with the UHP v2 session key, then sends
     /// over a fresh QUIC unidirectional stream.
     pub async fn send_encrypted(&self, message: &[u8]) -> Result<()> {
-        let session_key = self.session_key
+        let session_key = self
+            .session_key
             .ok_or_else(|| anyhow!("No session key - handshake not complete"))?;
 
         let encrypted = encrypt_data(message, &session_key)?;
-        let mut stream = self.quic_conn.open_uni().await
+        let mut stream = self
+            .quic_conn
+            .open_uni()
+            .await
             .context("Failed to open UNI stream for send")?;
-        stream.write_all(&encrypted).await
+        stream
+            .write_all(&encrypted)
+            .await
             .context("Failed to write encrypted data to UNI stream")?;
-        stream.finish()
-            .context("Failed to finish UNI stream")?;
+        stream.finish().context("Failed to finish UNI stream")?;
 
         self.touch();
-        debug!("Sent {} bytes (PQC encrypted + QUIC UNI stream)", message.len());
+        debug!(
+            "Sent {} bytes (PQC encrypted + QUIC UNI stream)",
+            message.len()
+        );
         Ok(())
     }
 
@@ -295,7 +311,10 @@ impl QuicMeshProtocol {
         cert_path: &Path,
         key_path: &Path,
     ) -> Result<Self> {
-        info!("🔐 Initializing QUIC mesh protocol on {} with UHP v2 authentication", bind_addr);
+        info!(
+            "🔐 Initializing QUIC mesh protocol on {} with UHP v2 authentication",
+            bind_addr
+        );
 
         // Install the ring crypto provider for rustls 0.23+
         // This must be done before any rustls ServerConfig/ClientConfig creation
@@ -313,8 +332,8 @@ impl QuicMeshProtocol {
         let server_config = Self::configure_server(cert.cert, cert.key)?;
 
         // Create QUIC endpoint
-        let endpoint = Endpoint::server(server_config, bind_addr)
-            .context("Failed to create QUIC endpoint")?;
+        let endpoint =
+            Endpoint::server(server_config, bind_addr).context("Failed to create QUIC endpoint")?;
 
         let actual_addr = endpoint.local_addr()?;
         info!("🔐 QUIC endpoint listening on {}", actual_addr);
@@ -322,7 +341,8 @@ impl QuicMeshProtocol {
         // Create shared handshake context with persistent nonce cache
         // Uses sled for persistence across restarts (prevents replay attacks)
         // TTL: 1 hour, max entries: 100,000 (handles high connection rate)
-        let nonce_db_path = cert_path.parent()
+        let nonce_db_path = cert_path
+            .parent()
             .unwrap_or(Path::new("./data"))
             .join("quic_nonce_cache");
 
@@ -448,7 +468,7 @@ impl QuicMeshProtocol {
             See Issue #739 for implementation plan."
         );
     }
-    
+
     /// Get the QUIC endpoint for accepting connections
     pub fn get_endpoint(&self) -> Arc<Endpoint> {
         Arc::new(self.endpoint.clone())
@@ -472,7 +492,8 @@ impl QuicMeshProtocol {
         let client_config = Self::configure_client(&self.trust_mode, peer_addr, &self.verifier)?;
 
         // Connect via QUIC
-        let connection = self.endpoint
+        let connection = self
+            .endpoint
             .connect_with(client_config, peer_addr, "zhtp-mesh")?
             .await
             .context("QUIC connection failed")?;
@@ -484,7 +505,9 @@ impl QuicMeshProtocol {
             &connection,
             &self.identity,
             &self.handshake_ctx,
-        ).await.context("UHP v2 handshake failed")?;
+        )
+        .await
+        .context("UHP v2 handshake failed")?;
 
         info!(
             peer_did = %handshake_result.verified_peer.identity.did,
@@ -498,15 +521,18 @@ impl QuicMeshProtocol {
         let peer_node_id = *handshake_result.verified_peer.identity.node_id.as_bytes();
 
         // Extract SPKI synchronously before async operations (Box<dyn Any> is not Send)
-        let peer_spki: Option<[u8; 32]> = connection.peer_identity()
-            .and_then(|certs| {
-                certs.downcast_ref::<Vec<CertificateDer<'static>>>()
-                    .and_then(|c| Self::extract_peer_spki_sha256(c).ok())
-            });
+        let peer_spki: Option<[u8; 32]> = connection.peer_identity().and_then(|certs| {
+            certs
+                .downcast_ref::<Vec<CertificateDer<'static>>>()
+                .and_then(|c| Self::extract_peer_spki_sha256(c).ok())
+        });
 
         // Now verify against pin cache (async)
         if let Some(peer_spki) = peer_spki {
-            match global_pin_cache().verify_peer_spki(&peer_node_id, &peer_spki).await {
+            match global_pin_cache()
+                .verify_peer_spki(&peer_node_id, &peer_spki)
+                .await
+            {
                 Ok(true) => {
                     info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 TLS certificate pin verified");
                 }
@@ -517,15 +543,25 @@ impl QuicMeshProtocol {
                     error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
                         "🚨 SECURITY: TLS certificate pin mismatch");
                     connection.close(2u32.into(), b"tls_pin_mismatch");
-                    return Err(anyhow!("TLS certificate pin mismatch for peer {:?}", hex::encode(&peer_node_id[..8])));
+                    return Err(anyhow!(
+                        "TLS certificate pin mismatch for peer {:?}",
+                        hex::encode(&peer_node_id[..8])
+                    ));
                 }
             }
         }
 
         // === Dilithium Public Key Verification (Issue #739) ===
         // Verify the peer's Dilithium PK from UHP matches what was cached from discovery
-        let peer_dilithium_pk = &handshake_result.verified_peer.identity.public_key.dilithium_pk;
-        match global_pin_cache().verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk).await {
+        let peer_dilithium_pk = &handshake_result
+            .verified_peer
+            .identity
+            .public_key
+            .dilithium_pk;
+        match global_pin_cache()
+            .verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk)
+            .await
+        {
             Ok(true) => {
                 info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 Dilithium PK verified against discovery cache");
             }
@@ -536,7 +572,10 @@ impl QuicMeshProtocol {
                 error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
                     "🚨 SECURITY: Dilithium PK mismatch - peer identity compromised");
                 connection.close(3u32.into(), b"dilithium_pk_mismatch");
-                return Err(anyhow!("Dilithium PK mismatch for peer {:?}", hex::encode(&peer_node_id[..8])));
+                return Err(anyhow!(
+                    "Dilithium PK mismatch for peer {:?}",
+                    hex::encode(&peer_node_id[..8])
+                ));
             }
         }
 
@@ -546,7 +585,12 @@ impl QuicMeshProtocol {
             .unwrap_or_default()
             .as_secs();
 
-        let peer_key = handshake_result.verified_peer.identity.node_id.as_bytes().to_vec();
+        let peer_key = handshake_result
+            .verified_peer
+            .identity
+            .node_id
+            .as_bytes()
+            .to_vec();
 
         let peer_conn = PeerConnection {
             quic_conn: connection,
@@ -579,27 +623,44 @@ impl QuicMeshProtocol {
     ///
     /// Even in bootstrap mode, the peer is cryptographically authenticated via UHP.
     /// The bootstrap_mode flag only affects what operations are allowed on the connection.
-    pub async fn connect_as_bootstrap(&self, peer_addr: SocketAddr, is_edge_node: bool) -> Result<()> {
-        let mode_str = if is_edge_node { "edge node - headers+proofs only" } else { "full node - complete blockchain" };
-        info!("🔐 Connecting to bootstrap peer at {} (mode: {})", peer_addr, mode_str);
+    pub async fn connect_as_bootstrap(
+        &self,
+        peer_addr: SocketAddr,
+        is_edge_node: bool,
+    ) -> Result<()> {
+        let mode_str = if is_edge_node {
+            "edge node - headers+proofs only"
+        } else {
+            "full node - complete blockchain"
+        };
+        info!(
+            "🔐 Connecting to bootstrap peer at {} (mode: {})",
+            peer_addr, mode_str
+        );
 
         // Configure client with PinnedCertVerifier
         let client_config = Self::configure_client(&self.trust_mode, peer_addr, &self.verifier)?;
 
         // Connect via QUIC
-        let connection = self.endpoint
+        let connection = self
+            .endpoint
             .connect_with(client_config, peer_addr, "zhtp-mesh")?
             .await
             .context("QUIC connection failed")?;
 
-        info!("🔐 QUIC connection established to bootstrap peer {}", peer_addr);
+        info!(
+            "🔐 QUIC connection established to bootstrap peer {}",
+            peer_addr
+        );
 
         // Perform UHP v2 handshake (authentication required even for bootstrap)
         let handshake_result = quic_handshake::handshake_as_initiator(
             &connection,
             &self.identity,
             &self.handshake_ctx,
-        ).await.context("UHP v2 handshake with bootstrap peer failed")?;
+        )
+        .await
+        .context("UHP v2 handshake with bootstrap peer failed")?;
 
         info!(
             peer_did = %handshake_result.verified_peer.identity.did,
@@ -613,15 +674,18 @@ impl QuicMeshProtocol {
         let peer_node_id = *handshake_result.verified_peer.identity.node_id.as_bytes();
 
         // Extract SPKI synchronously before async operations (Box<dyn Any> is not Send)
-        let peer_spki: Option<[u8; 32]> = connection.peer_identity()
-            .and_then(|certs| {
-                certs.downcast_ref::<Vec<CertificateDer<'static>>>()
-                    .and_then(|c| Self::extract_peer_spki_sha256(c).ok())
-            });
+        let peer_spki: Option<[u8; 32]> = connection.peer_identity().and_then(|certs| {
+            certs
+                .downcast_ref::<Vec<CertificateDer<'static>>>()
+                .and_then(|c| Self::extract_peer_spki_sha256(c).ok())
+        });
 
         // Now verify against pin cache (async)
         if let Some(peer_spki) = peer_spki {
-            match global_pin_cache().verify_peer_spki(&peer_node_id, &peer_spki).await {
+            match global_pin_cache()
+                .verify_peer_spki(&peer_node_id, &peer_spki)
+                .await
+            {
                 Ok(true) => {
                     info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 Bootstrap peer TLS pin verified");
                 }
@@ -632,14 +696,24 @@ impl QuicMeshProtocol {
                     error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
                         "🚨 SECURITY: Bootstrap peer TLS certificate pin mismatch");
                     connection.close(2u32.into(), b"tls_pin_mismatch");
-                    return Err(anyhow!("TLS certificate pin mismatch for bootstrap peer {:?}", hex::encode(&peer_node_id[..8])));
+                    return Err(anyhow!(
+                        "TLS certificate pin mismatch for bootstrap peer {:?}",
+                        hex::encode(&peer_node_id[..8])
+                    ));
                 }
             }
         }
 
         // === Dilithium Public Key Verification (Issue #739) ===
-        let peer_dilithium_pk = &handshake_result.verified_peer.identity.public_key.dilithium_pk;
-        match global_pin_cache().verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk).await {
+        let peer_dilithium_pk = &handshake_result
+            .verified_peer
+            .identity
+            .public_key
+            .dilithium_pk;
+        match global_pin_cache()
+            .verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk)
+            .await
+        {
             Ok(true) => {
                 info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 Bootstrap peer Dilithium PK verified");
             }
@@ -650,7 +724,10 @@ impl QuicMeshProtocol {
                 error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
                     "🚨 SECURITY: Bootstrap peer Dilithium PK mismatch");
                 connection.close(3u32.into(), b"dilithium_pk_mismatch");
-                return Err(anyhow!("Dilithium PK mismatch for bootstrap peer {:?}", hex::encode(&peer_node_id[..8])));
+                return Err(anyhow!(
+                    "Dilithium PK mismatch for bootstrap peer {:?}",
+                    hex::encode(&peer_node_id[..8])
+                ));
             }
         }
 
@@ -669,7 +746,12 @@ impl QuicMeshProtocol {
             .unwrap_or_default()
             .as_secs();
 
-        let peer_key = handshake_result.verified_peer.identity.node_id.as_bytes().to_vec();
+        let peer_key = handshake_result
+            .verified_peer
+            .identity
+            .node_id
+            .as_bytes()
+            .to_vec();
 
         let peer_conn = PeerConnection {
             quic_conn: connection,
@@ -687,7 +769,7 @@ impl QuicMeshProtocol {
 
         Ok(())
     }
-    
+
     // =========================================================================
     // Canonical connection store operations (Issue #907)
     // =========================================================================
@@ -738,7 +820,10 @@ impl QuicMeshProtocol {
 
     /// List all connected peer node IDs.
     pub fn connected_peer_ids(&self) -> Vec<Vec<u8>> {
-        self.connections.iter().map(|entry| entry.key().clone()).collect()
+        self.connections
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// Return the socket address of every currently-connected peer.
@@ -753,9 +838,29 @@ impl QuicMeshProtocol {
             .collect()
     }
 
+    /// Return authenticated peers currently connected in the canonical store.
+    ///
+    /// The `node_id` and `did` originate from the verified UHP handshake identity.
+    pub fn connected_authenticated_peers(&self) -> Vec<ConnectedAuthenticatedPeer> {
+        self.connections
+            .iter()
+            .map(|entry| {
+                let value = entry.value();
+                ConnectedAuthenticatedPeer {
+                    node_id: entry.key().clone(),
+                    did: value.verified_peer.identity.did.clone(),
+                    peer_addr: value.peer_addr,
+                    bootstrap_mode: value.bootstrap_mode,
+                }
+            })
+            .collect()
+    }
+
     /// Get a peer's session key (for external decryption, e.g. QuicHandler).
     pub fn get_peer_session_key(&self, node_id: &[u8]) -> Option<[u8; 32]> {
-        self.connections.get(node_id).and_then(|entry| entry.session_key)
+        self.connections
+            .get(node_id)
+            .and_then(|entry| entry.session_key)
     }
 
     /// Broadcast a serialized message to ALL connected peers.
@@ -764,10 +869,15 @@ impl QuicMeshProtocol {
     /// Dead peers (send failure) are automatically removed from the store.
     pub async fn broadcast_message(&self, message_bytes: &[u8]) -> Result<usize> {
         // Snapshot peer info to avoid holding DashMap locks across await points
-        let peers: Vec<(Vec<u8>, Connection, Option<[u8; 32]>)> = self.connections
+        let peers: Vec<(Vec<u8>, Connection, Option<[u8; 32]>)> = self
+            .connections
             .iter()
             .map(|entry| {
-                (entry.key().clone(), entry.value().quic_conn.clone(), entry.value().session_key)
+                (
+                    entry.key().clone(),
+                    entry.value().quic_conn.clone(),
+                    entry.value().session_key,
+                )
             })
             .collect();
 
@@ -811,7 +921,10 @@ impl QuicMeshProtocol {
             self.connections.remove(dead);
         }
         if !dead_peers.is_empty() {
-            info!(removed = dead_peers.len(), "Reaped dead peers after broadcast");
+            info!(
+                removed = dead_peers.len(),
+                "Reaped dead peers after broadcast"
+            );
             // If all peers died, immediately attempt to reconnect to bootstrap peers.
             if self.connections.is_empty() {
                 self.try_reconnect_to_bootstrap().await;
@@ -830,7 +943,8 @@ impl QuicMeshProtocol {
         if addrs.is_empty() {
             return;
         }
-        let connected: std::collections::HashSet<String> = self.connections
+        let connected: std::collections::HashSet<String> = self
+            .connections
             .iter()
             .map(|e| {
                 let pc = e.value();
@@ -853,14 +967,18 @@ impl QuicMeshProtocol {
     ///
     /// Made public for Issue #846 - allows direct sending to specific peers
     /// from external code that has access to a Connection and session key.
-    pub async fn send_encrypted_to(conn: &Connection, session_key: &[u8; 32], message: &[u8]) -> Result<()> {
+    pub async fn send_encrypted_to(
+        conn: &Connection,
+        session_key: &[u8; 32],
+        message: &[u8],
+    ) -> Result<()> {
         let encrypted = encrypt_data(message, session_key)?;
-        let mut stream = conn.open_uni().await
-            .context("Failed to open UNI stream")?;
-        stream.write_all(&encrypted).await
+        let mut stream = conn.open_uni().await.context("Failed to open UNI stream")?;
+        stream
+            .write_all(&encrypted)
+            .await
             .context("Failed to write to UNI stream")?;
-        stream.finish()
-            .context("Failed to finish UNI stream")?;
+        stream.finish().context("Failed to finish UNI stream")?;
         Ok(())
     }
 
@@ -883,7 +1001,8 @@ impl QuicMeshProtocol {
             loop {
                 match conn.accept_uni().await {
                     Ok(mut stream) => {
-                        match stream.read_to_end(1024 * 1024).await { // 1MB max
+                        match stream.read_to_end(1024 * 1024).await {
+                            // 1MB max
                             Ok(encrypted) => {
                                 match decrypt_data(&encrypted, &session_key) {
                                     Ok(decrypted) => {
@@ -896,8 +1015,11 @@ impl QuicMeshProtocol {
 
                                                 if let Some(ref handler) = message_handler {
                                                     let peer_pk = PublicKey::new(node_id.clone());
-                                                    if let Err(e) = handler.read().await
-                                                        .handle_mesh_message(message, peer_pk).await
+                                                    if let Err(e) = handler
+                                                        .read()
+                                                        .await
+                                                        .handle_mesh_message(message, peer_pk)
+                                                        .await
                                                     {
                                                         error!(peer = %node_id_hex,
                                                                error = %e,
@@ -948,24 +1070,21 @@ impl QuicMeshProtocol {
     }
 
     /// Send encrypted ZHTP message to peer
-    pub async fn send_to_peer(
-        &self,
-        peer_pubkey: &[u8],
-        message: ZhtpMeshMessage,
-    ) -> Result<()> {
+    pub async fn send_to_peer(&self, peer_pubkey: &[u8], message: ZhtpMeshMessage) -> Result<()> {
         // Snapshot connection info to avoid holding DashMap ref across await
         let (conn, session_key) = {
-            let entry = self.connections.get(peer_pubkey)
+            let entry = self
+                .connections
+                .get(peer_pubkey)
                 .ok_or_else(|| anyhow!("No connection to peer"))?;
             (entry.quic_conn.clone(), entry.session_key)
         };
 
-        let session_key = session_key
-            .ok_or_else(|| anyhow!("No session key for peer"))?;
+        let session_key = session_key.ok_or_else(|| anyhow!("No session key for peer"))?;
 
         // Serialize message
-        let message_bytes = bincode::serialize(&message)
-            .context("Failed to serialize ZhtpMeshMessage")?;
+        let message_bytes =
+            bincode::serialize(&message).context("Failed to serialize ZhtpMeshMessage")?;
 
         Self::send_encrypted_to(&conn, &session_key, &message_bytes).await?;
 
@@ -974,10 +1093,13 @@ impl QuicMeshProtocol {
             entry.touch();
         }
 
-        debug!("Sent {} bytes to peer (PQC encrypted + QUIC UNI)", message_bytes.len());
+        debug!(
+            "Sent {} bytes to peer (PQC encrypted + QUIC UNI)",
+            message_bytes.len()
+        );
         Ok(())
     }
-    
+
     /// Receive messages from peers (background task)
     ///
     /// Spawns background tasks to:
@@ -1015,19 +1137,22 @@ impl QuicMeshProtocol {
                                     info!("New QUIC connection from {}", peer_addr);
 
                                     // Perform UHP v2 handshake as server
-                                    let handshake_result = match quic_handshake::handshake_as_responder(
-                                        &connection,
-                                        &identity,
-                                        &ctx,
-                                    ).await {
-                                        Ok(result) => result,
-                                        Err(e) => {
-                                            error!(peer_addr = %peer_addr, error = %e,
+                                    let handshake_result =
+                                        match quic_handshake::handshake_as_responder(
+                                            &connection,
+                                            &identity,
+                                            &ctx,
+                                        )
+                                        .await
+                                        {
+                                            Ok(result) => result,
+                                            Err(e) => {
+                                                error!(peer_addr = %peer_addr, error = %e,
                                                    "UHP v2 handshake failed - rejecting connection");
-                                            connection.close(1u32.into(), b"handshake_failed");
-                                            return;
-                                        }
-                                    };
+                                                connection.close(1u32.into(), b"handshake_failed");
+                                                return;
+                                            }
+                                        };
 
                                     info!(
                                         peer_did = %handshake_result.verified_peer.identity.did,
@@ -1037,15 +1162,23 @@ impl QuicMeshProtocol {
                                     );
 
                                     // TLS Certificate Pinning Verification (Issue #739)
-                                    let peer_node_id = *handshake_result.verified_peer.identity.node_id.as_bytes();
-                                    let peer_spki: Option<[u8; 32]> = connection.peer_identity()
-                                        .and_then(|certs| {
-                                            certs.downcast_ref::<Vec<CertificateDer<'static>>>()
-                                                .and_then(|c| QuicMeshProtocol::extract_peer_spki_sha256(c).ok())
+                                    let peer_node_id =
+                                        *handshake_result.verified_peer.identity.node_id.as_bytes();
+                                    let peer_spki: Option<[u8; 32]> =
+                                        connection.peer_identity().and_then(|certs| {
+                                            certs
+                                                .downcast_ref::<Vec<CertificateDer<'static>>>()
+                                                .and_then(|c| {
+                                                    QuicMeshProtocol::extract_peer_spki_sha256(c)
+                                                        .ok()
+                                                })
                                         });
 
                                     if let Some(peer_spki) = peer_spki {
-                                        match global_pin_cache().verify_peer_spki(&peer_node_id, &peer_spki).await {
+                                        match global_pin_cache()
+                                            .verify_peer_spki(&peer_node_id, &peer_spki)
+                                            .await
+                                        {
                                             Ok(true) => debug!("TLS certificate pin verified"),
                                             Ok(false) => debug!("No TLS pin cached for peer"),
                                             Err(e) => {
@@ -1056,8 +1189,15 @@ impl QuicMeshProtocol {
                                         }
                                     }
 
-                                    let peer_dilithium_pk = &handshake_result.verified_peer.identity.public_key.dilithium_pk;
-                                    match global_pin_cache().verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk).await {
+                                    let peer_dilithium_pk = &handshake_result
+                                        .verified_peer
+                                        .identity
+                                        .public_key
+                                        .dilithium_pk;
+                                    match global_pin_cache()
+                                        .verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk)
+                                        .await
+                                    {
                                         Ok(true) => debug!("Dilithium PK verified"),
                                         Ok(false) => debug!("No Dilithium PK cached for peer"),
                                         Err(e) => {
@@ -1068,7 +1208,12 @@ impl QuicMeshProtocol {
                                     }
 
                                     // Create PeerConnection and register
-                                    let peer_id_vec = handshake_result.verified_peer.identity.node_id.as_bytes().to_vec();
+                                    let peer_id_vec = handshake_result
+                                        .verified_peer
+                                        .identity
+                                        .node_id
+                                        .as_bytes()
+                                        .to_vec();
                                     let now_secs = SystemTime::now()
                                         .duration_since(UNIX_EPOCH)
                                         .unwrap_or_default()
@@ -1095,7 +1240,8 @@ impl QuicMeshProtocol {
                                     let conns_for_loop = conns.clone();
                                     let handler_for_loop = handler.clone();
                                     let node_id_for_loop = peer_id_vec.clone();
-                                    let node_id_hex = hex::encode(&peer_id_vec[..8.min(peer_id_vec.len())]);
+                                    let node_id_hex =
+                                        hex::encode(&peer_id_vec[..8.min(peer_id_vec.len())]);
                                     let node_id_hex_panic = node_id_hex.clone();
 
                                     tokio::spawn(async move {
@@ -1104,7 +1250,10 @@ impl QuicMeshProtocol {
                                                 Ok(mut stream) => {
                                                     match stream.read_to_end(1024 * 1024).await {
                                                         Ok(encrypted) => {
-                                                            match decrypt_data(&encrypted, &session_key) {
+                                                            match decrypt_data(
+                                                                &encrypted,
+                                                                &session_key,
+                                                            ) {
                                                                 Ok(decrypted) => {
                                                                     match bincode::deserialize::<ZhtpMeshMessage>(&decrypted) {
                                                                         Ok(message) => {
@@ -1137,10 +1286,16 @@ impl QuicMeshProtocol {
                                                                         Err(e) => error!("Failed to deserialize: {}", e),
                                                                     }
                                                                 }
-                                                                Err(e) => error!("Failed to decrypt: {}", e),
+                                                                Err(e) => error!(
+                                                                    "Failed to decrypt: {}",
+                                                                    e
+                                                                ),
                                                             }
                                                         }
-                                                        Err(e) => debug!("Failed to read UNI stream: {}", e),
+                                                        Err(e) => debug!(
+                                                            "Failed to read UNI stream: {}",
+                                                            e
+                                                        ),
                                                     }
                                                 }
                                                 Err(e) => {
@@ -1172,17 +1327,22 @@ impl QuicMeshProtocol {
 
         Ok(())
     }
-    
+
     /// Get a QUIC connection by peer public key
     pub fn get_connection(&self, peer_key: &[u8]) -> Result<Connection> {
-        let entry = self.connections.get(peer_key)
+        let entry = self
+            .connections
+            .get(peer_key)
             .ok_or_else(|| anyhow!("No connection to peer with key {:?}", &peer_key[..8]))?;
         Ok(entry.quic_conn.clone())
     }
 
     /// Get all active connection addresses
     pub fn get_active_peers(&self) -> Vec<SocketAddr> {
-        self.connections.iter().map(|entry| entry.peer_addr).collect()
+        self.connections
+            .iter()
+            .map(|entry| entry.peer_addr)
+            .collect()
     }
 
     /// Get local endpoint address
@@ -1196,7 +1356,7 @@ impl QuicMeshProtocol {
         self.endpoint.close(0u32.into(), b"shutdown");
         self.connections.clear();
     }
-    
+
     /// Load existing TLS certificate from disk, or generate a new one if not found.
     ///
     /// This enables persistent certificates for Android Cronet compatibility.
@@ -1207,12 +1367,13 @@ impl QuicMeshProtocol {
     fn load_or_generate_cert(cert_path: &Path, key_path: &Path) -> Result<SelfSignedCert> {
         // Try to load existing certificate from disk
         if cert_path.exists() && key_path.exists() {
-            info!("🔐 Loading existing TLS certificate from {}", cert_path.display());
+            info!(
+                "🔐 Loading existing TLS certificate from {}",
+                cert_path.display()
+            );
 
-            let cert_pem = std::fs::read(cert_path)
-                .context("Failed to read certificate file")?;
-            let key_pem = std::fs::read(key_path)
-                .context("Failed to read key file")?;
+            let cert_pem = std::fs::read(cert_path).context("Failed to read certificate file")?;
+            let key_pem = std::fs::read(key_path).context("Failed to read key file")?;
 
             // Parse PEM-encoded certificate
             let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
@@ -1239,7 +1400,10 @@ impl QuicMeshProtocol {
         }
 
         // Generate new certificate and save to disk
-        info!("🔐 Generating new TLS certificate (will be saved to {})", cert_path.display());
+        info!(
+            "🔐 Generating new TLS certificate (will be saved to {})",
+            cert_path.display()
+        );
 
         use rcgen::{generate_simple_self_signed, CertifiedKey};
 
@@ -1263,8 +1427,7 @@ impl QuicMeshProtocol {
         }
 
         // Save certificate and key in PEM format
-        std::fs::write(cert_path, cert.pem())
-            .context("Failed to write certificate file")?;
+        std::fs::write(cert_path, cert.pem()).context("Failed to write certificate file")?;
         std::fs::write(key_path, signing_key.serialize_pem())
             .context("Failed to write private key file")?;
 
@@ -1310,8 +1473,8 @@ impl QuicMeshProtocol {
     /// # Returns
     /// 32-byte SHA256 hash of the SPKI
     pub fn compute_spki_sha256(cert_der: &[u8]) -> Result<[u8; 32]> {
+        use sha2::{Digest, Sha256};
         use x509_parser::prelude::*;
-        use sha2::{Sha256, Digest};
 
         let (_, cert) = X509Certificate::from_der(cert_der)
             .map_err(|e| anyhow!("Failed to parse X.509 certificate: {:?}", e))?;
@@ -1337,11 +1500,13 @@ impl QuicMeshProtocol {
         let cert_path = Path::new(DEFAULT_TLS_CERT_PATH);
 
         if !cert_path.exists() {
-            return Err(anyhow!("TLS certificate not found at {}", cert_path.display()));
+            return Err(anyhow!(
+                "TLS certificate not found at {}",
+                cert_path.display()
+            ));
         }
 
-        let cert_pem = std::fs::read(cert_path)
-            .context("Failed to read TLS certificate")?;
+        let cert_pem = std::fs::read(cert_path).context("Failed to read TLS certificate")?;
 
         let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
             .next()
@@ -1364,7 +1529,10 @@ impl QuicMeshProtocol {
     }
 
     /// Configure QUIC server
-    fn configure_server(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> Result<ServerConfig> {
+    fn configure_server(
+        cert: CertificateDer<'static>,
+        key: PrivateKeyDer<'static>,
+    ) -> Result<ServerConfig> {
         // Build rustls ServerConfig with ALPN support
         let mut rustls_config = rustls::ServerConfig::builder()
             .with_no_client_auth()
@@ -1388,13 +1556,15 @@ impl QuicMeshProtocol {
         transport_config.max_concurrent_bidi_streams(100u32.into());
         transport_config.max_concurrent_uni_streams(100u32.into());
         // Issue #907: Raised from 30s to 300s to prevent premature peer disconnection
-        transport_config.max_idle_timeout(Some(std::time::Duration::from_secs(300).try_into().unwrap()));
+        transport_config.max_idle_timeout(Some(
+            std::time::Duration::from_secs(300).try_into().unwrap(),
+        ));
 
         server_config.transport_config(Arc::new(transport_config));
 
         Ok(server_config)
     }
-    
+
     /// Configure QUIC client with PinnedCertVerifier support
     fn configure_client(
         trust_mode: &QuicTrustMode,
@@ -1429,18 +1599,20 @@ impl QuicMeshProtocol {
         // Configure ALPN protocols to match server (required for iOS Network.framework, Android Cronet)
         // Security note: ALPN is metadata only - actual security comes from UHP v2 (Kyber1024 + Dilithium5)
         crypto.alpn_protocols = vec![
-            b"zhtp-mesh/1".to_vec(),  // Mesh peer-to-peer with UHP handshake
+            b"zhtp-mesh/1".to_vec(), // Mesh peer-to-peer with UHP handshake
         ];
 
         let mut client_config = ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-                .context("Failed to create QUIC client config")?
+                .context("Failed to create QUIC client config")?,
         ));
 
         // Optimize for mesh networking
         let mut transport_config = quinn::TransportConfig::default();
         // Issue #907: Raised from 30s to 300s to prevent premature peer disconnection
-        transport_config.max_idle_timeout(Some(std::time::Duration::from_secs(300).try_into().unwrap()));
+        transport_config.max_idle_timeout(Some(
+            std::time::Duration::from_secs(300).try_into().unwrap(),
+        ));
         // Issue #907: Keepalive pings keep NAT mapping alive and prevent idle timeout
         // Only on client/outbound side (server doesn't initiate keepalive)
         transport_config.keep_alive_interval(Some(std::time::Duration::from_secs(15)));
@@ -1451,7 +1623,9 @@ impl QuicMeshProtocol {
     }
 
     /// Build client config with PinnedCertVerifier for production-safe mesh networking
-    fn build_pinned_client_config(verifier: Arc<PinnedCertVerifier>) -> Result<rustls::ClientConfig> {
+    fn build_pinned_client_config(
+        verifier: Arc<PinnedCertVerifier>,
+    ) -> Result<rustls::ClientConfig> {
         Ok(rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(verifier)
@@ -1584,7 +1758,8 @@ impl PqcQuicConnection {
     /// NOTE: Uses open_uni() — receiver must accept_uni(). For mesh broadcast
     /// where receiver uses accept_bi(), use send_encrypted_message_bi() instead.
     pub async fn send_encrypted_message(&mut self, message: &[u8]) -> Result<()> {
-        let session_key = self.session_key
+        let session_key = self
+            .session_key
             .ok_or_else(|| anyhow!("UHP v2 handshake not complete"))?;
 
         // Encrypt with session key (ChaCha20-Poly1305)
@@ -1596,10 +1771,12 @@ impl PqcQuicConnection {
         stream.write_all(&encrypted).await?;
         stream.finish()?;
 
-        debug!("📤 Sent {} bytes (double-encrypted: UHP v2 + TLS 1.3)", message.len());
+        debug!(
+            "📤 Sent {} bytes (double-encrypted: UHP v2 + TLS 1.3)",
+            message.len()
+        );
         Ok(())
     }
-
 
     /// Receive encrypted message using session key
     ///
@@ -1609,7 +1786,8 @@ impl PqcQuicConnection {
     /// derived from UHP v2 session key.
     /// QUIC handles TLS 1.3 decryption underneath.
     pub async fn recv_encrypted_message(&mut self) -> Result<Vec<u8>> {
-        let session_key = self.session_key
+        let session_key = self
+            .session_key
             .ok_or_else(|| anyhow!("UHP v2 handshake not complete"))?;
 
         // Receive from QUIC (TLS 1.3 decryption automatic)
@@ -1619,7 +1797,10 @@ impl PqcQuicConnection {
         // Decrypt using master key (nonce is embedded in encrypted data by lib-crypto)
         let decrypted = decrypt_data(&encrypted, &session_key)?;
 
-        debug!("📥 Received {} bytes (double-decrypted: TLS 1.3 + UHP v2)", decrypted.len());
+        debug!(
+            "📥 Received {} bytes (double-decrypted: TLS 1.3 + UHP v2)",
+            decrypted.len()
+        );
         Ok(decrypted)
     }
 
@@ -1698,7 +1879,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
 #[async_trait]
 impl super::Protocol for QuicMeshProtocol {
     async fn connect(&mut self, target: &super::PeerAddress) -> Result<super::ProtocolSession> {
-        use crate::protocols::types::{SessionKeys, AuthScheme, CipherSuite};
+        use crate::protocols::types::{AuthScheme, CipherSuite, SessionKeys};
 
         let peer_address = match target {
             super::PeerAddress::IpSocket(addr) => addr.clone(),
@@ -1708,19 +1889,18 @@ impl super::Protocol for QuicMeshProtocol {
         let mut session_keys = SessionKeys::new(CipherSuite::ChaCha20Poly1305, true);
         let addr_str = peer_address.inner().to_string();
         let key_material = blake3::hash(
-            format!("quic:mesh:{}:{}",
+            format!(
+                "quic:mesh:{}:{}",
                 String::from_iter([0u8; 32].iter().map(|b| format!("{:02x}", b))),
                 &addr_str
-            ).as_bytes()
+            )
+            .as_bytes(),
         );
         session_keys.set_encryption_key(*key_material.as_bytes())?;
 
         let peer_did = format!("did:zhtp:quic:{}", &addr_str);
-        let peer_identity = super::VerifiedPeerIdentity::new(
-            peer_did,
-            addr_str.as_bytes().to_vec(),
-            vec![],
-        )?;
+        let peer_identity =
+            super::VerifiedPeerIdentity::new(peer_did, addr_str.as_bytes().to_vec(), vec![])?;
 
         let mac_key = blake3::hash(b"quic:mac:key");
         let session = super::ProtocolSession::new(
@@ -1747,20 +1927,27 @@ impl super::Protocol for QuicMeshProtocol {
         }
 
         match session.lifecycle().needs_renewal() {
-            SessionRenewalReason::None => {},
+            SessionRenewalReason::None => {}
             reason => return Err(anyhow!("Session needs renewal: {:?}", reason)),
         }
 
         Ok(())
     }
 
-    async fn send_message(&self, session: &super::ProtocolSession, envelope: &crate::types::mesh_message::MeshMessageEnvelope) -> Result<()> {
+    async fn send_message(
+        &self,
+        session: &super::ProtocolSession,
+        envelope: &crate::types::mesh_message::MeshMessageEnvelope,
+    ) -> Result<()> {
         self.validate_session(session)?;
         let _serialized = serde_json::to_vec(envelope)?;
         Ok(())
     }
 
-    async fn receive_message(&self, _session: &super::ProtocolSession) -> Result<crate::types::mesh_message::MeshMessageEnvelope> {
+    async fn receive_message(
+        &self,
+        _session: &super::ProtocolSession,
+    ) -> Result<crate::types::mesh_message::MeshMessageEnvelope> {
         Err(anyhow!("Receive message not fully implemented for QUIC"))
     }
 
@@ -1770,7 +1957,7 @@ impl super::Protocol for QuicMeshProtocol {
     }
 
     fn capabilities(&self) -> super::ProtocolCapabilities {
-        use crate::protocols::types::{AuthScheme, CipherSuite, PqcMode, PowerProfile};
+        use crate::protocols::types::{AuthScheme, CipherSuite, PowerProfile, PqcMode};
 
         super::ProtocolCapabilities {
             version: crate::protocols::types::CAPABILITY_VERSION,
@@ -1818,8 +2005,8 @@ pub fn get_tls_spki_hash_from_default_cert() -> Option<[u8; 32]> {
     let cert_pem = std::fs::read(cert_path).ok()?;
 
     let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
-        .next()?  // Option<Result<CertificateDer>>
-        .ok()?;   // Result -> Option
+        .next()? // Option<Result<CertificateDer>>
+        .ok()?; // Result -> Option
 
     QuicMeshProtocol::compute_spki_sha256(&cert_der).ok()
 }
@@ -1839,7 +2026,7 @@ mod tests {
                 device_name,
                 None,
             )
-            .expect("Failed to create test identity")
+            .expect("Failed to create test identity"),
         )
     }
 
@@ -2013,8 +2200,8 @@ mod tests {
         let _ = lib_identity::types::node_id::try_set_network_genesis([0xABu8; 32]);
         let identity = create_test_identity("broadcast-test");
         let bind_addr = "127.0.0.1:0".parse().unwrap();
-        let protocol = QuicMeshProtocol::new(identity, bind_addr)
-            .expect("Failed to create protocol");
+        let protocol =
+            QuicMeshProtocol::new(identity, bind_addr).expect("Failed to create protocol");
 
         let result = protocol.broadcast_message(b"test message").await;
         assert!(result.is_ok());
@@ -2029,8 +2216,8 @@ mod tests {
         let _ = lib_identity::types::node_id::try_set_network_genesis([0xABu8; 32]);
         let identity = create_test_identity("send-test");
         let bind_addr = "127.0.0.1:0".parse().unwrap();
-        let protocol = QuicMeshProtocol::new(identity, bind_addr)
-            .expect("Failed to create protocol");
+        let protocol =
+            QuicMeshProtocol::new(identity, bind_addr).expect("Failed to create protocol");
 
         let message = ZhtpMeshMessage::PeerAnnouncement {
             sender: PublicKey::new(vec![0u8; 32]),
@@ -2040,7 +2227,10 @@ mod tests {
 
         let result = protocol.send_to_peer(&[99, 98, 97], message).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No connection to peer"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No connection to peer"));
 
         protocol.shutdown().await;
     }

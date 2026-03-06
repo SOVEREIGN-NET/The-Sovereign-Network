@@ -126,7 +126,10 @@ pub(super) mod determinism_guard {
     /// Mark consensus as inactive
     pub fn exit_consensus_scope() {
         let prev = CONSENSUS_ACTIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
-        debug_assert!(prev > 0, "exit_consensus_scope called more times than enter_consensus_scope");
+        debug_assert!(
+            prev > 0,
+            "exit_consensus_scope called more times than enter_consensus_scope"
+        );
     }
 
     /// Check if we're currently in a consensus-critical section
@@ -169,7 +172,10 @@ impl ConsensusEngine {
     }
 
     /// Verify consensus proof
-    pub(super) async fn verify_consensus_proof(&self, proof: &ConsensusProof) -> ConsensusResult<bool> {
+    pub(super) async fn verify_consensus_proof(
+        &self,
+        proof: &ConsensusProof,
+    ) -> ConsensusResult<bool> {
         match proof.consensus_type {
             ConsensusType::ProofOfStake => {
                 if let Some(stake_proof) = &proof.stake_proof {
@@ -221,9 +227,30 @@ impl ConsensusEngine {
     ///
     /// Uses the vote's own height and round to reconstruct the signed data.
     /// Returns true if signature is valid, false otherwise.
-    pub(super) async fn verify_vote_signature(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
-        // Validate the public key uses a known Dilithium variant (or empty for unsigned bootstrap votes).
-        if let Err(e) = lib_crypto::validate_consensus_vote_signature_scheme(&vote.signature.public_key.dilithium_pk) {
+    ///
+    /// Security invariant: membership is necessary but not sufficient.
+    /// Every vote MUST carry a non-empty Dilithium public key that exactly
+    /// matches the registered validator consensus key.
+    pub(super) async fn verify_vote_signature(
+        &self,
+        vote: &ConsensusVote,
+    ) -> ConsensusResult<bool> {
+        // Reject unsigned votes. Membership-only acceptance is unsafe because a spoofed
+        // sender could vote on behalf of validators registered with placeholder keys.
+        if vote.signature.public_key.dilithium_pk.is_empty() {
+            tracing::warn!(
+                "Vote rejected: empty consensus key for validator {} at height {} round {}",
+                vote.voter,
+                vote.height,
+                vote.round
+            );
+            return Ok(false);
+        }
+
+        // Validate the public key uses a known Dilithium variant.
+        if let Err(e) = lib_crypto::validate_consensus_vote_signature_scheme(
+            &vote.signature.public_key.dilithium_pk,
+        ) {
             tracing::warn!(
                 "Vote rejected: signature scheme validation failed for validator {} at height {} round {}: {}",
                 vote.voter,
@@ -232,16 +259,6 @@ impl ConsensusEngine {
                 e
             );
             return Ok(false);
-        }
-
-        // Empty public key = unsigned bootstrap vote. Accept based on validator membership alone.
-        // Validator membership is checked in validate_remote_vote() after this call.
-        if vote.signature.public_key.dilithium_pk.is_empty() {
-            tracing::debug!(
-                "Bootstrap unsigned vote from {} at height {} round {} — accepting (no key)",
-                vote.voter, vote.height, vote.round
-            );
-            return Ok(true);
         }
 
         let validator = match self.validator_manager.get_validator(&vote.voter) {
@@ -255,18 +272,13 @@ impl ConsensusEngine {
             }
         };
 
-        // Bootstrap placeholder: remote validators are registered with a 32-byte derived key
-        // (hash_blake3(identity + "consensus")) because their real Dilithium key is not yet known
-        // at seeding time.  Once a real key (>32 bytes) arrives in a vote, we accept the vote
-        // on membership alone and skip cryptographic verification.  The real key will be learnt
-        // via TOFU and future registrations will carry the proper key.
-        let registered_key_is_placeholder = validator.consensus_key.len() <= 32;
-        if registered_key_is_placeholder {
-            tracing::debug!(
-                "Bootstrap placeholder key for validator {} — accepting vote on membership",
-                vote.voter
+        if validator.consensus_key.is_empty() || validator.consensus_key.len() <= 32 {
+            tracing::warn!(
+                "Vote rejected: validator {} has non-verifiable registered consensus key (len={})",
+                vote.voter,
+                validator.consensus_key.len()
             );
-            return Ok(true);
+            return Ok(false);
         }
 
         if validator.consensus_key != vote.signature.public_key.dilithium_pk {
@@ -322,22 +334,46 @@ impl ConsensusEngine {
     /// to quorum. Combined with signature verification, this prevents Byzantine validators
     /// from forging votes or creating false quorums.
     pub(super) async fn validate_remote_vote(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
-        // Runtime check: Votes must be for current or future height (never past)
-        // Accepting votes for past heights could allow replay attacks
+        // 1. Height sanity: reject past-height votes (replay protection).
+        // Stale votes from previous blocks are silently discarded.
         if vote.height < self.current_round.height {
-            tracing::warn!(
-                "Vote rejected: vote height {} < current height {} (potential replay attack)",
+            tracing::debug!(
+                "Vote rejected: stale height {} < our height {}",
                 vote.height,
                 self.current_round.height
             );
             return Ok(false);
         }
-        // 1. Verify signature
+
+        // 2. Height divergence: peer is ahead of us.
+        //
+        // We cannot validate validator membership for a future height because we do not
+        // yet have the snapshot for that height.  Skip membership / signature checks
+        // and immediately fire the catch-up trigger so we download the missing blocks.
+        if vote.height > self.current_round.height {
+            let our_blockchain_height = self.current_round.height.saturating_sub(1);
+            tracing::info!(
+                "⬆️  Height divergence: peer {} votes at height {} \
+                 (our consensus height {}; local blockchain ~{}) — triggering catch-up sync",
+                vote.voter,
+                vote.height,
+                self.current_round.height,
+                our_blockchain_height
+            );
+            if let Some(ref trigger) = self.catch_up_sync_trigger {
+                trigger.trigger(our_blockchain_height);
+            }
+            return Ok(false);
+        }
+
+        // vote.height == self.current_round.height from this point on.
+
+        // 3. Verify signature
         if !self.verify_vote_signature(vote).await? {
             return Ok(false);
         }
 
-        // 2. Verify validator membership
+        // 4. Verify validator membership (snapshot is available since height matches)
         if !self.is_validator_member(&vote.voter, vote.height) {
             tracing::warn!(
                 "Vote rejected: voter {} is not in active validator set for height {}",
@@ -347,38 +383,15 @@ impl ConsensusEngine {
             return Ok(false);
         }
 
-        // 3. Verify height matches
-        if vote.height != self.current_round.height {
-            if vote.height > self.current_round.height {
-                // Peer is proposing or voting at a higher height.
-                // This means the peer's blockchain is ahead of ours: they have committed
-                // block(s) that we haven't seen yet.
-                //
-                // Trigger a catch-up block download so we can converge to the same height
-                // and form quorum.  The trigger is non-blocking and rate-limited by the
-                // runtime implementation.
-                let our_blockchain_height = self.current_round.height.saturating_sub(1);
-                tracing::info!(
-                    "⬆️  Height divergence: peer {} votes at height {} \
-                     (our consensus height {}; local blockchain ~{}) — triggering catch-up sync",
-                    vote.voter, vote.height, self.current_round.height, our_blockchain_height
-                );
-                if let Some(ref trigger) = self.catch_up_sync_trigger {
-                    trigger.trigger(our_blockchain_height);
-                }
-            } else {
-                tracing::debug!(
-                    "Vote rejected: stale height. Vote height {} < local height {}",
-                    vote.height, self.current_round.height
-                );
-            }
-            return Ok(false);
-        }
-
-        // 4. Verify round matches
-        if vote.round != self.current_round.round {
+        // 5. Round check.
+        //
+        // Stale rounds (vote.round < current) are rejected outright.
+        // Higher rounds (vote.round > current) are allowed through so that
+        // on_prevote / on_precommit can perform a Tendermint round-skip and bring
+        // all nodes to the same round without waiting for an entire timer cycle.
+        if vote.round < self.current_round.round {
             tracing::debug!(
-                "Vote rejected: round mismatch. Vote round {} != local round {}",
+                "Vote rejected: stale round {} < our round {}",
                 vote.round,
                 self.current_round.round
             );
@@ -503,9 +516,7 @@ impl ConsensusEngine {
                  current proposal height {}. In BFT consensus, committed blocks are \
                  final and irreversible. A proposal for an already-committed height is \
                  an invalid fork attempt and is rejected immediately.",
-                proposal_id,
-                proposal_height,
-                self.current_round.height,
+                proposal_id, proposal_height, self.current_round.height,
             )));
         }
 
@@ -527,9 +538,7 @@ impl ConsensusEngine {
                          proposal {:?} at height {}. In BFT consensus, once 2/3+1 validators \
                          have pre-committed a block, no other block is valid at that height. \
                          This conflicting proposal is an invalid fork attempt.",
-                        proposal_id,
-                        committed_id,
-                        proposal_height,
+                        proposal_id, committed_id, proposal_height,
                     )));
                 }
             }

@@ -658,19 +658,12 @@ impl TokenHandler {
         for (token_id, token) in &blockchain.token_contracts {
             let balance = if *token_id == native_token_id {
                 if let Some(wallet_id) = sov_wallet_id {
-                    // Prefer Sled tree when executor is active (canonical post-transfer balance)
-                    if let Some(store) = blockchain.get_store() {
-                        let storage_token_id = lib_blockchain::storage::TokenId(*token_id);
-                        let addr = lib_blockchain::storage::Address::new(wallet_id);
-                        store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
-                    } else {
-                        let wallet_key = PublicKey {
-                            dilithium_pk: vec![],
-                            kyber_pk: vec![],
-                            key_id: wallet_id,
-                        };
-                        token.balance_of(&wallet_key)
-                    }
+                    let wallet_key = PublicKey {
+                        dilithium_pk: vec![],
+                        kyber_pk: vec![],
+                        key_id: wallet_id,
+                    };
+                    token.balance_of(&wallet_key)
                 } else {
                     0
                 }

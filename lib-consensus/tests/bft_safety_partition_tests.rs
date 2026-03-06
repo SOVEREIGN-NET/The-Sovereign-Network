@@ -9,7 +9,7 @@
 
 use anyhow::Result;
 use lib_consensus::{
-    ByzantineFaultDetector, ByzantineEvidence, ByzantineFaultType, ConsensusConfig,
+    ByzantineEvidence, ByzantineFaultDetector, ByzantineFaultType, ConsensusConfig,
     ConsensusEngine, ConsensusProof, ConsensusProposal, ConsensusType, ConsensusVote,
     NoOpBroadcaster, StakeProof, ValidatorStatus, VoteType,
 };
@@ -91,6 +91,7 @@ fn create_test_proposal(
         id: proposal_id,
         proposer: proposer.clone(),
         height,
+        round: 0,
         previous_hash: previous_hash.clone(),
         block_data,
         timestamp,
@@ -211,8 +212,13 @@ async fn test_double_sign_detection_with_4_validators() -> Result<()> {
     let timestamp = 1000;
 
     // Proposal A
-    let proposal_a =
-        create_test_proposal(malicious_validator, height, &previous_hash, vec![1, 2, 3], timestamp);
+    let proposal_a = create_test_proposal(
+        malicious_validator,
+        height,
+        &previous_hash,
+        vec![1, 2, 3],
+        timestamp,
+    );
 
     // Proposal B - CONFLICTING (different block data)
     let proposal_b = create_test_proposal(
@@ -290,10 +296,20 @@ async fn test_double_sign_precommit_detection() -> Result<()> {
     let previous_hash = Hash::from_bytes(&[1u8; 32]);
     let timestamp = 2000;
 
-    let proposal_a =
-        create_test_proposal(malicious_validator, height, &previous_hash, vec![10], timestamp);
-    let proposal_b =
-        create_test_proposal(malicious_validator, height, &previous_hash, vec![20], timestamp + 1);
+    let proposal_a = create_test_proposal(
+        malicious_validator,
+        height,
+        &previous_hash,
+        vec![10],
+        timestamp,
+    );
+    let proposal_b = create_test_proposal(
+        malicious_validator,
+        height,
+        &previous_hash,
+        vec![20],
+        timestamp + 1,
+    );
 
     // Double PreCommit votes (CRITICAL - commits are final!)
     let vote_a = create_test_vote(
@@ -470,12 +486,10 @@ async fn test_no_conflicting_commits_allowed() {
     let config = create_bft_test_config();
     let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster)).unwrap();
 
-    let validator_ids = setup_validators(
-        &mut consensus_engine,
-        &["alice", "bob", "charlie", "dave"],
-    )
-    .await
-    .unwrap();
+    let validator_ids =
+        setup_validators(&mut consensus_engine, &["alice", "bob", "charlie", "dave"])
+            .await
+            .unwrap();
 
     let height = 30;
     let round = 0;
@@ -486,11 +500,9 @@ async fn test_no_conflicting_commits_allowed() {
     let proposer_a = &validator_ids[0];
     let proposer_b = &validator_ids[1];
 
-    let proposal_a =
-        create_test_proposal(proposer_a, height, &previous_hash, vec![100], timestamp);
+    let proposal_a = create_test_proposal(proposer_a, height, &previous_hash, vec![100], timestamp);
 
-    let proposal_b =
-        create_test_proposal(proposer_b, height, &previous_hash, vec![200], timestamp);
+    let proposal_b = create_test_proposal(proposer_b, height, &previous_hash, vec![200], timestamp);
 
     // Simulate byzantine scenario: trying to commit BOTH proposals
     let mut committed_proposals = Vec::new();
@@ -677,10 +689,20 @@ async fn test_safety_under_combined_faults() -> Result<()> {
     let previous_hash = Hash::from_bytes(&[5u8; 32]);
     let timestamp = 6000;
 
-    let proposal_a =
-        create_test_proposal(byzantine_validator, height, &previous_hash, vec![1], timestamp);
-    let proposal_b =
-        create_test_proposal(byzantine_validator, height, &previous_hash, vec![2], timestamp + 1);
+    let proposal_a = create_test_proposal(
+        byzantine_validator,
+        height,
+        &previous_hash,
+        vec![1],
+        timestamp,
+    );
+    let proposal_b = create_test_proposal(
+        byzantine_validator,
+        height,
+        &previous_hash,
+        vec![2],
+        timestamp + 1,
+    );
 
     let vote_a = create_test_vote(
         byzantine_validator,
@@ -762,10 +784,20 @@ async fn test_byzantine_fault_detection_for_slashing() -> Result<()> {
     let previous_hash = Hash::from_bytes(&[6u8; 32]);
     let timestamp = 7000;
 
-    let proposal_a =
-        create_test_proposal(byzantine_validator, height, &previous_hash, vec![10], timestamp);
-    let proposal_b =
-        create_test_proposal(byzantine_validator, height, &previous_hash, vec![20], timestamp + 1);
+    let proposal_a = create_test_proposal(
+        byzantine_validator,
+        height,
+        &previous_hash,
+        vec![10],
+        timestamp,
+    );
+    let proposal_b = create_test_proposal(
+        byzantine_validator,
+        height,
+        &previous_hash,
+        vec![20],
+        timestamp + 1,
+    );
 
     let vote_a = create_test_vote(
         byzantine_validator,
@@ -792,8 +824,15 @@ async fn test_byzantine_fault_detection_for_slashing() -> Result<()> {
     let faults = detector.detect_faults(consensus_engine.validator_manager())?;
 
     // CRITICAL: Byzantine fault MUST be detected
-    assert!(!faults.is_empty(), "SAFETY: Byzantine fault must be detected");
-    assert_eq!(faults.len(), 1, "Should detect exactly one Byzantine validator");
+    assert!(
+        !faults.is_empty(),
+        "SAFETY: Byzantine fault must be detected"
+    );
+    assert_eq!(
+        faults.len(),
+        1,
+        "Should detect exactly one Byzantine validator"
+    );
     assert_eq!(faults[0].validator, *byzantine_validator);
 
     // Verify the fault is a double-sign with critical severity
@@ -814,11 +853,8 @@ async fn test_exactly_one_third_byzantine_threshold() -> Result<()> {
     let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Setup 6 validators (exactly 2 = 1/3 Byzantine threshold)
-    let validator_ids = setup_validators(
-        &mut consensus_engine,
-        &["v1", "v2", "v3", "v4", "v5", "v6"],
-    )
-    .await?;
+    let validator_ids =
+        setup_validators(&mut consensus_engine, &["v1", "v2", "v3", "v4", "v5", "v6"]).await?;
 
     let total_validators = validator_ids.len();
     let byzantine_threshold_count = total_validators / 3; // 2 validators
@@ -887,10 +923,20 @@ async fn test_byzantine_validator_evidence_collection() -> Result<()> {
     let previous_hash = Hash::from_bytes(&[7u8; 32]);
     let timestamp = 8000;
 
-    let proposal_a =
-        create_test_proposal(byzantine_validator, height, &previous_hash, vec![1], timestamp);
-    let proposal_b =
-        create_test_proposal(byzantine_validator, height, &previous_hash, vec![2], timestamp + 1);
+    let proposal_a = create_test_proposal(
+        byzantine_validator,
+        height,
+        &previous_hash,
+        vec![1],
+        timestamp,
+    );
+    let proposal_b = create_test_proposal(
+        byzantine_validator,
+        height,
+        &previous_hash,
+        vec![2],
+        timestamp + 1,
+    );
 
     let vote_a = create_test_vote(
         byzantine_validator,

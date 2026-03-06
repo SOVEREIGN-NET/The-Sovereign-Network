@@ -237,6 +237,9 @@ pub mod meta {
 
     /// Key for token consensus snapshot (contracts + nonces)
     pub const TOKEN_STATE_SNAPSHOT: &[u8] = b"token_state_snapshot";
+
+    /// Key for persisted oracle state (committee, config, signing pubkeys)
+    pub const ORACLE_STATE: &[u8] = b"oracle_state";
 }
 
 // =============================================================================

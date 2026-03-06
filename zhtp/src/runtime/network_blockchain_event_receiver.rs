@@ -54,6 +54,8 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
 
         if height != local_height + 1 {
             info!("Block {} is non-consecutive (local height {}), cannot apply", height, local_height);
+            // Kick the catch-up sync task so it downloads the missing blocks.
+            crate::runtime::blockchain_provider::trigger_global_catchup(local_height);
             return Ok(());
         }
 
