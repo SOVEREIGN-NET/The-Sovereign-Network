@@ -354,8 +354,11 @@ pub struct Blockchain {
     /// Validators banned from oracle committee (key_id).
     #[serde(default)]
     pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
-    /// Last oracle epoch for which apply_pending_updates() was called.
+    /// Last oracle timestamp for which apply_pending_updates() was called.
     /// Prevents double-application within the same epoch.
+    /// 
+    /// ORACLE-R4: This field always stores a Unix timestamp (seconds), not an epoch ID.
+    /// Legacy data may have epoch IDs - migration happens on load.
     #[serde(default)]
     pub last_oracle_epoch_processed: u64,
 
@@ -2329,11 +2332,17 @@ impl Blockchain {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
         }
 
-        // ORACLE-7/13: Apply pending oracle updates at epoch boundaries (both BlockExecutor and legacy paths)
-        let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
-        if current_epoch > self.last_oracle_epoch_processed {
+        // ORACLE-R4: Apply pending oracle updates at epoch boundaries
+        // Uses timestamp-based comparison to handle epoch_duration changes correctly
+        if self
+            .oracle_state
+            .should_process_epoch(block.header.timestamp, self.last_oracle_epoch_processed)
+        {
+            // ORACLE-R4: Apply pending oracle updates at epoch boundaries
+            // Uses timestamp-based comparison to handle epoch_duration changes correctly
+            let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
             self.oracle_state.apply_pending_updates(current_epoch);
-            self.last_oracle_epoch_processed = current_epoch;
+            self.last_oracle_epoch_processed = block.header.timestamp;
             debug!("Oracle epoch processed: {} at block {}", current_epoch, self.height);
         }
 
@@ -2427,14 +2436,15 @@ impl Blockchain {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
         }
 
-        // Process oracle epoch advancement
+        // ORACLE-R4: Process oracle epoch advancement
         // Apply pending committee/config updates when epoch boundary is crossed
-        // This runs for both BlockExecutor and legacy paths
-        let block_epoch = self.oracle_state.epoch_id(block.header.timestamp);
-        let last_processed_epoch = self.oracle_state.epoch_id(self.last_oracle_epoch_processed);
-        if block_epoch > last_processed_epoch {
+        // Uses timestamp-based comparison for consistency across epoch_duration changes
+        if self
+            .oracle_state
+            .should_process_epoch(block.header.timestamp, self.last_oracle_epoch_processed)
+        {
+            let block_epoch = self.oracle_state.epoch_id(block.header.timestamp);
             self.oracle_state.apply_pending_updates(block_epoch);
-            // Store timestamp (not epoch_id) to remain correct if epoch_duration_secs changes
             self.last_oracle_epoch_processed = block.header.timestamp;
             info!("🔮 Oracle advanced to epoch {} (block height {})", block_epoch, self.height);
         }
@@ -10271,13 +10281,21 @@ impl Blockchain {
             warn!("Failed to apply governance parameter updates during load_from_file: {}", e);
         }
 
+        // ORACLE-R4: Migrate epoch tracking if needed (legacy format used epoch IDs)
+        if blockchain.oracle_state.needs_epoch_tracking_migration(blockchain.last_oracle_epoch_processed) {
+            blockchain.last_oracle_epoch_processed = blockchain.oracle_state.migrate_epoch_tracking(
+                blockchain.last_oracle_epoch_processed
+            );
+        }
+
         // Catch up oracle epoch advancement for any epochs missed while offline
-        // Use canonical committed timestamp to determine current epoch
-        let current_epoch = blockchain.oracle_state.epoch_id(blockchain.last_committed_timestamp());
-        let last_processed_epoch = blockchain.oracle_state.epoch_id(blockchain.last_oracle_epoch_processed);
-        if current_epoch > last_processed_epoch {
+        // ORACLE-R4: Uses timestamp-based comparison for consistency
+        if blockchain.oracle_state.should_process_epoch(
+            blockchain.last_committed_timestamp(),
+            blockchain.last_oracle_epoch_processed
+        ) {
+            let current_epoch = blockchain.oracle_state.epoch_id(blockchain.last_committed_timestamp());
             blockchain.oracle_state.apply_pending_updates(current_epoch);
-            // Store timestamp (not epoch_id) to remain correct if epoch_duration_secs changes
             blockchain.last_oracle_epoch_processed = blockchain.last_committed_timestamp();
             info!("🔮 Oracle caught up to epoch {} during load", current_epoch);
         }
