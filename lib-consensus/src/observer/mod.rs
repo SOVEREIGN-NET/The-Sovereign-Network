@@ -21,9 +21,3 @@ pub use trajectory_builder::{
     build_height_trajectories, ConsensusPhaseType, HeightTrajectory, PhaseTrajectory,
     RoundTrajectory,
 };
-pub use state_encoder::{
-    encode_height_states, encode_round_states, EncodedConsensusPhase, EncodedConsensusState,
-    ExecutionStatus, ParsedConsensusEvent, ParsedConsensusPhase, ParsedHeightTrajectory,
-    ParsedPhaseTrajectory, ParsedRoundTrajectory, ProposalStatus, RoundClass, StateEncoderConfig,
-    TimeClass,
-};
