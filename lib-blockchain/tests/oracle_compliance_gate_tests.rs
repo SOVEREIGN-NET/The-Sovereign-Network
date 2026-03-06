@@ -6,9 +6,6 @@
 //! Each gate maps to a section of the Oracle Spec v1 and must pass in CI.
 
 use lib_blockchain::oracle::{OracleConfig, OracleState};
-use lib_blockchain::{
-    Block, Blockchain, BlockHeader,
-};
 
 mod common;
 use common::oracle_harness::{OracleTestHarness, ValidatorKeys};
