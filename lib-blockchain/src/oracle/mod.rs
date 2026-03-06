@@ -459,7 +459,7 @@ pub struct OracleEpochState {
 }
 
 /// Root oracle consensus state.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OracleState {
     #[serde(default)]
     pub config: OracleConfig,
@@ -484,6 +484,33 @@ pub struct OracleState {
     /// Controls which oracle behavior set is active.
     #[serde(default)]
     pub protocol_config: protocol::OracleProtocolConfig,
+    /// ORACLE-R4: Epoch tracking format version.
+    /// 
+    /// Version 0 (legacy): last_oracle_timestamp_processed stored epoch IDs
+    /// Version 1 (current): last_oracle_timestamp_processed stores timestamps
+    /// 
+    /// Used for migration to ensure consistent semantics after epoch_duration changes.
+    #[serde(default = "default_epoch_tracking_version")]
+    pub epoch_tracking_version: u8,
+}
+
+fn default_epoch_tracking_version() -> u8 {
+    0 // Default to 0 for backward compatibility; new state explicitly sets to 1
+}
+
+impl Default for OracleState {
+    fn default() -> Self {
+        Self {
+            config: OracleConfig::default(),
+            committee: OracleCommitteeState::default(),
+            pending_config_update: None,
+            finalized_prices: BTreeMap::new(),
+            epoch_state: BTreeMap::new(),
+            oracle_signing_pubkeys: std::collections::HashMap::new(),
+            protocol_config: protocol::OracleProtocolConfig::default(),
+            epoch_tracking_version: 1, // New state uses current version
+        }
+    }
 }
 
 impl OracleState {
@@ -1018,6 +1045,61 @@ impl OracleState {
     /// Get pending protocol activation details.
     pub fn pending_protocol_activation(&self) -> Option<&protocol::PendingProtocolActivation> {
         self.protocol_config.pending_activation()
+    }
+
+    // =========================================================================
+    // Epoch Tracking (ORACLE-R4)
+    // =========================================================================
+
+    /// Check if epoch tracking needs migration from legacy format.
+    ///
+    /// Returns true if the stored last_oracle_timestamp_processed contains
+    /// epoch IDs instead of timestamps (legacy format).
+    pub fn needs_epoch_tracking_migration(&self, last_timestamp_processed: u64) -> bool {
+        // Legacy detection: if epoch_tracking_version is 0, we may need migration
+        // Heuristic: if the value is very small (likely an epoch ID), it's legacy format
+        self.epoch_tracking_version == 0 && last_timestamp_processed < 1_000_000_000
+    }
+
+    /// Migrate epoch tracking from legacy format to current format.
+    ///
+    /// Converts a last_processed value from epoch ID to timestamp.
+    /// Should be called during blockchain load if migration is detected.
+    pub fn migrate_epoch_tracking(&mut self, last_timestamp_processed: u64) -> u64 {
+        if self.epoch_tracking_version >= 1 {
+            return last_timestamp_processed; // Already current format
+        }
+
+        // Legacy format: stored value was an epoch ID
+        // Convert to timestamp: epoch_id * epoch_duration_secs
+        let epoch_id = last_timestamp_processed;
+        let timestamp = epoch_id.saturating_mul(self.config.epoch_duration_secs);
+        
+        self.epoch_tracking_version = 1;
+        
+        tracing::info!(
+            "🔮 ORACLE-R4: Migrated epoch tracking from epoch {} to timestamp {} (version 0 -> 1)",
+            epoch_id,
+            timestamp
+        );
+        
+        timestamp
+    }
+
+    /// Determine if a new epoch should be processed based on timestamp.
+    ///
+    /// ORACLE-R4: Uses timestamp comparison to handle epoch_duration changes correctly.
+    /// Returns true if the current block timestamp indicates a new epoch.
+    pub fn should_process_epoch(&self, block_timestamp: u64, last_timestamp_processed: u64) -> bool {
+        let current_epoch = self.epoch_id(block_timestamp);
+        let last_processed_epoch = self.epoch_id(last_timestamp_processed);
+        
+        current_epoch > last_processed_epoch
+    }
+
+    /// Get the effective epoch tracking version.
+    pub fn epoch_tracking_version(&self) -> u8 {
+        self.epoch_tracking_version
     }
 }
 
