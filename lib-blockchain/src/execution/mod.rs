@@ -44,5 +44,5 @@ pub mod executor;
 // Re-exports
 pub use errors::{BlockApplyError, BlockApplyResult, TxApplyError, TxApplyResult};
 pub use state_view::{StateView, StateViewExt};
-pub use tx_apply::{StateMutator, TransferOutcome, CoinbaseOutcome};
+pub use tx_apply::{StateMutator, TransferOutcome, CoinbaseOutcome, OracleAttestationOutcome};
 pub use executor::{BlockExecutor, ExecutorConfig, ApplyOutcome, StateChangesSummary, TokenTransferOutcome, TokenMintOutcome};
