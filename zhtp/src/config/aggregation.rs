@@ -306,15 +306,15 @@ pub struct ConsensusConfig {
     pub oracle_mock_sov_usd_price: Option<u64>,
 }
 
-fn default_consensus_propose_timeout_ms() -> u64 {
+pub(crate) fn default_consensus_propose_timeout_ms() -> u64 {
     3000
 }
 
-fn default_consensus_prevote_timeout_ms() -> u64 {
+pub(crate) fn default_consensus_prevote_timeout_ms() -> u64 {
     1000
 }
 
-fn default_consensus_precommit_timeout_ms() -> u64 {
+pub(crate) fn default_consensus_precommit_timeout_ms() -> u64 {
     1000
 }
 

@@ -72,7 +72,7 @@ pub use mesh_router_provider::{initialize_global_mesh_router_provider, set_globa
 /// Try to sync blockchain from bootstrap peers using paginated block-range QUIC requests.
 ///
 /// Uses the same `/api/v1/blockchain/blocks/{start}/{end}` endpoint as the catch-up
-/// sync path, fetching 200 blocks per page. This avoids the single-shot export which
+/// sync path, fetching 50 blocks per page. This avoids the single-shot export which
 /// hits the 16 MB QUIC message-size limit for any chain longer than ~700 blocks.
 ///
 /// Returns:

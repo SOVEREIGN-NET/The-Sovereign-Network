@@ -1219,9 +1219,9 @@ impl ConsensusComponent {
             node_role,
             min_stake,
             Vec::new(),
-            3000,
-            1000,
-            1000,
+            crate::config::aggregation::default_consensus_propose_timeout_ms(),
+            crate::config::aggregation::default_consensus_prevote_timeout_ms(),
+            crate::config::aggregation::default_consensus_precommit_timeout_ms(),
         )
     }
 
@@ -1641,11 +1641,27 @@ impl Component for ConsensusComponent {
         let mut config = ConsensusConfig::default();
 
         // Keep this node's consensus parameters aligned with zhtp configuration.
-        // Determinism requirement: all validators on the same chain must share these values.
+        //
+        // IMPORTANT DETERMINISM REQUIREMENT:
+        //   All validators participating in consensus on the same chain MUST use identical values
+        //   for propose / prevote / precommit timeouts and min_stake. These values are currently
+        //   loaded from each node's local configuration; misaligned settings across validators
+        //   can cause liveness issues (e.g. some validators timing out and advancing rounds while
+        //   others are still waiting), leading to unnecessary round rotations and slower block
+        //   times. Operators SHOULD ensure these parameters are kept in sync across all validators
+        //   for a given network.
         config.min_stake = self.min_stake;
         config.propose_timeout = self.propose_timeout_ms;
         config.prevote_timeout = self.prevote_timeout_ms;
         config.precommit_timeout = self.precommit_timeout_ms;
+
+        // Surface current timeout configuration prominently so operators and monitoring can
+        // verify alignment across validators.
+        warn!(
+            "Consensus timeout configuration (must match across all validators on this chain): \
+             propose_timeout_ms = {}, prevote_timeout_ms = {}, precommit_timeout_ms = {}",
+            config.propose_timeout, config.prevote_timeout, config.precommit_timeout
+        );
         // Storage is optional for validators in zhtp; do not block consensus on storage capacity.
         config.min_storage = 0;
         // Allow non-mainnet to run with <4 validators while still enforcing real signatures.
