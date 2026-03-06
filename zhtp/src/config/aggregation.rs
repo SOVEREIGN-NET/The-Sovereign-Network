@@ -72,6 +72,12 @@ pub struct PartialConsensusConfig {
     pub dao_enabled: Option<bool>,
     #[serde(default)]
     pub min_stake: Option<u64>,
+    #[serde(default)]
+    pub propose_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub prevote_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub precommit_timeout_ms: Option<u64>,
     /// Testnet/bootstrap mock SOV/USD price for the oracle (atomic units, scale 1e8).
     /// E.g. `100_000_000` = $1.00 USD.  When set, this value is used as the oracle
     /// price instead of fetching from external exchanges.  Required while SOV is not
@@ -283,6 +289,12 @@ pub struct ConsensusConfig {
     pub dao_enabled: bool,
     pub validator_enabled: bool,
     pub min_stake: u64,
+    #[serde(default = "default_consensus_propose_timeout_ms")]
+    pub propose_timeout_ms: u64,
+    #[serde(default = "default_consensus_prevote_timeout_ms")]
+    pub prevote_timeout_ms: u64,
+    #[serde(default = "default_consensus_precommit_timeout_ms")]
+    pub precommit_timeout_ms: u64,
     pub reward_multipliers: HashMap<String, f64>,
     /// Bootstrap Council configuration (dao-1)
     #[serde(default)]
@@ -292,6 +304,18 @@ pub struct ConsensusConfig {
     /// When absent the oracle will attempt real exchange price feeds.
     #[serde(default)]
     pub oracle_mock_sov_usd_price: Option<u64>,
+}
+
+pub(crate) fn default_consensus_propose_timeout_ms() -> u64 {
+    3000
+}
+
+pub(crate) fn default_consensus_prevote_timeout_ms() -> u64 {
+    1000
+}
+
+pub(crate) fn default_consensus_precommit_timeout_ms() -> u64 {
+    1000
 }
 
 /// Economics configuration
@@ -707,6 +731,9 @@ impl Default for NodeConfig {
                 dao_enabled: true,
                 validator_enabled: false,
                 min_stake: 1000,
+                propose_timeout_ms: default_consensus_propose_timeout_ms(),
+                prevote_timeout_ms: default_consensus_prevote_timeout_ms(),
+                precommit_timeout_ms: default_consensus_precommit_timeout_ms(),
                 reward_multipliers: HashMap::new(),
                 council: lib_blockchain::dao::CouncilBootstrapConfig::default(),
                 oracle_mock_sov_usd_price: None,
@@ -1070,6 +1097,16 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                         }
                         if let Some(min_stake) = consensus.min_stake {
                             config.consensus_config.min_stake = min_stake;
+                        }
+                        if let Some(propose_timeout_ms) = consensus.propose_timeout_ms {
+                            config.consensus_config.propose_timeout_ms = propose_timeout_ms.max(1);
+                        }
+                        if let Some(prevote_timeout_ms) = consensus.prevote_timeout_ms {
+                            config.consensus_config.prevote_timeout_ms = prevote_timeout_ms.max(1);
+                        }
+                        if let Some(precommit_timeout_ms) = consensus.precommit_timeout_ms {
+                            config.consensus_config.precommit_timeout_ms =
+                                precommit_timeout_ms.max(1);
                         }
                         if let Some(price) = consensus.oracle_mock_sov_usd_price {
                             config.consensus_config.oracle_mock_sov_usd_price = Some(price);
