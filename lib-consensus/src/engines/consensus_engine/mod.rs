@@ -204,6 +204,8 @@ mod state_machine;
 mod storage;
 mod validation;
 
+pub use state_machine::ConsensusAuditLog;
+
 #[cfg(test)]
 mod tests;
 

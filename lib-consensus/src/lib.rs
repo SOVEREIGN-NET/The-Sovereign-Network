@@ -20,6 +20,7 @@ pub mod invariants;
 pub mod mempool;
 pub mod mining;
 pub mod network;
+pub mod observer;
 pub mod proofs;
 pub mod rewards;
 pub mod slashing;
