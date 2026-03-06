@@ -1096,6 +1096,9 @@ pub struct ConsensusComponent {
     environment: crate::config::Environment,
     // Consensus safety parameters are config-driven; keep them immutable once constructed.
     min_stake: u64,
+    propose_timeout_ms: u64,
+    prevote_timeout_ms: u64,
+    precommit_timeout_ms: u64,
     // Local validator identity and signing keypair (loaded from keystore when validator-enabled).
     local_validator_identity: Arc<RwLock<Option<IdentityId>>>,
     local_validator_keypair: Arc<RwLock<Option<lib_crypto::KeyPair>>>,
@@ -1211,7 +1214,15 @@ impl ConsensusComponent {
         node_role: NodeRole,
         min_stake: u64,
     ) -> Self {
-        Self::new_with_bootstrap_validators(environment, node_role, min_stake, Vec::new())
+        Self::new_with_bootstrap_validators(
+            environment,
+            node_role,
+            min_stake,
+            Vec::new(),
+            3000,
+            1000,
+            1000,
+        )
     }
 
     /// Create a new ConsensusComponent with bootstrap validators pre-seeded.
@@ -1220,6 +1231,9 @@ impl ConsensusComponent {
         node_role: NodeRole,
         min_stake: u64,
         bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
+        propose_timeout_ms: u64,
+        prevote_timeout_ms: u64,
+        precommit_timeout_ms: u64,
     ) -> Self {
         Self::new_with_bootstrap_validators_and_oracle(
             environment,
@@ -1227,6 +1241,9 @@ impl ConsensusComponent {
             min_stake,
             bootstrap_validators,
             None,
+            propose_timeout_ms,
+            prevote_timeout_ms,
+            precommit_timeout_ms,
         )
     }
 
@@ -1236,6 +1253,9 @@ impl ConsensusComponent {
         min_stake: u64,
         bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
         oracle_mock_sov_usd_price: Option<u64>,
+        propose_timeout_ms: u64,
+        prevote_timeout_ms: u64,
+        precommit_timeout_ms: u64,
     ) -> Self {
         let development_mode = matches!(environment, crate::config::Environment::Development);
 
@@ -1250,6 +1270,9 @@ impl ConsensusComponent {
             blockchain: Arc::new(RwLock::new(None)),
             environment,
             min_stake,
+            propose_timeout_ms: propose_timeout_ms.max(1),
+            prevote_timeout_ms: prevote_timeout_ms.max(1),
+            precommit_timeout_ms: precommit_timeout_ms.max(1),
             local_validator_identity: Arc::new(RwLock::new(None)),
             local_validator_keypair: Arc::new(RwLock::new(None)),
             node_role: Arc::new(node_role),
@@ -1620,6 +1643,9 @@ impl Component for ConsensusComponent {
         // Keep this node's consensus parameters aligned with zhtp configuration.
         // Determinism requirement: all validators on the same chain must share these values.
         config.min_stake = self.min_stake;
+        config.propose_timeout = self.propose_timeout_ms;
+        config.prevote_timeout = self.prevote_timeout_ms;
+        config.precommit_timeout = self.precommit_timeout_ms;
         // Storage is optional for validators in zhtp; do not block consensus on storage capacity.
         config.min_storage = 0;
         // Allow non-mainnet to run with <4 validators while still enforcing real signatures.

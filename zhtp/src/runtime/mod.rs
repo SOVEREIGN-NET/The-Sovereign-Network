@@ -740,11 +740,21 @@ impl RuntimeOrchestrator {
             let environment = self.config.environment;
             let node_role = self.node_role.read().await.clone();
             let min_stake = self.config.consensus_config.min_stake;
+            let propose_timeout_ms = self.config.consensus_config.propose_timeout_ms;
+            let prevote_timeout_ms = self.config.consensus_config.prevote_timeout_ms;
+            let precommit_timeout_ms = self.config.consensus_config.precommit_timeout_ms;
             let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();
             let oracle_mock_price = self.config.consensus_config.oracle_mock_sov_usd_price;
             self.register_component(Arc::new(
                 ConsensusComponent::new_with_bootstrap_validators_and_oracle(
-                    environment, node_role, min_stake, bootstrap_validators, oracle_mock_price,
+                    environment,
+                    node_role,
+                    min_stake,
+                    bootstrap_validators,
+                    oracle_mock_price,
+                    propose_timeout_ms,
+                    prevote_timeout_ms,
+                    precommit_timeout_ms,
                 )
             )).await?;
         }
@@ -1763,6 +1773,9 @@ impl RuntimeOrchestrator {
                 self.config.consensus_config.min_stake,
                 self.config.network_config.bootstrap_validators.clone(),
                 self.config.consensus_config.oracle_mock_sov_usd_price,
+                self.config.consensus_config.propose_timeout_ms,
+                self.config.consensus_config.prevote_timeout_ms,
+                self.config.consensus_config.precommit_timeout_ms,
             )
         )).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
