@@ -492,7 +492,7 @@ async fn test_no_conflicting_commits_allowed() {
             .unwrap();
 
     let height = 30;
-    let round = 0;
+    let _round = 0;
     let previous_hash = Hash::from_bytes(&[4u8; 32]);
     let timestamp = 5000;
 
@@ -552,7 +552,7 @@ async fn test_network_partition_greater_than_one_third() -> Result<()> {
     );
 
     // Simulate partition: mark validators as offline
-    let offline_validators = &validator_ids[0..offline_count];
+    let _offline_validators = &validator_ids[0..offline_count];
 
     // In a real partition, these validators would not respond
     // Liveness Monitor would detect timeouts

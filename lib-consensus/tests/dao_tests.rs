@@ -12,19 +12,10 @@ use anyhow::Result;
 use lib_consensus::{DaoEngine, DaoProposalType, DaoVoteChoice, ConsensusConfig};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {
     Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
-
-/// Helper to get current timestamp in seconds
-fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
 }
 
 // ============================================================================

@@ -55,7 +55,7 @@ fn test_fix_10_systemtime_panic_handling() {
 
     // Create a minimal ConsensusEngine (pseudo-test)
     // This would normally panic with .unwrap() but should handle gracefully
-    let round = ConsensusRound {
+    let _round = ConsensusRound {
         height: 1,
         round: 0,
         step: ConsensusStep::Propose,
@@ -71,8 +71,7 @@ fn test_fix_10_systemtime_panic_handling() {
         valid_proposal: None,
     };
 
-    // Verify that start_time is set (either to actual time or fallback 0)
-    assert!(round.start_time >= 0);
+    // start_time is 0 (deterministic, wall-clock removed per CONSENSUS-NET fix)
 }
 
 #[test]
