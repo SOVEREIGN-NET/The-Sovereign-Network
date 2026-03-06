@@ -82,6 +82,9 @@ impl ZhtpRequestHandler for OracleHandler {
             (ZhtpMethod::Get, ["api", "v1", "oracle", "config"]) => self.handle_get_config().await,
             
             // ORACLE-14: New read endpoints
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "protocol"]) => {
+                self.handle_get_protocol().await
+            }
             (ZhtpMethod::Get, ["api", "v1", "oracle", "pending-updates"]) => {
                 self.handle_get_pending_updates().await
             }
@@ -368,6 +371,70 @@ impl OracleHandler {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     "Failed to serialize oracle config response".to_string(),
+                ));
+            }
+        };
+        Ok(ZhtpResponse::success_with_content_type(
+            bytes,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// GET /api/v1/oracle/protocol
+    ///
+    /// Returns the current oracle protocol version and any pending protocol upgrade.
+    async fn handle_get_protocol(&self) -> ZhtpResult<ZhtpResponse> {
+        let bc_arc = match self.get_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                warn!("Oracle protocol API: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    e.to_string(),
+                ));
+            }
+        };
+
+        let bc = bc_arc.read().await;
+        let protocol_config = &bc.oracle_state.protocol_config;
+
+        let current_version = protocol_config.current_version();
+        let feature_flags = bc.oracle_state.feature_flags();
+
+        let pending_upgrade = protocol_config.pending_activation().map(|p| {
+            json!({
+                "target_version": p.target_version.as_u16(),
+                "activate_at_height": p.activate_at_height,
+                "scheduled_at_height": p.scheduled_at_height,
+                "source_proposal_id": p.source_proposal_id.map(|id| hex::encode(id)),
+            })
+        });
+
+        let body = json!({
+            "current_version": current_version.as_u16(),
+            "version_name": if current_version.is_strict_spec() { "v1_strict_spec" } else { "v0_legacy" },
+            "activated_at_height": protocol_config.activated_at_height(),
+            "is_strict_spec_active": current_version.is_strict_spec(),
+            "feature_flags": {
+                "canonical_attestation_path": feature_flags.canonical_attestation_path,
+                "strict_cbe_graduation_formula": feature_flags.strict_cbe_graduation_formula,
+                "normalized_epoch_tracking": feature_flags.normalized_epoch_tracking,
+                "on_chain_producer_policy": feature_flags.on_chain_producer_policy,
+                "aligned_slashing_semantics": feature_flags.aligned_slashing_semantics,
+                "hardened_write_boundaries": feature_flags.hardened_write_boundaries,
+                "shadow_mode_parity": feature_flags.shadow_mode_parity,
+            },
+            "pending_upgrade": pending_upgrade,
+        });
+
+        let bytes = match serde_json::to_vec(&body) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("Oracle protocol API: failed to serialize response: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    "Failed to serialize oracle protocol response".to_string(),
                 ));
             }
         };
