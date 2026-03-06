@@ -346,6 +346,14 @@ fn test_strict_mode_flag() {
 /// Note: This is tested in zhtp/src/runtime/services/oracle_producer_service.rs
 #[test]
 fn test_producer_config_from_on_chain() {
-    // Gate verified in producer service tests
-    // See: zhtp/src/runtime/services/oracle_producer_service.rs
+    // Ensure OracleConfig can be round-tripped via serde, which is required
+    // for syncing on-chain config into any runtime producer configuration.
+    let original = OracleConfig::default();
+    let json = serde_json::to_string(&original).expect("OracleConfig should be serializable");
+    let decoded: OracleConfig =
+        serde_json::from_str(&json).expect("OracleConfig should be deserializable");
+    assert_eq!(
+        original, decoded,
+        "OracleConfig must round-trip via serde for on-chain config sync (R8)"
+    );
 }
