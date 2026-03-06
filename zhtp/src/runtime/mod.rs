@@ -2293,6 +2293,40 @@ impl RuntimeOrchestrator {
         if seeded > 0 {
             info!("🌱 Seeded blockchain.validator_registry with {} bootstrap validator(s)", seeded);
         }
+
+        // If oracle committee state was not restored from storage, bootstrap it directly
+        // from active validator consensus keys so attestations are not rejected as
+        // NonCommitteeSigner after node restart/rejoin.
+        if blockchain.oracle_state.committee.members().is_empty() {
+            let mut committee_members_with_pubkeys: Vec<([u8; 32], Vec<u8>)> = blockchain
+                .validator_registry
+                .values()
+                .filter(|v| v.status == "active" && !v.consensus_key.is_empty())
+                .map(|v| {
+                    let key_id = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
+                    (key_id, v.consensus_key.clone())
+                })
+                .collect();
+
+            committee_members_with_pubkeys.sort_by(|(a, _), (b, _)| a.cmp(b));
+            committee_members_with_pubkeys.dedup_by(|(a, _), (b, _)| a == b);
+
+            if !committee_members_with_pubkeys.is_empty() {
+                match blockchain.bootstrap_oracle_committee(committee_members_with_pubkeys) {
+                    Ok(()) => {
+                        info!(
+                            "🔮 Bootstrapped oracle committee from validator registry (members={})",
+                            blockchain.oracle_state.committee.members().len()
+                        );
+                    }
+                    Err(e) => {
+                        warn!("⚠️ Failed to bootstrap oracle committee from validator registry: {}", e);
+                    }
+                }
+            } else {
+                warn!("⚠️ Oracle committee is empty and no active validator consensus keys were found");
+            }
+        }
         Ok(())
     }
 
