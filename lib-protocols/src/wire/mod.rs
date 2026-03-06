@@ -32,8 +32,8 @@ use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 /// Wire protocol version
 pub const WIRE_VERSION: u16 = 1;
 
-/// Maximum message size (16 MB)
-pub const MAX_MESSAGE_SIZE: u32 = 16 * 1024 * 1024;
+/// Maximum message size (64 MB — needed for large block sync batches)
+pub const MAX_MESSAGE_SIZE: u32 = 64 * 1024 * 1024;
 
 /// Authentication context derived from UHP handshake
 ///

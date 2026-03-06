@@ -87,8 +87,8 @@ async fn try_initial_sync_from_peer(
     use lib_blockchain::storage::BlockchainStore;
     use lib_blockchain::sync::ChainSync;
 
-    const BLOCKS_PER_PAGE: u64 = 200;
-    // Safety cap: 50 000 pages × 200 = 10 M blocks
+    const BLOCKS_PER_PAGE: u64 = 50;
+    // Safety cap: 50 000 pages × 50 = 2.5 M blocks
     const MAX_PAGES_PER_PEER: usize = 50_000;
 
     let timestamp = std::time::SystemTime::now()
@@ -2181,6 +2181,15 @@ impl RuntimeOrchestrator {
             }
         }
 
+        // Submit a ValidatorRegistration tx for this node if validator_enabled.
+        // MUST run BEFORE seed_blockchain_validator_registry so the idempotency check
+        // inside submit_self_validator_registration() doesn't skip when finding the seeded entry.
+        if self.config.consensus_config.validator_enabled {
+            if let Err(e) = self.submit_self_validator_registration().await {
+                warn!("⚠️ Failed to submit self validator registration: {}", e);
+            }
+        }
+
         // Seed blockchain.validator_registry from bootstrap config (idempotent).
         // This ensures all bootstrap validators appear in the registry immediately,
         // regardless of whether their on-chain ValidatorRegistration txs have been mined yet.
@@ -2189,15 +2198,6 @@ impl RuntimeOrchestrator {
         if !self.config.network_config.bootstrap_validators.is_empty() {
             if let Err(e) = self.seed_blockchain_validator_registry().await {
                 warn!("⚠️ Failed to seed blockchain validator registry from bootstrap config: {}", e);
-            }
-        }
-
-        // Submit a ValidatorRegistration tx for this node if validator_enabled.
-        // This ensures the on-chain validator_registry is populated so other nodes
-        // see this node's registration after the next block is mined.
-        if self.config.consensus_config.validator_enabled {
-            if let Err(e) = self.submit_self_validator_registration().await {
-                warn!("⚠️ Failed to submit self validator registration: {}", e);
             }
         }
 

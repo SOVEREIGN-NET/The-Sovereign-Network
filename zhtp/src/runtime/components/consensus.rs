@@ -710,8 +710,8 @@ async fn catchup_sync_from_peer(
     let mut cursor = our_height;
     let mut total_applied = 0usize;
     let mut pages = 0usize;
-    const MAX_BLOCKS_PER_PAGE: u64 = 200;
-    const MAX_PAGES_PER_SYNC: usize = 20;
+    const MAX_BLOCKS_PER_PAGE: u64 = 50;
+    const MAX_PAGES_PER_SYNC: usize = 80;
 
     while cursor < tip.height && pages < MAX_PAGES_PER_SYNC {
         let start = cursor + 1;
