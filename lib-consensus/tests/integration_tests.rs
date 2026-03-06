@@ -204,8 +204,8 @@ async fn test_byzantine_fault_handling() -> Result<()> {
     let mut byzantine_detector = ByzantineFaultDetector::new();
     let faults = byzantine_detector.detect_faults(consensus_engine.validator_manager())?;
 
-    // Check that the system can handle fault detection
-    assert!(faults.len() >= 0); // May or may not have faults
+    // Check that the system can handle fault detection (may or may not have faults)
+    let _ = faults.len();
 
     let validator_count_after = consensus_engine
         .validator_manager()
@@ -213,8 +213,7 @@ async fn test_byzantine_fault_handling() -> Result<()> {
         .len();
 
     // Verify that the system is working (validator counts should be reasonable)
-    assert!(validator_count_before >= 0);
-    assert!(validator_count_after >= 0);
+    let _ = (validator_count_before, validator_count_after);
 
     // Since we couldn't actually slash the validator in our simplified test,
     // we'll just verify the integration works by checking the validator exists
