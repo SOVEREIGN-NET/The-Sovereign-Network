@@ -174,7 +174,9 @@ impl OracleComponent {
                 },
             );
 
-            use lib_blockchain::oracle::{OracleAttestationAdmissionError, OracleSlashReason};
+            use lib_blockchain::oracle::{
+                OracleAttestationAdmissionError, OracleAttestationValidationError, OracleSlashReason,
+            };
             
             match result {
                 Ok(admission) => {
@@ -197,17 +199,48 @@ impl OracleComponent {
                         attestation.epoch_id,
                     );
                 }
-                Err(OracleAttestationAdmissionError::Validation(_)) => {
-                    // ORACLE-4: Slash for validation errors including wrong-epoch
-                    warn!(
-                        "🔮 Oracle: Validation error — slashing validator {} for protocol violation",
-                        hex::encode(&attestation.validator_pubkey[..8])
-                    );
-                    bc.slash_oracle_validator(
-                        attestation.validator_pubkey,
-                        OracleSlashReason::WrongEpoch,
-                        attestation.epoch_id,
-                    );
+                Err(OracleAttestationAdmissionError::Validation(validation_err)) => {
+                    // Validation failures include non-malicious states (missing key material during startup,
+                    // signature codec mismatch, or non-committee signer). Do not slash by default here.
+                    //
+                    // Note: Wrong-epoch attestations are normally handled as
+                    // `IgnoredOutsideCurrentEpoch` by `precheck_attestation`, so they do not arrive here.
+                    // We still keep explicit handling for defensive completeness.
+                    match slash_reason_for_validation_error(&validation_err) {
+                        Some(OracleSlashReason::WrongEpoch) => {
+                            let (expected, got) = match validation_err {
+                                OracleAttestationValidationError::WrongEpoch { expected, got } => {
+                                    (expected, got)
+                                }
+                                _ => (0, 0),
+                            };
+                            warn!(
+                                "🔮 Oracle: wrong-epoch attestation (expected={}, got={}) from {} — slashing",
+                                expected,
+                                got,
+                                hex::encode(&attestation.validator_pubkey[..8])
+                            );
+                            bc.slash_oracle_validator(
+                                attestation.validator_pubkey,
+                                OracleSlashReason::WrongEpoch,
+                                attestation.epoch_id,
+                            );
+                        }
+                        Some(other_reason) => {
+                            warn!(
+                                "🔮 Oracle attestation validation mapped to unsupported slash reason {:?}; rejecting without slashing (validator={})",
+                                other_reason,
+                                hex::encode(&attestation.validator_pubkey[..8]),
+                            );
+                        }
+                        None => {
+                            warn!(
+                                "🔮 Oracle attestation validation rejected without slashing: {:?} (validator={})",
+                                validation_err,
+                                hex::encode(&attestation.validator_pubkey[..8]),
+                            );
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!("🔮 Oracle attestation rejected (epoch={}): {:?}", attestation.epoch_id, e);
@@ -445,6 +478,21 @@ fn exchange_http_client() -> Option<reqwest::Client> {
         .ok()
 }
 
+fn slash_reason_for_validation_error(
+    err: &lib_blockchain::oracle::OracleAttestationValidationError,
+) -> Option<lib_blockchain::oracle::OracleSlashReason> {
+    match err {
+        lib_blockchain::oracle::OracleAttestationValidationError::WrongEpoch { .. } => {
+            Some(lib_blockchain::oracle::OracleSlashReason::WrongEpoch)
+        }
+        lib_blockchain::oracle::OracleAttestationValidationError::InvalidSignature
+        | lib_blockchain::oracle::OracleAttestationValidationError::MissingSignerPublicKey(_)
+        | lib_blockchain::oracle::OracleAttestationValidationError::NonCommitteeSigner(_)
+        | lib_blockchain::oracle::OracleAttestationValidationError::DuplicateSigner(_)
+        | lib_blockchain::oracle::OracleAttestationValidationError::EncodeError(_) => None,
+    }
+}
+
 /// Fetch SOV/USD from CoinGecko (scaffolding — SOV not yet listed).
 #[allow(dead_code)]
 async fn fetch_coingecko_sov_usd(now: u64) -> Option<OracleFetchedPrice> {
@@ -477,4 +525,31 @@ async fn fetch_binance_sov_usdt(now: u64) -> Option<OracleFetchedPrice> {
         sov_usd_price: price_atomic,
         timestamp: now,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slash_reason_for_validation_error;
+    use lib_blockchain::oracle::{OracleAttestationValidationError, OracleSlashReason};
+
+    #[test]
+    fn slashes_only_on_wrong_epoch_validation_error() {
+        let wrong_epoch = OracleAttestationValidationError::WrongEpoch {
+            expected: 10,
+            got: 11,
+        };
+        assert_eq!(
+            slash_reason_for_validation_error(&wrong_epoch),
+            Some(OracleSlashReason::WrongEpoch)
+        );
+
+        let non_committee = OracleAttestationValidationError::NonCommitteeSigner([1u8; 32]);
+        assert_eq!(slash_reason_for_validation_error(&non_committee), None);
+
+        let invalid_sig = OracleAttestationValidationError::InvalidSignature;
+        assert_eq!(slash_reason_for_validation_error(&invalid_sig), None);
+
+        let missing_pk = OracleAttestationValidationError::MissingSignerPublicKey([2u8; 32]);
+        assert_eq!(slash_reason_for_validation_error(&missing_pk), None);
+    }
 }
