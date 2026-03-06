@@ -130,8 +130,12 @@ impl ZhtpRequestHandler for OracleHandler {
 #[derive(Debug, Deserialize)]
 struct ProposeCommitteeRequest {
     new_members: Vec<String>, // hex-encoded key_ids
+    /// Optional: hex-encoded dilithium_pk for each member, same order as new_members.
+    /// Required for bootstrap so attestation signature verification can resolve signers.
+    #[serde(default)]
+    signing_pubkeys: Vec<String>,
     activate_at_epoch: u64,
-    _reason: Option<String>,
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -652,17 +656,65 @@ impl OracleHandler {
             }
         }
 
-        // DAO proposal creation for oracle committee updates is not yet implemented.
-        debug!(
-            "Oracle committee proposal received but governance submission is not implemented; \
-             {} members, activate_at_epoch={}",
-            member_ids.len(), req.activate_at_epoch
-        );
+        // Bootstrap path: directly set the committee when it is currently empty.
+        // Once populated, modifications must go through DAO governance.
+        let bc_arc = match self.get_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    e.to_string(),
+                ));
+            }
+        };
 
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "DAO proposal creation for oracle committee updates is not yet implemented".to_string(),
-        ))
+        let mut bc = bc_arc.write().await;
+
+        let reason = req.reason.unwrap_or_else(|| "Bootstrap oracle committee".to_string());
+
+        // Parse signing public keys (hex) and pair with member key_ids.
+        let members_with_pubkeys: Vec<([u8; 32], Vec<u8>)> = member_ids
+            .iter()
+            .enumerate()
+            .map(|(i, &key_id)| {
+                let pk = req.signing_pubkeys.get(i)
+                    .and_then(|hex_str| hex::decode(hex_str).ok())
+                    .unwrap_or_default();
+                (key_id, pk)
+            })
+            .collect();
+
+        match bc.bootstrap_oracle_committee(members_with_pubkeys) {
+            Ok(()) => {
+                // Persist immediately so the change survives restart before next block.
+                let dat_path = std::path::Path::new("./data/testnet/blockchain.dat");
+                if let Err(e) = bc.save_to_file(dat_path) {
+                    warn!("Oracle bootstrap: failed to persist blockchain after committee update: {}", e);
+                }
+                let threshold = bc.oracle_state.committee.threshold();
+                let members_hex: Vec<String> = bc.oracle_state.committee.members()
+                    .iter()
+                    .map(hex::encode)
+                    .collect();
+                debug!("Oracle committee bootstrapped: {} members, reason={}", members_hex.len(), reason);
+                let body = serde_json::json!({
+                    "status": "success",
+                    "committee_members": members_hex,
+                    "committee_size": members_hex.len(),
+                    "threshold": threshold,
+                    "reason": reason,
+                });
+                Ok(ZhtpResponse::success_with_content_type(
+                    serde_json::to_vec(&body).unwrap_or_default(),
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                e.to_string(),
+            )),
+        }
     }
 
     /// POST /api/v1/oracle/config/propose

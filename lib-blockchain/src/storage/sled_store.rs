@@ -676,6 +676,27 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
+    fn get_oracle_state(&self) -> StorageResult<Option<crate::oracle::OracleState>> {
+        match self.meta.get(keys::meta::ORACLE_STATE) {
+            Ok(Some(bytes)) => {
+                let state: crate::oracle::OracleState = Self::deserialize(&bytes)?;
+                Ok(Some(state))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn save_oracle_state(&self, state: &crate::oracle::OracleState) -> StorageResult<()> {
+        // Direct write to meta tree — no active block transaction required.
+        // Oracle bootstrap happens outside of block processing.
+        let value = Self::serialize(state)?;
+        self.meta
+            .insert(keys::meta::ORACLE_STATE, value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     // =========================================================================
     // Account Operations
     // =========================================================================

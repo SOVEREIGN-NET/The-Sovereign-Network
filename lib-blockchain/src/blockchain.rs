@@ -1673,6 +1673,22 @@ impl Blockchain {
             warn!("Failed to apply governance parameter updates during load_from_store: {}", e);
         }
 
+        // Restore oracle_state from SledStore (persisted by bootstrap / governance).
+        // oracle_state is not reconstructed from block replays, so we load it separately.
+        match store.get_oracle_state() {
+            Ok(Some(oracle_state)) => {
+                let member_count = oracle_state.committee.members().len();
+                blockchain.oracle_state = oracle_state;
+                info!("🔮 Restored oracle_state from SledStore: {} committee members", member_count);
+            }
+            Ok(None) => {
+                info!("🔮 No persisted oracle_state in SledStore (oracle committee not yet bootstrapped)");
+            }
+            Err(e) => {
+                warn!("⚠️ Failed to load oracle_state from SledStore: {}", e);
+            }
+        }
+
         info!(
             "📂 Loaded blockchain from SledStore: height={}, identities={}, wallets={}, tokens={}",
             blockchain.height,
@@ -7014,6 +7030,54 @@ impl Blockchain {
             .map_err(|e| anyhow::anyhow!("ParameterValidationError: Failed to schedule committee update: {}", e))?;
 
         self.executed_dao_proposals.insert(proposal_id);
+        Ok(())
+    }
+
+    /// Bootstrap the oracle committee directly (no DAO governance required).
+    ///
+    /// Only succeeds when the committee is currently empty (first-time bootstrap).
+    /// After the committee is populated, modifications must go through DAO governance.
+    ///
+    /// `members_with_pubkeys`: pairs of `(key_id, dilithium_pk)`.  The `dilithium_pk`
+    /// bytes are stored in `oracle_state.oracle_signing_pubkeys` so attestation
+    /// signature verification can resolve the signer's key without the validator_registry.
+    pub fn bootstrap_oracle_committee(
+        &mut self,
+        members_with_pubkeys: Vec<([u8; 32], Vec<u8>)>,
+    ) -> Result<()> {
+        if !self.oracle_state.committee.members().is_empty() {
+            return Err(anyhow::anyhow!(
+                "Oracle committee already initialized; use DAO governance proposals to modify it"
+            ));
+        }
+        if members_with_pubkeys.is_empty() {
+            return Err(anyhow::anyhow!("Oracle committee members cannot be empty"));
+        }
+        let member_ids: Vec<[u8; 32]> = members_with_pubkeys.iter().map(|(id, _)| *id).collect();
+        let unique: std::collections::BTreeSet<[u8; 32]> = member_ids.iter().copied().collect();
+        if unique.len() != member_ids.len() {
+            return Err(anyhow::anyhow!("Oracle committee members must not contain duplicates"));
+        }
+        // Store signing public keys for attestation verification.
+        for (key_id, pk) in &members_with_pubkeys {
+            if !pk.is_empty() {
+                self.oracle_state.oracle_signing_pubkeys.insert(*key_id, pk.clone());
+            }
+        }
+        self.oracle_state.committee.set_members_genesis_only(member_ids);
+        info!("🔮 Oracle committee bootstrapped with {} members", self.oracle_state.committee.members().len());
+
+        // Persist oracle_state to SledStore so it survives node restarts.
+        // This is a direct write (no block transaction required) since bootstrap
+        // happens outside of normal block processing.
+        if let Some(store) = &self.store {
+            if let Err(e) = store.save_oracle_state(&self.oracle_state) {
+                warn!("⚠️ Failed to persist oracle_state to SledStore: {}", e);
+            } else {
+                info!("🔮 Oracle state persisted to SledStore");
+            }
+        }
+
         Ok(())
     }
 

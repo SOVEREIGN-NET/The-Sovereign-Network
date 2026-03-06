@@ -870,6 +870,27 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     fn put_token_state_snapshot(&self, snapshot: &TokenStateSnapshot) -> StorageResult<()>;
 
     // =========================================================================
+    // Oracle State Persistence
+    // =========================================================================
+
+    /// Get the persisted oracle state (committee, config, signing pubkeys).
+    ///
+    /// Returns `None` if no oracle state has been persisted yet.
+    /// Default no-op: implementations that don't support oracle state return None.
+    fn get_oracle_state(&self) -> StorageResult<Option<crate::oracle::OracleState>> {
+        Ok(None)
+    }
+
+    /// Persist oracle state directly (not inside a block transaction).
+    ///
+    /// This is intentionally a direct write (no `begin_block`/`commit_block` required)
+    /// because oracle committee bootstrap happens outside of block processing.
+    /// Default no-op for implementations that don't support oracle state.
+    fn save_oracle_state(&self, _state: &crate::oracle::OracleState) -> StorageResult<()> {
+        Ok(())
+    }
+
+    // =========================================================================
     // Token Balances (Hot Path)
     // =========================================================================
     // Token balances are separate from contract metadata for performance.

@@ -247,11 +247,14 @@ pub struct OracleArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum OracleAction {
-    /// Submit oracle committee update governance proposal
+    /// Bootstrap oracle committee (direct, no governance required when committee is empty)
     CommitteeUpdate {
         /// New committee members as 32-byte hex key_ids (comma-separated)
         #[arg(long, value_delimiter = ',')]
         members: Vec<String>,
+        /// Dilithium signing public keys (hex, comma-separated, same order as --members)
+        #[arg(long, value_delimiter = ',')]
+        pubkeys: Vec<String>,
         /// Activation epoch (must be in the future)
         #[arg(long)]
         activate_epoch: u64,
