@@ -11,6 +11,12 @@ pub use event_normalizer::{
     normalize_operational_message, normalize_runtime_signal, ConsensusBehaviorEventType,
     ConsensusNormalizedEvent, NormalizationError, RuntimeConsensusSignal,
 };
+pub use state_encoder::{
+    encode_height_states, encode_round_states, EncodedConsensusPhase, EncodedConsensusState,
+    ExecutionStatus, ParsedConsensusEvent, ParsedConsensusPhase, ParsedHeightTrajectory,
+    ParsedPhaseTrajectory, ParsedRoundTrajectory, ProposalStatus, RoundClass, StateEncoderConfig,
+    TimeClass,
+};
 pub use trajectory_builder::{
     build_height_trajectories, ConsensusPhaseType, HeightTrajectory, PhaseTrajectory,
     RoundTrajectory,
