@@ -334,6 +334,13 @@ impl ZhtpRequestHandler for NetworkHandler {
             (ZhtpMethod::Get, "/api/v1/network/ping") => {
                 self.handle_ping(request).await
             }
+            // Issue #1801: Missing network endpoints
+            (ZhtpMethod::Get, "/api/v1/network/status") => {
+                self.handle_get_network_status(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/network/peers") => {
+                self.handle_get_network_peers(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/blockchain/network/peers") => {
                 self.handle_get_network_peers(request).await
             }
@@ -632,6 +639,61 @@ impl NetworkHandler {
         let json_response = serde_json::to_vec(&response)
             .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
         
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Get network status (Issue #1801)
+    /// GET /api/v1/network/status
+    async fn handle_get_network_status(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting network status");
+
+        // Get peer count from runtime
+        let peer_count = match self.runtime.get_connected_peers().await {
+            Ok(peers) => peers.len(),
+            Err(_) => 0,
+        };
+
+        // Get blockchain height via global provider
+        let blockchain_height = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(bc) => {
+                let blockchain = bc.read().await;
+                blockchain.get_height()
+            }
+            Err(_) => 0,
+        };
+
+        // Consensus info would come from consensus component
+        // Using placeholder values that will be populated when consensus exposes this data
+        let consensus_height = blockchain_height; // Placeholder
+        let consensus_round = 0u64; // Placeholder
+
+        // Determine sync status
+        let sync_status = if consensus_height > blockchain_height {
+            "syncing"
+        } else if consensus_height == blockchain_height {
+            "synced"
+        } else {
+            "ahead"
+        };
+
+        let response = serde_json::json!({
+            "connected_peers": peer_count,
+            "consensus_round": consensus_round,
+            "consensus_height": consensus_height,
+            "blockchain_height": blockchain_height,
+            "sync_status": sync_status
+        });
+
+        info!("API: Network status - {} peers, height {}, status {}", 
+              peer_count, blockchain_height, sync_status);
+
+        let json_response = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
             "application/json".to_string(),
