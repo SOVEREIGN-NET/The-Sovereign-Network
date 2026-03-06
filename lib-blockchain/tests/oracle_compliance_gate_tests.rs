@@ -145,13 +145,8 @@ fn test_config_update_governance_path() {
 // =============================================================================
 
 /// ORACLE-GATE-9: Producer requires minimum 3 price sources
-/// Note: This is tested in zhtp/src/runtime/services/oracle_producer_service.rs
-/// Minimum 3 sources required, 2 valid required to attest
-#[test]
-fn test_price_source_count_requirement() {
-    // Gate verified in producer service tests
-    // See: zhtp/src/runtime/services/oracle_producer_service.rs
-}
+/// Note: This behavior is exercised in zhtp/src/runtime/services/oracle_producer_service.rs
+/// This gate is intentionally not duplicated here to avoid a false-positive empty test.
 
 // =============================================================================
 // §6. Attestation Compliance
