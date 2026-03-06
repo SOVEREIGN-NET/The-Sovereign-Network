@@ -12009,12 +12009,17 @@ impl Blockchain {
     ///
     /// Validates CBE graduation can proceed for the given token.
     ///
-    /// Enforces (Oracle Spec v1 §11):
+    /// Enforces (Oracle Spec v1 §2, §11):
     /// - A fresh (non-stale) oracle price must exist for the current epoch
-    /// - Token reserve balance (in micro-USD, stablecoin) must meet the $269K threshold
+    /// - USD value of SOV reserve >= $269K threshold (calculated per spec formula)
     ///
-    /// Note: The oracle price is checked for freshness but not used in the value calculation
-    /// because the reserve is already denominated in USD-pegged stablecoin.
+    /// Spec Formula (ORACLE-R3):
+    ///   usd_value = (reserve_sov * sov_usd_price) / ORACLE_PRICE_SCALE
+    ///
+    /// Where:
+    ///   - reserve_sov: Token reserve in SOV (atomic units)
+    ///   - sov_usd_price: Fresh finalized oracle price (fixed-point with 1e8 scale)
+    ///   - ORACLE_PRICE_SCALE: 100_000_000 (1e8)
     ///
     /// Called unconditionally in both BlockExecutor and legacy paths (ORACLE-13).
     pub fn validate_cbe_graduation_oracle_gate(
@@ -12023,6 +12028,7 @@ impl Blockchain {
         block_timestamp: u64,
     ) -> Result<()> {
         use crate::contracts::tokens::CBE_SYMBOL;
+        use crate::oracle::ORACLE_PRICE_SCALE;
         const CBE_GRADUATION_THRESHOLD_USD: u128 = 269_000;
 
         let token = if let Some(store) = &self.store {
@@ -12042,25 +12048,45 @@ impl Blockchain {
             return Ok(());
         }
 
-        // ORACLE-5: Use latest_fresh_price() which handles staleness check internally
+        // ORACLE-5 / ORACLE-R3: Get fresh oracle price with staleness check
         let current_epoch = self.oracle_state.epoch_id(block_timestamp);
         
-        let _fresh_price = self.oracle_state.latest_fresh_price(current_epoch)
+        let fresh_price = self.oracle_state.latest_fresh_price(current_epoch)
             .ok_or_else(|| anyhow::anyhow!(
                 "CBE graduation blocked: no fresh finalized oracle price available (current_epoch={})",
                 current_epoch
             ))?;
 
-        // Reserve balance is in stablecoin (USD-pegged), so we can compare directly
-        // Convert threshold to same units as reserve_balance (micro-USD: 1 USD = 1_000_000)
+        // ORACLE-R3: Calculate USD value using spec formula
+        // usd_value = (reserve_sov * sov_usd_price) / ORACLE_PRICE_SCALE
+        let reserve_sov = token.reserve_balance as u128;
+        let sov_usd_price = fresh_price.sov_usd_price;
+        
+        // Use checked arithmetic for safety
+        let usd_value_scaled = reserve_sov
+            .checked_mul(sov_usd_price)
+            .ok_or_else(|| anyhow::anyhow!(
+                "CBE graduation blocked: arithmetic overflow in USD value calculation"
+            ))?;
+        
+        let usd_value_micro = usd_value_scaled
+            .checked_div(ORACLE_PRICE_SCALE)
+            .ok_or_else(|| anyhow::anyhow!(
+                "CBE graduation blocked: division by zero in USD value calculation"
+            ))?;
+
+        // Convert threshold to micro-USD for comparison
+        // threshold_micro = $269,000 * 1_000_000 (since 1 USD = 1_000_000 micro-USD)
         const MICRO_USD_PER_USD: u128 = 1_000_000;
         let threshold_micro_usd = CBE_GRADUATION_THRESHOLD_USD * MICRO_USD_PER_USD;
-        let reserve_micro_usd = token.reserve_balance as u128;
 
-        if reserve_micro_usd < threshold_micro_usd {
+        if usd_value_micro < threshold_micro_usd {
             return Err(anyhow::anyhow!(
-                "CBE graduation blocked: reserve USD value below threshold (reserve={} micro-USD, threshold={} micro-USD)",
-                reserve_micro_usd,
+                "CBE graduation blocked: reserve USD value below threshold \
+                 (reserve_sov={}, sov_usd_price={}, usd_value_micro={}, threshold_micro={})",
+                reserve_sov,
+                sov_usd_price,
+                usd_value_micro,
                 threshold_micro_usd
             ));
         }

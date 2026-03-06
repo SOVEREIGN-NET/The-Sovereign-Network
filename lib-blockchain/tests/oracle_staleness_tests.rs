@@ -106,7 +106,7 @@ fn cbe_graduation_blocked_with_stale_price() {
     
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("stale"), "Expected stale error, got: {}", err_msg);
+    assert!(err_msg.contains("no fresh finalized oracle price"), "Expected stale/fresh error, got: {}", err_msg);
 }
 
 /// Test CBE graduation proceeds with fresh price.
