@@ -71,11 +71,21 @@ fn test_default_config_matches_spec() {
 /// ORACLE-GATE-5: Epoch duration is configurable via governance
 #[test]
 fn test_epoch_duration_configurable() {
-    let mut config = OracleConfig::default();
-    config.epoch_duration_secs = 600; // Change to 10 minutes
-    
-    // Config should accept custom epoch duration
-    assert_eq!(config.epoch_duration_secs, 600);
+    // Valid custom epoch duration should be accepted by config validation
+    let mut valid_config = OracleConfig::default();
+    valid_config.epoch_duration_secs = 600; // Change to 10 minutes
+    assert!(
+        valid_config.validate().is_ok(),
+        "Config with custom epoch duration must be valid"
+    );
+
+    // Obviously invalid epoch duration should be rejected by config validation
+    let mut invalid_config = OracleConfig::default();
+    invalid_config.epoch_duration_secs = 0; // Zero-length epoch is invalid
+    assert!(
+        invalid_config.validate().is_err(),
+        "Config with zero epoch duration must be rejected"
+    );
 }
 
 /// ORACLE-GATE-6: Epoch ID derived from block timestamp (not wall clock)
