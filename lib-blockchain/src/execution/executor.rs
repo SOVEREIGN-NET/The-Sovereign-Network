@@ -677,6 +677,12 @@ impl BlockExecutor {
                 TxOutcome::BondingCurveGraduate(_) => {
                     summary.account_updates += 1; // phase transition to AMM
                 }
+                TxOutcome::OracleAttestation(_) => {
+                    // ORACLE-R3: Oracle attestations are processed by Blockchain after
+                    // block execution (not by BlockExecutor). They don't touch storage
+                    // directly - they update in-memory oracle_state.
+                    summary.account_updates += 1;
+                }
                 TxOutcome::Coinbase(_) => {
                     // Should not happen - coinbase filtered out
                     unreachable!("Coinbase should not be in non-coinbase pass");
@@ -2026,6 +2032,12 @@ impl BlockExecutor {
                 Ok(TxOutcome::DaoExecution(outcome))
             }
 
+            // ORACLE-R3: Oracle attestation is handled as LegacySystem in executor.
+            // The actual oracle_state mutation happens in Blockchain.finish_block_processing()
+            // which iterates through transactions and calls apply_oracle_attestation().
+            // This separation is necessary because oracle_state is in-memory (not in storage).
+            TransactionType::OracleAttestation => Ok(TxOutcome::LegacySystem),
+
             // Coinbase is routed through apply_coinbase_with_fees, never here.
             TransactionType::Coinbase => Err(TxApplyError::InvalidType(
                 "Coinbase must not be routed through apply_transaction".to_string(),
@@ -2107,6 +2119,8 @@ enum TxOutcome {
     BondingCurveBuy(BondingCurveBuyOutcome),
     BondingCurveSell(BondingCurveSellOutcome),
     BondingCurveGraduate(BondingCurveGraduateOutcome),
+    /// Oracle attestation outcome (ORACLE-R3: Canonical Path)
+    OracleAttestation(OracleAttestationOutcome),
     Coinbase(CoinbaseOutcome),
     /// Legacy system transaction types (IdentityRegistration, WalletRegistration, etc.)
     /// accepted as no-ops by the Phase-2 executor for backwards compatibility.
@@ -2204,6 +2218,15 @@ pub struct BondingCurveSellOutcome {
 pub struct BondingCurveGraduateOutcome {
     pub token_id: [u8; 32],
     pub pool_id: [u8; 32],
+}
+
+/// Outcome of an oracle attestation transaction (ORACLE-R3: Canonical Path)
+#[derive(Debug, Clone)]
+pub struct OracleAttestationOutcome {
+    pub epoch_id: u64,
+    pub validator_pubkey: [u8; 32],
+    pub sov_usd_price: u128,
+    pub finalized: bool,
 }
 
 // =============================================================================

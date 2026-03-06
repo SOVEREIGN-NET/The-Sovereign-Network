@@ -128,6 +128,22 @@ impl OracleComponent {
                 }
             };
 
+            // ORACLE-R3: Check protocol version - in strict spec mode, attestations must go through
+            // transactions only, not direct gossip processing
+            {
+                let bc = blockchain.read().await;
+                if bc.oracle_state.is_strict_spec_active() {
+                    // In strict spec mode, reject direct gossip attestations
+                    // Validators must submit attestations via transactions
+                    debug!(
+                        "🔮 Oracle: rejecting gossip attestation in strict spec mode (epoch={}). \
+                         Validators must use transaction-based attestations.",
+                        attestation.epoch_id
+                    );
+                    continue;
+                }
+            }
+
             // Use block timestamp for epoch derivation (Oracle Spec v1 §4.1)
             // Wall clock MUST NOT be used to determine epoch_id.
             let mut bc = blockchain.write().await;
@@ -302,47 +318,51 @@ impl OracleComponent {
                         attestation.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64
                     );
 
-                    // Gossip to peers.
-                    Self::gossip_attestation(&attestation).await;
-
-                    // Process locally (our own vote counts).
-                    let _payload = match bincode::serialize(&attestation) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            warn!("Oracle: failed to serialize own attestation: {}", e);
-                            tokio::time::sleep(tokio::time::Duration::from_secs(epoch_duration_secs)).await;
-                            continue;
-                        }
+                    // Check protocol version for local processing
+                    let is_strict_spec = {
+                        let bc = blockchain.read().await;
+                        bc.oracle_state.is_strict_spec_active()
                     };
 
-                    // Use block timestamp for epoch derivation (Oracle Spec v1 §4.1)
-                    let mut bc = blockchain.write().await;
-                    let epoch2 = bc.oracle_state.epoch_id(bc.last_committed_timestamp());
-                    let oracle_pubkeys2 = bc.oracle_state.oracle_signing_pubkeys.clone();
-                    let key_map: Vec<([u8; 32], Vec<u8>)> = bc
-                        .validator_registry
-                        .values()
-                        .filter(|v| !v.consensus_key.is_empty())
-                        .map(|v| {
-                            let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
-                            (kid, v.consensus_key.clone())
-                        })
-                        .collect();
+                    if is_strict_spec {
+                        // ORACLE-R3: In strict spec mode, create and submit a transaction
+                        // instead of processing directly. The transaction will be included
+                        // in a block and processed through the canonical path.
+                        debug!("🔮 Oracle: strict spec mode - submitting attestation as transaction");
+                        Self::submit_attestation_transaction(&attestation).await;
+                    } else {
+                        // Legacy mode: Gossip and process directly
+                        Self::gossip_attestation(&attestation).await;
 
-                    match bc.oracle_state.process_attestation(
-                        &attestation,
-                        epoch2,
-                        |key_id: [u8; 32]| {
-                            if let Some(pk) = oracle_pubkeys2.get(&key_id) {
-                                if !pk.is_empty() {
-                                    return Some(pk.clone());
+                        // Process locally (our own vote counts).
+                        let mut bc = blockchain.write().await;
+                        let epoch2 = bc.oracle_state.epoch_id(bc.last_committed_timestamp());
+                        let oracle_pubkeys2 = bc.oracle_state.oracle_signing_pubkeys.clone();
+                        let key_map: Vec<([u8; 32], Vec<u8>)> = bc
+                            .validator_registry
+                            .values()
+                            .filter(|v| !v.consensus_key.is_empty())
+                            .map(|v| {
+                                let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
+                                (kid, v.consensus_key.clone())
+                            })
+                            .collect();
+
+                        match bc.oracle_state.process_attestation(
+                            &attestation,
+                            epoch2,
+                            |key_id: [u8; 32]| {
+                                if let Some(pk) = oracle_pubkeys2.get(&key_id) {
+                                    if !pk.is_empty() {
+                                        return Some(pk.clone());
+                                    }
                                 }
-                            }
-                            key_map.iter().find(|(kid, _)| *kid == key_id).map(|(_, pk)| pk.clone())
-                        },
-                    ) {
-                        Ok(r) => info!("🔮 Oracle: self-attestation local result: {:?}", r),
-                        Err(e) => warn!("🔮 Oracle: self-attestation local rejected: {:?}", e),
+                                key_map.iter().find(|(kid, _)| *kid == key_id).map(|(_, pk)| pk.clone())
+                            },
+                        ) {
+                            Ok(r) => info!("🔮 Oracle: self-attestation local result: {:?}", r),
+                            Err(e) => warn!("🔮 Oracle: self-attestation local rejected: {:?}", e),
+                        }
                     }
                 }
                 Ok(None) => {
@@ -425,6 +445,23 @@ impl OracleComponent {
             }
         }
     }
+
+    /// Submit an attestation as a transaction in strict spec mode.
+    ///
+    /// ORACLE-R3: In strict spec mode, attestations must go through the canonical
+    /// transaction/block path rather than direct gossip processing.
+    ///
+    /// TODO: Implement transaction creation and mempool submission
+    async fn submit_attestation_transaction(_attestation: &OraclePriceAttestation) {
+        // This is a placeholder for the full implementation.
+        // In the full implementation, this would:
+        // 1. Create an OracleAttestation transaction
+        // 2. Sign it with the validator's key
+        // 3. Submit it to the mempool
+        // 4. The transaction will be included in a block and processed through
+        //    the canonical path in Blockchain.process_oracle_attestation_transactions()
+        info!("🔮 Oracle: submitting attestation as transaction (TODO: implement)");
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -436,7 +473,6 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-/// Build a shared `reqwest::Client` with a 10-second overall timeout.
 #[allow(dead_code)]
 fn exchange_http_client() -> Option<reqwest::Client> {
     reqwest::Client::builder()
