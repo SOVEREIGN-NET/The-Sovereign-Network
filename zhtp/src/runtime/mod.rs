@@ -1467,6 +1467,7 @@ impl RuntimeOrchestrator {
                 // or Sled was wiped), restore oracle_state from blockchain.dat which persists it
                 // via BlockchainStorageV4.
                 if bc.oracle_state.committee.members().is_empty() && dat_path.exists() {
+                    #[allow(deprecated)]
                     match lib_blockchain::Blockchain::load_from_file(&dat_path) {
                         Ok(dat_bc) if !dat_bc.oracle_state.committee.members().is_empty() => {
                             let count = dat_bc.oracle_state.committee.members().len();
