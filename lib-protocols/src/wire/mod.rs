@@ -32,13 +32,12 @@ use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 /// Wire protocol version
 pub const WIRE_VERSION: u16 = 1;
 
-/// Maximum ZHTP framed message size (64 MB).
+/// Maximum message size (64 MB).
 ///
-/// This limit applies to a single length-prefixed ZhtpRequest/ZhtpResponse
-/// payload on a QUIC stream. It is chosen to allow large API responses
-/// (e.g. block sync or state snapshots) while still bounding per-message
-/// allocations. Larger logical transfers should be chunked or streamed at
-/// a higher protocol layer rather than sent as a single framed message.
+/// Consensus block proposals embed full block_data, which can reach 30+ MB
+/// on congested mempools.  Set to 64 MB to give headroom without being unbounded.
+/// Larger transfers (e.g. block sync) must be chunked or streamed at a higher
+/// protocol layer to avoid unbounded per-message allocations.
 pub const MAX_MESSAGE_SIZE: u32 = 64 * 1024 * 1024;
 
 /// Authentication context derived from UHP handshake
