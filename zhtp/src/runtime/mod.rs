@@ -1463,6 +1463,31 @@ impl RuntimeOrchestrator {
                     info!("🪙 SOV token contract initialized (persistence deferred to next block commit): {}", hex::encode(&sov_token_id[..8]));
                 }
 
+                // If oracle committee is empty after Sled load (node missed init_oracle_committee,
+                // or Sled was wiped), restore oracle_state from blockchain.dat which persists it
+                // via BlockchainStorageV4.
+                if bc.oracle_state.committee.members().is_empty() && dat_path.exists() {
+                    match lib_blockchain::Blockchain::load_from_file(&dat_path) {
+                        Ok(dat_bc) if !dat_bc.oracle_state.committee.members().is_empty() => {
+                            let count = dat_bc.oracle_state.committee.members().len();
+                            bc.oracle_state = dat_bc.oracle_state;
+                            info!("🔮 Restored oracle committee from blockchain.dat ({} members)", count);
+                            // Write back to Sled so future restarts don't need the .dat fallback.
+                            if let Some(store_ref) = bc.store.as_ref() {
+                                if let Err(e) = store_ref.save_oracle_state(&bc.oracle_state) {
+                                    warn!("⚠️ Failed to persist restored oracle_state to Sled: {}", e);
+                                }
+                            }
+                        }
+                        Ok(_) => {
+                            info!("🔮 blockchain.dat has no oracle committee either — will rebuild from validator registry");
+                        }
+                        Err(e) => {
+                            warn!("⚠️ Failed to read blockchain.dat for oracle_state fallback: {}", e);
+                        }
+                    }
+                }
+
                 (bc, true)
             }
             None => {
