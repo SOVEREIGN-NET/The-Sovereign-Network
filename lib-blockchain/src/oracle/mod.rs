@@ -474,6 +474,12 @@ pub struct OracleState {
     /// Per-epoch transient/finalization status.
     #[serde(default)]
     pub epoch_state: BTreeMap<u64, OracleEpochState>,
+    /// Oracle signing public keys: key_id → actual dilithium_pk.
+    /// Populated during committee bootstrap so that attestation signature
+    /// verification can resolve a signer's public key without querying the
+    /// validator_registry (which only stores governance/consensus keys).
+    #[serde(default)]
+    pub oracle_signing_pubkeys: std::collections::HashMap<[u8; 32], Vec<u8>>,
 }
 
 impl OracleState {

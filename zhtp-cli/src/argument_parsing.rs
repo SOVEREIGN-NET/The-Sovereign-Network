@@ -247,11 +247,14 @@ pub struct OracleArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum OracleAction {
-    /// Submit oracle committee update governance proposal
+    /// Bootstrap oracle committee (direct, no governance required when committee is empty)
     CommitteeUpdate {
         /// New committee members as 32-byte hex key_ids (comma-separated)
         #[arg(long, value_delimiter = ',')]
         members: Vec<String>,
+        /// Dilithium signing public keys (hex, comma-separated, same order as --members)
+        #[arg(long, value_delimiter = ',')]
+        pubkeys: Vec<String>,
         /// Activation epoch (must be in the future)
         #[arg(long)]
         activate_epoch: u64,
@@ -298,6 +301,18 @@ pub enum OracleAction {
         #[arg(long)]
         voting_period_days: Option<u32>,
     },
+    /// Get oracle committee status and epoch info
+    Status,
+    /// Get latest finalized SOV/USD price
+    Price,
+    /// Get oracle operating config
+    Config,
+    /// Get pending oracle committee/config updates
+    PendingUpdates,
+    /// Get oracle slashing events
+    SlashingEvents,
+    /// Get banned oracle validators
+    BannedValidators,
 }
 
 #[derive(Subcommand, Debug, Clone)]

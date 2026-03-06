@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{info, warn, debug, error};
+use tracing::{debug, error, info, warn};
 
-use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
-use crate::runtime::services::{GenesisFundingService, TransactionBuilder, GenesisValidator};
+use crate::config::aggregation::BootstrapValidator;
 use crate::runtime::dht_indexing::index_block_in_dht;
 use crate::runtime::node_runtime::NodeRole;
-use crate::config::aggregation::BootstrapValidator;
+use crate::runtime::services::{GenesisFundingService, GenesisValidator, TransactionBuilder};
+use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, ComponentStatus};
 use lib_blockchain::{Blockchain, Transaction};
 use lib_consensus::ValidatorManager;
 use lib_identity::IdentityId;
@@ -146,58 +146,99 @@ impl BlockchainComponent {
     pub fn get_node_role(&self) -> NodeRole {
         (*self.node_role).clone()
     }
-    
+
+    fn normalize_did(did: &str) -> &str {
+        did.strip_prefix("did:zhtp:").unwrap_or(did)
+    }
+
+    fn local_did_is_bootstrap_validator(
+        local_did: &str,
+        bootstrap_validators: &[BootstrapValidator],
+    ) -> bool {
+        let bootstrap_validator_dids: std::collections::HashSet<String> = bootstrap_validators
+            .iter()
+            .map(|validator| Self::normalize_did(&validator.identity_id).to_ascii_lowercase())
+            .collect();
+        bootstrap_validator_dids.contains(&Self::normalize_did(local_did).to_ascii_lowercase())
+    }
+
+    async fn is_bootstrap_mining_authority(&self) -> bool {
+        // No explicit bootstrap validator list: allow local mining behavior.
+        let bootstrap_validators_guard = self._bootstrap_validators.read().await;
+        if bootstrap_validators_guard.is_empty() {
+            return true;
+        }
+        let bootstrap_validators = bootstrap_validators_guard.clone();
+        drop(bootstrap_validators_guard);
+
+        let wallet_guard = self.user_wallet.read().await;
+        let Some(wallet) = wallet_guard.as_ref() else {
+            warn!("Bootstrap mining authority check failed: wallet identity not available");
+            return false;
+        };
+        Self::local_did_is_bootstrap_validator(&wallet.user_identity.did, &bootstrap_validators)
+            || Self::local_did_is_bootstrap_validator(&wallet.node_identity.did, &bootstrap_validators)
+    }
+
     pub async fn set_validator_manager(&self, validator_manager: Arc<RwLock<ValidatorManager>>) {
         *self.validator_manager.write().await = Some(validator_manager);
     }
-    
+
     pub async fn set_node_identity(&self, node_identity: IdentityId) {
         *self.node_identity.write().await = Some(node_identity);
     }
-    
+
     pub fn set_edge_mode(&mut self, is_edge: bool) {
         self.is_edge_node = is_edge;
     }
-    
+
     pub async fn set_user_wallet(&self, wallet: crate::runtime::did_startup::WalletStartupResult) {
         let mut user_wallet_guard = self.user_wallet.write().await;
         *user_wallet_guard = Some(wallet.clone());
         drop(user_wallet_guard);
-        
+
         let node_id_hex = hex::encode(&wallet.node_identity_id.0);
         let user_did = format!("did:zhtp:{}", hex::encode(&wallet.user_identity.id.0));
-        
-        info!(" Updating controlled_nodes for user {} with node {}", 
-              &user_did[..40], &node_id_hex[..32]);
-        
+
+        info!(
+            " Updating controlled_nodes for user {} with node {}",
+            &user_did[..40],
+            &node_id_hex[..32]
+        );
+
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(blockchain_arc) => {
                 let mut blockchain = blockchain_arc.write().await;
                 if let Some(identity_data) = blockchain.identity_registry.get_mut(&user_did) {
                     if !identity_data.controlled_nodes.contains(&node_id_hex) {
                         identity_data.controlled_nodes.push(node_id_hex.clone());
-                        info!(" Added node {} to user's controlled_nodes list", &node_id_hex[..32]);
+                        info!(
+                            " Added node {} to user's controlled_nodes list",
+                            &node_id_hex[..32]
+                        );
                     }
                 }
-            },
+            }
             Err(e) => {
                 warn!("  Failed to get global blockchain: {}", e);
             }
         }
     }
-    
+
     pub fn get_blockchain_arc(&self) -> Arc<RwLock<Option<Blockchain>>> {
         self.blockchain.clone()
     }
-    
-    pub fn get_edge_state_arc(&self) -> Arc<RwLock<Option<Arc<RwLock<lib_blockchain::edge_node_state::EdgeNodeState>>>>> {
+
+    pub fn get_edge_state_arc(
+        &self,
+    ) -> Arc<RwLock<Option<Arc<RwLock<lib_blockchain::edge_node_state::EdgeNodeState>>>>> {
         self.edge_state.clone()
     }
-    
+
     pub fn is_edge_mode(&self) -> bool {
         self.is_edge_node
     }
-    
+
     pub async fn get_initialized_blockchain(&self) -> Result<Arc<RwLock<Blockchain>>> {
         // Try global provider first - this is the source of truth
         if let Ok(global) = crate::runtime::blockchain_provider::get_global_blockchain().await {
@@ -220,7 +261,10 @@ impl BlockchainComponent {
         environment: &crate::config::Environment,
         user_primary_wallet_id: Option<(lib_identity::wallets::WalletId, Vec<u8>)>,
         user_identity_id: Option<lib_identity::IdentityId>,
-        genesis_private_data: Vec<(lib_identity::IdentityId, lib_identity::identity::PrivateIdentityData)>,
+        genesis_private_data: Vec<(
+            lib_identity::IdentityId,
+            lib_identity::identity::PrivateIdentityData,
+        )>,
     ) -> Result<()> {
         GenesisFundingService::create_genesis_funding(
             blockchain,
@@ -229,11 +273,14 @@ impl BlockchainComponent {
             user_primary_wallet_id,
             user_identity_id,
             genesis_private_data,
-        ).await
+        )
+        .await
     }
-    
+
     /// Create UBI distribution transaction - delegates to TransactionBuilder
-    async fn create_ubi_transaction(environment: &crate::config::Environment) -> Result<Transaction> {
+    async fn create_ubi_transaction(
+        environment: &crate::config::Environment,
+    ) -> Result<Transaction> {
         TransactionBuilder::create_ubi_transaction(environment).await
     }
 
@@ -241,11 +288,11 @@ impl BlockchainComponent {
     pub async fn create_reward_transaction(
         node_id: [u8; 32],
         reward_amount: u64,
-        environment: &crate::config::Environment
+        environment: &crate::config::Environment,
     ) -> Result<Transaction> {
         TransactionBuilder::create_reward_transaction(node_id, reward_amount, environment).await
     }
-    
+
     /// Mine a block using actual blockchain methods
     async fn mine_real_block(blockchain: &mut Blockchain) -> Result<()> {
         let next_height = blockchain.height + 1;
@@ -258,16 +305,24 @@ impl BlockchainComponent {
 
         let mut ubi_txs: Vec<lib_blockchain::Transaction> = Vec::new();
         for entry in blockchain.collect_ubi_mint_entries(next_height) {
-            let memo = format!("UBI_DISTRIBUTION_V1:{}:{}", entry.identity_id, entry.wallet_id).into_bytes();
-            match crate::runtime::token_utils::build_sov_mint_tx(&entry.recipient_wallet_id, entry.payout, memo).await {
+            let memo = format!(
+                "UBI_DISTRIBUTION_V1:{}:{}",
+                entry.identity_id, entry.wallet_id
+            )
+            .into_bytes();
+            match crate::runtime::token_utils::build_sov_mint_tx(
+                &entry.recipient_wallet_id,
+                entry.payout,
+                memo,
+            )
+            .await
+            {
                 Ok(tx) => ubi_txs.push(tx),
                 Err(e) => warn!("Failed to build UBI TokenMint tx: {}", e),
             }
         }
 
-        if blockchain.pending_transactions.is_empty() && ubi_txs.is_empty() {
-            return Err(anyhow::anyhow!("No pending transactions to mine"));
-        }
+        // Allow mining empty blocks so the chain never stalls waiting for transactions.
 
         info!(
             "Mining block with {} pending txs + {} UBI mints",
@@ -280,22 +335,20 @@ impl BlockchainComponent {
         let remaining = 10usize.saturating_sub(transactions_for_block.len());
         if remaining > 0 {
             transactions_for_block.extend(
-                blockchain.pending_transactions
+                blockchain
+                    .pending_transactions
                     .iter()
                     .take(remaining)
-                    .cloned()
+                    .cloned(),
             );
         }
 
-        if transactions_for_block.is_empty() {
-            return Err(anyhow::anyhow!("No valid transactions for block"));
-        }
+        // Empty transaction list is allowed — heartbeat/empty blocks keep the chain advancing.
 
-        let has_system_transactions = transactions_for_block
-            .iter()
-            .any(|tx| tx.inputs.is_empty());
+        let has_system_transactions = transactions_for_block.iter().any(|tx| tx.inputs.is_empty());
 
-        let previous_hash = blockchain.latest_block()
+        let previous_hash = blockchain
+            .latest_block()
             .map(|b| b.hash())
             .unwrap_or_default();
 
@@ -304,9 +357,15 @@ impl BlockchainComponent {
         let block_difficulty = mining_config.difficulty.clone();
 
         if has_system_transactions {
-            info!("Mining system transaction block with difficulty: {:#x}", block_difficulty.bits());
+            info!(
+                "Mining system transaction block with difficulty: {:#x}",
+                block_difficulty.bits()
+            );
         } else {
-            info!("Mining normal transaction block with difficulty: {:#x}", block_difficulty.bits());
+            info!(
+                "Mining normal transaction block with difficulty: {:#x}",
+                block_difficulty.bits()
+            );
         }
 
         let block = lib_blockchain::block::creation::create_block(
@@ -316,11 +375,18 @@ impl BlockchainComponent {
             block_difficulty,
         )?;
 
-        info!("⛏️ Mining block with {} profile (difficulty: {:#x}, max_iter: {})...",
-              if mining_config.allow_instant_mining { "Bootstrap" } else { "Standard" },
-              block_difficulty.bits(),
-              mining_config.max_iterations);
-        let new_block = lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
+        info!(
+            "⛏️ Mining block with {} profile (difficulty: {:#x}, max_iter: {})...",
+            if mining_config.allow_instant_mining {
+                "Bootstrap"
+            } else {
+                "Standard"
+            },
+            block_difficulty.bits(),
+            mining_config.max_iterations
+        );
+        let new_block =
+            lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
         info!("✓ Block mined with nonce: {}", new_block.header.nonce);
 
         match blockchain.add_block_with_proof(new_block.clone()).await {
@@ -330,10 +396,16 @@ impl BlockchainComponent {
                 info!("Block Height: {}", blockchain.height);
                 info!("Transactions in Block: {}", new_block.transactions.len());
                 info!("Total UTXOs: {}", blockchain.utxo_set.len());
-                info!("Identity Registry: {} entries", blockchain.identity_registry.len());
-                
+                info!(
+                    "Identity Registry: {} entries",
+                    blockchain.identity_registry.len()
+                );
+
                 if !blockchain.economics_transactions.is_empty() {
-                    info!("Economics Transactions: {}", blockchain.economics_transactions.len());
+                    info!(
+                        "Economics Transactions: {}",
+                        blockchain.economics_transactions.len()
+                    );
                 }
                 if let Err(e) = index_block_in_dht(&new_block).await {
                     warn!("DHT indexing failed (mining): {}", e);
@@ -350,7 +422,10 @@ impl BlockchainComponent {
                 let evicted = new_block.transactions.len();
                 blockchain.remove_pending_transactions(&new_block.transactions);
                 if evicted > 0 {
-                    warn!("Evicted {} transaction(s) from mempool after block failure", evicted);
+                    warn!(
+                        "Evicted {} transaction(s) from mempool after block failure",
+                        evicted
+                    );
                 }
                 return Err(e);
             }
@@ -358,10 +433,10 @@ impl BlockchainComponent {
 
         Ok(())
     }
-    
-    /// Minimum validators required for BFT consensus mode
-    /// With fewer validators, direct mining is allowed (bootstrap mode)
-    /// With 4+ validators, all block production must go through BFT consensus
+
+    /// Minimum validators required for BFT consensus mode.
+    /// Keep at 4 so bootstrap mining is available while the validator set is forming.
+    /// Matches MIN_BFT_VALIDATORS in lib-types and lib-consensus.
     const MIN_BFT_VALIDATORS: usize = 4;
 
     /// Real mining loop with consensus coordination
@@ -378,6 +453,7 @@ impl BlockchainComponent {
         node_identity_arc: Arc<RwLock<Option<IdentityId>>>,
         env_for_persist: crate::config::Environment,
         node_role: Arc<NodeRole>,
+        bootstrap_mining_authority: bool,
     ) {
         // CRITICAL: Enforce runtime guard - only FullValidator nodes should run mining loop
         // This replaces debug_assert to catch issues in release builds
@@ -395,7 +471,6 @@ impl BlockchainComponent {
 
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         let mut block_counter = 1u64;
-        let mut consensus_round = 0u32;
         let mut last_bft_mode_log = std::time::Instant::now();
 
         loop {
@@ -439,11 +514,27 @@ impl BlockchainComponent {
                         continue;
                     }
 
-                    // BOOTSTRAP MODE: Direct mining allowed
-                    info!("⛏️ BOOTSTRAP MODE: {} validators (need ≥{} for BFT)",
-                        validator_count, Self::MIN_BFT_VALIDATORS);
-                    info!("Mining check #{} - Height: {}, Pending: {}, UTXOs: {}, Identities: {}",
-                        block_counter, current_height, pending_count,
+                    // BOOTSTRAP MODE: only bootstrap authority may mine.
+                    if !bootstrap_mining_authority {
+                        debug!(
+                            "⛏️ BOOTSTRAP MODE: mining disabled on non-authority validator (height={}, pending={})",
+                            current_height, pending_count
+                        );
+                        drop(blockchain_guard);
+                        continue;
+                    }
+
+                    // BOOTSTRAP MODE: authority node may mine
+                    info!(
+                        "⛏️ BOOTSTRAP MODE: {} validators (need ≥{} for BFT)",
+                        validator_count,
+                        Self::MIN_BFT_VALIDATORS
+                    );
+                    info!(
+                        "Mining check #{} - Height: {}, Pending: {}, UTXOs: {}, Identities: {}",
+                        block_counter,
+                        current_height,
+                        pending_count,
                         blockchain_guard.utxo_set.len(),
                         blockchain_guard.identity_registry.len()
                     );
@@ -452,7 +543,9 @@ impl BlockchainComponent {
                         let validator_manager_opt = validator_manager_arc.read().await.clone();
                         let node_identity_opt = node_identity_arc.read().await.clone();
 
-                        let should_mine = if let (Some(vm), Some(node_id)) = (validator_manager_opt, node_identity_opt) {
+                        let should_mine = if let (Some(vm), Some(node_id)) =
+                            (validator_manager_opt, node_identity_opt)
+                        {
                             let vm_guard = vm.read().await;
                             let active_validators = vm_guard.get_active_validators();
 
@@ -461,7 +554,9 @@ impl BlockchainComponent {
                                 true
                             } else {
                                 let next_height = current_height + 1;
-                                if let Some(proposer) = vm_guard.select_proposer(next_height, consensus_round) {
+                                // Bootstrap proposer selection must be canonical across nodes.
+                                // Use fixed round 0 so local retry counters cannot diverge proposer choice.
+                                if let Some(proposer) = vm_guard.select_proposer(next_height, 0) {
                                     let node_id_hex = hex::encode(node_id.as_bytes());
                                     let mut is_proposer = false;
 
@@ -469,7 +564,8 @@ impl BlockchainComponent {
                                     // Validators are registered by node DID, so proposer.identity
                                     // is Hash(node_did_bytes). node_id.as_bytes() is the same
                                     // 32-byte slice. This is the primary matching path.
-                                    let node_hash = lib_crypto::Hash::from_bytes(node_id.as_bytes());
+                                    let node_hash =
+                                        lib_crypto::Hash::from_bytes(node_id.as_bytes());
                                     if node_hash == proposer.identity {
                                         is_proposer = true;
                                     }
@@ -477,13 +573,25 @@ impl BlockchainComponent {
                                     // Fallback: look up via user identity → controlled_nodes.
                                     // Handles cases where validator identity_id is the user DID.
                                     if !is_proposer {
-                                        for (did_string, identity_data) in blockchain_guard.identity_registry.iter() {
-                                            if identity_data.controlled_nodes.contains(&node_id_hex) {
-                                                if let Some(identity_hex) = did_string.strip_prefix("did:zhtp:") {
-                                                    if let Ok(identity_bytes) = hex::decode(identity_hex) {
+                                        for (did_string, identity_data) in
+                                            blockchain_guard.identity_registry.iter()
+                                        {
+                                            if identity_data.controlled_nodes.contains(&node_id_hex)
+                                            {
+                                                if let Some(identity_hex) =
+                                                    did_string.strip_prefix("did:zhtp:")
+                                                {
+                                                    if let Ok(identity_bytes) =
+                                                        hex::decode(identity_hex)
+                                                    {
                                                         if identity_bytes.len() >= 32 {
-                                                            let user_identity_hash = lib_crypto::Hash::from_bytes(&identity_bytes[..32]);
-                                                            if user_identity_hash == proposer.identity {
+                                                            let user_identity_hash =
+                                                                lib_crypto::Hash::from_bytes(
+                                                                    &identity_bytes[..32],
+                                                                );
+                                                            if user_identity_hash
+                                                                == proposer.identity
+                                                            {
                                                                 is_proposer = true;
                                                                 break;
                                                             }
@@ -514,9 +622,11 @@ impl BlockchainComponent {
                             let mut blockchain_guard = shared_blockchain.write().await;
                             match Self::mine_real_block(&mut *blockchain_guard).await {
                                 Ok(()) => {
-                                    info!("⛏️ Bootstrap block #{} mined successfully!", block_counter);
+                                    info!(
+                                        "⛏️ Bootstrap block #{} mined successfully!",
+                                        block_counter
+                                    );
                                     block_counter += 1;
-                                    consensus_round = 0;
 
                                     // Auto-persist blockchain after mining (legacy mode only)
                                     if blockchain_guard.get_store().is_none() {
@@ -524,8 +634,10 @@ impl BlockchainComponent {
                                         const PERSIST_INTERVAL: u64 = 1; // Save every block
                                         if blockchain_guard.should_auto_persist(PERSIST_INTERVAL) {
                                             // Use environment-specific path
-                                            let persist_path_str = env_for_persist.blockchain_data_path();
-                                            let persist_path = std::path::Path::new(&persist_path_str);
+                                            let persist_path_str =
+                                                env_for_persist.blockchain_data_path();
+                                            let persist_path =
+                                                std::path::Path::new(&persist_path_str);
                                             #[allow(deprecated)]
                                             match blockchain_guard.save_to_file(persist_path) {
                                                 Ok(()) => {
@@ -533,7 +645,10 @@ impl BlockchainComponent {
                                                     info!("💾 Blockchain auto-persisted to disk");
                                                 }
                                                 Err(e) => {
-                                                    warn!("⚠️ Failed to auto-persist blockchain: {}", e);
+                                                    warn!(
+                                                        "⚠️ Failed to auto-persist blockchain: {}",
+                                                        e
+                                                    );
                                                 }
                                             }
                                         }
@@ -543,27 +658,24 @@ impl BlockchainComponent {
                                 }
                                 Err(e) => {
                                     warn!("Failed to mine block #{}: {}", block_counter, e);
-                                    consensus_round += 1;
                                 }
                             }
-                        } else {
-                            consensus_round = (consensus_round + 1) % 10;
                         }
                     } else {
                         debug!("No pending transactions");
-                        consensus_round = 0;
                     }
                 }
                 Err(_) => {
                     // CRITICAL GUARD: Check node role again before using fallback path
                     // This prevents edge nodes or observers from mining even if global provider fails
-                    if !node_role.can_mine() {
+                    if !node_role.can_mine() || !bootstrap_mining_authority {
                         error!(
-                            "CRITICAL BUG: Non-mining node {:?} tried to use fallback mining path - config/component initialization bug",
-                            *node_role
+                            "CRITICAL BUG: node {:?} without bootstrap mining authority tried to use fallback mining path",
+                            *node_role,
                         );
                         // Skip mining on this iteration to avoid producing invalid blocks
-                    } else if let Some(ref mut local_blockchain) = blockchain.write().await.as_mut() {
+                    } else if let Some(ref mut local_blockchain) = blockchain.write().await.as_mut()
+                    {
                         let pending_count = local_blockchain.pending_transactions.len();
                         if pending_count > 0 {
                             match Self::mine_real_block(local_blockchain).await {
@@ -612,112 +724,199 @@ impl BlockchainComponent {
                     .as_secs();
                 let temp_id = match lib_identity::ZhtpIdentity::new_unified(
                     lib_identity::IdentityType::Device,
-                    None, None,
+                    None,
+                    None,
                     &format!("observer-sync-{}", ts),
                     None,
                 ) {
                     Ok(id) => id,
-                    Err(e) => { warn!("observer_sync: failed to create temp identity: {}", e); continue; }
+                    Err(e) => {
+                        warn!("observer_sync: failed to create temp identity: {}", e);
+                        continue;
+                    }
                 };
 
-                let cfg = ZhtpClientConfig { allow_bootstrap: true };
+                let cfg = ZhtpClientConfig {
+                    allow_bootstrap: true,
+                };
                 let mut client = match ZhtpClient::new_bootstrap_with_config(temp_id, cfg).await {
                     Ok(c) => c,
-                    Err(e) => { warn!("observer_sync: failed to create QUIC client: {}", e); continue; }
+                    Err(e) => {
+                        warn!("observer_sync: failed to create QUIC client: {}", e);
+                        continue;
+                    }
                 };
 
                 if let Err(e) = client.connect(peer_quic_addr).await {
-                    debug!("observer_sync: could not connect to {}: {}", peer_quic_addr, e);
+                    debug!(
+                        "observer_sync: could not connect to {}: {}",
+                        peer_quic_addr, e
+                    );
                     continue;
                 }
 
                 // Fetch peer's chain tip.
                 #[derive(Deserialize)]
-                struct ChainTip { height: u64 }
+                struct ChainTip {
+                    height: u64,
+                }
 
                 let tip_resp = match tokio::time::timeout(
                     Duration::from_secs(10),
                     client.get("/api/v1/blockchain/tip"),
-                ).await {
+                )
+                .await
+                {
                     Ok(Ok(r)) => r,
-                    Ok(Err(e)) => { warn!("observer_sync: tip request failed for {}: {}", peer_quic_addr, e); continue; }
-                    Err(_) => { warn!("observer_sync: tip request timed out for {}", peer_quic_addr); continue; }
+                    Ok(Err(e)) => {
+                        warn!(
+                            "observer_sync: tip request failed for {}: {}",
+                            peer_quic_addr, e
+                        );
+                        continue;
+                    }
+                    Err(_) => {
+                        warn!(
+                            "observer_sync: tip request timed out for {}",
+                            peer_quic_addr
+                        );
+                        continue;
+                    }
                 };
 
                 if !tip_resp.is_success() {
-                    warn!("observer_sync: peer {} returned non-success for /tip", peer_quic_addr);
+                    warn!(
+                        "observer_sync: peer {} returned non-success for /tip",
+                        peer_quic_addr
+                    );
                     continue;
                 }
 
                 let peer_tip: ChainTip = match serde_json::from_slice(&tip_resp.body) {
                     Ok(t) => t,
-                    Err(e) => { warn!("observer_sync: failed to parse tip JSON: {}", e); continue; }
+                    Err(e) => {
+                        warn!("observer_sync: failed to parse tip JSON: {}", e);
+                        continue;
+                    }
                 };
 
                 if peer_tip.height <= local_height {
-                    debug!("observer_sync: peer {} at height {}, local={}, no gap", peer_quic_addr, peer_tip.height, local_height);
+                    debug!(
+                        "observer_sync: peer {} at height {}, local={}, no gap",
+                        peer_quic_addr, peer_tip.height, local_height
+                    );
                     break 'peers; // We're caught up; no need to try other peers.
                 }
 
-                info!("📥 Observer gap-fill: peer {} height={}, local={}, fetching {} block(s)",
-                      peer_quic_addr, peer_tip.height, local_height, peer_tip.height - local_height);
+                info!(
+                    "📥 Observer gap-fill: peer {} height={}, local={}, fetching {} block(s)",
+                    peer_quic_addr,
+                    peer_tip.height,
+                    local_height,
+                    peer_tip.height - local_height
+                );
 
                 // Fetch and apply missing blocks in batches of 100.
                 let mut current = local_height;
                 let target = peer_tip.height;
 
                 'batches: loop {
-                    if current >= target { break; }
+                    if current >= target {
+                        break;
+                    }
 
                     let from = current + 1;
-                    let to   = std::cmp::min(from + 99, target);
+                    let to = std::cmp::min(from + 99, target);
 
                     let path = format!("/api/v1/blockchain/blocks/{}/{}", from, to);
                     let blocks_resp = match tokio::time::timeout(
                         Duration::from_secs(30),
                         client.get(&path),
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(Ok(r)) => r,
-                        Ok(Err(e)) => { warn!("observer_sync: blocks request failed: {}", e); break 'batches; }
-                        Err(_)    => { warn!("observer_sync: blocks request timed out"); break 'batches; }
+                        Ok(Err(e)) => {
+                            warn!("observer_sync: blocks request failed: {}", e);
+                            break 'batches;
+                        }
+                        Err(_) => {
+                            warn!("observer_sync: blocks request timed out");
+                            break 'batches;
+                        }
                     };
 
                     if !blocks_resp.is_success() {
-                        warn!("observer_sync: peer returned error for blocks {}-{}", from, to);
+                        warn!(
+                            "observer_sync: peer returned error for blocks {}-{}",
+                            from, to
+                        );
                         break 'batches;
                     }
 
-                    let blocks: Vec<lib_blockchain::Block> = match bincode::deserialize(&blocks_resp.body) {
-                        Ok(b) => b,
-                        Err(e) => { warn!("observer_sync: failed to deserialize blocks: {}", e); break 'batches; }
-                    };
+                    let blocks: Vec<lib_blockchain::Block> =
+                        match bincode::deserialize(&blocks_resp.body) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                warn!("observer_sync: failed to deserialize blocks: {}", e);
+                                break 'batches;
+                            }
+                        };
 
                     if blocks.is_empty() {
-                        warn!("observer_sync: peer returned empty block list for {}-{}", from, to);
+                        warn!(
+                            "observer_sync: peer returned empty block list for {}-{}",
+                            from, to
+                        );
                         break 'batches;
                     }
 
-                    info!("📥 Applying {} block(s) ({}-{}) from {}", blocks.len(), from, to, peer_quic_addr);
+                    info!(
+                        "📥 Applying {} block(s) ({}-{}) from {}",
+                        blocks.len(),
+                        from,
+                        to,
+                        peer_quic_addr
+                    );
 
                     let mut bc = bc_arc.write().await;
                     let mut applied: u64 = 0;
                     for block in blocks {
                         let h = block.header.height;
                         match bc.add_block_from_network_with_persistence(block).await {
-                            Ok(()) => { applied += 1; current = h; }
-                            Err(e) => { warn!("observer_sync: failed to apply block {}: {}", h, e); break 'batches; }
+                            Ok(()) => {
+                                applied += 1;
+                                current = h;
+                            }
+                            Err(e) => {
+                                warn!("observer_sync: failed to apply block {}: {}", h, e);
+                                break 'batches;
+                            }
                         }
                     }
                     drop(bc);
 
-                    info!("✅ observer_sync: applied {} block(s), local height now {}", applied, current);
-                    if applied == 0 { break 'batches; }
+                    info!(
+                        "✅ observer_sync: applied {} block(s), local height now {}",
+                        applied, current
+                    );
+                    if applied == 0 {
+                        break 'batches;
+                    }
                 }
 
                 // Successfully synced (or gap is filled); stop trying other peers.
                 break 'peers;
             }
         }
+    }
+
+    fn should_run_peer_sync_loop(
+        bootstrap_peers_count: usize,
+        joined_existing_network: bool,
+        can_mine: bool,
+    ) -> bool {
+        bootstrap_peers_count > 0 && (joined_existing_network || !can_mine)
     }
 }
 
@@ -734,9 +933,9 @@ impl Component for BlockchainComponent {
     async fn start(&self) -> Result<()> {
         info!("Starting blockchain component with shared blockchain service...");
         info!(" Network Environment: {}", self.environment);
-        
+
         *self.status.write().await = ComponentStatus::Starting;
-        
+
         // Edge node initialization
         if self.is_edge_node {
             info!("🔷 Edge node mode: Initializing EdgeNodeState (header-only sync)");
@@ -744,16 +943,16 @@ impl Component for BlockchainComponent {
             let edge_state = lib_blockchain::edge_node_state::EdgeNodeState::new(EDGE_MAX_HEADERS);
             let edge_state_arc = Arc::new(RwLock::new(edge_state));
             *self.edge_state.write().await = Some(edge_state_arc.clone());
-            
+
             crate::runtime::edge_state_provider::initialize_global_edge_state_provider();
             crate::runtime::edge_state_provider::set_global_edge_state(edge_state_arc).await?;
-            
+
             info!("✓ EdgeNodeState initialized");
             *self.start_time.write().await = Some(Instant::now());
             *self.status.write().await = ComponentStatus::Running;
             return Ok(());
         }
-        
+
         // Full node initialization
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(shared_blockchain) => {
@@ -761,7 +960,7 @@ impl Component for BlockchainComponent {
                 // CRITICAL FIX: Don't clone the blockchain data, just store the reference
                 // Cloning creates a snapshot that disconnects from the global state
                 // Instead, we'll use the global provider directly in mining loop
-                
+
                 // For local access via self.blockchain, we can clone the data once for initialization
                 // but the mining loop MUST use the global provider to see updates
                 let blockchain_clone = shared_blockchain.read().await.clone();
@@ -775,11 +974,14 @@ impl Component for BlockchainComponent {
                 }
             }
         }
-        
+
         // Start auto-graduation service for bonding curve tokens
         // This runs on all node types, not just validators
-        if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
-            let auto_grad_service = crate::runtime::services::AutoGraduationService::with_defaults(blockchain_arc);
+        if let Ok(blockchain_arc) =
+            crate::runtime::blockchain_provider::get_global_blockchain().await
+        {
+            let auto_grad_service =
+                crate::runtime::services::AutoGraduationService::with_defaults(blockchain_arc);
             if let Err(e) = auto_grad_service.start().await {
                 warn!("Failed to start auto-graduation service: {}", e);
             } else {
@@ -788,35 +990,59 @@ impl Component for BlockchainComponent {
             }
         }
 
+        // Run periodic gap-fill sync for joiners and non-mining nodes.
+        // The bootstrap leader with local chain data should not run this loop.
+        let should_run_peer_sync_loop = Self::should_run_peer_sync_loop(
+            self.bootstrap_peers.len(),
+            self.joined_existing_network,
+            self.node_role.can_mine(),
+        );
+        if should_run_peer_sync_loop {
+            let peers = self.bootstrap_peers.clone();
+            tokio::spawn(Self::observer_sync_loop(peers));
+            info!(
+                "✓ Peer sync loop started ({} bootstrap peer(s))",
+                self.bootstrap_peers.len()
+            );
+        } else {
+            info!(
+                "ℹ️ Peer sync loop disabled (bootstrap_peers={}, joined_existing_network={}, can_mine={})",
+                self.bootstrap_peers.len(),
+                self.joined_existing_network,
+                self.node_role.can_mine(),
+            );
+        }
+
         // Check if this node can mine before starting the mining loop
         // Only FullValidator nodes should participate in block mining
         if !self.node_role.can_mine() {
             let role_desc = match &*self.node_role {
-                crate::runtime::node_runtime::NodeRole::Observer => "observer (full blockchain, no mining)",
+                crate::runtime::node_runtime::NodeRole::Observer => {
+                    "observer (full blockchain, no mining)"
+                }
                 crate::runtime::node_runtime::NodeRole::LightNode => "light (headers only)",
                 _ => "non-validator",
             };
             info!(
                 "ℹ️ Node type {:?} does not mine blocks - running as {} node",
-                *self.node_role,
-                role_desc
+                *self.node_role, role_desc
             );
-
-            // Observer nodes run a periodic sync loop to catch up when behind validators.
-            // This handles the gap created by startup backfill blocks on the validator.
-            if !self.bootstrap_peers.is_empty() {
-                let peers = self.bootstrap_peers.clone();
-                tokio::spawn(Self::observer_sync_loop(peers));
-                info!("✓ Observer sync loop started ({} bootstrap peer(s))", self.bootstrap_peers.len());
-            } else {
-                info!("⚠️ No bootstrap peers configured — observer sync loop disabled");
-            }
 
             *self.status.write().await = ComponentStatus::Running;
             return Ok(());
         }
 
-        info!("✓ Node role {:?} can mine - starting mining service", *self.node_role);
+        info!(
+            "✓ Node role {:?} can mine - starting mining service",
+            *self.node_role
+        );
+
+        let bootstrap_mining_authority = self.is_bootstrap_mining_authority().await;
+        if !bootstrap_mining_authority {
+            info!(
+                "⛏️ Bootstrap mining disabled for this validator (non-bootstrap authority node)"
+            );
+        }
 
         // Start mining loop
         // CRITICAL FIX: Pass None for local blockchain to force using global provider
@@ -832,14 +1058,22 @@ impl Component for BlockchainComponent {
 
         let mining_handle = tokio::spawn(async move {
             info!("⛏️ Mining task spawned, starting mining loop...");
-            Self::real_mining_loop(dummy_local_blockchain, validator_manager_arc, node_identity_arc, env_for_persist, node_role_for_loop).await;
+            Self::real_mining_loop(
+                dummy_local_blockchain,
+                validator_manager_arc,
+                node_identity_arc,
+                env_for_persist,
+                node_role_for_loop,
+                bootstrap_mining_authority,
+            )
+            .await;
         });
-        
+
         *self.mining_handle.write().await = Some(mining_handle);
-        
+
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
-        
+
         info!("✓ Blockchain component started with mining enabled");
         Ok(())
     }
@@ -849,14 +1083,19 @@ impl Component for BlockchainComponent {
         *self.status.write().await = ComponentStatus::Stopping;
 
         // Persist blockchain before shutdown (legacy mode only)
-        if let Ok(shared_blockchain) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+        if let Ok(shared_blockchain) =
+            crate::runtime::blockchain_provider::get_global_blockchain().await
+        {
             let blockchain_guard = shared_blockchain.read().await;
             if blockchain_guard.get_store().is_none() {
                 let persist_path_str = self.environment.blockchain_data_path();
                 let persist_path = std::path::Path::new(&persist_path_str);
                 #[allow(deprecated)]
                 match blockchain_guard.save_to_file(persist_path) {
-                    Ok(()) => info!("💾 Blockchain persisted to {} before shutdown", persist_path_str),
+                    Ok(()) => info!(
+                        "💾 Blockchain persisted to {} before shutdown",
+                        persist_path_str
+                    ),
                     Err(e) => warn!("⚠️ Failed to persist blockchain on shutdown: {}", e),
                 }
             } else {
@@ -868,7 +1107,7 @@ impl Component for BlockchainComponent {
             handle.abort();
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        
+
         // Stop auto-graduation service
         if let Some(service) = self.auto_graduation_service.write().await.take() {
             if let Err(e) = service.stop().await {
@@ -887,16 +1126,16 @@ impl Component for BlockchainComponent {
     async fn force_stop(&self) -> Result<()> {
         warn!(" Force stopping blockchain component...");
         *self.status.write().await = ComponentStatus::Stopping;
-        
+
         if let Some(handle) = self.mining_handle.write().await.take() {
             handle.abort();
         }
-        
+
         // Stop auto-graduation service
         if let Some(service) = self.auto_graduation_service.write().await.take() {
             let _ = service.stop().await;
         }
-        
+
         *self.blockchain.write().await = None;
         *self.start_time.write().await = None;
         *self.status.write().await = ComponentStatus::Stopped;
@@ -907,7 +1146,7 @@ impl Component for BlockchainComponent {
         let status = self.status.read().await.clone();
         let start_time = *self.start_time.read().await;
         let uptime = start_time.map(|t| t.elapsed()).unwrap_or(Duration::ZERO);
-        
+
         Ok(ComponentHealth {
             status,
             last_heartbeat: Instant::now(),
@@ -923,65 +1162,85 @@ impl Component for BlockchainComponent {
         match message {
             ComponentMessage::Custom(msg, _data) if msg == "add_test_transaction" => {
                 // Try global provider first
-                let global_blockchain = crate::runtime::blockchain_provider::get_global_blockchain().await;
-                
+                let global_blockchain =
+                    crate::runtime::blockchain_provider::get_global_blockchain().await;
+
                 // We need to hold the lock for the duration of the operation
                 // This is a bit tricky with the different types, so we'll use a closure or just duplicate logic
                 // Duplicating logic is safer to avoid lifetime issues with locks
-                
+
                 if let Ok(global) = global_blockchain {
                     info!("Creating economic transactions on GLOBAL blockchain...");
                     let mut blockchain = global.write().await;
-                    
+
                     match Self::create_ubi_transaction(&self.environment).await {
-                        Ok(ubi_tx) => {
-                            match blockchain.add_pending_transaction(ubi_tx.clone()) {
-                                Ok(()) => info!("UBI distribution transaction added! Hash: {:?}", ubi_tx.hash()),
-                                Err(e) => warn!("Failed to add UBI transaction: {}", e),
-                            }
-                        }
+                        Ok(ubi_tx) => match blockchain.add_pending_transaction(ubi_tx.clone()) {
+                            Ok(()) => info!(
+                                "UBI distribution transaction added! Hash: {:?}",
+                                ubi_tx.hash()
+                            ),
+                            Err(e) => warn!("Failed to add UBI transaction: {}", e),
+                        },
                         Err(e) => warn!("Failed to create UBI transaction: {}", e),
                     }
-                    
+
                     let example_node_id = [2u8; 32];
                     let reward_amount = 500;
-                    match Self::create_reward_transaction(example_node_id, reward_amount, &self.environment).await {
+                    match Self::create_reward_transaction(
+                        example_node_id,
+                        reward_amount,
+                        &self.environment,
+                    )
+                    .await
+                    {
                         Ok(reward_tx) => {
                             match blockchain.add_pending_transaction(reward_tx.clone()) {
-                                Ok(()) => info!("Network reward transaction added! Hash: {:?}", reward_tx.hash()),
+                                Ok(()) => info!(
+                                    "Network reward transaction added! Hash: {:?}",
+                                    reward_tx.hash()
+                                ),
                                 Err(e) => warn!("Failed to add reward transaction: {}", e),
                             }
                         }
                         Err(e) => warn!("Failed to create reward transaction: {}", e),
                     }
                     info!("Transactions queued for mining on global chain");
-                    
                 } else if let Some(ref mut blockchain) = self.blockchain.write().await.as_mut() {
                     info!("Creating economic transactions on LOCAL blockchain (fallback)...");
-                    
+
                     match Self::create_ubi_transaction(&self.environment).await {
-                        Ok(ubi_tx) => {
-                            match blockchain.add_pending_transaction(ubi_tx.clone()) {
-                                Ok(()) => {
-                                    info!("UBI distribution transaction added! Hash: {:?}", ubi_tx.hash());
-                                }
-                                Err(e) => {
-                                    warn!("Failed to add UBI transaction: {}", e);
-                                }
+                        Ok(ubi_tx) => match blockchain.add_pending_transaction(ubi_tx.clone()) {
+                            Ok(()) => {
+                                info!(
+                                    "UBI distribution transaction added! Hash: {:?}",
+                                    ubi_tx.hash()
+                                );
                             }
-                        }
+                            Err(e) => {
+                                warn!("Failed to add UBI transaction: {}", e);
+                            }
+                        },
                         Err(e) => {
                             warn!("Failed to create UBI transaction: {}", e);
                         }
                     }
-                    
+
                     let example_node_id = [2u8; 32];
                     let reward_amount = 500;
-                    match Self::create_reward_transaction(example_node_id, reward_amount, &self.environment).await {
+                    match Self::create_reward_transaction(
+                        example_node_id,
+                        reward_amount,
+                        &self.environment,
+                    )
+                    .await
+                    {
                         Ok(reward_tx) => {
                             match blockchain.add_pending_transaction(reward_tx.clone()) {
                                 Ok(()) => {
-                                    info!("Network reward transaction added! Hash: {:?}", reward_tx.hash());
+                                    info!(
+                                        "Network reward transaction added! Hash: {:?}",
+                                        reward_tx.hash()
+                                    );
                                 }
                                 Err(e) => {
                                     warn!("Failed to add reward transaction: {}", e);
@@ -992,7 +1251,7 @@ impl Component for BlockchainComponent {
                             warn!("Failed to create reward transaction: {}", e);
                         }
                     }
-                    
+
                     info!("Transactions queued for mining");
                 }
                 Ok(())
@@ -1011,25 +1270,45 @@ impl Component for BlockchainComponent {
     async fn get_metrics(&self) -> Result<HashMap<String, f64>> {
         let mut metrics = HashMap::new();
         let start_time = *self.start_time.read().await;
-        let uptime_secs = start_time.map(|t| t.elapsed().as_secs() as f64).unwrap_or(0.0);
-        
+        let uptime_secs = start_time
+            .map(|t| t.elapsed().as_secs() as f64)
+            .unwrap_or(0.0);
+
         metrics.insert("uptime_seconds".to_string(), uptime_secs);
-        metrics.insert("is_running".to_string(), if matches!(*self.status.read().await, ComponentStatus::Running) { 1.0 } else { 0.0 });
-        
+        metrics.insert(
+            "is_running".to_string(),
+            if matches!(*self.status.read().await, ComponentStatus::Running) {
+                1.0
+            } else {
+                0.0
+            },
+        );
+
         // Try global provider first
         let global_blockchain = crate::runtime::blockchain_provider::get_global_blockchain().await;
-        
+
         if let Ok(global) = global_blockchain {
             let blockchain = global.read().await;
             metrics.insert("chain_height".to_string(), blockchain.height as f64);
             metrics.insert("total_blocks".to_string(), blockchain.blocks.len() as f64);
-            metrics.insert("pending_transactions".to_string(), blockchain.pending_transactions.len() as f64);
+            metrics.insert(
+                "pending_transactions".to_string(),
+                blockchain.pending_transactions.len() as f64,
+            );
             metrics.insert("utxo_count".to_string(), blockchain.utxo_set.len() as f64);
-            metrics.insert("identity_count".to_string(), blockchain.identity_registry.len() as f64);
+            metrics.insert(
+                "identity_count".to_string(),
+                blockchain.identity_registry.len() as f64,
+            );
             metrics.insert("total_work".to_string(), blockchain.total_work as f64);
-            
+
             let avg_block_size = if blockchain.blocks.len() > 0 {
-                blockchain.blocks.iter().map(|b| b.transactions.len()).sum::<usize>() as f64 / blockchain.blocks.len() as f64
+                blockchain
+                    .blocks
+                    .iter()
+                    .map(|b| b.transactions.len())
+                    .sum::<usize>() as f64
+                    / blockchain.blocks.len() as f64
             } else {
                 0.0
             };
@@ -1037,13 +1316,24 @@ impl Component for BlockchainComponent {
         } else if let Some(ref blockchain) = *self.blockchain.read().await {
             metrics.insert("chain_height".to_string(), blockchain.height as f64);
             metrics.insert("total_blocks".to_string(), blockchain.blocks.len() as f64);
-            metrics.insert("pending_transactions".to_string(), blockchain.pending_transactions.len() as f64);
+            metrics.insert(
+                "pending_transactions".to_string(),
+                blockchain.pending_transactions.len() as f64,
+            );
             metrics.insert("utxo_count".to_string(), blockchain.utxo_set.len() as f64);
-            metrics.insert("identity_count".to_string(), blockchain.identity_registry.len() as f64);
+            metrics.insert(
+                "identity_count".to_string(),
+                blockchain.identity_registry.len() as f64,
+            );
             metrics.insert("total_work".to_string(), blockchain.total_work as f64);
-            
+
             let avg_block_size = if blockchain.blocks.len() > 0 {
-                blockchain.blocks.iter().map(|b| b.transactions.len()).sum::<usize>() as f64 / blockchain.blocks.len() as f64
+                blockchain
+                    .blocks
+                    .iter()
+                    .map(|b| b.transactions.len())
+                    .sum::<usize>() as f64
+                    / blockchain.blocks.len() as f64
             } else {
                 0.0
             };
@@ -1057,10 +1347,106 @@ impl Component for BlockchainComponent {
             metrics.insert("total_work".to_string(), 0.0);
             metrics.insert("avg_transactions_per_block".to_string(), 0.0);
         }
-        
+
         Ok(metrics)
     }
 }
 
 // Export helper type
 pub use crate::runtime::components::consensus::BlockchainValidatorAdapter;
+
+#[cfg(test)]
+mod tests {
+    use super::BlockchainComponent;
+    use crate::config::aggregation::BootstrapValidator;
+
+    #[test]
+    fn should_run_peer_sync_loop_for_joining_validator() {
+        assert!(BlockchainComponent::should_run_peer_sync_loop(
+            1, true, true
+        ));
+    }
+
+    #[test]
+    fn should_not_run_peer_sync_loop_for_bootstrap_leader_validator() {
+        assert!(!BlockchainComponent::should_run_peer_sync_loop(
+            1, false, true
+        ));
+    }
+
+    #[test]
+    fn should_run_peer_sync_loop_for_non_mining_nodes() {
+        assert!(BlockchainComponent::should_run_peer_sync_loop(
+            1, false, false
+        ));
+    }
+
+    #[test]
+    fn normalize_did_supports_prefixed_and_raw_forms() {
+        let raw = "abc123";
+        let prefixed = "did:zhtp:abc123";
+        assert_eq!(BlockchainComponent::normalize_did(raw), "abc123");
+        assert_eq!(BlockchainComponent::normalize_did(prefixed), "abc123");
+    }
+
+    #[test]
+    fn bootstrap_authority_allows_any_listed_validator() {
+        let validators = vec![
+            BootstrapValidator {
+                identity_id: "did:zhtp:leader01".to_string(),
+                consensus_key: String::new(),
+                stake: 1000,
+                storage_provided: 0,
+                commission_rate: 0,
+                endpoints: Vec::new(),
+            },
+            BootstrapValidator {
+                identity_id: "did:zhtp:validator02".to_string(),
+                consensus_key: String::new(),
+                stake: 1000,
+                storage_provided: 0,
+                commission_rate: 0,
+                endpoints: Vec::new(),
+            },
+        ];
+
+        assert!(BlockchainComponent::local_did_is_bootstrap_validator(
+            "did:zhtp:validator02",
+            &validators
+        ));
+    }
+
+    #[test]
+    fn bootstrap_authority_check_is_case_insensitive() {
+        let validators = vec![BootstrapValidator {
+            identity_id: "did:zhtp:ABCDEF1234".to_string(),
+            consensus_key: String::new(),
+            stake: 1000,
+            storage_provided: 0,
+            commission_rate: 0,
+            endpoints: Vec::new(),
+        }];
+
+        assert!(BlockchainComponent::local_did_is_bootstrap_validator(
+            "did:zhtp:abcdef1234",
+            &validators
+        ));
+    }
+
+    #[test]
+    fn bootstrap_authority_rejects_unlisted_validator() {
+        let validators = vec![BootstrapValidator {
+            identity_id: "did:zhtp:leader01".to_string(),
+            consensus_key: String::new(),
+            stake: 1000,
+            storage_provided: 0,
+            commission_rate: 0,
+            endpoints: Vec::new(),
+        }];
+
+        assert!(!BlockchainComponent::local_did_is_bootstrap_validator(
+            "did:zhtp:outsider99",
+            &validators
+        ));
+    }
+}

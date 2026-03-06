@@ -876,6 +876,7 @@ impl BlockchainConsensusCoordinator {
         let proposal = ConsensusProposal {
             id: proposal_id.clone(),
             height,
+            round: 0,
             proposer: self.local_validator_id.clone().unwrap_or_else(|| Hash::from_bytes(&[0u8; 32])),
             previous_hash: consensus_previous_hash,
             block_data,

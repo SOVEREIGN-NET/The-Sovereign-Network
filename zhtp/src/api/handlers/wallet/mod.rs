@@ -248,16 +248,8 @@ impl WalletHandler {
         // Get wallets from the identity's wallet manager (created during identity registration)
         let wallet_summaries = identity.list_wallets();
 
-        // Use SOV token contract as authoritative live balance when available.
-        let (blockchain_balances, sov_token_id) = {
-            let blockchain = self.blockchain.read().await;
-            let balances: std::collections::HashMap<String, u64> = blockchain.wallet_registry.iter()
-                .map(|(id, data)| (id.clone(), data.initial_balance))
-                .collect();
-            (balances, lib_blockchain::contracts::utils::generate_lib_token_id())
-        };
+        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
-        // Convert wallet summaries to API response format, merging blockchain balances
         let mut wallets = Vec::new();
         let mut total_balance_adjusted = 0u64;
         for summary in wallet_summaries.iter() {
@@ -268,39 +260,26 @@ impl WalletHandler {
                 (0, 0)
             };
 
-            // Prefer SOV token contract balance (live balance), fallback to wallet registry.
+            // Read SOV balance from in-memory token_contracts (authoritative).
+            // After each block commit, the executor path syncs in-memory from SledStore
+            // for all touched addresses, so in-memory is always current.
             let wallet_id_hex = hex::encode(summary.id.0);
-            let blockchain_balance = blockchain_balances.get(&wallet_id_hex).copied().unwrap_or(0);
             let effective_balance = {
                 let blockchain = self.blockchain.read().await;
-                // When BlockExecutor is active, token balance writes go to the token_balances
-                // Sled tree. The in-memory token_contracts is never updated after executor-path
-                // transfers, so always prefer the Sled tree when a store is attached.
-                let sled_balance: Option<u64> = blockchain.get_store().and_then(|store| {
-                    let wallet_id_bytes = hex::decode(&wallet_id_hex).ok()?;
-                    if wallet_id_bytes.len() != 32 { return None; }
-                    let mut wallet_id_arr = [0u8; 32];
-                    wallet_id_arr.copy_from_slice(&wallet_id_bytes);
-                    let storage_token_id = lib_blockchain::storage::TokenId(sov_token_id);
-                    let addr = lib_blockchain::storage::Address::new(wallet_id_arr);
-                    store.get_token_balance(&storage_token_id, &addr).ok().map(|b| b as u64)
-                });
-                sled_balance.unwrap_or_else(|| {
-                    // Fallback: in-memory token contract (no store, or lookup failed)
-                    let token_balance = blockchain.token_contracts.get(&sov_token_id).and_then(|token| {
-                        let wallet_id_bytes = hex::decode(&wallet_id_hex).ok()?;
-                        if wallet_id_bytes.len() != 32 { return None; }
+                let wallet_id_bytes_opt = hex::decode(&wallet_id_hex).ok()
+                    .filter(|b| b.len() == 32);
+                wallet_id_bytes_opt.as_ref().and_then(|bytes| {
+                    blockchain.token_contracts.get(&sov_token_id).and_then(|token| {
                         let mut key_id = [0u8; 32];
-                        key_id.copy_from_slice(&wallet_id_bytes);
+                        key_id.copy_from_slice(bytes);
                         let wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
                             dilithium_pk: vec![],
                             kyber_pk: vec![],
                             key_id,
                         };
                         token.balances.get(&wallet_key).copied()
-                    });
-                    token_balance.unwrap_or_else(|| std::cmp::max(summary.balance, blockchain_balance))
-                })
+                    })
+                }).unwrap_or(0)
             };
 
             let wallet_info = WalletInfo {

@@ -318,11 +318,10 @@ impl CurveHandler {
             const CBE_DEPLOY_MIN_SOV: u64 = 100 * 100_000_000; // 100 SOV atomic
             let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
             let sov_token = blockchain.token_contracts.get(&sov_id);
-
             // Resolve the creator's primary wallet and check SOV balance against the wallet-based key.
             let sov_balance = match sov_token {
                 Some(token) => {
-                    let primary_wallet_id = match blockchain.primary_wallet_for_signer(&creator.key_id) {
+                    let primary_wallet_id = match blockchain.primary_wallet_id_for_signer(&creator.key_id) {
                         Some(wallet_id) => wallet_id,
                         None => {
                             return Ok(create_error_response(
@@ -332,7 +331,7 @@ impl CurveHandler {
                         }
                     };
                     let sov_wallet_key =
-                        lib_blockchain::contracts::utils::wallet_key_for_sov(primary_wallet_id);
+                        lib_blockchain::Blockchain::sov_key_from_wallet_id(&primary_wallet_id);
                     token.balance_of(&sov_wallet_key)
                 }
                 None => 0,
@@ -362,10 +361,10 @@ impl CurveHandler {
             threshold,
             deploy_req.sell_enabled,
             creator,
+            creator_did,
             self.get_current_block().await?,
             self.get_current_timestamp().await?,
         ).map_err(|e| anyhow::anyhow!("Deploy failed: {}", e))?;
-        token.creator_did = Some(creator_did);
 
         // Register in blockchain
         {
@@ -1389,6 +1388,7 @@ fn integer_sqrt(n: u128) -> u128 {
 mod tests {
     use super::*;
     use lib_blockchain::Blockchain;
+    use lib_crypto::Hash;
 
     #[test]
     fn test_integer_sqrt() {

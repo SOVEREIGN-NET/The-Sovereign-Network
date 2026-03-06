@@ -6,9 +6,9 @@ use crate::commands::web4_utils::connect_default;
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_network::client::ZhtpClient;
-use serde_json::json;
 
-const DAO_PROPOSAL_CREATE_ENDPOINT: &str = "/api/v1/dao/proposal/create";
+const ORACLE_COMMITTEE_PROPOSE_ENDPOINT: &str = "/api/v1/oracle/committee/propose";
+const ORACLE_CONFIG_PROPOSE_ENDPOINT: &str = "/api/v1/oracle/config/propose";
 
 pub async fn handle_oracle_command(args: OracleArgs, cli: &ZhtpCli) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
@@ -24,28 +24,30 @@ async fn handle_oracle_command_impl(
     match args.action {
         OracleAction::CommitteeUpdate {
             members,
+            pubkeys,
             activate_epoch,
             reason,
-            title,
-            description,
-            voting_period_days,
+            title: _,
+            description: _,
+            voting_period_days: _,
         } => {
             if members.is_empty() {
                 return Err(CliError::ConfigError(
                     "members cannot be empty".to_string(),
                 ));
             }
-            let request = build_committee_update_request(
-                members,
-                activate_epoch,
-                reason,
-                title,
-                description,
-                voting_period_days,
-            )?;
-
-            output.info("Submitting oracle committee governance proposal...")?;
-            submit_proposal(&client, cli, output, request, "Oracle Committee Update").await
+            let normalized_members = members
+                .iter()
+                .map(|m| parse_hex_32("member", m).map(hex::encode))
+                .collect::<CliResult<Vec<String>>>()?;
+            let request = serde_json::json!({
+                "new_members": normalized_members,
+                "signing_pubkeys": pubkeys,
+                "activate_at_epoch": activate_epoch,
+                "reason": reason,
+            });
+            output.info("Bootstrapping oracle committee...")?;
+            submit_oracle_request(&client, cli, output, ORACLE_COMMITTEE_PROPOSE_ENDPOINT, request, "Oracle Committee Bootstrap").await
         }
         OracleAction::ConfigUpdate {
             epoch_duration,
@@ -54,103 +56,75 @@ async fn handle_oracle_command_impl(
             max_price_staleness_epochs,
             activate_epoch,
             reason,
-            title,
-            description,
-            voting_period_days,
+            title: _,
+            description: _,
+            voting_period_days: _,
         } => {
-            let request = build_config_update_request(
-                epoch_duration,
-                max_source_age,
-                max_deviation_bps,
-                max_price_staleness_epochs,
-                activate_epoch,
-                reason,
-                title,
-                description,
-                voting_period_days,
-            );
-
-            output.info("Submitting oracle config governance proposal...")?;
-            submit_proposal(&client, cli, output, request, "Oracle Config Update").await
+            let request = serde_json::json!({
+                "epoch_duration_secs": epoch_duration,
+                "max_source_age_secs": max_source_age,
+                "max_deviation_bps": max_deviation_bps,
+                "max_price_staleness_epochs": max_price_staleness_epochs,
+                "activate_at_epoch": activate_epoch,
+                "reason": reason,
+            });
+            output.info("Submitting oracle config update...")?;
+            submit_oracle_request(&client, cli, output, ORACLE_CONFIG_PROPOSE_ENDPOINT, request, "Oracle Config Update").await
         }
+        OracleAction::Status => fetch_oracle(&client, cli, output, "/api/v1/oracle/status", "Oracle Status").await,
+        OracleAction::Price => fetch_oracle(&client, cli, output, "/api/v1/oracle/price", "Oracle Price").await,
+        OracleAction::Config => fetch_oracle(&client, cli, output, "/api/v1/oracle/config", "Oracle Config").await,
+        OracleAction::PendingUpdates => fetch_oracle(&client, cli, output, "/api/v1/oracle/pending-updates", "Oracle Pending Updates").await,
+        OracleAction::SlashingEvents => fetch_oracle(&client, cli, output, "/api/v1/oracle/slashing-events", "Oracle Slashing Events").await,
+        OracleAction::BannedValidators => fetch_oracle(&client, cli, output, "/api/v1/oracle/banned-validators", "Oracle Banned Validators").await,
     }
 }
 
-fn build_committee_update_request(
-    members: Vec<String>,
-    activate_epoch: u64,
-    reason: String,
-    title: Option<String>,
-    description: Option<String>,
-    voting_period_days: Option<u32>,
-) -> CliResult<serde_json::Value> {
-    if members.is_empty() {
-        return Err(CliError::ConfigError(
-            "members cannot be empty".to_string(),
-        ));
-    }
-    let normalized_members = members
-        .iter()
-        .map(|member| parse_hex_32("member", member).map(hex::encode))
-        .collect::<CliResult<Vec<String>>>()?;
+async fn fetch_oracle(
+    client: &ZhtpClient,
+    cli: &ZhtpCli,
+    output: &dyn crate::output::Output,
+    endpoint: &str,
+    title: &str,
+) -> CliResult<()> {
+    let response = client.get(endpoint).await.map_err(|e| CliError::ApiCallFailed {
+        endpoint: endpoint.to_string(),
+        status: 0,
+        reason: e.to_string(),
+    })?;
 
-    Ok(json!({
-        "title": title.unwrap_or_else(|| "Oracle committee update".to_string()),
-        "description": description.unwrap_or_else(|| reason.clone()),
-        "proposal_type": "update_oracle_committee",
-        "voting_period_days": voting_period_days,
-        "oracle_committee_members": normalized_members,
-        "activate_at_epoch": activate_epoch,
-        "reason": reason,
-        "orchestrated": true
-    }))
+    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
+        CliError::ApiCallFailed {
+            endpoint: endpoint.to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {e}"),
+        }
+    })?;
+    output.header(title)?;
+    output.print(&format_output(&result, &cli.format)?)?;
+    Ok(())
 }
 
-fn build_config_update_request(
-    epoch_duration: u64,
-    max_source_age: u64,
-    max_deviation_bps: u32,
-    max_price_staleness_epochs: u64,
-    activate_epoch: u64,
-    reason: String,
-    title: Option<String>,
-    description: Option<String>,
-    voting_period_days: Option<u32>,
-) -> serde_json::Value {
-    json!({
-        "title": title.unwrap_or_else(|| "Oracle config update".to_string()),
-        "description": description.unwrap_or_else(|| reason.clone()),
-        "proposal_type": "update_oracle_config",
-        "voting_period_days": voting_period_days,
-        "oracle_epoch_duration_secs": epoch_duration,
-        "oracle_max_source_age_secs": max_source_age,
-        "oracle_max_deviation_bps": max_deviation_bps,
-        "oracle_max_price_staleness_epochs": max_price_staleness_epochs,
-        "activate_at_epoch": activate_epoch,
-        "reason": reason,
-        "orchestrated": true
-    })
-}
-
-async fn submit_proposal(
+async fn submit_oracle_request(
     client: &ZhtpClient,
     cli: &ZhtpCli,
     output: &dyn Output,
+    endpoint: &str,
     request: serde_json::Value,
     title: &str,
 ) -> CliResult<()> {
     let response = client
-        .post_json(DAO_PROPOSAL_CREATE_ENDPOINT, &request)
+        .post_json(endpoint, &request)
         .await
         .map_err(|e| CliError::ApiCallFailed {
-            endpoint: DAO_PROPOSAL_CREATE_ENDPOINT.to_string(),
+            endpoint: endpoint.to_string(),
             status: 0,
             reason: e.to_string(),
         })?;
 
     let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
         CliError::ApiCallFailed {
-            endpoint: DAO_PROPOSAL_CREATE_ENDPOINT.to_string(),
+            endpoint: endpoint.to_string(),
             status: 0,
             reason: format!("Failed to parse response: {e}"),
         }

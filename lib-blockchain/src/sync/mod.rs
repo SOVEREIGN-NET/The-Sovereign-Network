@@ -211,7 +211,7 @@ impl ChainSync {
             return self.import_blocks_via_canonical_runtime(blocks, None);
         }
 
-        let executor = BlockExecutor::from_config(Arc::clone(&self.store), self.executor_config.clone());
+        let executor = BlockExecutor::from_config_trusted_replay(Arc::clone(&self.store), self.executor_config.clone());
 
         // Determine expected starting height
         let expected_start = match self.store.latest_height() {
@@ -275,7 +275,7 @@ impl ChainSync {
             return self.import_blocks_via_canonical_runtime(blocks, Some(&mut on_progress));
         }
 
-        let executor = BlockExecutor::from_config(Arc::clone(&self.store), self.executor_config.clone());
+        let executor = BlockExecutor::from_config_trusted_replay(Arc::clone(&self.store), self.executor_config.clone());
 
         // Determine expected starting height
         let expected_start = match self.store.latest_height() {
@@ -352,7 +352,7 @@ impl ChainSync {
 
             if split_index > 0 {
                 let prefix: Vec<Block> = remaining_blocks.drain(..split_index).collect();
-                let executor = BlockExecutor::from_config(
+                let executor = BlockExecutor::from_config_trusted_replay(
                     Arc::clone(&self.store),
                     self.executor_config.clone(),
                 );

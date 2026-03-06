@@ -447,6 +447,24 @@ fn test_partition_recovery() {
     assert!(evidence2.is_none()); // No partition because monitor is not stalled
 }
 
+#[test]
+fn test_partition_detection_skipped_for_single_validator_bootstrap() {
+    let mut detector = ByzantineFaultDetector::new();
+    let mut monitor = LivenessMonitor::new();
+
+    let validators: Vec<IdentityId> = vec![create_unique_identity()];
+    monitor.update_validator_set(&validators);
+
+    // Single validator will appear "stalled" by liveness logic when timed out.
+    // Partition evidence should be suppressed in bootstrap 1/1 mode.
+    monitor.report_timeout(&validators[0]);
+
+    let now = current_timestamp();
+    let evidence = detector.detect_network_partition(&monitor, 10, 0, now);
+
+    assert!(evidence.is_none());
+}
+
 // ============================================================================
 // FORENSIC TESTS (4 tests)
 // ============================================================================
