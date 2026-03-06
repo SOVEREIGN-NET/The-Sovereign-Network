@@ -291,6 +291,7 @@ impl ZkConsensusIntegration {
             id: proposal_id.clone(),
             proposer: validator_id.clone(),
             height,
+            round: 0,
             previous_hash,
             block_data,
             timestamp: std::time::SystemTime::now()

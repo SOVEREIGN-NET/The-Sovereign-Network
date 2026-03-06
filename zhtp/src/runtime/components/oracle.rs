@@ -143,7 +143,9 @@ impl OracleComponent {
                 continue;
             }
 
-            // Snapshot validator consensus keys for signature verification.
+            // Build key lookup: oracle_signing_pubkeys (from bootstrap) takes priority,
+            // then validator_registry consensus keys as fallback.
+            let oracle_pubkeys = bc.oracle_state.oracle_signing_pubkeys.clone();
             let key_map: Vec<([u8; 32], Vec<u8>)> = bc
                 .validator_registry
                 .values()
@@ -158,6 +160,13 @@ impl OracleComponent {
                 &attestation,
                 current_epoch,
                 |key_id: [u8; 32]| {
+                    // Check bootstrapped oracle signing pubkeys first.
+                    if let Some(pk) = oracle_pubkeys.get(&key_id) {
+                        if !pk.is_empty() {
+                            return Some(pk.clone());
+                        }
+                    }
+                    // Fall back to validator_registry consensus keys.
                     key_map
                         .iter()
                         .find(|(kid, _)| *kid == key_id)
@@ -309,6 +318,7 @@ impl OracleComponent {
                     // Use block timestamp for epoch derivation (Oracle Spec v1 §4.1)
                     let mut bc = blockchain.write().await;
                     let epoch2 = bc.oracle_state.epoch_id(bc.last_committed_timestamp());
+                    let oracle_pubkeys2 = bc.oracle_state.oracle_signing_pubkeys.clone();
                     let key_map: Vec<([u8; 32], Vec<u8>)> = bc
                         .validator_registry
                         .values()
@@ -323,6 +333,11 @@ impl OracleComponent {
                         &attestation,
                         epoch2,
                         |key_id: [u8; 32]| {
+                            if let Some(pk) = oracle_pubkeys2.get(&key_id) {
+                                if !pk.is_empty() {
+                                    return Some(pk.clone());
+                                }
+                            }
                             key_map.iter().find(|(kid, _)| *kid == key_id).map(|(_, pk)| pk.clone())
                         },
                     ) {

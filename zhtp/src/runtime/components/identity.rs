@@ -19,6 +19,9 @@ pub struct IdentityComponent {
     genesis_private_data: Arc<RwLock<Vec<(lib_identity::IdentityId, lib_identity::identity::PrivateIdentityData)>>>,
     /// Whether this node can mine blocks. Only FullValidator nodes mine startup backfill blocks.
     can_mine: bool,
+    /// Whether this node is the bootstrap mining leader (first entry in bootstrap_validators).
+    /// Only the leader creates SOV backfill TokenMint transactions.
+    is_bootstrap_leader: bool,
 }
 
 impl std::fmt::Debug for IdentityComponent {
@@ -30,12 +33,13 @@ impl std::fmt::Debug for IdentityComponent {
             .field("genesis_identities", &"<RwLock<Vec<ZhtpIdentity>>>")
             .field("genesis_private_data", &"<RwLock<Vec<(IdentityId, PrivateIdentityData)>>>")
             .field("can_mine", &self.can_mine)
+            .field("is_bootstrap_leader", &self.is_bootstrap_leader)
             .finish()
     }
 }
 
 impl IdentityComponent {
-    pub fn new(node_role: NodeRole) -> Self {
+    pub fn new(node_role: NodeRole, is_bootstrap_leader: bool) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -43,10 +47,11 @@ impl IdentityComponent {
             genesis_identities: Arc::new(RwLock::new(Vec::new())),
             genesis_private_data: Arc::new(RwLock::new(Vec::new())),
             can_mine: node_role.can_mine(),
+            is_bootstrap_leader,
         }
     }
 
-    pub fn new_with_identities(node_role: NodeRole, genesis_identities: Vec<lib_identity::ZhtpIdentity>) -> Self {
+    pub fn new_with_identities(node_role: NodeRole, genesis_identities: Vec<lib_identity::ZhtpIdentity>, is_bootstrap_leader: bool) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -54,6 +59,7 @@ impl IdentityComponent {
             genesis_identities: Arc::new(RwLock::new(genesis_identities)),
             genesis_private_data: Arc::new(RwLock::new(Vec::new())),
             can_mine: node_role.can_mine(),
+            is_bootstrap_leader,
         }
     }
 
@@ -61,6 +67,7 @@ impl IdentityComponent {
         node_role: NodeRole,
         genesis_identities: Vec<lib_identity::ZhtpIdentity>,
         genesis_private_data: Vec<(lib_identity::IdentityId, lib_identity::identity::PrivateIdentityData)>,
+        is_bootstrap_leader: bool,
     ) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
@@ -69,6 +76,7 @@ impl IdentityComponent {
             genesis_identities: Arc::new(RwLock::new(genesis_identities)),
             genesis_private_data: Arc::new(RwLock::new(genesis_private_data)),
             can_mine: node_role.can_mine(),
+            is_bootstrap_leader,
         }
     }
 
@@ -131,7 +139,7 @@ impl Component for IdentityComponent {
             }
         }
 
-        if let Err(e) = run_post_bootstrap_sov_backfill(self.can_mine).await {
+        if let Err(e) = run_post_bootstrap_sov_backfill(self.can_mine, self.is_bootstrap_leader).await {
             info!("⚠️ SOV backfill skipped (non-fatal): {}", e);
         }
 
@@ -927,8 +935,18 @@ async fn bootstrap_identities_from_dht(
 /// After DHT bootstrap and identity migration, mint missing SOV balances via TokenMint txs.
 /// This makes token balances block-authoritative and durable across restarts.
 /// Observer nodes skip the mine_block calls — they receive these blocks from the validator.
-async fn run_post_bootstrap_sov_backfill(can_mine: bool) -> Result<()> {
+async fn run_post_bootstrap_sov_backfill(can_mine: bool, is_bootstrap_leader: bool) -> Result<()> {
     let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
+
+    // Only the bootstrap leader creates SOV backfill TokenMint transactions.
+    // Non-leader nodes get their SOV balances by syncing the leader's mined blocks.
+    // Allowing all validators to create TokenMint txs floods the mempool with 4× duplicates
+    // (each node signs with its own key → unique hashes → no deduplication).
+    if !is_bootstrap_leader {
+        let bc = blockchain_arc.read().await;
+        info!("🪙 Not bootstrap leader (height {}): skipping SOV backfill — balances come from leader's blocks", bc.height);
+        return Ok(());
+    }
 
     // First, ensure all wallets in the registry are registered on-chain before minting.
     // This prevents TokenMint blocks from referencing wallets unknown to other nodes.
@@ -970,13 +988,19 @@ async fn run_post_bootstrap_sov_backfill(can_mine: bool) -> Result<()> {
             .pending_transactions
             .iter()
             .any(|tx| matches!(tx.transaction_type, lib_blockchain::TransactionType::WalletRegistration));
+        // Only mine startup blocks on the genesis node (height == 0).
+        // On all other nodes the chain was synced from the leader; startup transactions
+        // stay in the mempool and get mined by the leader's next block.
+        let is_genesis_node = bc.height == 0;
         if pending_wallet_regs {
-            if can_mine {
+            if can_mine && is_genesis_node {
                 if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await {
                     warn!("🪙 Failed to mine wallet registration block before backfill: {}", e);
                 } else {
                     info!("🪙 Mined wallet registration block before SOV backfill");
                 }
+            } else if can_mine {
+                info!("🪙 Synced chain: deferring wallet registrations to leader's mining loop");
             } else {
                 info!("🪙 Observer node: skipping startup mine for wallet registrations (validator will broadcast)");
             }
@@ -1022,12 +1046,15 @@ async fn run_post_bootstrap_sov_backfill(can_mine: bool) -> Result<()> {
         return Ok(());
     }
 
-    if can_mine {
+    let is_genesis_node = bc.height == 0;
+    if can_mine && is_genesis_node {
         if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await {
             warn!("🪙 Failed to mine SOV backfill block: {}", e);
         } else {
             info!("🪙 Mined SOV backfill block with {} TokenMint txs", queued);
         }
+    } else if can_mine {
+        info!("🪙 Synced chain: deferring SOV backfill to leader's mining loop");
     } else {
         info!("🪙 Observer node: skipping startup mine for SOV backfill (validator will broadcast)");
     }

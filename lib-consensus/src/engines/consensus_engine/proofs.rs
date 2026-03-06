@@ -46,6 +46,7 @@ impl ConsensusEngine {
             id: proposal_id,
             proposer: validator_id.clone(),
             height: self.current_round.height,
+            round: self.current_round.round,
             previous_hash,
             block_data,
             timestamp: SystemTime::now()

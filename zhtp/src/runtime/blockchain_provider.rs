@@ -71,6 +71,23 @@ impl BlockchainProvider {
 /// Global blockchain provider instance
 static GLOBAL_BLOCKCHAIN_PROVIDER: OnceLock<BlockchainProvider> = OnceLock::new();
 
+/// Global catch-up sync trigger: when a non-consecutive block is received via mesh
+/// (or any component detects height lag), fire this to kick the catch-up sync task.
+static GLOBAL_CATCHUP_TRIGGER: OnceLock<tokio::sync::mpsc::Sender<u64>> = OnceLock::new();
+
+/// Register the catch-up sync channel sender.  Called once from consensus setup.
+pub fn set_global_catchup_trigger(tx: tokio::sync::mpsc::Sender<u64>) {
+    let _ = GLOBAL_CATCHUP_TRIGGER.set(tx);
+}
+
+/// Fire the catch-up trigger with the current local height.
+/// Non-blocking: silently dropped if the channel is already full (sync in-flight).
+pub fn trigger_global_catchup(local_height: u64) {
+    if let Some(tx) = GLOBAL_CATCHUP_TRIGGER.get() {
+        let _ = tx.try_send(local_height);
+    }
+}
+
 /// Initialize the global blockchain provider
 pub fn initialize_global_blockchain_provider() -> &'static BlockchainProvider {
     GLOBAL_BLOCKCHAIN_PROVIDER.get_or_init(|| {

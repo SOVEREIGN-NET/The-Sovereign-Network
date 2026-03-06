@@ -64,205 +64,232 @@ pub use node_runtime::{
 pub use node_runtime_orchestrator::NodeRuntimeOrchestrator;
 pub use shared_blockchain::*;
 pub use shared_dht::*;
-pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_blockchain, is_global_blockchain_available};
+pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_blockchain, is_global_blockchain_available, set_global_catchup_trigger, trigger_global_catchup};
 pub use identity_manager_provider::{initialize_global_identity_manager_provider, set_global_identity_manager, get_global_identity_manager};
 pub use network_blockchain_provider::ZhtpBlockchainProvider;
 pub use mesh_router_provider::{initialize_global_mesh_router_provider, set_global_mesh_router, get_broadcast_metrics};
 
-/// Try to sync blockchain from bootstrap peers using QUIC transport
+/// Try to sync blockchain from bootstrap peers using paginated block-range QUIC requests.
 ///
-/// This function creates a temporary bootstrap identity and uses the QUIC-based
-/// ZhtpClient to fetch the blockchain from discovered peers. This ensures we use
-/// the same transport layer as the rest of the system (QUIC/ZHTP) rather than HTTP.
+/// Uses the same `/api/v1/blockchain/blocks/{start}/{end}` endpoint as the catch-up
+/// sync path, fetching 200 blocks per page. This avoids the single-shot export which
+/// hits the 16 MB QUIC message-size limit for any chain longer than ~700 blocks.
 ///
-/// Returns true if sync succeeded and blocks were imported to store.
+/// Returns:
+///   `Ok(true)`  — synced successfully; caller should load from store and proceed.
+///   `Ok(false)` — no peers had chain data at height > 0; creating genesis is safe.
+///   `Err(_)`    — at least one peer had height > 0 but all sync attempts failed;
+///                 the caller MUST NOT create genesis — it must retry until synced.
 async fn try_initial_sync_from_peer(
     store: std::sync::Arc<lib_blockchain::storage::SledStore>,
     peers: &[String],
-) -> bool {
-    // Configuration constants
-    const MAX_EXPORT_SIZE: usize = 100 * 1024 * 1024; // 100MB default
-    const MAX_SHIFT_BITS: usize = 31; // Prevent overflow: 1u64 << 32 would overflow
-    const MAX_BACKOFF_DELAY_MS: u64 = 60_000; // 60 seconds max backoff
-    
-    let max_attempts: usize = std::env::var("ZHTP_SYNC_MAX_ATTEMPTS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(5);
-    let base_delay_ms: u64 = std::env::var("ZHTP_SYNC_BASE_DELAY_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(500);
-    
-    let max_export_size = std::env::var("ZHTP_SYNC_MAX_EXPORT_SIZE")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(MAX_EXPORT_SIZE);
+) -> anyhow::Result<bool> {
+    use lib_blockchain::storage::BlockchainStore;
+    use lib_blockchain::sync::ChainSync;
 
-    // Create a temporary bootstrap identity for initial sync
-    // This is only used for the initial connection; once we have the chain,
-    // the node will use its proper identity from wallet startup.
+    const BLOCKS_PER_PAGE: u64 = 200;
+    // Safety cap: 50 000 pages × 200 = 10 M blocks
+    const MAX_PAGES_PER_PEER: usize = 50_000;
+
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let device_name = format!("temp-bootstrap-sync-{}", timestamp);
-    
     let temp_identity = match lib_identity::ZhtpIdentity::new_unified(
         lib_identity::IdentityType::Device,
-        None,  // age: not needed for Device type
-        None,  // jurisdiction: not needed for Device type
-        &device_name,
-        None,  // Generate random seed
+        None,
+        None,
+        &format!("temp-initial-sync-{}", timestamp),
+        None,
     ) {
         Ok(id) => id,
         Err(e) => {
             error!("❌ Failed to generate temporary identity for initial sync: {}", e);
-            return false;
+            // Cannot verify peers — treat as "no data" so genesis is allowed.
+            return Ok(false);
         }
     };
 
-    for attempt in 0..max_attempts {
-        for peer in peers {
-            // Parse peer address
-            let peer_addr = match peer.parse::<std::net::SocketAddr>() {
-                Ok(addr) => addr,
-                Err(_) => {
-                    warn!("⚠️  Skipping invalid bootstrap peer address: {}", peer);
-                    continue;
-                }
-            };
-            
-            info!("🔄 Attempting initial chain sync from {} (attempt {}/{})", peer_addr, attempt + 1, max_attempts);
+    // Determine local height and first block to fetch.
+    // latest_height() returns Err(NotInitialized) when the store has no genesis yet —
+    // in that case we must fetch starting from block 0 (genesis).
+    // When Ok(h), genesis exists and blocks 0..=h are committed; fetch from h+1.
+    let (local_height, first_start) = match (store.as_ref() as &dyn BlockchainStore).latest_height() {
+        Ok(h) => (h, h.saturating_add(1)),
+        Err(_) => (0u64, 0u64), // empty store — fetch genesis (block 0) first
+    };
 
-            // Create QUIC client in bootstrap mode for initial sync
-            use lib_network::client::{ZhtpClient, ZhtpClientConfig};
-            
-            let client_config = ZhtpClientConfig {
-                allow_bootstrap: true,
-            };
-            
-            let mut client = match ZhtpClient::new_bootstrap_with_config(
-                temp_identity.clone(),
-                client_config,
-            ).await {
-                Ok(c) => c,
-                Err(e) => {
-                    warn!("⚠️  Failed to create QUIC client: {}", e);
-                    continue;
-                }
-            };
+    let mut highest_peer_height: u64 = 0;
 
-            // Connect to peer with timeout
-            // Note: ZhtpClient.connect() requires a string, not SocketAddr
-            let connect_result = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                client.connect(peer)
-            ).await;
-            
-            match connect_result {
-                Ok(Ok(())) => {
-                    info!("✅ Connected to peer {}", peer_addr);
-                }
-                Ok(Err(e)) => {
-                    warn!("⚠️  Failed to connect to {}: {}", peer_addr, e);
-                    continue;
-                }
-                Err(_) => {
-                    warn!("⚠️  Connection timeout to {}", peer_addr);
-                    continue;
-                }
+    for peer in peers {
+        let peer_addr = match peer.parse::<std::net::SocketAddr>() {
+            Ok(addr) => addr,
+            Err(_) => {
+                warn!("⚠️  Skipping invalid bootstrap peer address: {}", peer);
+                continue;
             }
+        };
 
-            // Fetch blockchain export with timeout and size limit
-            let export_result = tokio::time::timeout(
+        info!(
+            "🔄 Initial sync: checking peer {} (local height={}, first fetch from={})",
+            peer_addr, local_height, first_start
+        );
+
+        use lib_network::client::{ZhtpClient, ZhtpClientConfig};
+        let mut client = match ZhtpClient::new_bootstrap_with_config(
+            temp_identity.clone(),
+            ZhtpClientConfig { allow_bootstrap: true },
+        ).await {
+            Ok(c) => c,
+            Err(e) => { warn!("⚠️  Failed to create QUIC client for {}: {}", peer_addr, e); continue; }
+        };
+
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client.connect(peer),
+        ).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => { warn!("⚠️  Connect failed to {}: {}", peer_addr, e); continue; }
+            Err(_) => { warn!("⚠️  Connect timeout to {}", peer_addr); continue; }
+        }
+
+        // Check the peer's chain tip.
+        let tip_resp = match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client.get("/api/v1/blockchain/tip"),
+        ).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => { warn!("⚠️  Tip request failed for {}: {}", peer_addr, e); continue; }
+            Err(_) => { warn!("⚠️  Tip request timeout for {}", peer_addr); continue; }
+        };
+
+        if !tip_resp.is_success() {
+            warn!("⚠️  Peer {} returned non-success for /tip", peer_addr);
+            continue;
+        }
+
+        #[derive(serde::Deserialize)]
+        struct TipInfo { height: u64 }
+        let tip: TipInfo = match serde_json::from_slice(&tip_resp.body) {
+            Ok(t) => t,
+            Err(e) => { warn!("⚠️  Failed to parse tip from {}: {}", peer_addr, e); continue; }
+        };
+
+        if tip.height == 0 || tip.height <= local_height {
+            debug!(
+                "Peer {} at height {} (local={}): no sync needed",
+                peer_addr, tip.height, local_height
+            );
+            continue;
+        }
+
+        highest_peer_height = highest_peer_height.max(tip.height);
+        info!(
+            "📥 Peer {} at height {} — fetching blocks {}-{}",
+            peer_addr, tip.height, local_height + 1, tip.height
+        );
+
+        // Paginated import: 200 blocks per request, same as consensus catch-up.
+        let sync = ChainSync::new(store.clone() as std::sync::Arc<dyn BlockchainStore>);
+        let mut cursor = local_height;
+        let mut next_start = first_start; // may be 0 (empty store) or local_height+1
+        let mut total_imported = 0usize;
+        let mut page_error = false;
+
+        for _ in 0..MAX_PAGES_PER_PEER {
+            if next_start > tip.height { break; }
+            let start = next_start;
+            let end = tip.height.min(start + BLOCKS_PER_PAGE - 1);
+            let url = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
+
+            let blocks_resp = match tokio::time::timeout(
                 std::time::Duration::from_secs(60),
-                client.get("/api/v1/blockchain/export")
-            ).await;
-            
-            let response = match export_result {
-                Ok(Ok(resp)) => resp,
+                client.get(&url),
+            ).await {
+                Ok(Ok(r)) => r,
                 Ok(Err(e)) => {
-                    warn!("⚠️  Failed to fetch export from {}: {}", peer_addr, e);
-                    continue;
+                    warn!("⚠️  Blocks {}-{} request failed from {}: {}", start, end, peer_addr, e);
+                    page_error = true;
+                    break;
                 }
                 Err(_) => {
-                    warn!("⚠️  Export request timeout from {}", peer_addr);
-                    continue;
+                    warn!("⚠️  Blocks {}-{} request timed out from {}", start, end, peer_addr);
+                    page_error = true;
+                    break;
                 }
             };
 
-            if !response.is_success() {
-                warn!("⚠️  Export request failed from {}: {}", peer_addr, response.status_message);
-                continue;
-            }
-
-            // Check response size before reading
-            if response.body.len() > max_export_size {
+            if !blocks_resp.is_success() {
                 warn!(
-                    "⚠️  Export from {} too large ({} bytes, max {}). Refusing to import.",
-                    peer_addr, response.body.len(), max_export_size
+                    "⚠️  Blocks {}-{} from {} returned error: {}",
+                    start, end, peer_addr, blocks_resp.status_message
                 );
-                continue;
+                page_error = true;
+                break;
             }
 
-            // Deserialize the export
-            let import: lib_blockchain::BlockchainImport = match bincode::deserialize(&response.body) {
-                Ok(i) => i,
+            let blocks: Vec<lib_blockchain::Block> = match bincode::deserialize(&blocks_resp.body) {
+                Ok(b) => b,
                 Err(e) => {
-                    warn!("⚠️  Failed to deserialize export from {}: {}", peer_addr, e);
-                    continue;
+                    warn!(
+                        "⚠️  Failed to deserialize blocks {}-{} from {}: {}",
+                        start, end, peer_addr, e
+                    );
+                    page_error = true;
+                    break;
                 }
             };
 
-            if import.blocks.is_empty() {
-                warn!("⚠️  Export from {} contained no blocks", peer_addr);
-                continue;
+            if blocks.is_empty() {
+                break;
             }
 
-            // Import blocks into store
-            // NOTE: ChainSync::import_blocks commits blocks incrementally, so if it fails
-            // mid-way, the store may contain partial state. Since we don't have a clean
-            // way to clear the store, we abort on first failure rather than retry.
-            let sync = lib_blockchain::sync::ChainSync::new(store.clone());
-            match sync.import_blocks(import.blocks) {
+            let page_count = blocks.len();
+            match sync.import_blocks(blocks) {
                 Ok(result) => {
+                    total_imported += page_count;
+                    cursor = result.final_height.unwrap_or(end);
+                    next_start = cursor + 1;
                     info!(
-                        "✅ Initial sync imported {} blocks (final height={:?}) from {}",
-                        result.blocks_imported, result.final_height, peer_addr
+                        "✅ Imported {} blocks (page), cursor now {}",
+                        page_count, cursor
                     );
-                    return true;
                 }
                 Err(e) => {
                     error!(
-                        "❌ Failed to import blocks from {}: {}. Aborting initial sync to avoid inconsistent partial state.",
-                        peer_addr, e
+                        "❌ Failed to import blocks {}-{} from {}: {}",
+                        start, end, peer_addr, e
                     );
-                    // Don't retry - partial state may prevent successful import
-                    return false;
+                    page_error = true;
+                    break;
                 }
             }
         }
 
-        // Exponential backoff with saturation to prevent overflow
-        if attempt + 1 < max_attempts {
-            // Safely calculate delay with capped shift to prevent overflow
-            let shift_amount = attempt.min(MAX_SHIFT_BITS);
-            // Use reasonable fallback (max delay) if shift fails (should never happen with proper cap)
-            let multiplier = 1u64.checked_shl(shift_amount as u32)
-                .unwrap_or(MAX_BACKOFF_DELAY_MS / base_delay_ms);
-            let delay = base_delay_ms.saturating_mul(multiplier);
-            // Cap maximum delay
-            let delay = delay.min(MAX_BACKOFF_DELAY_MS);
-            
-            info!("⏳ Initial sync retry in {}ms (attempt {}/{})", delay, attempt + 1, max_attempts);
-            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        if total_imported > 0 {
+            info!(
+                "✅ Initial sync complete: {} blocks from {} (height {}→{})",
+                total_imported, peer_addr, local_height, cursor
+            );
+            return Ok(true);
+        }
+
+        if page_error {
+            warn!("⚠️  Sync from {} failed mid-transfer", peer_addr);
         }
     }
 
-    false
+    if highest_peer_height > 0 {
+        // At least one peer had data but we could not import any of it.
+        // The caller must NOT create genesis — it must wait and retry.
+        Err(anyhow::anyhow!(
+            "Peers have chain data (max height={}) but all sync attempts failed",
+            highest_peer_height
+        ))
+    } else {
+        // All peers were unreachable or at height 0 — safe to create genesis.
+        Ok(false)
+    }
 }
 
 /// Component status information
@@ -661,15 +688,16 @@ impl RuntimeOrchestrator {
             let genesis_identities = self.genesis_identities.read().await.clone();
             let genesis_private_data = self.genesis_private_data.read().await.clone();
             let node_role_for_identity = self.node_role.read().await.clone();
+            let is_bootstrap_leader = self.is_local_bootstrap_leader().await.unwrap_or(false);
 
             if genesis_identities.is_empty() {
                 info!("Registering Identity component without genesis identities");
-                self.register_component(Arc::new(IdentityComponent::new(node_role_for_identity))).await?;
+                self.register_component(Arc::new(IdentityComponent::new(node_role_for_identity, is_bootstrap_leader))).await?;
             } else {
                 info!(" Registering Identity component with {} genesis identities and {} private keys",
                     genesis_identities.len(), genesis_private_data.len());
                 self.register_component(Arc::new(
-                    IdentityComponent::new_with_identities_and_private_data(node_role_for_identity, genesis_identities, genesis_private_data)
+                    IdentityComponent::new_with_identities_and_private_data(node_role_for_identity, genesis_identities, genesis_private_data, is_bootstrap_leader)
                 )).await?;
             }
         }
@@ -936,6 +964,67 @@ impl RuntimeOrchestrator {
             }
             Err(_) => Ok(0)
         }
+    }
+
+    /// Returns true when this node matches the first bootstrap validator identity.
+    async fn is_local_bootstrap_leader(&self) -> Result<bool> {
+        let leader_did = match self.config.network_config.bootstrap_validators.first() {
+            Some(v) => v.identity_id.clone(),
+            None => return Ok(false),
+        };
+
+        let keystore_path = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+            .join(".zhtp")
+            .join("keystore");
+
+        let local_identity =
+            crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await?;
+        let Some(identity) = local_identity else {
+            return Ok(false);
+        };
+
+        Ok(identity.did == leader_did)
+    }
+
+    /// Returns true if local persistent chain artifacts already exist.
+    fn has_local_chain_data(&self) -> bool {
+        let dat_path = std::path::PathBuf::from(self.config.environment.blockchain_data_path());
+        if dat_path.exists() {
+            return true;
+        }
+
+        let data_dir = self.config.environment.data_directory();
+        let sled_path = std::path::Path::new(&data_dir).join("sled");
+        if !sled_path.exists() {
+            return false;
+        }
+
+        match std::fs::read_dir(sled_path) {
+            Ok(mut entries) => entries.next().is_some(),
+            Err(_) => false,
+        }
+    }
+
+    fn should_skip_startup_sync(local_is_bootstrap_leader: bool, has_local_chain_data: bool) -> bool {
+        local_is_bootstrap_leader && has_local_chain_data
+    }
+
+    fn validate_validator_endpoint(network_address: &str) -> Result<()> {
+        if network_address.trim().is_empty() {
+            return Err(anyhow::anyhow!("Validator endpoint is empty"));
+        }
+
+        if let Ok(socket_addr) = network_address.parse::<std::net::SocketAddr>() {
+            if socket_addr.ip().is_unspecified() {
+                return Err(anyhow::anyhow!(
+                    "Validator endpoint {} is not reachable by peers. Configure a concrete host/IP, not 0.0.0.0.",
+                    network_address
+                ));
+            }
+        }
+
+        Ok(())
     }
     
     /// Wait for initial blockchain sync to reach at least height 1
@@ -1260,10 +1349,32 @@ impl RuntimeOrchestrator {
         // Only join an existing network if at least one peer has committed blocks (height > 0).
         // When all nodes start fresh simultaneously (e.g. full wipe) every peer reports height 0.
         // In that case treat it as a new network and let this node create genesis.
-        let joined_existing_network = network_info
-            .as_ref()
-            .map(|ni| ni.blockchain_height > 0)
-            .unwrap_or(false);
+        //
+        // Bootstrap leader with local chain data must NOT wait on peer startup/sync.
+        // This keeps G1 deterministic across restarts and avoids startup races.
+        let local_is_bootstrap_leader = match self.is_local_bootstrap_leader().await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    "Failed to determine bootstrap leader identity from keystore: {}",
+                    e
+                );
+                false
+            }
+        };
+        let leader_has_local_data = Self::should_skip_startup_sync(
+            local_is_bootstrap_leader,
+            self.has_local_chain_data(),
+        );
+        let joined_existing_network = if leader_has_local_data {
+            info!("🌱 Bootstrap leader with local chain data detected - skipping startup sync");
+            false
+        } else {
+            network_info
+                .as_ref()
+                .map(|ni| ni.blockchain_height > 0)
+                .unwrap_or(false)
+        };
         self.set_joined_existing_network(joined_existing_network).await?;
 
         // Phase 3: Use SledStore for persistent blockchain storage
@@ -1384,16 +1495,119 @@ impl RuntimeOrchestrator {
                     }
                 }
 
-                // If we discovered peers, try to sync before creating genesis.
+                // If we discovered peers, sync via paginated block-range protocol.
+                //
+                // Hard gate: if any peer has chain data we MUST NOT create genesis.
+                // Loop until fully caught up to peer tip before allowing mining.
+                //
+                // After each successful sync round we immediately retry: the peer
+                // may have mined additional blocks while we were importing, so we
+                // keep draining until the peer reports no blocks ahead (Ok(false))
+                // or we've closed the gap enough (MAX_CATCHUP_ROUNDS limit).
                 if let Some(ref net_info) = network_info {
                     if !net_info.bootstrap_peers.is_empty() {
-                        if try_initial_sync_from_peer(
-                            store.clone(),
-                            &net_info.bootstrap_peers,
-                        ).await {
-                            if let Some(bc) = lib_blockchain::Blockchain::load_from_store(store.clone())? {
-                                info!("📂 Synced chain from peer (height: {})", bc.height);
-                                synced_blockchain = Some(bc);
+                        const MAX_CATCHUP_ROUNDS: u32 = 10;
+                        let mut rounds = 0u32;
+                        loop {
+                            match try_initial_sync_from_peer(
+                                store.clone(),
+                                &net_info.bootstrap_peers,
+                            ).await {
+                                Ok(true) => {
+                                    // Imported blocks this round; check if peer has advanced further.
+                                    rounds += 1;
+                                    if rounds >= MAX_CATCHUP_ROUNDS {
+                                        info!(
+                                            "ℹ️  Reached max catch-up rounds ({}); proceeding.",
+                                            MAX_CATCHUP_ROUNDS
+                                        );
+                                        if let Some(bc) = lib_blockchain::Blockchain::load_from_store(store.clone())? {
+                                            info!("📂 Loaded chain after sync (height: {})", bc.height);
+                                            synced_blockchain = Some(bc);
+                                        }
+                                        break;
+                                    }
+                                    // Loop immediately to drain any blocks the peer mined
+                                    // during our import pass.
+                                }
+                                Ok(false) => {
+                                    // No peer is ahead of us — fully caught up (or no data at all).
+                                    if rounds > 0 {
+                                        // We synced at least one round; load the chain.
+                                        if let Some(bc) = lib_blockchain::Blockchain::load_from_store(store.clone())? {
+                                            info!("📂 Fully synced to peer tip (height: {})", bc.height);
+                                            synced_blockchain = Some(bc);
+                                        }
+                                    } else {
+                                        info!("ℹ️  No peers have chain data; this node will create genesis.");
+                                    }
+                                    break;
+                                }
+                                Err(e) => {
+                                    // Peers have data but sync failed — block mining/genesis.
+                                    error!(
+                                        "❌ {}. Retrying initial sync in 30s \
+                                         (mining/genesis blocked until synced)...",
+                                        e
+                                    );
+                                    rounds = 0; // reset round counter on failure
+                                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ─────────────────────────────────────────────────────────────
+                // GENESIS GATE: only the bootstrap leader may create genesis.
+                //
+                // If we have no synced chain AND we are not the designated leader,
+                // the leader hasn't mined block 1 yet (or we haven't found peers).
+                // Keep retrying until we either sync a chain from a peer or the
+                // process is killed.  This prevents every node from spawning its
+                // own incompatible genesis when all nodes start simultaneously.
+                // ─────────────────────────────────────────────────────────────
+                if synced_blockchain.is_none() && !local_is_bootstrap_leader {
+                    let retry_peers: Vec<_> = network_info
+                        .as_ref()
+                        .map(|ni| ni.bootstrap_peers.clone())
+                        .unwrap_or_default();
+
+                    loop {
+                        info!(
+                            "⏳ Not bootstrap leader — waiting for leader to mine genesis. \
+                             Retrying peer sync in 30s (peers: {})...",
+                            retry_peers.len()
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+                        if retry_peers.is_empty() {
+                            info!("No peers known yet; waiting for discovery...");
+                            continue;
+                        }
+
+                        match try_initial_sync_from_peer(store.clone(), &retry_peers).await {
+                            Ok(true) => {
+                                if let Some(bc) =
+                                    lib_blockchain::Blockchain::load_from_store(store.clone())?
+                                {
+                                    info!(
+                                        "📂 Non-leader successfully synced from leader \
+                                         (height: {})",
+                                        bc.height
+                                    );
+                                    synced_blockchain = Some(bc);
+                                    break;
+                                }
+                            }
+                            Ok(false) => {
+                                info!(
+                                    "⏳ Bootstrap leader peers still at height 0; \
+                                     leader hasn't mined yet..."
+                                );
+                            }
+                            Err(e) => {
+                                warn!("⚠️  Non-leader sync retry failed: {}; will retry...", e);
                             }
                         }
                     }
@@ -1402,16 +1616,9 @@ impl RuntimeOrchestrator {
                 if let Some(bc) = synced_blockchain {
                     (bc, true)
                 } else {
-                // Note: we attempted peer sync above (try_initial_sync_from_peer).
-                // If synced_blockchain is still None here it means either:
-                //   a) No blockchain.dat backup, AND all peers timed out (fresh network start), OR
-                //   b) Peers were reachable but had no chain data yet.
-                // In both cases creating a local genesis is correct — if a chain existed
-                // elsewhere, try_initial_sync_from_peer would have returned it.
-                // The old hard-error here caused all nodes to crash-loop when restarting
-                // simultaneously from wiped state (every node refused genesis because its
-                // *configured* peers existed but were unreachable mid-startup).
-                info!("📂 SledStore is empty - creating new blockchain");
+                // Bootstrap leader — all peers at height 0 or no peers at all.
+                // This node is the designated genesis creator.
+                info!("📂 SledStore is empty - creating new blockchain (bootstrap leader)");
                 let mut bc = lib_blockchain::Blockchain::new()?;
                 bc.set_store(store.clone());
 
@@ -1518,8 +1725,9 @@ impl RuntimeOrchestrator {
         let genesis_ids = self.genesis_identities.read().await.clone();
         let genesis_private = self.genesis_private_data.read().await.clone();
         let node_role_for_identity = self.node_role.read().await.clone();
+        let is_bootstrap_leader = self.is_local_bootstrap_leader().await.unwrap_or(false);
         self.register_component(
-            Arc::new(IdentityComponent::new_with_identities_and_private_data(node_role_for_identity, genesis_ids, genesis_private))
+            Arc::new(IdentityComponent::new_with_identities_and_private_data(node_role_for_identity, genesis_ids, genesis_private, is_bootstrap_leader))
         ).await?;
 
         self.register_component(Arc::new(StorageComponent::new())).await?;
@@ -2123,15 +2331,20 @@ impl RuntimeOrchestrator {
             &[ks.dilithium_pk.as_slice(), b"rewards"].concat()
         ).to_vec();
 
-        // Use the configured QUIC port for the network address so peers can dial this validator.
-        // The API port (HTTP) is not the right address for consensus/P2P traffic.
-        // Look up this node's endpoint from bootstrap_validators config if available,
-        // otherwise fall back to the configured QUIC port.
-        let quic_port = self.config.protocols_config.quic_port;
+        // Use explicit endpoint configuration so peers can dial this validator.
+        // Priority:
+        //   1) bootstrap_validators[].endpoints for this DID
+        //   2) ZHTP_VALIDATOR_ENDPOINT env var
         let network_address = self.config.network_config.bootstrap_validators.iter()
             .find(|bv| bv.identity_id == node_did)
             .and_then(|bv| bv.endpoints.first().cloned())
-            .unwrap_or_else(|| format!("0.0.0.0:{}", quic_port));
+            .or_else(|| std::env::var("ZHTP_VALIDATOR_ENDPOINT").ok())
+            .ok_or_else(|| anyhow::anyhow!(
+                "No validator endpoint configured for {}. Set bootstrap_validators[].endpoints or ZHTP_VALIDATOR_ENDPOINT.",
+                node_did
+            ))?;
+
+        Self::validate_validator_endpoint(&network_address)?;
 
         let validator_data = lib_blockchain::transaction::ValidatorTransactionData {
             identity_id: node_did.clone(),
@@ -3432,13 +3645,30 @@ impl RuntimeOrchestrator {
         
         // PHASE 3: Setup identity and blockchain
         info!("🔑 Phase 3: Setting up identity and blockchain...");
+        // Skip startup sync for the bootstrap leader when local chain data exists.
+        // This keeps G1 independent on restart and avoids pointless sync waits.
+        let local_is_bootstrap_leader = match orchestrator.is_local_bootstrap_leader().await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to determine bootstrap leader identity from keystore: {}", e);
+                false
+            }
+        };
+        let leader_has_local_data = Self::should_skip_startup_sync(
+            local_is_bootstrap_leader,
+            orchestrator.has_local_chain_data(),
+        );
+
         // Only join if peers have actual blocks (height > 0). If all peers are at height 0,
         // treat this as a fresh network and allow this node to create genesis.
         let peers_have_blocks = network_info
             .as_ref()
             .map(|ni| ni.blockchain_height > 0)
             .unwrap_or(false);
-        if let Some(ref net_info) = network_info.filter(|_| peers_have_blocks) {
+        if leader_has_local_data {
+            orchestrator.set_joined_existing_network(false).await?;
+            info!("🌱 Bootstrap leader with local chain data detected - skipping startup sync");
+        } else if let Some(ref net_info) = network_info.filter(|_| peers_have_blocks) {
             // Joining existing network
             orchestrator.set_joined_existing_network(true).await?;
             orchestrator.start_blockchain_sync(net_info).await?;
@@ -3668,6 +3898,31 @@ impl RuntimeOrchestrator {
     /// Check if node joined an existing network
     pub async fn get_joined_existing_network(&self) -> bool {
         *self.joined_existing_network.read().await
+    }
+}
+
+#[cfg(test)]
+mod runtime_orchestrator_tests {
+    use super::RuntimeOrchestrator;
+
+    #[test]
+    fn should_skip_startup_sync_only_for_leader_with_local_data() {
+        assert!(RuntimeOrchestrator::should_skip_startup_sync(true, true));
+        assert!(!RuntimeOrchestrator::should_skip_startup_sync(true, false));
+        assert!(!RuntimeOrchestrator::should_skip_startup_sync(false, true));
+        assert!(!RuntimeOrchestrator::should_skip_startup_sync(false, false));
+    }
+
+    #[test]
+    fn validate_validator_endpoint_rejects_unspecified_ip() {
+        let result = RuntimeOrchestrator::validate_validator_endpoint("0.0.0.0:9334");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_validator_endpoint_accepts_reachable_formats() {
+        assert!(RuntimeOrchestrator::validate_validator_endpoint("10.1.2.3:9334").is_ok());
+        assert!(RuntimeOrchestrator::validate_validator_endpoint("validator-g2.example.net:9334").is_ok());
     }
 }
 

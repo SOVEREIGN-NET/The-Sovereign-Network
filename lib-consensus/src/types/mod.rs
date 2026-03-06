@@ -144,6 +144,9 @@ pub struct ConsensusProposal {
     pub proposer: IdentityId,
     /// Block height
     pub height: u64,
+    /// Consensus round this proposal is for
+    #[serde(default)]
+    pub round: u32,
     /// Previous block hash
     pub previous_hash: Hash,
     /// Proposed block data

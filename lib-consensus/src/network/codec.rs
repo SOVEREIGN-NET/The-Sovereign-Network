@@ -273,8 +273,7 @@ impl ConsensusMessageCodec for BincodeConsensusCodec {
         // CM-3: Deterministic serialization (bincode is deterministic)
         // CM-8: Pure function (no I/O, no side effects)
         // CM-10: SerializationFailed is distinct from deserialization errors
-        bincode::serialize(message)
-            .map_err(|e| CodecError::SerializationFailed(e.to_string()))
+        bincode::serialize(message).map_err(|e| CodecError::SerializationFailed(e.to_string()))
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<ValidatorMessage, CodecError> {
@@ -290,8 +289,7 @@ impl ConsensusMessageCodec for BincodeConsensusCodec {
             ));
         }
 
-        bincode::deserialize(bytes)
-            .map_err(|e| CodecError::DeserializationFailed(e.to_string()))
+        bincode::deserialize(bytes).map_err(|e| CodecError::DeserializationFailed(e.to_string()))
     }
 
     fn frame(&self, payload: &[u8]) -> Result<Vec<u8>, CodecError> {
@@ -458,6 +456,7 @@ mod tests {
             id: Hash::from_bytes(b"test-proposal-id-123456789012345"),
             proposer: IdentityId::from_bytes(b"test-proposer-id-1234567890123"),
             height: 100,
+            round: 1,
             previous_hash: Hash::from_bytes(b"prev-hash-123456789012345678901"),
             block_data: vec![1, 2, 3, 4, 5],
             timestamp: 1234567890,

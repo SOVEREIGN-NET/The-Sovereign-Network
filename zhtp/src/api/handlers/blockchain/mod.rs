@@ -2,7 +2,7 @@
 //!
 //! Clean, minimal blockchain operations using lib-blockchain patterns
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use bincode::Options;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -15,13 +15,14 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 // Blockchain imports
-use lib_blockchain::types::Hash;
-use lib_blockchain::Blockchain;
+use lib_blockchain::integration::crypto_integration::Signature as BlockchainSignature;
 use lib_blockchain::transaction::{
     ContractDeploymentPayloadV1, DecodedContractExecutionMemo, Transaction,
     CONTRACT_DEPLOYMENT_MEMO_PREFIX,
 };
-use lib_blockchain::types::{transaction_type::TransactionType, ContractType};
+use lib_blockchain::types::Hash;
+use lib_blockchain::types::{transaction_type::TransactionType, ContractCall, ContractType};
+use lib_blockchain::Blockchain;
 
 /// Clean blockchain handler implementation
 ///
@@ -29,8 +30,7 @@ use lib_blockchain::types::{transaction_type::TransactionType, ContractType};
 /// Instead, it fetches the current shared blockchain on every request
 /// to ensure it always sees the latest state (including transactions
 /// added via mesh protocol).
-pub struct BlockchainHandler {
-}
+pub struct BlockchainHandler {}
 
 impl BlockchainHandler {
     pub fn new(_blockchain: Arc<RwLock<Blockchain>>) -> Self {
@@ -61,8 +61,12 @@ impl BlockchainHandler {
             if key.is_empty() {
                 continue;
             }
-            let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into()).to_string();
-            let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into()).to_string();
+            let decoded_key = urlencoding::decode(key)
+                .unwrap_or_else(|_| key.into())
+                .to_string();
+            let decoded_value = urlencoding::decode(value)
+                .unwrap_or_else(|_| value.into())
+                .to_string();
             params.insert(decoded_key, decoded_value);
         }
 
@@ -121,7 +125,11 @@ impl ZhtpRequestHandler for BlockchainHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::info!("Blockchain handler: {} {}", request.method, request.uri);
 
-        let uri_path = request.uri.split('?').next().unwrap_or(request.uri.as_str());
+        let uri_path = request
+            .uri
+            .split('?')
+            .next()
+            .unwrap_or(request.uri.as_str());
         let response = match (request.method, uri_path) {
             (ZhtpMethod::Get, "/api/v1/blockchain/blocks") => {
                 self.handle_list_blocks(request).await
@@ -129,12 +137,8 @@ impl ZhtpRequestHandler for BlockchainHandler {
             (ZhtpMethod::Get, "/api/v1/blockchain/transactions") => {
                 self.handle_list_transactions(request).await
             }
-            (ZhtpMethod::Get, "/api/v1/blockchain/stats") => {
-                self.handle_get_stats(request).await
-            }
-            (ZhtpMethod::Get, "/api/v1/blockchain/search") => {
-                self.handle_search(request).await
-            }
+            (ZhtpMethod::Get, "/api/v1/blockchain/stats") => self.handle_get_stats(request).await,
+            (ZhtpMethod::Get, "/api/v1/blockchain/search") => self.handle_search(request).await,
             (ZhtpMethod::Get, "/api/v1/blockchain/status") => {
                 self.handle_blockchain_status(request).await
             }
@@ -551,7 +555,9 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
                 tx.signature.signature = vec![0u8; expected_sig];
                 tx.signature.public_key.dilithium_pk = vec![0u8; expected_pk];
             }
-            bincode::serialize(&tx).map(|b| b.len()).unwrap_or(raw_tx.len())
+            bincode::serialize(&tx)
+                .map(|b| b.len())
+                .unwrap_or(raw_tx.len())
         }
         Err(_) => raw_tx.len(),
     }
@@ -572,12 +578,14 @@ impl BlockchainHandler {
                 MAX_CANONICAL_TX_BYTES * 2
             ));
         }
-        let tx_bytes = hex::decode(hex_data)
-            .map_err(|_| anyhow::anyhow!("Invalid hex transaction data"))?;
+        let tx_bytes =
+            hex::decode(hex_data).map_err(|_| anyhow::anyhow!("Invalid hex transaction data"))?;
         bincode::DefaultOptions::new()
             .with_limit(MAX_CANONICAL_TX_BYTES as u64)
             .deserialize::<Transaction>(&tx_bytes)
-            .map_err(|_| anyhow::anyhow!("Invalid transaction encoding (expected canonical bincode)"))
+            .map_err(|_| {
+                anyhow::anyhow!("Invalid transaction encoding (expected canonical bincode)")
+            })
     }
 
     fn decode_contract_execution_call(memo: &[u8]) -> Result<DecodedContractExecutionMemo> {
@@ -623,7 +631,11 @@ impl BlockchainHandler {
         match transaction.transaction_type {
             TransactionType::ContractDeployment => {
                 Self::decode_contract_deployment_payload_compat(&transaction.memo).map_err(
-                    |e| anyhow::anyhow!("ContractDeployment requires canonical deployment memo: {e}"),
+                    |e| {
+                        anyhow::anyhow!(
+                            "ContractDeployment requires canonical deployment memo: {e}"
+                        )
+                    },
                 )?;
             }
             TransactionType::ContractExecution => {
@@ -669,10 +681,12 @@ impl BlockchainHandler {
         expected_contract_id: Option<[u8; 32]>,
         success_message: &str,
     ) -> Result<ZhtpResponse> {
-        let req_data: ContractTransactionRequest = serde_json::from_slice(&request.body)
-            .map_err(|_| anyhow::anyhow!(
-                "Invalid request body. Expected JSON: {{\"transaction_data\":\"<hex>\"}}"
-            ))?;
+        let req_data: ContractTransactionRequest =
+            serde_json::from_slice(&request.body).map_err(|_| {
+                anyhow::anyhow!(
+                    "Invalid request body. Expected JSON: {{\"transaction_data\":\"<hex>\"}}"
+                )
+            })?;
 
         // Decode failures are client errors (bad hex / wrong encoding), not server errors.
         let transaction = match Self::decode_canonical_transaction_hex(&req_data.transaction_data) {
@@ -686,10 +700,7 @@ impl BlockchainHandler {
             expected_type,
             expected_contract_id,
         ) {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                e.to_string(),
-            ));
+            return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string()));
         }
 
         let tx_hash = transaction.hash();
@@ -959,7 +970,11 @@ impl BlockchainHandler {
             .map(|b| b.transactions.len() as u64)
             .sum();
 
-        let latest_height = blockchain.blocks.last().map(|b| b.header.height).unwrap_or(0);
+        let latest_height = blockchain
+            .blocks
+            .last()
+            .map(|b| b.header.height)
+            .unwrap_or(0);
         let latest_block_time = blockchain.blocks.last().map(|b| b.header.timestamp);
 
         let avg_block_time_secs = if blockchain.blocks.len() >= 2 {
@@ -1046,7 +1061,11 @@ impl BlockchainHandler {
 
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
-        let latest_height = blockchain.blocks.last().map(|b| b.header.height).unwrap_or(0);
+        let latest_height = blockchain
+            .blocks
+            .last()
+            .map(|b| b.header.height)
+            .unwrap_or(0);
 
         let mut result_type: Option<String> = None;
         let mut result: Option<serde_json::Value> = None;
@@ -1145,7 +1164,8 @@ impl BlockchainHandler {
                     }
                 }
                 _ => {
-                    message = Some("Unsupported search type. Use tx, block, wallet, did.".to_string());
+                    message =
+                        Some("Unsupported search type. Use tx, block, wallet, did.".to_string());
                 }
             }
         } else if Self::is_hex_64(&value) {
@@ -1163,9 +1183,8 @@ impl BlockchainHandler {
                 wallet
             };
         } else {
-            message = Some(
-                "Ambiguous identifier. Specify type: tx, block, wallet, did".to_string(),
-            );
+            message =
+                Some("Ambiguous identifier. Specify type: tx, block, wallet, did".to_string());
         }
 
         if result.is_none() && message.is_none() {
@@ -1337,8 +1356,7 @@ impl BlockchainHandler {
         let recipient_pubkey = req_data.to.as_bytes().to_vec();
 
         // Parse the provided signature (hex string)
-        let signature_bytes = hex::decode(&req_data.signature)
-            .context("Invalid signature hex")?;
+        let signature_bytes = hex::decode(&req_data.signature).context("Invalid signature hex")?;
 
         // Create transaction input (simplified - consuming from sender's wallet)
         let input = lib_blockchain::TransactionInput {
@@ -1420,10 +1438,7 @@ impl BlockchainHandler {
                 ))
             }
             Err(e) => {
-                tracing::error!(
-                    " Failed to add P2P transfer transaction to mempool: {}",
-                    e
-                );
+                tracing::error!(" Failed to add P2P transfer transaction to mempool: {}", e);
                 Ok(ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
                     format!("P2P transfer transaction validation failed: {}", e),
@@ -1439,7 +1454,7 @@ impl BlockchainHandler {
 
         // Get validators directly from blockchain validator_registry
         let all_validators = blockchain.get_all_validators();
-        
+
         // Map validator info to API format
         let validators: Vec<ValidatorInfo> = all_validators
             .iter()
@@ -1450,7 +1465,11 @@ impl BlockchainHandler {
                 blocks_produced: v.blocks_validated,
                 uptime_percentage: {
                     // Calculate uptime as percentage (100% if active, 0% if not)
-                    if v.status == "active" { 100.0 } else { 0.0 }
+                    if v.status == "active" {
+                        100.0
+                    } else {
+                        0.0
+                    }
                 },
             })
             .collect();
@@ -1507,7 +1526,9 @@ impl BlockchainHandler {
                 balance,
                 pending_balance,
                 transaction_count: transactions.len() as u64,
-                note: Some("Pending balance unavailable due to privacy-preserving commitments".to_string()),
+                note: Some(
+                    "Pending balance unavailable due to privacy-preserving commitments".to_string(),
+                ),
             }
         } else {
             BalanceResponse {
@@ -1747,10 +1768,10 @@ impl BlockchainHandler {
 
         // Calculate fees using the canonical chain fee model
         let fee_config = blockchain.get_tx_fee_config();
-        let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
-            tx_size,
-            fee_config,
-        );
+        let min_fee =
+            lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
+                tx_size, fee_config,
+            );
         let base_fee = min_fee;
         let dao_fee = 0;
         let total_fee = if is_system { 0 } else { min_fee };
@@ -1820,10 +1841,10 @@ impl BlockchainHandler {
             req_data.transaction_size.unwrap_or(250)
         };
 
-        let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
-            tx_size,
-            fee_config,
-        );
+        let min_fee =
+            lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
+                tx_size, fee_config,
+            );
 
         let response_data = FeeQuoteResponse {
             status: "success".to_string(),
@@ -2075,7 +2096,8 @@ impl BlockchainHandler {
             TransactionType::ContractDeployment,
             None,
             "Contract deployment transaction accepted to mempool",
-        ).await
+        )
+        .await
     }
 
     /// Call a smart contract function
@@ -2089,7 +2111,8 @@ impl BlockchainHandler {
             TransactionType::ContractExecution,
             Some(contract_id),
             "Contract execution transaction accepted to mempool",
-        ).await
+        )
+        .await
     }
 
     /// List all deployed contracts
@@ -2112,11 +2135,16 @@ impl BlockchainHandler {
 
         let mut contracts = Vec::new();
         if contract_filter == "all" || contract_filter == "token" {
-            contracts.extend(blockchain.token_contracts.keys().map(|id| ContractListItem {
-                contract_id: hex::encode(id),
-                contract_kind: "token".to_string(),
-                block_height: blockchain.contract_blocks.get(id).copied(),
-            }));
+            contracts.extend(
+                blockchain
+                    .token_contracts
+                    .keys()
+                    .map(|id| ContractListItem {
+                        contract_id: hex::encode(id),
+                        contract_kind: "token".to_string(),
+                        block_height: blockchain.contract_blocks.get(id).copied(),
+                    }),
+            );
         }
         if contract_filter == "all" || contract_filter == "web4" {
             contracts.extend(blockchain.web4_contracts.keys().map(|id| ContractListItem {
@@ -2164,56 +2192,56 @@ impl BlockchainHandler {
 
     /// Get contract state
     async fn handle_get_contract_state(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let (contract_id_hex, contract_id) = match Self::extract_contract_id_from_request_uri(&request.uri)
-        {
-            Ok(parts) => parts,
-            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
-        };
+        let (contract_id_hex, contract_id) =
+            match Self::extract_contract_id_from_request_uri(&request.uri) {
+                Ok(parts) => parts,
+                Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+            };
 
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
         let block_height = blockchain.contract_blocks.get(&contract_id).copied();
-        let (contract_kind, state_json) = if let Some(token) = blockchain.token_contracts.get(&contract_id)
-        {
-            let raw_state = blockchain
-                .get_contract_state(&contract_id)
-                .map(hex::encode)
-                .unwrap_or_default();
-            (
-                "token".to_string(),
-                serde_json::json!({
-                    "name": token.name,
-                    "symbol": token.symbol,
-                    "decimals": token.decimals,
-                    "total_supply": token.total_supply,
-                    "max_supply": token.max_supply,
-                    "holder_count": token.balances.len(),
-                    "raw_state_hex": raw_state,
-                }),
-            )
-        } else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
-            let raw_state = blockchain
-                .get_contract_state(&contract_id)
-                .map(hex::encode)
-                .unwrap_or_default();
-            (
-                "web4".to_string(),
-                serde_json::json!({
-                    "domain": web4.domain,
-                    "owner": web4.owner,
-                    "route_count": web4.routes.len(),
-                    "created_at": web4.created_at,
-                    "updated_at": web4.updated_at,
-                    "raw_state_hex": raw_state,
-                }),
-            )
-        } else {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::NotFound,
-                format!("Contract {} not found", contract_id_hex),
-            ));
-        };
+        let (contract_kind, state_json) =
+            if let Some(token) = blockchain.token_contracts.get(&contract_id) {
+                let raw_state = blockchain
+                    .get_contract_state(&contract_id)
+                    .map(hex::encode)
+                    .unwrap_or_default();
+                (
+                    "token".to_string(),
+                    serde_json::json!({
+                        "name": token.name,
+                        "symbol": token.symbol,
+                        "decimals": token.decimals,
+                        "total_supply": token.total_supply,
+                        "max_supply": token.max_supply,
+                        "holder_count": token.balances.len(),
+                        "raw_state_hex": raw_state,
+                    }),
+                )
+            } else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
+                let raw_state = blockchain
+                    .get_contract_state(&contract_id)
+                    .map(hex::encode)
+                    .unwrap_or_default();
+                (
+                    "web4".to_string(),
+                    serde_json::json!({
+                        "domain": web4.domain,
+                        "owner": web4.owner,
+                        "route_count": web4.routes.len(),
+                        "created_at": web4.created_at,
+                        "updated_at": web4.updated_at,
+                        "raw_state_hex": raw_state,
+                    }),
+                )
+            } else {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Contract {} not found", contract_id_hex),
+                ));
+            };
 
         let response_data = ContractStateResponse {
             status: "success".to_string(),
@@ -2232,47 +2260,48 @@ impl BlockchainHandler {
 
     /// Get contract information
     async fn handle_get_contract_info(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let (contract_id_hex, contract_id) = match Self::extract_contract_id_from_request_uri(&request.uri)
-        {
-            Ok(parts) => parts,
-            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
-        };
+        let (contract_id_hex, contract_id) =
+            match Self::extract_contract_id_from_request_uri(&request.uri) {
+                Ok(parts) => parts,
+                Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+            };
 
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
         let block_height = blockchain.contract_blocks.get(&contract_id).copied();
-        let (contract_kind, metadata) = if let Some(token) = blockchain.token_contracts.get(&contract_id) {
-            (
-                "token".to_string(),
-                serde_json::json!({
-                    "token_id": hex::encode(token.token_id),
-                    "name": token.name,
-                    "symbol": token.symbol,
-                    "decimals": token.decimals,
-                    "max_supply": token.max_supply,
-                    "is_deflationary": token.is_deflationary,
-                    "kernel_only_mode": token.kernel_only_mode,
-                }),
-            )
-        } else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
-            (
-                "web4".to_string(),
-                serde_json::json!({
-                    "contract_id": web4.contract_id,
-                    "domain": web4.domain,
-                    "owner": web4.owner,
-                    "route_count": web4.routes.len(),
-                    "created_at": web4.created_at,
-                    "updated_at": web4.updated_at,
-                }),
-            )
-        } else {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::NotFound,
-                format!("Contract {} not found", contract_id_hex),
-            ));
-        };
+        let (contract_kind, metadata) =
+            if let Some(token) = blockchain.token_contracts.get(&contract_id) {
+                (
+                    "token".to_string(),
+                    serde_json::json!({
+                        "token_id": hex::encode(token.token_id),
+                        "name": token.name,
+                        "symbol": token.symbol,
+                        "decimals": token.decimals,
+                        "max_supply": token.max_supply,
+                        "is_deflationary": token.is_deflationary,
+                        "kernel_only_mode": token.kernel_only_mode,
+                    }),
+                )
+            } else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
+                (
+                    "web4".to_string(),
+                    serde_json::json!({
+                        "contract_id": web4.contract_id,
+                        "domain": web4.domain,
+                        "owner": web4.owner,
+                        "route_count": web4.routes.len(),
+                        "created_at": web4.created_at,
+                        "updated_at": web4.updated_at,
+                    }),
+                )
+            } else {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Contract {} not found", contract_id_hex),
+                ));
+            };
 
         let response_data = ContractInfoResponse {
             status: "success".to_string(),
@@ -2315,7 +2344,8 @@ impl BlockchainHandler {
         if request.body.is_empty() {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
-                "Import requires blockchain data from /api/v1/blockchain/export endpoint".to_string(),
+                "Import requires blockchain data from /api/v1/blockchain/export endpoint"
+                    .to_string(),
             ));
         }
 
@@ -2327,7 +2357,7 @@ impl BlockchainHandler {
 
         // Try to import - if deserialization fails, return 400 not 500
         match blockchain.evaluate_and_merge_chain(request.body).await {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => {
                 let err_msg = e.to_string();
                 // Deserialization errors are client errors (400), not server errors (500)
@@ -2708,7 +2738,8 @@ mod tests {
                 previous_output: Hash::from_slice(b"prev"),
                 output_index: 0,
                 nullifier: Hash::from_slice(b"nullifier"),
-                zk_proof: lib_blockchain::integration::zk_integration::ZkTransactionProof::default(),
+                zk_proof: lib_blockchain::integration::zk_integration::ZkTransactionProof::default(
+                ),
             }],
             outputs: vec![test_output(signature.public_key.clone())],
             fee: 1000,
@@ -2776,7 +2807,10 @@ mod tests {
             TransactionType::ContractDeployment,
             None,
         );
-        assert!(result.is_err(), "non-canonical deployment memo must be rejected");
+        assert!(
+            result.is_err(),
+            "non-canonical deployment memo must be rejected"
+        );
     }
 
     #[test]
@@ -2818,11 +2852,8 @@ mod tests {
     #[test]
     fn validate_contract_call_rejects_mismatched_uri_contract_id() {
         let sig = test_signature(5);
-        let call = ContractCall::public_call(
-            ContractType::Web4Website,
-            "set_page".to_string(),
-            vec![1],
-        );
+        let call =
+            ContractCall::public_call(ContractType::Web4Website, "set_page".to_string(), vec![1]);
         let memo = encode_contract_execution_memo_v2([9u8; 32], &call, &sig).unwrap();
         let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
 
@@ -2831,18 +2862,18 @@ mod tests {
             TransactionType::ContractExecution,
             Some([8u8; 32]),
         );
-        assert!(result.is_err(), "mismatched URI contract_id must be rejected");
+        assert!(
+            result.is_err(),
+            "mismatched URI contract_id must be rejected"
+        );
     }
 
     #[test]
     fn validate_contract_call_accepts_matching_uri_contract_id() {
         let sig = test_signature(6);
         let contract_id = [7u8; 32];
-        let call = ContractCall::public_call(
-            ContractType::Web4Website,
-            "set_page".to_string(),
-            vec![1],
-        );
+        let call =
+            ContractCall::public_call(ContractType::Web4Website, "set_page".to_string(), vec![1]);
         let memo = encode_contract_execution_memo_v2(contract_id, &call, &sig).unwrap();
         let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
 
