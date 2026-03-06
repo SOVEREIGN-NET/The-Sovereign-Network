@@ -730,6 +730,7 @@ pub fn spawn_mesh_routing_listener(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pouw::types::ChallengeToken;
 
     fn test_keys() -> ([u8; 32], [u8; 32]) {
         let (public_key, private_key) = lib_crypto::classical::ed25519::ed25519_keypair();

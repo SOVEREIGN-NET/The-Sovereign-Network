@@ -1135,16 +1135,31 @@ fn derive_key_from_identity(identity_id: &str, domain: &[u8]) -> Vec<u8> {
     lib_crypto::hash_blake3(&input).to_vec()
 }
 
+fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<Vec<u8>> {
+    let trimmed = consensus_key_hex.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let normalized = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+
+    hex::decode(normalized).ok().filter(|k| !k.is_empty())
+}
+
 /// Adapter that implements lib-consensus ValidatorInfo for bootstrap config entries.
-/// Uses deterministic key derivation so no keys need to be stored in config files.
 /// For the local validator, `actual_consensus_key` carries the real Dilithium2 public key
 /// loaded from the keystore so that `ConsensusEngine::set_validator_keypair()` can match it.
+/// For remote validators, `actual_consensus_key` carries the decoded `consensus_key` from
+/// bootstrap TOML when present; otherwise it falls back to deterministic derivation.
 struct BootstrapValidatorAdapter {
     identity_id: String,
     stake: u64,
     storage_provided: u64,
     commission_rate: u8,
-    /// Real Dilithium2 public key for the local validator; `None` for remote peers.
+    /// Real consensus public key, either local keystore key or decoded bootstrap TOML key.
     actual_consensus_key: Option<Vec<u8>>,
 }
 
@@ -1361,7 +1376,7 @@ impl ConsensusComponent {
                 stake: bv.stake.max(1), // ensure non-zero for admission
                 storage_provided: bv.storage_provided,
                 commission_rate: (bv.commission_rate.min(100)) as u8,
-                actual_consensus_key: None, // local keypair not available here
+                actual_consensus_key: decode_bootstrap_consensus_key(&bv.consensus_key),
             })
             .collect();
 
@@ -1657,11 +1672,10 @@ impl Component for ConsensusComponent {
         // Previously, validators were only seeded into self.validator_manager (a separate object),
         // so the running consensus engine never received them and stayed in Bootstrap mode forever.
         if !self.bootstrap_validators.is_empty() {
-            // Build bootstrap adapters.  For the local validator, supply the actual
+            // Build bootstrap adapters. For the local validator, supply the actual
             // Dilithium2 public key so that ConsensusEngine::set_validator_keypair()
-            // can match it against the registered consensus_key.  For remote peers
-            // we leave actual_consensus_key as None (falls back to the derived placeholder)
-            // until their signed validator announcements arrive via TOFU registration.
+            // can match it against the registered consensus_key. For remote peers,
+            // use bootstrap TOML `consensus_key` when provided.
             let bootstrap_adapters: Vec<BootstrapValidatorAdapter> = self
                 .bootstrap_validators
                 .iter()
@@ -1685,7 +1699,7 @@ impl Component for ConsensusComponent {
                         // This entry represents the local node — use the real key.
                         Some(local_validator_keypair.public_key.dilithium_pk.clone())
                     } else {
-                        None
+                        decode_bootstrap_consensus_key(&bv.consensus_key)
                     };
                     BootstrapValidatorAdapter {
                         identity_id: bv.identity_id.clone(),
@@ -2135,6 +2149,22 @@ mod tests {
         let prefixed = format!("0x{}", plain);
         assert_eq!(decode_node_id_hex(&plain), Some(node.to_vec()));
         assert_eq!(decode_node_id_hex(&prefixed), Some(node.to_vec()));
+    }
+
+    #[test]
+    fn test_decode_bootstrap_consensus_key_accepts_plain_and_prefixed_hex() {
+        let key = vec![0x42u8; 16];
+        let plain = hex::encode(&key);
+        let prefixed = format!("0x{}", plain);
+        assert_eq!(decode_bootstrap_consensus_key(&plain), Some(key.clone()));
+        assert_eq!(decode_bootstrap_consensus_key(&prefixed), Some(key));
+    }
+
+    #[test]
+    fn test_decode_bootstrap_consensus_key_rejects_invalid_or_empty() {
+        assert_eq!(decode_bootstrap_consensus_key(""), None);
+        assert_eq!(decode_bootstrap_consensus_key("0x"), None);
+        assert_eq!(decode_bootstrap_consensus_key("not-hex"), None);
     }
 
     #[test]
