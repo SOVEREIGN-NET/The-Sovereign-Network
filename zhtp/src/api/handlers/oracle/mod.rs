@@ -134,6 +134,7 @@ struct ProposeCommitteeRequest {
     /// Required for bootstrap so attestation signature verification can resolve signers.
     #[serde(default)]
     signing_pubkeys: Vec<String>,
+    #[allow(dead_code)] // reserved for future epoch-scheduled updates
     activate_at_epoch: u64,
     reason: Option<String>,
 }

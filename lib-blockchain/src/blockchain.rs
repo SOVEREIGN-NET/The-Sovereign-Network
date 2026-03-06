@@ -1661,6 +1661,38 @@ impl Blockchain {
         // Repair any balances inflated by the pre-fix backfill bug (minted on every restart).
         blockchain.repair_backfill_inflation();
 
+        // Sync SOV balances from the authoritative token_balances Sled tree into in-memory
+        // token_contracts.balances.  The BlockExecutor updates token_balances on every
+        // TokenMint/TokenTransfer block, but put_token_contract (which updates the blob) is
+        // only called from legacy process_wallet_transactions — which runs post-commit and has
+        // no active transaction, causing it to silently fail.  As a result the blob is stale
+        // and in-memory balances loaded from it are zero for wallets registered via the
+        // executor path.  Reading back from the Sled tree (which is always correct) fixes the
+        // wallet handler, which reads token_contracts.balances directly.
+        {
+            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+            let storage_sov_id = crate::storage::TokenId(sov_token_id);
+            let wallet_ids: Vec<String> = blockchain.wallet_registry.keys().cloned().collect();
+            let mut synced = 0usize;
+            for wallet_id_hex in &wallet_ids {
+                if let Some(wallet_bytes) = Self::wallet_id_bytes(wallet_id_hex) {
+                    let addr = crate::storage::Address::new(wallet_bytes);
+                    if let Ok(balance) = store.get_token_balance(&storage_sov_id, &addr) {
+                        if balance > 0 {
+                            if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+                                let pk = Self::wallet_key_for_sov(&wallet_bytes);
+                                token.balances.insert(pk, balance as u64);
+                                synced += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            if synced > 0 {
+                info!("💰 Synced {} SOV balances from token_balances tree into in-memory contracts", synced);
+            }
+        }
+
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
             info!(
