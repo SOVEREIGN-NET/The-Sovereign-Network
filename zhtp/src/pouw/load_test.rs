@@ -420,7 +420,10 @@ mod tests {
 #[cfg(test)]
 mod stress_tests {
     use super::*;
+    use crate::pouw::{ChallengeGenerator, ReceiptValidator};
     use std::collections::HashSet;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
 
     fn build_validator() -> ReceiptValidator {
         let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();

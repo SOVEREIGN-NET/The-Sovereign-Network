@@ -281,13 +281,19 @@ impl ConsensusEngine {
                     }
                 } => {
                     // Send heartbeat (best-effort, ignore errors)
-                    if let Some(_validator_id) = &self.validator_identity {
+                    if let Some(validator_id) = &self.validator_identity {
                         let heartbeat_msg = self.heartbeat_tracker.create_heartbeat_message(
                             self.current_round.height,
                             self.current_round.round,
                             self.current_round.step.clone(),
                             self.validator_manager.get_active_validators().len() as u32,
                         );
+
+                        // Keep local liveness state fresh even when self-heartbeats are not looped
+                        // back through the network receiver path.
+                        self.heartbeat_tracker
+                            .record_heartbeat(validator_id, heartbeat_msg.timestamp);
+                        self.liveness_monitor.mark_responsive(validator_id);
 
                         // Get all validator IDs for broadcast
                         let validator_ids: Vec<_> = self.validator_manager
