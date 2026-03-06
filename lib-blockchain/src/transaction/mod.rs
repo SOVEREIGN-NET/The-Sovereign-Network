@@ -45,6 +45,7 @@ pub use oracle_governance::{
     OracleAttestationData,
     OracleCommitteeUpdateData,
     OracleConfigUpdateData,
+    OracleProtocolUpgradeData,
 };
 
 // Explicit re-exports from creation module
