@@ -210,18 +210,26 @@ fn classify_time(
     }
 
     let timeout_ref = step_timeout_reference.max(1);
-    let third = timeout_ref / 3;
-    let two_thirds = (timeout_ref * 2) / 3;
+    let early_cutoff = timeout_ref.div_ceil(3);
+    let mut mid_cutoff = timeout_ref.saturating_mul(2).div_ceil(3);
+    if mid_cutoff <= early_cutoff {
+        mid_cutoff = early_cutoff.saturating_add(1);
+    }
 
-    if duration <= third.max(1) {
+    if duration <= early_cutoff {
         TimeClass::Early
-    } else if duration <= two_thirds.max(1) {
+    } else if duration <= mid_cutoff {
         TimeClass::Mid
     } else {
         TimeClass::Late
     }
 }
 
+/// `Missing` is emitted only when we can prove we were in a propose phase and
+/// timed out without seeing/creating a proposal.
+///
+/// If `EnterPropose` is absent we intentionally keep `Unknown` because the
+/// current trajectory could have started mid-round from replay/catch-up data.
 fn derive_proposal_status(round: &ParsedRoundTrajectory) -> ProposalStatus {
     if round
         .events
@@ -444,6 +452,71 @@ mod tests {
         assert_eq!(
             encode_round_states(1, &mk(4), config)[0].round_class,
             RoundClass::R4Plus
+        );
+    }
+
+    #[test]
+    fn small_timeout_reference_keeps_mid_class_reachable() {
+        let mk_round = |duration| ParsedRoundTrajectory {
+            round_number: 0,
+            phases: vec![phase(
+                ParsedConsensusPhase::Propose,
+                ParsedConsensusEvent::ProposalReceived,
+                duration,
+            )],
+            events: vec![
+                ParsedConsensusEvent::EnterPropose,
+                ParsedConsensusEvent::ProposalReceived,
+            ],
+        };
+
+        let cfg_ref_1 = StateEncoderConfig {
+            step_timeout_reference: 1,
+            ..StateEncoderConfig::default()
+        };
+        let cfg_ref_2 = StateEncoderConfig {
+            step_timeout_reference: 2,
+            ..StateEncoderConfig::default()
+        };
+
+        assert_eq!(
+            encode_round_states(1, &mk_round(2), cfg_ref_1)[0].time_class,
+            TimeClass::Mid
+        );
+        assert_eq!(
+            encode_round_states(1, &mk_round(2), cfg_ref_2)[0].time_class,
+            TimeClass::Mid
+        );
+    }
+
+    #[test]
+    fn fault_phase_uses_configured_fallback_phase() {
+        let round = ParsedRoundTrajectory {
+            round_number: 0,
+            phases: vec![phase(
+                ParsedConsensusPhase::Fault,
+                ParsedConsensusEvent::EquivocationDetected,
+                1,
+            )],
+            events: vec![ParsedConsensusEvent::EquivocationDetected],
+        };
+
+        let cfg_recovering = StateEncoderConfig {
+            fallback_phase: EncodedConsensusPhase::Recovering,
+            ..StateEncoderConfig::default()
+        };
+        let cfg_stalled = StateEncoderConfig {
+            fallback_phase: EncodedConsensusPhase::Stalled,
+            ..StateEncoderConfig::default()
+        };
+
+        assert_eq!(
+            encode_round_states(1, &round, cfg_recovering)[0].phase,
+            EncodedConsensusPhase::Recovering
+        );
+        assert_eq!(
+            encode_round_states(1, &round, cfg_stalled)[0].phase,
+            EncodedConsensusPhase::Stalled
         );
     }
 }
