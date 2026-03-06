@@ -54,6 +54,7 @@ fn test_bonding_curve_full_lifecycle() {
         threshold,
         true, // sell_enabled
         creator.clone(),
+        String::new(),
         0,    // block height
         1_600_000_000, // timestamp
     ).expect("Failed to deploy token");
@@ -199,6 +200,7 @@ fn test_multiple_tokens_different_phases() {
             Threshold::ReserveAmount(10_000_000),
             true,
             creator.clone(),
+            String::new(),
             0,
             1_600_000_000,
         ).expect("Failed to deploy token");
@@ -241,6 +243,7 @@ fn test_curve_math_variations() {
         Threshold::ReserveAmount(10_000_000),
         true,
         creator.clone(),
+        String::new(),
         0,
         base_time,
     ).unwrap();
@@ -257,6 +260,7 @@ fn test_curve_math_variations() {
         Threshold::ReserveAmount(10_000_000),
         true,
         creator.clone(),
+        String::new(),
         0,
         base_time,
     ).unwrap();
@@ -277,6 +281,7 @@ fn test_curve_math_variations() {
         Threshold::SupplyAmount(1_000_000), // Graduate at 10 tokens
         true,
         creator.clone(),
+        String::new(),
         0,
         base_time,
     ).unwrap();
@@ -394,6 +399,7 @@ fn test_graduation_thresholds() {
         Threshold::ReserveAmount(10_000_000), // 100 USD
         true,
         creator.clone(),
+        String::new(),
         0,
         base_time,
     ).unwrap();
@@ -413,6 +419,7 @@ fn test_graduation_thresholds() {
         Threshold::SupplyAmount(1_000_000), // 10 tokens
         true,
         creator.clone(),
+        String::new(),
         0,
         base_time,
     ).unwrap();
@@ -435,6 +442,7 @@ fn test_graduation_thresholds() {
         },
         true,
         creator.clone(),
+        String::new(),
         0,
         base_time,
     ).unwrap();
