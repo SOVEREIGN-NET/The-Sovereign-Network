@@ -2,10 +2,11 @@
 //!
 //! Payload types for oracle governance transactions (ORACLE-6).
 
+use crate::oracle::protocol::MIN_PROTOCOL_ACTIVATION_LEAD_BLOCKS;
 use serde::{Deserialize, Serialize};
 
 /// Data for OracleAttestation transaction (ORACLE-9).
-/// 
+///
 /// Validator submits a signed price attestation for the current epoch.
 /// The signature is verified during block execution.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -91,12 +92,13 @@ impl OracleProtocolUpgradeData {
         }
 
         // Activation height should be reasonably far in the future to allow
-        // network coordination (at least 100 blocks ~ 17 minutes)
-        let min_lead_time = 100;
-        if self.activate_at_height < current_height.saturating_add(min_lead_time) {
+        // network coordination.
+        if self.activate_at_height
+            < current_height.saturating_add(MIN_PROTOCOL_ACTIVATION_LEAD_BLOCKS)
+        {
             return Err(format!(
                 "activate_at_height ({}) must be at least {} blocks in the future",
-                self.activate_at_height, min_lead_time
+                self.activate_at_height, MIN_PROTOCOL_ACTIVATION_LEAD_BLOCKS
             ));
         }
 
@@ -328,6 +330,14 @@ mod tests {
             reason: "Test".to_string(),
         };
         assert!(too_soon.validate(100).is_err());
+
+        // Exact minimum lead time should be valid
+        let boundary = OracleProtocolUpgradeData {
+            target_version: 1,
+            activate_at_height: 200, // exactly 100 blocks ahead
+            reason: "Boundary".to_string(),
+        };
+        assert!(boundary.validate(100).is_ok());
 
         // Same height (invalid)
         let same = OracleProtocolUpgradeData {

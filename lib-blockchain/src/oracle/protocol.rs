@@ -20,6 +20,12 @@
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
+/// Minimum number of blocks between scheduling and activation of a protocol upgrade.
+///
+/// This lead time is consensus-critical and must remain consistent across all call sites
+/// that validate or schedule protocol upgrades.
+pub const MIN_PROTOCOL_ACTIVATION_LEAD_BLOCKS: u64 = 100;
+
 /// Oracle protocol version for behavior selection.
 ///
 /// This enum represents the major protocol versions. New variants should be added
@@ -176,6 +182,17 @@ impl OracleProtocolConfig {
             });
         }
 
+        // Enforce minimum lead time for network coordination.
+        let min_activation_height =
+            current_height.saturating_add(MIN_PROTOCOL_ACTIVATION_LEAD_BLOCKS);
+        if activate_at_height < min_activation_height {
+            return Err(ProtocolScheduleError::InsufficientLeadTime {
+                activate_at_height,
+                current_height,
+                min_lead_blocks: MIN_PROTOCOL_ACTIVATION_LEAD_BLOCKS,
+            });
+        }
+
         // Validate we're not scheduling a downgrade
         if (target_version.as_u16()) < (self.current_version.as_u16()) {
             return Err(ProtocolScheduleError::DowngradeNotAllowed {
@@ -239,7 +256,10 @@ impl OracleProtocolConfig {
     /// # Returns
     /// * `Some(OracleProtocolVersion)` if activation occurred (new version)
     /// * `None` if no activation occurred
-    pub fn apply_pending_activation(&mut self, current_height: u64) -> Option<OracleProtocolVersion> {
+    pub fn apply_pending_activation(
+        &mut self,
+        current_height: u64,
+    ) -> Option<OracleProtocolVersion> {
         if let Some(pending) = self.pending_activation.take() {
             if current_height >= pending.activate_at_height {
                 // Activation point reached - apply the upgrade
@@ -291,6 +311,13 @@ pub enum ProtocolScheduleError {
         current_height: u64,
     },
 
+    /// Activation height must be at least the minimum lead-time ahead of current height.
+    InsufficientLeadTime {
+        activate_at_height: u64,
+        current_height: u64,
+        min_lead_blocks: u64,
+    },
+
     /// Downgrading protocol version is not allowed.
     DowngradeNotAllowed { current: u16, requested: u16 },
 
@@ -311,6 +338,15 @@ impl std::fmt::Display for ProtocolScheduleError {
                 f,
                 "activation height {} must be greater than current height {}",
                 activate_at_height, current_height
+            ),
+            Self::InsufficientLeadTime {
+                activate_at_height,
+                current_height,
+                min_lead_blocks,
+            } => write!(
+                f,
+                "activation height {} must be at least {} blocks ahead of current height {}",
+                activate_at_height, min_lead_blocks, current_height
             ),
             Self::DowngradeNotAllowed { current, requested } => write!(
                 f,
@@ -464,8 +500,8 @@ mod tests {
 
         let result = config.schedule_activation(
             OracleProtocolVersion::V1StrictSpec,
-            50,   // activate at height 50
-            100,  // current height is 100 (past)
+            50,  // activate at height 50
+            100, // current height is 100 (past)
             None,
         );
 
@@ -473,6 +509,28 @@ mod tests {
             result,
             Err(ProtocolScheduleError::InvalidActivationHeight { .. })
         ));
+    }
+
+    #[test]
+    fn schedule_activation_requires_minimum_lead_time() {
+        let mut config = OracleProtocolConfig::new();
+
+        // Exactly one block short of the minimum lead time.
+        let result =
+            config.schedule_activation(OracleProtocolVersion::V1StrictSpec, 199, 100, None);
+
+        assert!(matches!(
+            result,
+            Err(ProtocolScheduleError::InsufficientLeadTime {
+                activate_at_height: 199,
+                current_height: 100,
+                min_lead_blocks: MIN_PROTOCOL_ACTIVATION_LEAD_BLOCKS,
+            })
+        ));
+
+        // Exact lead-time boundary is valid.
+        let ok = config.schedule_activation(OracleProtocolVersion::V1StrictSpec, 200, 100, None);
+        assert!(ok.is_ok());
     }
 
     #[test]
@@ -488,7 +546,10 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ProtocolScheduleError::DowngradeNotAllowed { current: 1, requested: 0 })
+            Err(ProtocolScheduleError::DowngradeNotAllowed {
+                current: 1,
+                requested: 0
+            })
         ));
     }
 
@@ -523,7 +584,9 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ProtocolScheduleError::AlreadyScheduled { existing_height: 1000 })
+            Err(ProtocolScheduleError::AlreadyScheduled {
+                existing_height: 1000
+            })
         ));
     }
 
@@ -545,7 +608,10 @@ mod tests {
         let result = config.apply_pending_activation(1000);
         assert_eq!(result, Some(OracleProtocolVersion::V1StrictSpec));
         assert!(!config.has_pending_activation());
-        assert_eq!(config.current_version(), OracleProtocolVersion::V1StrictSpec);
+        assert_eq!(
+            config.current_version(),
+            OracleProtocolVersion::V1StrictSpec
+        );
         assert_eq!(config.activated_at_height(), 1000);
     }
 
@@ -560,7 +626,10 @@ mod tests {
         // Skip past activation height (node was offline)
         let result = config.apply_pending_activation(1500);
         assert_eq!(result, Some(OracleProtocolVersion::V1StrictSpec));
-        assert_eq!(config.current_version(), OracleProtocolVersion::V1StrictSpec);
+        assert_eq!(
+            config.current_version(),
+            OracleProtocolVersion::V1StrictSpec
+        );
     }
 
     #[test]
@@ -602,7 +671,12 @@ mod tests {
     fn protocol_config_serialization_roundtrip() {
         let mut config = OracleProtocolConfig::new();
         config
-            .schedule_activation(OracleProtocolVersion::V1StrictSpec, 1000, 100, Some([1u8; 32]))
+            .schedule_activation(
+                OracleProtocolVersion::V1StrictSpec,
+                1000,
+                100,
+                Some([1u8; 32]),
+            )
             .unwrap();
 
         let serialized = bincode::serialize(&config).unwrap();

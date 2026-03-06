@@ -2135,10 +2135,30 @@ impl Blockchain {
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
+        // ORACLE-R6: Apply pending protocol activation before execution so activation at
+        // height H governs block H. If block admission fails before execution/commit,
+        // restore the prior config.
+        let previous_protocol_config = self.oracle_state.protocol_config.clone();
+        let activated_version = self
+            .oracle_state
+            .apply_pending_protocol_activation(block.header.height);
+        if let Some(new_version) = activated_version {
+            info!(
+                "🔮 Oracle protocol upgraded to v{} at activation block height {}",
+                new_version.as_u16(),
+                block.header.height
+            );
+        }
+
         // ORACLE-13: Validate CBE graduation oracle gate BEFORE applying block
         // This ensures consensus rules are enforced atomically in BOTH
         // BlockExecutor and legacy paths
-        self.validate_block_cbe_graduation_gating(&block)?;
+        if let Err(e) = self.validate_block_cbe_graduation_gating(&block) {
+            if activated_version.is_some() {
+                self.oracle_state.protocol_config = previous_protocol_config.clone();
+            }
+            return Err(e);
+        }
 
         // If BlockExecutor is configured, use it as single source of truth
         if let Some(ref executor) = self.executor {
@@ -2230,6 +2250,9 @@ impl Blockchain {
                     return Ok(());
                 }
                 Err(e) => {
+                    if activated_version.is_some() {
+                        self.oracle_state.protocol_config = previous_protocol_config.clone();
+                    }
                     return Err(anyhow::anyhow!("BlockExecutor failed to apply block: {}", e));
                 }
             }
@@ -2243,6 +2266,9 @@ impl Blockchain {
         // Verify the block
         let previous_block = self.blocks.last();
         if !self.verify_block(&block, previous_block)? {
+            if activated_version.is_some() {
+                self.oracle_state.protocol_config = previous_protocol_config.clone();
+            }
             return Err(anyhow::anyhow!("Invalid block"));
         }
 
@@ -2250,13 +2276,24 @@ impl Blockchain {
         for tx in &block.transactions {
             for input in &tx.inputs {
                 if self.nullifier_set.contains(&input.nullifier) {
+                    if activated_version.is_some() {
+                        self.oracle_state.protocol_config = previous_protocol_config.clone();
+                    }
                     return Err(anyhow::anyhow!("Double spend detected"));
                 }
             }
         }
 
         // Issue #1016: Deduct transaction fees from sender balances BEFORE updating UTXO set
-        let block_fees = self.deduct_transaction_fees(&block)?;
+        let block_fees = match self.deduct_transaction_fees(&block) {
+            Ok(fees) => fees,
+            Err(e) => {
+                if activated_version.is_some() {
+                    self.oracle_state.protocol_config = previous_protocol_config.clone();
+                }
+                return Err(e);
+            }
+        };
         if block_fees > 0 {
             debug!("Collected {} in fees from block {}", block_fees, block.height());
         }
@@ -2290,16 +2327,6 @@ impl Blockchain {
         // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
-        }
-
-        // ORACLE-R6: Apply pending protocol activation at each block
-        // This must happen before other oracle processing to ensure correct behavior
-        if let Some(new_version) = self.oracle_state.apply_pending_protocol_activation(self.height) {
-            info!(
-                "🔮 Oracle protocol upgraded to v{} at height {}",
-                new_version.as_u16(),
-                self.height
-            );
         }
 
         // ORACLE-7/13: Apply pending oracle updates at epoch boundaries (both BlockExecutor and legacy paths)
@@ -2398,15 +2425,6 @@ impl Blockchain {
         // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
-        }
-
-        // ORACLE-R6: Apply pending protocol activation at each block
-        if let Some(new_version) = self.oracle_state.apply_pending_protocol_activation(self.height) {
-            info!(
-                "🔮 Oracle protocol upgraded to v{} at height {} (finish_block_processing)",
-                new_version.as_u16(),
-                self.height
-            );
         }
 
         // Process oracle epoch advancement
@@ -7288,41 +7306,31 @@ impl Blockchain {
             self.try_advance_governance_phase();
         }
 
-        // Get difficulty parameter update proposals with their quorum requirements
-        // Collect to avoid borrowing issues with self.has_proposal_passed()
-        let difficulty_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
-            .iter()
-            .filter(|p| p.proposal_type == "difficulty_parameter_update")
-            .map(|p| (p.proposal_id.clone(), p.quorum_required))
-            .collect();
+        // Collect proposals once, then classify in-memory to avoid repeated chain scans.
+        let dao_proposals = self.get_dao_proposals();
+        let mut difficulty_proposals: Vec<(Hash, u8)> = Vec::new();
+        let mut fee_proposals: Vec<(Hash, u8)> = Vec::new();
+        let mut oracle_committee_proposals: Vec<(Hash, u8)> = Vec::new();
+        let mut oracle_config_proposals: Vec<(Hash, u8)> = Vec::new();
+        let mut oracle_protocol_upgrade_proposals: Vec<(Hash, u8)> = Vec::new();
+        let mut cancel_oracle_proposals: Vec<(Hash, u8)> = Vec::new();
 
-        let fee_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
-            .iter()
-            .filter(|p| p.proposal_type == "fee_structure" || p.proposal_type == "FeeStructure")
-            .map(|p| (p.proposal_id.clone(), p.quorum_required))
-            .collect();
-
-        let oracle_committee_proposals: Vec<(Hash, u8)> = self
-            .get_dao_proposals()
-            .iter()
-            .filter(|p| Self::is_oracle_committee_proposal_type(&p.proposal_type))
-            .map(|p| (p.proposal_id.clone(), p.quorum_required))
-            .collect();
-
-        let oracle_config_proposals: Vec<(Hash, u8)> = self
-            .get_dao_proposals()
-            .iter()
-            .filter(|p| Self::is_oracle_config_proposal_type(&p.proposal_type))
-            .map(|p| (p.proposal_id.clone(), p.quorum_required))
-            .collect();
-
-        // ORACLE-R6: Collect oracle protocol upgrade proposals
-        let oracle_protocol_upgrade_proposals: Vec<(Hash, u8)> = self
-            .get_dao_proposals()
-            .iter()
-            .filter(|p| Self::is_oracle_protocol_upgrade_proposal_type(&p.proposal_type))
-            .map(|p| (p.proposal_id.clone(), p.quorum_required))
-            .collect();
+        for proposal in &dao_proposals {
+            let proposal_ref = (proposal.proposal_id.clone(), proposal.quorum_required);
+            if proposal.proposal_type == "difficulty_parameter_update" {
+                difficulty_proposals.push(proposal_ref);
+            } else if proposal.proposal_type == "fee_structure" || proposal.proposal_type == "FeeStructure" {
+                fee_proposals.push(proposal_ref);
+            } else if Self::is_oracle_committee_proposal_type(&proposal.proposal_type) {
+                oracle_committee_proposals.push(proposal_ref);
+            } else if Self::is_oracle_config_proposal_type(&proposal.proposal_type) {
+                oracle_config_proposals.push(proposal_ref);
+            } else if Self::is_oracle_protocol_upgrade_proposal_type(&proposal.proposal_type) {
+                oracle_protocol_upgrade_proposals.push(proposal_ref);
+            } else if proposal.proposal_type == "cancel_oracle_update" {
+                cancel_oracle_proposals.push(proposal_ref);
+            }
+        }
 
         for (proposal_id, quorum_required) in difficulty_proposals {
             // Skip if already executed
@@ -7508,13 +7516,6 @@ impl Blockchain {
         }
 
         // ORACLE-11: Process cancel oracle update proposals.
-        let cancel_oracle_proposals: Vec<(Hash, u8)> = self
-            .get_dao_proposals()
-            .iter()
-            .filter(|p| p.proposal_type == "cancel_oracle_update")
-            .map(|p| (p.proposal_id.clone(), p.quorum_required))
-            .collect();
-
         for (proposal_id, quorum_required) in cancel_oracle_proposals {
             if self.executed_dao_proposals.contains(&proposal_id) {
                 continue;
