@@ -279,40 +279,26 @@ impl OracleComponent {
         info!("🔮 Oracle attestation producer started");
 
         loop {
-            // ORACLE-R8: Refresh producer config from on-chain state
-            {
+            // ORACLE-R8: Single snapshot of all on-chain state needed for this epoch.
+            // Taking one lock avoids inconsistencies if a block commits between reads
+            // (e.g. config/committee updated by one epoch while current_epoch is from another).
+            let (on_chain_config, epoch_duration_secs, committee_members, current_epoch, is_strict_spec) = {
                 let bc = blockchain.read().await;
-                producer.update_config(&bc.oracle_state.config);
-            }
-
-            let epoch_duration_secs: u64 = {
-                let bc = blockchain.read().await;
-                bc.oracle_state.config.epoch_duration_secs.max(60)
+                let config = bc.oracle_state.config.clone();
+                let epoch_duration = config.epoch_duration_secs.max(60);
+                let members = bc.oracle_state.committee.members().to_vec();
+                let ts = bc.last_committed_timestamp();
+                let epoch = bc.oracle_state.epoch_id(ts);
+                let strict_spec = bc.oracle_state.is_strict_spec_active();
+                (config, epoch_duration, members, epoch, strict_spec)
             };
-
-            // Note: Committee membership is set through governance path only.
-            // The committee is updated via schedule_committee_update() → apply_pending_updates()
-            // at epoch boundaries in the block processing pipeline.
-            // This loop reads from oracle_state.committee.members() but does NOT modify it.
-
-            let committee_members: Vec<[u8; 32]> = {
-                let bc = blockchain.read().await;
-                bc.oracle_state.committee.members().to_vec()
-            };
+            producer.update_config(&on_chain_config);
 
             if committee_members.is_empty() {
                 debug!("Oracle producer: committee empty, skipping epoch");
                 tokio::time::sleep(tokio::time::Duration::from_secs(epoch_duration_secs)).await;
                 continue;
             }
-
-            // Get block timestamp for epoch derivation (Oracle Spec v1 §4.1)
-            // Wall clock MUST NOT be used to determine epoch_id.
-            let (_block_timestamp, current_epoch) = {
-                let bc = blockchain.read().await;
-                let ts = bc.last_committed_timestamp();
-                (ts, bc.oracle_state.epoch_id(ts))
-            };
 
             // Fetch prices from on-chain exchange state (Oracle Spec v1 §5).
             // Uses 3 independent sources: last trade, order book mid, VWAP.
@@ -356,12 +342,6 @@ impl OracleComponent {
                         current_epoch,
                         attestation.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64
                     );
-
-                    // Check protocol version for local processing
-                    let is_strict_spec = {
-                        let bc = blockchain.read().await;
-                        bc.oracle_state.is_strict_spec_active()
-                    };
 
                     if is_strict_spec {
                         // ORACLE-R3: In strict spec mode, create and submit a transaction
