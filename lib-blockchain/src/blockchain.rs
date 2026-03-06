@@ -2292,6 +2292,16 @@ impl Blockchain {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
         }
 
+        // ORACLE-R6: Apply pending protocol activation at each block
+        // This must happen before other oracle processing to ensure correct behavior
+        if let Some(new_version) = self.oracle_state.apply_pending_protocol_activation(self.height) {
+            info!(
+                "🔮 Oracle protocol upgraded to v{} at height {}",
+                new_version.as_u16(),
+                self.height
+            );
+        }
+
         // ORACLE-7/13: Apply pending oracle updates at epoch boundaries (both BlockExecutor and legacy paths)
         let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
         if current_epoch > self.last_oracle_epoch_processed {
@@ -2388,6 +2398,15 @@ impl Blockchain {
         // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
+        }
+
+        // ORACLE-R6: Apply pending protocol activation at each block
+        if let Some(new_version) = self.oracle_state.apply_pending_protocol_activation(self.height) {
+            info!(
+                "🔮 Oracle protocol upgraded to v{} at height {} (finish_block_processing)",
+                new_version.as_u16(),
+                self.height
+            );
         }
 
         // Process oracle epoch advancement
@@ -6993,6 +7012,77 @@ impl Blockchain {
         )
     }
 
+    fn is_oracle_protocol_upgrade_proposal_type(proposal_type: &str) -> bool {
+        matches!(
+            proposal_type,
+            "oracle_protocol_upgrade" | "upgrade_oracle_protocol" | "OracleProtocolUpgrade"
+        )
+    }
+
+    pub fn apply_oracle_protocol_upgrade(&mut self, proposal_id: Hash) -> Result<()> {
+        if self.executed_dao_proposals.contains(&proposal_id) {
+            debug!(
+                "Oracle protocol upgrade proposal {:?} already executed, skipping",
+                proposal_id
+            );
+            return Ok(());
+        }
+
+        let proposal = self
+            .get_dao_proposal(&proposal_id)
+            .ok_or_else(|| anyhow::anyhow!("InvalidProposal: Oracle protocol upgrade proposal {:?} not found", proposal_id))?;
+
+        if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
+            return Err(anyhow::anyhow!(
+                "InvalidProposal: Proposal {:?} has not passed voting",
+                proposal_id
+            ));
+        }
+
+        let execution_params = proposal.execution_params.ok_or_else(|| {
+            anyhow::anyhow!(
+                "InvalidProposal: Oracle protocol upgrade proposal {:?} has no execution parameters",
+                proposal_id
+            )
+        })?;
+
+        let upgrade_data: crate::transaction::OracleProtocolUpgradeData =
+            bincode::deserialize(&execution_params).map_err(|e| {
+                anyhow::anyhow!(
+                    "ParameterValidationError: Failed to decode oracle protocol upgrade params: {}",
+                    e
+                )
+            })?;
+
+        upgrade_data.validate(self.height).map_err(|e| {
+            anyhow::anyhow!("ParameterValidationError: Invalid oracle protocol upgrade: {}", e)
+        })?;
+
+        let target_version = crate::oracle::OracleProtocolVersion::from_u16(upgrade_data.target_version)
+            .ok_or_else(|| anyhow::anyhow!(
+                "ParameterValidationError: Invalid target protocol version {}",
+                upgrade_data.target_version
+            ))?;
+
+        self.oracle_state
+            .schedule_protocol_upgrade(
+                target_version,
+                upgrade_data.activate_at_height,
+                self.height,
+                Some(proposal_id.as_array()),
+            )
+            .map_err(|e| anyhow::anyhow!("ScheduleError: Failed to schedule protocol upgrade: {}", e))?;
+
+        self.executed_dao_proposals.insert(proposal_id);
+        info!(
+            "🔮 Oracle protocol upgrade scheduled: v{} at height {} (proposal {:?})",
+            upgrade_data.target_version,
+            upgrade_data.activate_at_height,
+            proposal_id
+        );
+        Ok(())
+    }
+
     pub fn apply_oracle_committee_update(&mut self, proposal_id: Hash) -> Result<()> {
         if self.executed_dao_proposals.contains(&proposal_id) {
             debug!(
@@ -7226,6 +7316,14 @@ impl Blockchain {
             .map(|p| (p.proposal_id.clone(), p.quorum_required))
             .collect();
 
+        // ORACLE-R6: Collect oracle protocol upgrade proposals
+        let oracle_protocol_upgrade_proposals: Vec<(Hash, u8)> = self
+            .get_dao_proposals()
+            .iter()
+            .filter(|p| Self::is_oracle_protocol_upgrade_proposal_type(&p.proposal_type))
+            .map(|p| (p.proposal_id.clone(), p.quorum_required))
+            .collect();
+
         for (proposal_id, quorum_required) in difficulty_proposals {
             // Skip if already executed
             if self.executed_dao_proposals.contains(&proposal_id) {
@@ -7367,6 +7465,42 @@ impl Blockchain {
                 Err(e) => {
                     warn!(
                         "Failed to check oracle config proposal {:?}: {}",
+                        proposal_id, e
+                    );
+                }
+            }
+        }
+
+        // ORACLE-R6: Process oracle protocol upgrade proposals
+        for (proposal_id, quorum_required) in oracle_protocol_upgrade_proposals {
+            if self.executed_dao_proposals.contains(&proposal_id) {
+                continue;
+            }
+
+            match self.has_proposal_passed(&proposal_id, quorum_required as u32) {
+                Ok(true) => match self.apply_oracle_protocol_upgrade(proposal_id.clone()) {
+                    Ok(()) => {
+                        info!(
+                            "✅ Successfully executed oracle protocol upgrade proposal {:?}",
+                            proposal_id
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to execute oracle protocol upgrade proposal {:?}: {}",
+                            proposal_id, e
+                        );
+                    }
+                },
+                Ok(false) => {
+                    debug!(
+                        "Oracle protocol upgrade proposal {:?} has not passed voting yet",
+                        proposal_id
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to check oracle protocol upgrade proposal {:?}: {}",
                         proposal_id, e
                     );
                 }

@@ -61,6 +61,49 @@ pub struct CancelOracleUpdateData {
     pub reason: String,
 }
 
+/// Data for OracleProtocolUpgrade transaction (ORACLE-R6).
+///
+/// Schedules an upgrade to a new oracle protocol version at a future block height.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OracleProtocolUpgradeData {
+    /// Target protocol version to upgrade to.
+    pub target_version: u16,
+    /// Block height when the upgrade activates (must be in the future).
+    pub activate_at_height: u64,
+    /// Reason for the upgrade.
+    pub reason: String,
+}
+
+impl OracleProtocolUpgradeData {
+    /// Validate the protocol upgrade data.
+    pub fn validate(&self, current_height: u64) -> Result<(), String> {
+        // Target version must be > 0 (V0 is genesis/legacy)
+        if self.target_version == 0 {
+            return Err("target_version must be > 0".to_string());
+        }
+
+        // Activation height must be in the future
+        if self.activate_at_height <= current_height {
+            return Err(format!(
+                "activate_at_height ({}) must be greater than current_height ({})",
+                self.activate_at_height, current_height
+            ));
+        }
+
+        // Activation height should be reasonably far in the future to allow
+        // network coordination (at least 100 blocks ~ 17 minutes)
+        let min_lead_time = 100;
+        if self.activate_at_height < current_height.saturating_add(min_lead_time) {
+            return Err(format!(
+                "activate_at_height ({}) must be at least {} blocks in the future",
+                self.activate_at_height, min_lead_time
+            ));
+        }
+
+        Ok(())
+    }
+}
+
 impl CancelOracleUpdateData {
     /// Validate the cancellation data.
     /// At least one of the flags must be true.
@@ -251,5 +294,47 @@ mod tests {
             reason: "Test".to_string(),
         };
         assert!(past.validate(5).is_err());
+    }
+
+    #[test]
+    fn protocol_upgrade_validation() {
+        let valid = OracleProtocolUpgradeData {
+            target_version: 1,
+            activate_at_height: 1000,
+            reason: "Test upgrade".to_string(),
+        };
+        assert!(valid.validate(100).is_ok());
+
+        // Version 0 (invalid)
+        let v0 = OracleProtocolUpgradeData {
+            target_version: 0,
+            activate_at_height: 1000,
+            reason: "Test".to_string(),
+        };
+        assert!(v0.validate(100).is_err());
+
+        // Past activation
+        let past = OracleProtocolUpgradeData {
+            target_version: 1,
+            activate_at_height: 50,
+            reason: "Test".to_string(),
+        };
+        assert!(past.validate(100).is_err());
+
+        // Insufficient lead time
+        let too_soon = OracleProtocolUpgradeData {
+            target_version: 1,
+            activate_at_height: 150, // only 50 blocks ahead
+            reason: "Test".to_string(),
+        };
+        assert!(too_soon.validate(100).is_err());
+
+        // Same height (invalid)
+        let same = OracleProtocolUpgradeData {
+            target_version: 1,
+            activate_at_height: 100,
+            reason: "Test".to_string(),
+        };
+        assert!(same.validate(100).is_err());
     }
 }

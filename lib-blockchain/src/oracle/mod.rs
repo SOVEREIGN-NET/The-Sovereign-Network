@@ -480,6 +480,10 @@ pub struct OracleState {
     /// validator_registry (which only stores governance/consensus keys).
     #[serde(default)]
     pub oracle_signing_pubkeys: std::collections::HashMap<[u8; 32], Vec<u8>>,
+    /// Protocol version and activation gate configuration (ORACLE-R6).
+    /// Controls which oracle behavior set is active.
+    #[serde(default)]
+    pub protocol_config: protocol::OracleProtocolConfig,
 }
 
 impl OracleState {
@@ -959,6 +963,61 @@ impl OracleState {
 
     pub fn config(&self) -> &OracleConfig {
         &self.config
+    }
+
+    // =========================================================================
+    // Protocol Version and Activation Gate (ORACLE-R6)
+    // =========================================================================
+
+    /// Get the current protocol version.
+    pub fn protocol_version(&self) -> protocol::OracleProtocolVersion {
+        self.protocol_config.current_version()
+    }
+
+    /// Check if strict spec behavior is active.
+    pub fn is_strict_spec_active(&self) -> bool {
+        self.protocol_config.is_strict_spec_active()
+    }
+
+    /// Get the effective feature flags for current protocol version.
+    pub fn feature_flags(&self) -> protocol::OracleFeatureFlags {
+        protocol::OracleFeatureFlags::for_version(self.protocol_version())
+    }
+
+    /// Schedule a protocol upgrade.
+    ///
+    /// This is a governance-gated operation that should be called when
+    /// a protocol upgrade proposal is approved.
+    pub fn schedule_protocol_upgrade(
+        &mut self,
+        target_version: protocol::OracleProtocolVersion,
+        activate_at_height: u64,
+        current_height: u64,
+        source_proposal_id: Option<[u8; 32]>,
+    ) -> Result<(), protocol::ProtocolScheduleError> {
+        self.protocol_config.schedule_activation(
+            target_version,
+            activate_at_height,
+            current_height,
+            source_proposal_id,
+        )
+    }
+
+    /// Apply pending protocol activation if the activation height has been reached.
+    ///
+    /// Returns the new version if activation occurred, None otherwise.
+    pub fn apply_pending_protocol_activation(&mut self, current_height: u64) -> Option<protocol::OracleProtocolVersion> {
+        self.protocol_config.apply_pending_activation(current_height)
+    }
+
+    /// Cancel any pending protocol activation.
+    pub fn cancel_pending_protocol_activation(&mut self) -> bool {
+        self.protocol_config.cancel_pending_activation()
+    }
+
+    /// Get pending protocol activation details.
+    pub fn pending_protocol_activation(&self) -> Option<&protocol::PendingProtocolActivation> {
+        self.protocol_config.pending_activation()
     }
 }
 
@@ -1740,4 +1799,15 @@ pub use slashing::{
     OracleSlashEvent,
     OracleSlashReason,
     OracleSlashingConfig,
+};
+
+// ORACLE-R6: Protocol version and activation gate
+pub mod protocol;
+
+pub use protocol::{
+    OracleProtocolConfig,
+    OracleProtocolVersion,
+    OracleFeatureFlags,
+    PendingProtocolActivation,
+    ProtocolScheduleError,
 };
