@@ -14,11 +14,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 // Counter for generating unique test IDs
 static TEST_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Helper to create a test IdentityId
-fn create_test_identity(name: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
-
 /// Helper to create a unique test IdentityId
 fn create_unique_identity() -> IdentityId {
     let id = TEST_ID_COUNTER.fetch_add(1, Ordering::SeqCst);

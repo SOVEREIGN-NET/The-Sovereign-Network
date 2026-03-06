@@ -171,6 +171,7 @@ use tokio::sync::mpsc;
 use tokio::time::Sleep;
 
 use crate::byzantine::ByzantineFaultDetector;
+use crate::invariants::{check_invariant, ConsensusInvariant, ConsensusState as InvariantState};
 use crate::dao::DaoEngine;
 use crate::dao::dao_types::{DaoExecutionAction, DaoProposal};
 use crate::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue};
@@ -203,6 +204,8 @@ mod proofs;
 mod state_machine;
 mod storage;
 mod validation;
+
+pub use state_machine::ConsensusAuditLog;
 
 #[cfg(test)]
 mod tests;
@@ -352,6 +355,9 @@ struct ValidatorSetSnapshot {
     validators: HashSet<IdentityId>,
 }
 
+/// All fields required to register a new validator at an upcoming epoch boundary.
+///
+/// Queued by `queue_validator_add` and consumed by `apply_epoch_boundary_changes`.
 #[derive(Debug, Clone)]
 struct PendingValidatorAdd {
     identity: IdentityId,
@@ -366,18 +372,31 @@ struct PendingValidatorAdd {
     commission_rate: u8,
 }
 
+/// A single pending mutation to the active validator set.
+///
+/// Changes are enqueued mid-epoch and applied atomically at the next epoch boundary,
+/// subject to the max-churn cap (`MAX_CHURN_NUMERATOR / MAX_CHURN_DENOMINATOR`).
+/// Removals are processed before additions when the churn budget is tight.
 #[derive(Debug, Clone)]
 enum ValidatorSetChange {
     Add(PendingValidatorAdd),
     Remove(IdentityId),
 }
 
+/// A `ValidatorSetChange` paired with the epoch boundary height at which it takes effect.
+///
+/// `effective_height` is always a multiple of `epoch_length_blocks` and is computed
+/// by `next_epoch_start` at the time the change is queued.
 #[derive(Debug, Clone)]
 struct PendingValidatorChange {
     effective_height: u64,
     change: ValidatorSetChange,
 }
 
+/// A scheduled update to `ConsensusConfig::epoch_length_blocks`.
+///
+/// Applied at `effective_height` (the next epoch boundary after the governance vote),
+/// replacing the current epoch length for all subsequent epoch calculations.
 #[derive(Debug, Clone)]
 struct PendingEpochLengthUpdate {
     effective_height: u64,
@@ -583,26 +602,41 @@ impl ConsensusEngine {
             match provider.get_blockchain_height().await {
                 Ok(blockchain_height) => {
                     let old_height = self.current_round.height;
-                    // Consensus proposes for next block, so height = blockchain_height + 1
-                    // But if blockchain is at 0 (no blocks), we start at height 1
+                    // Consensus proposes for next block, so height = blockchain_height + 1.
+                    // If blockchain is at 0 (no blocks yet), start at height 1.
                     self.current_round.height = if blockchain_height == 0 { 1 } else { blockchain_height + 1 };
-                    
-                    // TODO(BFT-J-1015): Add consensus invariant check on height transition
-                    // Validate monotonic height progression and no fork at new height
-                    // Example:
-                    // ```
-                    // use crate::invariants::{ConsensusState, enforce_consensus_invariants};
-                    // let state = ConsensusState {
-                    //     current_height: self.current_round.height,
-                    //     previous_height: Some(old_height),
-                    //     votes_received: 0, // Not applicable during height sync
-                    //     total_validators: self.validator_manager.active_validator_count(),
-                    //     fork_detected: false, // Check consensus state for fork detection
-                    //     reorg_detected: false, // Check if blockchain was reorged
-                    // };
-                    // enforce_consensus_invariants(&state);
-                    // ```
-                    
+                    let new_height = self.current_round.height;
+
+                    // BFT-J-1015: enforce monotonic height invariant on sync.
+                    // Only MonotonicHeight and NoFork are checked here — QuorumRequired
+                    // and FinalityIrreversible do not apply to a sync operation.
+                    // Skip when height is unchanged (already in sync with blockchain).
+                    //
+                    // Note on NoFork: fork_detected is always false here because this
+                    // function runs before the consensus loop starts — no commits have
+                    // been made at new_height yet, so a conflicting commit cannot exist.
+                    // This makes the NoFork check vacuously true at this site. Real fork
+                    // detection at sync time would require ConsensusBlockchainProvider to
+                    // expose a method for checking conflicting commits at a given height,
+                    // which it does not currently provide. If that capability is added,
+                    // fork_detected should be populated from the provider response here.
+                    if new_height != old_height {
+                        let state = InvariantState {
+                            current_height: new_height,
+                            previous_height: if old_height == 0 { None } else { Some(old_height) },
+                            votes_received: 0,
+                            total_validators: self.validator_manager.get_active_validators().len() as u64,
+                            fork_detected: false, // see note above
+                            reorg_detected: false,
+                        };
+                        for invariant in &[ConsensusInvariant::MonotonicHeight, ConsensusInvariant::NoFork] {
+                            if let Err(msg) = check_invariant(invariant, &state) {
+                                tracing::error!("Height sync invariant violated: {}", msg);
+                                return Err(ConsensusError::ValidatorError(msg));
+                            }
+                        }
+                    }
+
                     tracing::info!(
                         "📊 Consensus height synced: {} → {} (blockchain at {})",
                         old_height,
@@ -709,6 +743,11 @@ impl ConsensusEngine {
         self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_collector)));
     }
 
+    /// Fire a `ConsensusEvent` to any attached liveness monitor / alert bridge.
+    ///
+    /// The send is best-effort (`let _ = tx.send(...)`): if no receiver is configured
+    /// or the channel is closed, the event is silently dropped. Liveness monitoring
+    /// is observability infrastructure and must never block or fail consensus progress.
     fn emit_liveness_event(&self, event: ConsensusEvent) {
         if let Some(tx) = &self.liveness_event_tx {
             let _ = tx.send(event);
@@ -961,6 +1000,10 @@ impl ConsensusEngine {
         Ok(())
     }
 
+    /// Return the configured epoch length in blocks, with a safe fallback.
+    ///
+    /// A zero `epoch_length_blocks` in the config is invalid; this method emits a
+    /// warning and returns 1 rather than panicking to avoid divide-by-zero in callers.
     fn epoch_length_blocks(&self) -> u64 {
         if self.config.epoch_length_blocks == 0 {
             tracing::warn!("Epoch length blocks is zero; defaulting to 1");
@@ -969,15 +1012,31 @@ impl ConsensusEngine {
         self.config.epoch_length_blocks
     }
 
+    /// Return `true` if `height` falls exactly on an epoch boundary.
+    ///
+    /// An epoch boundary is any height that is an exact multiple of `epoch_length_blocks`.
+    /// Height 0 is considered a boundary, which triggers the genesis-epoch transition check.
     fn is_epoch_boundary(&self, height: u64) -> bool {
         height % self.epoch_length_blocks() == 0
     }
 
+    /// Return the first block height of the epoch that follows the epoch containing `height`.
+    ///
+    /// Used to compute `effective_height` when queuing validator set changes and epoch length
+    /// updates, ensuring they activate at the start of the next complete epoch.
     fn next_epoch_start(&self, height: u64) -> u64 {
         let epoch_len = self.epoch_length_blocks();
         ((height / epoch_len) + 1) * epoch_len
     }
 
+    /// Enqueue a validator addition for the next epoch boundary.
+    ///
+    /// If the same identity has a pending *removal* in the queue, that removal is cancelled
+    /// and this add supersedes it (re-registration of a departing validator). Duplicate adds
+    /// for an already-active or already-pending-add validator are rejected.
+    ///
+    /// The change takes effect at `next_epoch_start(current_round.height)` and is subject
+    /// to the churn cap in `apply_epoch_boundary_changes`.
     fn queue_validator_add(&mut self, pending: PendingValidatorAdd) -> ConsensusResult<()> {
         if self.validator_manager.get_validator(&pending.identity).is_some() {
             return Err(ConsensusError::ValidatorError(
@@ -1012,6 +1071,13 @@ impl ConsensusEngine {
         Ok(())
     }
 
+    /// Enqueue a validator removal for the next epoch boundary.
+    ///
+    /// If the same identity has a pending *addition* in the queue (i.e. the validator has
+    /// not yet activated), that add is cancelled and the method returns `Ok(())` without
+    /// creating a removal entry — the validator never joined, so nothing needs to be removed.
+    ///
+    /// Returns an error if the identity is not currently active and has no pending add to cancel.
     fn queue_validator_removal(&mut self, identity: IdentityId) -> ConsensusResult<()> {
         let mut removed_pending_add = false;
         self.pending_validator_changes.retain(|entry| match &entry.change {

@@ -31,7 +31,7 @@ fn register_test_validator(
 
 #[test]
 fn test_reward_calculator_initialization() {
-    let calculator = RewardCalculator::new();
+    let _calculator = RewardCalculator::new();
 
     // Should initialize with default settings
     // Implementation will vary based on actual RewardCalculator struct
@@ -320,7 +320,7 @@ fn test_reward_round_structure() -> Result<()> {
 
 #[test]
 fn test_useful_work_reward_types() -> Result<()> {
-    let calculator = RewardCalculator::new();
+    let _calculator = RewardCalculator::new();
 
     // Test that all useful work types are supported
     let work_types = vec![
