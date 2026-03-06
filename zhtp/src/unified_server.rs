@@ -63,6 +63,8 @@ use crate::api::handlers::{
     Web4Handler,
     DnsHandler,
     TokenHandler,
+    MonitorHandler,
+    ObserverHandler,
 };
 use crate::session_manager::SessionManager;
 
@@ -1641,7 +1643,7 @@ impl ZhtpUnifiedServer {
         &mut self,
         runtime: Arc<crate::runtime::RuntimeOrchestrator>
     ) -> Result<()> {
-        use crate::api::handlers::{NetworkHandler, MeshHandler, MonitorHandler};
+        use crate::api::handlers::{NetworkHandler, MeshHandler, MonitorHandler, ObserverHandler};
         use lib_protocols::zhtp::ZhtpRequestHandler;
 
         info!("🔌 Registering runtime-dependent API handlers...");
@@ -1666,11 +1668,17 @@ impl ZhtpUnifiedServer {
 
         // Issue #1801: Monitoring endpoints (health, system, performance)
         let monitor_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            MonitorHandler::new(runtime)
+            MonitorHandler::new(runtime.clone())
         );
         router_write.register_handler("/api/v1/monitor".to_string(), monitor_handler);
 
-        info!("✅ Runtime-dependent handlers registered: NetworkHandler, MeshHandler, MonitorHandler");
+        // Issue #1788: Observer metrics endpoints (consensus anomaly insights)
+        let observer_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            ObserverHandler::new(runtime)
+        );
+        router_write.register_handler("/api/v1/observer".to_string(), observer_handler);
+
+        info!("✅ Runtime-dependent handlers registered: NetworkHandler, MeshHandler, MonitorHandler, ObserverHandler");
         Ok(())
     }
 
