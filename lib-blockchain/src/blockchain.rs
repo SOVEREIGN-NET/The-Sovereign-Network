@@ -2439,6 +2439,11 @@ impl Blockchain {
             info!("🔮 Oracle advanced to epoch {} (block height {})", block_epoch, self.height);
         }
 
+        // ORACLE-R3: Process oracle attestation transactions through canonical path
+        // In V0 (legacy) mode: Also process gossip attestations (backward compatibility)
+        // In V1 (strict spec) mode: Only transaction attestations are processed
+        self.process_oracle_attestation_transactions(&block, block.header.timestamp);
+
         // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
             warn!("Error processing UBI claims at height {}: {}", self.height, e);
@@ -11704,6 +11709,127 @@ impl Blockchain {
         
         self.oracle_state.committee.set_members_genesis_only(members);
         Ok(())
+    }
+
+    /// Process OracleAttestation transactions from a block.
+    ///
+    /// ORACLE-R3: This is the canonical execution path for attestations in blocks.
+    /// Called by finish_block_processing() for both BlockExecutor and legacy paths.
+    fn process_oracle_attestation_transactions(&mut self, block: &Block, block_timestamp: u64) {
+        for tx in &block.transactions {
+            if tx.transaction_type == TransactionType::OracleAttestation {
+                if let Some(data) = &tx.oracle_attestation_data {
+                    // Build the attestation from transaction data
+                    let attestation = crate::oracle::OraclePriceAttestation {
+                        epoch_id: data.epoch_id,
+                        sov_usd_price: data.sov_usd_price,
+                        timestamp: data.timestamp,
+                        validator_pubkey: data.validator_pubkey,
+                        signature: data.signature.clone(),
+                    };
+
+                    // Apply through canonical path
+                    match self.apply_oracle_attestation(&attestation, block_timestamp) {
+                        Ok(outcome) => {
+                            if outcome.finalized {
+                                info!(
+                                    "🔮 Oracle epoch {} finalized at price {} via transaction",
+                                    outcome.epoch_id, outcome.sov_usd_price
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                "🔮 Oracle attestation transaction failed: {} (tx hash: {})",
+                                e,
+                                hex::encode(tx.hash().as_bytes())
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Apply an oracle attestation transaction through the canonical block execution path.
+    ///
+    /// ORACLE-R3: This is the canonical execution path for oracle attestations.
+    /// In strict-spec mode (V1), this is the ONLY allowed path for attestation processing.
+    ///
+    /// This method is called by:
+    /// - BlockExecutor when processing OracleAttestation transactions
+    /// - Runtime when in legacy mode (V0) for backward compatibility
+    ///
+    /// # Arguments
+    /// * `attestation` - The price attestation from a validator
+    /// * `block_timestamp` - The block timestamp for epoch derivation
+    ///
+    /// # Returns
+    /// * `Ok(OracleAttestationOutcome)` - Attestation was processed successfully
+    /// * `Err(...)` - Attestation was rejected (validation failure, double-sign, etc.)
+    pub fn apply_oracle_attestation(
+        &mut self,
+        attestation: &crate::oracle::OraclePriceAttestation,
+        block_timestamp: u64,
+    ) -> Result<crate::execution::tx_apply::OracleAttestationOutcome, String> {
+        let current_epoch = self.oracle_state.epoch_id(block_timestamp);
+
+        // Build key lookup for signature verification
+        let oracle_pubkeys = self.oracle_state.oracle_signing_pubkeys.clone();
+        let key_map: Vec<([u8; 32], Vec<u8>)> = self
+            .validator_registry
+            .values()
+            .filter(|v| !v.consensus_key.is_empty())
+            .map(|v| {
+                let kid = crate::types::hash::blake3_hash(&v.consensus_key).as_array();
+                (kid, v.consensus_key.clone())
+            })
+            .collect();
+
+        // Process the attestation through oracle state
+        let result = self.oracle_state.process_attestation(
+            attestation,
+            current_epoch,
+            |key_id: [u8; 32]| {
+                // Check bootstrapped oracle signing pubkeys first
+                if let Some(pk) = oracle_pubkeys.get(&key_id) {
+                    if !pk.is_empty() {
+                        return Some(pk.clone());
+                    }
+                }
+                // Fall back to validator_registry consensus keys
+                key_map
+                    .iter()
+                    .find(|(kid, _)| *kid == key_id)
+                    .map(|(_, pk)| pk.clone())
+            },
+        );
+
+        match result {
+            Ok(admission) => {
+                let finalized = matches!(
+                    admission,
+                    crate::oracle::OracleAttestationAdmission::Finalized(_)
+                );
+
+                Ok(crate::execution::tx_apply::OracleAttestationOutcome {
+                    epoch_id: attestation.epoch_id,
+                    validator_pubkey: attestation.validator_pubkey,
+                    sov_usd_price: attestation.sov_usd_price,
+                    finalized,
+                })
+            }
+            Err(crate::oracle::OracleAttestationAdmissionError::ConflictingSigner { .. }) => {
+                // Double-sign detected - slash the validator
+                self.slash_oracle_validator(
+                    attestation.validator_pubkey,
+                    crate::oracle::OracleSlashReason::ConflictingAttestation,
+                    attestation.epoch_id,
+                );
+                Err("Conflicting attestation detected - validator double-signed".to_string())
+            }
+            Err(e) => Err(format!("Attestation rejected: {:?}", e)),
+        }
     }
 }
 

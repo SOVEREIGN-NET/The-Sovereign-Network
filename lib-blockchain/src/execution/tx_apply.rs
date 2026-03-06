@@ -898,6 +898,94 @@ pub fn apply_coinbase(
 }
 
 // =============================================================================
+// Oracle Attestation Application (ORACLE-R3: Canonical Path)
+// =============================================================================
+
+/// Outcome of applying an oracle attestation transaction.
+#[derive(Debug, Clone)]
+pub struct OracleAttestationOutcome {
+    pub epoch_id: u64,
+    pub validator_pubkey: [u8; 32],
+    pub sov_usd_price: u128,
+    pub finalized: bool,
+}
+
+/// Apply an oracle attestation transaction.
+///
+/// This is the CANONICAL execution path for oracle attestations (ORACLE-R3).
+/// In strict-spec mode (V1), this is the ONLY allowed path for attestation processing.
+///
+/// # Arguments
+/// * `mutator` - State mutator for consensus state writes
+/// * `tx` - The attestation transaction
+/// * `block_timestamp` - The block's timestamp for epoch derivation
+/// * `oracle_state` - Mutable reference to oracle state (will be modified)
+/// * `resolve_signing_pubkey` - Function to resolve validator signing keys
+///
+/// # Returns
+/// The attestation outcome, including whether the epoch was finalized by this attestation.
+pub fn apply_oracle_attestation<F>(
+    _mutator: &StateMutator<'_>,
+    tx: &Transaction,
+    block_timestamp: u64,
+    oracle_state: &mut crate::oracle::OracleState,
+    resolve_signing_pubkey: F,
+) -> TxApplyResult<OracleAttestationOutcome>
+where
+    F: Fn([u8; 32]) -> Option<Vec<u8>>,
+{
+    let data = tx.oracle_attestation_data.as_ref().ok_or_else(|| {
+        TxApplyError::InvalidType("OracleAttestation requires oracle_attestation_data".to_string())
+    })?;
+
+    // Derive current epoch from block timestamp
+    let current_epoch = oracle_state.epoch_id(block_timestamp);
+
+    // Build the attestation
+    let attestation = crate::oracle::OraclePriceAttestation {
+        epoch_id: data.epoch_id,
+        sov_usd_price: data.sov_usd_price,
+        timestamp: data.timestamp,
+        validator_pubkey: data.validator_pubkey,
+        signature: data.signature.clone(),
+    };
+
+    // Process the attestation through oracle state
+    // This handles: validation, aggregation, threshold detection, finalization
+    let result = oracle_state.process_attestation(
+        &attestation,
+        current_epoch,
+        resolve_signing_pubkey,
+    );
+
+    match result {
+        Ok(admission) => {
+            let finalized = matches!(
+                admission,
+                crate::oracle::OracleAttestationAdmission::Finalized(_)
+            );
+
+            Ok(OracleAttestationOutcome {
+                epoch_id: data.epoch_id,
+                validator_pubkey: data.validator_pubkey,
+                sov_usd_price: data.sov_usd_price,
+                finalized,
+            })
+        }
+        Err(crate::oracle::OracleAttestationAdmissionError::ConflictingSigner { .. }) => {
+            // Double-sign detected - this should trigger slashing
+            Err(TxApplyError::InvalidType(
+                "Conflicting attestation detected - validator double-signed".to_string()
+            ))
+        }
+        Err(e) => Err(TxApplyError::InvalidType(format!(
+            "Attestation rejected: {:?}",
+            e
+        ))),
+    }
+}
+
+// =============================================================================
 // Outcome Types
 // =============================================================================
 
