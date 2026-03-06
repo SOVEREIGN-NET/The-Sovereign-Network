@@ -95,8 +95,13 @@ fn test_epoch_derivation_from_timestamp() {
     let timestamp = 1_700_000_000u64;
     let epoch = harness.blockchain.oracle_state.epoch_id(timestamp);
     
-    // Epoch 0: timestamps 0-299, Epoch 1: 300-599, etc.
-    let expected_epoch = timestamp / 300;
+    // Epoch 0: timestamps 0..epoch_duration_secs-1, Epoch 1: epoch_duration_secs..(2*epoch_duration_secs)-1, etc.
+    let epoch_duration = harness
+        .blockchain
+        .oracle_state
+        .config
+        .epoch_duration_secs;
+    let expected_epoch = timestamp / epoch_duration;
     assert_eq!(epoch, expected_epoch, "Epoch must be derived from timestamp / epoch_duration");
 }
 
