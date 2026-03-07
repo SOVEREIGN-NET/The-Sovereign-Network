@@ -1,7 +1,8 @@
 //! Oracle API Handler
 //!
 //! Endpoints:
-//!   GET /api/v1/oracle/price              — latest finalized SOV/USD price
+//!   GET /api/v1/oracle/price              — latest price for SOV/USD or CBE/USD
+//!   GET /api/v1/oracle/variation          — variation metrics for SOV/USD or CBE/USD
 //!   GET /api/v1/oracle/status             — committee state, epoch, last finalized height
 //!   GET /api/v1/oracle/config             — all operating parameters
 //!   GET /api/v1/oracle/pending-updates    — pending committee/config updates
@@ -15,6 +16,7 @@
 //!   POST /api/v1/oracle/attest            — submit oracle attestation (testnet only)
 
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use anyhow::Result;
 use lib_blockchain::oracle::{ORACLE_PRICE_SCALE, OracleSlashReason};
@@ -27,6 +29,21 @@ use tracing::{warn, debug};
 
 pub struct OracleHandler {
     is_testnet: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OraclePair {
+    SovUsd,
+    CbeUsd,
+}
+
+impl OraclePair {
+    fn as_str(self) -> &'static str {
+        match self {
+            OraclePair::SovUsd => "SOV/USD",
+            OraclePair::CbeUsd => "CBE/USD",
+        }
+    }
 }
 
 impl OracleHandler {
@@ -61,6 +78,70 @@ impl OracleHandler {
         out.copy_from_slice(&bytes);
         Ok(out)
     }
+
+    fn parse_query_params(uri: &str) -> HashMap<String, String> {
+        let mut out = HashMap::new();
+        let query = match uri.split_once('?') {
+            Some((_, q)) => q,
+            None => return out,
+        };
+        for kv in query.split('&') {
+            if kv.is_empty() {
+                continue;
+            }
+            let (k, v) = match kv.split_once('=') {
+                Some((k, v)) => (k.trim(), v.trim()),
+                None => (kv.trim(), ""),
+            };
+            if !k.is_empty() {
+                out.insert(k.to_ascii_lowercase(), v.to_ascii_uppercase());
+            }
+        }
+        out
+    }
+
+    fn parse_pair_from_uri(&self, uri: &str) -> Result<OraclePair> {
+        let q = Self::parse_query_params(uri);
+        if let Some(pair) = q.get("pair") {
+            return match pair.as_str() {
+                "SOV/USD" | "SOV_USD" => Ok(OraclePair::SovUsd),
+                "CBE/USD" | "CBE_USD" => Ok(OraclePair::CbeUsd),
+                _ => Err(anyhow::anyhow!(
+                    "Unsupported pair '{}'. Supported: SOV/USD, CBE/USD",
+                    pair
+                )),
+            };
+        }
+
+        let base = q.get("base").map(String::as_str).unwrap_or("SOV");
+        let quote = q.get("quote").map(String::as_str).unwrap_or("USD");
+        match (base, quote) {
+            ("SOV", "USD") => Ok(OraclePair::SovUsd),
+            ("CBE", "USD") => Ok(OraclePair::CbeUsd),
+            _ => Err(anyhow::anyhow!(
+                "Unsupported base/quote '{} / {}'. Supported: SOV/USD, CBE/USD",
+                base, quote
+            )),
+        }
+    }
+
+    fn parse_period_secs_from_uri(&self, uri: &str) -> Result<u64> {
+        let q = Self::parse_query_params(uri);
+        let period = q.get("period").map(String::as_str).unwrap_or("24h");
+        match period {
+            "1H" => Ok(3600),
+            "24H" => Ok(24 * 3600),
+            "7D" => Ok(7 * 24 * 3600),
+            _ => Err(anyhow::anyhow!(
+                "Unsupported period '{}'. Supported: 1h, 24h, 7d",
+                period
+            )),
+        }
+    }
+
+    fn price_f64_from_atomic(price_atomic: u128) -> f64 {
+        price_atomic as f64 / ORACLE_PRICE_SCALE as f64
+    }
 }
 
 #[async_trait::async_trait]
@@ -77,7 +158,8 @@ impl ZhtpRequestHandler for OracleHandler {
 
         match (request.method.clone(), path_parts.as_slice()) {
             // Existing read endpoints
-            (ZhtpMethod::Get, ["api", "v1", "oracle", "price"]) => self.handle_get_price().await,
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "price"]) => self.handle_get_price(&request).await,
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "variation"]) => self.handle_get_variation(&request).await,
             (ZhtpMethod::Get, ["api", "v1", "oracle", "status"]) => self.handle_get_status().await,
             (ZhtpMethod::Get, ["api", "v1", "oracle", "config"]) => self.handle_get_config().await,
             
@@ -173,7 +255,14 @@ impl OracleHandler {
     /// GET /api/v1/oracle/price
     ///
     /// Returns the latest finalized SOV/USD price, or 404 if no price has finalized yet.
-    async fn handle_get_price(&self) -> ZhtpResult<ZhtpResponse> {
+    async fn handle_get_price(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let pair = match self.parse_pair_from_uri(&request.uri) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string()));
+            }
+        };
+
         let bc_arc = match self.get_blockchain().await {
             Ok(bc) => bc,
             Err(e) => {
@@ -191,38 +280,85 @@ impl OracleHandler {
         let block_timestamp = bc.last_committed_timestamp();
         let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
 
-        let latest = bc
-            .oracle_state
-            .latest_finalized_price_at_or_before(current_epoch);
-
-        match latest {
-            Some(finalized) => {
-                let price_usd = finalized.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64;
-                
-                // ORACLE-5: Include staleness metadata
-                let epochs_since = current_epoch.saturating_sub(finalized.epoch_id);
-                let max_staleness = bc.oracle_state.config.max_price_staleness_epochs;
-                let is_fresh = epochs_since <= max_staleness;
-                
-                // u128 fields are serialized as strings — serde_json cannot represent
-                // integers beyond u64::MAX and will return an error otherwise.
+        match pair {
+            OraclePair::SovUsd => {
+                let latest = bc
+                    .oracle_state
+                    .latest_finalized_price_at_or_before(current_epoch);
+                match latest {
+                    Some(finalized) => {
+                        let epochs_since = current_epoch.saturating_sub(finalized.epoch_id);
+                        let max_staleness = bc.oracle_state.config.max_price_staleness_epochs;
+                        let is_fresh = epochs_since <= max_staleness;
+                        let body = json!({
+                            "pair": pair.as_str(),
+                            "source": "oracle_finalized",
+                            "epoch_id": finalized.epoch_id,
+                            "price_atomic": finalized.sov_usd_price.to_string(),
+                            "price": Self::price_f64_from_atomic(finalized.sov_usd_price),
+                            "oracle_price_scale": ORACLE_PRICE_SCALE.to_string(),
+                            "current_epoch": current_epoch,
+                            "epochs_since_finalization": epochs_since,
+                            "is_fresh": is_fresh,
+                            "max_price_staleness_epochs": max_staleness,
+                        });
+                        let bytes = match serde_json::to_vec(&body) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                warn!("Oracle price API: failed to serialize response: {}", e);
+                                return Ok(ZhtpResponse::error(
+                                    ZhtpStatus::InternalServerError,
+                                    "Failed to serialize oracle price response".to_string(),
+                                ));
+                            }
+                        };
+                        Ok(ZhtpResponse::success_with_content_type(
+                            bytes,
+                            "application/json".to_string(),
+                            None,
+                        ))
+                    }
+                    None => Ok(ZhtpResponse::error(
+                        ZhtpStatus::NotFound,
+                        "No finalized oracle price yet — oracle committee has not reached consensus".to_string(),
+                    )),
+                }
+            }
+            OraclePair::CbeUsd => {
+                let token_opt = bc
+                    .bonding_curve_registry
+                    .get_all()
+                    .into_iter()
+                    .find(|t| t.symbol == lib_blockchain::contracts::tokens::CBE_SYMBOL);
+                let token = match token_opt {
+                    Some(t) => t,
+                    None => {
+                        return Ok(ZhtpResponse::error(
+                            ZhtpStatus::NotFound,
+                            "CBE bonding curve token not found".to_string(),
+                        ));
+                    }
+                };
+                let price_atomic = token.current_price() as u128;
                 let body = json!({
-                    "epoch_id": finalized.epoch_id,
-                    "sov_usd_price_atomic": finalized.sov_usd_price.to_string(),
-                    "sov_usd_price": price_usd,
-                    "oracle_price_scale": ORACLE_PRICE_SCALE.to_string(),
+                    "pair": pair.as_str(),
+                    "source": "bonding_curve",
+                    "token_id": hex::encode(token.token_id),
+                    "phase": format!("{:?}", token.phase),
+                    "price_atomic": price_atomic.to_string(),
+                    "price": Self::price_f64_from_atomic(price_atomic),
+                    "price_scale": ORACLE_PRICE_SCALE.to_string(),
+                    "total_supply": token.total_supply,
+                    "reserve_balance": token.reserve_balance,
                     "current_epoch": current_epoch,
-                    "epochs_since_finalization": epochs_since,
-                    "is_fresh": is_fresh,
-                    "max_price_staleness_epochs": max_staleness,
                 });
                 let bytes = match serde_json::to_vec(&body) {
                     Ok(b) => b,
                     Err(e) => {
-                        warn!("Oracle price API: failed to serialize response: {}", e);
+                        warn!("Oracle price API: failed to serialize CBE response: {}", e);
                         return Ok(ZhtpResponse::error(
                             ZhtpStatus::InternalServerError,
-                            "Failed to serialize oracle price response".to_string(),
+                            "Failed to serialize CBE price response".to_string(),
                         ));
                     }
                 };
@@ -232,10 +368,175 @@ impl OracleHandler {
                     None,
                 ))
             }
-            None => Ok(ZhtpResponse::error(
-                ZhtpStatus::NotFound,
-                "No finalized oracle price yet — oracle committee has not reached consensus".to_string(),
-            )),
+        }
+    }
+
+    async fn handle_get_variation(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let pair = match self.parse_pair_from_uri(&request.uri) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string()));
+            }
+        };
+        let period_secs = match self.parse_period_secs_from_uri(&request.uri) {
+            Ok(p) => p,
+            Err(e) => return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
+        };
+
+        let bc_arc = match self.get_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                warn!("Oracle variation API: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    e.to_string(),
+                ));
+            }
+        };
+        let bc = bc_arc.read().await;
+        let block_timestamp = bc.last_committed_timestamp();
+        let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+
+        match pair {
+            OraclePair::SovUsd => {
+                let epoch_duration = bc.oracle_state.config.epoch_duration_secs.max(1);
+                let epochs_span = period_secs.saturating_add(epoch_duration - 1) / epoch_duration;
+                let start_epoch = current_epoch.saturating_sub(epochs_span);
+
+                let latest = match bc.oracle_state.latest_finalized_price_at_or_before(current_epoch) {
+                    Some(p) => p,
+                    None => {
+                        return Ok(ZhtpResponse::error(
+                            ZhtpStatus::NotFound,
+                            "No finalized SOV/USD oracle price available".to_string(),
+                        ));
+                    }
+                };
+                let reference = match bc.oracle_state.latest_finalized_price_at_or_before(start_epoch) {
+                    Some(p) => p,
+                    None => latest,
+                };
+
+                let mut prices: Vec<f64> = bc
+                    .oracle_state
+                    .all_finalized_prices()
+                    .iter()
+                    .filter(|(epoch, _)| **epoch >= start_epoch && **epoch <= current_epoch)
+                    .map(|(_, p)| Self::price_f64_from_atomic(p.sov_usd_price))
+                    .collect();
+                if prices.is_empty() {
+                    prices.push(Self::price_f64_from_atomic(latest.sov_usd_price));
+                }
+                let high = prices.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let low = prices.iter().cloned().fold(f64::INFINITY, f64::min);
+                let mean = prices.iter().sum::<f64>() / prices.len() as f64;
+                let variance = prices.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / prices.len() as f64;
+                let stdev = variance.sqrt();
+
+                let latest_price = Self::price_f64_from_atomic(latest.sov_usd_price);
+                let reference_price = Self::price_f64_from_atomic(reference.sov_usd_price);
+                let abs_change = latest_price - reference_price;
+                let pct_change = if reference_price > 0.0 {
+                    (abs_change / reference_price) * 100.0
+                } else {
+                    0.0
+                };
+
+                let body = json!({
+                    "pair": pair.as_str(),
+                    "source": "oracle_finalized",
+                    "period_secs": period_secs,
+                    "period_start_epoch": start_epoch,
+                    "period_end_epoch": current_epoch,
+                    "latest_price": latest_price,
+                    "reference_price": reference_price,
+                    "absolute_change": abs_change,
+                    "percent_change": pct_change,
+                    "high": high,
+                    "low": low,
+                    "mean": mean,
+                    "stdev": stdev,
+                    "sample_count": prices.len(),
+                });
+                let bytes = match serde_json::to_vec(&body) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        warn!("Oracle variation API: failed to serialize SOV response: {}", e);
+                        return Ok(ZhtpResponse::error(
+                            ZhtpStatus::InternalServerError,
+                            "Failed to serialize SOV variation response".to_string(),
+                        ));
+                    }
+                };
+                Ok(ZhtpResponse::success_with_content_type(
+                    bytes,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            OraclePair::CbeUsd => {
+                let token_opt = bc
+                    .bonding_curve_registry
+                    .get_all()
+                    .into_iter()
+                    .find(|t| t.symbol == lib_blockchain::contracts::tokens::CBE_SYMBOL);
+                let token = match token_opt {
+                    Some(t) => t,
+                    None => {
+                        return Ok(ZhtpResponse::error(
+                            ZhtpStatus::NotFound,
+                            "CBE bonding curve token not found".to_string(),
+                        ));
+                    }
+                };
+                let current_price_atomic = token.current_price() as u128;
+                let base_price_atomic = match token.curve_type {
+                    lib_blockchain::contracts::bonding_curve::types::CurveType::Linear { base_price, .. } => base_price as u128,
+                    lib_blockchain::contracts::bonding_curve::types::CurveType::Exponential { base_price, .. } => base_price as u128,
+                    lib_blockchain::contracts::bonding_curve::types::CurveType::Sigmoid { max_price, .. } => (max_price as u128) / 2,
+                };
+                let current_price = Self::price_f64_from_atomic(current_price_atomic);
+                let base_price = Self::price_f64_from_atomic(base_price_atomic);
+                let abs_change = current_price - base_price;
+                let pct_change = if base_price > 0.0 {
+                    (abs_change / base_price) * 100.0
+                } else {
+                    0.0
+                };
+                let stats = token.get_stats(block_timestamp);
+
+                let body = json!({
+                    "pair": pair.as_str(),
+                    "source": "bonding_curve_model",
+                    "note": "CBE variation is computed against curve baseline; no historical per-period oracle series exists yet",
+                    "period_secs": period_secs,
+                    "token_id": hex::encode(token.token_id),
+                    "phase": format!("{:?}", token.phase),
+                    "current_price": current_price,
+                    "base_price": base_price,
+                    "absolute_change_since_base": abs_change,
+                    "percent_change_since_base": pct_change,
+                    "reserve_balance": token.reserve_balance,
+                    "total_supply": token.total_supply,
+                    "graduation_progress_percent": stats.graduation_progress_percent,
+                    "can_graduate": stats.can_graduate,
+                });
+                let bytes = match serde_json::to_vec(&body) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        warn!("Oracle variation API: failed to serialize CBE response: {}", e);
+                        return Ok(ZhtpResponse::error(
+                            ZhtpStatus::InternalServerError,
+                            "Failed to serialize CBE variation response".to_string(),
+                        ));
+                    }
+                };
+                Ok(ZhtpResponse::success_with_content_type(
+                    bytes,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
         }
     }
 
@@ -928,5 +1229,40 @@ impl OracleHandler {
             ZhtpStatus::NotImplemented,
             "Manual attestation submission is not yet implemented".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OracleHandler, OraclePair};
+
+    #[test]
+    fn parses_supported_pairs() {
+        let h = OracleHandler::new();
+        assert!(matches!(
+            h.parse_pair_from_uri("/api/v1/oracle/price?base=SOV&quote=USD").unwrap(),
+            OraclePair::SovUsd
+        ));
+        assert!(matches!(
+            h.parse_pair_from_uri("/api/v1/oracle/price?pair=CBE_USD").unwrap(),
+            OraclePair::CbeUsd
+        ));
+    }
+
+    #[test]
+    fn parses_supported_periods() {
+        let h = OracleHandler::new();
+        assert_eq!(
+            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=1h").unwrap(),
+            3600
+        );
+        assert_eq!(
+            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=24h").unwrap(),
+            24 * 3600
+        );
+        assert_eq!(
+            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=7d").unwrap(),
+            7 * 24 * 3600
+        );
     }
 }
