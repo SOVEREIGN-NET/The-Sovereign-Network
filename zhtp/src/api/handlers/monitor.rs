@@ -244,7 +244,7 @@ impl MonitorHandler {
                         0.0
                     };
                     
-                    let mempool_size = blockchain.pending_transactions.len();
+                    let mempool_size = blockchain.get_pending_transactions().len();
                     
                     (height, avg_block_time, mempool_size)
                 }
