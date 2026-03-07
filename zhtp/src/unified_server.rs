@@ -1641,7 +1641,7 @@ impl ZhtpUnifiedServer {
         &mut self,
         runtime: Arc<crate::runtime::RuntimeOrchestrator>
     ) -> Result<()> {
-        use crate::api::handlers::{NetworkHandler, MeshHandler};
+        use crate::api::handlers::{NetworkHandler, MeshHandler, MonitorHandler};
         use lib_protocols::zhtp::ZhtpRequestHandler;
 
         info!("🔌 Registering runtime-dependent API handlers...");
@@ -1660,11 +1660,17 @@ impl ZhtpUnifiedServer {
 
         // Mesh blockchain operations
         let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            MeshHandler::new(runtime)
+            MeshHandler::new(runtime.clone())
         );
         router_write.register_handler("/api/v1/mesh".to_string(), mesh_handler);
 
-        info!("✅ Runtime-dependent handlers registered: NetworkHandler, MeshHandler");
+        // Issue #1801: Monitoring endpoints (health, system, performance)
+        let monitor_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            MonitorHandler::new(runtime)
+        );
+        router_write.register_handler("/api/v1/monitor".to_string(), monitor_handler);
+
+        info!("✅ Runtime-dependent handlers registered: NetworkHandler, MeshHandler, MonitorHandler");
         Ok(())
     }
 

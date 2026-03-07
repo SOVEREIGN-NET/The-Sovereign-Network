@@ -24,6 +24,7 @@ pub mod crypto;
 pub mod token;
 pub mod bonding_curve;
 pub mod oracle;
+pub mod monitor;
 
 pub use identity::IdentityHandler;
 pub use guardian::GuardianHandler;
@@ -44,3 +45,4 @@ pub use validator::ValidatorHandler;
 pub use crypto::CryptoHandler;
 pub use token::TokenHandler;
 pub use bonding_curve::{CurveHandler, SwapHandler, ValuationHandler};
+pub use monitor::MonitorHandler;
