@@ -2,6 +2,11 @@ use lib_blockchain::oracle::{OracleConfig, OraclePriceAttestation};
 use lib_crypto::keypair::generation::KeyPair;
 use std::collections::BTreeSet;
 
+/// Minimum number of raw source readings required before the producer attempts attestation.
+const MIN_SOURCES_REQUIRED: usize = 3;
+/// Minimum number of fresh, within-deviation sources needed to emit an attestation (vs. abstain).
+const MIN_VALID_SOURCES_TO_ATTEST: usize = 2;
+
 /// ORACLE-R8: Producer configuration derived from on-chain oracle config.
 /// 
 /// This ensures the producer's filtering rules match the consensus expectations,
@@ -21,10 +26,9 @@ impl OracleProducerConfig {
     /// consistency with consensus validation rules.
     pub fn from_on_chain_config(config: &OracleConfig) -> Self {
         Self {
-            min_sources_required: 3,
-            min_valid_sources_to_attest: 2,
             max_source_age_secs: config.max_source_age_secs,
             max_deviation_bps: config.max_deviation_bps,
+            ..Self::default()
         }
     }
 }
@@ -32,8 +36,8 @@ impl OracleProducerConfig {
 impl Default for OracleProducerConfig {
     fn default() -> Self {
         Self {
-            min_sources_required: 3,
-            min_valid_sources_to_attest: 2,
+            min_sources_required: MIN_SOURCES_REQUIRED,
+            min_valid_sources_to_attest: MIN_VALID_SOURCES_TO_ATTEST,
             max_source_age_secs: 60,
             max_deviation_bps: 500,
         }
