@@ -273,12 +273,18 @@ impl OracleComponent {
         keypair: KeyPair,
         mock_sov_usd_price: Option<u64>,
     ) {
-        let producer = OracleProducerService::new(OracleProducerConfig::default());
+        let mut producer = OracleProducerService::new(OracleProducerConfig::default());
         // Wait a bit at startup so that the blockchain and consensus are fully ready.
         tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
         info!("🔮 Oracle attestation producer started");
 
         loop {
+            // ORACLE-R8: Refresh producer config from on-chain state
+            {
+                let bc = blockchain.read().await;
+                producer.update_config(&bc.oracle_state.config);
+            }
+
             let epoch_duration_secs: u64 = {
                 let bc = blockchain.read().await;
                 bc.oracle_state.config.epoch_duration_secs.max(60)
