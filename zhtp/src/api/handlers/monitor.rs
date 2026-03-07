@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error};
+use tracing::{info, error};
 
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
