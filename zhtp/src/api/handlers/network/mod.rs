@@ -672,13 +672,10 @@ impl NetworkHandler {
         let consensus_round = 0u64; // Placeholder
 
         // Determine sync status
-        let sync_status = if consensus_height > blockchain_height {
-            "syncing"
-        } else if consensus_height == blockchain_height {
-            "synced"
-        } else {
-            "ahead"
-        };
+        // NOTE: Placeholder value until consensus exposes real sync state.
+        // Currently we always report "synced" to avoid misleading branch logic
+        // based on identical placeholder heights.
+        let sync_status = "synced";
 
         let response = serde_json::json!({
             "connected_peers": peer_count,
