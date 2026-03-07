@@ -1,7 +1,16 @@
-use lib_blockchain::oracle::OraclePriceAttestation;
+use lib_blockchain::oracle::{OracleConfig, OraclePriceAttestation};
 use lib_crypto::keypair::generation::KeyPair;
 use std::collections::BTreeSet;
 
+/// Minimum number of raw source readings required before the producer attempts attestation.
+const MIN_SOURCES_REQUIRED: usize = 3;
+/// Minimum number of fresh, within-deviation sources needed to emit an attestation (vs. abstain).
+const MIN_VALID_SOURCES_TO_ATTEST: usize = 2;
+
+/// ORACLE-R8: Producer configuration derived from on-chain oracle config.
+/// 
+/// This ensures the producer's filtering rules match the consensus expectations,
+/// preventing attestations that would be rejected by the chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OracleProducerConfig {
     pub min_sources_required: usize,
@@ -10,11 +19,25 @@ pub struct OracleProducerConfig {
     pub max_deviation_bps: u32,
 }
 
+impl OracleProducerConfig {
+    /// Create producer config from on-chain oracle config.
+    /// 
+    /// ORACLE-R8: Producer policy is sourced from on-chain config to ensure
+    /// consistency with consensus validation rules.
+    pub fn from_on_chain_config(config: &OracleConfig) -> Self {
+        Self {
+            max_source_age_secs: config.max_source_age_secs,
+            max_deviation_bps: config.max_deviation_bps,
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for OracleProducerConfig {
     fn default() -> Self {
         Self {
-            min_sources_required: 3,
-            min_valid_sources_to_attest: 2,
+            min_sources_required: MIN_SOURCES_REQUIRED,
+            min_valid_sources_to_attest: MIN_VALID_SOURCES_TO_ATTEST,
             max_source_age_secs: 60,
             max_deviation_bps: 500,
         }
@@ -45,6 +68,20 @@ pub struct OracleProducerService {
 impl OracleProducerService {
     pub fn new(config: OracleProducerConfig) -> Self {
         Self { config }
+    }
+
+    /// ORACLE-R8: Update config from on-chain oracle state.
+    /// 
+    /// This should be called periodically by the runtime to ensure
+    /// the producer's filtering rules stay in sync with on-chain config.
+    pub fn update_config(&mut self, on_chain_config: &OracleConfig) {
+        self.config = OracleProducerConfig::from_on_chain_config(on_chain_config);
+    }
+
+    /// Get the current producer configuration.
+    #[cfg(test)]
+    pub fn config(&self) -> &OracleProducerConfig {
+        &self.config
     }
 
     pub fn build_attestation(
@@ -364,5 +401,41 @@ mod tests {
             result.unwrap_err(),
             OracleProducerError::NotEnoughSources { .. }
         ));
+    }
+
+    #[test]
+    fn config_derived_from_on_chain_config() {
+        // ORACLE-R8: Producer policy sourced from on-chain config
+        let mut on_chain_config = OracleConfig::default();
+        on_chain_config.max_source_age_secs = 120;
+        on_chain_config.max_deviation_bps = 1000;
+
+        let producer_config = OracleProducerConfig::from_on_chain_config(&on_chain_config);
+
+        assert_eq!(producer_config.max_source_age_secs, 120);
+        assert_eq!(producer_config.max_deviation_bps, 1000);
+        // These should remain at their fixed defaults
+        assert_eq!(producer_config.min_sources_required, 3);
+        assert_eq!(producer_config.min_valid_sources_to_attest, 2);
+    }
+
+    #[test]
+    fn update_config_from_on_chain_state() {
+        // ORACLE-R8: Runtime can refresh config from on-chain state
+        let mut service = OracleProducerService::new(OracleProducerConfig::default());
+
+        // Verify default config
+        assert_eq!(service.config().max_source_age_secs, 60);
+        assert_eq!(service.config().max_deviation_bps, 500);
+
+        // Update with custom on-chain config
+        let mut new_on_chain_config = OracleConfig::default();
+        new_on_chain_config.max_source_age_secs = 90;
+        new_on_chain_config.max_deviation_bps = 800;
+        service.update_config(&new_on_chain_config);
+
+        // Verify config was updated
+        assert_eq!(service.config().max_source_age_secs, 90);
+        assert_eq!(service.config().max_deviation_bps, 800);
     }
 }
