@@ -160,7 +160,11 @@ impl MonitorHandler {
 
         // Determine overall status
         let overall_status = if network_health == "error" || blockchain_health == "error" {
+            // Any hard failure puts the node into a degraded state
             "degraded"
+        } else if network_health == "warning" || blockchain_health == "warning" {
+            // Any warning without errors should surface as a warning overall
+            "warning"
         } else {
             "healthy"
         };
