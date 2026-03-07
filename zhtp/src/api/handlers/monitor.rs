@@ -58,8 +58,8 @@ pub struct MonitorHandler {
 }
 
 impl MonitorHandler {
-    pub fn new(_runtime: Arc<RuntimeOrchestrator>) -> Self {
-        Self { _runtime }
+    pub fn new(runtime: Arc<RuntimeOrchestrator>) -> Self {
+        Self { _runtime: runtime }
     }
 }
 
