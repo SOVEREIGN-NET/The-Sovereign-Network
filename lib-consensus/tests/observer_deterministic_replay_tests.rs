@@ -612,12 +612,14 @@ fn integration_serialization_roundtrip() {
 /// OBSERVER-INTEGRATION-3: Multiple scenarios produce distinct signatures
 #[test]
 fn integration_distinct_scenarios_distinct_outputs() {
+    // Use a constant height for all scenarios so uniqueness is due to scenario
+    // differences, not trivially guaranteed by differing heights.
     let scenarios = vec![
         ("healthy", healthy_single_round(100, 0)),
-        ("delayed", delayed_round(101, 0)),
-        ("stalled", stalled_round(102, 0)),
-        ("recovering", recovering_round(103, 1)),
-        ("divergence", multi_round_with_divergence(104)),
+        ("delayed", delayed_round(100, 0)),
+        ("stalled", stalled_round(100, 0)),
+        ("recovering", recovering_round(100, 1)),
+        ("divergence", multi_round_with_divergence(100)),
     ];
 
     let config = default_config();
