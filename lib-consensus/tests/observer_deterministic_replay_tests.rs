@@ -8,10 +8,20 @@
 //! - Cross-module integration tests for end-to-end observer outputs
 
 use lib_consensus::observer::{
-    encode_height_states, encode_round_states,
-    EncodedConsensusPhase, EncodedConsensusState, ExecutionStatus, ParsedConsensusEvent,
-    ParsedConsensusPhase, ParsedHeightTrajectory, ParsedPhaseTrajectory, ParsedRoundTrajectory,
-    ProposalStatus, RoundClass, StateEncoderConfig, TimeClass,
+    encode_height_states,
+    encode_round_states,
+    EncodedConsensusPhase,
+    EncodedConsensusState,
+    ExecutionStatus,
+    ParsedConsensusEvent,
+    ParsedConsensusPhase,
+    ParsedHeightTrajectory,
+    ParsedPhaseTrajectory,
+    ParsedRoundTrajectory,
+    ProposalStatus,
+    RoundClass,
+    StateEncoderConfig,
+    TimeClass,
 };
 
 // =============================================================================
