@@ -165,11 +165,10 @@ impl MonitorHandler {
             "healthy"
         };
 
-        // Get uptime (placeholder - would track actual node start time)
-        let uptime_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() % 86400; // Placeholder: use seconds since midnight
+        // Get uptime
+        // TODO: Track actual node start time in the runtime and compute real uptime here.
+        // For now, expose a neutral placeholder value instead of a misleading "seconds since midnight".
+        let uptime_secs: u64 = 0;
 
         let response = HealthResponse {
             status: overall_status.to_string(),
