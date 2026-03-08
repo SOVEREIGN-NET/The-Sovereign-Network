@@ -645,8 +645,6 @@ pub fn build_create_token_tx(
         memo,
     );
 
-    // TokenCreation is a system transaction — consensus requires fee == 0
-    tx.fee = 0;
     let tx_hash = tx.signing_hash();
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
