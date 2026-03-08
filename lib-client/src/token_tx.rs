@@ -645,6 +645,22 @@ pub fn build_create_token_tx(
         memo,
     );
 
+    // Estimate fee from serialized size. Serialize with empty signature (sig bytes = vec![]),
+    // then pad for the Dilithium5 signature bytes (4595) that will be appended after signing.
+    // The pubkey is already present in the Signature struct so its size is already accounted for.
+    tx.fee = 0;
+    let unsigned_bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize tx for fee estimation: {}", e))?;
+    const D5_SIG_BYTES: usize = 4595;
+    let estimated_size = unsigned_bytes.len() + D5_SIG_BYTES;
+    tx.fee = calculate_min_fee_from_size(
+        estimated_size,
+        TX_FEE_BASE_FEE.load(Ordering::SeqCst),
+        TX_FEE_BYTES_PER_SOV.load(Ordering::SeqCst),
+        TX_FEE_WITNESS_CAP.load(Ordering::SeqCst),
+    );
+
+
     let tx_hash = tx.signing_hash();
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;

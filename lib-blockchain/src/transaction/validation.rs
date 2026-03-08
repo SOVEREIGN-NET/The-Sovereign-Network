@@ -1595,6 +1595,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::IdentityRegistration
             && transaction.transaction_type != TransactionType::TokenTransfer
             && transaction.transaction_type != TransactionType::TokenMint
+            && transaction.transaction_type != TransactionType::TokenCreation
             && !is_token_contract_execution(transaction)
         {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");
