@@ -415,8 +415,11 @@ mod tests {
         assert_eq!(producer_config.max_source_age_secs, 120);
         assert_eq!(producer_config.max_deviation_bps, 1000);
         // These should remain at their fixed defaults
-        assert_eq!(producer_config.min_sources_required, 3);
-        assert_eq!(producer_config.min_valid_sources_to_attest, 2);
+        assert_eq!(producer_config.min_sources_required, MIN_SOURCES_REQUIRED);
+        assert_eq!(
+            producer_config.min_valid_sources_to_attest,
+            MIN_VALID_SOURCES_TO_ATTEST
+        );
     }
 
     #[test]
