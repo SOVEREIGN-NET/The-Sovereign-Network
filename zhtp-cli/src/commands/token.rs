@@ -292,9 +292,9 @@ async fn handle_create<O: Output>(
     })?;
     // Use a zero-cost placeholder so that signing_hash() reflects real tx fields
     // before we overwrite it with the actual signature below.
-    let mut tx =
-        Transaction::new_token_creation_with_chain_id(0x03, lib_crypto::Signature::default(), memo);
-    tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
+    let mut tx = Transaction::new_token_creation_with_chain_id(0x03, lib_crypto::Signature::default(), memo);
+    // TokenCreation is validated as a system transaction on the node and must carry zero fee.
+    tx.fee = 0;
     tx.signature = keypair
         .sign(tx.signing_hash().as_bytes())
         .map_err(|e| CliError::ConfigError(format!("Failed to sign token creation tx: {e}")))?;
