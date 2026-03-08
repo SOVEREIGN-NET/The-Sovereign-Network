@@ -645,30 +645,8 @@ pub fn build_create_token_tx(
         memo,
     );
 
+    // TokenCreation is a system transaction — consensus requires fee == 0
     tx.fee = 0;
-    let tx_hash = tx.signing_hash();
-    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
-        .map_err(|e| format!("Failed to sign: {}", e))?;
-
-    tx.signature = Signature {
-        signature: signature_bytes,
-        public_key: signer_pk,
-        algorithm: SignatureAlgorithm::Dilithium5,
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-    };
-
-    let tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize tx for fee estimation: {}", e))?;
-    tx.fee = calculate_min_fee_from_size(
-        tx_bytes.len(),
-        TX_FEE_BASE_FEE.load(Ordering::SeqCst),
-        TX_FEE_BYTES_PER_SOV.load(Ordering::SeqCst),
-        TX_FEE_WITNESS_CAP.load(Ordering::SeqCst),
-    );
-
     let tx_hash = tx.signing_hash();
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign: {}", e))?;
