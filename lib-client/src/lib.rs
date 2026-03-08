@@ -493,6 +493,38 @@ pub extern "C" fn zhtp_client_sign_registration_proof(
     }
 }
 
+/// Sign a PoUW receipt JSON payload. Returns signature bytes.
+/// Caller must free with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_sign_pouw_receipt_json(
+    handle: *const IdentityHandle,
+    receipt_json: *const std::ffi::c_char,
+) -> ByteBuffer {
+    if handle.is_null() || receipt_json.is_null() {
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let receipt_json = unsafe {
+        match std::ffi::CStr::from_ptr(receipt_json).to_str() {
+            Ok(s) => s,
+            Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        }
+    };
+
+    match sign_pouw_receipt_json(identity, receipt_json) {
+        Ok(mut sig) => {
+            let buf = ByteBuffer { data: sig.as_mut_ptr(), len: sig.len() };
+            std::mem::forget(sig);
+            buf
+        }
+        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+    }
+}
+
 /// Sign UHP handshake challenge. Returns signature bytes.
 /// Private keys stay in Rust - never exposed to caller.
 #[no_mangle]
