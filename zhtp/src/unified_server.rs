@@ -991,8 +991,9 @@ impl ZhtpUnifiedServer {
         crate::network_output_dispatcher::spawn_app_network_output_processor();
 
         // Restore persisted POUW rewards from disk
+        let pouw_env = crate::config::environment::detect_environment();
         let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(
-            std::path::Path::new(&crate::config::environment::Environment::default().blockchain_data_path())
+            std::path::Path::new(&pouw_env.blockchain_data_path())
         );
         if let Err(e) = self.pouw_calculator_arc.load_rewards_from_file(&rewards_path).await {
             tracing::warn!("Failed to load POUW rewards from disk: {}", e);
@@ -1357,7 +1358,7 @@ impl ZhtpUnifiedServer {
         {
             let calc = self.pouw_calculator_arc.clone();
             let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(
-                std::path::Path::new(&crate::config::environment::Environment::default().blockchain_data_path())
+                std::path::Path::new(&crate::config::environment::detect_environment().blockchain_data_path())
             );
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -1375,7 +1376,7 @@ impl ZhtpUnifiedServer {
         crate::pouw::spawn_pouw_payout_task(
             self.pouw_calculator_arc.clone(),
             self.blockchain.clone(),
-            std::path::PathBuf::from(crate::config::environment::Environment::default().blockchain_data_path()),
+            std::path::PathBuf::from(crate::config::environment::detect_environment().blockchain_data_path()),
             crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
         );
         info!("✓ POUW reward payout task spawned (epoch interval: {}s)",

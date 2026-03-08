@@ -14,6 +14,18 @@ pub enum Environment {
     Mainnet,
 }
 
+/// Detect the runtime environment from CLI args, matching main.rs parsing logic.
+pub fn detect_environment() -> Environment {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--mainnet") {
+        Environment::Mainnet
+    } else if args.iter().any(|a| a == "--testnet") {
+        Environment::Testnet
+    } else {
+        Environment::Development
+    }
+}
+
 impl fmt::Display for Environment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
