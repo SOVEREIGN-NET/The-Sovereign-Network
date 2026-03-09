@@ -128,7 +128,13 @@ impl ZhtpClient {
                 if let Some(cached) = BOOTSTRAP_NONCE_CACHE.get() {
                     cached.clone()
                 } else {
-                    let nonce_db_path = std::env::temp_dir().join("zhtp_bootstrap_nonce");
+                    // Use per-process subdirectory to avoid cross-process contention
+                    // when running multiple nodes on the same host (common in local testing)
+                    let pid = std::process::id();
+                    let nonce_db_path = std::env::temp_dir()
+                        .join("zhtp_bootstrap_nonce")
+                        .join(pid.to_string())
+                        .join("db");
                     if let Some(parent) = nonce_db_path.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
