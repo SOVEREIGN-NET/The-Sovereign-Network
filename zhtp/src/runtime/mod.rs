@@ -2740,13 +2740,31 @@ impl RuntimeOrchestrator {
         // from active validator consensus keys so attestations are not rejected as
         // NonCommitteeSigner after node restart/rejoin.
         if blockchain.oracle_state.committee.members().is_empty() {
+            const DILITHIUM2_PK_LEN: usize = 1312;
+            const DILITHIUM5_PK_LEN: usize = 2592;
+
             let mut committee_members_with_pubkeys: Vec<([u8; 32], Vec<u8>)> = blockchain
                 .validator_registry
                 .values()
-                .filter(|v| v.status == "active" && !v.consensus_key.is_empty())
-                .map(|v| {
-                    let key_id = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
-                    (key_id, v.consensus_key.clone())
+                .filter(|v| v.status == "active")
+                .filter_map(|v| {
+                    if v.consensus_key.is_empty() {
+                        return None;
+                    }
+
+                    let key_len = v.consensus_key.len();
+                    if key_len == DILITHIUM2_PK_LEN || key_len == DILITHIUM5_PK_LEN {
+                        let key_id = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
+                        Some((key_id, v.consensus_key.clone()))
+                    } else {
+                        warn!(
+                            "Skipping validator with invalid consensus_key length (len={}, expected {} or {}) when bootstrapping oracle committee",
+                            key_len,
+                            DILITHIUM2_PK_LEN,
+                            DILITHIUM5_PK_LEN
+                        );
+                        None
+                    }
                 })
                 .collect();
 
