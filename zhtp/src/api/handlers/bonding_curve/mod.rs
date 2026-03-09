@@ -1246,7 +1246,7 @@ impl ValuationHandler {
                     ConfidenceLevel::DeterministicCurve,
                 ),
                 Phase::AMM => (
-                    PriceSource::AMM_TWAP,
+                    PriceSource::AmmTwap,
                     ConfidenceLevel::TwapLiquiditySufficient,
                 ),
                 _ => (
@@ -1535,9 +1535,9 @@ impl ValuationHandler {
             Phase::AMM => {
                 // AMM phase: use requested type (default twap)
                 let source = if price_type == "spot" {
-                    PriceSource::AMM_Spot
+                    PriceSource::AmmSpot
                 } else {
-                    PriceSource::AMM_TWAP
+                    PriceSource::AmmTwap
                 };
                 let confidence = if price_type == "spot" {
                     ConfidenceLevel::TwapLowLiquidity // Spot is less reliable

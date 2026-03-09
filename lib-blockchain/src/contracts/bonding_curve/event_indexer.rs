@@ -1,4 +1,63 @@
 //! Sled-backed Persistent Event Indexer
+//!
+//! # Purpose
+//!
+//! This module provides **API-side event indexing** for bonding curve operations.
+//! It is **NOT part of the consensus-critical path**.
+//!
+//! # Architecture
+//!
+//! The event indexer serves the following roles:
+//!
+//! 1. **API Query Support**: Provides efficient querying of historical bonding curve
+//!    events (purchases, sales, graduations, swaps, liquidity operations) for API
+//!    endpoints like `/api/v1/bonding-curve/{token_id}/events`.
+//!
+//! 2. **Off-Chain Indexing**: Events are indexed from the consensus state after block
+//!    execution. The indexer does not validate or affect consensus - it only provides
+//!    convenient access patterns for historical data.
+//!
+//! 3. **Persistence**: Uses sled (embedded B-tree database) for durable storage of
+//!    events across node restarts.
+//!
+//! # Data Model
+//!
+//! The indexer maintains:
+//! - **Event store**: All bonding curve events serialized with bincode
+//! - **Token index**: Events indexed by token_id for token-specific queries
+//! - **Block index**: Events indexed by block height for range queries
+//! - **Type index**: Events indexed by event type (e.g., "token_purchased")
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! // Initialize indexer (typically in node startup)
+//! let mut indexer = SledEventIndexer::open("/path/to/data")?;
+//!
+//! // Index events after block execution (API-side)
+//! for event in block_events {
+//!     indexer.index_event(event);
+//! }
+//! indexer.flush()?;
+//!
+//! // Query for API responses
+//! let token_events = indexer.get_token_events(token_id);
+//! let purchases = indexer.get_purchase_events(token_id);
+//! let range_events = indexer.get_events_in_range(start_block, end_block);
+//! ```
+//!
+//! # Consensus Boundary
+//!
+//! **Important**: This indexer is for API convenience only. The canonical source of
+//! truth for bonding curve state is the `BondingCurveRegistry` in consensus state.
+//! Events are derived from state transitions but the indexer itself is not validated
+//! by consensus.
+//!
+//! # Performance Characteristics
+//!
+//! - **Write**: O(log n) per event (sled B-tree insertion)
+//! - **Read**: O(log n + k) for k events in range
+//! - **Storage**: Unbounded growth - consider pruning strategies for long-running nodes
 
 use super::events::{BondingCurveEvent, EventIndexer};
 

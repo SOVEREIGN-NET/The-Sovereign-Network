@@ -134,8 +134,8 @@ impl BondingCurveToken {
 
     /// Calculate how many tokens can be bought for a given stable amount
     ///
-    /// Uses the constant product approximation for simplicity.
-    /// For more accurate pricing, integrate over the curve.
+    /// Delegates to the curve type for accurate calculation.
+    /// For piecewise linear curves, uses exact integral-based calculation.
     ///
     /// # Arguments
     /// * `stable_amount` - Amount of stablecoin to spend
@@ -149,18 +149,8 @@ impl BondingCurveToken {
 
         self.require_phase(Phase::Curve)?;
 
-        let price = self.current_price();
-        if price == 0 {
-            return Err(CurveError::InvalidParameters("Price is zero".to_string()));
-        }
-
-        // tokens = stable_amount / price
-        // Both in atomic units, result in token atomic units
-        let tokens = (stable_amount as u128)
-            .checked_mul(100_000_000) // Token decimals
-            .ok_or(CurveError::Overflow)?
-            .checked_div(price as u128)
-            .ok_or(CurveError::Overflow)? as u64;
+        // Delegate to curve type for accurate calculation
+        let tokens = self.curve_type.calculate_buy_tokens(self.total_supply, stable_amount);
 
         if tokens == 0 {
             return Err(CurveError::ZeroAmount);
@@ -170,6 +160,9 @@ impl BondingCurveToken {
     }
 
     /// Calculate how much stablecoin can be received for selling tokens
+    ///
+    /// Delegates to the curve type for accurate calculation.
+    /// For piecewise linear curves, uses exact integral-based calculation.
     ///
     /// # Arguments
     /// * `token_amount` - Amount of tokens to sell
@@ -189,14 +182,8 @@ impl BondingCurveToken {
             ));
         }
 
-        let price = self.current_price();
-
-        // stable = token_amount × price / token_decimals
-        let stable = (token_amount as u128)
-            .checked_mul(price as u128)
-            .ok_or(CurveError::Overflow)?
-            .checked_div(100_000_000)
-            .ok_or(CurveError::Overflow)? as u64;
+        // Delegate to curve type for accurate calculation
+        let stable = self.curve_type.calculate_sell_stable(self.total_supply, token_amount);
 
         if stable > self.reserve_balance {
             return Err(CurveError::InsufficientReserve);

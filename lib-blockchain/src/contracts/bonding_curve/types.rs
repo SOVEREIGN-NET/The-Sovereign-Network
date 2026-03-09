@@ -473,9 +473,9 @@ pub enum PriceSource {
     /// Bonding curve pricing
     BondingCurve,
     /// AMM spot price
-    AMM_Spot,
+    AmmSpot,
     /// AMM TWAP price
-    AMM_TWAP,
+    AmmTwap,
 }
 
 impl PriceSource {
@@ -483,8 +483,8 @@ impl PriceSource {
         match self {
             PriceSource::SRV => "srv",
             PriceSource::BondingCurve => "bonding_curve",
-            PriceSource::AMM_Spot => "amm_spot",
-            PriceSource::AMM_TWAP => "amm_twap",
+            PriceSource::AmmSpot => "amm_spot",
+            PriceSource::AmmTwap => "amm_twap",
         }
     }
 }
@@ -527,6 +527,8 @@ pub enum CurveError {
     PoolNotFound,
     /// Unauthorized operation
     Unauthorized,
+    /// Purchase would exceed maximum token supply
+    SupplyCapExceeded { current: u64, requested: u64, max: u64 },
 }
 
 impl std::fmt::Display for CurveError {
@@ -547,6 +549,9 @@ impl std::fmt::Display for CurveError {
             CurveError::ThresholdNotMet => write!(f, "Graduation threshold not yet met"),
             CurveError::PoolNotFound => write!(f, "AMM pool not found"),
             CurveError::Unauthorized => write!(f, "Unauthorized operation"),
+            CurveError::SupplyCapExceeded { current, requested, max } => {
+                write!(f, "Supply cap exceeded: current={}, requested={}, max={}", current, requested, max)
+            }
         }
     }
 }
@@ -630,5 +635,29 @@ mod tests {
             steepness: 1000,
         };
         assert_eq!(sigmoid.name(), "sigmoid");
+    }
+
+    #[test]
+    fn test_supply_cap_exceeded_error() {
+        let error = CurveError::SupplyCapExceeded {
+            current: 90_000_000_000_000_000_00u64,
+            requested: 20_000_000_000_000_000_00u64,
+            max: 100_000_000_000_000_000_00u64,
+        };
+
+        let error_str = format!("{}", error);
+        assert!(error_str.contains("Supply cap exceeded"));
+        assert!(error_str.contains("current="));
+        assert!(error_str.contains("requested="));
+        assert!(error_str.contains("max="));
+    }
+
+    #[test]
+    fn test_price_source_names() {
+        // Test that PriceSource enum variants follow naming conventions
+        assert_eq!(PriceSource::SRV.name(), "srv");
+        assert_eq!(PriceSource::BondingCurve.name(), "bonding_curve");
+        assert_eq!(PriceSource::AmmSpot.name(), "amm_spot");
+        assert_eq!(PriceSource::AmmTwap.name(), "amm_twap");
     }
 }
