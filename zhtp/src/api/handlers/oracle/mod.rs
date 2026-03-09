@@ -102,7 +102,13 @@ impl OracleHandler {
                 None => (kv.trim(), ""),
             };
             if !k.is_empty() {
-                out.insert(k.to_ascii_lowercase(), v.to_ascii_uppercase());
+                let decoded_k = urlencoding::decode(k)
+                    .unwrap_or_else(|_| k.into())
+                    .to_ascii_lowercase();
+                let decoded_v = urlencoding::decode(v)
+                    .unwrap_or_else(|_| v.into())
+                    .to_ascii_uppercase();
+                out.insert(decoded_k, decoded_v);
             }
         }
         out
