@@ -6,8 +6,13 @@
 use anyhow::{anyhow, Context, Result};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::{debug, info, warn};
+
+/// Singleton bootstrap NonceCache — opened once, shared (via Arc<Db>) across all bootstrap clients.
+/// This prevents the OOM bug where a unique sled DB path was created per bootstrap connection.
+static BOOTSTRAP_NONCE_CACHE: OnceLock<NonceCache> = OnceLock::new();
+static BOOTSTRAP_NONCE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 use quinn::{ClientConfig, Connection, Endpoint};
 
@@ -106,44 +111,67 @@ impl ZhtpClient {
             Endpoint::client("0.0.0.0:0".parse()?).context("Failed to create QUIC endpoint")?;
 
         // Create nonce cache.
-        // Bootstrap mode uses a fixed shared path so all short-lived bootstrap clients
-        // reuse the same sled database instead of creating a new one per call.
-        // A unique timestamp path was used previously, leaking one sled instance per
-        // observer_sync_loop tick (~6/min) and causing OOM after extended uptime.
-        let nonce_db_path = if config.allow_bootstrap {
-            std::env::temp_dir().join("zhtp_bootstrap_nonce")
-        } else {
-            dirs::home_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(".zhtp")
-                .join("client_nonce_cache")
-        };
-
-        // Safely get parent directory, defaulting to current dir if path is malformed
-        if let Some(parent) = nonce_db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        // Derive network epoch from genesis hash.
-        // Bootstrap mode uses chain_id=0 as a safe fallback: the node has no local chain yet
-        // and needs a QUIC connection specifically to fetch genesis from a peer. Requiring genesis
-        // before bootstrapping creates an unresolvable chicken-and-egg deadlock.
-        let network_epoch = if config.allow_bootstrap {
-            match crate::handshake::NetworkEpoch::from_global_or_fail() {
-                Ok(epoch) => epoch,
-                Err(_) => {
-                    warn!(
-                        "Network genesis not yet available (bootstrap mode) - \
-                         using chain_id=0 for initial sync connection"
-                    );
-                    crate::handshake::NetworkEpoch::from_chain_id(0)
+        // Bootstrap clients share a single NonceCache instance (opened once via OnceLock).
+        // NonceCache::clone() is cheap — it shares the Arc<sled::Db> without reopening.
+        // This prevents the OOM bug (unique sled path per bootstrap call) and the
+        // concurrent-open bug (sled only allows one opener per path at a time).
+        let nonce_cache = if config.allow_bootstrap {
+            // Fast path: already initialized
+            if let Some(cached) = BOOTSTRAP_NONCE_CACHE.get() {
+                cached.clone()
+            } else {
+                // Slow path: initialize once under mutex to prevent races
+                let _guard = BOOTSTRAP_NONCE_MUTEX
+                    .lock()
+                    .map_err(|_| anyhow!("Bootstrap nonce mutex poisoned"))?;
+                // Double-check after acquiring lock
+                if let Some(cached) = BOOTSTRAP_NONCE_CACHE.get() {
+                    cached.clone()
+                } else {
+                    let nonce_db_path = std::env::temp_dir().join("zhtp_bootstrap_nonce");
+                    if let Some(parent) = nonce_db_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    let network_epoch = match crate::handshake::NetworkEpoch::from_global_or_fail() {
+                        Ok(epoch) => epoch,
+                        Err(_) => {
+                            warn!(
+                                "Network genesis not yet available (bootstrap mode) - \
+                                 using chain_id=0 for initial sync connection"
+                            );
+                            crate::handshake::NetworkEpoch::from_chain_id(0)
+                        }
+                    };
+                    // Open bootstrap nonce cache. If it fails due to epoch mismatch (stale
+                    // sled from a previous run with different genesis), wipe and recreate.
+                    // The bootstrap nonce cache is ephemeral — cross-restart replay protection
+                    // for bootstrap connections is not a security requirement.
+                    let cache = match NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            warn!("Bootstrap nonce cache open failed ({}); clearing stale DB and retrying", e);
+                            let _ = std::fs::remove_dir_all(&nonce_db_path);
+                            std::fs::create_dir_all(&nonce_db_path)?;
+                            NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
+                                .context("Failed to open nonce cache")?
+                        }
+                    };
+                    let _ = BOOTSTRAP_NONCE_CACHE.set(cache.clone());
+                    cache
                 }
             }
         } else {
-            crate::handshake::NetworkEpoch::from_global_or_fail()?
+            let nonce_db_path = dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".zhtp")
+                .join("client_nonce_cache");
+            if let Some(parent) = nonce_db_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
+            NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
+                .context("Failed to open nonce cache")?
         };
-        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
-            .context("Failed to open nonce cache")?;
 
         let handshake_ctx = HandshakeContext::new(nonce_cache);
 
