@@ -53,7 +53,16 @@ impl ZhtpRequestHandler for MonitorHandler {
             "Monitor API request received"
         );
 
-        let response = match (request.method, request.uri.as_str()) {
+        // Normalize URI: strip trailing slashes and query strings for consistent matching
+        let normalized_uri = request.uri.trim_end_matches('/');
+        let normalized_uri = if normalized_uri.is_empty() {
+            "/"
+        } else {
+            normalized_uri
+        };
+        let match_uri = normalized_uri.split('?').next().unwrap_or(normalized_uri);
+
+        let response = match (request.method, match_uri) {
             (ZhtpMethod::Get, "/api/v1/monitor/health") => {
                 self.handle_get_health(request).await
             }
