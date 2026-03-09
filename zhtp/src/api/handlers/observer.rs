@@ -171,7 +171,7 @@ impl ZhtpRequestHandler for ObserverHandler {
     }
 
     fn priority(&self) -> u32 {
-        75 // Lower priority than core blockchain, higher than monitoring
+        75 // Priority for observer API handler
     }
 }
 
