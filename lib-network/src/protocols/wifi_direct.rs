@@ -1018,7 +1018,7 @@ impl WiFiDirectMeshProtocol {
 
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         {
-            Err(anyhow!(
+            Err(anyhow::anyhow!(
                 "Platform not supported for WiFi Direct MAC address retrieval"
             ))
         }
