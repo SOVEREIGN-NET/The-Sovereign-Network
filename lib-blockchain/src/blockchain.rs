@@ -2495,6 +2495,8 @@ impl Blockchain {
             // Uses timestamp-based comparison to handle epoch_duration changes correctly
             let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
             self.oracle_state.apply_pending_updates(current_epoch);
+            // ORACLE-R1: Apply pending committee removals at epoch boundaries (Spec §9)
+            self.apply_pending_committee_removals(current_epoch);
             self.last_oracle_epoch_processed = block.header.timestamp;
             debug!(
                 "Oracle epoch processed: {} at block {}",
@@ -2621,6 +2623,8 @@ impl Blockchain {
         {
             let block_epoch = self.oracle_state.epoch_id(block.header.timestamp);
             self.oracle_state.apply_pending_updates(block_epoch);
+            // ORACLE-R1: Apply pending committee removals at epoch boundaries (Spec §9)
+            self.apply_pending_committee_removals(block_epoch);
             self.last_oracle_epoch_processed = block.header.timestamp;
             info!(
                 "🔮 Oracle advanced to epoch {} (block height {})",
@@ -11491,6 +11495,8 @@ impl Blockchain {
                 .oracle_state
                 .epoch_id(blockchain.last_committed_timestamp());
             blockchain.oracle_state.apply_pending_updates(current_epoch);
+            // ORACLE-R1: Apply pending committee removals at epoch boundaries (Spec §9)
+            blockchain.apply_pending_committee_removals(current_epoch);
             blockchain.last_oracle_epoch_processed = blockchain.last_committed_timestamp();
             info!("🔮 Oracle caught up to epoch {} during load", current_epoch);
         }
@@ -13608,16 +13614,43 @@ impl Blockchain {
     ///
     /// # Arguments
     /// * `key_id` - The validator's oracle key_id (blake3 of consensus_key)
-    /// * `reason` - The slashing reason (double-sign or wrong-epoch)
+    /// * `reason` - The slashing reason (double-sign, wrong-epoch, or deviation-band)
     /// * `epoch_id` - The epoch where the violation occurred
     ///
     /// # Returns
     /// The amount of stake slashed (in SOV atomic units)
+    ///
+    /// # Backward Compatibility
+    /// This function maintains V0 (legacy) behavior with immediate committee removal.
+    /// For V1 (strict spec) behavior with aligned removal, use
+    /// `slash_oracle_validator_with_options` with `aligned_removal=true`.
     pub fn slash_oracle_validator(
         &mut self,
         key_id: [u8; 32],
         reason: crate::oracle::OracleSlashReason,
         epoch_id: u64,
+    ) -> u64 {
+        // Legacy V0 behavior: immediate committee removal (aligned_removal = false).
+        self.slash_oracle_validator_with_options(key_id, reason, epoch_id, false)
+    }
+
+    /// Slash an oracle validator with configurable committee removal timing.
+    ///
+    /// # Arguments
+    /// * `key_id` - The validator's oracle key_id (blake3 of consensus_key)
+    /// * `reason` - The slashing reason (double-sign, wrong-epoch, or deviation-band)
+    /// * `epoch_id` - The epoch where the violation occurred
+    /// * `aligned_removal` - If true, remove from committee at next epoch boundary (Spec §9).
+    ///                       If false, remove immediately (legacy V0 behavior).
+    ///
+    /// # Returns
+    /// The amount of stake slashed (in SOV atomic units)
+    pub fn slash_oracle_validator_with_options(
+        &mut self,
+        key_id: [u8; 32],
+        reason: crate::oracle::OracleSlashReason,
+        epoch_id: u64,
+        aligned_removal: bool,
     ) -> u64 {
         use crate::types::hash::blake3_hash;
         use tracing::{info, warn};
@@ -13640,8 +13673,28 @@ impl Blockchain {
         // 2. Ban from oracle committee (permanent until governance re-adds)
         self.oracle_banned_validators.insert(key_id);
 
-        // 3. Remove from active committee immediately
-        self.oracle_state.committee.remove_member(key_id);
+        // 3. Committee removal timing (Spec §9: next-epoch boundary for aligned semantics)
+        let committee_removal_at_epoch = if aligned_removal {
+            // Spec-compliant: queue removal for next epoch boundary
+            let removal_epoch = epoch_id.saturating_add(1);
+            self.oracle_state
+                .committee_removal_queue
+                .push(crate::oracle::CommitteeRemovalEntry {
+                    validator_key_id: key_id,
+                    remove_at_epoch: removal_epoch,
+                    reason,
+                });
+            info!(
+                "⚔️ Oracle validator {} queued for committee removal at epoch {} (aligned semantics)",
+                hex::encode(&key_id[..8]),
+                removal_epoch
+            );
+            Some(removal_epoch)
+        } else {
+            // Legacy V0: immediate removal
+            self.oracle_state.committee.remove_member(key_id);
+            None
+        };
 
         // 4. Record the slash event
         self.oracle_slash_events
@@ -13651,6 +13704,7 @@ impl Blockchain {
                 epoch_id,
                 slash_amount,
                 slashed_at_height: self.height,
+                committee_removal_at_epoch,
             });
 
         if slash_amount > 0 {
@@ -13671,6 +13725,37 @@ impl Blockchain {
         }
 
         slash_amount
+    }
+
+    /// Apply pending committee removals that are scheduled for the current epoch.
+    ///
+    /// This should be called at the start of each epoch to process the removal queue.
+    /// Spec §9: Committee removal happens at the next epoch boundary after slashing.
+    ///
+    /// # Performance
+    /// This method processes the queue in a single pass (O(n)) to avoid repeated scans.
+    pub fn apply_pending_committee_removals(&mut self, current_epoch: u64) {
+        let queue = &mut self.oracle_state.committee_removal_queue;
+        let mut remaining = Vec::with_capacity(queue.len());
+
+        for entry in queue.drain(..) {
+            if entry.remove_at_epoch <= current_epoch {
+                self.oracle_state
+                    .committee
+                    .remove_member(entry.validator_key_id);
+                info!(
+                    "🚫 Oracle validator {} removed from committee at epoch {} (scheduled for {})",
+                    hex::encode(&entry.validator_key_id[..8]),
+                    current_epoch,
+                    entry.remove_at_epoch
+                );
+            } else {
+                // Keep entries scheduled for future epochs.
+                remaining.push(entry);
+            }
+        }
+
+        *queue = remaining;
     }
 }
 

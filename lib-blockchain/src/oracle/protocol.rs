@@ -435,6 +435,202 @@ impl OracleFeatureFlags {
     }
 }
 
+// ============================================================================
+// ORACLE-R8: Observability, Parity Monitoring, and Rollback Controls
+// ============================================================================
+
+/// Parity monitoring metrics for shadow mode comparison.
+///
+/// Tracks agreement/disagreement between legacy and strict spec execution paths
+/// during the shadow period before cutover.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct OracleParityMetrics {
+    /// Total attestations processed by both paths.
+    pub total_comparisons: u64,
+    /// Number of times both paths produced identical results.
+    pub agreements: u64,
+    /// Number of times paths produced different results.
+    pub disagreements: u64,
+    /// Number of slash events from legacy path.
+    pub legacy_slash_count: u64,
+    /// Number of slash events from strict path.
+    pub strict_slash_count: u64,
+    /// Last epoch where disagreement was detected.
+    pub last_disagreement_epoch: Option<u64>,
+    /// Block height when metrics were last updated.
+    pub last_updated_height: u64,
+}
+
+impl OracleParityMetrics {
+    /// Record a comparison result between legacy and strict paths.
+    pub fn record_comparison(&mut self, agreed: bool, height: u64) {
+        self.total_comparisons += 1;
+        self.last_updated_height = height;
+        if agreed {
+            self.agreements += 1;
+        } else {
+            self.disagreements += 1;
+        }
+    }
+
+    /// Record a disagreement with epoch information.
+    ///
+    /// This delegates counter updates to `record_comparison` to ensure
+    /// `total_comparisons` and `disagreements` stay in sync.
+    pub fn record_disagreement(&mut self, epoch: u64, height: u64) {
+        self.record_comparison(false, height);
+        self.last_disagreement_epoch = Some(epoch);
+    }
+
+    /// Calculate agreement rate as percentage (0-100).
+    pub fn agreement_rate_percent(&self) -> f64 {
+        if self.total_comparisons == 0 {
+            return 100.0;
+        }
+        (self.agreements as f64 / self.total_comparisons as f64) * 100.0
+    }
+
+    /// Check if parity is within acceptable threshold for cutover.
+    /// Default threshold: 99.9% agreement rate.
+    pub fn is_parity_acceptable(&self, threshold_percent: f64) -> bool {
+        self.agreement_rate_percent() >= threshold_percent
+    }
+
+    /// Reset all metrics.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Divergence alarm configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DivergenceAlarmConfig {
+    /// Agreement rate threshold below which alarm triggers (default: 95.0).
+    pub alarm_threshold_percent: f64,
+    /// Minimum comparisons before alarm can trigger (default: 100).
+    pub min_comparisons_before_alarm: u64,
+    /// Consecutive disagreements before critical alarm (default: 5).
+    pub consecutive_disagreements_threshold: u64,
+}
+
+impl Default for DivergenceAlarmConfig {
+    fn default() -> Self {
+        Self {
+            alarm_threshold_percent: 95.0,
+            min_comparisons_before_alarm: 100,
+            consecutive_disagreements_threshold: 5,
+        }
+    }
+}
+
+/// Rollback control state for emergency protocol version reversal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackControls {
+    /// Whether emergency rollback is enabled.
+    pub enabled: bool,
+    /// The version to rollback to (typically V0Legacy).
+    pub rollback_target: OracleProtocolVersion,
+    /// Block height at which rollback was triggered (if any).
+    pub triggered_at_height: Option<u64>,
+    /// Reason for rollback (audit trail).
+    pub rollback_reason: Option<String>,
+    /// Who authorized the rollback (node operator identifier).
+    pub authorized_by: Option<String>,
+}
+
+impl Default for RollbackControls {
+    fn default() -> Self {
+        Self {
+            enabled: true, // Rollback is enabled by default for safety
+            rollback_target: OracleProtocolVersion::V0Legacy,
+            triggered_at_height: None,
+            rollback_reason: None,
+            authorized_by: None,
+        }
+    }
+}
+
+impl RollbackControls {
+    /// Trigger an emergency rollback.
+    pub fn trigger_rollback(
+        &mut self,
+        height: u64,
+        reason: String,
+        authorized_by: String,
+    ) -> OracleProtocolVersion {
+        self.triggered_at_height = Some(height);
+        self.rollback_reason = Some(reason);
+        self.authorized_by = Some(authorized_by);
+        self.rollback_target
+    }
+
+    /// Check if a rollback has been triggered.
+    pub fn is_rollback_triggered(&self) -> bool {
+        self.triggered_at_height.is_some()
+    }
+
+    /// Clear rollback state (after successful rollback).
+    pub fn clear_rollback(&mut self) {
+        self.triggered_at_height = None;
+        self.rollback_reason = None;
+        self.authorized_by = None;
+    }
+}
+
+/// Oracle observability state containing metrics and controls.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct OracleObservabilityState {
+    /// Parity monitoring metrics.
+    pub parity_metrics: OracleParityMetrics,
+    /// Divergence alarm configuration.
+    pub divergence_config: DivergenceAlarmConfig,
+    /// Rollback controls.
+    pub rollback_controls: RollbackControls,
+    /// Current alarm status.
+    pub alarm_active: bool,
+    /// Consecutive disagreements counter.
+    pub consecutive_disagreements: u64,
+}
+
+impl OracleObservabilityState {
+    /// Check and update alarm status based on current metrics.
+    pub fn update_alarm_status(&mut self) {
+        let metrics = &self.parity_metrics;
+        let config = &self.divergence_config;
+
+        if metrics.total_comparisons < config.min_comparisons_before_alarm {
+            self.alarm_active = false;
+            return;
+        }
+
+        let below_threshold = metrics.agreement_rate_percent() < config.alarm_threshold_percent;
+        let consecutive_exceeded = self.consecutive_disagreements >= config.consecutive_disagreements_threshold;
+
+        self.alarm_active = below_threshold || consecutive_exceeded;
+    }
+
+    /// Record a disagreement and update alarm status.
+    ///
+    /// Increments the consecutive disagreements counter and delegates
+    /// metrics updates to parity_metrics.record_comparison to ensure
+    /// total_comparisons stays in sync.
+    pub fn record_disagreement(&mut self, epoch: u64, height: u64) {
+        self.consecutive_disagreements += 1;
+        self.parity_metrics.record_comparison(false, height);
+        self.parity_metrics.last_disagreement_epoch = Some(epoch);
+        self.parity_metrics.last_updated_height = height;
+        self.update_alarm_status();
+    }
+
+    /// Record an agreement and reset consecutive counter.
+    pub fn record_agreement(&mut self, height: u64) {
+        self.consecutive_disagreements = 0;
+        self.parity_metrics.record_comparison(true, height);
+        self.parity_metrics.last_updated_height = height;
+        self.update_alarm_status();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,5 +881,126 @@ mod tests {
         assert_eq!(config.current_version, deserialized.current_version);
         assert_eq!(config.pending_activation, deserialized.pending_activation);
         assert_eq!(config.activated_at_height, deserialized.activated_at_height);
+    }
+
+    // =========================================================================
+    // ORACLE-R8: Observability Tests
+    // =========================================================================
+
+    #[test]
+    fn parity_metrics_calculates_agreement_rate() {
+        let mut metrics = OracleParityMetrics::default();
+        
+        // No comparisons yet - should be 100%
+        assert_eq!(metrics.agreement_rate_percent(), 100.0);
+        
+        // Record some comparisons
+        metrics.record_comparison(true, 100);   // agreement
+        metrics.record_comparison(true, 101);   // agreement
+        metrics.record_comparison(false, 102);  // disagreement
+        
+        assert_eq!(metrics.total_comparisons, 3);
+        assert_eq!(metrics.agreements, 2);
+        assert_eq!(metrics.disagreements, 1);
+        assert!((metrics.agreement_rate_percent() - 66.67).abs() < 0.1);
+    }
+
+    #[test]
+    fn parity_metrics_parity_acceptable_threshold() {
+        let mut metrics = OracleParityMetrics::default();
+        
+        // Add 1000 comparisons with 5 disagreements (99.5% agreement)
+        for i in 0..995 {
+            metrics.record_comparison(true, i);
+        }
+        for i in 995..1000 {
+            metrics.record_comparison(false, i);
+        }
+        
+        // Should not be acceptable at 99.9% threshold
+        assert!(!metrics.is_parity_acceptable(99.9));
+        // Should be acceptable at 99.0% threshold
+        assert!(metrics.is_parity_acceptable(99.0));
+    }
+
+    #[test]
+    fn rollback_controls_trigger_and_clear() {
+        let mut controls = RollbackControls::default();
+        
+        assert!(!controls.is_rollback_triggered());
+        assert!(controls.enabled);
+        
+        let target = controls.trigger_rollback(
+            1000,
+            "Divergence alarm triggered".to_string(),
+            "operator-1".to_string(),
+        );
+        
+        assert!(controls.is_rollback_triggered());
+        assert_eq!(target, OracleProtocolVersion::V0Legacy);
+        assert_eq!(controls.triggered_at_height, Some(1000));
+        assert_eq!(controls.rollback_reason, Some("Divergence alarm triggered".to_string()));
+        assert_eq!(controls.authorized_by, Some("operator-1".to_string()));
+        
+        controls.clear_rollback();
+        assert!(!controls.is_rollback_triggered());
+    }
+
+    #[test]
+    fn observability_alarm_triggers_on_low_agreement() {
+        let mut state = OracleObservabilityState::default();
+        state.divergence_config.min_comparisons_before_alarm = 10;
+        state.divergence_config.alarm_threshold_percent = 95.0;
+        
+        // Not enough comparisons yet
+        for i in 0..5 {
+            state.record_agreement(i);
+        }
+        assert!(!state.alarm_active);
+        
+        // Add more comparisons but keep agreement high
+        for i in 5..15 {
+            state.record_agreement(i);
+        }
+        assert!(!state.alarm_active);
+        
+        // Now add many disagreements to drop agreement rate
+        for i in 15..25 {
+            state.record_disagreement(i, i);
+        }
+        // Agreement rate is now 15/25 = 60%, below 95% threshold
+        assert!(state.alarm_active);
+    }
+
+    #[test]
+    fn observability_alarm_triggers_on_consecutive_disagreements() {
+        let mut state = OracleObservabilityState::default();
+        // Set threshold to 0% so only consecutive disagreements can trigger alarm
+        state.divergence_config.min_comparisons_before_alarm = 0;
+        state.divergence_config.alarm_threshold_percent = 0.0;
+        state.divergence_config.consecutive_disagreements_threshold = 3;
+        
+        // Add some agreements first
+        for i in 0..5 {
+            state.record_agreement(i);
+        }
+        assert!(!state.alarm_active);
+        
+        // Now add consecutive disagreements
+        state.record_disagreement(100, 10);
+        assert_eq!(state.consecutive_disagreements, 1);
+        assert!(!state.alarm_active);
+        state.record_disagreement(101, 11);
+        assert_eq!(state.consecutive_disagreements, 2);
+        assert!(!state.alarm_active);
+        state.record_disagreement(102, 12);
+        assert_eq!(state.consecutive_disagreements, 3);
+        // 3 consecutive disagreements should trigger alarm
+        assert!(state.alarm_active);
+        
+        // One agreement should reset consecutive counter and clear alarm
+        state.record_agreement(13);
+        assert!(!state.alarm_active);
+        assert_eq!(state.consecutive_disagreements, 0);
     }
 }
