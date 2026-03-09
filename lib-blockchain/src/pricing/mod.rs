@@ -104,6 +104,26 @@ pub struct PriceComponents {
     pub sov_usd: Option<f64>,
 }
 
+impl PriceComponents {
+    /// Create from oracle CBE/USD price
+    pub fn from_oracle(cbe_usd_8dec: u128, sov_usd_8dec: u128) -> Self {
+        Self {
+            cbe_usd: Some(cbe_usd_8dec as f64 / PRICE_SCALE as f64),
+            sov_usd: Some(sov_usd_8dec as f64 / PRICE_SCALE as f64),
+            ..Default::default()
+        }
+    }
+
+    /// Create from bonding curve calculation
+    pub fn from_curve(curve_price_sov: u64, sov_usd_8dec: u128) -> Self {
+        Self {
+            curve_price_sov: Some(curve_price_sov as f64 / PRICE_SCALE as f64),
+            sov_usd: Some(sov_usd_8dec as f64 / PRICE_SCALE as f64),
+            ..Default::default()
+        }
+    }
+}
+
 /// CBE-specific price information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CbePriceInfo {
@@ -132,7 +152,8 @@ pub struct CbePriceInfo {
 pub struct TokenPricingState {
     /// Current CBE/USD price from oracle (8-decimal precision)
     pub cbe_usd_price: Option<u128>,
-    /// Internal CBE/SOV ratio from bonding curve (8-decimal precision)
+    /// SOV per CBE ratio from bonding curve (8-decimal precision)
+    /// This is the bonding curve price: how many SOV atomic units per 1 CBE token
     pub cbe_sov_ratio: Option<u128>,
     /// Epoch when CBE/USD was last updated
     pub cbe_price_epoch: Option<u64>,

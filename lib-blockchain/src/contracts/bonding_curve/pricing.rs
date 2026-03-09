@@ -475,7 +475,11 @@ mod tests {
     fn test_price_increases_with_supply() {
         let curve = PiecewiseLinearCurve::cbe_default();
         let price_low = curve.price_at(1_000_000_000); // Low supply
-        let price_high = curve.price_at(50_000_000_000_000_000); // High supply (50B)
+        
+        // High supply: 50B tokens = 50_000_000_000 * 100_000_000 atomic units
+        let high_supply = 50_000_000_000u64 * 100_000_000;
+        let price_high = curve.price_at(high_supply);
+        
         assert!(price_high > price_low, "Price must increase with supply");
     }
 

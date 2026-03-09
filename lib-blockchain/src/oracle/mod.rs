@@ -1097,7 +1097,8 @@ impl OracleState {
         signer_set.insert(attestation.validator_pubkey);
         
         // Track CBE price if provided (Issue #1819)
-        let cbe_finalized = if let Some(cbe_price) = attestation.cbe_usd_price {
+        let mut cbe_finalized = false;
+        if let Some(cbe_price) = attestation.cbe_usd_price {
             epoch_state
                 .signer_cbe_prices
                 .insert(attestation.validator_pubkey, cbe_price);
@@ -1106,17 +1107,13 @@ impl OracleState {
                 .entry(cbe_price)
                 .or_default();
             cbe_signer_set.insert(attestation.validator_pubkey);
-            
+
             // Check if CBE price has reached threshold
             if epoch_state.winning_cbe_price.is_none() && cbe_signer_set.len() >= threshold {
                 epoch_state.winning_cbe_price = Some(cbe_price);
-                true
-            } else {
-                false
+                cbe_finalized = true;
             }
-        } else {
-            false
-        };
+        }
 
         // Check if SOV price has reached threshold
         if !epoch_state.finalized && signer_set.len() >= threshold {
@@ -1144,6 +1141,10 @@ impl OracleState {
 
             return Ok(OracleAttestationAdmission::Finalized(finalized));
         }
+
+        // Note: CBE price is finalized independently but included in SOV finalization
+        // CBE finalization alone doesn't trigger OracleAttestationAdmission::Finalized
+        // because SOV/USD is the primary oracle output
 
         Ok(OracleAttestationAdmission::Accepted)
     }

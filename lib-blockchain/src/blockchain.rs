@@ -1464,10 +1464,9 @@ impl Blockchain {
     // =========================================================================
 
     /// Update CBE/USD price from oracle (called when oracle finalizes CBE price)
-    pub fn update_cbe_usd_oracle_price(&mut self, price_8dec: u128, epoch: u64) {
-        let timestamp = self.get_genesis_timestamp();
+    pub fn update_cbe_usd_oracle_price(&mut self, price_8dec: u128, epoch: u64, timestamp: u64) {
         self.token_pricing_state.update_cbe_usd_price(price_8dec, epoch, timestamp);
-        
+
         if self.token_pricing_state.dynamic_pricing_active {
             info!(
                 "Unified pricing: Dynamic mode activated - SOV price = ${:.4}",
@@ -1478,9 +1477,12 @@ impl Blockchain {
 
     /// Compute and update internal CBE/SOV ratio from bonding curve
     /// Should be called periodically to keep the ratio current
+    ///
+    /// The ratio is: SOV per CBE (how many SOV atomic units to buy 1 CBE token)
+    /// This comes directly from the bonding curve price.
     pub fn update_cbe_sov_ratio_from_curve(&mut self) {
         use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
-        
+
         // Generate CBE token ID
         let cbe_token_id = {
             use std::collections::hash_map::DefaultHasher;
@@ -1499,14 +1501,11 @@ impl Blockchain {
 
         // Get CBE token from registry
         if let Some(cbe_token) = self.bonding_curve_registry.get(&cbe_token_id) {
-            // Get current SOV price for ratio calculation
-            let sov_price_8dec = self.token_pricing_state.get_sov_price_8dec();
-            let cbe_price_sov = cbe_token.current_price(); // Price in SOV atomic units
+            // CBE token current_price() returns SOV-per-CBE in 8-decimal fixed point
+            // This is exactly the cbe_sov_ratio we need
+            let cbe_sov_ratio_8dec = cbe_token.current_price() as u128;
             
-            // CBE/SOV ratio = CBE price in SOV
-            // This represents how many SOV tokens are needed to buy 1 CBE
-            if sov_price_8dec > 0 {
-                let cbe_sov_ratio_8dec = (cbe_price_sov as u128 * crate::pricing::PRICE_SCALE) / sov_price_8dec;
+            if cbe_sov_ratio_8dec > 0 {
                 let timestamp = self.get_genesis_timestamp();
                 self.token_pricing_state.update_cbe_sov_ratio(cbe_sov_ratio_8dec, timestamp);
             }
@@ -1533,7 +1532,7 @@ impl Blockchain {
     /// Get current CBE price information for API
     pub fn get_cbe_price_info(&self) -> Option<crate::pricing::CbePriceInfo> {
         use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
-        
+
         // Generate CBE token ID
         let cbe_token_id = {
             use std::collections::hash_map::DefaultHasher;
@@ -1552,14 +1551,23 @@ impl Blockchain {
 
         let cbe_token = self.bonding_curve_registry.get(&cbe_token_id)?;
         let sov_price_8dec = self.token_pricing_state.get_sov_price_8dec();
-        
-        // Calculate CBE price in USD
-        let (price_cents, components) = self.token_pricing_state.calculate_cbe_price(
-            sov_price_8dec,
-            cbe_token.current_price()
-        );
 
-        let (price_mode, price_source, oracle_confidence) = if self.token_pricing_state.cbe_usd_price.is_some() {
+        // Calculate CBE price in USD
+        // If oracle provides CBE/USD directly, use it; otherwise compute from curve + SOV price
+        let (price_cents, components, use_oracle_price) = if let Some(cbe_usd_8dec) = self.token_pricing_state.cbe_usd_price {
+            // Oracle provides direct CBE/USD price
+            let price_cents = crate::pricing::PricingCalculator::to_cents(cbe_usd_8dec);
+            (price_cents, crate::pricing::PriceComponents::from_oracle(cbe_usd_8dec, sov_price_8dec), true)
+        } else {
+            // Compute from bonding curve: CBE/SOV * SOV/USD
+            let (price_cents, components) = self.token_pricing_state.calculate_cbe_price(
+                sov_price_8dec,
+                cbe_token.current_price()
+            );
+            (price_cents, crate::pricing::PriceComponents::from_curve(cbe_token.current_price(), sov_price_8dec), false)
+        };
+
+        let (price_mode, price_source, oracle_confidence) = if use_oracle_price {
             (
                 crate::pricing::PricingMode::PostGraduation,
                 crate::pricing::PriceSource::Oracle,

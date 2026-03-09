@@ -1484,7 +1484,7 @@ impl ValuationHandler {
                     "oracle_confidence": info.oracle_confidence,
                     "reserve_usd": info.reserve_usd,
                     "supply": info.supply,
-                    "confidence_level": if info.price_mode.to_string() == "dynamic" { "high" } else { "deterministic_curve" },
+                    "confidence_level": if info.price_source == crate::pricing::PriceSource::Oracle { "high" } else { "deterministic_curve" },
                     "last_updated": info.last_updated,
                 }))
             }
@@ -1509,7 +1509,7 @@ impl ValuationHandler {
                     "price_mode": price_mode,
                     "price_source": price_source,
                     "phase": phase,
-                    "confidence_level": if price_mode == "dynamic" { "high" } else { "deterministic_curve" },
+                    "confidence_level": if price_source == "oracle" { "high" } else { "deterministic_curve" },
                     "last_updated": pricing.last_updated,
                     "note": "Using fallback pricing (get_cbe_price_info returned None)",
                 }))
