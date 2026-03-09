@@ -98,7 +98,9 @@ impl TreasuryProposal {
     /// Check if proposal is executable
     pub fn is_executable(&self, current_epoch: u64) -> bool {
         self.status == ProposalStatus::Approved
-            && self.timelock_expires_epoch.map_or(false, |e| current_epoch >= e)
+            && self
+                .timelock_expires_epoch
+                .map_or(false, |e| current_epoch >= e)
     }
 
     /// Check if proposal has expired
@@ -107,8 +109,9 @@ impl TreasuryProposal {
             ProposalStatus::Voting => current_epoch > self.voting_ends_epoch,
             ProposalStatus::Approved => {
                 // Approved proposals expire if not executed within grace period
-                self.timelock_expires_epoch
-                    .map_or(false, |e| current_epoch > e.saturating_add(EXECUTION_GRACE_EPOCHS))
+                self.timelock_expires_epoch.map_or(false, |e| {
+                    current_epoch > e.saturating_add(EXECUTION_GRACE_EPOCHS)
+                })
             }
             _ => false,
         }
@@ -155,10 +158,7 @@ pub enum TreasuryAction {
         reason: MintReason,
     },
     /// Burn tokens from treasury reserve
-    Burn {
-        amount: u64,
-        reason: BurnReason,
-    },
+    Burn { amount: u64, reason: BurnReason },
     /// Update role cap
     UpdateRoleCap {
         role_id: RoleId,
@@ -175,9 +175,7 @@ pub enum TreasuryAction {
         per_epoch_cap: u64,
     },
     /// Deactivate a role (no new assignments)
-    DeactivateRole {
-        role_id: RoleId,
-    },
+    DeactivateRole { role_id: RoleId },
     /// Update global parameters
     UpdateParameter {
         parameter: TreasuryParameter,
@@ -188,10 +186,7 @@ pub enum TreasuryAction {
     /// Resume from emergency pause
     EmergencyResume,
     /// Update compensation config
-    UpdateCompensationRate {
-        role_id: RoleId,
-        new_rate: u64,
-    },
+    UpdateCompensationRate { role_id: RoleId, new_rate: u64 },
     /// Grant role to identity
     GrantRole {
         identity_id: IdentityId,
@@ -234,7 +229,10 @@ impl fmt::Display for TreasuryAction {
             Self::DeactivateRole { role_id } => {
                 write!(f, "DeactivateRole: {:?}", &role_id[..4])
             }
-            Self::UpdateParameter { parameter, new_value } => {
+            Self::UpdateParameter {
+                parameter,
+                new_value,
+            } => {
                 write!(f, "UpdateParameter: {} = {}", parameter, new_value)
             }
             Self::EmergencyPause => write!(f, "EmergencyPause"),
@@ -242,16 +240,40 @@ impl fmt::Display for TreasuryAction {
             Self::UpdateCompensationRate { role_id, new_rate } => {
                 write!(f, "UpdateRate for {:?} to {}", &role_id[..4], new_rate)
             }
-            Self::GrantRole { identity_id, role_id } => {
-                write!(f, "GrantRole {:?} to {:?}", &role_id[..4], &identity_id[..4])
+            Self::GrantRole {
+                identity_id,
+                role_id,
+            } => {
+                write!(
+                    f,
+                    "GrantRole {:?} to {:?}",
+                    &role_id[..4],
+                    &identity_id[..4]
+                )
             }
-            Self::RevokeRole { identity_id, role_id } => {
-                write!(f, "RevokeRole {:?} from {:?}", &role_id[..4], &identity_id[..4])
+            Self::RevokeRole {
+                identity_id,
+                role_id,
+            } => {
+                write!(
+                    f,
+                    "RevokeRole {:?} from {:?}",
+                    &role_id[..4],
+                    &identity_id[..4]
+                )
             }
-            Self::UpdateSRV { new_committed_value_usd, rationale, .. } => {
+            Self::UpdateSRV {
+                new_committed_value_usd,
+                rationale,
+                ..
+            } => {
                 let usd_whole = new_committed_value_usd / 100;
                 let usd_frac = new_committed_value_usd % 100;
-                write!(f, "UpdateSRV to ${}.{:02} ({})", usd_whole, usd_frac, rationale)
+                write!(
+                    f,
+                    "UpdateSRV to ${}.{:02} ({})",
+                    usd_whole, usd_frac, rationale
+                )
             }
         }
     }
@@ -382,18 +404,30 @@ impl fmt::Display for GovernanceError {
             Self::ProposalAlreadyExists(id) => {
                 write!(f, "Proposal already exists: {:?}", &id[..4])
             }
-            Self::InvalidProposalStatus { proposal_id, expected, actual } => {
+            Self::InvalidProposalStatus {
+                proposal_id,
+                expected,
+                actual,
+            } => {
                 write!(
                     f,
                     "Invalid status for proposal {:?}: expected {}, got {}",
-                    &proposal_id[..4], expected, actual
+                    &proposal_id[..4],
+                    expected,
+                    actual
                 )
             }
-            Self::TimelockNotExpired { proposal_id, expires_epoch, current_epoch } => {
+            Self::TimelockNotExpired {
+                proposal_id,
+                expires_epoch,
+                current_epoch,
+            } => {
                 write!(
                     f,
                     "Timelock not expired for {:?}: expires at {}, current {}",
-                    &proposal_id[..4], expires_epoch, current_epoch
+                    &proposal_id[..4],
+                    expires_epoch,
+                    current_epoch
                 )
             }
             Self::ProposalExpired(id) => {
@@ -443,7 +477,12 @@ impl ExecutionResult {
     }
 
     /// Create a failed result
-    pub fn failure(proposal_id: ProposalId, epoch: u64, action: TreasuryAction, reason: &str) -> Self {
+    pub fn failure(
+        proposal_id: ProposalId,
+        epoch: u64,
+        action: TreasuryAction,
+        reason: &str,
+    ) -> Self {
         Self {
             proposal_id,
             executed_at_epoch: epoch,

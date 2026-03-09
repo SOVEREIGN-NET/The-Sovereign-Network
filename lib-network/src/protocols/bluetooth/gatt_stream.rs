@@ -20,8 +20,7 @@ use crate::protocols::bluetooth::gatt::{fragment_large_message, FragmentReassemb
 #[cfg(test)]
 use futures::FutureExt;
 
-type SendFn =
-    std::sync::Arc<dyn Fn(Vec<u8>) -> BoxFuture<'static, io::Result<()>> + Send + Sync>;
+type SendFn = std::sync::Arc<dyn Fn(Vec<u8>) -> BoxFuture<'static, io::Result<()>> + Send + Sync>;
 
 /// Stream abstraction over BLE GATT notifications/write-without-response.
 pub struct GattStream {

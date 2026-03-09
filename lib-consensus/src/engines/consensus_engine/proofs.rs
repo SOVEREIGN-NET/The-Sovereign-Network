@@ -307,8 +307,8 @@ impl ConsensusEngine {
         let validator_hash = Hash::from_bytes(validator_id.as_bytes());
         let unsigned = crate::proofs::StorageCapacityAttestation::new(
             validator_hash,
-            0,   // storage_capacity: none
-            0,   // utilization: 0%
+            0,      // storage_capacity: none
+            0,      // utilization: 0%
             vec![], // no challenge results
         );
         let attestation = unsigned
@@ -390,14 +390,11 @@ impl ConsensusEngine {
         &self,
         validator: &crate::validators::Validator,
     ) -> ConsensusResult<&lib_crypto::KeyPair> {
-        let keypair = self
-            .validator_keypair
-            .as_ref()
-            .ok_or_else(|| {
-                ConsensusError::ValidatorError(
-                    "No signing keypair configured for local validator".to_string(),
-                )
-            })?;
+        let keypair = self.validator_keypair.as_ref().ok_or_else(|| {
+            ConsensusError::ValidatorError(
+                "No signing keypair configured for local validator".to_string(),
+            )
+        })?;
 
         if keypair.public_key.dilithium_pk != validator.consensus_key {
             return Err(ConsensusError::ValidatorError(

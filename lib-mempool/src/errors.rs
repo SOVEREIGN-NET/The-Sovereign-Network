@@ -4,9 +4,9 @@
 //! and is re-exported here. This module defines `AdmitError` and provides
 //! convenience constructors for building specific admission errors.
 
-use thiserror::Error;
 pub use lib_types::mempool::AdmitErrorKind;
 use lib_types::{Address, Amount};
+use thiserror::Error;
 
 /// Error during mempool admission
 #[derive(Error, Debug, Clone)]
@@ -49,7 +49,10 @@ impl AdmitError {
     }
 
     pub fn mempool_bytes_full(current: u64, max: u64) -> Self {
-        Self::new(AdmitErrorKind::MempoolBytesFull { prospective_total_bytes: current, max })
+        Self::new(AdmitErrorKind::MempoolBytesFull {
+            prospective_total_bytes: current,
+            max,
+        })
     }
 
     pub fn sender_limit(sender: Address, count: u32, max: u32) -> Self {
@@ -57,7 +60,11 @@ impl AdmitError {
     }
 
     pub fn rate_limited(sender: Address, period_count: u32, max: u32) -> Self {
-        Self::new(AdmitErrorKind::RateLimited { sender, period_count, max })
+        Self::new(AdmitErrorKind::RateLimited {
+            sender,
+            period_count,
+            max,
+        })
     }
 
     pub fn invalid_transaction(msg: impl Into<String>) -> Self {
@@ -88,10 +95,22 @@ mod tests {
     #[test]
     fn test_error_constructors() {
         let err = AdmitError::insufficient_fee(100, 50);
-        assert!(matches!(err.kind, AdmitErrorKind::InsufficientFee { required: 100, provided: 50 }));
+        assert!(matches!(
+            err.kind,
+            AdmitErrorKind::InsufficientFee {
+                required: 100,
+                provided: 50
+            }
+        ));
 
         let err = AdmitError::tx_too_large(200, 100);
-        assert!(matches!(err.kind, AdmitErrorKind::TxTooLarge { size: 200, max: 100 }));
+        assert!(matches!(
+            err.kind,
+            AdmitErrorKind::TxTooLarge {
+                size: 200,
+                max: 100
+            }
+        ));
 
         let err = AdmitError::mempool_full();
         assert!(matches!(err.kind, AdmitErrorKind::MempoolFull));

@@ -1,13 +1,13 @@
-use std::any::Any;
-use std::net::SocketAddr;
-use rlibbencode::variables::bencode_bytes::BencodeBytes;
-use rlibbencode::variables::bencode_object::{BencodeObject, GetObject, ObjectOptions, PutObject};
+use super::inter::method_message_base::MethodMessageBase;
 use crate::kad::server::TID_LENGTH;
 use crate::messages::inter::message_base::{MessageBase, TID_KEY};
 use crate::messages::inter::message_exception::MessageException;
 use crate::messages::inter::message_type::{MessageType, TYPE_KEY};
 use crate::utils::uid::{ID_LENGTH, UID};
-use super::inter::method_message_base::MethodMessageBase;
+use rlibbencode::variables::bencode_bytes::BencodeBytes;
+use rlibbencode::variables::bencode_object::{BencodeObject, GetObject, ObjectOptions, PutObject};
+use std::any::Any;
+use std::net::SocketAddr;
 
 #[derive(Clone)]
 pub struct FindNodeRequest {
@@ -16,11 +16,10 @@ pub struct FindNodeRequest {
     public: Option<SocketAddr>,
     destination: Option<SocketAddr>,
     origin: Option<SocketAddr>,
-    target: Option<UID>
+    target: Option<UID>,
 }
 
 impl FindNodeRequest {
-
     pub fn new(tid: [u8; TID_LENGTH]) -> Self {
         Self {
             tid,
@@ -38,7 +37,6 @@ impl FindNodeRequest {
 }
 
 impl Default for FindNodeRequest {
-
     fn default() -> Self {
         Self {
             uid: None,
@@ -46,14 +44,13 @@ impl Default for FindNodeRequest {
             public: None,
             destination: None,
             origin: None,
-            target: None
+            target: None,
         }
     }
 }
 
 //I WONDER IF WE CAN MACRO THIS SHIT FOR EVERY CLASS...?
 impl MessageBase for FindNodeRequest {
-
     fn set_uid(&mut self, uid: UID) {
         self.uid = Some(uid);
     }
@@ -107,10 +104,14 @@ impl MessageBase for FindNodeRequest {
 
         ben.put(self.get_type().rpc_type_name(), self.get_method());
         ben.put(self.get_type().inner_key(), BencodeObject::new());
-        ben.get_mut::<BencodeObject>(self.get_type().inner_key()).unwrap().put("id", self.uid.unwrap().bytes().clone());
+        ben.get_mut::<BencodeObject>(self.get_type().inner_key())
+            .unwrap()
+            .put("id", self.uid.unwrap().bytes().clone());
 
         if let Some(target) = self.target {
-            ben.get_mut::<BencodeObject>(self.get_type().inner_key()).unwrap().put("target", target.bytes().clone());
+            ben.get_mut::<BencodeObject>(self.get_type().inner_key())
+                .unwrap()
+                .put("target", target.bytes().clone());
         }
 
         ben
@@ -118,25 +119,46 @@ impl MessageBase for FindNodeRequest {
 
     fn decode(&mut self, ben: &BencodeObject) -> Result<(), MessageException> {
         if !ben.contains_key(self.get_type().inner_key()) {
-            return Err(MessageException::new("Protocol Error, such as a malformed packet.", 203));
+            return Err(MessageException::new(
+                "Protocol Error, such as a malformed packet.",
+                203,
+            ));
         }
 
-        match ben.get::<BencodeObject>(self.get_type().inner_key()).unwrap().get::<BencodeBytes>("id") {
+        match ben
+            .get::<BencodeObject>(self.get_type().inner_key())
+            .unwrap()
+            .get::<BencodeBytes>("id")
+        {
             Some(id) => {
                 let mut bid = [0u8; ID_LENGTH];
                 bid.copy_from_slice(&id.as_bytes()[..ID_LENGTH]);
                 self.uid = Some(UID::from(bid));
             }
-            _ => return Err(MessageException::new("Protocol Error, such as a malformed packet.", 203))
+            _ => {
+                return Err(MessageException::new(
+                    "Protocol Error, such as a malformed packet.",
+                    203,
+                ))
+            }
         }
 
-        match ben.get::<BencodeObject>(self.get_type().inner_key()).unwrap().get::<BencodeBytes>("target") {
+        match ben
+            .get::<BencodeObject>(self.get_type().inner_key())
+            .unwrap()
+            .get::<BencodeBytes>("target")
+        {
             Some(target) => {
                 let mut bid = [0u8; ID_LENGTH];
                 bid.copy_from_slice(&target.as_bytes()[..ID_LENGTH]);
                 self.target = Some(UID::from(bid));
             }
-            _ => return Err(MessageException::new("Protocol Error, such as a malformed packet.", 203))
+            _ => {
+                return Err(MessageException::new(
+                    "Protocol Error, such as a malformed packet.",
+                    203,
+                ))
+            }
         }
 
         Ok(())
@@ -152,7 +174,6 @@ impl MessageBase for FindNodeRequest {
 }
 
 impl MethodMessageBase for FindNodeRequest {
-
     fn get_method(&self) -> &str {
         "find_node"
     }

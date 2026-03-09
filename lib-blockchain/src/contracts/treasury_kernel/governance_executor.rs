@@ -19,8 +19,8 @@
 //! Execution results are idempotent - same proposal executes only once.
 
 use super::governance_types::{
-    ExecutionResult, GovernanceError, ProposalId, ProposalStatus,
-    TreasuryAction, TreasuryParameter, TreasuryProposal,
+    ExecutionResult, GovernanceError, ProposalId, ProposalStatus, TreasuryAction,
+    TreasuryParameter, TreasuryProposal,
 };
 use super::role_types::IdentityId;
 use serde::{Deserialize, Serialize};
@@ -60,8 +60,14 @@ impl GovernanceExecutor {
         let mut parameters = BTreeMap::new();
         parameters.insert(TreasuryParameter::MintDelayEpochs, 1);
         parameters.insert(TreasuryParameter::MaxUbiPoolPerEpoch, 1_000_000);
-        parameters.insert(TreasuryParameter::DefaultVotingDurationEpochs, DEFAULT_VOTING_DURATION_EPOCHS);
-        parameters.insert(TreasuryParameter::DefaultTimelockEpochs, DEFAULT_TIMELOCK_EPOCHS);
+        parameters.insert(
+            TreasuryParameter::DefaultVotingDurationEpochs,
+            DEFAULT_VOTING_DURATION_EPOCHS,
+        );
+        parameters.insert(
+            TreasuryParameter::DefaultTimelockEpochs,
+            DEFAULT_TIMELOCK_EPOCHS,
+        );
         parameters.insert(TreasuryParameter::MaxEpochPayout, 100_000);
         parameters.insert(TreasuryParameter::MinPayoutThreshold, 1);
 
@@ -132,7 +138,12 @@ impl GovernanceExecutor {
                     ));
                 }
             }
-            TreasuryAction::CreateRole { name, annual_cap, per_epoch_cap, .. } => {
+            TreasuryAction::CreateRole {
+                name,
+                annual_cap,
+                per_epoch_cap,
+                ..
+            } => {
                 if name.is_empty() {
                     return Err(GovernanceError::InvalidActionParameters(
                         "Role name cannot be empty".to_string(),
@@ -169,7 +180,9 @@ impl GovernanceExecutor {
         proposal_id: &ProposalId,
         current_epoch: u64,
     ) -> Result<(), GovernanceError> {
-        let proposal = self.proposals.get_mut(proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(proposal_id)
             .ok_or_else(|| GovernanceError::ProposalNotFound(*proposal_id))?;
 
         if proposal.status != ProposalStatus::Voting {
@@ -189,7 +202,9 @@ impl GovernanceExecutor {
     /// # Arguments
     /// * `proposal_id` - Proposal to reject
     pub fn reject_proposal(&mut self, proposal_id: &ProposalId) -> Result<(), GovernanceError> {
-        let proposal = self.proposals.get_mut(proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(proposal_id)
             .ok_or_else(|| GovernanceError::ProposalNotFound(*proposal_id))?;
 
         if proposal.status != ProposalStatus::Voting {
@@ -206,7 +221,8 @@ impl GovernanceExecutor {
 
     /// Check if a proposal is ready for execution
     pub fn is_executable(&self, proposal_id: &ProposalId, current_epoch: u64) -> bool {
-        self.proposals.get(proposal_id)
+        self.proposals
+            .get(proposal_id)
             .map_or(false, |p| p.is_executable(current_epoch))
     }
 
@@ -232,7 +248,9 @@ impl GovernanceExecutor {
             });
         }
 
-        let proposal = self.proposals.get(proposal_id)
+        let proposal = self
+            .proposals
+            .get(proposal_id)
             .ok_or_else(|| GovernanceError::ProposalNotFound(*proposal_id))?;
 
         // Check status
@@ -271,7 +289,9 @@ impl GovernanceExecutor {
         success: bool,
         details: Option<&str>,
     ) -> Result<ExecutionResult, GovernanceError> {
-        let proposal = self.proposals.get_mut(proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(proposal_id)
             .ok_or_else(|| GovernanceError::ProposalNotFound(*proposal_id))?;
 
         let result = if success {
@@ -290,7 +310,11 @@ impl GovernanceExecutor {
 
         // Update parameters if this was a parameter update
         if success {
-            if let TreasuryAction::UpdateParameter { parameter, new_value } = &proposal.action {
+            if let TreasuryAction::UpdateParameter {
+                parameter,
+                new_value,
+            } = &proposal.action
+            {
                 self.parameters.insert(*parameter, *new_value);
             }
         }
@@ -315,7 +339,9 @@ impl GovernanceExecutor {
         proposal_id: &ProposalId,
         current_epoch: u64,
     ) -> Result<(u64, Option<u16>, String), GovernanceError> {
-        let proposal = self.proposals.get(proposal_id)
+        let proposal = self
+            .proposals
+            .get(proposal_id)
             .ok_or_else(|| GovernanceError::ProposalNotFound(*proposal_id))?;
 
         // Check status
@@ -343,8 +369,13 @@ impl GovernanceExecutor {
             new_committed_value_usd,
             new_stability_multiplier_bps,
             rationale,
-        } = &proposal.action {
-            Ok((*new_committed_value_usd, *new_stability_multiplier_bps, rationale.clone()))
+        } = &proposal.action
+        {
+            Ok((
+                *new_committed_value_usd,
+                *new_stability_multiplier_bps,
+                rationale.clone(),
+            ))
         } else {
             Err(GovernanceError::InvalidActionType)
         }
@@ -352,7 +383,9 @@ impl GovernanceExecutor {
 
     /// Process epoch changes - expire old proposals
     pub fn process_epoch(&mut self, current_epoch: u64) {
-        let expired_ids: Vec<ProposalId> = self.proposals.iter()
+        let expired_ids: Vec<ProposalId> = self
+            .proposals
+            .iter()
             .filter(|(_, p)| p.has_expired(current_epoch))
             .map(|(id, _)| *id)
             .collect();
@@ -371,21 +404,24 @@ impl GovernanceExecutor {
 
     /// Get all proposals in voting phase
     pub fn get_voting_proposals(&self) -> Vec<&TreasuryProposal> {
-        self.proposals.values()
+        self.proposals
+            .values()
             .filter(|p| p.status == ProposalStatus::Voting)
             .collect()
     }
 
     /// Get all executable proposals
     pub fn get_executable_proposals(&self, current_epoch: u64) -> Vec<&TreasuryProposal> {
-        self.proposals.values()
+        self.proposals
+            .values()
             .filter(|p| p.is_executable(current_epoch))
             .collect()
     }
 
     /// Get all proposals requiring execution (in timelock)
     pub fn get_pending_execution(&self) -> Vec<&TreasuryProposal> {
-        self.proposals.values()
+        self.proposals
+            .values()
             .filter(|p| p.status == ProposalStatus::Approved)
             .collect()
     }
@@ -417,7 +453,10 @@ impl GovernanceExecutor {
 
     /// Get proposal count by status
     pub fn proposal_count(&self, status: ProposalStatus) -> usize {
-        self.proposals.values().filter(|p| p.status == status).count()
+        self.proposals
+            .values()
+            .filter(|p| p.status == status)
+            .count()
     }
 
     /// Get total execution count
@@ -428,7 +467,9 @@ impl GovernanceExecutor {
     /// Clean up old executed proposals (keep last N)
     pub fn cleanup_executed(&mut self, keep_last: usize) {
         if self.executed.len() > keep_last {
-            let to_remove: Vec<ProposalId> = self.executed.keys()
+            let to_remove: Vec<ProposalId> = self
+                .executed
+                .keys()
                 .take(self.executed.len() - keep_last)
                 .copied()
                 .collect();
@@ -448,9 +489,9 @@ impl Default for GovernanceExecutor {
 
 #[cfg(test)]
 mod tests {
+    use super::super::governance_types::MintReason;
     use super::*;
     use crate::contracts::treasury_kernel::role_types::RoleId;
-    use super::super::governance_types::MintReason;
 
     fn test_proposal_id(n: u8) -> ProposalId {
         [n; 32]
@@ -469,17 +510,19 @@ mod tests {
         let mut executor = GovernanceExecutor::new();
 
         // Create proposal
-        executor.create_proposal(
-            test_proposal_id(1),
-            TreasuryAction::Mint {
-                recipient: test_identity_id(),
-                amount: 10_000,
-                reason: MintReason::TreasuryAllocation,
-            },
-            1, // epoch 1
-            test_identity_id(),
-            "Test mint".to_string(),
-        ).unwrap();
+        executor
+            .create_proposal(
+                test_proposal_id(1),
+                TreasuryAction::Mint {
+                    recipient: test_identity_id(),
+                    amount: 10_000,
+                    reason: MintReason::TreasuryAllocation,
+                },
+                1, // epoch 1
+                test_identity_id(),
+                "Test mint".to_string(),
+            )
+            .unwrap();
 
         // Check it's in voting
         let proposal = executor.get_proposal(&test_proposal_id(1)).unwrap();
@@ -498,13 +541,15 @@ mod tests {
     fn test_reject_proposal() {
         let mut executor = GovernanceExecutor::new();
 
-        executor.create_proposal(
-            test_proposal_id(1),
-            TreasuryAction::EmergencyPause,
-            1,
-            test_identity_id(),
-            "Test".to_string(),
-        ).unwrap();
+        executor
+            .create_proposal(
+                test_proposal_id(1),
+                TreasuryAction::EmergencyPause,
+                1,
+                test_identity_id(),
+                "Test".to_string(),
+            )
+            .unwrap();
 
         executor.reject_proposal(&test_proposal_id(1)).unwrap();
 
@@ -518,17 +563,19 @@ mod tests {
         executor.set_timelock_epochs(1);
 
         // Create
-        executor.create_proposal(
-            test_proposal_id(1),
-            TreasuryAction::Mint {
-                recipient: test_identity_id(),
-                amount: 10_000,
-                reason: MintReason::TreasuryAllocation,
-            },
-            1,
-            test_identity_id(),
-            "Test".to_string(),
-        ).unwrap();
+        executor
+            .create_proposal(
+                test_proposal_id(1),
+                TreasuryAction::Mint {
+                    recipient: test_identity_id(),
+                    amount: 10_000,
+                    reason: MintReason::TreasuryAllocation,
+                },
+                1,
+                test_identity_id(),
+                "Test".to_string(),
+            )
+            .unwrap();
 
         // Approve at epoch 3
         executor.approve_proposal(&test_proposal_id(1), 3).unwrap();
@@ -544,7 +591,9 @@ mod tests {
         assert!(matches!(action, TreasuryAction::Mint { .. }));
 
         // Complete execution
-        let result = executor.complete_execution(&test_proposal_id(1), 4, true, None).unwrap();
+        let result = executor
+            .complete_execution(&test_proposal_id(1), 4, true, None)
+            .unwrap();
         assert!(result.success);
 
         // Check it's marked executed
@@ -557,19 +606,24 @@ mod tests {
         let mut executor = GovernanceExecutor::new();
         executor.set_timelock_epochs(2);
 
-        executor.create_proposal(
-            test_proposal_id(1),
-            TreasuryAction::EmergencyPause,
-            1,
-            test_identity_id(),
-            "Test".to_string(),
-        ).unwrap();
+        executor
+            .create_proposal(
+                test_proposal_id(1),
+                TreasuryAction::EmergencyPause,
+                1,
+                test_identity_id(),
+                "Test".to_string(),
+            )
+            .unwrap();
 
         executor.approve_proposal(&test_proposal_id(1), 3).unwrap();
 
         // Try to execute before timelock expires
         let result = executor.begin_execution(&test_proposal_id(1), 4);
-        assert!(matches!(result, Err(GovernanceError::TimelockNotExpired { .. })));
+        assert!(matches!(
+            result,
+            Err(GovernanceError::TimelockNotExpired { .. })
+        ));
     }
 
     #[test]
@@ -577,13 +631,15 @@ mod tests {
         let mut executor = GovernanceExecutor::new();
         executor.set_voting_duration_epochs(2);
 
-        executor.create_proposal(
-            test_proposal_id(1),
-            TreasuryAction::EmergencyPause,
-            1, // created epoch 1
-            test_identity_id(),
-            "Test".to_string(),
-        ).unwrap();
+        executor
+            .create_proposal(
+                test_proposal_id(1),
+                TreasuryAction::EmergencyPause,
+                1, // created epoch 1
+                test_identity_id(),
+                "Test".to_string(),
+            )
+            .unwrap();
 
         // Process at epoch 5 (well past voting end of epoch 3)
         executor.process_epoch(5);
@@ -596,13 +652,15 @@ mod tests {
     fn test_duplicate_proposal_fails() {
         let mut executor = GovernanceExecutor::new();
 
-        executor.create_proposal(
-            test_proposal_id(1),
-            TreasuryAction::EmergencyPause,
-            1,
-            test_identity_id(),
-            "Test".to_string(),
-        ).unwrap();
+        executor
+            .create_proposal(
+                test_proposal_id(1),
+                TreasuryAction::EmergencyPause,
+                1,
+                test_identity_id(),
+                "Test".to_string(),
+            )
+            .unwrap();
 
         let result = executor.create_proposal(
             test_proposal_id(1),
@@ -612,7 +670,10 @@ mod tests {
             "Duplicate".to_string(),
         );
 
-        assert!(matches!(result, Err(GovernanceError::ProposalAlreadyExists(_))));
+        assert!(matches!(
+            result,
+            Err(GovernanceError::ProposalAlreadyExists(_))
+        ));
     }
 
     #[test]
@@ -631,7 +692,10 @@ mod tests {
             "Test".to_string(),
         );
 
-        assert!(matches!(result, Err(GovernanceError::InvalidActionParameters(_))));
+        assert!(matches!(
+            result,
+            Err(GovernanceError::InvalidActionParameters(_))
+        ));
     }
 
     #[test]
@@ -640,24 +704,31 @@ mod tests {
         executor.set_timelock_epochs(0); // Instant execution for test
 
         // Create parameter update proposal
-        executor.create_proposal(
-            test_proposal_id(1),
-            TreasuryAction::UpdateParameter {
-                parameter: TreasuryParameter::MaxEpochPayout,
-                new_value: 200_000,
-            },
-            1,
-            test_identity_id(),
-            "Increase max payout".to_string(),
-        ).unwrap();
+        executor
+            .create_proposal(
+                test_proposal_id(1),
+                TreasuryAction::UpdateParameter {
+                    parameter: TreasuryParameter::MaxEpochPayout,
+                    new_value: 200_000,
+                },
+                1,
+                test_identity_id(),
+                "Increase max payout".to_string(),
+            )
+            .unwrap();
 
         // Approve and execute
         executor.approve_proposal(&test_proposal_id(1), 2).unwrap();
         let _ = executor.begin_execution(&test_proposal_id(1), 2).unwrap();
-        executor.complete_execution(&test_proposal_id(1), 2, true, None).unwrap();
+        executor
+            .complete_execution(&test_proposal_id(1), 2, true, None)
+            .unwrap();
 
         // Check parameter was updated
-        assert_eq!(executor.get_parameter(TreasuryParameter::MaxEpochPayout), 200_000);
+        assert_eq!(
+            executor.get_parameter(TreasuryParameter::MaxEpochPayout),
+            200_000
+        );
     }
 
     #[test]
@@ -667,13 +738,15 @@ mod tests {
 
         // Create and approve two proposals
         for i in 1..=2 {
-            executor.create_proposal(
-                test_proposal_id(i),
-                TreasuryAction::EmergencyPause,
-                1,
-                test_identity_id(),
-                format!("Test {}", i),
-            ).unwrap();
+            executor
+                .create_proposal(
+                    test_proposal_id(i),
+                    TreasuryAction::EmergencyPause,
+                    1,
+                    test_identity_id(),
+                    format!("Test {}", i),
+                )
+                .unwrap();
             executor.approve_proposal(&test_proposal_id(i), 2).unwrap();
         }
 
@@ -687,23 +760,30 @@ mod tests {
         let mut executor = GovernanceExecutor::new();
         executor.set_timelock_epochs(0);
 
-        executor.create_proposal(
-            test_proposal_id(1),
-            TreasuryAction::EmergencyPause,
-            1,
-            test_identity_id(),
-            "Test".to_string(),
-        ).unwrap();
+        executor
+            .create_proposal(
+                test_proposal_id(1),
+                TreasuryAction::EmergencyPause,
+                1,
+                test_identity_id(),
+                "Test".to_string(),
+            )
+            .unwrap();
 
         executor.approve_proposal(&test_proposal_id(1), 2).unwrap();
 
         // First execution succeeds
         let _ = executor.begin_execution(&test_proposal_id(1), 2).unwrap();
-        executor.complete_execution(&test_proposal_id(1), 2, true, None).unwrap();
+        executor
+            .complete_execution(&test_proposal_id(1), 2, true, None)
+            .unwrap();
 
         // Second execution fails (already executed)
         let result = executor.begin_execution(&test_proposal_id(1), 3);
-        assert!(matches!(result, Err(GovernanceError::InvalidProposalStatus { .. })));
+        assert!(matches!(
+            result,
+            Err(GovernanceError::InvalidProposalStatus { .. })
+        ));
     }
 
     #[test]
@@ -712,13 +792,15 @@ mod tests {
 
         // Create 3 proposals
         for i in 1..=3 {
-            executor.create_proposal(
-                test_proposal_id(i),
-                TreasuryAction::EmergencyPause,
-                1,
-                test_identity_id(),
-                format!("Test {}", i),
-            ).unwrap();
+            executor
+                .create_proposal(
+                    test_proposal_id(i),
+                    TreasuryAction::EmergencyPause,
+                    1,
+                    test_identity_id(),
+                    format!("Test {}", i),
+                )
+                .unwrap();
         }
 
         assert_eq!(executor.proposal_count(ProposalStatus::Voting), 3);
@@ -748,6 +830,9 @@ mod tests {
             "Test".to_string(),
         );
 
-        assert!(matches!(result, Err(GovernanceError::InvalidActionParameters(_))));
+        assert!(matches!(
+            result,
+            Err(GovernanceError::InvalidActionParameters(_))
+        ));
     }
 }

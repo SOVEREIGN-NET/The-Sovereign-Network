@@ -1,5 +1,5 @@
 //! ZHTP Server Configuration
-//! 
+//!
 //! Comprehensive configuration system for ZHTP servers with economic,
 //! security, networking, and performance settings.
 
@@ -270,7 +270,7 @@ pub struct NetworkingConfig {
     pub enable_mesh: bool,
     /// Mesh configuration
     pub mesh: MeshConfig,
-    /// Enable 
+    /// Enable
     pub enable_isp_bypass: bool,
     ///  configuration
     pub isp_bypass: IspBypassConfig,
@@ -744,10 +744,7 @@ impl Default for IspBypassConfig {
                 "https://dns.google/dns-query".to_string(),
             ],
             enable_dot: true,
-            dot_servers: vec![
-                "1.1.1.1:853".to_string(),
-                "8.8.8.8:853".to_string(),
-            ],
+            dot_servers: vec!["1.1.1.1:853".to_string(), "8.8.8.8:853".to_string()],
         }
     }
 }
@@ -772,9 +769,7 @@ impl Default for P2pConfig {
 impl Default for ZdnsConfig {
     fn default() -> Self {
         Self {
-            resolvers: vec![
-                "zdns://127.0.0.1".to_string(),
-            ],
+            resolvers: vec!["zdns://127.0.0.1".to_string()],
             enable_caching: true,
             cache_ttl_seconds: 3600, // 1 hour
             enable_validation: true,
@@ -809,7 +804,7 @@ impl Default for CacheConfig {
         Self {
             cache_type: CacheType::Memory,
             max_size_bytes: 1024 * 1024 * 1024, // 1GB
-            default_ttl_seconds: 3600, // 1 hour
+            default_ttl_seconds: 3600,          // 1 hour
             enable_compression: true,
             eviction_policy: CacheEvictionPolicy::Lru,
         }
@@ -855,7 +850,7 @@ impl ServerConfig {
         config.economic.enable_dao_fees = false;
         config
     }
-    
+
     /// Create a production configuration
     pub fn production() -> Self {
         let mut config = Self::default();
@@ -867,7 +862,7 @@ impl ServerConfig {
         config.logging.output = LogOutput::File("/var/log/zhtp/server.log".to_string());
         config
     }
-    
+
     /// Create a testing configuration
     pub fn testing() -> Self {
         let mut config = Self::default();
@@ -883,36 +878,36 @@ impl ServerConfig {
         config.networking.enable_p2p = false;
         config
     }
-    
+
     /// Validate configuration
     pub fn validate(&self) -> Result<(), String> {
         if self.port == 0 && !cfg!(test) {
             return Err("Port cannot be 0 in non-test environment".to_string());
         }
-        
+
         if self.max_request_size == 0 {
             return Err("Maximum request size cannot be 0".to_string());
         }
-        
+
         if self.max_response_size == 0 {
             return Err("Maximum response size cannot be 0".to_string());
         }
-        
+
         if self.economic.dao_fee_percentage < 0.0 || self.economic.dao_fee_percentage > 1.0 {
             return Err("DAO fee percentage must be between 0.0 and 1.0".to_string());
         }
-        
+
         if self.economic.ubi_percentage < 0.0 || self.economic.ubi_percentage > 1.0 {
             return Err("UBI percentage must be between 0.0 and 1.0".to_string());
         }
-        
+
         if self.compression_level < 1 || self.compression_level > 9 {
             return Err("Compression level must be between 1 and 9".to_string());
         }
-        
+
         Ok(())
     }
-    
+
     /// Get effective worker thread count
     pub fn effective_worker_threads(&self) -> usize {
         self.performance.worker_threads.unwrap_or_else(|| {
@@ -965,10 +960,10 @@ mod tests {
     fn test_config_validation() {
         let mut config = ServerConfig::default();
         assert_eq!(config.validate(), Ok(()));
-        
+
         config.economic.dao_fee_percentage = 1.5;
         assert!(config.validate().is_err());
-        
+
         config.economic.dao_fee_percentage = 0.02;
         config.compression_level = 15;
         assert!(config.validate().is_err());
@@ -978,7 +973,7 @@ mod tests {
     fn test_effective_worker_threads() {
         let mut config = ServerConfig::default();
         assert!(config.effective_worker_threads() >= 1);
-        
+
         config.performance.worker_threads = Some(8);
         assert_eq!(config.effective_worker_threads(), 8);
     }

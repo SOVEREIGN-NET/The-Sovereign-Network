@@ -217,7 +217,9 @@ mod tests {
             key.zeroize();
         }
 
-        let secret = SecretData { data: vec![0xFF; 64] };
+        let secret = SecretData {
+            data: vec![0xFF; 64],
+        };
         process(secret);
     }
 }

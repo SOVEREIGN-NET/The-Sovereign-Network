@@ -16,10 +16,10 @@
 //! let outcome = apply_native_transfer(&store, &tx, tx_hash, height)?;
 //! ```
 
-pub mod types;
 pub mod apply;
 pub mod errors;
+pub mod types;
 
-pub use types::*;
 pub use apply::apply_native_transfer;
 pub use errors::{UtxoError, UtxoResult};
+pub use types::*;

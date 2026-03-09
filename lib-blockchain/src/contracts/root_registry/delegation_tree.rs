@@ -1,7 +1,7 @@
 //! Delegation tree index for parent-child relationships.
 
-use std::collections::HashMap;
 use super::types::NameHash;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 pub struct DelegationTree {

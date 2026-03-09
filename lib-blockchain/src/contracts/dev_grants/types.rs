@@ -40,14 +40,16 @@ impl Amount {
 
     /// Safe addition with overflow check
     pub fn checked_add(self, other: Amount) -> Result<Amount, Error> {
-        self.0.checked_add(other.0)
+        self.0
+            .checked_add(other.0)
             .map(Amount)
             .ok_or(Error::Overflow)
     }
 
     /// Safe subtraction with underflow check
     pub fn checked_sub(self, other: Amount) -> Result<Amount, Error> {
-        self.0.checked_sub(other.0)
+        self.0
+            .checked_sub(other.0)
             .map(Amount)
             .ok_or(Error::Overflow)
     }

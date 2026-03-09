@@ -1,11 +1,11 @@
 //! Verification result types and error handling
-//! 
+//!
 //! Provides comprehensive result types for ZK proof verification operations,
 //! including detailed error information for debugging and validation.
 
-use serde::{Serialize, Deserialize};
-use std::fmt;
 use crate::types::zk_proof::ZkProofType;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Result of ZK proof verification with detailed information
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,7 +53,10 @@ impl VerificationResult {
     /// Get verification time if available
     pub fn verification_time_ms(&self) -> Option<u64> {
         match self {
-            VerificationResult::Valid { verification_time_ms, .. } => Some(*verification_time_ms),
+            VerificationResult::Valid {
+                verification_time_ms,
+                ..
+            } => Some(*verification_time_ms),
             _ => None,
         }
     }
@@ -134,16 +137,30 @@ impl fmt::Display for VerificationError {
             VerificationError::UnsupportedProofSystem => write!(f, "Unsupported proof system"),
             VerificationError::InvalidPublicInputs => write!(f, "Invalid public inputs"),
             VerificationError::InvalidVerificationKey => write!(f, "Invalid verification key"),
-            VerificationError::CryptographicFailure => write!(f, "Cryptographic verification failed"),
+            VerificationError::CryptographicFailure => {
+                write!(f, "Cryptographic verification failed")
+            }
             VerificationError::RangeViolation { min, max, actual } => {
                 write!(f, "Range violation: {} not in [{}, {}]", actual, min, max)
             }
-            VerificationError::MerkleVerificationFailed => write!(f, "Merkle proof verification failed"),
-            VerificationError::IdentityRequirementsNotMet => write!(f, "Identity requirements not met"),
-            VerificationError::TransactionConstraintsViolated => write!(f, "Transaction constraints violated"),
-            VerificationError::NullifierAlreadyUsed => write!(f, "Nullifier already used (double-spending)"),
-            VerificationError::InsufficientBalance => write!(f, "Insufficient balance for transaction"),
-            VerificationError::Plonky2VerificationFailed => write!(f, "Plonky2 circuit verification failed"),
+            VerificationError::MerkleVerificationFailed => {
+                write!(f, "Merkle proof verification failed")
+            }
+            VerificationError::IdentityRequirementsNotMet => {
+                write!(f, "Identity requirements not met")
+            }
+            VerificationError::TransactionConstraintsViolated => {
+                write!(f, "Transaction constraints violated")
+            }
+            VerificationError::NullifierAlreadyUsed => {
+                write!(f, "Nullifier already used (double-spending)")
+            }
+            VerificationError::InsufficientBalance => {
+                write!(f, "Insufficient balance for transaction")
+            }
+            VerificationError::Plonky2VerificationFailed => {
+                write!(f, "Plonky2 circuit verification failed")
+            }
             VerificationError::Custom(msg) => write!(f, "Custom error: {}", msg),
         }
     }
@@ -154,8 +171,16 @@ impl std::error::Error for VerificationError {}
 impl fmt::Display for VerificationResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VerificationResult::Valid { circuit_id, verification_time_ms, .. } => {
-                write!(f, "Valid (circuit: {}, time: {}ms)", circuit_id, verification_time_ms)
+            VerificationResult::Valid {
+                circuit_id,
+                verification_time_ms,
+                ..
+            } => {
+                write!(
+                    f,
+                    "Valid (circuit: {}, time: {}ms)",
+                    circuit_id, verification_time_ms
+                )
             }
             VerificationResult::Invalid(err) => write!(f, "Invalid: {}", err),
             VerificationResult::Error(msg) => write!(f, "Error: {}", msg),
@@ -223,7 +248,11 @@ mod tests {
 
     #[test]
     fn test_verification_error_display() {
-        let error = VerificationError::RangeViolation { min: 0, max: 100, actual: 150 };
+        let error = VerificationError::RangeViolation {
+            min: 0,
+            max: 100,
+            actual: 150,
+        };
         assert_eq!(error.to_string(), "Range violation: 150 not in [0, 100]");
     }
 

@@ -1,7 +1,7 @@
 //! Chain-backed name resolver (view model).
 
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 
 use super::domain_registry::DomainRegistry;
 use super::types::ResolvedNameRecord;
@@ -21,7 +21,9 @@ impl NameResolver {
     /// NOTE: Until chain-backed queries are wired, this uses the local registry cache.
     pub async fn resolve(&self, domain: &str) -> Result<ResolvedNameRecord> {
         let response = self.registry.lookup_domain(domain).await?;
-        let domain_record = response.record.ok_or_else(|| anyhow::anyhow!("Domain not found: {}", domain))?;
+        let domain_record = response
+            .record
+            .ok_or_else(|| anyhow::anyhow!("Domain not found: {}", domain))?;
         Ok(domain_record.into())
     }
 

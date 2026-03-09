@@ -42,7 +42,10 @@ pub fn enable_socket_reuse(socket: &socket2::Socket) -> Result<()> {
             );
             if ret != 0 {
                 // Non-fatal: SO_REUSEPORT is optional optimization
-                eprintln!("Warning: Failed to set SO_REUSEPORT: {}", std::io::Error::last_os_error());
+                eprintln!(
+                    "Warning: Failed to set SO_REUSEPORT: {}",
+                    std::io::Error::last_os_error()
+                );
             }
         }
     }

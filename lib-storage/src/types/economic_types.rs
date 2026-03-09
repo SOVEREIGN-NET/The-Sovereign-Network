@@ -1,10 +1,10 @@
 //! Economic storage type definitions
-//! 
+//!
 //! Contains all types related to the economic layer of the storage system,
 //! including contracts, payments, penalties, rewards, and market mechanisms.
 
-use crate::types::{ContentHash, NodeId};
 use crate::types::dht_types::StorageTier;
+use crate::types::{ContentHash, NodeId};
 use lib_crypto::Hash;
 use lib_identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};
@@ -593,7 +593,7 @@ impl Default for EscrowPreferences {
 }
 
 /// Performance snapshot for incentive calculations
-/// 
+///
 /// Captures key performance metrics at a point in time for reward calculations
 /// and quality assessment in the economic incentive system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -601,19 +601,19 @@ pub struct PerformanceSnapshot {
     /// Node uptime as a ratio (0.0 to 1.0)
     /// Example: 0.99 = 99% uptime
     pub uptime: f64,
-    
+
     /// Average response time in milliseconds
     /// Lower values indicate better performance
     pub avg_response_time: u64,
-    
+
     /// Data integrity score as a ratio (0.0 to 1.0)
     /// Example: 0.9999 = 99.99% data integrity
     pub data_integrity: f64,
-    
+
     /// Throughput in bytes per second
     /// Higher values indicate better performance
     pub throughput: u64,
-    
+
     /// Error rate as a ratio (0.0 to 1.0)
     /// Example: 0.001 = 0.1% error rate
     pub error_rate: f64,
@@ -648,7 +648,7 @@ impl PerformanceSnapshot {
             error_rate,
         }
     }
-    
+
     /// Calculate an overall performance score (0.0 to 1.0)
     /// This provides a single metric combining all performance aspects
     pub fn overall_score(&self) -> f64 {
@@ -658,36 +658,36 @@ impl PerformanceSnapshot {
         let integrity_weight = 0.3;
         let throughput_weight = 0.1;
         let error_weight = 0.05;
-        
+
         // Normalize latency (lower is better, cap at 1000ms)
         let latency_score = (1000.0 - self.avg_response_time.min(1000) as f64) / 1000.0;
-        
+
         // Normalize throughput (higher is better, baseline at 1MB/s)
         let throughput_score = (self.throughput as f64 / 1_000_000.0).min(1.0);
-        
+
         // Error rate (lower is better)
         let error_score = (1.0 - self.error_rate).max(0.0);
-        
-        self.uptime * uptime_weight +
-        latency_score * latency_weight +
-        self.data_integrity * integrity_weight +
-        throughput_score * throughput_weight +
-        error_score * error_weight
+
+        self.uptime * uptime_weight
+            + latency_score * latency_weight
+            + self.data_integrity * integrity_weight
+            + throughput_score * throughput_weight
+            + error_score * error_weight
     }
-    
+
     /// Check if this performance snapshot meets basic quality thresholds
     pub fn meets_basic_quality(&self) -> bool {
-        self.uptime >= 0.95 &&
-        self.avg_response_time <= 1000 &&
-        self.data_integrity >= 0.99 &&
-        self.error_rate <= 0.05
+        self.uptime >= 0.95
+            && self.avg_response_time <= 1000
+            && self.data_integrity >= 0.99
+            && self.error_rate <= 0.05
     }
-    
+
     /// Check if this performance snapshot qualifies for premium incentives
     pub fn qualifies_for_premium(&self) -> bool {
-        self.uptime >= 0.99 &&
-        self.avg_response_time <= 100 &&
-        self.data_integrity >= 0.999 &&
-        self.error_rate <= 0.001
+        self.uptime >= 0.99
+            && self.avg_response_time <= 100
+            && self.data_integrity >= 0.999
+            && self.error_rate <= 0.001
     }
 }

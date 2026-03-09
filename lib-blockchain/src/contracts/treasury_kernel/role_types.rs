@@ -259,7 +259,8 @@ impl Assignment {
         if self.last_payment_epoch != Some(current_epoch) {
             self.snap_per_epoch_cap
         } else {
-            self.snap_per_epoch_cap.saturating_sub(self.current_epoch_paid)
+            self.snap_per_epoch_cap
+                .saturating_sub(self.current_epoch_paid)
         }
     }
 
@@ -420,10 +421,7 @@ pub enum RoleRegistryError {
         role_id: RoleId,
     },
     /// Prohibited role combination
-    ProhibitedCombination {
-        role_a: RoleId,
-        role_b: RoleId,
-    },
+    ProhibitedCombination { role_a: RoleId, role_b: RoleId },
     /// Unauthorized operation
     Unauthorized,
     /// Assignment error
@@ -521,7 +519,7 @@ mod tests {
             test_assignment_id(),
             test_person_id(),
             &role,
-            100, // current epoch
+            100,  // current epoch
             2024, // current year
         );
 
@@ -539,13 +537,8 @@ mod tests {
     #[test]
     fn test_assignment_record_payment() {
         let role = test_role();
-        let mut assignment = Assignment::new(
-            test_assignment_id(),
-            test_person_id(),
-            &role,
-            100,
-            2024,
-        );
+        let mut assignment =
+            Assignment::new(test_assignment_id(), test_person_id(), &role, 100, 2024);
 
         // Record payment
         assert!(assignment.record_payment(5_000, 100, 2024).is_ok());
@@ -557,13 +550,8 @@ mod tests {
     #[test]
     fn test_assignment_exceeds_annual_cap() {
         let role = test_role(); // 100k annual cap
-        let mut assignment = Assignment::new(
-            test_assignment_id(),
-            test_person_id(),
-            &role,
-            100,
-            2024,
-        );
+        let mut assignment =
+            Assignment::new(test_assignment_id(), test_person_id(), &role, 100, 2024);
 
         // Try to exceed annual cap
         let result = assignment.record_payment(100_001, 100, 2024);
@@ -573,13 +561,8 @@ mod tests {
     #[test]
     fn test_assignment_exceeds_epoch_cap() {
         let role = test_role(); // 10k per epoch cap
-        let mut assignment = Assignment::new(
-            test_assignment_id(),
-            test_person_id(),
-            &role,
-            100,
-            2024,
-        );
+        let mut assignment =
+            Assignment::new(test_assignment_id(), test_person_id(), &role, 100, 2024);
 
         // Try to exceed epoch cap
         let result = assignment.record_payment(10_001, 100, 2024);
@@ -589,13 +572,8 @@ mod tests {
     #[test]
     fn test_assignment_exceeds_lifetime_cap() {
         let role = test_role().with_lifetime_cap(50_000);
-        let mut assignment = Assignment::new(
-            test_assignment_id(),
-            test_person_id(),
-            &role,
-            100,
-            2024,
-        );
+        let mut assignment =
+            Assignment::new(test_assignment_id(), test_person_id(), &role, 100, 2024);
 
         // Pay up to lifetime cap over multiple epochs
         assert!(assignment.record_payment(10_000, 100, 2024).is_ok());
@@ -612,13 +590,8 @@ mod tests {
     #[test]
     fn test_assignment_epoch_reset() {
         let role = test_role(); // 10k per epoch cap
-        let mut assignment = Assignment::new(
-            test_assignment_id(),
-            test_person_id(),
-            &role,
-            100,
-            2024,
-        );
+        let mut assignment =
+            Assignment::new(test_assignment_id(), test_person_id(), &role, 100, 2024);
 
         // Fill epoch cap
         assert!(assignment.record_payment(10_000, 100, 2024).is_ok());
@@ -633,13 +606,8 @@ mod tests {
     #[test]
     fn test_assignment_year_reset() {
         let role = test_role(); // 100k annual cap
-        let mut assignment = Assignment::new(
-            test_assignment_id(),
-            test_person_id(),
-            &role,
-            100,
-            2024,
-        );
+        let mut assignment =
+            Assignment::new(test_assignment_id(), test_person_id(), &role, 100, 2024);
 
         // Pay full annual amount over epochs
         for i in 0..10 {
@@ -659,13 +627,8 @@ mod tests {
     #[test]
     fn test_assignment_suspend_and_reactivate() {
         let role = test_role();
-        let mut assignment = Assignment::new(
-            test_assignment_id(),
-            test_person_id(),
-            &role,
-            100,
-            2024,
-        );
+        let mut assignment =
+            Assignment::new(test_assignment_id(), test_person_id(), &role, 100, 2024);
 
         // Pay some amount
         assert!(assignment.record_payment(5_000, 100, 2024).is_ok());
@@ -693,13 +656,8 @@ mod tests {
     #[test]
     fn test_assignment_terminate() {
         let role = test_role();
-        let mut assignment = Assignment::new(
-            test_assignment_id(),
-            test_person_id(),
-            &role,
-            100,
-            2024,
-        );
+        let mut assignment =
+            Assignment::new(test_assignment_id(), test_person_id(), &role, 100, 2024);
 
         // Terminate
         assert!(assignment.terminate(101).is_ok());
@@ -724,15 +682,11 @@ mod tests {
             100_000, // annual
             5_000,   // per epoch
             100,
-        ).with_lifetime_cap(200_000);
+        )
+        .with_lifetime_cap(200_000);
 
-        let mut assignment = Assignment::new(
-            test_assignment_id(),
-            test_person_id(),
-            &role,
-            100,
-            2024,
-        );
+        let mut assignment =
+            Assignment::new(test_assignment_id(), test_person_id(), &role, 100, 2024);
 
         // Initially limited by epoch cap (5k is smallest)
         assert_eq!(assignment.max_payable(100), 5_000);

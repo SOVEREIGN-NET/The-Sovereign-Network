@@ -1,22 +1,22 @@
 //! Web4 Domain Registry System
-//! 
+//!
 //! Provides formal domain registration, ownership verification, and domain management
 //! for the Web4 ecosystem. Integrates with existing DHT and ZDNS systems.
 
 use anyhow::{anyhow, Result};
+use hex;
+use lib_crypto::hash_blake3;
+use lib_identity::ZhtpIdentity;
+use lib_proofs::ZeroKnowledgeProof;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, error, warn};
-use lib_crypto::hash_blake3;
-use lib_proofs::ZeroKnowledgeProof;
-use lib_identity::ZhtpIdentity;
-use hex;
+use tracing::{error, info, warn};
 
-use crate::dht::ZkDHTIntegration;
-use super::types::*;
-use crate::storage_stub::UnifiedStorage;
 use super::content_publisher::ContentPublisher;
+use super::types::*;
+use crate::dht::ZkDHTIntegration;
+use crate::storage_stub::UnifiedStorage;
 
 /// Web4 domain registry manager
 pub struct DomainRegistry {
@@ -83,7 +83,10 @@ impl DomainRegistry {
     }
 
     /// Create with optional DHT client (for tests/advanced use)
-    pub async fn new_with_dht(storage: Arc<dyn UnifiedStorage>, dht_client: Option<ZkDHTIntegration>) -> Result<Self> {
+    pub async fn new_with_dht(
+        storage: Arc<dyn UnifiedStorage>,
+        dht_client: Option<ZkDHTIntegration>,
+    ) -> Result<Self> {
         let registry = Self::new(storage).await?;
         *registry.dht_client.write().await = dht_client;
         Ok(registry)
@@ -100,7 +103,10 @@ impl DomainRegistry {
 
         // Call storage trait method - no lock needed, storage impl handles that
         let records = self.storage.list_domain_records().await?;
-        info!("🔍 load_persisted_domains: list_domain_records returned {} records", records.len());
+        info!(
+            "🔍 load_persisted_domains: list_domain_records returned {} records",
+            records.len()
+        );
 
         if records.is_empty() {
             info!(" ⚠️  No persisted domain records found in storage");
@@ -114,8 +120,12 @@ impl DomainRegistry {
                 Ok(record) => {
                     // MIGRATION: Immediately re-save with new format (serde aliases make old data readable)
                     let migrated_data = serde_json::to_vec(&record)?;
-                    self.storage.store_domain_record(&domain, migrated_data).await
-                        .map_err(|e| anyhow!("Failed to migrate domain record '{}': {}", domain, e))?;
+                    self.storage
+                        .store_domain_record(&domain, migrated_data)
+                        .await
+                        .map_err(|e| {
+                            anyhow!("Failed to migrate domain record '{}': {}", domain, e)
+                        })?;
 
                     parsed_records.push((domain, record));
                 }
@@ -127,7 +137,10 @@ impl DomainRegistry {
 
         let loaded_count = parsed_records.len() as u64;
         if loaded_count > 0 {
-            info!(" ✅ MIGRATION: Re-saved {} domain records in new format", loaded_count);
+            info!(
+                " ✅ MIGRATION: Re-saved {} domain records in new format",
+                loaded_count
+            );
         }
 
         // LOCK SAFETY: Acquire domain_records lock, do sync work only, release
@@ -165,12 +178,17 @@ impl DomainRegistry {
             match serde_json::from_slice::<DomainRecord>(&data) {
                 Ok(record) => {
                     let migrated_data = serde_json::to_vec(&record)?;
-                    self.storage.store_domain_record(&domain, migrated_data).await?;
+                    self.storage
+                        .store_domain_record(&domain, migrated_data)
+                        .await?;
                     parsed_records.push((domain, record));
                     migrated += 1;
                 }
                 Err(e) => {
-                    warn!("Failed to deserialize domain record during migration: {}", e);
+                    warn!(
+                        "Failed to deserialize domain record during migration: {}",
+                        e
+                    );
                 }
             }
         }
@@ -218,7 +236,10 @@ impl DomainRegistry {
                                     let manifest_bytes = match serde_json::to_vec(manifest) {
                                         Ok(bytes) => bytes,
                                         Err(e) => {
-                                            warn!("Failed to serialize manifest for caching: {}", e);
+                                            warn!(
+                                                "Failed to serialize manifest for caching: {}",
+                                                e
+                                            );
                                             continue;
                                         }
                                     };
@@ -242,7 +263,10 @@ impl DomainRegistry {
             }
         }
 
-        info!("Loaded {} manifest histories from storage", loaded_manifests);
+        info!(
+            "Loaded {} manifest histories from storage",
+            loaded_manifests
+        );
         Ok(())
     }
 
@@ -251,12 +275,21 @@ impl DomainRegistry {
         let data = serde_json::to_vec(record)
             .map_err(|e| anyhow!("Failed to serialize domain record: {}", e))?;
 
-        info!("🔍 persist_domain_record: Serialized domain {} to {} bytes", record.domain, data.len());
+        info!(
+            "🔍 persist_domain_record: Serialized domain {} to {} bytes",
+            record.domain,
+            data.len()
+        );
 
         // Call storage trait method - error is NOT swallowed
-        self.storage.store_domain_record(&record.domain, data).await?;
+        self.storage
+            .store_domain_record(&record.domain, data)
+            .await?;
 
-        info!(" ✅ Persisted domain record: {} (v{}) - storage confirmed", record.domain, record.version);
+        info!(
+            " ✅ Persisted domain record: {} (v{}) - storage confirmed",
+            record.domain, record.version
+        );
         Ok(())
     }
 
@@ -267,7 +300,10 @@ impl DomainRegistry {
     }
 
     /// Register a new Web4 domain
-    pub async fn register_domain(&self, request: DomainRegistrationRequest) -> Result<DomainRegistrationResponse> {
+    pub async fn register_domain(
+        &self,
+        request: DomainRegistrationRequest,
+    ) -> Result<DomainRegistrationResponse> {
         info!("Registering Web4 domain: {}", request.domain);
 
         // Validate domain name
@@ -302,18 +338,25 @@ impl DomainRegistry {
         let expires_at = current_time + (request.duration_days * 24 * 60 * 60);
 
         // Create ownership proof
-        let ownership_proof = self.create_ownership_proof(&request.owner, &request.domain, current_time).await?;
+        let ownership_proof = self
+            .create_ownership_proof(&request.owner, &request.domain, current_time)
+            .await?;
 
         // Store initial content if provided
         let mut content_mappings = HashMap::new();
         for (path, content) in &request.initial_content {
-            let content_hash = self.store_domain_content(&request.domain, path, content.clone()).await?;
+            let content_hash = self
+                .store_domain_content(&request.domain, path, content.clone())
+                .await?;
             content_mappings.insert(path.clone(), content_hash);
         }
 
         // Determine version and manifest info
         let (version, previous_manifest) = if let Some(ref existing) = existing_record {
-            (existing.version + 1, Some(existing.current_web4_manifest_cid.clone()))
+            (
+                existing.version + 1,
+                Some(existing.current_web4_manifest_cid.clone()),
+            )
         } else {
             (1, None)
         };
@@ -325,10 +368,21 @@ impl DomainRegistry {
             let manifest_bytes = self
                 .get_content_by_cid(deploy_manifest_cid)
                 .await?
-                .ok_or_else(|| anyhow!("DeployManifest content not found for CID {}", deploy_manifest_cid))?;
+                .ok_or_else(|| {
+                    anyhow!(
+                        "DeployManifest content not found for CID {}",
+                        deploy_manifest_cid
+                    )
+                })?;
 
             let cli_manifest_data = serde_json::from_slice::<serde_json::Value>(&manifest_bytes)
-                .map_err(|e| anyhow!("Failed to parse DeployManifest JSON {}: {}", deploy_manifest_cid, e))?;
+                .map_err(|e| {
+                    anyhow!(
+                        "Failed to parse DeployManifest JSON {}: {}",
+                        deploy_manifest_cid,
+                        e
+                    )
+                })?;
 
             // Convert CLI manifest format to Web4Manifest
             // Use BTreeMap for deterministic iteration order — HashMap serialization order is
@@ -338,25 +392,47 @@ impl DomainRegistry {
             let files_array = cli_manifest_data
                 .get("files")
                 .and_then(|f| f.as_array())
-                .ok_or_else(|| anyhow!("DeployManifest {} missing files array", deploy_manifest_cid))?;
+                .ok_or_else(|| {
+                    anyhow!("DeployManifest {} missing files array", deploy_manifest_cid)
+                })?;
 
             for file_entry in files_array {
                 let path = file_entry
                     .get("path")
                     .and_then(|p| p.as_str())
-                    .ok_or_else(|| anyhow!("DeployManifest {} has file entry missing path", deploy_manifest_cid))?;
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "DeployManifest {} has file entry missing path",
+                            deploy_manifest_cid
+                        )
+                    })?;
                 let hash = file_entry
                     .get("hash")
                     .and_then(|h| h.as_str())
-                    .ok_or_else(|| anyhow!("DeployManifest {} has file entry missing hash", deploy_manifest_cid))?;
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "DeployManifest {} has file entry missing hash",
+                            deploy_manifest_cid
+                        )
+                    })?;
                 let size = file_entry
                     .get("size")
                     .and_then(|s| s.as_u64())
-                    .ok_or_else(|| anyhow!("DeployManifest {} has file entry missing size", deploy_manifest_cid))?;
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "DeployManifest {} has file entry missing size",
+                            deploy_manifest_cid
+                        )
+                    })?;
                 let mime_type = file_entry
                     .get("mime_type")
                     .and_then(|m| m.as_str())
-                    .ok_or_else(|| anyhow!("DeployManifest {} has file entry missing mime_type", deploy_manifest_cid))?;
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "DeployManifest {} has file entry missing mime_type",
+                            deploy_manifest_cid
+                        )
+                    })?;
 
                 // Create ManifestFile from FileEntry
                 // Note: FileEntry uses `hash` field as the uploaded blob CID
@@ -390,20 +466,28 @@ impl DomainRegistry {
                 domain: request.domain.clone(),
                 version,
                 previous_manifest,
-                build_hash: if let Some(root_hash) = cli_manifest_data.get("root_hash").and_then(|h| h.as_str()) {
+                build_hash: if let Some(root_hash) =
+                    cli_manifest_data.get("root_hash").and_then(|h| h.as_str())
+                {
                     root_hash.to_string()
                 } else {
                     hex::encode(lib_crypto::hash_blake3(
-                        format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
+                        format!("{}:v{}:{}", request.domain, version, current_time).as_bytes(),
                     ))
                 },
                 files: manifest_files, // Use files from CLI manifest
                 created_at: current_time,
                 created_by: format!("{}", request.owner.id),
                 message: if existing_record.is_some() {
-                    Some(format!("Domain {} updated with {} files", request.domain, file_count))
+                    Some(format!(
+                        "Domain {} updated with {} files",
+                        request.domain, file_count
+                    ))
                 } else {
-                    Some(format!("Domain {} registered with {} files", request.domain, file_count))
+                    Some(format!(
+                        "Domain {} registered with {} files",
+                        request.domain, file_count
+                    ))
                 },
             };
 
@@ -416,7 +500,7 @@ impl DomainRegistry {
                 version,
                 previous_manifest,
                 build_hash: hex::encode(lib_crypto::hash_blake3(
-                    format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
+                    format!("{}:v{}:{}", request.domain, version, current_time).as_bytes(),
                 )),
                 files: std::collections::BTreeMap::new(),
                 created_at: current_time,
@@ -475,14 +559,20 @@ impl DomainRegistry {
         {
             let mut records = self.domain_records.write().await;
             records.insert(request.domain.clone(), domain_record);
-            info!(" DEBUG: Stored domain in registry. Total domains: {}. Registry ptr: {:p}",
-                records.len(), &*self.domain_records);
+            info!(
+                " DEBUG: Stored domain in registry. Total domains: {}. Registry ptr: {:p}",
+                records.len(),
+                &*self.domain_records
+            );
         }
 
         // Update statistics
         self.update_registration_stats(registration_fee).await?;
 
-        info!(" Domain {} registered successfully with ID {}", request.domain, registration_id);
+        info!(
+            " Domain {} registered successfully with ID {}",
+            request.domain, registration_id
+        );
 
         Ok(DomainRegistrationResponse {
             domain: request.domain,
@@ -505,10 +595,7 @@ impl DomainRegistry {
         // Create registration proof (simplified for now)
         let registration_proof = ZeroKnowledgeProof::new(
             "Plonky2".to_string(),
-            hash_blake3(&[
-                owner.id.0.as_slice(),
-                domain.as_bytes(),
-            ].concat()).to_vec(),
+            hash_blake3(&[owner.id.0.as_slice(), domain.as_bytes()].concat()).to_vec(),
             owner.id.0.to_vec(),
             owner.id.0.to_vec(),
             None,
@@ -533,7 +620,7 @@ impl DomainRegistry {
 
         // First check local cache
         let records = self.domain_records.read().await;
-        
+
         if let Some(record) = records.get(domain) {
             // Check if domain has expired
             let current_time = std::time::SystemTime::now()
@@ -548,7 +635,7 @@ impl DomainRegistry {
                     identity_hash: hex::encode(&record.owner.0[..16]), // First 16 bytes for privacy
                     registered_at: record.registered_at,
                     verified: true, // All registered domains are verified
-                    alias: None, // Could be added later
+                    alias: None,    // Could be added later
                 };
 
                 return Ok(DomainLookupResponse {
@@ -559,7 +646,7 @@ impl DomainRegistry {
                 });
             }
         }
-        
+
         drop(records); // Release lock before storage query
 
         // Domain not found locally - try storage as fallback
@@ -609,7 +696,6 @@ impl DomainRegistry {
         }
     }
 
-
     /// Transfer domain to new owner
     pub async fn transfer_domain(
         &self,
@@ -618,14 +704,15 @@ impl DomainRegistry {
         to_owner: &ZhtpIdentity,
         transfer_proof: ZeroKnowledgeProof,
     ) -> Result<bool> {
-        info!(" Transferring domain {} from {} to {}", 
-            domain, 
+        info!(
+            " Transferring domain {} from {} to {}",
+            domain,
             hex::encode(&from_owner.id.0[..8]),
             hex::encode(&to_owner.id.0[..8])
         );
 
         let mut records = self.domain_records.write().await;
-        
+
         if let Some(record) = records.get_mut(domain) {
             // Verify current ownership
             if record.owner != from_owner.id {
@@ -633,7 +720,10 @@ impl DomainRegistry {
             }
 
             // Verify transfer proof
-            if !self.verify_transfer_proof(from_owner, to_owner, domain, &transfer_proof).await? {
+            if !self
+                .verify_transfer_proof(from_owner, to_owner, domain, &transfer_proof)
+                .await?
+            {
                 return Err(anyhow!("Invalid transfer proof"));
             }
 
@@ -652,11 +742,15 @@ impl DomainRegistry {
             };
 
             // Create updated record for persistence (persist BEFORE mutating memory)
-            let new_ownership_proof = self.create_ownership_proof(
-                to_owner,
-                domain,
-                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()
-            ).await?;
+            let new_ownership_proof = self
+                .create_ownership_proof(
+                    to_owner,
+                    domain,
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs(),
+                )
+                .await?;
 
             let mut updated_record = record.clone();
             updated_record.owner = to_owner.id.clone();
@@ -748,22 +842,22 @@ impl DomainRegistry {
 
         // Extract the name part (before TLD)
         let name = &domain[..domain.len() - tld_len];
-        
+
         // Check for reserved dao. prefix (virtual namespace - cannot be registered)
         if name.starts_with("dao.") || name == "dao" {
             return Err(anyhow!(
                 "dao. prefix is virtual and cannot be registered. DAO governance is automatically derived from base domains."
             ));
         }
-        
+
         // Split into labels and validate each independently
         let labels: Vec<&str> = name.split('.').collect();
-        
+
         // Must have at least one label
         if labels.is_empty() {
             return Err(anyhow!("Domain must have at least one label"));
         }
-        
+
         // Validate each label
         for label in &labels {
             // Each label must be 1-63 characters
@@ -776,12 +870,18 @@ impl DomainRegistry {
 
             // Must contain only valid characters (alphanumeric + hyphen)
             if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                return Err(anyhow!("Domain label '{}' can only contain letters, numbers, and hyphens", label));
+                return Err(anyhow!(
+                    "Domain label '{}' can only contain letters, numbers, and hyphens",
+                    label
+                ));
             }
 
             // Cannot start or end with hyphen
             if label.starts_with('-') || label.ends_with('-') {
-                return Err(anyhow!("Domain label '{}' cannot start or end with hyphen", label));
+                return Err(anyhow!(
+                    "Domain label '{}' cannot start or end with hyphen",
+                    label
+                ));
             }
         }
 
@@ -789,21 +889,36 @@ impl DomainRegistry {
         // This maintains the original 3-character minimum policy while allowing shorter subdomain labels
         if let Some(base_domain) = labels.last() {
             if base_domain.len() < 3 {
-                return Err(anyhow!("Base domain '{}' must be at least 3 characters", base_domain));
+                return Err(anyhow!(
+                    "Base domain '{}' must be at least 3 characters",
+                    base_domain
+                ));
             }
         }
-        
+
         // Overall name length check (all labels + dots, excluding TLD)
         if name.len() > 253 {
-            return Err(anyhow!("Domain name (excluding TLD) cannot exceed 253 characters"));
+            return Err(anyhow!(
+                "Domain name (excluding TLD) cannot exceed 253 characters"
+            ));
         }
 
         Ok(())
     }
 
     /// Store domain content using content-addressed storage
-    async fn store_domain_content(&self, domain: &str, path: &str, content: Vec<u8>) -> Result<String> {
-        info!(" Storing content for {}{} ({} bytes)", domain, path, content.len());
+    async fn store_domain_content(
+        &self,
+        domain: &str,
+        path: &str,
+        content: Vec<u8>,
+    ) -> Result<String> {
+        info!(
+            " Storing content for {}{} ({} bytes)",
+            domain,
+            path,
+            content.len()
+        );
 
         // Use the content-addressed storage method
         let cid = self.store_content_by_cid(content).await?;
@@ -824,17 +939,23 @@ impl DomainRegistry {
     }
 
     /// Create ownership proof for domain
-    async fn create_ownership_proof(&self, owner: &ZhtpIdentity, domain: &str, timestamp: u64) -> Result<ZeroKnowledgeProof> {
+    async fn create_ownership_proof(
+        &self,
+        owner: &ZhtpIdentity,
+        domain: &str,
+        timestamp: u64,
+    ) -> Result<ZeroKnowledgeProof> {
         // Create proof data combining identity, domain, and timestamp
         let proof_data = [
             owner.id.0.as_slice(),
             domain.as_bytes(),
             &timestamp.to_le_bytes(),
-        ].concat();
+        ]
+        .concat();
 
         // Generate proof hash (in production this would be a proper ZK proof)
         let proof_hash = hash_blake3(&proof_data);
-        
+
         Ok(ZeroKnowledgeProof::new(
             "Plonky2".to_string(),
             proof_hash.to_vec(),
@@ -848,8 +969,8 @@ impl DomainRegistry {
     async fn verify_registration_proof(&self, request: &DomainRegistrationRequest) -> Result<bool> {
         // In production, this would verify the ZK proof
         // For now, just check that proof is present and valid format
-        Ok(!request.registration_proof.proof_data.is_empty() && 
-           !request.registration_proof.verification_key.is_empty())
+        Ok(!request.registration_proof.proof_data.is_empty()
+            && !request.registration_proof.verification_key.is_empty())
     }
 
     /// Verify transfer proof
@@ -872,15 +993,17 @@ impl DomainRegistry {
         // Base fee structure
         let base_fee = 10.0; // 10 SOV base fee
         let per_day_fee = 0.01; // 0.01 SOV per day
-        
+
         // Premium domain multiplier
-        let premium_multiplier = if request.domain.len() <= 6 { // Short domains are premium
+        let premium_multiplier = if request.domain.len() <= 6 {
+            // Short domains are premium
             3.0
         } else {
             1.0
         };
 
-        let total_fee = (base_fee + (request.duration_days as f64 * per_day_fee)) * premium_multiplier;
+        let total_fee =
+            (base_fee + (request.duration_days as f64 * per_day_fee)) * premium_multiplier;
         Ok(total_fee)
     }
 
@@ -902,8 +1025,7 @@ impl DomainRegistry {
 
     /// Get content by CID from unified storage/cache.
     pub async fn get_content(&self, content_hash: &str) -> Result<Vec<u8>> {
-        self
-            .get_content_by_cid(content_hash)
+        self.get_content_by_cid(content_hash)
             .await?
             .ok_or_else(|| anyhow!("Content not found for CID: {}", content_hash))
     }
@@ -912,11 +1034,14 @@ impl DomainRegistry {
     pub async fn get_domain_content(&self, domain: &str, path: &str) -> Result<Vec<u8>> {
         // Look up domain
         let records = self.domain_records.read().await;
-        let record = records.get(domain)
+        let record = records
+            .get(domain)
             .ok_or_else(|| anyhow!("Domain not found: {}", domain))?;
 
         // Get content hash for path
-        let content_hash = record.content_mappings.get(path)
+        let content_hash = record
+            .content_mappings
+            .get(path)
             .ok_or_else(|| anyhow!("Path not found in domain: {}", path))?;
 
         // Retrieve content
@@ -930,8 +1055,12 @@ impl DomainRegistry {
     /// Get domain status (version info)
     pub async fn get_domain_status(&self, domain: &str) -> Result<DomainStatusResponse> {
         let records = self.domain_records.read().await;
-        info!(" DEBUG: get_domain_status for '{}'. Total domains: {}. DomainRegistry self ptr: {:p}",
-            domain, records.len(), self);
+        info!(
+            " DEBUG: get_domain_status for '{}'. Total domains: {}. DomainRegistry self ptr: {:p}",
+            domain,
+            records.len(),
+            self
+        );
 
         if let Some(record) = records.get(domain) {
             return Ok(DomainStatusResponse {
@@ -942,7 +1071,9 @@ impl DomainRegistry {
                 owner_did: format!("did:zhtp:{}", hex::encode(record.owner.0)),
                 updated_at: record.updated_at,
                 expires_at: record.expires_at,
-                build_hash: hex::encode(&hash_blake3(record.current_web4_manifest_cid.as_bytes())[..16]),
+                build_hash: hex::encode(
+                    &hash_blake3(record.current_web4_manifest_cid.as_bytes())[..16],
+                ),
             });
         }
 
@@ -965,7 +1096,9 @@ impl DomainRegistry {
                     owner_did: format!("did:zhtp:{}", hex::encode(&record.owner.0[..16])),
                     updated_at: record.updated_at,
                     expires_at: record.expires_at,
-                    build_hash: hex::encode(&hash_blake3(record.current_web4_manifest_cid.as_bytes())[..16]),
+                    build_hash: hex::encode(
+                        &hash_blake3(record.current_web4_manifest_cid.as_bytes())[..16],
+                    ),
                 });
             }
         }
@@ -1002,7 +1135,9 @@ impl DomainRegistry {
         // FIX (Content Persistence Bug): Also persist content to storage
         // Content needs to be stored with key "content:{cid}" for durability across restarts
         let content_key = format!("content:{}", cid);
-        self.storage.store_domain_record(&content_key, content.clone()).await?;
+        self.storage
+            .store_domain_record(&content_key, content.clone())
+            .await?;
 
         Ok(cid)
     }
@@ -1033,7 +1168,10 @@ impl DomainRegistry {
                 // Content not found, fall through to check manifest
             }
             Err(e) => {
-                warn!("Error retrieving content from storage for CID {}: {}", cid, e);
+                warn!(
+                    "Error retrieving content from storage for CID {}: {}",
+                    cid, e
+                );
             }
         }
 
@@ -1049,22 +1187,28 @@ impl DomainRegistry {
                 }
                 Ok(Some(content))
             }
-            Ok(None) => {
-                Ok(None)
-            }
+            Ok(None) => Ok(None),
             Err(e) => {
-                warn!("Error retrieving manifest from storage for CID {}: {}", cid, e);
+                warn!(
+                    "Error retrieving manifest from storage for CID {}: {}",
+                    cid, e
+                );
                 Ok(None)
             }
         }
     }
 
     /// Get domain version history
-    pub async fn get_domain_history(&self, domain: &str, limit: usize) -> Result<DomainHistoryResponse> {
+    pub async fn get_domain_history(
+        &self,
+        domain: &str,
+        limit: usize,
+    ) -> Result<DomainHistoryResponse> {
         let records = self.domain_records.read().await;
         let manifests = self.manifest_history.read().await;
 
-        let record = records.get(domain)
+        let record = records
+            .get(domain)
             .ok_or_else(|| anyhow!("Domain not found: {}", domain))?;
 
         // Get version history from manifest storage
@@ -1089,7 +1233,9 @@ impl DomainRegistry {
                 created_at: record.updated_at,
                 created_by: format!("did:zhtp:{}", hex::encode(&record.owner.0[..16])),
                 message: Some("Initial deployment".to_string()),
-                build_hash: hex::encode(&hash_blake3(record.current_web4_manifest_cid.as_bytes())[..16]),
+                build_hash: hex::encode(
+                    &hash_blake3(record.current_web4_manifest_cid.as_bytes())[..16],
+                ),
             });
         }
 
@@ -1102,7 +1248,10 @@ impl DomainRegistry {
     }
 
     /// Update domain with new manifest (atomic compare-and-swap)
-    pub async fn update_domain(&self, update_request: DomainUpdateRequest) -> Result<DomainUpdateResponse> {
+    pub async fn update_domain(
+        &self,
+        update_request: DomainUpdateRequest,
+    ) -> Result<DomainUpdateResponse> {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
@@ -1121,7 +1270,10 @@ impl DomainRegistry {
                 new_manifest_cid: String::new(),
                 previous_manifest_cid: String::new(),
                 updated_at: 0,
-                error: Some(format!("Request expired. Timestamp difference: {} seconds", time_diff)),
+                error: Some(format!(
+                    "Request expired. Timestamp difference: {} seconds",
+                    time_diff
+                )),
             });
         }
 
@@ -1132,7 +1284,8 @@ impl DomainRegistry {
 
         let mut records = self.domain_records.write().await;
 
-        let record = records.get_mut(&update_request.domain)
+        let record = records
+            .get_mut(&update_request.domain)
             .ok_or_else(|| anyhow!("Domain not found: {}", update_request.domain))?;
 
         // Compare-and-swap: verify expected previous CID matches current
@@ -1145,8 +1298,7 @@ impl DomainRegistry {
                 updated_at: record.updated_at,
                 error: Some(format!(
                     "Concurrent update detected. Expected previous CID: {}, actual: {}",
-                    update_request.expected_previous_manifest_cid,
-                    record.current_web4_manifest_cid
+                    update_request.expected_previous_manifest_cid, record.current_web4_manifest_cid
                 )),
             });
         }
@@ -1201,7 +1353,10 @@ impl DomainRegistry {
         })
     }
 
-    async fn extract_content_mappings_from_manifest_cid(&self, cid: &str) -> Result<HashMap<String, String>> {
+    async fn extract_content_mappings_from_manifest_cid(
+        &self,
+        cid: &str,
+    ) -> Result<HashMap<String, String>> {
         let manifest_bytes = self
             .get_content_by_cid(cid)
             .await?
@@ -1308,16 +1463,27 @@ impl DomainRegistry {
 
             // Persist to storage
             drop(manifests); // Release lock before making storage call
-            self.storage.store_manifest(&domain, manifest_history_data).await?;
-            info!(" ✅ Persisted manifest history for domain: {} (CID: {})", domain, cid);
+            self.storage
+                .store_manifest(&domain, manifest_history_data)
+                .await?;
+            info!(
+                " ✅ Persisted manifest history for domain: {} (CID: {})",
+                domain, cid
+            );
         }
 
         // FIX (Content Not Found Bug): Also store the manifest content itself
         // The manifest needs to be retrievable by its CID as content
         // Store manifest content under key "manifest:{cid}" so it can be fetched
         let manifest_content_key = format!("manifest:{}", cid);
-        self.storage.store_domain_record(&manifest_content_key, manifest_bytes.clone()).await?;
-        info!(" ✅ Stored manifest content with CID: {} (size: {} bytes)", cid, manifest_bytes.len());
+        self.storage
+            .store_domain_record(&manifest_content_key, manifest_bytes.clone())
+            .await?;
+        info!(
+            " ✅ Stored manifest content with CID: {} (size: {} bytes)",
+            cid,
+            manifest_bytes.len()
+        );
 
         info!(" Stored manifest {} for domain", cid);
         Ok(cid)
@@ -1353,13 +1519,20 @@ impl DomainRegistry {
     }
 
     /// Rollback domain to a previous version
-    pub async fn rollback_domain(&self, domain: &str, target_version: u64, _owner_did: &str) -> Result<DomainUpdateResponse> {
+    pub async fn rollback_domain(
+        &self,
+        domain: &str,
+        target_version: u64,
+        _owner_did: &str,
+    ) -> Result<DomainUpdateResponse> {
         // Get the target manifest
         let manifests = self.manifest_history.read().await;
-        let domain_manifests = manifests.get(domain)
+        let domain_manifests = manifests
+            .get(domain)
             .ok_or_else(|| anyhow!("No history found for domain: {}", domain))?;
 
-        let target_manifest = domain_manifests.iter()
+        let target_manifest = domain_manifests
+            .iter()
             .find(|m| m.version == target_version)
             .ok_or_else(|| anyhow!("Version {} not found for domain {}", target_version, domain))?
             .clone();
@@ -1370,7 +1543,8 @@ impl DomainRegistry {
 
         // Get current state
         let records = self.domain_records.read().await;
-        let current_cid = records.get(domain)
+        let current_cid = records
+            .get(domain)
             .map(|r| r.current_web4_manifest_cid.clone())
             .ok_or_else(|| anyhow!("Domain not found: {}", domain))?;
         drop(records);
@@ -1421,10 +1595,7 @@ impl Web4Manager {
         // Create registration proof (simplified for now)
         let registration_proof = ZeroKnowledgeProof::new(
             "Plonky2".to_string(),
-            hash_blake3(&[
-                owner.id.0.as_slice(),
-                domain.as_bytes(),
-            ].concat()).to_vec(),
+            hash_blake3(&[owner.id.0.as_slice(), domain.as_bytes()].concat()).to_vec(),
             owner.id.0.to_vec(),
             owner.id.0.to_vec(),
             None,
@@ -1452,11 +1623,11 @@ impl Web4Manager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_identity::{ZhtpIdentity, IdentityType};
-    use tempfile::TempDir;
     use crate::storage_stub::UnifiedStorage;
     use async_trait::async_trait;
+    use lib_identity::{IdentityType, ZhtpIdentity};
     use std::sync::RwLock as StdRwLock;
+    use tempfile::TempDir;
 
     /// Test storage implementation that actually persists data in memory
     #[derive(Clone, Default)]
@@ -1468,7 +1639,10 @@ mod tests {
     #[async_trait]
     impl UnifiedStorage for TestStorage {
         async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> Result<()> {
-            self.domains.write().unwrap().insert(domain.to_string(), data);
+            self.domains
+                .write()
+                .unwrap()
+                .insert(domain.to_string(), data);
             Ok(())
         }
 
@@ -1482,14 +1656,20 @@ mod tests {
         }
 
         async fn list_domain_records(&self) -> Result<Vec<(String, Vec<u8>)>> {
-            Ok(self.domains.read().unwrap()
+            Ok(self
+                .domains
+                .read()
+                .unwrap()
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect())
         }
 
         async fn store_manifest(&self, domain: &str, manifest_data: Vec<u8>) -> Result<()> {
-            self.manifests.write().unwrap().insert(domain.to_string(), manifest_data);
+            self.manifests
+                .write()
+                .unwrap()
+                .insert(domain.to_string(), manifest_data);
             Ok(())
         }
 
@@ -1504,7 +1684,7 @@ mod tests {
 
     /// Test storage registry - maintains persistent storage per path for test isolation
     use std::collections::HashMap;
-    use std::sync::{OnceLock, Mutex};
+    use std::sync::{Mutex, OnceLock};
 
     fn get_test_storage_map() -> &'static Mutex<HashMap<String, Arc<TestStorage>>> {
         static STORAGE_MAP: OnceLock<Mutex<HashMap<String, Arc<TestStorage>>>> = OnceLock::new();
@@ -1532,7 +1712,9 @@ mod tests {
     }
 
     /// Create a test storage system that actually persists across multiple calls
-    async fn create_test_storage_with_persistence(persist_path: std::path::PathBuf) -> Arc<dyn UnifiedStorage> {
+    async fn create_test_storage_with_persistence(
+        persist_path: std::path::PathBuf,
+    ) -> Arc<dyn UnifiedStorage> {
         get_test_storage(&persist_path)
     }
 
@@ -1544,7 +1726,8 @@ mod tests {
             Some("US".to_string()),
             "test_domain_owner",
             None,
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[tokio::test]
@@ -1612,7 +1795,10 @@ mod tests {
 
             // Domain should be loaded from persistence
             let lookup = registry.lookup_domain(domain_name).await.unwrap();
-            assert!(lookup.found, "Domain should persist across registry restarts");
+            assert!(
+                lookup.found,
+                "Domain should persist across registry restarts"
+            );
             assert_eq!(lookup.record.as_ref().unwrap().domain, domain_name);
         }
 
@@ -1676,7 +1862,12 @@ mod tests {
 
             // Get initial manifest CID
             let lookup = registry.lookup_domain(domain_name).await.unwrap();
-            initial_manifest_cid = lookup.record.as_ref().unwrap().current_web4_manifest_cid.clone();
+            initial_manifest_cid = lookup
+                .record
+                .as_ref()
+                .unwrap()
+                .current_web4_manifest_cid
+                .clone();
 
             // Update domain
             let update_request = DomainUpdateRequest {
@@ -1704,7 +1895,10 @@ mod tests {
             assert!(lookup.found);
             let record = lookup.record.unwrap();
             assert_eq!(record.version, 2, "Version should be updated");
-            assert_eq!(record.current_web4_manifest_cid, updated_manifest_cid, "Manifest CID should be updated");
+            assert_eq!(
+                record.current_web4_manifest_cid, updated_manifest_cid,
+                "Manifest CID should be updated"
+            );
         }
 
         let _ = std::fs::remove_file(&persist_path);

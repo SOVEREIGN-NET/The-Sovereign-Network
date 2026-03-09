@@ -8,18 +8,21 @@ pub enum ZoneTypes {
     Master,
     Slave,
     Stub,
-    Forward
+    Forward,
 }
 
 impl fmt::Display for ZoneTypes {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self {
-            Self::Hint => "HINT",
-            Self::Master => "MASTER",
-            Self::Slave => "SLAVE",
-            Self::Stub => "STUB",
-            Self::Forward => "FORWARD"
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Hint => "HINT",
+                Self::Master => "MASTER",
+                Self::Slave => "SLAVE",
+                Self::Stub => "STUB",
+                Self::Forward => "FORWARD",
+            }
+        )
     }
 }

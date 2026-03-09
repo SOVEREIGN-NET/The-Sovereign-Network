@@ -1,5 +1,5 @@
 //! Priority-based fee calculation with QoS multipliers
-//! 
+//!
 //! Implements quality-of-service style pricing for network transactions.
 
 use crate::types::{Priority, PriorityExt};
@@ -25,7 +25,7 @@ pub fn get_priority_info(priority: Priority) -> serde_json::Value {
     } else {
         "Standard cost".to_string()
     };
-    
+
     serde_json::json!({
         "priority": format!("{:?}", priority),
         "description": priority.description(),
@@ -43,6 +43,6 @@ pub fn calculate_priority_total_fees(
 ) -> (u64, u64, u64) {
     let adjusted_network_fee = calculate_priority_fee(base_network_fee, priority);
     let total_fee = adjusted_network_fee + dao_fee; // DAO fee not affected by priority
-    
+
     (adjusted_network_fee, dao_fee, total_fee)
 }

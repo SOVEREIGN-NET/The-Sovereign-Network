@@ -9,8 +9,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 mod common;
 use common::test_helpers::{
-    identity_with_seed, peer_id_from_node_id, derive_session_key_for_test,
-    TEST_TIMEOUT,
+    derive_session_key_for_test, identity_with_seed, peer_id_from_node_id, TEST_TIMEOUT,
 };
 
 #[test]
@@ -24,14 +23,22 @@ fn node_id_remains_stable_across_restart() -> Result<()> {
     let second = identity_with_seed(device, seed)?;
 
     assert_eq!(first.did, second.did, "DID should be deterministic");
-    assert_eq!(first.node_id, second.node_id, "NodeId should survive restart with same seed");
-    assert!(!first.public_key.as_bytes().is_empty(), "Public key should be present");
-    assert!(!second.public_key.as_bytes().is_empty(), "Public key should be present");
+    assert_eq!(
+        first.node_id, second.node_id,
+        "NodeId should survive restart with same seed"
+    );
+    assert!(
+        !first.public_key.as_bytes().is_empty(),
+        "Public key should be present"
+    );
+    assert!(
+        !second.public_key.as_bytes().is_empty(),
+        "Public key should be present"
+    );
 
     let expected = NodeId::from_did_device(&first.did, device)?;
     assert_eq!(
-        expected,
-        first.node_id,
+        expected, first.node_id,
         "NodeId must match DID + device derivation"
     );
 
@@ -47,7 +54,10 @@ fn node_id_changes_with_different_seed() -> Result<()> {
     let a = identity_with_seed(device, [0x11u8; 64])?;
     let b = identity_with_seed(device, [0x12u8; 64])?;
 
-    assert_ne!(a.did, b.did, "Different seeds should produce different DIDs");
+    assert_ne!(
+        a.did, b.did,
+        "Different seeds should produce different DIDs"
+    );
     assert_ne!(
         a.node_id, b.node_id,
         "Different seeds should produce different NodeIds"
@@ -115,7 +125,10 @@ async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()
                 .expect("peer should be registered");
 
             assert_eq!(peer.did.as_deref(), Some(identity.did.as_str()));
-            assert_eq!(peer.device_id.as_deref(), Some(identity.primary_device.as_str()));
+            assert_eq!(
+                peer.device_id.as_deref(),
+                Some(identity.primary_device.as_str())
+            );
             assert_eq!(
                 peer.public_key.as_ref().map(|k| k.as_bytes()),
                 Some(identity.public_key.as_bytes())
@@ -153,8 +166,7 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
         let addr_a: SocketAddr = "192.0.2.10:9443".parse().unwrap(); // RFC 5737
         let addr_b: SocketAddr = "192.0.2.11:9443".parse().unwrap(); // RFC 5737
 
-        let mut initial =
-            DiscoveryResult::new(peer_id, addr_a, DiscoveryProtocol::PortScan, 9443);
+        let mut initial = DiscoveryResult::new(peer_id, addr_a, DiscoveryProtocol::PortScan, 9443);
         initial.did = Some(identity.did.clone());
         initial.device_id = Some(identity.primary_device.clone());
         service.register_peer(initial).await;
@@ -176,7 +188,10 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
         assert!(peer.addresses.contains(&addr_b));
         assert_eq!(peer.protocol, DiscoveryProtocol::UdpMulticast);
         assert_eq!(peer.did.as_deref(), Some(identity.did.as_str()));
-        assert_eq!(peer.device_id.as_deref(), Some(identity.primary_device.as_str()));
+        assert_eq!(
+            peer.device_id.as_deref(),
+            Some(identity.primary_device.as_str())
+        );
         assert_eq!(
             peer.public_key.as_ref().map(|k| k.as_bytes()),
             Some(identity.public_key.as_bytes())
@@ -228,14 +243,12 @@ async fn mesh_discovery_concurrent_duplicate_registration_is_consistent() -> Res
         let addr_a: SocketAddr = "198.51.100.10:9443".parse().unwrap(); // RFC 5737
         let addr_b: SocketAddr = "198.51.100.11:9443".parse().unwrap(); // RFC 5737
 
-        let mut a =
-            DiscoveryResult::new(peer_id, addr_a, DiscoveryProtocol::UdpMulticast, 9443);
+        let mut a = DiscoveryResult::new(peer_id, addr_a, DiscoveryProtocol::UdpMulticast, 9443);
         a.public_key = Some(identity.public_key.clone());
         a.did = Some(identity.did.clone());
         a.device_id = Some(identity.primary_device.clone());
 
-        let mut b =
-            DiscoveryResult::new(peer_id, addr_b, DiscoveryProtocol::UdpMulticast, 9443);
+        let mut b = DiscoveryResult::new(peer_id, addr_b, DiscoveryProtocol::UdpMulticast, 9443);
         b.public_key = Some(identity.public_key.clone());
         b.did = Some(identity.did.clone());
         b.device_id = Some(identity.primary_device.clone());
@@ -276,23 +289,23 @@ fn quic_session_key_is_bound_to_node_id() -> Result<()> {
 
     // Fixed test vectors for QUIC session key derivation (deterministic, realistic handshake outputs).
     let uhp_session_key: [u8; 32] = [
-        0x02, 0x4F, 0x4F, 0xD7, 0x2E, 0x70, 0xF5, 0x8B, 0xDE, 0xDC, 0x55, 0x33, 0x53, 0x09,
-        0xC5, 0x71, 0xDD, 0xF5, 0x39, 0xCF, 0x76, 0xEA, 0x25, 0x97, 0x6B, 0x40, 0xEC, 0xDA,
-        0x58, 0x33, 0xB5, 0x4D,
+        0x02, 0x4F, 0x4F, 0xD7, 0x2E, 0x70, 0xF5, 0x8B, 0xDE, 0xDC, 0x55, 0x33, 0x53, 0x09, 0xC5,
+        0x71, 0xDD, 0xF5, 0x39, 0xCF, 0x76, 0xEA, 0x25, 0x97, 0x6B, 0x40, 0xEC, 0xDA, 0x58, 0x33,
+        0xB5, 0x4D,
     ];
     let pqc_shared_secret: [u8; 32] = [
-        0xD9, 0xC8, 0x2C, 0xFE, 0x51, 0xA9, 0x06, 0xEB, 0x9D, 0x97, 0xA1, 0xF1, 0xBD, 0x8A,
-        0xB5, 0x57, 0xD7, 0x52, 0xDB, 0x9F, 0xBE, 0x5E, 0xD4, 0xF2, 0xB7, 0xB5, 0x7E, 0x97,
-        0xCA, 0x01, 0x08, 0x3A,
+        0xD9, 0xC8, 0x2C, 0xFE, 0x51, 0xA9, 0x06, 0xEB, 0x9D, 0x97, 0xA1, 0xF1, 0xBD, 0x8A, 0xB5,
+        0x57, 0xD7, 0x52, 0xDB, 0x9F, 0xBE, 0x5E, 0xD4, 0xF2, 0xB7, 0xB5, 0x7E, 0x97, 0xCA, 0x01,
+        0x08, 0x3A,
     ];
     let transcript_preimage: [u8; 96] = [
-        0x01, 0xAC, 0x69, 0x91, 0x1D, 0xB9, 0x66, 0x10, 0xAE, 0x0B, 0xFD, 0x27, 0x79, 0x50,
-        0x94, 0x85, 0xA0, 0xEE, 0x69, 0xD0, 0x54, 0xB9, 0x78, 0x62, 0x4A, 0xC3, 0x3F, 0x69,
-        0xE8, 0xC7, 0xDE, 0x7C, 0x52, 0x48, 0xA4, 0x50, 0xF3, 0x34, 0xD4, 0xDD, 0x22, 0xCE,
-        0x7C, 0xB9, 0xC3, 0x24, 0x94, 0x9C, 0xAE, 0xCB, 0x84, 0xB6, 0x64, 0x10, 0x00, 0xB4,
-        0xE4, 0xC6, 0xFB, 0xA0, 0xD8, 0xBA, 0x53, 0xF1, 0x56, 0x44, 0xBD, 0x1A, 0xDE, 0xF4,
-        0x34, 0x7E, 0x27, 0xB9, 0xBE, 0xA0, 0xB3, 0x82, 0x36, 0x38, 0x24, 0x95, 0x6A, 0x85,
-        0x29, 0xF7, 0xE5, 0x80, 0xD2, 0xA0, 0x20, 0x8C, 0xAE, 0xFB, 0xDA, 0x58,
+        0x01, 0xAC, 0x69, 0x91, 0x1D, 0xB9, 0x66, 0x10, 0xAE, 0x0B, 0xFD, 0x27, 0x79, 0x50, 0x94,
+        0x85, 0xA0, 0xEE, 0x69, 0xD0, 0x54, 0xB9, 0x78, 0x62, 0x4A, 0xC3, 0x3F, 0x69, 0xE8, 0xC7,
+        0xDE, 0x7C, 0x52, 0x48, 0xA4, 0x50, 0xF3, 0x34, 0xD4, 0xDD, 0x22, 0xCE, 0x7C, 0xB9, 0xC3,
+        0x24, 0x94, 0x9C, 0xAE, 0xCB, 0x84, 0xB6, 0x64, 0x10, 0x00, 0xB4, 0xE4, 0xC6, 0xFB, 0xA0,
+        0xD8, 0xBA, 0x53, 0xF1, 0x56, 0x44, 0xBD, 0x1A, 0xDE, 0xF4, 0x34, 0x7E, 0x27, 0xB9, 0xBE,
+        0xA0, 0xB3, 0x82, 0x36, 0x38, 0x24, 0x95, 0x6A, 0x85, 0x29, 0xF7, 0xE5, 0x80, 0xD2, 0xA0,
+        0x20, 0x8C, 0xAE, 0xFB, 0xDA, 0x58,
     ];
     let transcript_hash = hash_blake3(&transcript_preimage);
 

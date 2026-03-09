@@ -1,9 +1,9 @@
 //! DAO governance registration from the original identity.rs
 
+use crate::economics::{EconomicModel, Priority, Transaction, TransactionType};
+use crate::types::IdentityId;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use crate::types::IdentityId;
-use crate::economics::{EconomicModel, Transaction, TransactionType, Priority};
 
 /// DAO governance registration result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,7 +45,7 @@ impl DaoRegistration {
             proposal_eligibility,
         }
     }
-    
+
     /// Register identity for DAO governance participation - IMPLEMENTATION FROM ORIGINAL
     pub async fn register_for_dao_governance(
         identity_id: &IdentityId,
@@ -59,7 +59,7 @@ impl DaoRegistration {
         let dao_tx = Transaction::new(
             [0u8; 32], // DAO treasury
             identity_id.0,
-            0, // No cost to join DAO
+            0,                       // No cost to join DAO
             TransactionType::DaoFee, // Actually a DAO registration
             economic_model,
             64, // Transaction size
@@ -68,10 +68,10 @@ impl DaoRegistration {
 
         // Generate voting power (starts at 1 vote per citizen)
         let voting_power = 1u64;
-        
+
         // Generate DAO membership proof
         let membership_proof = lib_crypto::hash_blake3(
-            &[identity_id.0.as_slice(), &current_time.to_le_bytes()].concat()
+            &[identity_id.0.as_slice(), &current_time.to_le_bytes()].concat(),
         );
 
         tracing::info!(
@@ -90,17 +90,17 @@ impl DaoRegistration {
             true, // proposal_eligibility
         ))
     }
-    
+
     /// Check if citizen can vote
     pub fn can_vote(&self) -> bool {
         self.voting_eligibility && self.voting_power > 0
     }
-    
+
     /// Check if citizen can create proposals
     pub fn can_create_proposals(&self) -> bool {
         self.proposal_eligibility && self.voting_power > 0
     }
-    
+
     /// Get voting weight (currently 1 vote per citizen)
     pub fn get_voting_weight(&self) -> u64 {
         if self.voting_eligibility {
@@ -109,7 +109,7 @@ impl DaoRegistration {
             0
         }
     }
-    
+
     /// Get registration age in seconds
     pub fn registration_age_seconds(&self) -> u64 {
         let now = std::time::SystemTime::now()
@@ -118,12 +118,10 @@ impl DaoRegistration {
             .as_secs();
         now.saturating_sub(self.registered_at)
     }
-    
+
     /// Check if membership proof is valid (simplified validation)
     pub fn is_membership_proof_valid(&self) -> bool {
         // Verify membership proof contains expected elements
-        self.membership_proof != [0u8; 32] && 
-        self.voting_power > 0 &&
-        self.registered_at > 0
+        self.membership_proof != [0u8; 32] && self.voting_power > 0 && self.registered_at > 0
     }
 }

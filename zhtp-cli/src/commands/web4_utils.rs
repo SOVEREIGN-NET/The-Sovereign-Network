@@ -29,7 +29,8 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
     // that were created before USER/NODE identity separation
     if !identity_file.exists() || !private_key_file.exists() {
         let node_identity_file = keystore_path.join(zhtp::keystore_names::NODE_IDENTITY_FILENAME);
-        let node_private_key_file = keystore_path.join(zhtp::keystore_names::NODE_PRIVATE_KEY_FILENAME);
+        let node_private_key_file =
+            keystore_path.join(zhtp::keystore_names::NODE_PRIVATE_KEY_FILENAME);
 
         if node_identity_file.exists() && node_private_key_file.exists() {
             eprintln!(
@@ -103,7 +104,8 @@ pub fn resolve_keystore_path(keystore: Option<&str>) -> CliResult<PathBuf> {
     }
 
     Err(CliError::IdentityError(
-        "Keystore path required. Provide --keystore or set defaults in ~/.zhtp/cli.toml".to_string(),
+        "Keystore path required. Provide --keystore or set defaults in ~/.zhtp/cli.toml"
+            .to_string(),
     ))
 }
 
@@ -303,8 +305,8 @@ pub fn decode_base64(data: &str) -> CliResult<Vec<u8>> {
 }
 
 pub fn default_trust_paths() -> (PathBuf, PathBuf) {
-    let trustdb = TrustConfig::default_trustdb_path()
-        .unwrap_or_else(|_| PathBuf::from("trustdb.json"));
+    let trustdb =
+        TrustConfig::default_trustdb_path().unwrap_or_else(|_| PathBuf::from("trustdb.json"));
     let audit = TrustConfig::default_audit_path();
     (trustdb, audit)
 }
@@ -321,13 +323,11 @@ pub fn save_private_key_to_file(
         master_seed: private_key.master_seed.clone(),
     };
 
-    let private_key_json = serde_json::to_string_pretty(&keystore_key).map_err(|e| {
-        CliError::IdentityError(format!("Failed to serialize private key: {}", e))
-    })?;
+    let private_key_json = serde_json::to_string_pretty(&keystore_key)
+        .map_err(|e| CliError::IdentityError(format!("Failed to serialize private key: {}", e)))?;
 
-    std::fs::write(private_key_file, private_key_json).map_err(|e| {
-        CliError::IdentityError(format!("Failed to write private key file: {}", e))
-    })?;
+    std::fs::write(private_key_file, private_key_json)
+        .map_err(|e| CliError::IdentityError(format!("Failed to write private key file: {}", e)))?;
 
     // Set restrictive permissions on Unix
     #[cfg(unix)]

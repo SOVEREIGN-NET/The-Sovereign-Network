@@ -64,13 +64,13 @@
 //! - `meta:last_finalized_height` - Recovery metadata
 //! - `meta:version` - Schema version
 
+pub mod cache;
+pub mod cached_persistent;
 pub mod errors;
 pub mod persistent;
-pub mod versioning;
-pub mod cache;
 pub mod recovery;
 pub mod state_root;
-pub mod cached_persistent;
+pub mod versioning;
 
 #[cfg(test)]
 mod tests;
@@ -78,10 +78,10 @@ mod tests;
 #[cfg(all(test, feature = "persistent-contracts"))]
 mod benchmarks;
 
+pub use cache::{CacheConfig, CacheStats, StateCache};
+pub use cached_persistent::CachedPersistentStorage;
 pub use errors::{StorageError, StorageResult};
 pub use persistent::PersistentStorage;
-pub use versioning::StateVersionManager;
-pub use cache::{StateCache, CacheConfig, CacheStats};
 pub use recovery::WalRecoveryManager;
 pub use state_root::StateRootComputation;
-pub use cached_persistent::CachedPersistentStorage;
+pub use versioning::StateVersionManager;

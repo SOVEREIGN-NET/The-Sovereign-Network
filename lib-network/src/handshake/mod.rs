@@ -52,20 +52,20 @@
 //! UHP v2 is the only supported handshake in alpha. There are no legacy fallbacks,
 //! downgrade paths, or dual-version code paths in the critical path.
 
-use anyhow::{Result, anyhow};
-use lib_crypto::{PublicKey, Signature, KeyPair};
-use lib_identity::{ZhtpIdentity, NodeId};
+use anyhow::{anyhow, Result};
+use lib_crypto::{KeyPair, PublicKey, Signature};
+use lib_identity::{NodeId, ZhtpIdentity};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use rand::RngCore;
 use tracing::error;
 
 // Security modules
-pub mod security;
+pub mod blockchain;
 mod nonce_cache;
 mod observability;
 mod rate_limiter;
-pub mod blockchain;
+pub mod security;
 
 // Core handshake I/O (Ticket #136)
 pub mod core;
@@ -80,50 +80,57 @@ pub mod framing;
 pub mod orchestrator;
 
 // Re-export security utilities
-pub use security::{
-    TimestampConfig, SessionContext,
-    validate_timestamp, current_timestamp,
-    derive_session_key_hkdf, ct_eq_bytes, ct_verify_eq,
-    // UHP v2 key schedule and MAC
-    v2_labels, V2SessionKeys, derive_v2_session_keys, derive_v2_key,
-    CanonicalRequest, compute_v2_mac, verify_v2_mac,
-};
 pub use nonce_cache::{
-    NonceCache, start_nonce_cleanup_task, NetworkEpoch,
-    SeenResult, compute_nonce_fingerprint,
+    compute_nonce_fingerprint,
+    get_or_init_global_nonce_cache,
+    global_nonce_cache,
     // Global singleton functions [DB-013]
-    init_global_nonce_cache, global_nonce_cache,
-    is_global_nonce_cache_initialized, get_or_init_global_nonce_cache,
+    init_global_nonce_cache,
+    is_global_nonce_cache_initialized,
+    start_nonce_cleanup_task,
+    NetworkEpoch,
+    NonceCache,
+    SeenResult,
 };
 pub use observability::{
-    HandshakeObserver, HandshakeEvent, HandshakeMetrics, FailureReason,
-    NoOpObserver, LoggingObserver, Timer,
+    FailureReason, HandshakeEvent, HandshakeMetrics, HandshakeObserver, LoggingObserver,
+    NoOpObserver, Timer,
 };
-pub use rate_limiter::{RateLimiter, RateLimitConfig};
+pub use rate_limiter::{RateLimitConfig, RateLimiter};
+pub use security::{
+    compute_v2_mac,
+    ct_eq_bytes,
+    ct_verify_eq,
+    current_timestamp,
+    derive_session_key_hkdf,
+    derive_v2_key,
+    derive_v2_session_keys,
+    // UHP v2 key schedule and MAC
+    v2_labels,
+    validate_timestamp,
+    verify_v2_mac,
+    CanonicalRequest,
+    SessionContext,
+    TimestampConfig,
+    V2SessionKeys,
+};
 
 // Re-export blockchain handshake types
 pub use blockchain::{
-    BlockchainHandshakeContext, BlockchainHandshakeVerifier,
-    BlockchainVerificationResult, PeerTier,
+    BlockchainHandshakeContext, BlockchainHandshakeVerifier, BlockchainVerificationResult, PeerTier,
 };
 
 // Re-export PQC types and functions
 pub use pqc::{
-    PqcCapability, PqcHandshakeOffer, PqcHandshakeState,
-    create_pqc_offer, verify_pqc_offer, encapsulate_pqc,
-    decapsulate_pqc, derive_hybrid_session_key,
+    create_pqc_offer, decapsulate_pqc, derive_hybrid_session_key, encapsulate_pqc,
+    verify_pqc_offer, PqcCapability, PqcHandshakeOffer, PqcHandshakeState,
 };
 
 // Re-export core handshake functions
-pub use core::{
-    handshake_as_initiator, handshake_as_responder,
-    NonceTracker, HandshakeIoError,
-};
+pub use core::{handshake_as_initiator, handshake_as_responder, HandshakeIoError, NonceTracker};
 
 // Re-export message framing utilities
-pub use framing::{
-    send_framed, recv_framed, MAX_HANDSHAKE_MESSAGE_SIZE,
-};
+pub use framing::{recv_framed, send_framed, MAX_HANDSHAKE_MESSAGE_SIZE};
 
 /// Default network identifier for handshake domain separation.
 pub const DEFAULT_HANDSHAKE_NETWORK_ID: &str = "zhtp-mainnet";
@@ -168,7 +175,10 @@ pub enum BackwardCompatibilityPolicy {
 ///
 /// This MUST be called before accepting any block, vote, or validator
 /// registration from a peer.
-pub fn check_backward_compatibility(peer_version: u8, local_version: u8) -> BackwardCompatibilityPolicy {
+pub fn check_backward_compatibility(
+    peer_version: u8,
+    local_version: u8,
+) -> BackwardCompatibilityPolicy {
     if peer_version >= MIN_SUPPORTED_VERSION && peer_version <= local_version {
         BackwardCompatibilityPolicy::Accept
     } else {
@@ -271,7 +281,10 @@ fn append_len_prefixed(buf: &mut Vec<u8>, bytes: &[u8]) {
     buf.extend_from_slice(bytes);
 }
 
-pub fn derive_channel_binding_from_addrs(local: std::net::SocketAddr, peer: std::net::SocketAddr) -> Vec<u8> {
+pub fn derive_channel_binding_from_addrs(
+    local: std::net::SocketAddr,
+    peer: std::net::SocketAddr,
+) -> Vec<u8> {
     use lib_crypto::hash_blake3;
 
     let mut addrs = [local.to_string(), peer.to_string()];
@@ -370,7 +383,10 @@ impl HandshakeContext {
     }
 
     /// Create with custom timestamp configuration
-    pub fn with_timestamp_config(nonce_cache: NonceCache, timestamp_config: TimestampConfig) -> Self {
+    pub fn with_timestamp_config(
+        nonce_cache: NonceCache,
+        timestamp_config: TimestampConfig,
+    ) -> Self {
         Self {
             nonce_cache,
             timestamp_config,
@@ -386,7 +402,10 @@ impl HandshakeContext {
     }
 
     /// Create with custom observer
-    pub fn with_observer(nonce_cache: NonceCache, observer: std::sync::Arc<dyn HandshakeObserver>) -> Self {
+    pub fn with_observer(
+        nonce_cache: NonceCache,
+        observer: std::sync::Arc<dyn HandshakeObserver>,
+    ) -> Self {
         Self {
             nonce_cache,
             timestamp_config: TimestampConfig::default(),
@@ -546,19 +565,19 @@ impl HandshakeContext {
 pub struct NodeIdentity {
     /// Decentralized Identifier (DID) - Sovereign Identity
     pub did: String,
-    
+
     /// Cryptographic public key for signature verification
     pub public_key: PublicKey,
-    
+
     /// Derived node identifier from lib-identity (Blake3(DID || device_name))
     pub node_id: NodeId,
-    
+
     /// Device identifier (e.g., "laptop", "phone", "server-01")
     pub device_id: String,
-    
+
     /// Optional display name for this node
     pub display_name: Option<String>,
-    
+
     /// Timestamp of identity creation (Unix timestamp)
     pub created_at: u64,
 }
@@ -579,7 +598,7 @@ impl NodeIdentity {
             created_at: identity.created_at,
         }
     }
-    
+
     /// Verify that node_id matches Blake3(DID || device_id) per lib-identity rules
     ///
     /// SECURITY: Uses constant-time comparison to prevent timing side-channels.
@@ -590,7 +609,7 @@ impl NodeIdentity {
         let res = ct_verify_eq(
             self.node_id.as_bytes(),
             expected.as_bytes(),
-            "Invalid NodeId"
+            "Invalid NodeId",
         );
 
         #[cfg(feature = "identity-debug")]
@@ -625,10 +644,14 @@ impl NodeIdentity {
         );
         Ok(())
     }
-    
+
     /// Get a compact string representation for logging
     pub fn to_compact_string(&self) -> String {
-        format!("{}@{}", self.device_id, &self.did[..std::cmp::min(20, self.did.len())])
+        format!(
+            "{}@{}",
+            self.device_id,
+            &self.did[..std::cmp::min(20, self.did.len())]
+        )
     }
 }
 
@@ -644,31 +667,31 @@ impl NodeIdentity {
 pub struct HandshakeCapabilities {
     /// Supported network protocols (BLE, WiFi, LoRa, QUIC, etc.)
     pub protocols: Vec<String>,
-    
+
     /// Maximum throughput in bytes/second
     pub max_throughput: u64,
-    
+
     /// Maximum message size in bytes
     pub max_message_size: usize,
-    
+
     /// Supported encryption methods (ChaCha20-Poly1305, AES-GCM, etc.)
     pub encryption_methods: Vec<String>,
-    
+
     /// Post-quantum cryptography capability level (None, Kyber1024+Dilithium5, Hybrid)
     pub pqc_capability: PqcCapability,
-    
+
     /// DHT participation capability
     pub dht_capable: bool,
-    
+
     /// Relay capability (can forward messages for others)
     pub relay_capable: bool,
-    
+
     /// Storage capacity offered (in bytes, 0 = none)
     pub storage_capacity: u64,
-    
+
     /// Supports Web4 content serving
     pub web4_capable: bool,
-    
+
     /// Custom features (protocol-specific extensions)
     pub custom_features: Vec<String>,
 }
@@ -695,8 +718,8 @@ impl HandshakeCapabilities {
     pub fn minimal() -> Self {
         Self {
             protocols: vec!["ble".to_string()],
-            max_throughput: 10_000,    // 10 KB/s
-            max_message_size: 512,     // 512 bytes
+            max_throughput: 10_000, // 10 KB/s
+            max_message_size: 512,  // 512 bytes
             encryption_methods: vec!["chacha20-poly1305".to_string()],
             pqc_capability: PqcCapability::Kyber1024Dilithium5,
             dht_capable: false,
@@ -706,7 +729,7 @@ impl HandshakeCapabilities {
             custom_features: vec![],
         }
     }
-    
+
     /// Create full-featured capabilities for desktop/server nodes
     pub fn full_featured() -> Self {
         Self {
@@ -717,12 +740,9 @@ impl HandshakeCapabilities {
                 "ble".to_string(),
                 "wifi-direct".to_string(),
             ],
-            max_throughput: 100_000_000, // 100 MB/s
+            max_throughput: 100_000_000,  // 100 MB/s
             max_message_size: 10_485_760, // 10 MB
-            encryption_methods: vec![
-                "chacha20-poly1305".to_string(),
-                "aes-256-gcm".to_string(),
-            ],
+            encryption_methods: vec!["chacha20-poly1305".to_string(), "aes-256-gcm".to_string()],
             pqc_capability: PqcCapability::Kyber1024Dilithium5,
             dht_capable: true,
             relay_capable: true,
@@ -731,25 +751,27 @@ impl HandshakeCapabilities {
             custom_features: vec![],
         }
     }
-    
+
     /// Find compatible features between two capability sets
     pub fn negotiate(&self, other: &HandshakeCapabilities) -> NegotiatedCapabilities {
-        let protocols: Vec<String> = self.protocols.iter()
+        let protocols: Vec<String> = self
+            .protocols
+            .iter()
             .filter(|p| other.protocols.contains(p))
             .cloned()
             .collect();
-        
-        let encryption_methods: Vec<String> = self.encryption_methods.iter()
+
+        let encryption_methods: Vec<String> = self
+            .encryption_methods
+            .iter()
             .filter(|e| other.encryption_methods.contains(e))
             .cloned()
             .collect();
-        
+
         // Negotiate PQC capability using the enum's negotiation logic
-        let negotiated_pqc = PqcCapability::negotiate(
-            self.pqc_capability.clone(),
-            other.pqc_capability.clone(),
-        );
-        
+        let negotiated_pqc =
+            PqcCapability::negotiate(self.pqc_capability.clone(), other.pqc_capability.clone());
+
         NegotiatedCapabilities {
             protocol: protocols.first().cloned().unwrap_or_default(),
             max_throughput: self.max_throughput.min(other.max_throughput),
@@ -767,22 +789,22 @@ impl HandshakeCapabilities {
 pub struct NegotiatedCapabilities {
     /// Selected protocol for this session
     pub protocol: String,
-    
+
     /// Negotiated maximum throughput
     pub max_throughput: u64,
-    
+
     /// Negotiated maximum message size
     pub max_message_size: usize,
-    
+
     /// Selected encryption method
     pub encryption_method: String,
-    
+
     /// Negotiated PQC capability for this session
     pub pqc_capability: PqcCapability,
-    
+
     /// Whether DHT participation is enabled
     pub dht_enabled: bool,
-    
+
     /// Whether relay forwarding is enabled
     pub relay_enabled: bool,
 }
@@ -799,10 +821,10 @@ pub struct NegotiatedCapabilities {
 pub struct HandshakeMessage {
     /// Protocol version
     pub version: u8,
-    
+
     /// Message type and payload
     pub payload: HandshakePayload,
-    
+
     /// Timestamp (Unix timestamp in seconds)
     pub timestamp: u64,
 }
@@ -819,12 +841,12 @@ impl HandshakeMessage {
                 .as_secs(),
         }
     }
-    
+
     /// Serialize to bytes
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         bincode::serialize(self).map_err(|e| anyhow!("Serialization failed: {}", e))
     }
-    
+
     /// Deserialize from bytes
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         bincode::deserialize(data).map_err(|e| anyhow!("Deserialization failed: {}", e))
@@ -836,22 +858,22 @@ impl HandshakeMessage {
 pub enum HandshakePayload {
     /// Client initiates handshake
     ClientHello(ClientHello),
-    
+
     /// Server responds with identity and challenge response
     ServerHello(ServerHello),
-    
+
     /// Client confirms and completes handshake
     ClientFinish(ClientFinish),
-    
+
     /// Provisional handshake for nodes without SID
     ProvisionalHello(ProvisionalHello),
-    
+
     /// Server challenge for provisional handshake
     ChallengeResponse(ChallengeResponse),
-    
+
     /// Client proves challenge completion
     ChallengeProof(ChallengeProof),
-    
+
     /// Handshake error
     Error(HandshakeErrorMessage),
 }
@@ -935,7 +957,10 @@ impl ClientHello {
 
         let keypair = KeyPair {
             public_key: zhtp_identity.public_key.clone(),
-            private_key: zhtp_identity.private_key.clone().ok_or_else(|| anyhow!("Identity missing private key"))?,
+            private_key: zhtp_identity
+                .private_key
+                .clone()
+                .ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
 
         let data = Self::data_to_sign(
@@ -958,20 +983,23 @@ impl ClientHello {
             (None, None)
         };
 
-        Ok((Self {
-            identity,
-            capabilities,
-            network_id: ctx.domain.network_id.clone(),
-            protocol_id: ctx.domain.protocol_id.clone(),
-            purpose: ctx.domain.purpose.clone(),
-            role: ctx.local_role,
-            channel_binding: ctx.channel_binding.clone(),
-            challenge_nonce,
-            signature,
-            timestamp,
-            protocol_version,
-            pqc_offer,
-        }, pqc_state))
+        Ok((
+            Self {
+                identity,
+                capabilities,
+                network_id: ctx.domain.network_id.clone(),
+                protocol_id: ctx.domain.protocol_id.clone(),
+                purpose: ctx.domain.purpose.clone(),
+                role: ctx.local_role,
+                channel_binding: ctx.channel_binding.clone(),
+                challenge_nonce,
+                signature,
+                timestamp,
+                protocol_version,
+                pqc_offer,
+            },
+            pqc_state,
+        ))
     }
 
     /// Verify the signature on this ClientHello
@@ -983,17 +1011,21 @@ impl ClientHello {
     /// **FINDING 2 FIX:** Uses HandshakeContext to eliminate parameter threading.
     /// **FINDING 4 FIX:** Emits observability events for monitoring.
     pub fn verify_signature(&self, ctx: &HandshakeContext) -> Result<()> {
-        use observability::{HandshakeEvent, FailureReason, Timer};
+        use observability::{FailureReason, HandshakeEvent, Timer};
 
         let timer = Timer::start();
-        ctx.observer.on_event(HandshakeEvent::ClientHelloVerificationStarted, None);
+        ctx.observer
+            .on_event(HandshakeEvent::ClientHelloVerificationStarted, None);
 
         ctx.require_channel_binding()?;
 
         // 0. CRITICAL: Validate protocol version (VULN-004 FIX)
         if let Err(e) = validate_protocol_version(self.protocol_version) {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
-            ctx.observer.on_event(HandshakeEvent::InvalidProtocolVersionDetected, Some(metrics.clone()));
+            ctx.observer.on_event(
+                HandshakeEvent::InvalidProtocolVersionDetected,
+                Some(metrics.clone()),
+            );
             ctx.observer.on_failure(
                 HandshakeEvent::ClientHelloVerificationFailed,
                 FailureReason::InvalidProtocolVersion,
@@ -1008,7 +1040,10 @@ impl ClientHello {
             || self.purpose != ctx.domain.purpose
         {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
-            ctx.observer.on_event(HandshakeEvent::InvalidProtocolVersionDetected, Some(metrics.clone()));
+            ctx.observer.on_event(
+                HandshakeEvent::InvalidProtocolVersionDetected,
+                Some(metrics.clone()),
+            );
             ctx.observer.on_failure(
                 HandshakeEvent::ClientHelloVerificationFailed,
                 FailureReason::InvalidProtocolVersion,
@@ -1049,7 +1084,10 @@ impl ClientHello {
         // 4. CRITICAL: Verify NodeId derivation (prevent collision attacks)
         if let Err(e) = self.identity.verify_node_id() {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
-            ctx.observer.on_event(HandshakeEvent::NodeIdVerificationFailed, Some(metrics.clone()));
+            ctx.observer.on_event(
+                HandshakeEvent::NodeIdVerificationFailed,
+                Some(metrics.clone()),
+            );
             ctx.observer.on_failure(
                 HandshakeEvent::ClientHelloVerificationFailed,
                 FailureReason::NodeIdVerificationFailed,
@@ -1061,7 +1099,10 @@ impl ClientHello {
         // 5. CRITICAL: Validate timestamp (prevent replay attacks)
         if let Err(e) = validate_timestamp(self.timestamp, &ctx.timestamp_config) {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
-            ctx.observer.on_event(HandshakeEvent::InvalidTimestampDetected, Some(metrics.clone()));
+            ctx.observer.on_event(
+                HandshakeEvent::InvalidTimestampDetected,
+                Some(metrics.clone()),
+            );
             ctx.observer.on_failure(
                 HandshakeEvent::ClientHelloVerificationFailed,
                 FailureReason::InvalidTimestamp,
@@ -1072,9 +1113,13 @@ impl ClientHello {
 
         // 6. CRITICAL: Check nonce cache - prevent replay attacks (VULN-001 FIX)
         #[allow(deprecated)]
-        if let Err(e) = ctx.nonce_cache.check_and_store(&self.challenge_nonce, self.timestamp) {
+        if let Err(e) = ctx
+            .nonce_cache
+            .check_and_store(&self.challenge_nonce, self.timestamp)
+        {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
-            ctx.observer.on_event(HandshakeEvent::ReplayAttackDetected, Some(metrics.clone()));
+            ctx.observer
+                .on_event(HandshakeEvent::ReplayAttackDetected, Some(metrics.clone()));
             ctx.observer.on_failure(
                 HandshakeEvent::ClientHelloVerificationFailed,
                 FailureReason::ReplayAttack,
@@ -1136,7 +1181,10 @@ impl ClientHello {
 
         if self.identity.public_key.verify(&data, &self.signature)? {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
-            ctx.observer.on_event(HandshakeEvent::ClientHelloVerificationSuccess, Some(metrics));
+            ctx.observer.on_event(
+                HandshakeEvent::ClientHelloVerificationSuccess,
+                Some(metrics),
+            );
             Ok(())
         } else {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
@@ -1288,7 +1336,10 @@ impl ServerHello {
 
         let keypair = KeyPair {
             public_key: zhtp_identity.public_key.clone(),
-            private_key: zhtp_identity.private_key.clone().ok_or_else(|| anyhow!("Identity missing private key"))?,
+            private_key: zhtp_identity
+                .private_key
+                .clone()
+                .ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
 
         let data = Self::data_to_sign(
@@ -1312,21 +1363,24 @@ impl ServerHello {
             (None, None)
         };
 
-        Ok((Self {
-            identity,
-            capabilities,
-            network_id: ctx.domain.network_id.clone(),
-            protocol_id: ctx.domain.protocol_id.clone(),
-            purpose: ctx.domain.purpose.clone(),
-            role: ctx.local_role,
-            channel_binding: ctx.channel_binding.clone(),
-            response_nonce,
-            signature,
-            negotiated,
-            timestamp,
-            protocol_version,
-            pqc_offer,
-        }, pqc_state))
+        Ok((
+            Self {
+                identity,
+                capabilities,
+                network_id: ctx.domain.network_id.clone(),
+                protocol_id: ctx.domain.protocol_id.clone(),
+                purpose: ctx.domain.purpose.clone(),
+                role: ctx.local_role,
+                channel_binding: ctx.channel_binding.clone(),
+                response_nonce,
+                signature,
+                negotiated,
+                timestamp,
+                protocol_version,
+                pqc_offer,
+            },
+            pqc_state,
+        ))
     }
 
     /// Verify the server's signature
@@ -1373,7 +1427,8 @@ impl ServerHello {
 
         // 6. CRITICAL: Check nonce cache - prevent replay attacks (VULN-001 FIX)
         #[allow(deprecated)]
-        ctx.nonce_cache.check_and_store(&self.response_nonce, self.timestamp)?;
+        ctx.nonce_cache
+            .check_and_store(&self.response_nonce, self.timestamp)?;
 
         // 7. CRITICAL: Enforce required capabilities
         if !ctx.required_capabilities.is_empty() {
@@ -1554,13 +1609,16 @@ impl ClientFinish {
         }
 
         // === MUTUAL AUTHENTICATION: Verify server before completing handshake ===
-        server_hello.identity.verify_node_id()
+        server_hello
+            .identity
+            .verify_node_id()
             .map_err(|e| anyhow!("Server NodeId verification failed: {}", e))?;
 
         validate_timestamp(server_hello.timestamp, &ctx.timestamp_config)
             .map_err(|e| anyhow!("Server timestamp validation failed: {}", e))?;
 
-        server_hello.verify_signature(&client_hello.challenge_nonce, client_hello_hash, ctx)
+        server_hello
+            .verify_signature(&client_hello.challenge_nonce, client_hello_hash, ctx)
             .map_err(|e| anyhow!("Server signature verification failed: {}", e))?;
 
         // === Server verified! Now complete handshake ===
@@ -1579,26 +1637,30 @@ impl ClientFinish {
         let signature = keypair.sign(&data)?;
 
         // Encapsulate to server's PQC offer and preserve shared secret
-        let (pqc_ciphertext, pqc_shared_secret) = if let Some(ref pqc_offer) = server_hello.pqc_offer {
-            verify_pqc_offer(pqc_offer)?;
-            let (ciphertext, shared_secret) = encapsulate_pqc(pqc_offer)?;
-            (Some(ciphertext), Some(shared_secret))
-        } else {
-            (None, None)
-        };
+        let (pqc_ciphertext, pqc_shared_secret) =
+            if let Some(ref pqc_offer) = server_hello.pqc_offer {
+                verify_pqc_offer(pqc_offer)?;
+                let (ciphertext, shared_secret) = encapsulate_pqc(pqc_offer)?;
+                (Some(ciphertext), Some(shared_secret))
+            } else {
+                (None, None)
+            };
 
-        Ok((Self {
-            signature,
-            network_id: ctx.domain.network_id.clone(),
-            protocol_id: ctx.domain.protocol_id.clone(),
-            purpose: ctx.domain.purpose.clone(),
-            role: ctx.local_role,
-            channel_binding: ctx.channel_binding.clone(),
-            timestamp,
-            protocol_version,
-            session_params: None,
-            pqc_ciphertext,
-        }, pqc_shared_secret))
+        Ok((
+            Self {
+                signature,
+                network_id: ctx.domain.network_id.clone(),
+                protocol_id: ctx.domain.protocol_id.clone(),
+                purpose: ctx.domain.purpose.clone(),
+                role: ctx.local_role,
+                channel_binding: ctx.channel_binding.clone(),
+                timestamp,
+                protocol_version,
+                session_params: None,
+                pqc_ciphertext,
+            },
+            pqc_shared_secret,
+        ))
     }
 
     /// Verify client's signature on server nonce
@@ -1722,13 +1784,13 @@ impl ClientFinish {
 pub struct ProvisionalHello {
     /// Ephemeral public key (temporary, not tied to SID)
     pub ephemeral_pubkey: PublicKey,
-    
+
     /// Random nonce for this provisional session
     pub nonce: [u8; 32],
-    
+
     /// Signature over nonce with ephemeral key
     pub signature: Signature,
-    
+
     /// Optional metadata (e.g., device type, reason for request)
     pub metadata: Option<Vec<u8>>,
 }
@@ -1738,9 +1800,9 @@ impl ProvisionalHello {
     pub fn new(ephemeral_keypair: &KeyPair, metadata: Option<Vec<u8>>) -> Result<Self> {
         let mut nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut nonce);
-        
+
         let signature = ephemeral_keypair.sign(&nonce)?;
-        
+
         Ok(Self {
             ephemeral_pubkey: ephemeral_keypair.public_key.clone(),
             nonce,
@@ -1748,7 +1810,7 @@ impl ProvisionalHello {
             metadata,
         })
     }
-    
+
     /// Verify signature
     pub fn verify_signature(&self) -> Result<()> {
         if self.ephemeral_pubkey.verify(&self.nonce, &self.signature)? {
@@ -1767,13 +1829,13 @@ impl ProvisionalHello {
 pub struct ChallengeResponse {
     /// Challenge data (depends on challenge type)
     pub challenge: Vec<u8>,
-    
+
     /// Challenge type (e.g., "proof-of-work", "captcha", "email-verify")
     pub challenge_type: String,
-    
+
     /// Difficulty or parameters for challenge
     pub difficulty: u32,
-    
+
     /// Expiration timestamp for this challenge
     pub expires_at: u64,
 }
@@ -1786,10 +1848,10 @@ pub struct ChallengeResponse {
 pub struct ChallengeProof {
     /// Proof data (format depends on challenge type)
     pub proof: Vec<u8>,
-    
+
     /// Original challenge nonce for verification
     pub challenge_nonce: [u8; 32],
-    
+
     /// Signature over proof with ephemeral key
     pub signature: Signature,
 }
@@ -1844,7 +1906,8 @@ impl HandshakeSessionInfo {
             return Err(anyhow!("Handshake channel binding mismatch"));
         }
 
-        if client_hello.role != HandshakeRole::Client || server_hello.role != HandshakeRole::Server {
+        if client_hello.role != HandshakeRole::Client || server_hello.role != HandshakeRole::Server
+        {
             return Err(anyhow!("Handshake role mismatch"));
         }
 
@@ -1935,8 +1998,8 @@ impl HandshakeResult {
         let classical_key = derive_session_key_hkdf(client_nonce, server_nonce, &context)?;
 
         // If PQC shared secret is provided, derive hybrid key
-        let pqc_secret = pqc_shared_secret
-            .ok_or_else(|| anyhow!("Missing PQC shared secret for UHP v2"))?;
+        let pqc_secret =
+            pqc_shared_secret.ok_or_else(|| anyhow!("Missing PQC shared secret for UHP v2"))?;
         let hybrid_key = derive_hybrid_session_key(pqc_secret, &classical_key)?;
         let (session_key, pqc_hybrid_enabled) = (hybrid_key, true);
 
@@ -1990,8 +2053,12 @@ impl HandshakeResult {
     }
 
     /// Derive 32-byte session ID from session key and nonces
-    fn derive_session_id(session_key: &[u8; 32], client_nonce: &[u8; 32], server_nonce: &[u8; 32]) -> [u8; 32] {
-        use sha3::{Sha3_256, Digest};
+    fn derive_session_id(
+        session_key: &[u8; 32],
+        client_nonce: &[u8; 32],
+        server_nonce: &[u8; 32],
+    ) -> [u8; 32] {
+        use sha3::{Digest, Sha3_256};
         let mut hasher = Sha3_256::new();
         hasher.update(b"zhtp/v2/session_id");
         hasher.update(session_key);
@@ -2026,38 +2093,34 @@ pub enum HandshakeError {
         did: String,
         device: String,
     },
-    
+
     /// Signature verification failed
     InvalidSignature { peer: String },
-    
+
     /// Protocol version not supported
-    UnsupportedVersion {
-        version: u8,
-        min: u8,
-        max: u8,
-    },
-    
+    UnsupportedVersion { version: u8, min: u8, max: u8 },
+
     /// No compatible capabilities found
     IncompatibleCapabilities {
         client_caps: String,
         server_caps: String,
     },
-    
+
     /// Handshake timeout
     Timeout { seconds: u64 },
-    
+
     /// Challenge failed (provisional handshake)
     ChallengeFailed { reason: String },
-    
+
     /// Connection closed during handshake
     ConnectionClosed { stage: String },
-    
+
     /// Invalid message format
     InvalidMessage { reason: String },
-    
+
     /// Replay attack detected
     ReplayDetected { timestamp: u64 },
-    
+
     /// Internal error
     Internal { message: String },
 }
@@ -2067,10 +2130,10 @@ pub enum HandshakeError {
 pub struct HandshakeErrorMessage {
     /// Error code
     pub code: String,
-    
+
     /// Human-readable error message
     pub message: String,
-    
+
     /// Whether the connection should be closed
     pub fatal: bool,
 }
@@ -2078,22 +2141,58 @@ pub struct HandshakeErrorMessage {
 impl std::fmt::Display for HandshakeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HandshakeError::NodeIdMismatch { claimed, expected, did, device } => {
-                write!(f, "NodeId mismatch: claimed {} but expected {} from DID '{}' + device '{}'", claimed, expected, did, device)
+            HandshakeError::NodeIdMismatch {
+                claimed,
+                expected,
+                did,
+                device,
+            } => {
+                write!(
+                    f,
+                    "NodeId mismatch: claimed {} but expected {} from DID '{}' + device '{}'",
+                    claimed, expected, did, device
+                )
             }
-            HandshakeError::InvalidSignature { peer } => write!(f, "Invalid signature from peer {}", peer),
+            HandshakeError::InvalidSignature { peer } => {
+                write!(f, "Invalid signature from peer {}", peer)
+            }
             HandshakeError::UnsupportedVersion { version, min, max } => {
-                write!(f, "Unsupported protocol version {} (supported: {}-{})", version, min, max)
+                write!(
+                    f,
+                    "Unsupported protocol version {} (supported: {}-{})",
+                    version, min, max
+                )
             }
-            HandshakeError::IncompatibleCapabilities { client_caps, server_caps } => {
-                write!(f, "No compatible capabilities: client supports {}, server supports {}", client_caps, server_caps)
+            HandshakeError::IncompatibleCapabilities {
+                client_caps,
+                server_caps,
+            } => {
+                write!(
+                    f,
+                    "No compatible capabilities: client supports {}, server supports {}",
+                    client_caps, server_caps
+                )
             }
-            HandshakeError::Timeout { seconds } => write!(f, "Handshake timeout after {} seconds", seconds),
-            HandshakeError::ChallengeFailed { reason } => write!(f, "Challenge verification failed: {}", reason),
-            HandshakeError::ConnectionClosed { stage } => write!(f, "Connection closed during handshake at stage {}", stage),
-            HandshakeError::InvalidMessage { reason } => write!(f, "Invalid handshake message: {}", reason),
-            HandshakeError::ReplayDetected { timestamp } => write!(f, "Replay attack detected: timestamp {} is too old", timestamp),
-            HandshakeError::Internal { message } => write!(f, "Internal handshake error: {}", message),
+            HandshakeError::Timeout { seconds } => {
+                write!(f, "Handshake timeout after {} seconds", seconds)
+            }
+            HandshakeError::ChallengeFailed { reason } => {
+                write!(f, "Challenge verification failed: {}", reason)
+            }
+            HandshakeError::ConnectionClosed { stage } => {
+                write!(f, "Connection closed during handshake at stage {}", stage)
+            }
+            HandshakeError::InvalidMessage { reason } => {
+                write!(f, "Invalid handshake message: {}", reason)
+            }
+            HandshakeError::ReplayDetected { timestamp } => write!(
+                f,
+                "Replay attack detected: timestamp {} is too old",
+                timestamp
+            ),
+            HandshakeError::Internal { message } => {
+                write!(f, "Internal handshake error: {}", message)
+            }
         }
     }
 }
@@ -2114,7 +2213,7 @@ impl From<HandshakeError> for HandshakeErrorMessage {
             HandshakeError::ReplayDetected { .. } => "REPLAY_DETECTED",
             HandshakeError::Internal { .. } => "INTERNAL_ERROR",
         };
-        
+
         Self {
             code: code.to_string(),
             message: err.to_string(),
@@ -2130,7 +2229,7 @@ impl From<HandshakeError> for HandshakeErrorMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_uhp_version_constants() {
         assert_eq!(UHP_VERSION, 2);
@@ -2138,7 +2237,7 @@ mod tests {
         assert!(MIN_SUPPORTED_VERSION <= UHP_VERSION);
         assert!(UHP_VERSION <= MAX_SUPPORTED_VERSION);
     }
-    
+
     #[test]
     fn test_zhtp_identity_in_handshake() -> Result<()> {
         let identity = lib_identity::ZhtpIdentity::new_unified(
@@ -2148,15 +2247,15 @@ mod tests {
             "test-device",
             None,
         )?;
-        
+
         // Verify ZhtpIdentity has all necessary fields for handshake
         assert!(!identity.did.is_empty());
         assert!(!identity.node_id.as_bytes().is_empty());
         assert!(!identity.public_key.dilithium_pk.is_empty());
-        
+
         Ok(())
     }
-    
+
     #[test]
     fn test_zhtp_identity_node_id_derivation() -> Result<()> {
         let identity = lib_identity::ZhtpIdentity::new_unified(
@@ -2166,14 +2265,14 @@ mod tests {
             "test-device",
             None,
         )?;
-        
+
         // Verify node_id is properly derived from DID and device
         let expected = NodeId::from_did_device(&identity.did, &identity.primary_device)?;
         assert_eq!(identity.node_id.as_bytes(), expected.as_bytes());
-        
+
         Ok(())
     }
-    
+
     #[test]
     fn test_capability_negotiation() {
         let client_caps = HandshakeCapabilities {
@@ -2188,7 +2287,7 @@ mod tests {
             web4_capable: false,
             custom_features: vec![],
         };
-        
+
         let server_caps = HandshakeCapabilities {
             protocols: vec!["tcp".to_string(), "quic".to_string()],
             max_throughput: 50_000_000,
@@ -2201,31 +2300,34 @@ mod tests {
             web4_capable: true,
             custom_features: vec![],
         };
-        
+
         let negotiated = client_caps.negotiate(&server_caps);
-        
+
         // Should pick first common protocol
         assert_eq!(negotiated.protocol, "tcp");
-        
+
         // Should pick minimum throughput
         assert_eq!(negotiated.max_throughput, 10_000_000);
-        
+
         // Should pick minimum message size
         assert_eq!(negotiated.max_message_size, 1_000_000);
-        
+
         // Should pick first common encryption
         assert_eq!(negotiated.encryption_method, "chacha20-poly1305");
-        
+
         // Should negotiate PQC to Kyber1024+Dilithium5 (both support it)
-        assert_eq!(negotiated.pqc_capability, PqcCapability::Kyber1024Dilithium5);
-        
+        assert_eq!(
+            negotiated.pqc_capability,
+            PqcCapability::Kyber1024Dilithium5
+        );
+
         // Should disable DHT (server doesn't support)
         assert!(!negotiated.dht_enabled);
-        
+
         // Should disable relay (client doesn't support)
         assert!(!negotiated.relay_enabled);
     }
-    
+
     #[test]
     fn test_handshake_message_serialization() -> Result<()> {
         let identity = lib_identity::ZhtpIdentity::new_unified(
@@ -2235,26 +2337,26 @@ mod tests {
             "test-device",
             None,
         )?;
-        
+
         let capabilities = HandshakeCapabilities::default();
-        
-        let ctx = HandshakeContext::new_test()
-            .with_roles(HandshakeRole::Client, HandshakeRole::Server);
+
+        let ctx =
+            HandshakeContext::new_test().with_roles(HandshakeRole::Client, HandshakeRole::Server);
         let client_hello = ClientHello::new(&identity, capabilities, &ctx)?;
         let message = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello));
-        
+
         // Serialize
         let bytes = message.to_bytes()?;
-        
+
         // Deserialize
         let deserialized = HandshakeMessage::from_bytes(&bytes)?;
-        
+
         // Verify version matches
         assert_eq!(deserialized.version, UHP_VERSION);
-        
+
         Ok(())
     }
-    
+
     #[test]
     fn test_client_hello_signature_verification() -> Result<()> {
         let identity = lib_identity::ZhtpIdentity::new_unified(
@@ -2288,11 +2390,11 @@ mod tests {
             None,
         )?;
 
-        let base_ctx = HandshakeContext::new_test()
-            .with_channel_binding(vec![9u8; 32]);
+        let base_ctx = HandshakeContext::new_test().with_channel_binding(vec![9u8; 32]);
         let client_ctx = base_ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
         let server_ctx = base_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
-        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
+        let client_hello =
+            ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
 
         let mismatched_ctx = server_ctx.with_domain(HandshakeDomain {
             network_id: "zhtp-testnet".to_string(),
@@ -2314,11 +2416,11 @@ mod tests {
             None,
         )?;
 
-        let base_ctx = HandshakeContext::new_test()
-            .with_channel_binding(vec![7u8; 32]);
+        let base_ctx = HandshakeContext::new_test().with_channel_binding(vec![7u8; 32]);
         let client_ctx = base_ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
         let server_ctx = base_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
-        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
+        let client_hello =
+            ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
 
         let wrong_role_ctx = server_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Server);
         assert!(client_hello.verify_signature(&wrong_role_ctx).is_err());
@@ -2335,11 +2437,11 @@ mod tests {
             None,
         )?;
 
-        let base_ctx = HandshakeContext::new_test()
-            .with_channel_binding(vec![1u8; 32]);
+        let base_ctx = HandshakeContext::new_test().with_channel_binding(vec![1u8; 32]);
         let client_ctx = base_ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
         let server_ctx = base_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
-        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
+        let client_hello =
+            ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
 
         let mismatched_binding = server_ctx.with_channel_binding(vec![2u8; 32]);
         assert!(client_hello.verify_signature(&mismatched_binding).is_err());
@@ -2371,7 +2473,7 @@ mod tests {
         assert!(client_hello.verify_signature(&server_ctx).is_err());
         Ok(())
     }
-    
+
     #[test]
     fn test_session_key_derivation() {
         let client_nonce = [0x42u8; 32];
@@ -2401,18 +2503,18 @@ mod tests {
         let key3 = derive_session_key_hkdf(&different_client, &server_nonce, &context).unwrap();
         assert_ne!(key1, key3);
     }
-    
+
     #[test]
     fn test_minimal_capabilities() {
         let minimal = HandshakeCapabilities::minimal();
-        
+
         assert_eq!(minimal.protocols, vec!["ble".to_string()]);
         assert_eq!(minimal.max_throughput, 10_000);
         assert_eq!(minimal.max_message_size, 512);
         assert_eq!(minimal.pqc_capability, PqcCapability::Kyber1024Dilithium5);
         assert!(!minimal.dht_capable);
     }
-    
+
     #[test]
     fn test_full_featured_capabilities() {
         let full = HandshakeCapabilities::full_featured();
@@ -2428,7 +2530,7 @@ mod tests {
     #[test]
     fn test_pqc_capability_negotiation() {
         use PqcCapability::*;
-        
+
         // Both have full PQC -> full PQC
         let full1 = HandshakeCapabilities {
             pqc_capability: Kyber1024Dilithium5,
@@ -2440,7 +2542,7 @@ mod tests {
         };
         let neg = full1.negotiate(&full2);
         assert_eq!(neg.pqc_capability, Kyber1024Dilithium5);
-        
+
         // Full + Hybrid -> Hybrid (fallback)
         let hybrid = HandshakeCapabilities {
             pqc_capability: HybridEd25519Dilithium5,
@@ -2448,7 +2550,7 @@ mod tests {
         };
         let neg = full1.negotiate(&hybrid);
         assert_eq!(neg.pqc_capability, HybridEd25519Dilithium5);
-        
+
         // Hybrid + None -> None (no common support)
         let none = HandshakeCapabilities {
             pqc_capability: None,
@@ -2492,7 +2594,8 @@ mod tests {
         // Step 1: Client sends ClientHello
         let client_capabilities = HandshakeCapabilities::default();
         let client_hello = ClientHello::new(&client_identity, client_capabilities, &client_ctx)?;
-        let client_hello_msg = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
+        let client_hello_msg =
+            HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
         let client_hello_bytes = client_hello_msg.to_bytes()?;
         let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
 
@@ -2508,7 +2611,8 @@ mod tests {
             &client_hello_hash,
             &server_ctx,
         )?;
-        let server_hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
+        let server_hello_msg =
+            HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
         let server_hello_bytes = server_hello_msg.to_bytes()?;
         let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
 
@@ -2526,7 +2630,8 @@ mod tests {
             &client_keypair,
             &client_ctx,
         )?;
-        let client_finish_msg = HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish.clone()));
+        let client_finish_msg =
+            HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish.clone()));
         let client_finish_bytes = client_finish_msg.to_bytes()?;
 
         // Server verifies ClientFinish
@@ -2620,8 +2725,13 @@ mod tests {
                     let client_ctx = ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
                     let server_ctx = ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
 
-                    let client_hello = ClientHello::new(&client_identity, HandshakeCapabilities::default(), &client_ctx)?;
-                    let client_hello_msg = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
+                    let client_hello = ClientHello::new(
+                        &client_identity,
+                        HandshakeCapabilities::default(),
+                        &client_ctx,
+                    )?;
+                    let client_hello_msg =
+                        HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
                     let client_hello_bytes = client_hello_msg.to_bytes()?;
                     let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
 
@@ -2634,9 +2744,11 @@ mod tests {
                         &client_hello_hash,
                         &server_ctx,
                     )?;
-                    let server_hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
+                    let server_hello_msg =
+                        HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
                     let server_hello_bytes = server_hello_msg.to_bytes()?;
-                    let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
+                    let pre_finish_hash =
+                        compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
 
                     let client_keypair = KeyPair {
                         public_key: client_identity.public_key.clone(),
@@ -2658,10 +2770,7 @@ mod tests {
             .collect();
 
         // Wait for all handshakes to complete
-        let results: Vec<_> = handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
         // All should succeed
         for result in results {
@@ -2692,7 +2801,8 @@ mod tests {
         )?;
 
         // Create ClientHello
-        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
+        let client_hello =
+            ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
 
         // First verification should succeed
         assert!(client_hello.verify_signature(&server_ctx).is_ok());

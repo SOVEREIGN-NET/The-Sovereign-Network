@@ -14,16 +14,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::types::{
-    ChallengeIssue,
-    ChallengeResponse,
-    ChallengeToken,
-    Policy,
-    ProofType,
-    DEFAULT_CHALLENGE_TTL_SECS,
-    DEFAULT_MAX_BYTES_TOTAL,
-    DEFAULT_MAX_RECEIPTS,
-    DEFAULT_MIN_BYTES_PER_RECEIPT,
-    POUW_VERSION,
+    ChallengeIssue, ChallengeResponse, ChallengeToken, Policy, ProofType,
+    DEFAULT_CHALLENGE_TTL_SECS, DEFAULT_MAX_BYTES_TOTAL, DEFAULT_MAX_RECEIPTS,
+    DEFAULT_MIN_BYTES_PER_RECEIPT, POUW_VERSION,
 };
 
 /// Challenge token generator
@@ -103,7 +96,7 @@ impl ChallengeGenerator {
             expires_at: token.expires_at,
             policy: token.policy.clone(),
         };
-        
+
         // Use deterministic bincode serialization
         bincode::serialize(&signable).context("Failed to serialize token for signing")
     }
@@ -186,12 +179,9 @@ impl ChallengeGenerator {
         }
 
         // Serialize full token to JSON then base64
-        let token_json = serde_json::to_vec(&token)
-            .context("Failed to serialize token to JSON")?;
-        let token_b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &token_json,
-        );
+        let token_json = serde_json::to_vec(&token).context("Failed to serialize token to JSON")?;
+        let token_b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &token_json);
 
         info!(
             nonce = hex::encode(&challenge_nonce[..8]),
@@ -261,7 +251,7 @@ mod tests {
 
     fn test_keys() -> ([u8; 32], [u8; 32]) {
         let (public_key, private_key) = lib_crypto::classical::ed25519::ed25519_keypair();
-        
+
         let mut priv_arr = [0u8; 32];
         let mut pub_arr = [0u8; 32];
         priv_arr.copy_from_slice(&private_key[..32]);
@@ -288,8 +278,14 @@ mod tests {
         let (private_key, public_key) = test_keys();
         let generator = ChallengeGenerator::new(private_key, public_key);
 
-        let r1 = generator.generate_challenge(None, None, None, None).await.unwrap();
-        let r2 = generator.generate_challenge(None, None, None, None).await.unwrap();
+        let r1 = generator
+            .generate_challenge(None, None, None, None)
+            .await
+            .unwrap();
+        let r2 = generator
+            .generate_challenge(None, None, None, None)
+            .await
+            .unwrap();
 
         // Tokens should be different (different nonces)
         assert_ne!(r1.token, r2.token);
@@ -300,7 +296,10 @@ mod tests {
         let (private_key, public_key) = test_keys();
         let generator = ChallengeGenerator::new(private_key, public_key);
 
-        let _ = generator.generate_challenge(None, None, None, None).await.unwrap();
+        let _ = generator
+            .generate_challenge(None, None, None, None)
+            .await
+            .unwrap();
 
         // Get all challenges and verify one exists
         let challenges = generator.challenges.read().await;
@@ -322,10 +321,12 @@ mod tests {
     #[tokio::test]
     async fn test_challenge_expiry() {
         let (private_key, public_key) = test_keys();
-        let generator = ChallengeGenerator::new(private_key, public_key)
-            .with_ttl(1); // 1 second TTL
+        let generator = ChallengeGenerator::new(private_key, public_key).with_ttl(1); // 1 second TTL
 
-        let _ = generator.generate_challenge(None, None, None, None).await.unwrap();
+        let _ = generator
+            .generate_challenge(None, None, None, None)
+            .await
+            .unwrap();
 
         // Wait for expiry
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;

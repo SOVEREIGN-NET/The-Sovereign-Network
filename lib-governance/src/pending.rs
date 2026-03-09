@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 
 use lib_types::{BlockHeight, TokenId};
 
+use crate::errors::{GovernanceError, GovernanceResult};
 use crate::fields::ConfigField;
 use crate::tx::GovernanceConfigTx;
-use crate::errors::{GovernanceError, GovernanceResult};
 
 /// A pending configuration change
 ///
@@ -62,8 +62,8 @@ impl PendingChange {
         hasher.update(self.target.as_bytes());
 
         // Serialize ConfigField deterministically
-        let field_bytes = bincode::serialize(&self.field)
-            .expect("ConfigField must be serializable");
+        let field_bytes =
+            bincode::serialize(&self.field).expect("ConfigField must be serializable");
         hasher.update(&field_bytes);
 
         *hasher.finalize().as_bytes()
@@ -235,7 +235,10 @@ mod tests {
         pending.add(change1).unwrap();
         let result = pending.add(change2);
 
-        assert!(matches!(result, Err(GovernanceError::ConflictingChange { .. })));
+        assert!(matches!(
+            result,
+            Err(GovernanceError::ConflictingChange { .. })
+        ));
     }
 
     #[test]

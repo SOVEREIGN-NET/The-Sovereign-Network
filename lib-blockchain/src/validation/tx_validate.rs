@@ -25,10 +25,7 @@
 
 use std::collections::HashSet;
 
-use crate::fees::{
-    classify_transaction, compute_fee_v2, validate_block_limits,
-    FeeParamsV2,
-};
+use crate::fees::{classify_transaction, compute_fee_v2, validate_block_limits, FeeParamsV2};
 use crate::storage::{BlockchainStore, OutPoint, TxHash};
 use crate::transaction::Transaction;
 use crate::types::TransactionType;
@@ -58,9 +55,10 @@ fn is_type_allowed(tx_type: TransactionType) -> bool {
 pub fn validate_stateless(tx: &Transaction) -> TxValidateResult<()> {
     // Check transaction type is allowed in Phase 2
     if !is_type_allowed(tx.transaction_type) {
-        return Err(TxValidateError::UnsupportedType(
-            format!("{:?}", tx.transaction_type)
-        ));
+        return Err(TxValidateError::UnsupportedType(format!(
+            "{:?}",
+            tx.transaction_type
+        )));
     }
 
     // Version check
@@ -74,9 +72,12 @@ pub fn validate_stateless(tx: &Transaction) -> TxValidateResult<()> {
         TransactionType::TokenTransfer => validate_token_transfer_stateless(tx)?,
         TransactionType::TokenMint => validate_token_mint_stateless(tx)?,
         TransactionType::Coinbase => validate_coinbase_stateless(tx)?,
-        _ => return Err(TxValidateError::UnsupportedType(
-            format!("{:?}", tx.transaction_type)
-        )),
+        _ => {
+            return Err(TxValidateError::UnsupportedType(format!(
+                "{:?}",
+                tx.transaction_type
+            )))
+        }
     }
 
     Ok(())
@@ -120,15 +121,16 @@ fn validate_transfer_stateless(tx: &Transaction) -> TxValidateResult<()> {
 fn validate_token_transfer_stateless(tx: &Transaction) -> TxValidateResult<()> {
     // Token transfer MUST have token_transfer_data field
     // This matches the executor's requirement at executor.rs:489-495
-    let data = tx.token_transfer_data.as_ref()
-        .ok_or_else(|| TxValidateError::MissingField(
-            "TokenTransfer requires token_transfer_data field".to_string()
-        ))?;
+    let data = tx.token_transfer_data.as_ref().ok_or_else(|| {
+        TxValidateError::MissingField(
+            "TokenTransfer requires token_transfer_data field".to_string(),
+        )
+    })?;
 
     // Amount must be > 0
     if data.amount == 0 {
         return Err(TxValidateError::InvalidAmount(
-            "Token transfer amount must be greater than 0".to_string()
+            "Token transfer amount must be greater than 0".to_string(),
         ));
     }
 
@@ -142,24 +144,23 @@ fn validate_token_transfer_stateless(tx: &Transaction) -> TxValidateResult<()> {
 fn validate_token_mint_stateless(tx: &Transaction) -> TxValidateResult<()> {
     if tx.version < 2 {
         return Err(TxValidateError::InvalidStructure(
-            "TokenMint transactions not supported in this serialization version".to_string()
+            "TokenMint transactions not supported in this serialization version".to_string(),
         ));
     }
 
-    let data = tx.token_mint_data.as_ref()
-        .ok_or_else(|| TxValidateError::MissingField(
-            "TokenMint requires token_mint_data field".to_string()
-        ))?;
+    let data = tx.token_mint_data.as_ref().ok_or_else(|| {
+        TxValidateError::MissingField("TokenMint requires token_mint_data field".to_string())
+    })?;
 
     if data.amount == 0 {
         return Err(TxValidateError::InvalidAmount(
-            "TokenMint amount must be greater than 0".to_string()
+            "TokenMint amount must be greater than 0".to_string(),
         ));
     }
 
     if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
         return Err(TxValidateError::InvalidStructure(
-            "TokenMint must not have UTXO inputs or outputs".to_string()
+            "TokenMint must not have UTXO inputs or outputs".to_string(),
         ));
     }
 
@@ -189,10 +190,7 @@ fn validate_coinbase_stateless(tx: &Transaction) -> TxValidateResult<()> {
 ///
 /// This performs checks that require reading from the store.
 /// It does NOT modify any state.
-pub fn validate_stateful(
-    tx: &Transaction,
-    store: &dyn BlockchainStore,
-) -> TxValidateResult<()> {
+pub fn validate_stateful(tx: &Transaction, store: &dyn BlockchainStore) -> TxValidateResult<()> {
     match tx.transaction_type {
         TransactionType::Transfer => validate_transfer_stateful(tx, store)?,
         TransactionType::TokenTransfer => validate_token_transfer_stateful(tx, store)?,
@@ -202,9 +200,12 @@ pub fn validate_stateful(
         TransactionType::Coinbase => {
             // Coinbase has no stateful checks (reward validation done in executor)
         }
-        _ => return Err(TxValidateError::UnsupportedType(
-            format!("{:?}", tx.transaction_type)
-        )),
+        _ => {
+            return Err(TxValidateError::UnsupportedType(format!(
+                "{:?}",
+                tx.transaction_type
+            )))
+        }
     }
 
     Ok(())
@@ -224,7 +225,8 @@ fn validate_transfer_stateful(
             input.output_index,
         );
 
-        let utxo = store.get_utxo(&outpoint)
+        let utxo = store
+            .get_utxo(&outpoint)
             .map_err(|e| TxValidateError::StorageError(e.to_string()))?
             .ok_or_else(|| TxValidateError::UtxoNotFound(outpoint.clone()))?;
 
@@ -323,9 +325,10 @@ pub fn validate_fee(tx: &Transaction, params: &FeeParamsV2) -> TxValidateResult<
 
         _ => {
             // Unsupported types are caught earlier in validation
-            Err(TxValidateError::UnsupportedType(
-                format!("{:?}", tx.transaction_type)
-            ))
+            Err(TxValidateError::UnsupportedType(format!(
+                "{:?}",
+                tx.transaction_type
+            )))
         }
     }
 }
@@ -377,28 +380,24 @@ pub fn validate_transactions_stateful(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transaction::{Transaction, TransactionInput, TransactionOutput};
-    use crate::types::Hash;
     use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
     use crate::integration::zk_integration::ZkTransactionProof;
+    use crate::transaction::{Transaction, TransactionInput, TransactionOutput};
+    use crate::types::Hash;
 
     fn create_test_transfer(fee: u64) -> Transaction {
         Transaction::new(
-            vec![
-                TransactionInput::new(
-                    Hash::new([1u8; 32]),
-                    0,
-                    Hash::new([2u8; 32]),
-                    ZkTransactionProof::default(),
-                ),
-            ],
-            vec![
-                TransactionOutput::new(
-                    Hash::new([3u8; 32]),
-                    Hash::new([4u8; 32]),
-                    PublicKey::new(vec![5u8; 32]),
-                ),
-            ],
+            vec![TransactionInput::new(
+                Hash::new([1u8; 32]),
+                0,
+                Hash::new([2u8; 32]),
+                ZkTransactionProof::default(),
+            )],
+            vec![TransactionOutput::new(
+                Hash::new([3u8; 32]),
+                Hash::new([4u8; 32]),
+                PublicKey::new(vec![5u8; 32]),
+            )],
             fee,
             Signature {
                 signature: vec![0u8; 64],
@@ -437,13 +436,11 @@ mod tests {
     fn create_test_coinbase(fee: u64) -> Transaction {
         let mut tx = Transaction::new(
             vec![],
-            vec![
-                TransactionOutput::new(
-                    Hash::new([1u8; 32]),
-                    Hash::new([2u8; 32]),
-                    PublicKey::new(vec![0u8; 32]),
-                ),
-            ],
+            vec![TransactionOutput::new(
+                Hash::new([1u8; 32]),
+                Hash::new([2u8; 32]),
+                PublicKey::new(vec![0u8; 32]),
+            )],
             fee,
             Signature {
                 signature: vec![],
@@ -464,7 +461,10 @@ mod tests {
 
         let result = validate_fee(&tx, &params);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), TxValidateError::FeeTooLow { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            TxValidateError::FeeTooLow { .. }
+        ));
     }
 
     #[test]
@@ -492,7 +492,11 @@ mod tests {
         let tx = create_test_token_transfer(100);
         // Non-zero fee is also allowed — miner fee is separate from the 1% protocol fee
         let result = validate_fee(&tx, &params);
-        assert!(result.is_ok(), "Expected Ok for TokenTransfer with fee=100, got {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected Ok for TokenTransfer with fee=100, got {:?}",
+            result
+        );
     }
 
     #[test]
@@ -511,6 +515,9 @@ mod tests {
 
         let result = validate_fee(&tx, &params);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), TxValidateError::CoinbaseNonZeroFee(100)));
+        assert!(matches!(
+            result.unwrap_err(),
+            TxValidateError::CoinbaseNonZeroFee(100)
+        ));
     }
 }

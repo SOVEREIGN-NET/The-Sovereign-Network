@@ -3,11 +3,11 @@
 //! Verifies that treasury balance queries use TokenContract::balance_of()
 //! instead of the placeholder UTXO counting approach.
 
-use lib_blockchain::Blockchain;
-use lib_blockchain::contracts::TokenContract;
 use lib_blockchain::contracts::utils::generate_lib_token_id;
+use lib_blockchain::contracts::TokenContract;
 use lib_blockchain::transaction::WalletTransactionData;
 use lib_blockchain::types::Hash;
+use lib_blockchain::Blockchain;
 use lib_crypto::types::keys::PublicKey;
 
 /// Create a test public key with a specific ID byte
@@ -70,7 +70,9 @@ fn test_treasury_balance_uses_token_contract() {
     let treasury_amount: u64 = 1_000_000;
 
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.balances.insert(treasury_pubkey.clone(), treasury_amount);
+        token
+            .balances
+            .insert(treasury_pubkey.clone(), treasury_amount);
     }
 
     // Query treasury balance - should reflect the credited amount
@@ -92,7 +94,9 @@ fn test_treasury_balance_not_placeholder() {
     let expected_amount: u64 = 5_555_555;
 
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.balances.insert(treasury_pubkey.clone(), expected_amount);
+        token
+            .balances
+            .insert(treasury_pubkey.clone(), expected_amount);
     }
 
     // Query balance multiple times - should always return the exact amount

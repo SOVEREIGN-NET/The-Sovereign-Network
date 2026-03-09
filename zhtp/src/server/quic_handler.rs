@@ -39,25 +39,25 @@
 //! - `zhtp_router` uses RwLock - multiple concurrent readers allowed
 //! - `quic_protocol` uses DashMap for lock-free concurrent peer connection tracking
 
-use std::sync::Arc;
-use std::net::SocketAddr;
-use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use anyhow::{Result, Context, anyhow};
-use tracing::{info, warn, debug, error};
+use anyhow::{anyhow, Context, Result};
 use quinn::{Connection, Incoming, RecvStream, SendStream};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
-use lib_network::protocols::quic_mesh::{QuicMeshProtocol, PqcQuicConnection, PeerConnection};
-use lib_network::protocols::quic_handshake::{self};
-use lib_network::handshake::{HandshakeContext, ClientHello};
-use lib_network::messaging::message_handler::MeshMessageHandler;
-use lib_network::types::mesh_message::ZhtpMeshMessage;
-use lib_crypto::PublicKey;
 use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
+use lib_crypto::PublicKey;
+use lib_network::handshake::{ClientHello, HandshakeContext};
+use lib_network::messaging::message_handler::MeshMessageHandler;
+use lib_network::protocols::quic_handshake::{self};
+use lib_network::protocols::quic_mesh::{PeerConnection, PqcQuicConnection, QuicMeshProtocol};
+use lib_network::types::mesh_message::ZhtpMeshMessage;
 
-use super::zhtp::ZhtpRouter;
 use super::zhtp::serialization::ZHTP_MAGIC;
+use super::zhtp::ZhtpRouter;
 
 /// Connection idle timeout for client connections (60 seconds)
 const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -175,12 +175,16 @@ impl BufferedStream {
             // Still have prepended data to drain
             let remaining = self.prepended_data.len() - self.offset;
             let to_copy = remaining.min(buf.len());
-            buf[..to_copy].copy_from_slice(&self.prepended_data[self.offset..self.offset + to_copy]);
+            buf[..to_copy]
+                .copy_from_slice(&self.prepended_data[self.offset..self.offset + to_copy]);
             self.offset += to_copy;
             Ok(Some(to_copy))
         } else {
             // Prepended data exhausted, read from underlying stream
-            self.stream.read(buf).await.map_err(|e| anyhow!("Stream read error: {}", e))
+            self.stream
+                .read(buf)
+                .await
+                .map_err(|e| anyhow!("Stream read error: {}", e))
         }
     }
 
@@ -195,7 +199,9 @@ impl BufferedStream {
         }
 
         // Then read from stream
-        let remaining = self.stream.read_to_end(size_limit)
+        let remaining = self
+            .stream
+            .read_to_end(size_limit)
             .await
             .map_err(|e| anyhow!("Failed to read stream: {}", e))?;
 
@@ -275,7 +281,9 @@ impl QuicHandler {
         // Check limit
         if entry.0 >= MAX_HANDSHAKES_PER_IP {
             warn!("Rate limit exceeded for handshakes from {}", peer_addr);
-            return Err(anyhow!("Too many handshake attempts, please try again later"));
+            return Err(anyhow!(
+                "Too many handshake attempts, please try again later"
+            ));
         }
 
         // Increment counter
@@ -306,7 +314,10 @@ impl QuicHandler {
         tokio::spawn(async move {
             match connecting.await {
                 Ok(connection) => {
-                    info!("✅ QUIC connection established from {}", connection.remote_address());
+                    info!(
+                        "✅ QUIC connection established from {}",
+                        connection.remote_address()
+                    );
 
                     if let Err(e) = handler.handle_connection(connection).await {
                         error!("❌ QUIC connection error: {}", e);
@@ -351,14 +362,19 @@ impl QuicHandler {
         let peer_addr = connection.remote_address();
 
         // Determine connection mode from negotiated ALPN
-        let alpn = connection.handshake_data()
+        let alpn = connection
+            .handshake_data()
             .and_then(|hd| hd.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
             .and_then(|hd| hd.protocol.clone());
 
         let mode = ConnectionMode::from_alpn(alpn.as_deref());
 
-        debug!("📡 Handling QUIC connection from {} (mode: {:?}, alpn: {:?})",
-               peer_addr, mode, alpn.as_ref().map(|a| String::from_utf8_lossy(a)));
+        debug!(
+            "📡 Handling QUIC connection from {} (mode: {:?}, alpn: {:?})",
+            peer_addr,
+            mode,
+            alpn.as_ref().map(|a| String::from_utf8_lossy(a))
+        );
 
         match mode {
             ConnectionMode::Public => {
@@ -367,7 +383,8 @@ impl QuicHandler {
             }
             ConnectionMode::ControlPlane => {
                 // Control plane: UHP v2 handshake with HKDF-SHA3-256 key derivation
-                self.handle_control_plane_v2_connection(connection, peer_addr).await
+                self.handle_control_plane_v2_connection(connection, peer_addr)
+                    .await
             }
             ConnectionMode::Mesh => {
                 // Mesh: Perform UHP handshake, then handle mesh messages
@@ -389,14 +406,19 @@ impl QuicHandler {
     /// - HKDF-SHA3-256 with transcript hash salt
     /// - HMAC-SHA3-256 request MAC
     /// - Canonical request format with counter and session_id binding
-    async fn handle_control_plane_v2_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
-        info!("🔐 Control plane connection from {} - starting UHP v2 handshake", peer_addr);
+    async fn handle_control_plane_v2_connection(
+        &self,
+        connection: Connection,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        info!(
+            "🔐 Control plane connection from {} - starting UHP v2 handshake",
+            peer_addr
+        );
 
         // Perform UHP+Kyber handshake (same as v1, but we'll derive keys differently)
-        let (_identity, handshake_result) = self.perform_uhp_handshake(
-            &connection,
-            &peer_addr,
-        ).await?;
+        let (_identity, handshake_result) =
+            self.perform_uhp_handshake(&connection, &peer_addr).await?;
 
         let peer_did = handshake_result.verified_peer.identity.did.clone();
         let session_key = handshake_result.session_key;
@@ -414,7 +436,8 @@ impl QuicHandler {
         let v2_keys = lib_network::handshake::security::derive_v2_session_keys(
             &session_key,
             &transcript_hash,
-        ).context("Failed to derive v2 session keys")?;
+        )
+        .context("Failed to derive v2 session keys")?;
 
         debug!(
             mac_key_prefix = ?hex::encode(&v2_keys.mac_key[..8]),
@@ -432,7 +455,8 @@ impl QuicHandler {
         );
 
         // Auto-register the authenticated peer identity
-        self.auto_register_peer_identity(&handshake_result.verified_peer.identity).await;
+        self.auto_register_peer_identity(&handshake_result.verified_peer.identity)
+            .await;
 
         // Record session in POUW session log for proof-of-presence verification
         if let Some(session_log) = &self.pouw_session_log {
@@ -457,7 +481,8 @@ impl QuicHandler {
         // For now, we'll pass session info directly to stream handler
 
         // Handle streams with v2 authentication
-        self.handle_control_plane_v2_streams(connection, v2_session, peer_addr).await
+        self.handle_control_plane_v2_streams(connection, v2_session, peer_addr)
+            .await
     }
 
     /// Handle authenticated control plane v2 streams
@@ -470,10 +495,8 @@ impl QuicHandler {
         let session = Arc::new(session);
 
         loop {
-            let stream_result = tokio::time::timeout(
-                CLIENT_IDLE_TIMEOUT,
-                connection.accept_bi()
-            ).await;
+            let stream_result =
+                tokio::time::timeout(CLIENT_IDLE_TIMEOUT, connection.accept_bi()).await;
 
             match stream_result {
                 Ok(Ok((send, recv))) => {
@@ -483,8 +506,16 @@ impl QuicHandler {
                     debug!("Accepted new stream {} for v2 request", stream_id.index());
 
                     tokio::spawn(async move {
-                        if let Err(e) = handler.handle_authenticated_v2_stream(recv, send, &session, peer_addr).await {
-                            warn!("⚠️ Control plane v2 stream {} error from {}: {:?}", stream_id.index(), peer_addr, e);
+                        if let Err(e) = handler
+                            .handle_authenticated_v2_stream(recv, send, &session, peer_addr)
+                            .await
+                        {
+                            warn!(
+                                "⚠️ Control plane v2 stream {} error from {}: {:?}",
+                                stream_id.index(),
+                                peer_addr,
+                                e
+                            );
                         }
                     });
                 }
@@ -497,7 +528,10 @@ impl QuicHandler {
                     break;
                 }
                 Err(_) => {
-                    debug!("⏱️ Control plane v2 connection idle timeout from {}", peer_addr);
+                    debug!(
+                        "⏱️ Control plane v2 connection idle timeout from {}",
+                        peer_addr
+                    );
                     break;
                 }
             }
@@ -519,13 +553,14 @@ impl QuicHandler {
         session: &lib_network::protocols::types::session::V2Session,
         peer_addr: SocketAddr,
     ) -> Result<()> {
-        use lib_protocols::wire::{read_request, write_response, ZhtpResponseWire};
+        use lib_network::handshake::security::{verify_v2_mac, CanonicalRequest};
         use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
-        use lib_network::handshake::security::{CanonicalRequest, verify_v2_mac};
+        use lib_protocols::wire::{read_request, write_response, ZhtpResponseWire};
 
         // Read ZHTP wire request (length-prefixed CBOR)
         // SECURITY: read_request enforces MAX_MESSAGE_SIZE before allocating
-        let wire_request = read_request(&mut recv).await
+        let wire_request = read_request(&mut recv)
+            .await
             .context("Failed to read v2 request")?;
 
         debug!(
@@ -678,23 +713,28 @@ impl QuicHandler {
         let mut request = wire_request.request;
         request.requester = lib_identity::did::parse_did_to_identity_id(session.peer_did()).ok();
         // Attach authoritative peer address for handlers (prevents spoofed forwarded headers).
-        request.headers.custom.insert("peer_addr".to_string(), peer_addr.to_string());
-        request.headers.custom.insert("peer_addr_source".to_string(), "quic".to_string());
+        request
+            .headers
+            .custom
+            .insert("peer_addr".to_string(), peer_addr.to_string());
+        request
+            .headers
+            .custom
+            .insert("peer_addr_source".to_string(), "quic".to_string());
 
         let router = self.zhtp_router.read().await;
-        let response = router.route_request(request).await
-            .unwrap_or_else(|e| {
-                warn!("Handler error: {}", e);
-                ZhtpResponse::error(ZhtpStatus::InternalServerError, e.to_string())
-            });
+        let response = router.route_request(request).await.unwrap_or_else(|e| {
+            warn!("Handler error: {}", e);
+            ZhtpResponse::error(ZhtpStatus::InternalServerError, e.to_string())
+        });
 
         // Send wire response (length-prefixed CBOR)
         let wire_response = ZhtpResponseWire::success(wire_request.request_id, response);
-        write_response(&mut send, &wire_response).await
+        write_response(&mut send, &wire_response)
+            .await
             .context("Failed to write ZHTP wire response")?;
 
-        send.finish()
-            .context("Failed to finish QUIC stream")?;
+        send.finish().context("Failed to finish QUIC stream")?;
 
         Ok(())
     }
@@ -710,7 +750,10 @@ impl QuicHandler {
         &self,
         connection: &Connection,
         peer_addr: &SocketAddr,
-    ) -> Result<(lib_identity::ZhtpIdentity, lib_network::protocols::quic_handshake::QuicHandshakeResult)> {
+    ) -> Result<(
+        lib_identity::ZhtpIdentity,
+        lib_network::protocols::quic_handshake::QuicHandshakeResult,
+    )> {
         // Check rate limit
         self.check_handshake_rate_limit(peer_addr).await?;
 
@@ -728,7 +771,9 @@ impl QuicHandler {
             connection,
             identity,
             &handshake_ctx,
-        ).await.context("UHP+Kyber handshake failed")?;
+        )
+        .await
+        .context("UHP+Kyber handshake failed")?;
 
         Ok((identity.clone(), handshake_result))
     }
@@ -754,7 +799,10 @@ impl QuicHandler {
     /// - Grant economic privileges
     ///
     /// Registration ≠ authorization. Authorization happens at the API layer.
-    async fn auto_register_peer_identity(&self, peer_identity: &lib_network::handshake::NodeIdentity) {
+    async fn auto_register_peer_identity(
+        &self,
+        peer_identity: &lib_network::handshake::NodeIdentity,
+    ) {
         let peer_did = &peer_identity.did;
 
         // Check if identity already exists
@@ -801,11 +849,8 @@ impl QuicHandler {
 
                 // Fund new identity with welcome bonus (5,000 SOV)
                 // This ensures all authenticated peers can participate in the network
-                self.fund_new_identity_wallet(
-                    &identity_id,
-                    peer_identity,
-                    peer_did,
-                ).await;
+                self.fund_new_identity_wallet(&identity_id, peer_identity, peer_did)
+                    .await;
             }
             Err(e) => {
                 warn!(
@@ -837,12 +882,8 @@ impl QuicHandler {
         };
 
         // Generate wallet ID from identity
-        let wallet_id_bytes = lib_crypto::hash_blake3(
-            &[
-                b"wallet:primary:",
-                identity_id.as_bytes(),
-            ].concat()
-        );
+        let wallet_id_bytes =
+            lib_crypto::hash_blake3(&[b"wallet:primary:", identity_id.as_bytes()].concat());
         let wallet_id_hex = hex::encode(&wallet_id_bytes);
 
         // Check if wallet already exists and has balance
@@ -885,17 +926,24 @@ impl QuicHandler {
             &wallet_id_bytes,
             welcome_bonus,
             format!("SOV_WELCOME_BONUS:{}", peer_did).into_bytes(),
-        ).await {
+        )
+        .await
+        {
             Ok(tx) => Some(tx),
             Err(e) => {
-                warn!("Failed to build SOV welcome mint tx for peer {}: {}", peer_did, e);
+                warn!(
+                    "Failed to build SOV welcome mint tx for peer {}: {}",
+                    peer_did, e
+                );
                 None
             }
         };
 
         {
             let mut bc_write = blockchain.write().await;
-            bc_write.wallet_registry.insert(wallet_id_hex.clone(), wallet_data);
+            bc_write
+                .wallet_registry
+                .insert(wallet_id_hex.clone(), wallet_data);
             if let Some(tx) = mint_tx {
                 if let Err(e) = bc_write.add_pending_transaction(tx) {
                     warn!("Failed to enqueue peer welcome mint tx: {}", e);
@@ -922,14 +970,19 @@ impl QuicHandler {
     /// Issue #907: Simplified to use QuicMeshProtocol as the single canonical connection store.
     /// After UHP handshake, a PeerConnection is created and registered via register_peer(),
     /// which also spawns a UNI receive loop for incoming mesh messages.
-    async fn handle_mesh_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
-        info!("Mesh peer connection from {} - starting UHP handshake", peer_addr);
+    async fn handle_mesh_connection(
+        &self,
+        connection: Connection,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        info!(
+            "Mesh peer connection from {} - starting UHP handshake",
+            peer_addr
+        );
 
         // Perform UHP+Kyber handshake with common setup (uses global nonce cache)
-        let (_identity, handshake_result) = self.perform_uhp_handshake(
-            &connection,
-            &peer_addr,
-        ).await?;
+        let (_identity, handshake_result) =
+            self.perform_uhp_handshake(&connection, &peer_addr).await?;
 
         // Extract peer node ID
         let peer_node_id = handshake_result.verified_peer.identity.node_id.as_bytes();
@@ -963,14 +1016,16 @@ impl QuicHandler {
             last_activity: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_secs)),
         };
 
-        self.quic_protocol.register_peer(node_id_arr.to_vec(), peer_conn);
+        self.quic_protocol
+            .register_peer(node_id_arr.to_vec(), peer_conn);
         info!(
             peer_count = self.quic_protocol.peer_count(),
             "Inbound mesh peer registered in canonical store"
         );
 
         // Auto-register peer identity for wallet/blockchain
-        self.auto_register_peer_identity(&handshake_result.verified_peer.identity).await;
+        self.auto_register_peer_identity(&handshake_result.verified_peer.identity)
+            .await;
 
         Ok(())
     }
@@ -983,15 +1038,17 @@ impl QuicHandler {
     /// - Content/blob retrieval (GET /api/v1/web4/content/{cid})
     ///
     /// Rejects all mutations (POST/PUT/DELETE to restricted endpoints).
-    async fn handle_public_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
+    async fn handle_public_connection(
+        &self,
+        connection: Connection,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
         info!("📖 Public read-only connection from {}", peer_addr);
 
         // Accept streams and handle public read requests
         loop {
-            let stream_result = tokio::time::timeout(
-                CLIENT_IDLE_TIMEOUT,
-                connection.accept_bi()
-            ).await;
+            let stream_result =
+                tokio::time::timeout(CLIENT_IDLE_TIMEOUT, connection.accept_bi()).await;
 
             match stream_result {
                 Ok(Ok((send, recv))) => {
@@ -1035,7 +1092,8 @@ impl QuicHandler {
         match protocol {
             ProtocolType::NativeZhtp(initial_data) => {
                 // Parse ZHTP request and validate it's a read operation
-                self.handle_public_zhtp_stream(initial_data, recv, send).await
+                self.handle_public_zhtp_stream(initial_data, recv, send)
+                    .await
             }
             ProtocolType::LegacyHttp(_) => {
                 self.send_error_response(send, LEGACY_HTTP_OVER_QUIC_REJECTION)
@@ -1043,17 +1101,27 @@ impl QuicHandler {
             }
             _ => {
                 // Reject non-ZHTP protocols on public connection
-                self.send_error_response(send, "Public connections only support native ZHTP read requests").await
+                self.send_error_response(
+                    send,
+                    "Public connections only support native ZHTP read requests",
+                )
+                .await
             }
         }
     }
 
     /// Handle public ZHTP stream - only allows read operations
-    async fn handle_public_zhtp_stream(&self, initial_data: Vec<u8>, recv: RecvStream, send: SendStream) -> Result<()> {
+    async fn handle_public_zhtp_stream(
+        &self,
+        initial_data: Vec<u8>,
+        recv: RecvStream,
+        send: SendStream,
+    ) -> Result<()> {
         // Forward to ZHTP handler - it will check method internally
         // For now, allow all ZHTP requests through (the API handlers will enforce read-only)
         // TODO: Add request parsing to reject mutations at this layer
-        self.handle_zhtp_stream_with_prefix(initial_data, recv, send).await
+        self.handle_zhtp_stream_with_prefix(initial_data, recv, send)
+            .await
     }
 
     /// Handle the first stream of a connection - determines connection type
@@ -1073,27 +1141,39 @@ impl QuicHandler {
         match protocol {
             ProtocolType::PqcHandshake(initial_data) => {
                 debug!("🔐 PQC handshake detected from {}", peer_addr);
-                self.handle_pqc_handshake_stream(initial_data, recv, send, connection, peer_addr).await?;
+                self.handle_pqc_handshake_stream(initial_data, recv, send, connection, peer_addr)
+                    .await?;
             }
             ProtocolType::NativeZhtp(initial_data) => {
                 debug!("✅ Native ZHTP protocol detected from {}", peer_addr);
-                self.handle_zhtp_stream_with_prefix(initial_data, recv, send).await?;
+                self.handle_zhtp_stream_with_prefix(initial_data, recv, send)
+                    .await?;
                 // Continue accepting more streams on this connection
                 self.accept_additional_streams(connection, None);
             }
             ProtocolType::LegacyHttp(_) => {
-                warn!("❌ Legacy HTTP request-line payload rejected from {}", peer_addr);
+                warn!(
+                    "❌ Legacy HTTP request-line payload rejected from {}",
+                    peer_addr
+                );
                 self.send_error_response(send, LEGACY_HTTP_OVER_QUIC_REJECTION)
                     .await?;
             }
             ProtocolType::MeshMessage(_initial_data) => {
-                warn!("📨 Mesh message on first stream from {} - should be after handshake", peer_addr);
+                warn!(
+                    "📨 Mesh message on first stream from {} - should be after handshake",
+                    peer_addr
+                );
                 // Treat as unknown since handshake should come first
-                self.send_error_response(send, "Expected PQC handshake first").await?;
+                self.send_error_response(send, "Expected PQC handshake first")
+                    .await?;
             }
             ProtocolType::Unknown(initial_data) => {
-                warn!("❓ Unknown protocol from {}: {:02x?}", peer_addr,
-                      &initial_data[..initial_data.len().min(16)]);
+                warn!(
+                    "❓ Unknown protocol from {}: {:02x?}",
+                    peer_addr,
+                    &initial_data[..initial_data.len().min(16)]
+                );
                 self.send_error_response(send, "Unknown protocol").await?;
             }
         }
@@ -1116,10 +1196,8 @@ impl QuicHandler {
             };
 
             loop {
-                let stream_result = tokio::time::timeout(
-                    idle_timeout,
-                    connection.accept_bi()
-                ).await;
+                let stream_result =
+                    tokio::time::timeout(idle_timeout, connection.accept_bi()).await;
 
                 match stream_result {
                     Ok(Ok((send, recv))) => {
@@ -1160,11 +1238,13 @@ impl QuicHandler {
 
         match protocol {
             ProtocolType::NativeZhtp(initial_data) => {
-                self.handle_zhtp_stream_with_prefix(initial_data, recv, send).await
+                self.handle_zhtp_stream_with_prefix(initial_data, recv, send)
+                    .await
             }
             ProtocolType::MeshMessage(initial_data) => {
                 if let Some(peer_id) = peer_node_id {
-                    self.handle_mesh_message_stream(initial_data, recv, peer_id).await
+                    self.handle_mesh_message_stream(initial_data, recv, peer_id)
+                        .await
                 } else {
                     warn!("Mesh message received on non-peer connection");
                     Err(anyhow!("Mesh messages only valid on peer connections"))
@@ -1176,7 +1256,10 @@ impl QuicHandler {
                 Err(anyhow!("PQC handshake only valid on first stream"))
             }
             ProtocolType::Unknown(data) => {
-                warn!("Unknown protocol on stream: {:02x?}", &data[..data.len().min(16)]);
+                warn!(
+                    "Unknown protocol on stream: {:02x?}",
+                    &data[..data.len().min(16)]
+                );
                 Err(anyhow!("Unknown protocol"))
             }
         }
@@ -1216,11 +1299,10 @@ impl QuicHandler {
         let handshake_ctx = HandshakeContext::new(nonce_cache.clone());
 
         // Perform UHP+Kyber handshake as responder
-        let handshake_result = quic_handshake::handshake_as_responder(
-            &connection,
-            identity,
-            &handshake_ctx,
-        ).await.context("UHP+Kyber handshake failed")?;
+        let handshake_result =
+            quic_handshake::handshake_as_responder(&connection, identity, &handshake_ctx)
+                .await
+                .context("UHP+Kyber handshake failed")?;
 
         // Extract peer node ID
         let peer_node_id = handshake_result.verified_peer.identity.node_id.as_bytes();
@@ -1243,7 +1325,8 @@ impl QuicHandler {
             handshake_result.session_id,
             false,
         );
-        self.quic_protocol.register_peer(node_id_arr.to_vec(), pqc_conn.into_peer_connection());
+        self.quic_protocol
+            .register_peer(node_id_arr.to_vec(), pqc_conn.into_peer_connection());
 
         // Continue accepting streams (BI streams for ZHTP API requests)
         self.accept_additional_streams(connection, Some(node_id_arr));
@@ -1268,7 +1351,10 @@ impl QuicHandler {
         mut recv: RecvStream,
         peer_node_id: [u8; 32],
     ) -> Result<()> {
-        debug!("Receiving mesh message from peer {}", hex::encode(&peer_node_id[..8]));
+        debug!(
+            "Receiving mesh message from peer {}",
+            hex::encode(&peer_node_id[..8])
+        );
 
         // Read full message with size limit (P1-4: Bincode size limits)
         let mut message_data = initial_data;
@@ -1276,23 +1362,32 @@ impl QuicHandler {
         message_data.extend_from_slice(&remaining);
 
         if message_data.len() > MAX_MESSAGE_SIZE as usize {
-            warn!("Mesh message too large from peer {}: {} bytes",
-                  hex::encode(&peer_node_id[..8]), message_data.len());
+            warn!(
+                "Mesh message too large from peer {}: {} bytes",
+                hex::encode(&peer_node_id[..8]),
+                message_data.len()
+            );
             return Err(anyhow!("Message exceeds maximum size"));
         }
 
         // Issue #907: Get session key from canonical store (QuicMeshProtocol.connections)
-        let session_key = self.quic_protocol.get_peer_session_key(&peer_node_id)
-            .ok_or_else(|| anyhow!("No session key for peer {} - not in canonical store",
-                                   hex::encode(&peer_node_id[..8])))?;
+        let session_key = self
+            .quic_protocol
+            .get_peer_session_key(&peer_node_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "No session key for peer {} - not in canonical store",
+                    hex::encode(&peer_node_id[..8])
+                )
+            })?;
 
         // Decrypt with session key (derived from UHP+Kyber handshake)
         let decrypted = lib_crypto::symmetric::chacha20::decrypt_data(&message_data, &session_key)
             .context("Failed to decrypt mesh message - possible tampering")?;
 
         // Deserialize mesh message with size validation
-        let message: ZhtpMeshMessage = bincode::deserialize(&decrypted)
-            .context("Failed to deserialize mesh message")?;
+        let message: ZhtpMeshMessage =
+            bincode::deserialize(&decrypted).context("Failed to deserialize mesh message")?;
 
         // ✅ TICKET 2.6 FIX: Route through MeshRouter instead of direct handler call
         // This ensures all messages are logged and follow standard routing path
@@ -1301,7 +1396,11 @@ impl QuicHandler {
             // Note: MeshMessageHandler.handle_mesh_message() processes incoming messages
             // This is correct for QUIC as it's receiving messages, not sending them
             // The bypass was in sending responses - those should use mesh_router.send_with_routing()
-            handler.read().await.handle_mesh_message(message, peer_pk).await?;
+            handler
+                .read()
+                .await
+                .handle_mesh_message(message, peer_pk)
+                .await?;
         } else {
             warn!("No mesh handler configured on either QuicMeshProtocol or QuicHandler");
         }
@@ -1318,13 +1417,18 @@ impl QuicHandler {
     ) -> Result<()> {
         let router = self.zhtp_router.read().await;
         let mut buffered = BufferedStream::new(prefix, recv);
-        router.handle_zhtp_stream_buffered(&mut buffered, send).await
+        router
+            .handle_zhtp_stream_buffered(&mut buffered, send)
+            .await
     }
 
     /// Send error response to client
     async fn send_error_response(&self, mut send: SendStream, message: &str) -> Result<()> {
-        let error_msg = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
-                               message.len(), message);
+        let error_msg = format!(
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+            message.len(),
+            message
+        );
         send.write_all(error_msg.as_bytes()).await.ok();
         send.finish().ok();
         Ok(())
@@ -1336,10 +1440,8 @@ impl QuicHandler {
         // Read up to 1KB to determine protocol with timeout (P1-1)
         let mut buffer = vec![0u8; PROTOCOL_DETECT_SIZE];
 
-        let read_result = tokio::time::timeout(
-            PROTOCOL_DETECT_TIMEOUT,
-            recv.read(&mut buffer)
-        ).await;
+        let read_result =
+            tokio::time::timeout(PROTOCOL_DETECT_TIMEOUT, recv.read(&mut buffer)).await;
 
         match read_result {
             Err(_) => {
@@ -1347,58 +1449,59 @@ impl QuicHandler {
                 return Err(anyhow!("Protocol detection timeout"));
             }
             Ok(recv_result) => match recv_result {
-            Ok(Some(n)) => {
-                buffer.truncate(n);
+                Ok(Some(n)) => {
+                    buffer.truncate(n);
 
-                if buffer.len() < 4 {
-                    return Ok(ProtocolType::Unknown(buffer));
-                }
-
-                // 1. Check for ZHTP magic first (highest priority - our native protocol)
-                if &buffer[0..4] == ZHTP_MAGIC {
-                    debug!("✅ ZHTP magic bytes detected");
-                    return Ok(ProtocolType::NativeZhtp(buffer));
-                }
-
-                // 2. Check for UHP ClientHello (UHP+Kyber handshake initiation)
-                // ClientHello contains: version(1B) + identity + capabilities + nonce(32B) + signature
-                // The UHP handshake uses a dedicated bidirectional stream, so protocol detection
-                // should recognize this as a handshake initiation
-                if buffer.len() >= 100 {
-                    // Try to parse as UHP ClientHello (first message of UHP handshake)
-                    if let Ok(_msg) = bincode::deserialize::<ClientHello>(&buffer) {
-                        debug!("🔐 UHP ClientHello detected (handshake initiation)");
-                        return Ok(ProtocolType::PqcHandshake(buffer));
+                    if buffer.len() < 4 {
+                        return Ok(ProtocolType::Unknown(buffer));
                     }
-                }
 
-                // 3. Explicit HTTP request-line detection for deterministic rejection.
-                if Self::is_http_request_line(&buffer) {
-                    debug!("❌ Legacy HTTP request-line payload detected on QUIC stream");
-                    return Ok(ProtocolType::LegacyHttp(buffer));
-                }
+                    // 1. Check for ZHTP magic first (highest priority - our native protocol)
+                    if &buffer[0..4] == ZHTP_MAGIC {
+                        debug!("✅ ZHTP magic bytes detected");
+                        return Ok(ProtocolType::NativeZhtp(buffer));
+                    }
 
-                // 4. Check for encrypted mesh message (typically starts with encryption header)
-                // After handshake, mesh messages are ChaCha20 encrypted
-                // No reliable way to detect without trying to decrypt, so treat as mesh if all else fails
-                // and buffer is reasonably sized
-                if buffer.len() > 50 {
-                    debug!("📨 Possible mesh message detected");
-                    return Ok(ProtocolType::MeshMessage(buffer));
-                }
+                    // 2. Check for UHP ClientHello (UHP+Kyber handshake initiation)
+                    // ClientHello contains: version(1B) + identity + capabilities + nonce(32B) + signature
+                    // The UHP handshake uses a dedicated bidirectional stream, so protocol detection
+                    // should recognize this as a handshake initiation
+                    if buffer.len() >= 100 {
+                        // Try to parse as UHP ClientHello (first message of UHP handshake)
+                        if let Ok(_msg) = bincode::deserialize::<ClientHello>(&buffer) {
+                            debug!("🔐 UHP ClientHello detected (handshake initiation)");
+                            return Ok(ProtocolType::PqcHandshake(buffer));
+                        }
+                    }
 
-                // Unknown protocol
-                warn!("❓ Unknown protocol, first bytes: {:02x?}", &buffer[..buffer.len().min(16)]);
-                Ok(ProtocolType::Unknown(buffer))
-            }
-            Ok(None) => {
-                Ok(ProtocolType::Unknown(Vec::new()))
-            }
-            Err(e) => {
-                warn!("⚠️ Failed to read from stream: {}", e);
-                Err(anyhow!("Stream read error: {}", e))
-            }
-            }
+                    // 3. Explicit HTTP request-line detection for deterministic rejection.
+                    if Self::is_http_request_line(&buffer) {
+                        debug!("❌ Legacy HTTP request-line payload detected on QUIC stream");
+                        return Ok(ProtocolType::LegacyHttp(buffer));
+                    }
+
+                    // 4. Check for encrypted mesh message (typically starts with encryption header)
+                    // After handshake, mesh messages are ChaCha20 encrypted
+                    // No reliable way to detect without trying to decrypt, so treat as mesh if all else fails
+                    // and buffer is reasonably sized
+                    if buffer.len() > 50 {
+                        debug!("📨 Possible mesh message detected");
+                        return Ok(ProtocolType::MeshMessage(buffer));
+                    }
+
+                    // Unknown protocol
+                    warn!(
+                        "❓ Unknown protocol, first bytes: {:02x?}",
+                        &buffer[..buffer.len().min(16)]
+                    );
+                    Ok(ProtocolType::Unknown(buffer))
+                }
+                Ok(None) => Ok(ProtocolType::Unknown(Vec::new())),
+                Err(e) => {
+                    warn!("⚠️ Failed to read from stream: {}", e);
+                    Err(anyhow!("Stream read error: {}", e))
+                }
+            },
         }
     }
 
@@ -1471,7 +1574,9 @@ mod tests {
 
     #[test]
     fn test_http_request_line_detection_false_for_native_zhtp() {
-        assert!(!QuicHandler::is_http_request_line(b"ZHTP\x01\x00\x00\x00\x10test data"));
+        assert!(!QuicHandler::is_http_request_line(
+            b"ZHTP\x01\x00\x00\x00\x10test data"
+        ));
     }
 
     #[test]
@@ -1500,7 +1605,10 @@ mod tests {
             ConnectionMode::from_alpn(Some(b"zhtp/1.0")),
             ConnectionMode::Public
         );
-        assert_eq!(ConnectionMode::from_alpn(Some(b"h3")), ConnectionMode::Public);
+        assert_eq!(
+            ConnectionMode::from_alpn(Some(b"h3")),
+            ConnectionMode::Public
+        );
 
         // No ALPN negotiated — must default to least-privileged (Public), never elevate.
         assert_eq!(ConnectionMode::from_alpn(None), ConnectionMode::Public);

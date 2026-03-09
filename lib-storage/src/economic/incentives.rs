@@ -1,5 +1,5 @@
 //! Economic Incentive System
-//! 
+//!
 //! Implements comprehensive economic incentives for the ZHTP storage network including:
 //! - Token-based rewards for storage providers
 //! - Performance-based bonus calculations
@@ -7,11 +7,11 @@
 //! - Staking and delegation mechanisms
 //! - Liquidity mining and yield farming
 
-use crate::types::{PerformanceSnapshot};
 use crate::economic::reputation::*;
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
+use crate::types::PerformanceSnapshot;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Economic incentive coordinator
 #[derive(Debug)]
@@ -293,8 +293,8 @@ pub struct TokenPair {
 /// Distribution schedule for rewards
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DistributionSchedule {
-    Linear(u64), // Linear distribution over duration
-    Exponential(f64), // Exponential decay with half-life
+    Linear(u64),              // Linear distribution over duration
+    Exponential(f64),         // Exponential decay with half-life
     Stepped(Vec<(u64, u64)>), // Stepped distribution
 }
 
@@ -317,7 +317,7 @@ impl IncentiveSystem {
     /// Create a new incentive system
     pub fn new(config: IncentiveConfig) -> Self {
         let mut reward_pools = HashMap::new();
-        
+
         // Initialize default reward pools
         for (pool_type, &allocation) in &config.base_reward_rates {
             let pool = RewardPool {
@@ -333,7 +333,8 @@ impl IncentiveSystem {
                 expiration_time: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs() + 31536000, // 1 year
+                    .as_secs()
+                    + 31536000, // 1 year
                 eligibility_criteria: Vec::new(),
             };
             reward_pools.insert(pool_type.clone(), pool);
@@ -370,7 +371,8 @@ impl IncentiveSystem {
         reputation_score: f64,
     ) -> Result<RewardCalculation> {
         let base_reward = self.calculate_base_reward(participant_id)?;
-        let performance_bonus = self.calculate_performance_bonus(performance_metrics, reputation_score)?;
+        let performance_bonus =
+            self.calculate_performance_bonus(performance_metrics, reputation_score)?;
         let staking_bonus = self.calculate_staking_bonus(participant_id)?;
         let network_bonus = self.calculate_network_growth_bonus()?;
 
@@ -396,16 +398,17 @@ impl IncentiveSystem {
         let base_storage_provided = 1_000_000_000u64; // 1GB default
         let utilization_rate = 0.8; // 80% default utilization
         let quality_multiplier = 1.0; // Base quality
-        
+
         // Base calculation: storage_gb * utilization * quality * rate_per_gb
         let storage_gb = base_storage_provided / (1024 * 1024 * 1024);
-        let base_reward = (storage_gb as f64 * utilization_rate * quality_multiplier * 100.0) as u64;
-        
+        let base_reward =
+            (storage_gb as f64 * utilization_rate * quality_multiplier * 100.0) as u64;
+
         // Add participant-specific adjustments based on ID hash
         let participant_hash = blake3::hash(participant_id.as_bytes());
         let hash_modifier = (participant_hash.as_bytes()[0] as f64 / 255.0) * 0.2; // ±20% variation
         let adjusted_reward = (base_reward as f64 * (1.0 + hash_modifier - 0.1)) as u64;
-        
+
         Ok(adjusted_reward.max(100)) // Minimum 100 tokens
     }
 
@@ -445,19 +448,23 @@ impl IncentiveSystem {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            
+
             let staking_duration = current_time - staking_info.stake_start_time;
             let base_bonus = staking_info.staked_amount / 1000; // 0.1% of stake
 
             // Calculate time-based bonus based on staking duration
-            let _time_bonus = if staking_duration > 86400 * 30 { // 30 days
+            let _time_bonus = if staking_duration > 86400 * 30 {
+                // 30 days
                 (staking_duration / 86400) as u64 * 10 // 10 tokens per day after 30 days
             } else {
                 0
             };
 
             // Apply lock period multiplier
-            let multiplier = self.config.staking_params.lock_multipliers
+            let multiplier = self
+                .config
+                .staking_params
+                .lock_multipliers
                 .get(&staking_info.lock_duration)
                 .copied()
                 .unwrap_or(1.0);
@@ -515,10 +522,15 @@ impl IncentiveSystem {
         reason: SlashingReason,
         severity: SlashingSeverity,
     ) -> Result<u64> {
-        let staking_info = self.staking_info.get_mut(participant_id)
+        let staking_info = self
+            .staking_info
+            .get_mut(participant_id)
             .ok_or_else(|| anyhow!("Participant not found"))?;
 
-        let slash_rate = self.config.slashing_params.slashing_rates
+        let slash_rate = self
+            .config
+            .slashing_params
+            .slashing_rates
             .get(&severity)
             .copied()
             .unwrap_or(0.1);
@@ -559,18 +571,20 @@ impl IncentiveSystem {
                 pool.distributed_amount += distributed;
                 pool.remaining_amount -= distributed;
                 distribution.total_distributed += distributed;
-                
+
                 // Log pool-specific distribution
-                println!("Distributed {} tokens from {:?} pool (remaining: {})", 
-                        distributed, pool_type, pool.remaining_amount);
-                
+                println!(
+                    "Distributed {} tokens from {:?} pool (remaining: {})",
+                    distributed, pool_type, pool.remaining_amount
+                );
+
                 // Distribute proportionally to eligible participants
                 // In a full implementation, this would iterate through participants
                 // and distribute based on their contribution to this pool type
                 if let Some(participant_id) = self.performance_bonuses.keys().next() {
                     distribution.participant_rewards.insert(
-                        participant_id.clone(), 
-                        distributed / self.performance_bonuses.len() as u64
+                        participant_id.clone(),
+                        distributed / self.performance_bonuses.len() as u64,
                     );
                 }
             }
@@ -602,18 +616,18 @@ impl IncentiveSystem {
     ) -> Result<u64> {
         // Calculate base reward from storage provider pool
         let base_reward = self.calculate_base_reward(participant_id)?;
-        
+
         // Calculate performance bonus with default reputation for standalone operation
         let performance_bonus = self.calculate_performance_bonus(&performance, 0.8)?; // Default reputation score
-        
+
         // Calculate staking bonus
         let staking_bonus = self.calculate_staking_bonus(participant_id)?;
-        
+
         // Calculate network growth bonus
         let network_bonus = self.calculate_network_growth_bonus()?;
-        
+
         let total = base_reward + performance_bonus + staking_bonus + network_bonus;
-        
+
         Ok(total)
     }
 
@@ -626,24 +640,24 @@ impl IncentiveSystem {
     ) -> Result<u64> {
         // Calculate base reward from storage provider pool
         let base_reward = self.calculate_base_reward(participant_id)?;
-        
+
         // Get actual reputation score from the reputation system
         let reputation_score = reputation_system
             .get_reputation(participant_id)
             .map(|score| score.overall_score)
             .unwrap_or(0.5); // New provider default
-        
+
         // Calculate performance bonus with reputation integration
         let performance_bonus = self.calculate_performance_bonus(&performance, reputation_score)?;
-        
+
         // Calculate staking bonus
         let staking_bonus = self.calculate_staking_bonus(participant_id)?;
-        
+
         // Calculate network growth bonus
         let network_bonus = self.calculate_network_growth_bonus()?;
-        
+
         let total = base_reward + performance_bonus + staking_bonus + network_bonus;
-        
+
         Ok(total)
     }
 
@@ -657,7 +671,7 @@ impl IncentiveSystem {
         // Check participant's historical performance for personalized bonuses
         let historical_bonus = self.participant_bonuses.get(participant_id).unwrap_or(&0.0);
         let loyalty_multiplier = 1.0 + (historical_bonus / 100.0).min(0.2); // Max 20% loyalty bonus
-        
+
         let performance_multiplier = if performance.qualifies_for_premium() {
             1.5 // 50% bonus for premium performance
         } else if performance.meets_basic_quality() {
@@ -668,11 +682,13 @@ impl IncentiveSystem {
 
         let total_multiplier = performance_multiplier * loyalty_multiplier;
         let bonus = ((base_payment as f64) * (total_multiplier - 1.0)) as u64;
-        
+
         // Update participant's bonus history
-        self.participant_bonuses.insert(participant_id.to_string(), 
-            historical_bonus + (bonus as f64 / base_payment as f64 * 100.0));
-        
+        self.participant_bonuses.insert(
+            participant_id.to_string(),
+            historical_bonus + (bonus as f64 / base_payment as f64 * 100.0),
+        );
+
         Ok(bonus)
     }
 
@@ -685,7 +701,14 @@ impl IncentiveSystem {
     ) -> Result<()> {
         // Record penalty in performance bonuses with zero amount (penalty tracked separately)
         let penalty_record = PerformanceBonus {
-            bonus_id: format!("penalty_{}_{}", participant_id, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
+            bonus_id: format!(
+                "penalty_{}_{}",
+                participant_id,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            ),
             participant_id: participant_id.to_string(),
             bonus_type: BonusType::Penalty,
             amount: 0, // Penalties tracked separately, not as negative bonuses
@@ -718,7 +741,14 @@ impl IncentiveSystem {
     ) -> Result<()> {
         // Record successful payment as positive contribution
         let payment_record = PerformanceBonus {
-            bonus_id: format!("payment_{}_{}", participant_id, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
+            bonus_id: format!(
+                "payment_{}_{}",
+                participant_id,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            ),
             participant_id: participant_id.to_string(),
             bonus_type: BonusType::ReliableProvider,
             amount: payment_amount / 10, // 10% as future reward multiplier
@@ -768,7 +798,7 @@ impl Default for IncentiveConfig {
     fn default() -> Self {
         let mut base_reward_rates = HashMap::new();
         base_reward_rates.insert(RewardPoolType::StorageProviders, 10_000_000); // 10M tokens
-        base_reward_rates.insert(RewardPoolType::EarlyAdopters, 5_000_000);     // 5M tokens
+        base_reward_rates.insert(RewardPoolType::EarlyAdopters, 5_000_000); // 5M tokens
         base_reward_rates.insert(RewardPoolType::NetworkValidators, 3_000_000); // 3M tokens
 
         let mut performance_multipliers = HashMap::new();
@@ -777,16 +807,16 @@ impl Default for IncentiveConfig {
         performance_multipliers.insert(BonusType::HighThroughput, 1.4);
 
         let mut lock_multipliers = HashMap::new();
-        lock_multipliers.insert(86400 * 30, 1.1);   // 30 days: 10% bonus
-        lock_multipliers.insert(86400 * 90, 1.25);  // 90 days: 25% bonus
-        lock_multipliers.insert(86400 * 365, 1.5);  // 1 year: 50% bonus
+        lock_multipliers.insert(86400 * 30, 1.1); // 30 days: 10% bonus
+        lock_multipliers.insert(86400 * 90, 1.25); // 90 days: 25% bonus
+        lock_multipliers.insert(86400 * 365, 1.5); // 1 year: 50% bonus
 
         let mut slashing_rates = HashMap::new();
-        slashing_rates.insert(SlashingSeverity::Minor, 0.01);     // 1%
-        slashing_rates.insert(SlashingSeverity::Moderate, 0.05);  // 5%
-        slashing_rates.insert(SlashingSeverity::Major, 0.15);     // 15%
-        slashing_rates.insert(SlashingSeverity::Severe, 0.30);    // 30%
-        slashing_rates.insert(SlashingSeverity::Critical, 0.50);  // 50%
+        slashing_rates.insert(SlashingSeverity::Minor, 0.01); // 1%
+        slashing_rates.insert(SlashingSeverity::Moderate, 0.05); // 5%
+        slashing_rates.insert(SlashingSeverity::Major, 0.15); // 15%
+        slashing_rates.insert(SlashingSeverity::Severe, 0.30); // 30%
+        slashing_rates.insert(SlashingSeverity::Critical, 0.50); // 50%
 
         Self {
             base_reward_rates,
@@ -800,8 +830,8 @@ impl Default for IncentiveConfig {
             },
             slashing_params: SlashingParameters {
                 slashing_rates,
-                grace_period: 86400, // 1 day
-                max_slash_per_incident: 0.25, // 25% max
+                grace_period: 86400,               // 1 day
+                max_slash_per_incident: 0.25,      // 25% max
                 rehabilitation_period: 86400 * 30, // 30 days
             },
             epoch_duration: 86400, // 1 day epochs
@@ -824,9 +854,11 @@ mod tests {
     fn test_staking() {
         let config = IncentiveConfig::default();
         let mut system = IncentiveSystem::new(config);
-        
-        system.stake_tokens("participant1".to_string(), 50_000, 86400 * 30).unwrap();
-        
+
+        system
+            .stake_tokens("participant1".to_string(), 50_000, 86400 * 30)
+            .unwrap();
+
         let staking_info = system.get_staking_info("participant1").unwrap();
         assert_eq!(staking_info.staked_amount, 50_000);
     }
@@ -835,7 +867,7 @@ mod tests {
     fn test_reward_calculation() {
         let config = IncentiveConfig::default();
         let system = IncentiveSystem::new(config);
-        
+
         let metrics = PerformanceSnapshot {
             uptime: 0.995,
             avg_response_time: 80,
@@ -843,8 +875,10 @@ mod tests {
             throughput: 1_000_000,
             error_rate: 0.001,
         };
-        
-        let calculation = system.calculate_rewards("participant1", &metrics, 0.9).unwrap();
+
+        let calculation = system
+            .calculate_rewards("participant1", &metrics, 0.9)
+            .unwrap();
         assert!(calculation.total_reward > 0);
     }
 

@@ -5,9 +5,9 @@
 //! - **payload_bytes**: Intent fields (inputs, outputs, amounts, token transfer data)
 //! - **witness_bytes**: Signature bytes + public key bytes + ZK proof bytes
 
+use super::types::{FeeInput, SigScheme, TxKind};
 use crate::transaction::Transaction;
 use crate::types::TransactionType;
-use super::types::{FeeInput, TxKind, SigScheme};
 
 /// Size constants for byte classification
 mod sizes {
@@ -179,7 +179,7 @@ pub fn classify_coinbase(tx: &Transaction) -> FeeInput {
 
     FeeInput::new(
         TxKind::NativeTransfer, // Coinbase uses same base cost as transfer
-        SigScheme::Dilithium5,     // Default scheme (not used for fee calc)
+        SigScheme::Dilithium5,  // Default scheme (not used for fee calc)
         0,                      // No signatures
         envelope_bytes,
         payload_bytes,
@@ -215,7 +215,11 @@ pub fn classify_token_mint(tx: &Transaction) -> FeeInput {
     let payload_bytes = token_payload + memo_payload;
 
     let sig_scheme = detect_sig_scheme(&tx.signature);
-    let sig_count = if tx.signature.signature.is_empty() { 0 } else { 1 };
+    let sig_count = if tx.signature.signature.is_empty() {
+        0
+    } else {
+        1
+    };
     let witness_bytes = if sig_count == 1 {
         sizes::DILITHIUM5_SIG + sizes::DILITHIUM5_PK
     } else {
@@ -288,30 +292,26 @@ fn estimate_pubkey_size(sig: &crate::integration::crypto_integration::Signature)
         SignatureAlgorithm::Dilithium2 | SignatureAlgorithm::Dilithium5 => {
             sizes::DILITHIUM5_PUBKEY_SIZE
         }
-        SignatureAlgorithm::RingSignature => {
-            sizes::DILITHIUM5_PUBKEY_SIZE
-        }
+        SignatureAlgorithm::RingSignature => sizes::DILITHIUM5_PUBKEY_SIZE,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transaction::{Transaction, TransactionInput, TransactionOutput};
-    use crate::types::Hash;
     use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
     use crate::integration::zk_integration::ZkTransactionProof;
+    use crate::transaction::{Transaction, TransactionInput, TransactionOutput};
+    use crate::types::Hash;
 
     fn create_test_transfer() -> Transaction {
         Transaction::new(
-            vec![
-                TransactionInput::new(
-                    Hash::new([1u8; 32]),
-                    0,
-                    Hash::new([2u8; 32]),
-                    ZkTransactionProof::default(),
-                ),
-            ],
+            vec![TransactionInput::new(
+                Hash::new([1u8; 32]),
+                0,
+                Hash::new([2u8; 32]),
+                ZkTransactionProof::default(),
+            )],
             vec![
                 TransactionOutput::new(
                     Hash::new([3u8; 32]),
@@ -362,13 +362,11 @@ mod tests {
     fn create_test_coinbase() -> Transaction {
         let mut tx = Transaction::new(
             vec![], // No inputs for coinbase
-            vec![
-                TransactionOutput::new(
-                    Hash::new([1u8; 32]),
-                    Hash::new([2u8; 32]),
-                    PublicKey::new(vec![0u8; 32]),
-                ),
-            ],
+            vec![TransactionOutput::new(
+                Hash::new([1u8; 32]),
+                Hash::new([2u8; 32]),
+                PublicKey::new(vec![0u8; 32]),
+            )],
             0, // Coinbase has no fee
             Signature {
                 signature: vec![],
@@ -415,7 +413,7 @@ mod tests {
         assert_eq!(fee_input.tx_kind, TxKind::TokenTransfer);
 
         // Check state operations for balance model
-        assert_eq!(fee_input.state_reads, 2);  // sender + receiver
+        assert_eq!(fee_input.state_reads, 2); // sender + receiver
         assert_eq!(fee_input.state_writes, 2); // sender + receiver
 
         // Check no ZK proof bytes (balance model)

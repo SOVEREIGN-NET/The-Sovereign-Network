@@ -137,11 +137,7 @@ impl CallExecutor {
     ///
     /// In production, this would be managed by AbiRegistry.
     /// For testing, allows manual registration.
-    pub fn register_abi(
-        &mut self,
-        contract_id: ContractId,
-        methods: Vec<MethodSignature>,
-    ) {
+    pub fn register_abi(&mut self, contract_id: ContractId, methods: Vec<MethodSignature>) {
         self.abi_registry.insert(contract_id, methods);
     }
 
@@ -152,10 +148,7 @@ impl CallExecutor {
 
     /// Get the current call chain
     pub fn call_chain(&self) -> Vec<(ContractId, String)> {
-        self.call_stack
-            .borrow()
-            .chain()
-            .to_vec()
+        self.call_stack.borrow().chain().to_vec()
     }
 
     /// Execute a cross-contract call
@@ -176,8 +169,7 @@ impl CallExecutor {
         caller_abi_version: &str,
     ) -> Result<CrossContractCallResult> {
         // Step 1: Validate call structure
-        call.validate_structure()
-            .map_err(|e| anyhow!(e))?;
+        call.validate_structure().map_err(|e| anyhow!(e))?;
 
         // Step 2: Check depth limit BEFORE attempting to push
         if self.current_depth() >= MAX_RECURSION_DEPTH {
@@ -191,7 +183,10 @@ impl CallExecutor {
 
         // Step 3: Load callee's ABI
         let methods = self.abi_registry.get(&call.callee).ok_or_else(|| {
-            anyhow!("Contract {} not registered in ABI registry", hex::encode(call.callee))
+            anyhow!(
+                "Contract {} not registered in ABI registry",
+                hex::encode(call.callee)
+            )
         })?;
 
         // Step 4: Validate against ABI
@@ -237,7 +232,9 @@ impl CallExecutor {
             Err(_) => {
                 // Depth exceeded
                 drop(stack);
-                let error = self.call_stack.borrow()
+                let error = self
+                    .call_stack
+                    .borrow()
                     .depth_exceeded_error(call.callee, call.method.clone());
                 Ok(CrossContractCallResult::Error { error })
             }
@@ -335,8 +332,7 @@ mod tests {
         executor.register_abi(contract_id, methods);
 
         let result = executor.execute_call(
-            call,
-            2,       // param count
+            call, 2,       // param count
             "bool",  // return type
             "1.0.0", // caller abi version
         );
@@ -352,12 +348,7 @@ mod tests {
         let mut call = create_test_call();
         call.method = "".to_string(); // Invalid: empty method
 
-        let result = executor.execute_call(
-            call,
-            2,
-            "bool",
-            "1.0.0",
-        );
+        let result = executor.execute_call(call, 2, "bool", "1.0.0");
 
         assert!(result.is_err()); // Invalid structure should error
     }
@@ -368,12 +359,7 @@ mod tests {
         let call = create_test_call();
 
         // Don't register the ABI - should fail
-        let result = executor.execute_call(
-            call,
-            2,
-            "bool",
-            "1.0.0",
-        );
+        let result = executor.execute_call(call, 2, "bool", "1.0.0");
 
         assert!(result.is_err());
         assert!(result
@@ -393,12 +379,7 @@ mod tests {
         let methods = vec![create_test_method()];
         executor.register_abi(contract_id, methods);
 
-        let result = executor.execute_call(
-            call,
-            2,
-            "bool",
-            "1.0.0",
-        );
+        let result = executor.execute_call(call, 2, "bool", "1.0.0");
 
         assert!(result.is_ok());
         let result = result.unwrap();
@@ -421,10 +402,8 @@ mod tests {
         executor.register_abi(contract_id, methods);
 
         let result = executor.execute_call(
-            call,
-            3, // Wrong count
-            "bool",
-            "1.0.0",
+            call, 3, // Wrong count
+            "bool", "1.0.0",
         );
 
         assert!(result.is_ok());
@@ -442,9 +421,7 @@ mod tests {
         executor.register_abi(contract_id, methods);
 
         let result = executor.execute_call(
-            call,
-            2,
-            "u64", // Wrong return type
+            call, 2, "u64", // Wrong return type
             "1.0.0",
         );
 
@@ -577,11 +554,7 @@ mod tests {
 
     #[test]
     fn test_call_result_error() {
-        let error = CrossContractError::validation_failed(
-            [1u8; 32],
-            "method".to_string(),
-            "test",
-        );
+        let error = CrossContractError::validation_failed([1u8; 32], "method".to_string(), "test");
         let result = CrossContractCallResult::Error { error };
 
         assert!(!result.is_success());
@@ -603,11 +576,7 @@ mod tests {
 
     #[test]
     fn test_call_result_into_result_error() {
-        let error = CrossContractError::validation_failed(
-            [1u8; 32],
-            "method".to_string(),
-            "test",
-        );
+        let error = CrossContractError::validation_failed([1u8; 32], "method".to_string(), "test");
         let result = CrossContractCallResult::Error {
             error: error.clone(),
         };
@@ -628,24 +597,14 @@ mod tests {
         executor.register_abi(contract_id, methods);
 
         // Execute first call
-        let result1 = executor.execute_call(
-            call.clone(),
-            2,
-            "bool",
-            "1.0.0",
-        );
+        let result1 = executor.execute_call(call.clone(), 2, "bool", "1.0.0");
         assert!(result1.is_ok());
 
         // Depth should be back to 0 after first call completes
         assert_eq!(executor.current_depth(), 0);
 
         // Execute second call
-        let result2 = executor.execute_call(
-            call,
-            2,
-            "bool",
-            "1.0.0",
-        );
+        let result2 = executor.execute_call(call, 2, "bool", "1.0.0");
         assert!(result2.is_ok());
 
         // Depth should still be 0

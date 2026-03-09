@@ -26,11 +26,11 @@
 //! - **Immutability**: Inputs never change, so ID never changes
 //! - **Collision resistance**: BLAKE3's cryptographic strength
 
-use std::collections::HashMap;
 use crate::contracts::root_registry::{DaoId, NameHash};
 use crate::integration::crypto_integration::PublicKey;
 use crate::types::dao::DAOType;
 use crate::types::sector::WelfareSectorId;
+use std::collections::HashMap;
 
 /// Type of approval verifier a DAO uses for welfare issuance (Issue #658)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +100,6 @@ pub struct DAOEntry {
     pub created_at: u64,
 
     // === Phase 3: Welfare Sector Support (Issue #658) ===
-
     /// Sector claim for welfare DAOs (if any)
     pub sector_claim: Option<SectorClaim>,
 
@@ -273,17 +272,12 @@ impl DAORegistry {
     /// Hard failure if token not registered (no silent None)
     pub fn get_dao(&self, token_addr: &PublicKey) -> Result<DAOEntry, String> {
         match self.token_to_dao.get(token_addr) {
-            Some(&dao_id) => {
-                self.entries
-                    .get(&dao_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!(
-                            "Internal inconsistency: token mapped to DAO ID {} but entry not found",
-                            hex::encode(&dao_id)
-                        )
-                    })
-            }
+            Some(&dao_id) => self.entries.get(&dao_id).cloned().ok_or_else(|| {
+                format!(
+                    "Internal inconsistency: token mapped to DAO ID {} but entry not found",
+                    hex::encode(&dao_id)
+                )
+            }),
             None => {
                 // CRITICAL: Do not derive or expose DAO IDs in error messages
                 // Prevents enumeration attacks where callers learn DAO IDs from errors
@@ -404,7 +398,8 @@ impl DAORegistry {
     ) -> Result<(), String> {
         // === VALIDATION PHASE ===
 
-        let entry = self.entries
+        let entry = self
+            .entries
             .get_mut(&dao_id)
             .ok_or_else(|| format!("DAO not found: {}", hex::encode(&dao_id)))?;
 
@@ -481,7 +476,8 @@ impl DAORegistry {
         caller: &PublicKey,
         block_height: u64,
     ) -> Result<(), String> {
-        let entry = self.entries
+        let entry = self
+            .entries
             .get_mut(&dao_id)
             .ok_or_else(|| format!("DAO not found: {}", hex::encode(&dao_id)))?;
 
@@ -521,11 +517,13 @@ impl DAORegistry {
         dao_id: [u8; 32],
         block_height: u64,
     ) -> Result<WelfareSectorId, String> {
-        let entry = self.entries
+        let entry = self
+            .entries
             .get_mut(&dao_id)
             .ok_or_else(|| format!("DAO not found: {}", hex::encode(&dao_id)))?;
 
-        let claim = entry.sector_claim
+        let claim = entry
+            .sector_claim
             .as_mut()
             .ok_or_else(|| "No sector claim found".to_string())?;
 
@@ -548,15 +546,14 @@ impl DAORegistry {
     /// - DAO not found
     /// - No pending claim
     /// - Claim not in pending status
-    pub fn reject_sector_claim(
-        &mut self,
-        dao_id: [u8; 32],
-    ) -> Result<(), String> {
-        let entry = self.entries
+    pub fn reject_sector_claim(&mut self, dao_id: [u8; 32]) -> Result<(), String> {
+        let entry = self
+            .entries
             .get_mut(&dao_id)
             .ok_or_else(|| format!("DAO not found: {}", hex::encode(&dao_id)))?;
 
-        let claim = entry.sector_claim
+        let claim = entry
+            .sector_claim
             .as_mut()
             .ok_or_else(|| "No sector claim found".to_string())?;
 
@@ -585,7 +582,8 @@ impl DAORegistry {
         verifier_type: ApprovalVerifierType,
         caller: &PublicKey,
     ) -> Result<(), String> {
-        let entry = self.entries
+        let entry = self
+            .entries
             .get_mut(&dao_id)
             .ok_or_else(|| format!("DAO not found: {}", hex::encode(&dao_id)))?;
 
@@ -600,7 +598,9 @@ impl DAORegistry {
 
     /// Get the sector claim for a DAO
     pub fn get_sector_claim(&self, dao_id: &[u8; 32]) -> Option<&SectorClaim> {
-        self.entries.get(dao_id).and_then(|e| e.sector_claim.as_ref())
+        self.entries
+            .get(dao_id)
+            .and_then(|e| e.sector_claim.as_ref())
     }
 
     /// Get all DAOs with ratified sector claims
@@ -665,11 +665,7 @@ impl Default for DAORegistry {
 /// Length-prefixes ensure:
 /// - ("ab", "c") ≠ ("a", "bc") in preimage space
 /// - No ambiguous concatenations
-pub fn derive_dao_id(
-    token_addr: &PublicKey,
-    class: DAOType,
-    treasury: &PublicKey,
-) -> [u8; 32] {
+pub fn derive_dao_id(token_addr: &PublicKey, class: DAOType, treasury: &PublicKey) -> [u8; 32] {
     let mut data = Vec::new();
 
     // Domain separation (versioned for future migrations V2, V3, etc.)
@@ -746,28 +742,26 @@ mod tests {
         let owner = test_public_key(3);
 
         // First registration succeeds
-        registry.register_dao(
-            token.clone(),
-            DAOType::NP,
-            treasury.clone(),
-            [1u8; 32],
-            owner.clone(),
-            100,
-        ).unwrap();
+        registry
+            .register_dao(
+                token.clone(),
+                DAOType::NP,
+                treasury.clone(),
+                [1u8; 32],
+                owner.clone(),
+                100,
+            )
+            .unwrap();
 
         // Second registration with same token fails
-        let result = registry.register_dao(
-            token,
-            DAOType::NP,
-            treasury,
-            [2u8; 32],
-            owner,
-            200,
-        );
+        let result = registry.register_dao(token, DAOType::NP, treasury, [2u8; 32], owner, 200);
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("already registered") || err_msg.contains("Token address already registered"));
+        assert!(
+            err_msg.contains("already registered")
+                || err_msg.contains("Token address already registered")
+        );
     }
 
     #[test]
@@ -818,24 +812,19 @@ mod tests {
         let owner = test_public_key(4);
 
         // Register with treasury1
-        registry.register_dao(
-            token.clone(),
-            DAOType::NP,
-            treasury1,
-            [1u8; 32],
-            owner.clone(),
-            100,
-        ).unwrap();
+        registry
+            .register_dao(
+                token.clone(),
+                DAOType::NP,
+                treasury1,
+                [1u8; 32],
+                owner.clone(),
+                100,
+            )
+            .unwrap();
 
         // Try to register same token with different treasury
-        let result = registry.register_dao(
-            token,
-            DAOType::NP,
-            treasury2,
-            [1u8; 32],
-            owner,
-            200,
-        );
+        let result = registry.register_dao(token, DAOType::NP, treasury2, [1u8; 32], owner, 200);
 
         assert!(result.is_err());
     }
@@ -853,7 +842,7 @@ mod tests {
             treasury,
             [1u8; 32],
             owner,
-            0,  // Genesis block
+            0, // Genesis block
         );
 
         assert!(result.is_ok());
@@ -873,14 +862,16 @@ mod tests {
         let owner = test_public_key(3);
 
         let metadata = [42u8; 32];
-        registry.register_dao(
-            token.clone(),
-            DAOType::NP,
-            treasury.clone(),
-            metadata,
-            owner.clone(),
-            100,
-        ).unwrap();
+        registry
+            .register_dao(
+                token.clone(),
+                DAOType::NP,
+                treasury.clone(),
+                metadata,
+                owner.clone(),
+                100,
+            )
+            .unwrap();
 
         let entry = registry.get_dao(&token).unwrap();
         assert_eq!(entry.owner, owner);
@@ -896,7 +887,9 @@ mod tests {
         let result = registry.get_dao(&unknown_token);
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("not registered") || err_msg.contains("Token address not registered"));
+        assert!(
+            err_msg.contains("not registered") || err_msg.contains("Token address not registered")
+        );
     }
 
     #[test]
@@ -909,14 +902,16 @@ mod tests {
             .map(|i| {
                 let token = test_public_key(i);
                 let treasury = test_public_key(i + 100);
-                registry.register_dao(
-                    token,
-                    DAOType::NP,
-                    treasury,
-                    [i as u8; 32],
-                    owner.clone(),
-                    100 + i as u64,
-                ).unwrap()
+                registry
+                    .register_dao(
+                        token,
+                        DAOType::NP,
+                        treasury,
+                        [i as u8; 32],
+                        owner.clone(),
+                        100 + i as u64,
+                    )
+                    .unwrap()
             })
             .collect();
 
@@ -941,14 +936,9 @@ mod tests {
         let owner = test_public_key(3);
         let other = test_public_key(4);
 
-        let dao_id = registry.register_dao(
-            token,
-            DAOType::NP,
-            treasury,
-            [1u8; 32],
-            owner.clone(),
-            100,
-        ).unwrap();
+        let dao_id = registry
+            .register_dao(token, DAOType::NP, treasury, [1u8; 32], owner.clone(), 100)
+            .unwrap();
 
         // Owner can update
         let result = registry.update_metadata(dao_id, [2u8; 32], &owner);
@@ -967,14 +957,16 @@ mod tests {
         let treasury = test_public_key(2);
         let owner = test_public_key(3);
 
-        let dao_id = registry.register_dao(
-            token.clone(),
-            DAOType::NP,
-            treasury.clone(),
-            [1u8; 32],
-            owner.clone(),
-            100,
-        ).unwrap();
+        let dao_id = registry
+            .register_dao(
+                token.clone(),
+                DAOType::NP,
+                treasury.clone(),
+                [1u8; 32],
+                owner.clone(),
+                100,
+            )
+            .unwrap();
 
         let before = registry.get_dao(&token).unwrap();
 
@@ -1002,14 +994,9 @@ mod tests {
         let owner = test_public_key(3);
         let hash = [42u8; 32];
 
-        let dao_id = registry.register_dao(
-            token,
-            DAOType::NP,
-            treasury,
-            hash,
-            owner.clone(),
-            100,
-        ).unwrap();
+        let dao_id = registry
+            .register_dao(token, DAOType::NP, treasury, hash, owner.clone(), 100)
+            .unwrap();
 
         let result = registry.update_metadata(dao_id, hash, &owner);
         assert!(result.is_err());
@@ -1027,17 +1014,13 @@ mod tests {
         let zero_treasury = PublicKey::new(vec![0u8; 1312]);
         let owner = test_public_key(3);
 
-        let result = registry.register_dao(
-            token,
-            DAOType::NP,
-            zero_treasury,
-            [1u8; 32],
-            owner,
-            100,
-        );
+        let result =
+            registry.register_dao(token, DAOType::NP, zero_treasury, [1u8; 32], owner, 100);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Treasury address cannot be zero"));
+        assert!(result
+            .unwrap_err()
+            .contains("Treasury address cannot be zero"));
     }
 
     #[test]
@@ -1047,14 +1030,8 @@ mod tests {
         let treasury = test_public_key(2);
         let owner = test_public_key(3);
 
-        let result = registry.register_dao(
-            zero_token,
-            DAOType::NP,
-            treasury,
-            [1u8; 32],
-            owner,
-            100,
-        );
+        let result =
+            registry.register_dao(zero_token, DAOType::NP, treasury, [1u8; 32], owner, 100);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Token address cannot be zero"));
@@ -1067,17 +1044,13 @@ mod tests {
         let treasury = test_public_key(2);
         let zero_owner = PublicKey::new(vec![0u8; 1312]);
 
-        let result = registry.register_dao(
-            token,
-            DAOType::NP,
-            treasury,
-            [1u8; 32],
-            zero_owner,
-            100,
-        );
+        let result =
+            registry.register_dao(token, DAOType::NP, treasury, [1u8; 32], zero_owner, 100);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Owner/caller address cannot be zero"));
+        assert!(result
+            .unwrap_err()
+            .contains("Owner/caller address cannot be zero"));
     }
 
     // ============================================================================
@@ -1165,7 +1138,7 @@ mod tests {
             token,
             DAOType::NP,
             treasury,
-            [0u8; 32],  // Zero metadata
+            [0u8; 32], // Zero metadata
             owner,
             100,
         );
@@ -1181,14 +1154,9 @@ mod tests {
         let treasury = test_public_key(2);
         let owner = test_public_key(3);
 
-        let dao_id = registry.register_dao(
-            token,
-            DAOType::NP,
-            treasury,
-            [1u8; 32],
-            owner.clone(),
-            100,
-        ).unwrap();
+        let dao_id = registry
+            .register_dao(token, DAOType::NP, treasury, [1u8; 32], owner.clone(), 100)
+            .unwrap();
 
         let result = registry.update_metadata(dao_id, [0u8; 32], &owner);
         assert!(result.is_err());
@@ -1209,14 +1177,16 @@ mod tests {
         for i in 1..=5 {
             let token = test_public_key(i);
             let treasury = test_public_key(i + 100);
-            registry.register_dao(
-                token,
-                if i % 2 == 0 { DAOType::NP } else { DAOType::FP },
-                treasury,
-                [i as u8; 32],
-                owner.clone(),
-                100,
-            ).unwrap();
+            registry
+                .register_dao(
+                    token,
+                    if i % 2 == 0 { DAOType::NP } else { DAOType::FP },
+                    treasury,
+                    [i as u8; 32],
+                    owner.clone(),
+                    100,
+                )
+                .unwrap();
         }
 
         assert_eq!(registry.dao_count(), 5);
@@ -1230,14 +1200,16 @@ mod tests {
         for i in 1..=6 {
             let token = test_public_key(i);
             let treasury = test_public_key(i + 100);
-            registry.register_dao(
-                token,
-                if i % 2 == 0 { DAOType::NP } else { DAOType::FP },
-                treasury,
-                [i as u8; 32],
-                owner.clone(),
-                100,
-            ).unwrap();
+            registry
+                .register_dao(
+                    token,
+                    if i % 2 == 0 { DAOType::NP } else { DAOType::FP },
+                    treasury,
+                    [i as u8; 32],
+                    owner.clone(),
+                    100,
+                )
+                .unwrap();
         }
 
         assert_eq!(registry.dao_count_by_class(DAOType::NP), 3);
@@ -1252,14 +1224,16 @@ mod tests {
         for i in 1..=4 {
             let token = test_public_key(i);
             let treasury = test_public_key(i + 100);
-            registry.register_dao(
-                token,
-                if i % 2 == 0 { DAOType::NP } else { DAOType::FP },
-                treasury,
-                [i as u8; 32],
-                owner.clone(),
-                100,
-            ).unwrap();
+            registry
+                .register_dao(
+                    token,
+                    if i % 2 == 0 { DAOType::NP } else { DAOType::FP },
+                    treasury,
+                    [i as u8; 32],
+                    owner.clone(),
+                    100,
+                )
+                .unwrap();
         }
 
         let np_daos = registry.get_daos_by_class(DAOType::NP);
@@ -1281,14 +1255,16 @@ mod tests {
         let owner = test_public_key(3);
         let metadata = [42u8; 32];
 
-        let dao_id = registry.register_dao(
-            token.clone(),
-            DAOType::NP,
-            treasury.clone(),
-            metadata,
-            owner.clone(),
-            100,
-        ).unwrap();
+        let dao_id = registry
+            .register_dao(
+                token.clone(),
+                DAOType::NP,
+                treasury.clone(),
+                metadata,
+                owner.clone(),
+                100,
+            )
+            .unwrap();
 
         // Should be able to look up by ID
         let entry = registry.get_dao_by_id(dao_id).unwrap();
@@ -1322,14 +1298,16 @@ mod tests {
         for i in 1..=5 {
             let token = test_public_key(i);
             let treasury = test_public_key(i + 100);
-            registry.register_dao(
-                token.clone(),
-                DAOType::NP,
-                treasury,
-                [i as u8; 32],
-                owner.clone(),
-                100 + i as u64,
-            ).unwrap();
+            registry
+                .register_dao(
+                    token.clone(),
+                    DAOType::NP,
+                    treasury,
+                    [i as u8; 32],
+                    owner.clone(),
+                    100 + i as u64,
+                )
+                .unwrap();
 
             // After each registration, verify consistency:
             // - token_to_dao should have an entry
@@ -1365,14 +1343,16 @@ mod tests {
         let owner1 = test_public_key(3);
         let owner2 = test_public_key(4);
 
-        let dao_id = registry.register_dao(
-            token.clone(),
-            DAOType::NP,
-            treasury,
-            [1u8; 32],
-            owner1.clone(),
-            100,
-        ).unwrap();
+        let dao_id = registry
+            .register_dao(
+                token.clone(),
+                DAOType::NP,
+                treasury,
+                [1u8; 32],
+                owner1.clone(),
+                100,
+            )
+            .unwrap();
 
         // Get initial owner
         let entry1 = registry.get_dao(&token).unwrap();
@@ -1398,14 +1378,16 @@ mod tests {
         let owner = test_public_key(3);
         let initial_metadata = [1u8; 32];
 
-        let dao_id = registry.register_dao(
-            token.clone(),
-            DAOType::NP,
-            treasury.clone(),
-            initial_metadata,
-            owner.clone(),
-            100,
-        ).unwrap();
+        let dao_id = registry
+            .register_dao(
+                token.clone(),
+                DAOType::NP,
+                treasury.clone(),
+                initial_metadata,
+                owner.clone(),
+                100,
+            )
+            .unwrap();
 
         // Get initial state
         let before = registry.get_dao(&token).unwrap();
@@ -1444,14 +1426,16 @@ mod tests {
         // Successful registration
         let token1 = test_public_key(1);
         let treasury1 = test_public_key(101);
-        registry.register_dao(
-            token1.clone(),
-            DAOType::NP,
-            treasury1,
-            [1u8; 32],
-            owner.clone(),
-            100,
-        ).unwrap();
+        registry
+            .register_dao(
+                token1.clone(),
+                DAOType::NP,
+                treasury1,
+                [1u8; 32],
+                owner.clone(),
+                100,
+            )
+            .unwrap();
 
         // Failed registration (token already registered)
         let token2 = test_public_key(1); // Same as token1

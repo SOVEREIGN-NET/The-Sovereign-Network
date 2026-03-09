@@ -1,26 +1,26 @@
 //! ZHTP Request Handlers
-//! 
+//!
 //! Core request handlers for all ZHTP methods (GET, POST, PUT, DELETE, etc.)
 //! with zero-knowledge proof validation, economic fee processing, and
 //! post-quantum cryptographic security.
 
 #![allow(dead_code)]
 
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
-use crate::zhtp::{ZhtpResult, ServerCapabilities};
+use crate::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use crate::zhtp::{ServerCapabilities, ZhtpResult};
 
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
-use anyhow::Result;
-use uuid::Uuid;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
 // Import ZK proof functionality from lib-proofs
 use lib_proofs::{
-    ZkProof, ZkTransactionProof, TransactionVerifier,
-    types::VerificationResult, initialize_zk_system
+    initialize_zk_system, types::VerificationResult, TransactionVerifier, ZkProof,
+    ZkTransactionProof,
 };
 
 /// Core ZHTP request handlers
@@ -268,14 +268,14 @@ impl ZhtpHandlers {
             stats: Arc::new(RwLock::new(HandlerStats::default())),
         }
     }
-    
+
     /// Handle incoming ZHTP request
     pub async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let start_time = SystemTime::now();
-        
+
         // Update statistics
         self.update_request_stats(&request).await;
-        
+
         // Check cache first
         if self.config.enable_caching {
             if let Some(cached_response) = self.get_cached_response(&request).await? {
@@ -284,7 +284,7 @@ impl ZhtpHandlers {
             }
             self.update_cache_stats(false).await;
         }
-        
+
         // Route request to appropriate handler
         let response = match &request.method {
             ZhtpMethod::Get => self.handle_get(request.clone()).await?,
@@ -298,22 +298,22 @@ impl ZhtpHandlers {
             ZhtpMethod::Connect => self.handle_connect(request.clone()).await?,
             ZhtpMethod::Trace => self.handle_trace(request.clone()).await?,
         };
-        
+
         // Cache successful responses
         if self.config.enable_caching && response.status == ZhtpStatus::Ok {
             self.cache_response(&request, &response).await?;
         }
-        
+
         // Update response time statistics
         self.update_response_time_stats(start_time).await;
-        
+
         Ok(response)
     }
-    
+
     /// Handle GET requests
     pub async fn handle_get(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("Handling GET request: {}", request.uri);
-        
+
         // API endpoints are now handled by zhtp orchestrator
         if request.uri.starts_with("/api/") {
             return Ok(ZhtpResponse::error(
@@ -321,56 +321,59 @@ impl ZhtpHandlers {
                 "API endpoints moved to zhtp orchestrator".to_string(),
             ));
         }
-        
+
         // Handle content retrieval
         if let Some(content_id) = self.extract_content_id(&request.uri) {
             return self.handle_content_get(&content_id, &request).await;
         }
-        
+
         // Handle server capabilities request
         if request.uri == "/capabilities" || request.uri == "/.well-known/zhtp" {
             return self.handle_capabilities_request().await;
         }
-        
+
         // Handle root request
         if request.uri == "/" {
             return self.handle_root_request().await;
         }
-        
+
         // Default 404 response
         Ok(ZhtpResponse::error(
             ZhtpStatus::NotFound,
             format!("Resource {} not found", request.uri),
         ))
     }
-    
+
     /// Handle POST requests
     pub async fn handle_post(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("Handling POST request: {}", request.uri);
-        
+
         // Validate request size
         if request.body.len() > self.config.max_content_size {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::PayloadTooLarge,
-                format!("Request body too large: {} bytes (max: {})", 
-                    request.body.len(), self.config.max_content_size),
+                format!(
+                    "Request body too large: {} bytes (max: {})",
+                    request.body.len(),
+                    self.config.max_content_size
+                ),
             ));
         }
-        
+
         // Validate economic requirements
         if self.config.enable_economic_validation {
             if let Some(response) = self.validate_economic_requirements(&request).await? {
                 return Ok(response);
             }
         }
-        
+
         // Validate zero-knowledge proofs
         if self.config.enable_zk_validation {
             if let Some(response) = self.validate_zk_proofs(&request).await? {
                 return Ok(response);
             }
         }
-        
+
         // API endpoints are now handled by zhtp orchestrator
         if request.uri.starts_with("/api/") {
             return Ok(ZhtpResponse::error(
@@ -378,28 +381,28 @@ impl ZhtpHandlers {
                 "API endpoints moved to zhtp orchestrator".to_string(),
             ));
         }
-        
+
         // Handle content upload
         if request.uri.starts_with("/content/upload") {
             return self.handle_content_upload(&request).await;
         }
-        
+
         // Handle content creation
         if request.uri.starts_with("/content/") {
             return self.handle_content_create(&request).await;
         }
-        
+
         // Default handling
         Ok(ZhtpResponse::error(
             ZhtpStatus::NotImplemented,
             format!("POST to {} not implemented", request.uri),
         ))
     }
-    
+
     /// Handle PUT requests
     pub async fn handle_put(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("Handling PUT request: {}", request.uri);
-        
+
         // Validate request size
         if request.body.len() > self.config.max_content_size {
             return Ok(ZhtpResponse::error(
@@ -407,7 +410,7 @@ impl ZhtpHandlers {
                 "Request body too large".to_string(),
             ));
         }
-        
+
         // API endpoints are now handled by zhtp orchestrator
         if request.uri.starts_with("/api/") {
             return Ok(ZhtpResponse::error(
@@ -415,22 +418,22 @@ impl ZhtpHandlers {
                 "API endpoints moved to zhtp orchestrator".to_string(),
             ));
         }
-        
+
         // Handle content update
         if let Some(content_id) = self.extract_content_id(&request.uri) {
             return self.handle_content_update(&content_id, &request).await;
         }
-        
+
         Ok(ZhtpResponse::error(
             ZhtpStatus::NotImplemented,
             format!("PUT to {} not implemented", request.uri),
         ))
     }
-    
+
     /// Handle PATCH requests
     pub async fn handle_patch(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("Handling PATCH request: {}", request.uri);
-        
+
         // API endpoints are now handled by zhtp orchestrator
         if request.uri.starts_with("/api/") {
             return Ok(ZhtpResponse::error(
@@ -438,22 +441,22 @@ impl ZhtpHandlers {
                 "API endpoints moved to zhtp orchestrator".to_string(),
             ));
         }
-        
+
         // Handle partial content updates
         if let Some(content_id) = self.extract_content_id(&request.uri) {
             return self.handle_content_patch(&content_id, &request).await;
         }
-        
+
         Ok(ZhtpResponse::error(
             ZhtpStatus::NotImplemented,
             format!("PATCH to {} not implemented", request.uri),
         ))
     }
-    
+
     /// Handle DELETE requests
     pub async fn handle_delete(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("Handling DELETE request: {}", request.uri);
-        
+
         // API endpoints are now handled by zhtp orchestrator
         if request.uri.starts_with("/api/") {
             return Ok(ZhtpResponse::error(
@@ -461,74 +464,93 @@ impl ZhtpHandlers {
                 "API endpoints moved to zhtp orchestrator".to_string(),
             ));
         }
-        
+
         // Handle content deletion
         if let Some(content_id) = self.extract_content_id(&request.uri) {
             return self.handle_content_delete(&content_id, &request).await;
         }
-        
+
         Ok(ZhtpResponse::error(
             ZhtpStatus::NotImplemented,
             format!("DELETE to {} not implemented", request.uri),
         ))
     }
-    
+
     /// Handle HEAD requests
     pub async fn handle_head(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("👀 Handling HEAD request: {}", request.uri);
-        
+
         // Get the full response first
         let mut full_response = self.handle_get(request).await?;
-        
+
         // Clear the body but keep headers
         full_response.body = Vec::new();
-        
+
         Ok(full_response)
     }
-    
+
     /// Handle OPTIONS requests
     pub async fn handle_options(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("Handling OPTIONS request: {}", request.uri);
-        
+
         let mut response = ZhtpResponse::success(Vec::new(), None);
-        
+
         // Add CORS headers
-        response.headers.set("Access-Control-Allow-Origin", "*".to_string());
-        response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, VERIFY".to_string());
-        response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Wallet-Address, X-User-ID, X-API-Key, X-ZK-Proof".to_string());
-        response.headers.set("Access-Control-Max-Age", "3600".to_string());
-        
+        response
+            .headers
+            .set("Access-Control-Allow-Origin", "*".to_string());
+        response.headers.set(
+            "Access-Control-Allow-Methods",
+            "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, VERIFY".to_string(),
+        );
+        response.headers.set(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, X-Wallet-Address, X-User-ID, X-API-Key, X-ZK-Proof"
+                .to_string(),
+        );
+        response
+            .headers
+            .set("Access-Control-Max-Age", "3600".to_string());
+
         // Add ZHTP-specific options
         response.headers.set("ZHTP-Version", "1.0".to_string());
-        response.headers.set("ZHTP-Features", "zk-proofs,post-quantum,dao-fees,ubi,mesh".to_string());
-        
+        response.headers.set(
+            "ZHTP-Features",
+            "zk-proofs,post-quantum,dao-fees,ubi,mesh".to_string(),
+        );
+
         Ok(response)
     }
-    
+
     /// Handle VERIFY requests (ZHTP-specific)
     pub async fn handle_verify(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("Handling VERIFY request: {}", request.uri);
-        
+
         // Extract verification data from request
-        let verification_type = request.headers.get("X-Verification-Type")
+        let verification_type = request
+            .headers
+            .get("X-Verification-Type")
             .unwrap_or_else(|| "general".to_string());
-        
+
         let verification_data = if !request.body.is_empty() {
             Some(request.body.clone())
         } else {
             None
         };
-        
+
         // Perform verification based on type
         let verification_result = match verification_type.as_str() {
             "zk-proof" => self.verify_zk_proof(verification_data).await?,
             "signature" => self.verify_signature(verification_data).await?,
-            "content" => self.verify_content_integrity(&request.uri, verification_data).await?,
+            "content" => {
+                self.verify_content_integrity(&request.uri, verification_data)
+                    .await?
+            }
             "identity" => self.verify_identity(verification_data).await?,
             "economic" => self.verify_economic_proof(verification_data).await?,
             _ => VerificationResult::Invalid("Unknown verification type".to_string()),
         };
-        
+
         let response_data = serde_json::json!({
             "verification_type": verification_type,
             "valid": verification_result.is_valid(),
@@ -539,15 +561,19 @@ impl ZhtpHandlers {
                 .unwrap_or_default()
                 .as_secs()
         });
-        
+
         Ok(ZhtpResponse::json(&response_data, None)?)
     }
-    
+
     // Content handling methods
-    
-    async fn handle_content_get(&self, content_id: &str, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+
+    async fn handle_content_get(
+        &self,
+        content_id: &str,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<ZhtpResponse> {
         let content_store = self.content_store.read().await;
-        
+
         if let Some(content) = content_store.get(content_id) {
             // Check access permissions
             if !self.check_content_access(content, request).await? {
@@ -556,7 +582,7 @@ impl ZhtpHandlers {
                     "Access denied to content".to_string(),
                 ));
             }
-            
+
             // Clone content data before dropping the lock
             let content_data = content.data.clone();
             let content_type = content.content_type.clone();
@@ -564,27 +590,31 @@ impl ZhtpHandlers {
             let content_size = content.metadata.size;
             let created_at = content.created_at;
             let filename = content.metadata.filename.clone();
-            
+
             // Update access statistics
             drop(content_store);
             self.update_content_access_stats(content_id).await;
-            
+
             // Return content with appropriate headers
-            let mut response = ZhtpResponse::success_with_content_type(
-                content_data,
-                content_type,
-                None,
-            );
-            
+            let mut response =
+                ZhtpResponse::success_with_content_type(content_data, content_type, None);
+
             // Add content metadata headers
             response.headers.set("Content-Hash", content_hash);
-            response.headers.set("Content-Size", content_size.to_string());
-            response.headers.set("Content-Created", created_at.to_string());
-            
+            response
+                .headers
+                .set("Content-Size", content_size.to_string());
+            response
+                .headers
+                .set("Content-Created", created_at.to_string());
+
             if let Some(filename) = &filename {
-                response.headers.set("Content-Disposition", format!("attachment; filename=\"{}\"", filename));
+                response.headers.set(
+                    "Content-Disposition",
+                    format!("attachment; filename=\"{}\"", filename),
+                );
             }
-            
+
             Ok(response)
         } else {
             Ok(ZhtpResponse::error(
@@ -593,18 +623,22 @@ impl ZhtpHandlers {
             ))
         }
     }
-    
+
     async fn handle_content_upload(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         // Generate content ID
         let content_id = Uuid::new_v4().to_string();
-        
+
         // Extract metadata from headers
-        let content_type = request.headers.get("Content-Type")
+        let content_type = request
+            .headers
+            .get("Content-Type")
             .unwrap_or_else(|| "application/octet-stream".to_string());
-        
-        let filename = request.headers.get("Content-Disposition")
+
+        let filename = request
+            .headers
+            .get("Content-Disposition")
             .and_then(|cd| self.extract_filename_from_disposition(&cd));
-        
+
         // Create content metadata
         let metadata = ContentMetadata {
             filename,
@@ -618,13 +652,13 @@ impl ZhtpHandlers {
             author: request.headers.get("Content-Author"),
             license: request.headers.get("Content-License"),
         };
-        
+
         // Calculate content hash
         let content_hash = self.calculate_content_hash(&request.body);
-        
+
         // Create access permissions
         let access_permissions = self.create_default_access_permissions(request).await;
-        
+
         // Create economic assessment for the content
         let economic_assessment = crate::types::EconomicAssessment {
             network_fee: 100,
@@ -637,7 +671,7 @@ impl ZhtpHandlers {
             estimated_time: 1,
             currency: crate::types::economic::TOKEN_NAME.to_string(),
         };
-        
+
         // Create economic data
         let economic_data = EconomicData {
             total_fees_collected: 0,
@@ -646,7 +680,7 @@ impl ZhtpHandlers {
             access_count: 0,
             revenue_distribution: HashMap::new(),
         };
-        
+
         // Create stored content
         let stored_content = StoredContent {
             id: content_id.clone(),
@@ -660,13 +694,19 @@ impl ZhtpHandlers {
                 .as_secs(),
             last_accessed: 0,
             content_hash: content_hash.clone(),
-            validity_proof: self.generate_validity_proof(&content_id, &content_hash, &economic_assessment).await.ok(),
+            validity_proof: self
+                .generate_validity_proof(&content_id, &content_hash, &economic_assessment)
+                .await
+                .ok(),
             economic_data,
         };
-        
+
         // Store content
-        self.content_store.write().await.insert(content_id.clone(), stored_content);
-        
+        self.content_store
+            .write()
+            .await
+            .insert(content_id.clone(), stored_content);
+
         // Create response
         let response_data = serde_json::json!({
             "content_id": content_id,
@@ -678,18 +718,22 @@ impl ZhtpHandlers {
                 .unwrap_or_default()
                 .as_secs()
         });
-        
+
         Ok(ZhtpResponse::json(&response_data, None)?)
     }
-    
+
     async fn handle_content_create(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         // Similar to upload but with different semantics
         self.handle_content_upload(request).await
     }
-    
-    async fn handle_content_update(&self, content_id: &str, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+
+    async fn handle_content_update(
+        &self,
+        content_id: &str,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<ZhtpResponse> {
         let mut content_store = self.content_store.write().await;
-        
+
         if let Some(content) = content_store.get_mut(content_id) {
             // Check access permissions
             if !self.check_content_write_access(content, request).await? {
@@ -698,7 +742,7 @@ impl ZhtpHandlers {
                     "Write access denied to content".to_string(),
                 ));
             }
-            
+
             // Update content
             content.data = request.body.clone();
             content.content_hash = self.calculate_content_hash(&request.body);
@@ -707,14 +751,14 @@ impl ZhtpHandlers {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            
+
             let response_data = serde_json::json!({
                 "content_id": content_id,
                 "status": "updated",
                 "size": request.body.len(),
                 "timestamp": content.last_accessed
             });
-            
+
             Ok(ZhtpResponse::json(&response_data, None)?)
         } else {
             Ok(ZhtpResponse::error(
@@ -723,16 +767,24 @@ impl ZhtpHandlers {
             ))
         }
     }
-    
-    async fn handle_content_patch(&self, content_id: &str, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+
+    async fn handle_content_patch(
+        &self,
+        content_id: &str,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<ZhtpResponse> {
         // Implement partial content updates
         // For now, delegate to full update
         self.handle_content_update(content_id, request).await
     }
-    
-    async fn handle_content_delete(&self, content_id: &str, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+
+    async fn handle_content_delete(
+        &self,
+        content_id: &str,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<ZhtpResponse> {
         let mut content_store = self.content_store.write().await;
-        
+
         if let Some(content) = content_store.get(content_id) {
             // Check access permissions
             if !self.check_content_write_access(content, request).await? {
@@ -741,9 +793,9 @@ impl ZhtpHandlers {
                     "Delete access denied to content".to_string(),
                 ));
             }
-            
+
             content_store.remove(content_id);
-            
+
             let response_data = serde_json::json!({
                 "content_id": content_id,
                 "status": "deleted",
@@ -752,7 +804,7 @@ impl ZhtpHandlers {
                     .unwrap_or_default()
                     .as_secs()
             });
-            
+
             Ok(ZhtpResponse::json(&response_data, None)?)
         } else {
             Ok(ZhtpResponse::error(
@@ -761,12 +813,12 @@ impl ZhtpHandlers {
             ))
         }
     }
-    
+
     async fn handle_capabilities_request(&self) -> ZhtpResult<ZhtpResponse> {
         let capabilities = ServerCapabilities::default();
         capabilities.to_response()
     }
-    
+
     async fn handle_root_request(&self) -> ZhtpResult<ZhtpResponse> {
         let root_info = serde_json::json!({
             "protocol": "ZHTP",
@@ -775,7 +827,7 @@ impl ZhtpHandlers {
             "message": "Welcome to the Zero Knowledge Hypertext Transfer Protocol",
             "features": [
                 "Zero-knowledge proofs",
-                "Post-quantum cryptography", 
+                "Post-quantum cryptography",
                 "Economic incentives",
                 "DAO governance",
                 "UBI integration",
@@ -793,30 +845,27 @@ impl ZhtpHandlers {
                 .unwrap_or_default()
                 .as_secs()
         });
-        
+
         Ok(ZhtpResponse::json(&root_info, None)?)
     }
-    
+
     // Helper methods
-    
+
     fn extract_content_id(&self, uri: &str) -> Option<String> {
-        if let Some(captures) = regex::Regex::new(r"/content/([^/?]+)")
-            .ok()?
-            .captures(uri) 
-        {
+        if let Some(captures) = regex::Regex::new(r"/content/([^/?]+)").ok()?.captures(uri) {
             captures.get(1).map(|m| m.as_str().to_string())
         } else {
             None
         }
     }
-    
+
     fn calculate_content_hash(&self, data: &[u8]) -> String {
         use sha3::{Digest, Sha3_256};
         let mut hasher = Sha3_256::new();
         hasher.update(data);
         format!("sha3-256:{}", hex::encode(hasher.finalize()))
     }
-    
+
     fn extract_filename_from_disposition(&self, disposition: &str) -> Option<String> {
         // Simple filename extraction from Content-Disposition header
         if let Some(start) = disposition.find("filename=\"") {
@@ -827,16 +876,20 @@ impl ZhtpHandlers {
         }
         None
     }
-    
+
     async fn extract_tags_from_headers(&self, request: &ZhtpRequest) -> Vec<String> {
-        request.headers.get("Content-Tags")
+        request
+            .headers
+            .get("Content-Tags")
             .map(|tags| tags.split(',').map(|tag| tag.trim().to_string()).collect())
             .unwrap_or_default()
     }
-    
+
     async fn create_default_access_permissions(&self, request: &ZhtpRequest) -> AccessPermissions {
         AccessPermissions {
-            public_read: request.headers.get("Content-Public-Read")
+            public_read: request
+                .headers
+                .get("Content-Public-Read")
                 .map(|v| v == "true")
                 .unwrap_or(false),
             public_write: false, // Default to private write
@@ -848,48 +901,59 @@ impl ZhtpHandlers {
             economic_requirements: None,
         }
     }
-    
-    async fn check_content_access(&self, content: &StoredContent, request: &ZhtpRequest) -> ZhtpResult<bool> {
+
+    async fn check_content_access(
+        &self,
+        content: &StoredContent,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<bool> {
         // Simplified access check
         if content.access_permissions.public_read {
             return Ok(true);
         }
-        
+
         // Check if user is in allowed list
         if let Some(user_id) = request.headers.get("X-User-ID") {
             if content.access_permissions.allowed_users.contains(&user_id) {
                 return Ok(true);
             }
         }
-        
+
         // More complex access checks would go here
         Ok(false)
     }
-    
-    async fn check_content_write_access(&self, content: &StoredContent, request: &ZhtpRequest) -> ZhtpResult<bool> {
+
+    async fn check_content_write_access(
+        &self,
+        content: &StoredContent,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<bool> {
         // Simplified write access check
         if content.access_permissions.public_write {
             return Ok(true);
         }
-        
+
         // Check if user is in allowed list
         if let Some(user_id) = request.headers.get("X-User-ID") {
             if content.access_permissions.allowed_users.contains(&user_id) {
                 return Ok(true);
             }
         }
-        
+
         Ok(false)
     }
-    
+
     // Statistics and caching methods
-    
+
     async fn update_request_stats(&self, request: &ZhtpRequest) {
         let mut stats = self.stats.write().await;
         stats.total_requests += 1;
-        *stats.method_stats.entry(request.method.clone()).or_insert(0) += 1;
+        *stats
+            .method_stats
+            .entry(request.method.clone())
+            .or_insert(0) += 1;
     }
-    
+
     async fn update_cache_stats(&self, hit: bool) {
         let mut stats = self.stats.write().await;
         if hit {
@@ -897,25 +961,26 @@ impl ZhtpHandlers {
         } else {
             stats.cache_stats.misses += 1;
         }
-        
+
         let total = stats.cache_stats.hits + stats.cache_stats.misses;
         if total > 0 {
             stats.cache_stats.hit_ratio = stats.cache_stats.hits as f64 / total as f64;
         }
     }
-    
+
     async fn update_response_time_stats(&self, start_time: SystemTime) {
         if let Ok(duration) = start_time.elapsed() {
             let duration_ms = duration.as_millis() as u64;
             let mut stats = self.stats.write().await;
-            
+
             // Update average
             let current_avg = stats.response_times.avg_response_time_ms;
-            stats.response_times.avg_response_time_ms = 
-                (current_avg + duration_ms as f64) / 2.0;
-            
+            stats.response_times.avg_response_time_ms = (current_avg + duration_ms as f64) / 2.0;
+
             // Update min/max
-            if stats.response_times.min_response_time_ms == 0 || duration_ms < stats.response_times.min_response_time_ms {
+            if stats.response_times.min_response_time_ms == 0
+                || duration_ms < stats.response_times.min_response_time_ms
+            {
                 stats.response_times.min_response_time_ms = duration_ms;
             }
             if duration_ms > stats.response_times.max_response_time_ms {
@@ -923,7 +988,7 @@ impl ZhtpHandlers {
             }
         }
     }
-    
+
     async fn update_content_access_stats(&self, content_id: &str) {
         if let Some(content) = self.content_store.write().await.get_mut(content_id) {
             content.economic_data.access_count += 1;
@@ -933,26 +998,30 @@ impl ZhtpHandlers {
                 .as_secs();
         }
     }
-    
+
     async fn get_cached_response(&self, request: &ZhtpRequest) -> ZhtpResult<Option<ZhtpResponse>> {
         let cache_key = format!("{}:{}", request.method.as_str(), request.uri);
         let cache = self.request_cache.read().await;
-        
+
         if let Some(cached) = cache.get(&cache_key) {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            
+
             if now < cached.cached_at + cached.ttl {
                 return Ok(Some(cached.response.clone()));
             }
         }
-        
+
         Ok(None)
     }
-    
-    async fn cache_response(&self, request: &ZhtpRequest, response: &ZhtpResponse) -> ZhtpResult<()> {
+
+    async fn cache_response(
+        &self,
+        request: &ZhtpRequest,
+        response: &ZhtpResponse,
+    ) -> ZhtpResult<()> {
         let cache_key = format!("{}:{}", request.method.as_str(), request.uri);
         let cached_response = CachedResponse {
             response: response.clone(),
@@ -963,14 +1032,20 @@ impl ZhtpHandlers {
             ttl: self.config.cache_ttl,
             access_count: 0,
         };
-        
-        self.request_cache.write().await.insert(cache_key, cached_response);
+
+        self.request_cache
+            .write()
+            .await
+            .insert(cache_key, cached_response);
         Ok(())
     }
-    
+
     // Validation methods
-    
-    async fn validate_economic_requirements(&self, request: &ZhtpRequest) -> ZhtpResult<Option<ZhtpResponse>> {
+
+    async fn validate_economic_requirements(
+        &self,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<Option<ZhtpResponse>> {
         // Use centralized validation logic directly
         if request.headers.get("X-DAO-Fee").is_none() {
             return Ok(Some(ZhtpResponse::error(
@@ -978,18 +1053,25 @@ impl ZhtpHandlers {
                 "DAO fee required for this operation".to_string(),
             )));
         }
-        
+
         // Validate DAO fee amount
         if let Some(dao_fee) = request.headers.get("X-DAO-Fee") {
             if let Ok(fee_amount) = dao_fee.parse::<f64>() {
                 // Calculate minimum required fee using centralized logic
-                let request_value = crate::economics::utils::calculate_request_value(&request.method, &request.body, &request.uri);
+                let request_value = crate::economics::utils::calculate_request_value(
+                    &request.method,
+                    &request.body,
+                    &request.uri,
+                );
                 let min_fee = (request_value as f64 * 0.02).max(5.0); // 2% DAO fee, minimum 5 tokens
-                
+
                 if fee_amount < min_fee {
                     return Ok(Some(ZhtpResponse::error(
                         ZhtpStatus::PaymentRequired,
-                        format!("Insufficient DAO fee: {} required, {} provided", min_fee, fee_amount),
+                        format!(
+                            "Insufficient DAO fee: {} required, {} provided",
+                            min_fee, fee_amount
+                        ),
                     )));
                 }
             } else {
@@ -999,12 +1081,17 @@ impl ZhtpHandlers {
                 )));
             }
         }
-        
+
         Ok(None)
     }
 
     /// Validate fee payment proof
-    async fn validate_fee_proof(&self, fee_amount: f64, fee_proof: &str, request: &ZhtpRequest) -> ZhtpResult<()> {
+    async fn validate_fee_proof(
+        &self,
+        fee_amount: f64,
+        fee_proof: &str,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<()> {
         // Decode hex proof
         let proof_bytes = hex::decode(fee_proof)
             .map_err(|_| anyhow::anyhow!("Fee proof must be valid hexadecimal"))?;
@@ -1037,7 +1124,7 @@ impl ZhtpHandlers {
         // Verify signature (simplified)
         let payment_hash = self.calculate_content_hash(&payment_data);
         let signature_hash = self.calculate_content_hash(signature);
-        
+
         // Check signature validity (basic correlation check)
         if payment_hash[..8] != signature_hash[..8] {
             return Err(anyhow::anyhow!("Fee payment signature verification failed"));
@@ -1045,7 +1132,7 @@ impl ZhtpHandlers {
 
         Ok(())
     }
-    
+
     async fn validate_zk_proofs(&self, request: &ZhtpRequest) -> ZhtpResult<Option<ZhtpResponse>> {
         // In test mode, allow simplified ZK proof validation
         if self.config.test_mode {
@@ -1057,7 +1144,8 @@ impl ZhtpHandlers {
                 } else {
                     return Ok(Some(ZhtpResponse::error(
                         ZhtpStatus::BadRequest,
-                        "ZK proof too short (test mode requires at least 32 characters)".to_string(),
+                        "ZK proof too short (test mode requires at least 32 characters)"
+                            .to_string(),
                     )));
                 }
             } else {
@@ -1077,14 +1165,18 @@ impl ZhtpHandlers {
                 match serde_json::from_str::<ZkProof>(&zk_proof_header) {
                     Ok(zk_proof) => {
                         // Use lib-proofs verification system
-                        return match self.verify_zk_proof_with_lib_proofs(&zk_proof, request).await {
+                        return match self
+                            .verify_zk_proof_with_lib_proofs(&zk_proof, request)
+                            .await
+                        {
                             Ok(verification_result) if verification_result.is_valid() => {
                                 tracing::debug!("ZK proof verified successfully with lib-proofs");
                                 self.update_zk_verification_stats().await;
                                 Ok(None) // Proof valid, continue processing
                             }
                             Ok(verification_result) => {
-                                let error_msg = verification_result.error_message()
+                                let error_msg = verification_result
+                                    .error_message()
                                     .unwrap_or("ZK proof verification failed");
                                 Ok(Some(ZhtpResponse::error(
                                     ZhtpStatus::Forbidden,
@@ -1102,8 +1194,9 @@ impl ZhtpHandlers {
                     }
                     Err(_) => {
                         // Not valid JSON, try hex decoding
-                        hex::decode(zk_proof_header)
-                            .map_err(|_| anyhow::anyhow!("ZK proof must be valid JSON or hexadecimal"))?
+                        hex::decode(zk_proof_header).map_err(|_| {
+                            anyhow::anyhow!("ZK proof must be valid JSON or hexadecimal")
+                        })?
                     }
                 }
             } else {
@@ -1111,7 +1204,7 @@ impl ZhtpHandlers {
                 hex::decode(zk_proof_header)
                     .map_err(|_| anyhow::anyhow!("ZK proof must be valid hexadecimal"))?
             };
-            
+
             if proof_bytes.len() < 96 {
                 return Ok(Some(ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
@@ -1151,14 +1244,13 @@ impl ZhtpHandlers {
                     format!("ZK proof freshness validation failed: {}", e),
                 )));
             }
-
         } else {
             return Ok(Some(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
                 "ZK proof required for this operation".to_string(),
             )));
         }
-        
+
         Ok(None)
     }
 
@@ -1166,51 +1258,52 @@ impl ZhtpHandlers {
     fn generate_zk_public_inputs(&self, request: &ZhtpRequest) -> Vec<u8> {
         use sha3::{Digest, Sha3_256};
         let mut hasher = Sha3_256::new();
-        
+
         // Include request method
         hasher.update(request.method.as_str().as_bytes());
-        
+
         // Include request URI
         hasher.update(request.uri.as_bytes());
-        
+
         // Include timestamp
         hasher.update(&request.timestamp.to_be_bytes());
-        
+
         // Include requester if available
         if let Some(requester) = &request.requester {
             hasher.update(&requester.0);
         }
-        
+
         // Include content hash if body present
         if !request.body.is_empty() {
             let content_hash = self.calculate_content_hash(&request.body);
             hasher.update(&content_hash);
         }
-        
+
         hasher.finalize().to_vec()
     }
 
     /// Validate ZK proof freshness
     async fn validate_zk_proof_freshness(&self, request: &ZhtpRequest) -> ZhtpResult<()> {
         if let Some(timestamp_str) = request.headers.get("X-ZK-Proof-Timestamp") {
-            let proof_timestamp: u64 = timestamp_str.parse()
+            let proof_timestamp: u64 = timestamp_str
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid ZK proof timestamp"))?;
-            
+
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            
+
             // Proof should be recent (within 5 minutes)
             if current_time.saturating_sub(proof_timestamp) > 300 {
                 return Err(anyhow::anyhow!("ZK proof is too old"));
             }
-            
+
             if proof_timestamp > current_time + 60 {
                 return Err(anyhow::anyhow!("ZK proof timestamp from future"));
             }
         }
-        
+
         Ok(())
     }
 
@@ -1219,9 +1312,9 @@ impl ZhtpHandlers {
         // This would update server statistics for ZK proof verification
         tracing::debug!("Updated ZK verification statistics");
     }
-    
+
     // Verification methods
-    
+
     async fn verify_zk_proof(&self, _data: Option<Vec<u8>>) -> ZhtpResult<VerificationResult> {
         // Simplified ZK proof verification
         Ok(VerificationResult::Valid {
@@ -1230,7 +1323,7 @@ impl ZhtpHandlers {
             public_inputs: vec![],
         })
     }
-    
+
     async fn verify_signature(&self, _data: Option<Vec<u8>>) -> ZhtpResult<VerificationResult> {
         // Simplified signature verification
         Ok(VerificationResult::Valid {
@@ -1239,8 +1332,12 @@ impl ZhtpHandlers {
             public_inputs: vec![],
         })
     }
-    
-    async fn verify_content_integrity(&self, _uri: &str, _data: Option<Vec<u8>>) -> ZhtpResult<VerificationResult> {
+
+    async fn verify_content_integrity(
+        &self,
+        _uri: &str,
+        _data: Option<Vec<u8>>,
+    ) -> ZhtpResult<VerificationResult> {
         // Simplified content integrity verification
         Ok(VerificationResult::Valid {
             circuit_id: "content_integrity".to_string(),
@@ -1248,7 +1345,7 @@ impl ZhtpHandlers {
             public_inputs: vec![],
         })
     }
-    
+
     async fn verify_identity(&self, _data: Option<Vec<u8>>) -> ZhtpResult<VerificationResult> {
         // Simplified identity verification
         Ok(VerificationResult::Valid {
@@ -1257,8 +1354,11 @@ impl ZhtpHandlers {
             public_inputs: vec![],
         })
     }
-    
-    async fn verify_economic_proof(&self, _data: Option<Vec<u8>>) -> ZhtpResult<VerificationResult> {
+
+    async fn verify_economic_proof(
+        &self,
+        _data: Option<Vec<u8>>,
+    ) -> ZhtpResult<VerificationResult> {
         // Simplified economic proof verification
         Ok(VerificationResult::Valid {
             circuit_id: "economic_proof".to_string(),
@@ -1266,17 +1366,17 @@ impl ZhtpHandlers {
             public_inputs: vec![],
         })
     }
-    
+
     /// Get handler statistics
     pub async fn get_stats(&self) -> HandlerStats {
         self.stats.read().await.clone()
     }
-    
+
     /// Get content store size
     pub async fn get_content_store_size(&self) -> usize {
         self.content_store.read().await.len()
     }
-    
+
     /// Clear request cache
     pub async fn clear_cache(&self) {
         self.request_cache.write().await.clear();
@@ -1285,12 +1385,12 @@ impl ZhtpHandlers {
     /// Handle CONNECT requests - establish persistent connection
     pub async fn handle_connect(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("Handling CONNECT request: {}", request.uri);
-        
+
         // CONNECT method is used to establish a persistent connection to a server
         // For ZHTP, this could be used for mesh node connections or WebSocket upgrades
-        
+
         let target = request.uri.strip_prefix('/').unwrap_or(&request.uri);
-        
+
         let response_data = serde_json::json!({
             "method": "CONNECT",
             "target": target,
@@ -1304,19 +1404,23 @@ impl ZhtpHandlers {
         });
 
         let mut response = ZhtpResponse::json(&response_data, None)?;
-        response.headers.set("Connection", "Established".to_string());
-        response.headers.set("ZHTP-Connection-Type", "Mesh".to_string());
-        
+        response
+            .headers
+            .set("Connection", "Established".to_string());
+        response
+            .headers
+            .set("ZHTP-Connection-Type", "Mesh".to_string());
+
         Ok(response)
     }
 
     /// Handle TRACE requests - debug routing and mesh network
     pub async fn handle_trace(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("Handling TRACE request: {}", request.uri);
-        
+
         // TRACE method returns diagnostic information about the request path
         // For ZHTP, this includes mesh routing information and node capabilities
-        
+
         let trace_data = serde_json::json!({
             "method": "TRACE",
             "original_uri": request.uri,
@@ -1334,7 +1438,7 @@ impl ZhtpHandlers {
                     "capabilities": ["routing", "validation"]
                 },
                 {
-                    "node_id": "target_node", 
+                    "node_id": "target_node",
                     "hop": 2,
                     "latency_ms": 12,
                     "capabilities": ["content_serving", "zk_validation"]
@@ -1354,9 +1458,13 @@ impl ZhtpHandlers {
         });
 
         let mut response = ZhtpResponse::json(&trace_data, None)?;
-        response.headers.set("Content-Type", "application/json".to_string());
-        response.headers.set("ZHTP-Trace-Version", "1.0".to_string());
-        
+        response
+            .headers
+            .set("Content-Type", "application/json".to_string());
+        response
+            .headers
+            .set("ZHTP-Trace-Version", "1.0".to_string());
+
         Ok(response)
     }
 }
@@ -1365,7 +1473,7 @@ impl Default for HandlerConfig {
     fn default() -> Self {
         Self {
             enable_caching: true,
-            cache_ttl: 3600, // 1 hour
+            cache_ttl: 3600,                    // 1 hour
             max_content_size: 16 * 1024 * 1024, // 16MB
             enable_compression: true,
             compression_threshold: 1024, // 1KB
@@ -1385,7 +1493,10 @@ pub async fn handle_get(request: ZhtpRequest, handlers: &ZhtpHandlers) -> ZhtpRe
 }
 
 /// Handle POST request
-pub async fn handle_post(request: ZhtpRequest, handlers: &ZhtpHandlers) -> ZhtpResult<ZhtpResponse> {
+pub async fn handle_post(
+    request: ZhtpRequest,
+    handlers: &ZhtpHandlers,
+) -> ZhtpResult<ZhtpResponse> {
     handlers.handle_post(request).await
 }
 
@@ -1395,38 +1506,60 @@ pub async fn handle_put(request: ZhtpRequest, handlers: &ZhtpHandlers) -> ZhtpRe
 }
 
 /// Handle DELETE request
-pub async fn handle_delete(request: ZhtpRequest, handlers: &ZhtpHandlers) -> ZhtpResult<ZhtpResponse> {
+pub async fn handle_delete(
+    request: ZhtpRequest,
+    handlers: &ZhtpHandlers,
+) -> ZhtpResult<ZhtpResponse> {
     handlers.handle_delete(request).await
 }
 
 /// Handle HEAD request
-pub async fn handle_head(request: ZhtpRequest, handlers: &ZhtpHandlers) -> ZhtpResult<ZhtpResponse> {
+pub async fn handle_head(
+    request: ZhtpRequest,
+    handlers: &ZhtpHandlers,
+) -> ZhtpResult<ZhtpResponse> {
     handlers.handle_head(request).await
 }
 
 /// Handle OPTIONS request
-pub async fn handle_options(request: ZhtpRequest, handlers: &ZhtpHandlers) -> ZhtpResult<ZhtpResponse> {
+pub async fn handle_options(
+    request: ZhtpRequest,
+    handlers: &ZhtpHandlers,
+) -> ZhtpResult<ZhtpResponse> {
     handlers.handle_options(request).await
 }
 
 /// Handle VERIFY request
-pub async fn handle_verify(request: ZhtpRequest, handlers: &ZhtpHandlers) -> ZhtpResult<ZhtpResponse> {
+pub async fn handle_verify(
+    request: ZhtpRequest,
+    handlers: &ZhtpHandlers,
+) -> ZhtpResult<ZhtpResponse> {
     handlers.handle_verify(request).await
 }
 
 /// Handle CONNECT request
-pub async fn handle_connect(request: ZhtpRequest, handlers: &ZhtpHandlers) -> ZhtpResult<ZhtpResponse> {
+pub async fn handle_connect(
+    request: ZhtpRequest,
+    handlers: &ZhtpHandlers,
+) -> ZhtpResult<ZhtpResponse> {
     handlers.handle_connect(request).await
 }
 
 /// Handle TRACE request
-pub async fn handle_trace(request: ZhtpRequest, handlers: &ZhtpHandlers) -> ZhtpResult<ZhtpResponse> {
+pub async fn handle_trace(
+    request: ZhtpRequest,
+    handlers: &ZhtpHandlers,
+) -> ZhtpResult<ZhtpResponse> {
     handlers.handle_trace(request).await
 }
 
 impl ZhtpHandlers {
     /// Verify ZK proof using lib-proofs package
-    async fn verify_zk_proof_with_lib_proofs(&self, zk_proof: &ZkProof, request: &ZhtpRequest) -> Result<VerificationResult> {
+    async fn verify_zk_proof_with_lib_proofs(
+        &self,
+        zk_proof: &ZkProof,
+        request: &ZhtpRequest,
+    ) -> Result<VerificationResult> {
         // Initialize ZK system from lib-proofs
         let zk_system = initialize_zk_system()
             .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {}", e))?;
@@ -1439,12 +1572,16 @@ impl ZhtpHandlers {
                         VerificationResult::Valid {
                             circuit_id: "plonky2_transaction".to_string(),
                             verification_time_ms: 50,
-                            public_inputs: zk_proof.public_inputs.iter().map(|&b| b as u64).collect(),
+                            public_inputs: zk_proof
+                                .public_inputs
+                                .iter()
+                                .map(|&b| b as u64)
+                                .collect(),
                         }
                     } else {
                         VerificationResult::Invalid("Plonky2 verification failed".to_string())
                     });
-                },
+                }
                 Err(e) => {
                     tracing::debug!("Plonky2 verification failed: {}", e);
                     // Fall through to other verification methods
@@ -1460,12 +1597,16 @@ impl ZhtpHandlers {
                         VerificationResult::Valid {
                             circuit_id: "transaction_verifier".to_string(),
                             verification_time_ms: 30,
-                            public_inputs: zk_proof.public_inputs.iter().map(|&b| b as u64).collect(),
+                            public_inputs: zk_proof
+                                .public_inputs
+                                .iter()
+                                .map(|&b| b as u64)
+                                .collect(),
                         }
                     } else {
                         VerificationResult::Invalid("Transaction verification failed".to_string())
                     });
-                },
+                }
                 Err(e) => {
                     tracing::debug!("Transaction proof verification failed: {}", e);
                     // Fall through to basic verification
@@ -1477,14 +1618,17 @@ impl ZhtpHandlers {
         if let Ok(_verifier) = TransactionVerifier::new() {
             // Create a simple transaction proof from the request data
             let public_inputs = self.generate_zk_public_inputs(request);
-            
+
             // For now, basic validation of the proof structure
             if !zk_proof.proof_data.is_empty() && !zk_proof.public_inputs.is_empty() {
                 // Check if proof contains commitment to request data
                 let contains_commitment = zk_proof.public_inputs.windows(32).any(|window| {
-                    window.iter().zip(public_inputs.iter())
+                    window
+                        .iter()
+                        .zip(public_inputs.iter())
                         .filter(|(a, b)| a == b)
-                        .count() >= 8 // At least 1/4 of the hash should match
+                        .count()
+                        >= 8 // At least 1/4 of the hash should match
                 });
 
                 return Ok(if contains_commitment {
@@ -1500,7 +1644,8 @@ impl ZhtpHandlers {
         }
 
         // Fallback to basic structural validation
-        let is_structurally_valid = !zk_proof.proof_data.is_empty() && zk_proof.proof_data.len() >= 96;
+        let is_structurally_valid =
+            !zk_proof.proof_data.is_empty() && zk_proof.proof_data.len() >= 96;
         Ok(if is_structurally_valid {
             VerificationResult::Valid {
                 circuit_id: "structural_validation".to_string(),
@@ -1520,7 +1665,7 @@ impl ZhtpHandlers {
         economic_data: &crate::types::EconomicAssessment,
     ) -> Result<ZkContentProof> {
         use lib_crypto::hash_blake3;
-        
+
         // Create proof context with content metadata
         let proof_context = serde_json::json!({
             "content_id": content_id,
@@ -1533,43 +1678,59 @@ impl ZhtpHandlers {
             },
             "server_id": "lib-server-v1.0"
         });
-        
+
         let context_bytes = proof_context.to_string().into_bytes();
-        
+
         // Try to use lib-proofs for proof generation
         if let Ok(_zk_system) = initialize_zk_system() {
             // Generate a simple validity proof using lib-proofs
             // Create some dummy transaction parameters for content validity proof
-            let content_hash_bytes: [u8; 32] = hash_blake3(content_hash.as_bytes()).try_into().unwrap_or([0u8; 32]);
-            let sender_blinding: [u8; 32] = hash_blake3(&context_bytes).try_into().unwrap_or([0u8; 32]);
-            let receiver_blinding: [u8; 32] = hash_blake3(&[content_hash.as_bytes(), &context_bytes].concat()).try_into().unwrap_or([0u8; 32]);
-            
+            let content_hash_bytes: [u8; 32] = hash_blake3(content_hash.as_bytes())
+                .try_into()
+                .unwrap_or([0u8; 32]);
+            let sender_blinding: [u8; 32] =
+                hash_blake3(&context_bytes).try_into().unwrap_or([0u8; 32]);
+            let receiver_blinding: [u8; 32] =
+                hash_blake3(&[content_hash.as_bytes(), &context_bytes].concat())
+                    .try_into()
+                    .unwrap_or([0u8; 32]);
+
             match ZkTransactionProof::prove_transaction(
-                1000, // sender_balance
-                0,    // receiver_balance  
-                1,    // amount (1 unit for content validity)
+                1000,                           // sender_balance
+                0,                              // receiver_balance
+                1,                              // amount (1 unit for content validity)
                 economic_data.total_fee as u64, // fee
                 sender_blinding,
-                    receiver_blinding,
-                    content_hash_bytes
-                ) {
-                    Ok(proof) => {
-                        tracing::debug!("Generated ZK validity proof for content {}", content_id);
-                        let proof_bytes = serde_json::to_vec(&proof).map_err(|e| anyhow::anyhow!("Proof serialization failed: {}", e))?;
-                        return Ok(ZkContentProof {
-                            proof: proof_bytes,
-                            verification_key: vec![0u8; 32], // Placeholder verification key
-                            public_inputs: vec![content_id.to_string(), content_hash.to_string()],
-                            created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
-                            expires_at: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() + 86400), // 24 hours
-                        });
-                    }
-                    Err(e) => {
-                        tracing::debug!("ZK proof generation failed: {}, using fallback", e);
-                    }
+                receiver_blinding,
+                content_hash_bytes,
+            ) {
+                Ok(proof) => {
+                    tracing::debug!("Generated ZK validity proof for content {}", content_id);
+                    let proof_bytes = serde_json::to_vec(&proof)
+                        .map_err(|e| anyhow::anyhow!("Proof serialization failed: {}", e))?;
+                    return Ok(ZkContentProof {
+                        proof: proof_bytes,
+                        verification_key: vec![0u8; 32], // Placeholder verification key
+                        public_inputs: vec![content_id.to_string(), content_hash.to_string()],
+                        created_at: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        expires_at: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs()
+                                + 86400,
+                        ), // 24 hours
+                    });
                 }
+                Err(e) => {
+                    tracing::debug!("ZK proof generation failed: {}, using fallback", e);
+                }
+            }
         }
-        
+
         // Fallback: Generate a structured proof-like format
         let fallback_proof = serde_json::json!({
             "proof_type": "content_validity",
@@ -1585,15 +1746,25 @@ impl ZhtpHandlers {
                 "proof_hash": hex::encode(hash_blake3(&economic_data.total_fee.to_le_bytes()))
             }
         });
-        
-        let fallback_proof_bytes = serde_json::to_vec(&fallback_proof).map_err(|e| anyhow::anyhow!("Fallback proof serialization failed: {}", e))?;
-        
+
+        let fallback_proof_bytes = serde_json::to_vec(&fallback_proof)
+            .map_err(|e| anyhow::anyhow!("Fallback proof serialization failed: {}", e))?;
+
         Ok(ZkContentProof {
             proof: fallback_proof_bytes,
             verification_key: hash_blake3(&context_bytes).to_vec(),
             public_inputs: vec![content_id.to_string(), content_hash.to_string()],
-            created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
-            expires_at: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() + 86400),
+            created_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            expires_at: Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+                    + 86400,
+            ),
         })
     }
 }
@@ -1624,27 +1795,31 @@ mod tests {
         if let Ok(_zk_system) = initialize_zk_system() {
             let content_hash = lib_crypto::hash_blake3(b"test content");
             let content_hash_bytes: [u8; 32] = content_hash.try_into().unwrap_or([0u8; 32]);
-            let sender_blinding: [u8; 32] = lib_crypto::hash_blake3(b"test_sender").try_into().unwrap_or([0u8; 32]);
-            let receiver_blinding: [u8; 32] = lib_crypto::hash_blake3(b"test_receiver").try_into().unwrap_or([0u8; 32]);
-            
+            let sender_blinding: [u8; 32] = lib_crypto::hash_blake3(b"test_sender")
+                .try_into()
+                .unwrap_or([0u8; 32]);
+            let receiver_blinding: [u8; 32] = lib_crypto::hash_blake3(b"test_receiver")
+                .try_into()
+                .unwrap_or([0u8; 32]);
+
             match ZkTransactionProof::prove_transaction(
                 1000, // sender_balance
-                0,    // receiver_balance  
+                0,    // receiver_balance
                 1,    // amount
                 100,  // fee
                 sender_blinding,
                 receiver_blinding,
-                    content_hash_bytes
-                ) {
-                    Ok(proof) => {
-                        if let Ok(proof_json) = serde_json::to_string(&proof) {
-                            return proof_json;
-                        }
+                content_hash_bytes,
+            ) {
+                Ok(proof) => {
+                    if let Ok(proof_json) = serde_json::to_string(&proof) {
+                        return proof_json;
                     }
-                    Err(_) => {}
                 }
+                Err(_) => {}
+            }
         }
-        
+
         // Fallback to hex format (which is also valid according to the validation logic)
         "a".repeat(128) // 64 bytes in hex format
     }
@@ -1652,7 +1827,7 @@ mod tests {
     fn create_valid_fee_proof() -> String {
         // Create a valid 128-byte hex proof (tx_hash + block_hash + signature)
         let tx_hash = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"; // 32 bytes
-        let block_hash = "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"; // 32 bytes  
+        let block_hash = "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"; // 32 bytes
         let signature = "a".repeat(128); // 64 bytes signature
         format!("{}{}{}", tx_hash, block_hash, signature)
     }
@@ -1661,10 +1836,10 @@ mod tests {
     async fn test_get_capabilities() {
         let config = HandlerConfig::default();
         let handlers = ZhtpHandlers::new(config);
-        
+
         let request = create_test_request(ZhtpMethod::Get, "/capabilities");
         let response = handlers.handle_get(request).await.unwrap();
-        
+
         assert_eq!(response.status, ZhtpStatus::Ok);
     }
 
@@ -1672,12 +1847,15 @@ mod tests {
     async fn test_options_request() {
         let config = HandlerConfig::default();
         let handlers = ZhtpHandlers::new(config);
-        
+
         let request = create_test_request(ZhtpMethod::Options, "/api/v1/test");
         let response = handlers.handle_options(request).await.unwrap();
-        
+
         assert_eq!(response.status, ZhtpStatus::Ok);
-        assert!(response.headers.get("Access-Control-Allow-Origin").is_some());
+        assert!(response
+            .headers
+            .get("Access-Control-Allow-Origin")
+            .is_some());
     }
 
     #[tokio::test]
@@ -1685,19 +1863,27 @@ mod tests {
         let mut config = HandlerConfig::default();
         config.test_mode = true; // Enable test mode for simplified validation
         let handlers = ZhtpHandlers::new(config);
-        
+
         let mut request = create_test_request(ZhtpMethod::Post, "/content/upload");
         request.body = b"test content".to_vec();
-        request.headers.set("Content-Type", "text/plain".to_string());
-        
+        request
+            .headers
+            .set("Content-Type", "text/plain".to_string());
+
         // Add proper ZHTP protocol headers with test-friendly proofs
         request.headers.set("X-DAO-Fee", "100".to_string());
-        request.headers.set("X-DAO-Fee-Proof", create_valid_fee_proof());
-        request.headers.set("X-Payment-Proof", create_valid_fee_proof());
-        request.headers.set("X-ZK-Proof", "test_zk_proof_".to_string() + &"a".repeat(64)); // Test mode proof
-        
+        request
+            .headers
+            .set("X-DAO-Fee-Proof", create_valid_fee_proof());
+        request
+            .headers
+            .set("X-Payment-Proof", create_valid_fee_proof());
+        request
+            .headers
+            .set("X-ZK-Proof", "test_zk_proof_".to_string() + &"a".repeat(64)); // Test mode proof
+
         let response = handlers.handle_post(request).await.unwrap();
-        
+
         assert_eq!(response.status, ZhtpStatus::Ok);
     }
 

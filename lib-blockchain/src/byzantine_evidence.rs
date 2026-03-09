@@ -3,11 +3,11 @@
 //! This module implements the evidence recording system for Byzantine validators,
 //! tracking misbehavior and executing slashing penalties.
 
+use crate::integration::crypto_integration::PublicKey;
+use anyhow::{anyhow, Result};
+use blake3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use blake3;
-use crate::integration::crypto_integration::PublicKey;
 
 // ============================================================================
 // CONSTANTS
@@ -151,13 +151,13 @@ impl ByzantineEvidenceRecorder {
         // types at the same block height
         let evidence_id = {
             let mut hasher = blake3::Hasher::new();
-            
+
             // Hash validator key
             hasher.update(&evidence.validator.key_id);
-            
+
             // Hash block height
             hasher.update(&evidence.block_height.to_le_bytes());
-            
+
             // Hash evidence type discriminant
             let type_discriminant = match evidence.evidence_type {
                 ByzantineEvidenceType::DoubleProposal => 1u8,
@@ -168,10 +168,10 @@ impl ByzantineEvidenceRecorder {
                 ByzantineEvidenceType::ConsensusViolation => 6u8,
             };
             hasher.update(&[type_discriminant]);
-            
+
             // Hash timestamp to ensure uniqueness even for duplicate evidence submissions
             hasher.update(&evidence.recorded_at.to_le_bytes());
-            
+
             // Finalize hash to 32-byte array
             let hash = hasher.finalize();
             let mut id = [0u8; 32];
@@ -181,7 +181,10 @@ impl ByzantineEvidenceRecorder {
 
         // Check if we already have evidence for this validator at this height
         if self.evidence.contains_key(&evidence_id) {
-            return Err(anyhow!("Evidence already recorded for this validator at height {}", evidence.block_height));
+            return Err(anyhow!(
+                "Evidence already recorded for this validator at height {}",
+                evidence.block_height
+            ));
         }
 
         // Record the evidence
@@ -220,7 +223,10 @@ impl ByzantineEvidenceRecorder {
 
     /// Get strike count for a validator
     pub fn get_validator_strikes(&self, validator_key: &[u8; 32]) -> u64 {
-        self.validator_strikes.get(validator_key).copied().unwrap_or(0)
+        self.validator_strikes
+            .get(validator_key)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Check if validator should be slashed
@@ -230,7 +236,10 @@ impl ByzantineEvidenceRecorder {
 
     /// Get slashing amount for validator
     pub fn get_slashing_amount(&self, validator_key: &[u8; 32]) -> u64 {
-        self.slashing_amounts.get(validator_key).copied().unwrap_or(0)
+        self.slashing_amounts
+            .get(validator_key)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Execute slashing for a validator
@@ -427,7 +436,7 @@ mod tests {
         let evidence1 = ByzantineEvidence::new(
             ByzantineEvidenceType::DoubleProposal,
             validator.clone(),
-            100, // same height
+            100,  // same height
             1000, // timestamp 1
             "Double proposal".to_string(),
         );
@@ -435,7 +444,7 @@ mod tests {
         let evidence2 = ByzantineEvidence::new(
             ByzantineEvidenceType::InvalidProposal,
             validator.clone(),
-            100, // same height
+            100,  // same height
             1001, // timestamp 2 - slightly different
             "Invalid proposal".to_string(),
         );
@@ -445,8 +454,11 @@ mod tests {
         let id2 = recorder.record_evidence(evidence2).unwrap();
 
         // Evidence IDs must be different
-        assert_ne!(id1, id2, "Evidence IDs should be unique even for same validator at same height");
-        
+        assert_ne!(
+            id1, id2,
+            "Evidence IDs should be unique even for same validator at same height"
+        );
+
         // Both pieces of evidence should be stored
         assert_eq!(recorder.evidence_count(), 2);
         assert!(recorder.get_evidence(&id1).is_some());

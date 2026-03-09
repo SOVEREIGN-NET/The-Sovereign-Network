@@ -1,29 +1,28 @@
 //! KeyPair operations - preserving ZHTP signing, encryption, and verification
-//! 
+//!
 //! implementations from crypto.rs, lines 330-450, 451-570
 
-use anyhow::Result;
-use sha3::Sha3_256;
-use hkdf::Hkdf;
-use pqcrypto_dilithium::{dilithium2, dilithium5};
-use pqcrypto_traits::{
-    sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey, SignedMessage},
-};
-use pqc_kyber;
 use crate::post_quantum::constants::{
-    KYBER1024_CIPHERTEXT_BYTES, KYBER1024_PUBLICKEY_BYTES, KYBER1024_SECRETKEY_BYTES,
     DILITHIUM2_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES_CRYSTALS,
+    KYBER1024_CIPHERTEXT_BYTES, KYBER1024_PUBLICKEY_BYTES, KYBER1024_SECRETKEY_BYTES,
 };
+use anyhow::Result;
+use hkdf::Hkdf;
+use pqc_kyber;
+use pqcrypto_dilithium::{dilithium2, dilithium5};
+use pqcrypto_traits::sign::{
+    PublicKey as SignPublicKey, SecretKey as SignSecretKey, SignedMessage,
+};
+use sha3::Sha3_256;
 // Ed25519 imports removed - pure post-quantum only
+use super::KeyPair;
+use crate::advanced::ring_signature::{verify_ring_signature, RingSignature};
+use crate::random::generate_nonce;
+use crate::types::{Encapsulation, Signature, SignatureAlgorithm};
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
-    ChaCha20Poly1305, Nonce, Key,
+    ChaCha20Poly1305, Key, Nonce,
 };
-use crate::types::{Signature, SignatureAlgorithm, Encapsulation};
-use crate::random::generate_nonce;
-use crate::advanced::ring_signature::{verify_ring_signature, RingSignature};
-use super::KeyPair;
-
 
 /// The only valid signature scheme for BFT consensus votes and commits.
 ///
@@ -84,12 +83,12 @@ mod consensus_scheme_tests {
             let result = validate_consensus_signature_scheme(scheme);
             assert!(
                 result.is_err(),
-                "Scheme {} must be rejected for consensus", scheme
+                "Scheme {} must be rejected for consensus",
+                scheme
             );
         }
     }
 }
-
 
 impl KeyPair {
     /// Sign a message with CRYSTALS-Dilithium post-quantum signature
@@ -162,16 +161,17 @@ impl KeyPair {
     pub fn verify(&self, signature: &Signature, message: &[u8]) -> Result<bool> {
         match signature.algorithm {
             SignatureAlgorithm::Dilithium2 => {
-                let dilithium_pk = dilithium2::PublicKey::from_bytes(&signature.public_key.dilithium_pk)
-                    .map_err(|_| anyhow::anyhow!("Invalid Dilithium public key"))?;
+                let dilithium_pk =
+                    dilithium2::PublicKey::from_bytes(&signature.public_key.dilithium_pk)
+                        .map_err(|_| anyhow::anyhow!("Invalid Dilithium public key"))?;
                 let sig = dilithium2::SignedMessage::from_bytes(&signature.signature)
                     .map_err(|_| anyhow::anyhow!("Invalid Dilithium signature"))?;
-                
+
                 match dilithium2::open(&sig, &dilithium_pk) {
                     Ok(verified_message) => Ok(verified_message == message),
                     Err(_) => Ok(false),
                 }
-            },
+            }
             SignatureAlgorithm::Dilithium5 => {
                 // Try crystals-dilithium (detached signature) first, then pqcrypto (SignedMessage)
                 // crystals-dilithium produces 4595-byte detached signatures
@@ -185,8 +185,9 @@ impl KeyPair {
                     Ok(pk.verify(message, &sig_arr))
                 } else {
                     // Try pqcrypto SignedMessage format
-                    let dilithium_pk = dilithium5::PublicKey::from_bytes(&signature.public_key.dilithium_pk)
-                        .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
+                    let dilithium_pk =
+                        dilithium5::PublicKey::from_bytes(&signature.public_key.dilithium_pk)
+                            .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
                     let sig = dilithium5::SignedMessage::from_bytes(&signature.signature)
                         .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 signature"))?;
 
@@ -195,7 +196,7 @@ impl KeyPair {
                         Err(_) => Ok(false),
                     }
                 }
-            },
+            }
             // Removed duplicate Dilithium2 arm - already handled above
             SignatureAlgorithm::RingSignature => {
                 // Use ring signature verification from advanced module
@@ -209,27 +210,28 @@ impl KeyPair {
         // Parse the ring signature from signature bytes
         // In a implementation, you'd need to properly serialize/deserialize RingSignature
         // For now, we'll do a basic structural validation and delegate to the verifier
-        
-        if signature.signature.len() < 96 { // Minimum size for ring signature (32 + 32 + 32)
+
+        if signature.signature.len() < 96 {
+            // Minimum size for ring signature (32 + 32 + 32)
             return Ok(false);
         }
-        
+
         // Extract challenge, key image, and first response as a basic example
         let mut c = [0u8; 32];
         let mut key_image = [0u8; 32];
         let mut first_response = [0u8; 32];
-        
+
         c.copy_from_slice(&signature.signature[0..32]);
         key_image.copy_from_slice(&signature.signature[32..64]);
         first_response.copy_from_slice(&signature.signature[64..96]);
-        
+
         // Create a minimal ring signature for verification
         let ring_sig = RingSignature {
             c,
             responses: vec![first_response], // In usage, you'd have multiple responses
             key_image,
         };
-        
+
         // Use the ring signature verifier with a minimal ring
         let ring = vec![signature.public_key.clone()];
         verify_ring_signature(&ring_sig, message, &ring)
@@ -237,21 +239,28 @@ impl KeyPair {
 
     /// Encapsulate a shared secret using CRYSTALS-Kyber
     pub fn encapsulate(&self) -> Result<Encapsulation> {
-        let pk: [u8; KYBER1024_PUBLICKEY_BYTES] = self.public_key.kyber_pk
+        let pk: [u8; KYBER1024_PUBLICKEY_BYTES] = self
+            .public_key
+            .kyber_pk
             .as_slice()
             .try_into()
-            .map_err(|_| anyhow::anyhow!("Invalid Kyber public key (len={})", self.public_key.kyber_pk.len()))?;
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Invalid Kyber public key (len={})",
+                    self.public_key.kyber_pk.len()
+                )
+            })?;
 
         let (ciphertext, shared_secret_bytes) = pqc_kyber::encapsulate(&pk, &mut rand::rngs::OsRng)
             .map_err(|e| anyhow::anyhow!("Kyber encapsulation failed: {:?}", e))?;
-        
+
         // Derive a 32-byte key using HKDF-SHA3
         let hk = Hkdf::<Sha3_256>::new(None, &shared_secret_bytes);
         let mut shared_secret = [0u8; 32];
         let kdf_info = b"ZHTP-KEM-v2.0";
         hk.expand(kdf_info, &mut shared_secret)
             .map_err(|_| anyhow::anyhow!("HKDF expansion failed"))?;
-        
+
         Ok(Encapsulation {
             ciphertext: ciphertext.to_vec(),
             shared_secret,
@@ -261,25 +270,38 @@ impl KeyPair {
 
     /// Decapsulate a shared secret using CRYSTALS-Kyber
     pub fn decapsulate(&self, encapsulation: &Encapsulation) -> Result<[u8; 32]> {
-        let sk: [u8; KYBER1024_SECRETKEY_BYTES] = self.private_key.kyber_sk
+        let sk: [u8; KYBER1024_SECRETKEY_BYTES] = self
+            .private_key
+            .kyber_sk
             .as_slice()
             .try_into()
-            .map_err(|_| anyhow::anyhow!("Invalid Kyber secret key (len={})", self.private_key.kyber_sk.len()))?;
+            .map_err(|_| {
+            anyhow::anyhow!(
+                "Invalid Kyber secret key (len={})",
+                self.private_key.kyber_sk.len()
+            )
+        })?;
 
-        let ct: [u8; KYBER1024_CIPHERTEXT_BYTES] = encapsulation.ciphertext
+        let ct: [u8; KYBER1024_CIPHERTEXT_BYTES] = encapsulation
+            .ciphertext
             .as_slice()
             .try_into()
-            .map_err(|_| anyhow::anyhow!("Invalid Kyber ciphertext (len={})", encapsulation.ciphertext.len()))?;
+            .map_err(|_| {
+            anyhow::anyhow!(
+                "Invalid Kyber ciphertext (len={})",
+                encapsulation.ciphertext.len()
+            )
+        })?;
 
         let shared_secret_bytes = pqc_kyber::decapsulate(&ct, &sk)
             .map_err(|e| anyhow::anyhow!("Kyber decapsulation failed: {:?}", e))?;
-        
+
         // Derive the same 32-byte key using HKDF-SHA3
         let hk = Hkdf::<Sha3_256>::new(None, &shared_secret_bytes);
         let mut shared_secret = [0u8; 32];
         hk.expand(&encapsulation.kdf_info, &mut shared_secret)
             .map_err(|_| anyhow::anyhow!("HKDF expansion failed"))?;
-        
+
         Ok(shared_secret)
     }
 
@@ -287,30 +309,30 @@ impl KeyPair {
     pub fn encrypt(&self, plaintext: &[u8], associated_data: &[u8]) -> Result<Vec<u8>> {
         let encapsulation = self.encapsulate()?;
         let cipher = ChaCha20Poly1305::new(Key::from_slice(&encapsulation.shared_secret));
-        
+
         let nonce = generate_nonce();
         let mut ciphertext = Vec::new();
-        
+
         // Prepend Kyber ciphertext
         ciphertext.extend_from_slice(&encapsulation.ciphertext);
         // Append nonce
         ciphertext.extend_from_slice(&nonce);
-        
+
         // Create payload for AEAD encryption
         let mut combined_data = Vec::new();
         combined_data.extend_from_slice(plaintext);
         combined_data.extend_from_slice(associated_data);
-        
+
         let payload = Payload {
             msg: &combined_data,
             aad: b"",
         };
-        
+
         // Encrypt with ChaCha20-Poly1305
         let encrypted = cipher
             .encrypt(Nonce::from_slice(&nonce), payload)
             .map_err(|_| anyhow::anyhow!("Encryption failed"))?;
-        
+
         ciphertext.extend_from_slice(&encrypted);
         Ok(ciphertext)
     }
@@ -334,7 +356,7 @@ impl KeyPair {
 
         let shared_secret = self.decapsulate(&encapsulation)?;
         let cipher = ChaCha20Poly1305::new(Key::from_slice(&shared_secret));
-        
+
         // Decrypt the combined plaintext + associated_data
         let combined_data = cipher
             .decrypt(Nonce::from_slice(nonce), symmetric_ct)
@@ -360,7 +382,7 @@ impl KeyPair {
 
     // NOTE: ZK proof methods moved to lib-proofs for proper architectural separation.
     // Use lib-proofs crate for zero-knowledge proof functionality:
-    // 
+    //
     // use lib_proofs::zk_integration;
     // let proof = zk_integration::prove_identity(&keypair.private_key, age, ...)?;
 }
@@ -372,7 +394,9 @@ pub fn encrypt_with_public_key(
     associated_data: &[u8],
 ) -> Result<Vec<u8>> {
     if public_key.kyber_pk.is_empty() {
-        return Err(anyhow::anyhow!("Recipient public key missing Kyber component"));
+        return Err(anyhow::anyhow!(
+            "Recipient public key missing Kyber component"
+        ));
     }
 
     let kyber_pk: [u8; KYBER1024_PUBLICKEY_BYTES] = public_key

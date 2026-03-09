@@ -55,10 +55,19 @@ fn test_price_scale_compliance() {
 #[test]
 fn test_default_config_matches_spec() {
     let config = OracleConfig::default();
-    assert_eq!(config.epoch_duration_secs, 300, "Epoch duration must be 300s");
+    assert_eq!(
+        config.epoch_duration_secs, 300,
+        "Epoch duration must be 300s"
+    );
     assert_eq!(config.max_source_age_secs, 60, "Max source age must be 60s");
-    assert_eq!(config.max_deviation_bps, 500, "Max deviation must be 500 bps (5%)");
-    assert_eq!(config.max_price_staleness_epochs, 2, "Max staleness must be 2 epochs");
+    assert_eq!(
+        config.max_deviation_bps, 500,
+        "Max deviation must be 500 bps (5%)"
+    );
+    assert_eq!(
+        config.max_price_staleness_epochs, 2,
+        "Max staleness must be 2 epochs"
+    );
 }
 
 // =============================================================================
@@ -91,15 +100,14 @@ fn test_epoch_derivation_from_timestamp() {
     let harness = OracleTestHarness::new(3);
     let timestamp = 1_700_000_000u64;
     let epoch = harness.blockchain.oracle_state.epoch_id(timestamp);
-    
+
     // Epoch 0: timestamps 0..epoch_duration_secs-1, Epoch 1: epoch_duration_secs..(2*epoch_duration_secs)-1, etc.
-    let epoch_duration = harness
-        .blockchain
-        .oracle_state
-        .config
-        .epoch_duration_secs;
+    let epoch_duration = harness.blockchain.oracle_state.config.epoch_duration_secs;
     let expected_epoch = timestamp / epoch_duration;
-    assert_eq!(epoch, expected_epoch, "Epoch must be derived from timestamp / epoch_duration");
+    assert_eq!(
+        epoch, expected_epoch,
+        "Epoch must be derived from timestamp / epoch_duration"
+    );
 }
 
 // =============================================================================
@@ -111,13 +119,19 @@ fn test_epoch_derivation_from_timestamp() {
 fn test_committee_update_governance_path() {
     let mut harness = OracleTestHarness::new(3);
     let new_committee = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
-    
+
     // Schedule update through governance
-    harness.schedule_committee_update(new_committee.clone(), 1)
+    harness
+        .schedule_committee_update(new_committee.clone(), 1)
         .expect("Governance path should allow committee update");
-    
+
     // Verify pending update exists
-    assert!(harness.blockchain.oracle_state.committee.pending_update().is_some());
+    assert!(harness
+        .blockchain
+        .oracle_state
+        .committee
+        .pending_update()
+        .is_some());
 }
 
 /// ORACLE-GATE-8: Config changes require governance path
@@ -126,15 +140,21 @@ fn test_config_update_governance_path() {
     let mut harness = OracleTestHarness::new(3);
     let mut new_config = OracleConfig::default();
     new_config.max_deviation_bps = 1000;
-    
+
     // Schedule update through governance
     let current_epoch = harness.current_epoch();
-    harness.blockchain.oracle_state
+    harness
+        .blockchain
+        .oracle_state
         .schedule_config_update(new_config, 1, current_epoch, None)
         .expect("Governance path should allow config update");
-    
+
     // Verify pending update exists
-    assert!(harness.blockchain.oracle_state.pending_config_update.is_some());
+    assert!(harness
+        .blockchain
+        .oracle_state
+        .pending_config_update
+        .is_some());
 }
 
 // =============================================================================
@@ -153,13 +173,16 @@ fn test_config_update_governance_path() {
 #[test]
 fn test_attestation_signature_verification() {
     let harness = OracleTestHarness::new(3);
-    
+
     // Produce an attestation from validator 0
     let attestation = harness.produce_attestation(0, 1, 100_000_000);
-    
+
     // Verify signature is present
-    assert!(!attestation.signature.is_empty(), "Attestation must have signature");
-    
+    assert!(
+        !attestation.signature.is_empty(),
+        "Attestation must have signature"
+    );
+
     // Verify the signature cryptographically
     let validator = &harness.validators[0];
     let result = attestation.verify_signature(&validator.consensus_keypair.public_key.as_bytes());
@@ -170,13 +193,13 @@ fn test_attestation_signature_verification() {
 #[test]
 fn test_committee_membership_verification() {
     let mut harness = OracleTestHarness::new(3);
-    
+
     // Generate a non-committee keypair
     let non_committee = ValidatorKeys::generate();
-    
+
     // Use current epoch from harness
     let current_epoch = harness.current_epoch();
-    
+
     // Create attestation manually with non-committee key
     let mut attestation = lib_blockchain::oracle::OraclePriceAttestation {
         epoch_id: current_epoch,
@@ -185,19 +208,30 @@ fn test_committee_membership_verification() {
         validator_pubkey: non_committee.key_id,
         signature: Vec::new(),
     };
-    
+
     // Sign it
     let digest = attestation.signing_digest().expect("digest should build");
-    let sig = non_committee.consensus_keypair.sign(&digest).expect("signing must succeed");
+    let sig = non_committee
+        .consensus_keypair
+        .sign(&digest)
+        .expect("signing must succeed");
     attestation.signature = sig.signature;
-    
+
     // Try to process - should fail because not in committee
     let result = harness.blockchain.oracle_state.process_attestation(
         &attestation,
         current_epoch,
-        |_key_id| Some(non_committee.consensus_keypair.public_key.dilithium_pk.clone()),
+        |_key_id| {
+            Some(
+                non_committee
+                    .consensus_keypair
+                    .public_key
+                    .dilithium_pk
+                    .clone(),
+            )
+        },
     );
-    
+
     assert!(
         result.is_err(),
         "Non-committee member should not be able to create attestation, got: {:?}",
@@ -210,48 +244,62 @@ fn test_committee_membership_verification() {
 // =============================================================================
 
 /// ORACLE-GATE-12: Restart preserves oracle state (R1)
-/// 
+///
 /// Verifies that oracle config and committee state survive serialization/deserialization
 #[test]
 fn test_restart_preserves_oracle_state() {
     let harness = OracleTestHarness::new(5);
-    
+
     // Get original state values
     let original_epoch_duration = harness.blockchain.oracle_state.config.epoch_duration_secs;
     let original_max_deviation = harness.blockchain.oracle_state.config.max_deviation_bps;
     let original_committee_size = harness.blockchain.oracle_state.committee.members().len();
-    
+
     // Simulate restart by serializing and deserializing state
     let state_bytes = bincode::serialize(&harness.blockchain.oracle_state).expect("serialize");
     let restored_state: OracleState = bincode::deserialize(&state_bytes).expect("deserialize");
-    
+
     // Verify config is preserved
-    assert_eq!(restored_state.config.epoch_duration_secs, original_epoch_duration, "Epoch duration must survive restart");
-    assert_eq!(restored_state.config.max_deviation_bps, original_max_deviation, "Max deviation must survive restart");
-    
+    assert_eq!(
+        restored_state.config.epoch_duration_secs, original_epoch_duration,
+        "Epoch duration must survive restart"
+    );
+    assert_eq!(
+        restored_state.config.max_deviation_bps, original_max_deviation,
+        "Max deviation must survive restart"
+    );
+
     // Verify committee is preserved
-    assert_eq!(restored_state.committee.members().len(), original_committee_size, "Committee size must survive restart");
+    assert_eq!(
+        restored_state.committee.members().len(),
+        original_committee_size,
+        "Committee size must survive restart"
+    );
 }
 
 /// ORACLE-GATE-13: Attestation processing is deterministic (R2)
-/// 
+///
 /// Verifies that processing attestations produces deterministic results
 /// (accepted/rejected) based on committee membership and epoch.
 #[test]
 fn test_attestation_processing_deterministic() {
     let mut harness = OracleTestHarness::new(5);
-    
+
     // Process the same attestation twice
     let attestation1 = harness.produce_attestation(0, 1, 100_000_000);
     let result1 = harness.process_attestation(attestation1.clone());
-    
+
     // First should be accepted
     assert!(result1.is_ok(), "First attestation should be accepted");
-    
+
     // Second identical attestation should be rejected (duplicate)
     let result2 = harness.process_attestation(attestation1);
     assert!(
-        result2.is_err() || !matches!(result2, Ok(lib_blockchain::oracle::OracleAttestationAdmission::Accepted)),
+        result2.is_err()
+            || !matches!(
+                result2,
+                Ok(lib_blockchain::oracle::OracleAttestationAdmission::Accepted)
+            ),
         "Duplicate attestation should be rejected"
     );
 }
@@ -265,13 +313,16 @@ fn test_committee_configuration_determinism() {
     // Two independent nodes with same committee size
     let node1 = OracleTestHarness::new(5);
     let node2 = OracleTestHarness::new(5);
-    
+
     // Both should calculate same threshold for same committee size
     let threshold1 = node1.blockchain.oracle_state.committee.threshold();
     let threshold2 = node2.blockchain.oracle_state.committee.threshold();
-    
-    assert_eq!(threshold1, threshold2, "Threshold calculation must be deterministic");
-    
+
+    assert_eq!(
+        threshold1, threshold2,
+        "Threshold calculation must be deterministic"
+    );
+
     // Committee sizes should match
     assert_eq!(
         node1.blockchain.oracle_state.committee.members().len(),
@@ -284,18 +335,22 @@ fn test_committee_configuration_determinism() {
 #[test]
 fn test_nonce_replay_rejected() {
     let mut harness = OracleTestHarness::new(3);
-    
+
     // Create and process an attestation
     let attestation = harness.produce_attestation(0, 1, 100_000_000);
     let result1 = harness.process_attestation(attestation.clone());
     assert!(result1.is_ok(), "First attestation should succeed");
-    
+
     // Attempt to replay the same attestation
     let result2 = harness.process_attestation(attestation);
-    
+
     // Should be rejected as duplicate
     assert!(
-        result2.is_err() || !matches!(result2, Ok(lib_blockchain::oracle::OracleAttestationAdmission::Accepted)),
+        result2.is_err()
+            || !matches!(
+                result2,
+                Ok(lib_blockchain::oracle::OracleAttestationAdmission::Accepted)
+            ),
         "Nonce replay must be rejected"
     );
 }
@@ -308,31 +363,46 @@ fn test_nonce_replay_rejected() {
 #[test]
 fn test_protocol_upgrade_scheduling() {
     use lib_blockchain::oracle::protocol::OracleProtocolVersion;
-    
+
     let mut harness = OracleTestHarness::new(3);
-    
+
     // Schedule upgrade to V1
-    harness.blockchain.oracle_state.protocol_config
-        .schedule_activation(OracleProtocolVersion::V1StrictSpec, 100, harness.current_height, None)
+    harness
+        .blockchain
+        .oracle_state
+        .protocol_config
+        .schedule_activation(
+            OracleProtocolVersion::V1StrictSpec,
+            100,
+            harness.current_height,
+            None,
+        )
         .expect("Should be able to schedule protocol upgrade");
-    
+
     let config = &harness.blockchain.oracle_state.protocol_config;
-    assert!(config.pending_activation.is_some(), "Upgrade should be pending");
+    assert!(
+        config.pending_activation.is_some(),
+        "Upgrade should be pending"
+    );
 }
 
 /// ORACLE-GATE-17: Strict mode flag exists (R7)
 #[test]
 fn test_strict_mode_flag() {
     use lib_blockchain::oracle::protocol::OracleProtocolVersion;
-    
+
     let mut harness = OracleTestHarness::new(3);
-    
+
     // Initially should be V0 (legacy)
     assert!(!harness.blockchain.oracle_state.is_strict_spec_active());
-    
+
     // Activate strict spec mode
-    harness.blockchain.oracle_state.protocol_config.current_version = OracleProtocolVersion::V1StrictSpec;
-    
+    harness
+        .blockchain
+        .oracle_state
+        .protocol_config
+        .current_version = OracleProtocolVersion::V1StrictSpec;
+
     assert!(
         harness.blockchain.oracle_state.is_strict_spec_active(),
         "Strict mode should be active after activation"

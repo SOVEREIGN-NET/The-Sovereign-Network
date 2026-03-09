@@ -143,7 +143,7 @@ impl std::error::Error for FeeParamsError {}
 
 impl FeeParams {
     /// Create params for testing with realistic values
-    /// 
+    ///
     /// These values are lower than production but still maintain
     /// realistic ratios between different fee components.
     pub fn for_testing() -> Self {
@@ -287,7 +287,13 @@ mod tests {
             ..FeeParams::default()
         };
         let err = params.validate().unwrap_err();
-        assert!(matches!(err, FeeParamsError::MinExceedsMax { min: 1000, max: 500 }));
+        assert!(matches!(
+            err,
+            FeeParamsError::MinExceedsMax {
+                min: 1000,
+                max: 500
+            }
+        ));
     }
 
     #[test]

@@ -1,41 +1,43 @@
+use crate::utils::fqdn_utils::MAX_LABEL;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
-use std::ops::RangeBounds;
 use std::ops::Bound::*;
-use crate::utils::fqdn_utils::MAX_LABEL;
+use std::ops::RangeBounds;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum WireError {
     Truncated(String),
     Format(String),
-    Other(String)
+    Other(String),
 }
 
 impl fmt::Display for WireError {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self {
-            Self::Truncated(v) => v,
-            Self::Format(v) => v,
-            Self::Other(v) => v
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Truncated(v) => v,
+                Self::Format(v) => v,
+                Self::Other(v) => v,
+            }
+        )
     }
 }
 
 pub struct ToWireContext {
     buf: Vec<u8>,
     capacity: usize,
-    compression_map: HashMap<Vec<u8>, u16>
+    compression_map: HashMap<Vec<u8>, u16>,
 }
 
 impl ToWireContext {
-
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             buf: Vec::with_capacity(capacity),
             capacity,
-            compression_map: HashMap::new()
+            compression_map: HashMap::new(),
         }
     }
 
@@ -51,12 +53,17 @@ impl ToWireContext {
 
     pub fn skip(&mut self, n: usize) -> Result<(), WireError> {
         self.ensure_space(n)?;
-        Ok(unsafe { self.buf.set_len(self.buf.len()+n); })
+        Ok(unsafe {
+            self.buf.set_len(self.buf.len() + n);
+        })
     }
 
     fn ensure_space(&mut self, n: usize) -> Result<(), WireError> {
         if self.buf.len() + n > self.capacity {
-            return Err(WireError::Truncated(format!("write past capacity at {}", self.buf.len())));
+            return Err(WireError::Truncated(format!(
+                "write past capacity at {}",
+                self.buf.len()
+            )));
         }
 
         Ok(())
@@ -66,12 +73,12 @@ impl ToWireContext {
         let start = match range.start_bound() {
             Included(&x) => x,
             Excluded(&x) => x + 1,
-            Unbounded => 0
+            Unbounded => 0,
         };
         let end = match range.end_bound() {
             Included(&x) => x + 1,
             Excluded(&x) => x,
-            Unbounded => self.buf.len()
+            Unbounded => self.buf.len(),
         };
 
         if end > self.buf.len() || start > end || buf.len() != (end - start) {
@@ -85,7 +92,8 @@ impl ToWireContext {
     pub fn rollback(&mut self, mark: usize) {
         if mark < self.buf.len() {
             self.buf.truncate(mark);
-            self.compression_map.retain(|_, &mut off| (off as usize) < mark);
+            self.compression_map
+                .retain(|_, &mut off| (off as usize) < mark);
         }
     }
 
@@ -156,16 +164,12 @@ impl ToWireContext {
 
 pub struct FromWireContext<'a> {
     buf: &'a [u8],
-    pos: usize
+    pos: usize,
 }
 
 impl<'a> FromWireContext<'a> {
-
     pub fn new(buf: &'a [u8]) -> Self {
-        Self {
-            buf,
-            pos: 0
-        }
+        Self { buf, pos: 0 }
     }
 
     pub fn pos(&self) -> usize {
@@ -173,7 +177,10 @@ impl<'a> FromWireContext<'a> {
     }
 
     pub fn take(&mut self, n: usize) -> Result<&'a [u8], WireError> {
-        let end = self.pos.checked_add(n).ok_or(WireError::Format("overflow".to_string()))?;
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or(WireError::Format("overflow".to_string()))?;
         if end > self.buf.len() {
             return Err(WireError::Truncated("read".to_string()));
         }
@@ -184,7 +191,10 @@ impl<'a> FromWireContext<'a> {
     }
 
     pub fn peek(&self, n: usize) -> Result<&'a [u8], WireError> {
-        let end = self.pos.checked_add(n).ok_or(WireError::Format("overflow".into()))?;
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or(WireError::Format("overflow".into()))?;
         if end > self.buf.len() {
             return Err(WireError::Truncated("peek".into()));
         }
@@ -196,12 +206,12 @@ impl<'a> FromWireContext<'a> {
         let start = match range.start_bound() {
             Included(&x) => x,
             Excluded(&x) => x + 1,
-            Unbounded => 0
+            Unbounded => 0,
         };
         let end = match range.end_bound() {
             Included(&x) => x + 1,
             Excluded(&x) => x,
-            Unbounded => self.buf.len()
+            Unbounded => self.buf.len(),
         };
 
         Ok(&self.buf[start..end])
@@ -214,8 +224,12 @@ impl<'a> FromWireContext<'a> {
         let mut steps = 0usize;
 
         loop {
-            if steps > 255 { return Err(WireError::Format("too many labels".to_string())); }
-            if off >= self.buf.len() { return Err(WireError::Truncated("name".to_string())); }
+            if steps > 255 {
+                return Err(WireError::Format("too many labels".to_string()));
+            }
+            if off >= self.buf.len() {
+                return Err(WireError::Truncated("name".to_string()));
+            }
 
             let len = self.buf[off];
 
@@ -227,19 +241,22 @@ impl<'a> FromWireContext<'a> {
             }
 
             if (len & 0xC0) == 0xC0 {
-                if off + 1 >= self.buf.len() { return Err(WireError::Truncated("name ptr".to_string())); }
+                if off + 1 >= self.buf.len() {
+                    return Err(WireError::Truncated("name ptr".to_string()));
+                }
                 let ptr = (((len as u16 & 0x3F) << 8) | self.buf[off + 1] as u16) as usize;
-                if !jumped { self.pos = off + 2; }
+                if !jumped {
+                    self.pos = off + 2;
+                }
                 off = ptr;
                 jumped = true;
-
             } else {
                 let l = len as usize;
                 if off + 1 + l > self.buf.len() {
                     return Err(WireError::Truncated("label".to_string()));
                 }
 
-                let lab = &self.buf[off + 1 .. off + 1 + l];
+                let lab = &self.buf[off + 1..off + 1 + l];
                 if !out.is_empty() {
                     out.push('.');
                 }
@@ -253,29 +270,28 @@ impl<'a> FromWireContext<'a> {
 }
 
 pub trait FromWire {
-
-    fn from_wire(context: &mut FromWireContext) -> Result<Self, WireError> where Self: Sized;
+    fn from_wire(context: &mut FromWireContext) -> Result<Self, WireError>
+    where
+        Self: Sized;
 }
 
 pub trait FromWireLen {
-
-    fn from_wire_len(context: &mut FromWireContext, len: u16) -> Result<Self, WireError> where Self: Sized;
+    fn from_wire_len(context: &mut FromWireContext, len: u16) -> Result<Self, WireError>
+    where
+        Self: Sized;
 }
 
 pub trait ToWire {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError>;
 }
 
 impl FromWire for u8 {
-
     fn from_wire(context: &mut FromWireContext) -> Result<Self, WireError> {
         Ok(context.take(1)?[0])
     }
 }
 
 impl ToWire for u8 {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
         context.ensure_space(1)?;
         Ok(context.buf.push(*self))
@@ -283,7 +299,6 @@ impl ToWire for u8 {
 }
 
 impl FromWire for u16 {
-
     fn from_wire(context: &mut FromWireContext) -> Result<Self, WireError> {
         let b = context.take(2)?;
         Ok(u16::from_be_bytes([b[0], b[1]]))
@@ -291,7 +306,6 @@ impl FromWire for u16 {
 }
 
 impl ToWire for u16 {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
         context.ensure_space(2)?;
         Ok(context.buf.extend_from_slice(&self.to_be_bytes()))
@@ -299,7 +313,6 @@ impl ToWire for u16 {
 }
 
 impl FromWire for u32 {
-
     fn from_wire(context: &mut FromWireContext) -> Result<Self, WireError> {
         let b = context.take(4)?;
         Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
@@ -307,7 +320,6 @@ impl FromWire for u32 {
 }
 
 impl ToWire for u32 {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
         context.ensure_space(4)?;
         Ok(context.buf.extend_from_slice(&self.to_be_bytes()))

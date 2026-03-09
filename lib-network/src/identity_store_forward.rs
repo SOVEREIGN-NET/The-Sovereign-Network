@@ -1,7 +1,7 @@
 //! Store-and-forward queue for identity envelopes (Phase 3 baseline)
 
-use lib_protocols::types::{IdentityEnvelope, DeliveryReceipt};
 use lib_protocols::identity_messaging::verify_pouw_stamp_with_sender_did;
+use lib_protocols::types::{DeliveryReceipt, IdentityEnvelope};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -84,7 +84,12 @@ impl IdentityStoreForward {
         };
         let mut filtered = Vec::new();
         for queued in queue.iter() {
-            if queued.envelope.payloads.iter().any(|p| p.device_id == device_id) {
+            if queued
+                .envelope
+                .payloads
+                .iter()
+                .any(|p| p.device_id == device_id)
+            {
                 filtered.push(queued.envelope.clone());
             }
         }
@@ -103,7 +108,11 @@ impl IdentityStoreForward {
     }
 
     /// Acknowledge delivery (remove envelope by message_id)
-    pub fn acknowledge_delivery(&mut self, recipient_did: &str, message_id: u64) -> Result<bool, String> {
+    pub fn acknowledge_delivery(
+        &mut self,
+        recipient_did: &str,
+        message_id: u64,
+    ) -> Result<bool, String> {
         let queue = match self.per_recipient.get_mut(recipient_did) {
             Some(queue) => queue,
             None => return Ok(false),
@@ -168,7 +177,10 @@ impl IdentityStoreForward {
             queue.pop_front();
         }
 
-        queue.push_back(QueuedEnvelope { envelope, expires_at });
+        queue.push_back(QueuedEnvelope {
+            envelope,
+            expires_at,
+        });
         self.stats.enqueued += 1;
         Ok(())
     }

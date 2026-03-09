@@ -151,10 +151,8 @@ impl QuicValidatorTransport {
         recipients: &[IdentityId],
         target_height: u64,
     ) -> HashSet<Vec<u8>> {
-        let targets: HashSet<Vec<u8>> = recipients
-            .iter()
-            .map(|id| id.as_bytes().to_vec())
-            .collect();
+        let targets: HashSet<Vec<u8>> =
+            recipients.iter().map(|id| id.as_bytes().to_vec()).collect();
 
         tracing::debug!(
             "ValidatorProtocol targets for height {} resolved to {} peer node IDs",
@@ -539,7 +537,8 @@ async fn run_catch_up_sync_task(
         // If every peer reports a chain mismatch at the first block, we're on the
         // wrong chain entirely. Wipe local state and restart — systemd will bring
         // us back up and we'll sync the correct chain from genesis.
-        if wrong_chain_peers > 0 && wrong_chain_peers == prioritized_peers.len() && from_height > 0 {
+        if wrong_chain_peers > 0 && wrong_chain_peers == prioritized_peers.len() && from_height > 0
+        {
             error!(
                 "❌ WRONG CHAIN DETECTED: all {} peer(s) reject our block {} — local chain is incompatible. Wiping sled and restarting.",
                 wrong_chain_peers, from_height + 1
@@ -609,7 +608,8 @@ async fn prioritize_catchup_peers(
     for validator in blockchain.get_active_validators() {
         if let Some(did_hash) = did_hash_to_identity_id(&validator.identity_id) {
             validator_peer_ids.insert(did_hash.as_bytes().to_vec());
-            if let Some(controlled_nodes) = controlled_nodes_for_validator_id(&blockchain, &did_hash)
+            if let Some(controlled_nodes) =
+                controlled_nodes_for_validator_id(&blockchain, &did_hash)
             {
                 for node_id in controlled_nodes {
                     validator_peer_ids.insert(node_id);
@@ -1924,9 +1924,11 @@ impl Component for ConsensusComponent {
             let trigger = Arc::new(CatchUpSyncChannel { tx: catch_up_tx });
             consensus_engine.set_catch_up_sync_trigger(trigger);
             let blockchain_slot_for_sync = self.blockchain.clone();
-            let sled_path_for_sync = std::path::Path::new(&self.environment.data_directory()).join("sled");
+            let sled_path_for_sync =
+                std::path::Path::new(&self.environment.data_directory()).join("sled");
             tokio::spawn(async move {
-                run_catch_up_sync_task(catch_up_rx, blockchain_slot_for_sync, sled_path_for_sync).await;
+                run_catch_up_sync_task(catch_up_rx, blockchain_slot_for_sync, sled_path_for_sync)
+                    .await;
             });
             info!("🔄 Catch-up sync trigger wired (height-divergence recovery active)");
         }

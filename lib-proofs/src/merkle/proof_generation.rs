@@ -1,11 +1,11 @@
 //! Merkle proof generation
-//! 
+//!
 //! Implements the generation of cryptographic inclusion proofs for Merkle trees,
 //! allowing verification of data membership without revealing tree structure.
 
-use anyhow::Result;
+use crate::merkle::tree::{hash_merkle_pair, ZkMerkleTree};
 use crate::types::MerkleProof;
-use crate::merkle::tree::{ZkMerkleTree, hash_merkle_pair};
+use anyhow::Result;
 
 impl ZkMerkleTree {
     /// Generate a Merkle inclusion proof
@@ -59,7 +59,8 @@ impl ZkMerkleTree {
 
     /// Generate proof for a specific leaf value
     pub fn generate_proof_for_leaf(&self, leaf: [u8; 32]) -> Result<MerkleProof> {
-        let index = self.find_leaf_index(leaf)
+        let index = self
+            .find_leaf_index(leaf)
             .ok_or_else(|| anyhow::anyhow!("Leaf not found in tree"))?;
         self.generate_proof(index)
     }
@@ -67,11 +68,11 @@ impl ZkMerkleTree {
     /// Generate multiple proofs at once
     pub fn generate_batch_proofs(&self, indices: Vec<usize>) -> Result<Vec<MerkleProof>> {
         let mut proofs = Vec::with_capacity(indices.len());
-        
+
         for index in indices {
             proofs.push(self.generate_proof(index)?);
         }
-        
+
         Ok(proofs)
     }
 
@@ -91,12 +92,14 @@ pub fn generate_streaming_proof(
     tree_height: u8,
 ) -> Result<MerkleProof> {
     if siblings.len() != tree_height as usize {
-        return Err(anyhow::anyhow!("Incorrect number of siblings for tree height"));
+        return Err(anyhow::anyhow!(
+            "Incorrect number of siblings for tree height"
+        ));
     }
 
     let mut indices = Vec::new();
     let mut current_index = leaf_index;
-    
+
     for _ in 0..tree_height {
         indices.push(current_index % 2 == 1);
         current_index /= 2;
@@ -223,21 +226,21 @@ mod tests {
     #[test]
     fn test_generate_proof() {
         let mut tree = ZkMerkleTree::new(4);
-        
+
         // Add some leaves
         let leaf1 = hash_blake3(b"leaf1");
         let leaf2 = hash_blake3(b"leaf2");
         let leaf3 = hash_blake3(b"leaf3");
-        
+
         tree.add_leaf(leaf1).unwrap();
         tree.add_leaf(leaf2).unwrap();
         tree.add_leaf(leaf3).unwrap();
-        
+
         // Generate proof for leaf1
         let proof = tree.generate_proof(0).unwrap();
         assert_eq!(proof.leaf, leaf1);
         assert!(proof.is_valid_structure());
-        
+
         // Generate proof for leaf2
         let proof = tree.generate_proof(1).unwrap();
         assert_eq!(proof.leaf, leaf2);
@@ -248,9 +251,9 @@ mod tests {
     fn test_generate_proof_for_leaf() {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"test_leaf");
-        
+
         tree.add_leaf(leaf).unwrap();
-        
+
         let proof = tree.generate_proof_for_leaf(leaf).unwrap();
         assert_eq!(proof.leaf, leaf);
     }
@@ -260,9 +263,9 @@ mod tests {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"test_leaf");
         let nonexistent = hash_blake3(b"nonexistent");
-        
+
         tree.add_leaf(leaf).unwrap();
-        
+
         let result = tree.generate_proof_for_leaf(nonexistent);
         assert!(result.is_err());
     }
@@ -270,15 +273,15 @@ mod tests {
     #[test]
     fn test_batch_proof_generation() {
         let mut tree = ZkMerkleTree::new(4);
-        
+
         for i in 0..5 {
             let leaf = hash_blake3(&[i]);
             tree.add_leaf(leaf).unwrap();
         }
-        
+
         let proofs = tree.generate_batch_proofs(vec![0, 2, 4]).unwrap();
         assert_eq!(proofs.len(), 3);
-        
+
         for (i, proof) in proofs.iter().enumerate() {
             let expected_leaf = hash_blake3(&[i as u8 * 2]);
             assert_eq!(proof.leaf, expected_leaf);
@@ -288,12 +291,12 @@ mod tests {
     #[test]
     fn test_generate_all_proofs() {
         let mut tree = ZkMerkleTree::new(3);
-        
+
         for i in 0..3 {
             let leaf = hash_blake3(&[i]);
             tree.add_leaf(leaf).unwrap();
         }
-        
+
         let proofs = tree.generate_all_proofs().unwrap();
         assert_eq!(proofs.len(), 3);
     }
@@ -303,14 +306,11 @@ mod tests {
         let mut tree = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"test");
         tree.add_leaf(leaf).unwrap();
-        
+
         let proof = tree.generate_proof(0).unwrap();
-        let computed_root = compute_root_from_proof(
-            proof.leaf, 
-            &proof.path, 
-            &proof.indices
-        ).unwrap();
-        
+        let computed_root =
+            compute_root_from_proof(proof.leaf, &proof.path, &proof.indices).unwrap();
+
         assert_eq!(computed_root, tree.root);
     }
 
@@ -319,12 +319,12 @@ mod tests {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"test");
         tree.add_leaf(leaf).unwrap();
-        
+
         let mut proof = tree.generate_proof(0).unwrap();
         let original_size = proof.size();
-        
+
         proof.optimize();
-        
+
         // Size should be same or smaller after optimization
         assert!(proof.size() <= original_size);
     }
@@ -334,11 +334,11 @@ mod tests {
         let mut tree = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"test");
         tree.add_leaf(leaf).unwrap();
-        
+
         let proof = tree.generate_proof(0).unwrap();
         let compact = proof.to_compact();
         let restored = compact.to_standard();
-        
+
         assert_eq!(proof.leaf, restored.leaf);
         assert_eq!(proof.path, restored.path);
         assert_eq!(proof.indices, restored.indices);
@@ -349,7 +349,7 @@ mod tests {
         let indices = vec![true, false, true, true, false];
         let packed = pack_indices(&indices);
         let unpacked = unpack_indices(packed, indices.len());
-        
+
         assert_eq!(indices, unpacked);
     }
 }

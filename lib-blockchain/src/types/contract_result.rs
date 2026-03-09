@@ -152,8 +152,8 @@ impl Default for ContractResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::ContractLog;
+    use super::*;
 
     #[test]
     fn test_contract_result_creation() {

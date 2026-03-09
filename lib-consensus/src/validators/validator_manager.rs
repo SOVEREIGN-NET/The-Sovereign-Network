@@ -375,7 +375,8 @@ impl ValidatorManager {
     pub fn unjail_validator(&mut self, identity: &IdentityId, current_block: u64) -> Result<()> {
         if let Some(validator) = self.validators.get_mut(identity) {
             // Attempt to unjail - this enforces all recovery policy invariants
-            validator.unjail(current_block)
+            validator
+                .unjail(current_block)
                 .map_err(|e| anyhow::anyhow!("Failed to unjail validator: {}", e))?;
 
             // Recalculate total voting power after unjail

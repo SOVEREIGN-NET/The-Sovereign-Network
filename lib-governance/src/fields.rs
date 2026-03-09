@@ -120,8 +120,7 @@ impl ConfigField {
 
             ConfigField::MaxSupply => FieldCategory::Supply,
 
-            ConfigField::AuthorityAdd
-            | ConfigField::AuthorityRemove => FieldCategory::Authority,
+            ConfigField::AuthorityAdd | ConfigField::AuthorityRemove => FieldCategory::Authority,
 
             ConfigField::BlockSizeLimit
             | ConfigField::TxCountLimit
@@ -198,10 +197,19 @@ mod tests {
     #[test]
     fn test_field_categories() {
         assert_eq!(ConfigField::TransferFeeBps.category(), FieldCategory::Fee);
-        assert_eq!(ConfigField::TransferPolicy.category(), FieldCategory::Policy);
+        assert_eq!(
+            ConfigField::TransferPolicy.category(),
+            FieldCategory::Policy
+        );
         assert_eq!(ConfigField::MaxSupply.category(), FieldCategory::Supply);
-        assert_eq!(ConfigField::AuthorityAdd.category(), FieldCategory::Authority);
-        assert_eq!(ConfigField::BlockSizeLimit.category(), FieldCategory::Protocol);
+        assert_eq!(
+            ConfigField::AuthorityAdd.category(),
+            FieldCategory::Authority
+        );
+        assert_eq!(
+            ConfigField::BlockSizeLimit.category(),
+            FieldCategory::Protocol
+        );
         assert_eq!(ConfigField::Name.category(), FieldCategory::Immutable);
     }
 }

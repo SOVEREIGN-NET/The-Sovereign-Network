@@ -1,6 +1,3 @@
-use std::any::Any;
-use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
 use crate::routing::inter::routing_table::{RestartListener, RoutingTable};
 use crate::utils;
 use crate::utils::hash::crc32c::Crc32c;
@@ -8,6 +5,9 @@ use crate::utils::linked_hashmap::LinkedHashMap;
 use crate::utils::net::address_utils::is_global_unicast;
 use crate::utils::node::{Node, V4_MASK, V6_MASK};
 use crate::utils::uid::{ID_LENGTH, UID};
+use std::any::Any;
+use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
 
 pub struct MRoutingTable {
     uid: Option<UID>,
@@ -19,7 +19,6 @@ pub struct MRoutingTable {
 }
 
 impl MRoutingTable {
-
     pub fn new() -> Self {
         let mut routing_table = Self {
             uid: None,
@@ -36,21 +35,54 @@ impl MRoutingTable {
 }
 
 impl RoutingTable for MRoutingTable {
-
     fn get_update_public_ip_consensus(&self) -> fn(Arc<Mutex<dyn RoutingTable>>, IpAddr, IpAddr) {
         Self::update_public_ip_consensus
     }
 
-    fn update_public_ip_consensus(routing_table: Arc<Mutex<dyn RoutingTable>>, source: IpAddr, addr: IpAddr) {
+    fn update_public_ip_consensus(
+        routing_table: Arc<Mutex<dyn RoutingTable>>,
+        source: IpAddr,
+        addr: IpAddr,
+    ) {
         if !is_global_unicast(addr) {
             return;
         }
 
-        routing_table.lock().unwrap().as_any_mut().downcast_mut::<Self>().unwrap().origin_pairs.insert(source, addr);
+        routing_table
+            .lock()
+            .unwrap()
+            .as_any_mut()
+            .downcast_mut::<Self>()
+            .unwrap()
+            .origin_pairs
+            .insert(source, addr);
 
-        if routing_table.lock().unwrap().as_any().downcast_ref::<Self>().unwrap().origin_pairs.len() > 20 &&
-            addr != routing_table.lock().unwrap().as_any().downcast_ref::<Self>().unwrap().consensus_external_address {
-            let k: Vec<IpAddr> = routing_table.lock().unwrap().as_any().downcast_ref::<Self>().unwrap().origin_pairs.values();
+        if routing_table
+            .lock()
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Self>()
+            .unwrap()
+            .origin_pairs
+            .len()
+            > 20
+            && addr
+                != routing_table
+                    .lock()
+                    .unwrap()
+                    .as_any()
+                    .downcast_ref::<Self>()
+                    .unwrap()
+                    .consensus_external_address
+        {
+            let k: Vec<IpAddr> = routing_table
+                .lock()
+                .unwrap()
+                .as_any()
+                .downcast_ref::<Self>()
+                .unwrap()
+                .origin_pairs
+                .values();
             let mut res = 0;
             let mut count: i16 = 1;
 
@@ -63,8 +95,22 @@ impl RoutingTable for MRoutingTable {
                 }
             }
 
-            if routing_table.lock().unwrap().as_any().downcast_ref::<Self>().unwrap().consensus_external_address != k[res] {
-                routing_table.lock().unwrap().as_any_mut().downcast_mut::<Self>().unwrap().consensus_external_address = k[res];
+            if routing_table
+                .lock()
+                .unwrap()
+                .as_any()
+                .downcast_ref::<Self>()
+                .unwrap()
+                .consensus_external_address
+                != k[res]
+            {
+                routing_table
+                    .lock()
+                    .unwrap()
+                    .as_any_mut()
+                    .downcast_mut::<Self>()
+                    .unwrap()
+                    .consensus_external_address = k[res];
                 Self::restart(routing_table);
             }
         }
@@ -80,7 +126,7 @@ impl RoutingTable for MRoutingTable {
 
     fn insert(&mut self, n: Node) {
         if self.secure_only && !n.has_secure_id() {
-            return
+            return;
         }
 
         if let Some(uid) = &self.uid {
@@ -90,7 +136,6 @@ impl RoutingTable for MRoutingTable {
                 //if self.m_bucket[id],is_full() {
 
                 //}
-
 
                 /*
                 let mut contains_ip = false;
@@ -200,13 +245,34 @@ impl RoutingTable for MRoutingTable {
     }
 
     fn restart(routing_table: Arc<Mutex<dyn RoutingTable>>) {
-        routing_table.lock().unwrap().as_any_mut().downcast_mut::<Self>().unwrap().derive_uid();
+        routing_table
+            .lock()
+            .unwrap()
+            .as_any_mut()
+            .downcast_mut::<Self>()
+            .unwrap()
+            .derive_uid();
 
-        if routing_table.lock().unwrap().as_any().downcast_ref::<Self>().unwrap().listeners.is_empty() {
+        if routing_table
+            .lock()
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Self>()
+            .unwrap()
+            .listeners
+            .is_empty()
+        {
             return;
         }
 
-        let listeners = routing_table.lock().unwrap().as_any().downcast_ref::<Self>().unwrap().listeners.clone();
+        let listeners = routing_table
+            .lock()
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Self>()
+            .unwrap()
+            .listeners
+            .clone();
         for listener in &listeners {
             listener();
         }

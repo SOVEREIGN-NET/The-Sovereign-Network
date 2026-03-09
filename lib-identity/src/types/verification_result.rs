@@ -1,8 +1,8 @@
 //! Identity verification result types from the original identity.rs
 
+use super::{CredentialType, IdentityId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use super::{IdentityId, CredentialType};
 
 /// Identity verification result
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,11 +1,11 @@
 //! Access Control Policies for ZHTP
-//! 
+//!
 //! Comprehensive access control system with geographic restrictions,
 //! time-based access, reputation scoring, and zero-knowledge privacy.
 
+use lib_identity::IdentityId;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use lib_identity::IdentityId;
 
 /// Access control policy for ZHTP resources
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,13 +334,17 @@ impl AccessPolicy {
             let current_day = (days_since_epoch + 4) % 7; // Adjust for epoch starting on Thursday
             let current_hour = (now % 86400) / 3600;
 
-            if !time_restriction.allowed_days.is_empty() 
-                && !time_restriction.allowed_days.contains(&(current_day as u8)) {
+            if !time_restriction.allowed_days.is_empty()
+                && !time_restriction.allowed_days.contains(&(current_day as u8))
+            {
                 return false;
             }
 
-            if !time_restriction.allowed_hours.is_empty() 
-                && !time_restriction.allowed_hours.contains(&(current_hour as u8)) {
+            if !time_restriction.allowed_hours.is_empty()
+                && !time_restriction
+                    .allowed_hours
+                    .contains(&(current_hour as u8))
+            {
                 return false;
             }
         }
@@ -414,7 +418,9 @@ impl AccessPolicy {
             // Still need to check other restrictions
         } else if !self.public && identity.is_none() {
             result.allowed = false;
-            result.reasons.push("Identity required for access".to_string());
+            result
+                .reasons
+                .push("Identity required for access".to_string());
             return result;
         }
 
@@ -429,7 +435,9 @@ impl AccessPolicy {
         // Check time restrictions
         if !self.check_time_access() {
             result.allowed = false;
-            result.reasons.push("Access not allowed at current time".to_string());
+            result
+                .reasons
+                .push("Access not allowed at current time".to_string());
         }
 
         // Check geographic restrictions
@@ -451,7 +459,9 @@ impl AccessPolicy {
         // Check economic requirements
         if !self.check_economic_requirements(user_balance, user_stake) {
             result.allowed = false;
-            result.reasons.push("Economic requirements not met".to_string());
+            result
+                .reasons
+                .push("Economic requirements not met".to_string());
         }
 
         result
@@ -570,14 +580,14 @@ mod tests {
     fn test_identity_access_check() {
         let mut policy = AccessPolicy::private();
         let identity = Hash::from_bytes(&[1u8; 32]);
-        
+
         // Initially no specific access
         assert!(policy.check_identity_access(&identity));
-        
+
         // Add to blacklist
         policy.denied_identities.push(identity.clone());
         assert!(!policy.check_identity_access(&identity));
-        
+
         // Remove from blacklist and add to whitelist
         policy.denied_identities.clear();
         policy.allowed_identities.push(identity.clone());
@@ -596,18 +606,17 @@ mod tests {
         let standard = RateLimit::standard();
         assert_eq!(standard.max_requests, 100);
         assert_eq!(standard.window_seconds, 60);
-        
+
         let strict = RateLimit::strict();
         assert_eq!(strict.max_requests, 10);
     }
 
     #[test]
     fn test_comprehensive_access_check() {
-        let policy = AccessPolicy::private()
-            .with_min_reputation(100);
-        
+        let policy = AccessPolicy::private().with_min_reputation(100);
+
         let identity = Hash::from_bytes(&[1u8; 32]);
-        
+
         // Should fail due to insufficient reputation
         let result = policy.check_access(
             Some(&identity),
@@ -618,7 +627,7 @@ mod tests {
         );
         assert!(!result.allowed);
         assert!(!result.reasons.is_empty());
-        
+
         // Should pass with sufficient reputation
         let result = policy.check_access(
             Some(&identity),
@@ -633,7 +642,7 @@ mod tests {
     #[test]
     fn test_geo_restrictions() {
         let policy = AccessPolicy::geo_restricted(vec!["US".to_string(), "CA".to_string()]);
-        
+
         assert!(policy.check_geo_access(Some("US")));
         assert!(policy.check_geo_access(Some("CA")));
         assert!(!policy.check_geo_access(Some("CN")));

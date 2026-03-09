@@ -40,7 +40,10 @@ impl BluetoothMeshProtocol {
             .output();
 
         let _ = Command::new("powershell")
-            .args(&["-Command", "Set-NetConnectionProfile -NetworkCategory Private"])
+            .args(&[
+                "-Command",
+                "Set-NetConnectionProfile -NetworkCategory Private",
+            ])
             .output();
 
         info!("Windows Bluetooth ready for mesh networking");

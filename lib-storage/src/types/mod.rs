@@ -6,20 +6,20 @@
 use lib_crypto::Hash;
 
 // Sub-modules for organized type definitions
-pub mod dht_types;
-pub mod storage_types;
-pub mod economic_types;
 pub mod config_types;
-pub mod stats_types;
+pub mod dht_types;
+pub mod economic_types;
 pub mod node_address;
+pub mod stats_types;
+pub mod storage_types;
 
 // Re-export commonly used types for convenience
-pub use dht_types::*;
-pub use storage_types::*;
-pub use economic_types::*;
 pub use config_types::*;
-pub use stats_types::*;
+pub use dht_types::*;
+pub use economic_types::*;
 pub use node_address::*;
+pub use stats_types::*;
+pub use storage_types::*;
 
 /// Node identifier for DHT routing - imported from lib-identity
 /// Provides deterministic identity-based NodeIds derived from DIDs

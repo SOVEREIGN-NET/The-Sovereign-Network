@@ -1,14 +1,14 @@
 //! ZHTP Response Implementation
-//! 
+//!
 //! Complete ZHTP response structure with zero-knowledge proof validation,
 //! content integrity checks, and Web4 protocol extensions.
 
-use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
-use crate::types::{ZhtpStatus, ZhtpHeaders, ZHTP_VERSION};
+use crate::storage_stub::ContentHash;
+use crate::types::{ZhtpHeaders, ZhtpStatus, ZHTP_VERSION};
 use lib_identity::IdentityId;
 use lib_proofs::ZeroKnowledgeProof;
-use crate::storage_stub::ContentHash;
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// ZHTP response with Web4 extensions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,14 +40,14 @@ impl ZhtpResponse {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let headers = ZhtpHeaders::new()
             .with_content_type("application/octet-stream".to_string())
             .with_content_length(body.len() as u64)
             .with_cache_control("max-age=3600".to_string())
             .with_privacy_level(100)
             .with_encryption("CRYSTALS-Kyber".to_string());
-        
+
         ZhtpResponse {
             version: ZHTP_VERSION.to_string(),
             status: ZhtpStatus::Ok,
@@ -72,10 +72,7 @@ impl ZhtpResponse {
     }
 
     /// Create a JSON response
-    pub fn json<T: serde::Serialize>(
-        data: &T,
-        server: Option<IdentityId>,
-    ) -> anyhow::Result<Self> {
+    pub fn json<T: serde::Serialize>(data: &T, server: Option<IdentityId>) -> anyhow::Result<Self> {
         let body = serde_json::to_vec(data)?;
         Ok(Self::success_with_content_type(
             body,
@@ -113,12 +110,12 @@ impl ZhtpResponse {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let headers = ZhtpHeaders::new()
             .with_content_type("application/octet-stream".to_string())
             .with_content_length(body.len() as u64)
             .with_custom_header("location".to_string(), location);
-        
+
         ZhtpResponse {
             version: ZHTP_VERSION.to_string(),
             status: ZhtpStatus::Created,
@@ -137,11 +134,11 @@ impl ZhtpResponse {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let headers = ZhtpHeaders::new()
             .with_content_type("text/plain".to_string())
             .with_content_length(message.len() as u64);
-        
+
         ZhtpResponse {
             version: ZHTP_VERSION.to_string(),
             status: ZhtpStatus::Accepted,
@@ -160,9 +157,9 @@ impl ZhtpResponse {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let headers = ZhtpHeaders::new().with_content_length(0);
-        
+
         ZhtpResponse {
             version: ZHTP_VERSION.to_string(),
             status: ZhtpStatus::NoContent,
@@ -181,12 +178,12 @@ impl ZhtpResponse {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let headers = ZhtpHeaders::new()
             .with_content_type("text/plain; charset=utf-8".to_string())
             .with_content_length(message.len() as u64)
             .with_privacy_level(100);
-        
+
         ZhtpResponse {
             version: ZHTP_VERSION.to_string(),
             status,
@@ -208,12 +205,12 @@ impl ZhtpResponse {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let body = serde_json::to_vec(error_data)?;
         let headers = ZhtpHeaders::new()
             .with_content_type("application/json".to_string())
             .with_content_length(body.len() as u64);
-        
+
         Ok(ZhtpResponse {
             version: ZHTP_VERSION.to_string(),
             status,
@@ -271,7 +268,10 @@ impl ZhtpResponse {
     pub fn dao_fee_insufficient(required: u64, provided: u64) -> Self {
         Self::error(
             ZhtpStatus::DaoFeeInsufficient,
-            format!("DAO fee insufficient. Required: {} SOV, Provided: {} SOV", required, provided),
+            format!(
+                "DAO fee insufficient. Required: {} SOV, Provided: {} SOV",
+                required, provided
+            ),
         )
     }
 
@@ -354,9 +354,11 @@ impl ZhtpResponse {
 
     /// Get response size in bytes
     pub fn size(&self) -> usize {
-        self.body.len() + 
-        serde_json::to_string(&self.headers).unwrap_or_default().len() +
-        self.status_message.len()
+        self.body.len()
+            + serde_json::to_string(&self.headers)
+                .unwrap_or_default()
+                .len()
+            + self.status_message.len()
     }
 
     /// Get content type
@@ -415,16 +417,11 @@ impl ZhtpResponse {
         }
 
         // Validate timestamp is not too far in the future
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs();
-        
-        if self.timestamp > now + 300 { // Allow 5 minutes clock skew
-            tracing::warn!(
-                "Response timestamp in future: {} > {}",
-                self.timestamp,
-                now
-            );
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
+        if self.timestamp > now + 300 {
+            // Allow 5 minutes clock skew
+            tracing::warn!("Response timestamp in future: {} > {}", self.timestamp, now);
             return Ok(false);
         }
 
@@ -472,10 +469,13 @@ mod tests {
             "message": "Hello, World!",
             "status": "success"
         });
-        
+
         let response = ZhtpResponse::json(&data, None).unwrap();
-        assert_eq!(response.content_type(), Some(&"application/json".to_string()));
-        
+        assert_eq!(
+            response.content_type(),
+            Some(&"application/json".to_string())
+        );
+
         let parsed: serde_json::Value = response.body_as_json().unwrap();
         assert_eq!(parsed["message"], "Hello, World!");
     }
@@ -483,11 +483,17 @@ mod tests {
     #[test]
     fn test_convenience_responses() {
         let text_response = ZhtpResponse::text("Hello".to_string(), None);
-        assert_eq!(text_response.content_type(), Some(&"text/plain; charset=utf-8".to_string()));
+        assert_eq!(
+            text_response.content_type(),
+            Some(&"text/plain; charset=utf-8".to_string())
+        );
         assert_eq!(text_response.body_as_string().unwrap(), "Hello");
 
         let html_response = ZhtpResponse::html("<h1>Title</h1>".to_string(), None);
-        assert_eq!(html_response.content_type(), Some(&"text/html; charset=utf-8".to_string()));
+        assert_eq!(
+            html_response.content_type(),
+            Some(&"text/html; charset=utf-8".to_string())
+        );
 
         let no_content = ZhtpResponse::no_content(None);
         assert_eq!(no_content.status, ZhtpStatus::NoContent);
@@ -509,8 +515,12 @@ mod tests {
         let response = ZhtpResponse::success(b"test data".to_vec(), None);
         assert!(response.has_zero_knowledge_privacy());
         assert!(response.has_post_quantum_crypto());
-        assert_eq!(response.size(), response.body.len() + response.status_message.len() + 
-                   serde_json::to_string(&response.headers).unwrap().len());
+        assert_eq!(
+            response.size(),
+            response.body.len()
+                + response.status_message.len()
+                + serde_json::to_string(&response.headers).unwrap().len()
+        );
     }
 
     #[test]
@@ -522,6 +532,9 @@ mod tests {
 
         assert_eq!(response.headers.cache_control, Some("no-cache".to_string()));
         assert_eq!(response.headers.etag, Some("\"123456\"".to_string()));
-        assert_eq!(response.headers.custom.get("x-custom"), Some(&"value".to_string()));
+        assert_eq!(
+            response.headers.custom.get("x-custom"),
+            Some(&"value".to_string())
+        );
     }
 }

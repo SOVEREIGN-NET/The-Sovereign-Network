@@ -32,9 +32,7 @@ async fn handle_oracle_command_impl(
             voting_period_days: _,
         } => {
             if members.is_empty() {
-                return Err(CliError::ConfigError(
-                    "members cannot be empty".to_string(),
-                ));
+                return Err(CliError::ConfigError("members cannot be empty".to_string()));
             }
             let normalized_members = members
                 .iter()
@@ -47,7 +45,15 @@ async fn handle_oracle_command_impl(
                 "reason": reason,
             });
             output.info("Bootstrapping oracle committee...")?;
-            submit_oracle_request(&client, cli, output, ORACLE_COMMITTEE_PROPOSE_ENDPOINT, request, "Oracle Committee Bootstrap").await
+            submit_oracle_request(
+                &client,
+                cli,
+                output,
+                ORACLE_COMMITTEE_PROPOSE_ENDPOINT,
+                request,
+                "Oracle Committee Bootstrap",
+            )
+            .await
         }
         OracleAction::ConfigUpdate {
             epoch_duration,
@@ -69,14 +75,69 @@ async fn handle_oracle_command_impl(
                 "reason": reason,
             });
             output.info("Submitting oracle config update...")?;
-            submit_oracle_request(&client, cli, output, ORACLE_CONFIG_PROPOSE_ENDPOINT, request, "Oracle Config Update").await
+            submit_oracle_request(
+                &client,
+                cli,
+                output,
+                ORACLE_CONFIG_PROPOSE_ENDPOINT,
+                request,
+                "Oracle Config Update",
+            )
+            .await
         }
-        OracleAction::Status => fetch_oracle(&client, cli, output, "/api/v1/oracle/status", "Oracle Status").await,
-        OracleAction::Price => fetch_oracle(&client, cli, output, "/api/v1/oracle/price", "Oracle Price").await,
-        OracleAction::Config => fetch_oracle(&client, cli, output, "/api/v1/oracle/config", "Oracle Config").await,
-        OracleAction::PendingUpdates => fetch_oracle(&client, cli, output, "/api/v1/oracle/pending-updates", "Oracle Pending Updates").await,
-        OracleAction::SlashingEvents => fetch_oracle(&client, cli, output, "/api/v1/oracle/slashing-events", "Oracle Slashing Events").await,
-        OracleAction::BannedValidators => fetch_oracle(&client, cli, output, "/api/v1/oracle/banned-validators", "Oracle Banned Validators").await,
+        OracleAction::Status => {
+            fetch_oracle(
+                &client,
+                cli,
+                output,
+                "/api/v1/oracle/status",
+                "Oracle Status",
+            )
+            .await
+        }
+        OracleAction::Price => {
+            fetch_oracle(&client, cli, output, "/api/v1/oracle/price", "Oracle Price").await
+        }
+        OracleAction::Config => {
+            fetch_oracle(
+                &client,
+                cli,
+                output,
+                "/api/v1/oracle/config",
+                "Oracle Config",
+            )
+            .await
+        }
+        OracleAction::PendingUpdates => {
+            fetch_oracle(
+                &client,
+                cli,
+                output,
+                "/api/v1/oracle/pending-updates",
+                "Oracle Pending Updates",
+            )
+            .await
+        }
+        OracleAction::SlashingEvents => {
+            fetch_oracle(
+                &client,
+                cli,
+                output,
+                "/api/v1/oracle/slashing-events",
+                "Oracle Slashing Events",
+            )
+            .await
+        }
+        OracleAction::BannedValidators => {
+            fetch_oracle(
+                &client,
+                cli,
+                output,
+                "/api/v1/oracle/banned-validators",
+                "Oracle Banned Validators",
+            )
+            .await
+        }
     }
 }
 
@@ -87,19 +148,21 @@ async fn fetch_oracle(
     endpoint: &str,
     title: &str,
 ) -> CliResult<()> {
-    let response = client.get(endpoint).await.map_err(|e| CliError::ApiCallFailed {
-        endpoint: endpoint.to_string(),
-        status: 0,
-        reason: e.to_string(),
-    })?;
+    let response = client
+        .get(endpoint)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: endpoint.to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
 
-    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-        CliError::ApiCallFailed {
+    let result: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: endpoint.to_string(),
             status: 0,
             reason: format!("Failed to parse response: {e}"),
-        }
-    })?;
+        })?;
     output.header(title)?;
     output.print(&format_output(&result, &cli.format)?)?;
     Ok(())
@@ -113,22 +176,22 @@ async fn submit_oracle_request(
     request: serde_json::Value,
     title: &str,
 ) -> CliResult<()> {
-    let response = client
-        .post_json(endpoint, &request)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
+    let response =
+        client
+            .post_json(endpoint, &request)
+            .await
+            .map_err(|e| CliError::ApiCallFailed {
+                endpoint: endpoint.to_string(),
+                status: 0,
+                reason: e.to_string(),
+            })?;
 
-    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-        CliError::ApiCallFailed {
+    let result: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: endpoint.to_string(),
             status: 0,
             reason: format!("Failed to parse response: {e}"),
-        }
-    })?;
+        })?;
 
     output.header(title)?;
     output.print(&format_output(&result, &cli.format)?)?;
@@ -187,7 +250,8 @@ mod tests {
             Some("update_oracle_config")
         );
         assert_eq!(
-            body.get("oracle_max_deviation_bps").and_then(|v| v.as_u64()),
+            body.get("oracle_max_deviation_bps")
+                .and_then(|v| v.as_u64()),
             Some(900)
         );
         assert_eq!(

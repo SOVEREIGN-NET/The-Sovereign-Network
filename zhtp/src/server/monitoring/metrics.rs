@@ -1,5 +1,5 @@
 //! Performance Metrics Tracking
-//! 
+//!
 //! Monitors blockchain synchronization performance
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,20 +16,20 @@ pub struct SyncPerformanceMetrics {
     pub max_block_latency_ms: u64,
     pub min_tx_latency_ms: u64,
     pub max_tx_latency_ms: u64,
-    
+
     // Bandwidth tracking (bytes)
     pub total_bytes_sent: u64,
     pub total_bytes_received: u64,
     pub bytes_sent_per_sec: f64,
     pub bytes_received_per_sec: f64,
     pub peak_bandwidth_usage_bps: u64,
-    
+
     // Efficiency metrics
     pub duplicate_block_ratio: f64,
     pub duplicate_tx_ratio: f64,
     pub validation_success_rate: f64,
     pub relay_efficiency: f64,
-    
+
     // Time window for rate calculations
     pub measurement_start: u64,
     pub measurement_duration_secs: u64,
@@ -37,7 +37,10 @@ pub struct SyncPerformanceMetrics {
 
 impl SyncPerformanceMetrics {
     pub fn new() -> Self {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         Self {
             avg_block_propagation_ms: 0.0,
             avg_tx_propagation_ms: 0.0,
@@ -122,7 +125,7 @@ impl MetricsHistory {
             last_snapshot: 0,
         }
     }
-    
+
     pub fn add_snapshot(&mut self, snapshot: MetricsSnapshot) {
         self.last_snapshot = snapshot.timestamp;
         self.snapshots.push(snapshot);
@@ -130,9 +133,12 @@ impl MetricsHistory {
             self.snapshots.remove(0);
         }
     }
-    
+
     pub fn should_take_snapshot(&self) -> bool {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         now - self.last_snapshot >= self.interval_secs
     }
 }

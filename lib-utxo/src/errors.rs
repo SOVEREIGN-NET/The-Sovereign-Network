@@ -1,7 +1,7 @@
 //! UTXO Errors
 
-use thiserror::Error;
 use lib_types::Amount;
+use thiserror::Error;
 
 use crate::types::OutPoint;
 

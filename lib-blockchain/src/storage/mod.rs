@@ -1212,7 +1212,11 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Returns an iterator of (TokenId, BondingCurveToken) pairs.
     fn iter_bonding_curve_tokens(
         &self,
-    ) -> StorageResult<Box<dyn Iterator<Item = (TokenId, crate::contracts::bonding_curve::BondingCurveToken)> + '_>>;
+    ) -> StorageResult<
+        Box<
+            dyn Iterator<Item = (TokenId, crate::contracts::bonding_curve::BondingCurveToken)> + '_,
+        >,
+    >;
 
     /// Get bonding curve token ID by symbol (secondary index).
     ///
@@ -1227,7 +1231,11 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     ///
     /// # Requirements
     /// - MUST be called within begin_block/commit_block
-    fn put_bonding_curve_symbol_index(&self, symbol: &str, token_id: &TokenId) -> StorageResult<()> {
+    fn put_bonding_curve_symbol_index(
+        &self,
+        symbol: &str,
+        token_id: &TokenId,
+    ) -> StorageResult<()> {
         // Default implementation is a no-op
         let _ = (symbol, token_id);
         Ok(())

@@ -1,20 +1,20 @@
 //! Ring signature implementation for ZHTP
-//! 
+//!
 //! implementation from crypto.rs, lines 745-822
 
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use crate::types::{PrivateKey, PublicKey};
-use crate::hashing::hash_blake3;
 use crate::classical::curve25519_scalar_mult;
+use crate::hashing::hash_blake3;
+use crate::types::{PrivateKey, PublicKey};
+use anyhow::Result;
+use rand::{rngs::OsRng, RngCore};
+use serde::{Deserialize, Serialize};
 use zeroize::ZeroizeOnDrop;
-use rand::{RngCore, rngs::OsRng};
 
 /// Ring signature structure for anonymous signing
 /// implementation from crypto.rs, lines 745-756
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RingSignature {
-    pub c: [u8; 32],     // Challenge hash
+    pub c: [u8; 32],              // Challenge hash
     pub responses: Vec<[u8; 32]>, // Responses for each ring member
     pub key_image: [u8; 32],      // Key image for double-spend prevention
 }
@@ -57,13 +57,14 @@ impl RingContext {
     /// Generate a ring signature using proper cryptographic methods
     /// implementation from crypto.rs, lines 787-822
     pub fn sign(&self) -> Result<RingSignature> {
-        let signer_index = self.signer_index.ok_or_else(|| {
-            anyhow::anyhow!("No signer set")
-        })?;
-        
-        let private_key = self.private_key.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("No private key set")
-        })?;
+        let signer_index = self
+            .signer_index
+            .ok_or_else(|| anyhow::anyhow!("No signer set"))?;
+
+        let private_key = self
+            .private_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No private key set"))?;
 
         let ring_size = self.ring.len();
         let mut responses = vec![[0u8; 32]; ring_size];
@@ -75,15 +76,16 @@ impl RingContext {
         // Step 1: Generate random nonces for all non-signers and collect commitments
         let mut commitments = Vec::new();
         let mut random_nonces = vec![[0u8; 32]; ring_size];
-        
+
         for i in 0..ring_size {
             if i != signer_index {
                 // Generate random response for non-signers
                 rng.fill_bytes(&mut random_nonces[i]);
                 responses[i] = random_nonces[i];
-                
+
                 // Simulate commitment for non-signer
-                let commitment = self.simulate_commitment(&self.ring[i].dilithium_pk, &responses[i])?;
+                let commitment =
+                    self.simulate_commitment(&self.ring[i].dilithium_pk, &responses[i])?;
                 commitments.push(commitment);
             } else {
                 // Placeholder for signer's commitment (will be calculated later)
@@ -95,7 +97,7 @@ impl RingContext {
         let mut challenge_data = Vec::new();
         challenge_data.extend_from_slice(&self.message);
         challenge_data.extend_from_slice(&key_image);
-        
+
         // Add all ring member public keys and their commitments
         for (i, pubkey) in self.ring.iter().enumerate() {
             challenge_data.extend_from_slice(&pubkey.dilithium_pk);
@@ -108,13 +110,16 @@ impl RingContext {
         responses[signer_index] = self.generate_signer_response(&challenge, private_key)?;
 
         // Step 4: Update signer's commitment with the response
-        commitments[signer_index] = self.simulate_commitment(&self.ring[signer_index].dilithium_pk, &responses[signer_index])?;
+        commitments[signer_index] = self.simulate_commitment(
+            &self.ring[signer_index].dilithium_pk,
+            &responses[signer_index],
+        )?;
 
         // Step 5: Recompute final challenge with correct signer commitment
         let mut final_challenge_data = Vec::new();
         final_challenge_data.extend_from_slice(&self.message);
         final_challenge_data.extend_from_slice(&key_image);
-        
+
         for (i, pubkey) in self.ring.iter().enumerate() {
             final_challenge_data.extend_from_slice(&pubkey.dilithium_pk);
             final_challenge_data.extend_from_slice(&commitments[i]);
@@ -150,7 +155,11 @@ impl RingContext {
 
     /// Generate response for the actual signer
     /// implementation from crypto.rs, lines 840-847
-    fn generate_signer_response(&self, challenge: &[u8; 32], private_key: &PrivateKey) -> Result<[u8; 32]> {
+    fn generate_signer_response(
+        &self,
+        challenge: &[u8; 32],
+        private_key: &PrivateKey,
+    ) -> Result<[u8; 32]> {
         // response generation using the challenge and private key
         let mut response_data = Vec::new();
         response_data.extend_from_slice(challenge);
@@ -182,7 +191,7 @@ pub fn verify_ring_signature(
     let mut challenge_data = Vec::new();
     challenge_data.extend_from_slice(message);
     challenge_data.extend_from_slice(&signature.key_image);
-    
+
     // Add all ring member public keys and their recomputed commitments
     for (i, pubkey) in ring.iter().enumerate() {
         challenge_data.extend_from_slice(&pubkey.dilithium_pk);
@@ -190,7 +199,7 @@ pub fn verify_ring_signature(
     }
 
     let recomputed_challenge = hash_blake3(&challenge_data);
-    
+
     // Step 3: Verify that recomputed challenge matches signature challenge
     if recomputed_challenge != signature.c {
         return Ok(false);
@@ -211,7 +220,8 @@ pub fn verify_ring_signature(
         for &byte in response {
             unique_bytes.insert(byte);
         }
-        if unique_bytes.len() > 8 {  // Reasonable entropy threshold
+        if unique_bytes.len() > 8 {
+            // Reasonable entropy threshold
             entropy_check_passed = true;
             break;
         }
@@ -271,11 +281,8 @@ mod tests {
     fn test_ring_signature_verification_failure() -> Result<()> {
         let keypair1 = KeyPair::generate()?;
         let keypair2 = KeyPair::generate()?;
-        
-        let ring = vec![
-            keypair1.public_key.clone(),
-            keypair2.public_key.clone(),
-        ];
+
+        let ring = vec![keypair1.public_key.clone(), keypair2.public_key.clone()];
 
         let message = b"ZHTP test message";
         let wrong_message = b"Wrong message";
@@ -287,7 +294,10 @@ mod tests {
 
         // Verify with wrong message should fail
         let is_valid = verify_ring_signature(&signature, wrong_message, &ring)?;
-        assert!(!is_valid, "Ring signature should be invalid with wrong message");
+        assert!(
+            !is_valid,
+            "Ring signature should be invalid with wrong message"
+        );
 
         Ok(())
     }

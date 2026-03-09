@@ -1,5 +1,5 @@
 //! ZHTP Status Codes
-//! 
+//!
 //! Status codes for ZHTP protocol responses, extending traditional HTTP status codes
 //! with Web4-specific codes for zero-knowledge proofs, DAO fees, and mesh networking.
 
@@ -344,8 +344,14 @@ mod tests {
     #[test]
     fn test_reason_phrases() {
         assert_eq!(ZhtpStatus::Ok.reason_phrase(), "OK");
-        assert_eq!(ZhtpStatus::DaoFeeInsufficient.reason_phrase(), "DAO Fee Insufficient");
-        assert_eq!(ZhtpStatus::ZkProofInvalid.reason_phrase(), "Zero-Knowledge Proof Invalid");
+        assert_eq!(
+            ZhtpStatus::DaoFeeInsufficient.reason_phrase(),
+            "DAO Fee Insufficient"
+        );
+        assert_eq!(
+            ZhtpStatus::ZkProofInvalid.reason_phrase(),
+            "Zero-Knowledge Proof Invalid"
+        );
     }
 
     #[test]
@@ -379,6 +385,9 @@ mod tests {
     #[test]
     fn test_display_format() {
         assert_eq!(ZhtpStatus::Ok.to_string(), "200 OK");
-        assert_eq!(ZhtpStatus::DaoFeeRequired.to_string(), "700 DAO Fee Required");
+        assert_eq!(
+            ZhtpStatus::DaoFeeRequired.to_string(),
+            "700 DAO Fee Required"
+        );
     }
 }

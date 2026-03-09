@@ -2,9 +2,9 @@
 //!
 //! Moves bootstrap logic out of mesh/core while keeping the interface data-only.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::path::PathBuf;
 
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, info, warn};
@@ -48,17 +48,15 @@ pub fn setup_mesh_dht_integration(
     let local_node_id = derive_local_node_id(server_id);
     let dht_storage = create_persistent_storage(local_node_id.clone(), dispatcher);
 
-    let dht_keypair = Arc::new(
-        lib_crypto::KeyPair::generate().expect("Failed to generate DHT keypair"),
-    );
+    let dht_keypair =
+        Arc::new(lib_crypto::KeyPair::generate().expect("Failed to generate DHT keypair"));
 
     let (mesh_dht_transport, dht_payload_sender_raw) =
         MeshDhtTransport::new(mesh_message_router, dht_keypair);
     let mesh_dht_transport = Arc::new(mesh_dht_transport);
 
     // Map NodeId to PeerId for the lib-storage transport.
-    let (mapped_tx, mut mapped_rx) =
-        mpsc::unbounded_channel::<(Vec<u8>, NodeId)>();
+    let (mapped_tx, mut mapped_rx) = mpsc::unbounded_channel::<(Vec<u8>, NodeId)>();
     tokio::spawn(async move {
         while let Some((data, node_id)) = mapped_rx.recv().await {
             let peer_id = lib_storage::dht::transport::PeerId::Mesh(node_id.as_bytes().to_vec());
@@ -117,7 +115,10 @@ fn create_persistent_storage(
         .join("storage");
 
     if let Err(e) = std::fs::create_dir_all(&zhtp_dir) {
-        warn!("Failed to create DHT storage directory {:?}: {}", zhtp_dir, e);
+        warn!(
+            "Failed to create DHT storage directory {:?}: {}",
+            zhtp_dir, e
+        );
     }
 
     // FIX (Ticket #XXX): Use separate persistence file for MeshRouter DHT storage
@@ -134,7 +135,10 @@ fn create_persistent_storage(
 
     // Initial in-memory placeholder; replaced by network-enabled storage in
     // setup_mesh_dht_integration() once mesh transport is wired.
-    Arc::new(Mutex::new(DhtStorage::new(local_node_id, DHT_STORAGE_BYTES)))
+    Arc::new(Mutex::new(DhtStorage::new(
+        local_node_id,
+        DHT_STORAGE_BYTES,
+    )))
 }
 
 fn derive_local_node_id(server_id: Uuid) -> lib_identity::NodeId {

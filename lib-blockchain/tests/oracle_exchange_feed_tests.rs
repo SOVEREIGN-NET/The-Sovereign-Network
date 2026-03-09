@@ -111,10 +111,9 @@ fn vwap_is_volume_weighted_average() {
     let vwap = exchange.vwap_sov_usdc(now - 3600, now).unwrap();
 
     // Expected: 68,000,000 / 60 = 1,133,333.33... (at 1e8 scale)
-    let expected = (100_000_000u128 * 10_000_000
-        + 110_000_000 * 20_000_000
-        + 120_000_000 * 30_000_000)
-        / (10_000_000 + 20_000_000 + 30_000_000);
+    let expected =
+        (100_000_000u128 * 10_000_000 + 110_000_000 * 20_000_000 + 120_000_000 * 30_000_000)
+            / (10_000_000 + 20_000_000 + 30_000_000);
 
     assert_eq!(vwap, expected);
     // Should be approximately $1.133
@@ -132,7 +131,10 @@ fn vwap_returns_none_for_empty_window() {
 
     // Query VWAP for a window that doesn't include the trade
     let vwap = exchange.vwap_sov_usdc(2000, 3000);
-    assert!(vwap.is_none(), "vwap should be None when no trades in window");
+    assert!(
+        vwap.is_none(),
+        "vwap should be None when no trades in window"
+    );
 }
 
 /// ORACLE-3: Verify last trade returns most recent trade.

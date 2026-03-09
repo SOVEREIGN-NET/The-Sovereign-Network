@@ -11,11 +11,13 @@ use tempfile::TempDir;
 
 use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::execution::{BlockExecutor, ExecutorConfig};
-use lib_blockchain::storage::{BlockchainStore, SledStore, Address, TokenId, OutPoint, TxHash, Utxo, AccountState, WalletState};
-use lib_blockchain::sync::{ChainSync, SnapshotManager, SnapshotId};
-use lib_blockchain::transaction::{Transaction, TokenTransferData};
-use lib_blockchain::types::{Hash, Difficulty, TransactionType};
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+use lib_blockchain::storage::{
+    AccountState, Address, BlockchainStore, OutPoint, SledStore, TokenId, TxHash, Utxo, WalletState,
+};
+use lib_blockchain::sync::{ChainSync, SnapshotId, SnapshotManager};
+use lib_blockchain::transaction::{TokenTransferData, Transaction};
+use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 
 // =============================================================================
 // Test Helpers
@@ -169,9 +171,18 @@ fn test_snapshot_restore_complete_state() {
     assert_eq!(store.latest_height().unwrap(), 3);
 
     // Verify balances
-    assert_eq!(store.get_token_balance(&token, &alice).unwrap(), alice_balance_before);
-    assert_eq!(store.get_token_balance(&token, &bob).unwrap(), bob_balance_before);
-    assert_eq!(store.get_token_balance(&token, &charlie).unwrap(), charlie_balance_before);
+    assert_eq!(
+        store.get_token_balance(&token, &alice).unwrap(),
+        alice_balance_before
+    );
+    assert_eq!(
+        store.get_token_balance(&token, &bob).unwrap(),
+        bob_balance_before
+    );
+    assert_eq!(
+        store.get_token_balance(&token, &charlie).unwrap(),
+        charlie_balance_before
+    );
 
     // Verify UTXOs
     let restored_utxo1 = store.get_utxo(&outpoint1).unwrap().unwrap();
@@ -446,9 +457,19 @@ fn test_snapshot_with_chain_sync_roundtrip() {
 
     // Add some state
     store1.begin_block(10).unwrap();
-    let block10 = create_block_at_height(10, store1.get_block_by_height(9).unwrap().unwrap().header.block_hash);
+    let block10 = create_block_at_height(
+        10,
+        store1
+            .get_block_by_height(9)
+            .unwrap()
+            .unwrap()
+            .header
+            .block_hash,
+    );
     store1.append_block(&block10).unwrap();
-    store1.set_token_balance(&TokenId::NATIVE, &Address::new([1u8; 32]), 999_999).unwrap();
+    store1
+        .set_token_balance(&TokenId::NATIVE, &Address::new([1u8; 32]), 999_999)
+        .unwrap();
     store1.commit_block().unwrap();
 
     // Take snapshot
@@ -468,7 +489,17 @@ fn test_snapshot_with_chain_sync_roundtrip() {
     assert_eq!(store2.latest_height().unwrap(), 10);
 
     // Hashes should match
-    let hash1 = store1.get_block_by_height(10).unwrap().unwrap().header.block_hash;
-    let hash2 = store2.get_block_by_height(10).unwrap().unwrap().header.block_hash;
+    let hash1 = store1
+        .get_block_by_height(10)
+        .unwrap()
+        .unwrap()
+        .header
+        .block_hash;
+    let hash2 = store2
+        .get_block_by_height(10)
+        .unwrap()
+        .unwrap()
+        .header
+        .block_hash;
     assert_eq!(hash1, hash2);
 }

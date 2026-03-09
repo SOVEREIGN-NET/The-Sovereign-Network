@@ -1,55 +1,55 @@
 //! SOV Economics Engine
-//! 
+//!
 //! Post-scarcity economics system for the quantum-resistant Web4 internet that replaces ISPs.
-//! Provides economic models, rewards calculation, wallet management, transaction 
+//! Provides economic models, rewards calculation, wallet management, transaction
 //! processing, Universal Basic Income distribution, and incentives.
-//! 
-//! ISP REPLACEMENT ECONOMICS 
-//! 
+//!
+//! ISP REPLACEMENT ECONOMICS
+//!
 //! The Sovereign Network creates a free internet by incentivizing users to share resources:
 //! - Route packets: Earn SOV tokens for bandwidth sharing (replaces ISP revenue)
-//! - Store content: Earn SOV tokens for distributed storage (replaces CDN revenue) 
+//! - Store content: Earn SOV tokens for distributed storage (replaces CDN revenue)
 //! - Validate transactions: Earn SOV tokens for network security (replaces authority fees)
 //! - Share internet: Earn SOV tokens for connectivity sharing (crowd-sourced ISP)
-//! 
+//!
 //! ALL PARTICIPANTS RECEIVE UBI:
 //! - 2% of all network activity funds Universal Basic Income
 //! - DAO governance distributes UBI to all verified humans
 //! - Network growth funds welfare and public services
 //! - Creates a sustainable society where technology serves everyone
-//! 
+//!
 //! ECONOMIC MODEL: Post-scarcity economics through abundant network resources
 
-pub mod wasm;
-pub mod types;
-pub mod models;
-pub mod transactions;
-pub mod wallets;
-pub mod incentives;
 pub mod distribution;
-pub mod treasury_economics;
-pub mod supply;
-pub mod pricing;
-pub mod integration;
-pub mod testing;
-pub mod rewards;
-pub mod network_types;
-pub mod tokens;
 pub mod fee_distribution;
+pub mod incentives;
+pub mod integration;
+pub mod models;
+pub mod network_types;
+pub mod pricing;
+pub mod rewards;
+pub mod supply;
+pub mod testing;
+pub mod tokens;
+pub mod transactions;
+pub mod treasury_economics;
+pub mod types;
+pub mod wallets;
+pub mod wasm;
 
 // Re-export main types and functions
-pub use types::*;
-pub use models::*; // All models exports are okay
-pub use transactions::*;
-pub use wallets::*;
-pub use incentives::*;
 pub use distribution::*;
-pub use treasury_economics::*;
-pub use supply::{management, total_supply}; // Module-level exports to avoid conflicts
+pub use fee_distribution::{distribute_fee, FeeDistribution, FeeDistributionError, SectorDao};
+pub use incentives::*;
+pub use models::*; // All models exports are okay
 pub use pricing::*;
 pub use rewards::*;
+pub use supply::{management, total_supply}; // Module-level exports to avoid conflicts
 pub use tokens::*;
-pub use fee_distribution::{distribute_fee, FeeDistribution, FeeDistributionError, SectorDao};
+pub use transactions::*;
+pub use treasury_economics::*;
+pub use types::*;
+pub use wallets::*;
 
 /// Economic constants - aligned with financial projections (docs/sov_final/)
 ///
@@ -75,7 +75,9 @@ pub const MINIMUM_NETWORK_FEE: u64 = 10;
 /// - Dev Grants (10%): $500K
 pub const UBI_ALLOCATION_PERCENTAGE: u64 = 45; // 45% → Universal Basic Income
 pub const SECTOR_DAO_ALLOCATION_PERCENTAGE: u64 = 30; // 30% → Sector DAOs (5 DAOs × 6% each)
-#[deprecated(note = "Use SECTOR_DAO_ALLOCATION_PERCENTAGE instead; this constant refers specifically to Sector DAOs.")]
+#[deprecated(
+    note = "Use SECTOR_DAO_ALLOCATION_PERCENTAGE instead; this constant refers specifically to Sector DAOs."
+)]
 pub const DAO_ALLOCATION_PERCENTAGE: u64 = SECTOR_DAO_ALLOCATION_PERCENTAGE; // Backwards-compatible alias
 pub const EMERGENCY_ALLOCATION_PERCENTAGE: u64 = 15; // 15% → Emergency Reserve Fund
 pub const DEV_GRANT_ALLOCATION_PERCENTAGE: u64 = 10; // 10% → Development Grants

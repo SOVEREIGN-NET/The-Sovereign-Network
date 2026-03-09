@@ -5,12 +5,12 @@ pub mod fault_detector;
 pub mod lru_cache;
 
 pub use evidence::{
-    ByzantineEvidence, ConflictingVote, EquivocationEvidence, FirstVoteRecord,
-    ForensicMessageType, ForensicRecord, PartitionSuspectedEvidence, ReplayEvidence,
-    ReplayKey, ReplayMetadata, VoteTrackingKey,
+    ByzantineEvidence, ConflictingVote, EquivocationEvidence, FirstVoteRecord, ForensicMessageType,
+    ForensicRecord, PartitionSuspectedEvidence, ReplayEvidence, ReplayKey, ReplayMetadata,
+    VoteTrackingKey,
 };
 pub use fault_detector::{
-    ByzantineFaultDetector, ByzantineFault, ByzantineFaultType, FaultSeverity,
-    DoubleSignEvent, LivenessViolation, InvalidProposalEvent, FaultDetectorConfig,
+    ByzantineFault, ByzantineFaultDetector, ByzantineFaultType, DoubleSignEvent,
+    FaultDetectorConfig, FaultSeverity, InvalidProposalEvent, LivenessViolation,
 };
 pub use lru_cache::BoundedLruCache;

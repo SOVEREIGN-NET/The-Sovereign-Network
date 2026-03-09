@@ -153,7 +153,12 @@ impl ChainEvaluator {
 mod tests {
     use super::*;
 
-    fn create_test_chain(height: u64, work: u128, identities: u64, transactions: u64) -> ChainSummary {
+    fn create_test_chain(
+        height: u64,
+        work: u128,
+        identities: u64,
+        transactions: u64,
+    ) -> ChainSummary {
         ChainSummary {
             height,
             total_work: work,

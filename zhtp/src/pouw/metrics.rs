@@ -2,11 +2,11 @@
 //!
 //! Provides Prometheus-compatible metrics for the PoUW protocol.
 
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use serde::{Serialize, Deserialize};
 
 /// PoUW metrics collector
 pub struct PouwMetrics {
@@ -163,52 +163,106 @@ impl PouwMetrics {
         // Counter metrics
         output.push_str("# HELP pouw_receipts_received_total Total receipts received\n");
         output.push_str("# TYPE pouw_receipts_received_total counter\n");
-        output.push_str(&format!("pouw_receipts_received_total {}\n", snapshot.receipts_received));
+        output.push_str(&format!(
+            "pouw_receipts_received_total {}\n",
+            snapshot.receipts_received
+        ));
 
         output.push_str("# HELP pouw_receipts_accepted_total Total receipts accepted\n");
         output.push_str("# TYPE pouw_receipts_accepted_total counter\n");
-        output.push_str(&format!("pouw_receipts_accepted_total {}\n", snapshot.receipts_accepted));
+        output.push_str(&format!(
+            "pouw_receipts_accepted_total {}\n",
+            snapshot.receipts_accepted
+        ));
 
         // Rejection counters with labels
         output.push_str("# HELP pouw_receipts_rejected_total Total receipts rejected by reason\n");
         output.push_str("# TYPE pouw_receipts_rejected_total counter\n");
-        output.push_str(&format!("pouw_receipts_rejected_total{{reason=\"invalid_signature\"}} {}\n", snapshot.rejection_counters.invalid_signature));
-        output.push_str(&format!("pouw_receipts_rejected_total{{reason=\"expired_challenge\"}} {}\n", snapshot.rejection_counters.expired_challenge));
-        output.push_str(&format!("pouw_receipts_rejected_total{{reason=\"invalid_challenge_binding\"}} {}\n", snapshot.rejection_counters.invalid_challenge_binding));
-        output.push_str(&format!("pouw_receipts_rejected_total{{reason=\"duplicate_nonce\"}} {}\n", snapshot.rejection_counters.duplicate_nonce));
-        output.push_str(&format!("pouw_receipts_rejected_total{{reason=\"invalid_proof_type\"}} {}\n", snapshot.rejection_counters.invalid_proof_type));
-        output.push_str(&format!("pouw_receipts_rejected_total{{reason=\"policy_violation\"}} {}\n", snapshot.rejection_counters.policy_violation));
-        output.push_str(&format!("pouw_receipts_rejected_total{{reason=\"malformed_receipt\"}} {}\n", snapshot.rejection_counters.malformed_receipt));
-        output.push_str(&format!("pouw_receipts_rejected_total{{reason=\"unknown_client\"}} {}\n", snapshot.rejection_counters.unknown_client));
+        output.push_str(&format!(
+            "pouw_receipts_rejected_total{{reason=\"invalid_signature\"}} {}\n",
+            snapshot.rejection_counters.invalid_signature
+        ));
+        output.push_str(&format!(
+            "pouw_receipts_rejected_total{{reason=\"expired_challenge\"}} {}\n",
+            snapshot.rejection_counters.expired_challenge
+        ));
+        output.push_str(&format!(
+            "pouw_receipts_rejected_total{{reason=\"invalid_challenge_binding\"}} {}\n",
+            snapshot.rejection_counters.invalid_challenge_binding
+        ));
+        output.push_str(&format!(
+            "pouw_receipts_rejected_total{{reason=\"duplicate_nonce\"}} {}\n",
+            snapshot.rejection_counters.duplicate_nonce
+        ));
+        output.push_str(&format!(
+            "pouw_receipts_rejected_total{{reason=\"invalid_proof_type\"}} {}\n",
+            snapshot.rejection_counters.invalid_proof_type
+        ));
+        output.push_str(&format!(
+            "pouw_receipts_rejected_total{{reason=\"policy_violation\"}} {}\n",
+            snapshot.rejection_counters.policy_violation
+        ));
+        output.push_str(&format!(
+            "pouw_receipts_rejected_total{{reason=\"malformed_receipt\"}} {}\n",
+            snapshot.rejection_counters.malformed_receipt
+        ));
+        output.push_str(&format!(
+            "pouw_receipts_rejected_total{{reason=\"unknown_client\"}} {}\n",
+            snapshot.rejection_counters.unknown_client
+        ));
 
         // Challenge metrics
         output.push_str("# HELP pouw_challenges_issued_total Total challenges issued\n");
         output.push_str("# TYPE pouw_challenges_issued_total counter\n");
-        output.push_str(&format!("pouw_challenges_issued_total {}\n", snapshot.challenges_issued));
+        output.push_str(&format!(
+            "pouw_challenges_issued_total {}\n",
+            snapshot.challenges_issued
+        ));
 
         // Rate limiting
         output.push_str("# HELP pouw_rate_limit_denials_total Total rate limit denials\n");
         output.push_str("# TYPE pouw_rate_limit_denials_total counter\n");
-        output.push_str(&format!("pouw_rate_limit_denials_total {}\n", snapshot.rate_limit_denials));
+        output.push_str(&format!(
+            "pouw_rate_limit_denials_total {}\n",
+            snapshot.rate_limit_denials
+        ));
 
         // Histograms
         if let Some(hist) = &snapshot.sig_verification_histogram {
             output.push_str("# HELP pouw_signature_verification_duration_microseconds Signature verification duration\n");
             output.push_str("# TYPE pouw_signature_verification_duration_microseconds histogram\n");
-            output.push_str(&format!("pouw_signature_verification_duration_microseconds_sum {}\n", hist.sum));
-            output.push_str(&format!("pouw_signature_verification_duration_microseconds_count {}\n", hist.count));
+            output.push_str(&format!(
+                "pouw_signature_verification_duration_microseconds_sum {}\n",
+                hist.sum
+            ));
+            output.push_str(&format!(
+                "pouw_signature_verification_duration_microseconds_count {}\n",
+                hist.count
+            ));
             for (le, count) in &hist.buckets {
-                output.push_str(&format!("pouw_signature_verification_duration_microseconds_bucket{{le=\"{}\"}} {}\n", le, count));
+                output.push_str(&format!(
+                    "pouw_signature_verification_duration_microseconds_bucket{{le=\"{}\"}} {}\n",
+                    le, count
+                ));
             }
         }
 
         if let Some(hist) = &snapshot.processing_histogram {
             output.push_str("# HELP pouw_receipt_processing_duration_microseconds Receipt processing duration\n");
             output.push_str("# TYPE pouw_receipt_processing_duration_microseconds histogram\n");
-            output.push_str(&format!("pouw_receipt_processing_duration_microseconds_sum {}\n", hist.sum));
-            output.push_str(&format!("pouw_receipt_processing_duration_microseconds_count {}\n", hist.count));
+            output.push_str(&format!(
+                "pouw_receipt_processing_duration_microseconds_sum {}\n",
+                hist.sum
+            ));
+            output.push_str(&format!(
+                "pouw_receipt_processing_duration_microseconds_count {}\n",
+                hist.count
+            ));
             for (le, count) in &hist.buckets {
-                output.push_str(&format!("pouw_receipt_processing_duration_microseconds_bucket{{le=\"{}\"}} {}\n", le, count));
+                output.push_str(&format!(
+                    "pouw_receipt_processing_duration_microseconds_bucket{{le=\"{}\"}} {}\n",
+                    le, count
+                ));
             }
         }
 
@@ -278,7 +332,7 @@ fn compute_histogram(samples: &[u64]) -> Option<Histogram> {
     // Standard histogram buckets (microseconds)
     let bucket_boundaries = [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000];
     let mut buckets = Vec::new();
-    
+
     for boundary in bucket_boundaries {
         let count_below = sorted.iter().filter(|&&x| x <= boundary).count() as u64;
         buckets.push((boundary.to_string(), count_below));
@@ -307,7 +361,9 @@ pub struct MetricsTimer {
 
 impl MetricsTimer {
     pub fn start() -> Self {
-        Self { start: Instant::now() }
+        Self {
+            start: Instant::now(),
+        }
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -322,7 +378,7 @@ mod tests {
     #[tokio::test]
     async fn test_receipt_counters() {
         let metrics = PouwMetrics::new();
-        
+
         metrics.record_receipt_received();
         metrics.record_receipt_received();
         metrics.record_receipt_accepted();
@@ -335,10 +391,16 @@ mod tests {
     #[tokio::test]
     async fn test_rejection_counters() {
         let metrics = PouwMetrics::new();
-        
-        metrics.record_rejection(RejectionType::InvalidSignature).await;
-        metrics.record_rejection(RejectionType::InvalidSignature).await;
-        metrics.record_rejection(RejectionType::ExpiredChallenge).await;
+
+        metrics
+            .record_rejection(RejectionType::InvalidSignature)
+            .await;
+        metrics
+            .record_rejection(RejectionType::InvalidSignature)
+            .await;
+        metrics
+            .record_rejection(RejectionType::ExpiredChallenge)
+            .await;
 
         let snapshot = metrics.snapshot().await;
         assert_eq!(snapshot.rejection_counters.invalid_signature, 2);
@@ -348,10 +410,16 @@ mod tests {
     #[tokio::test]
     async fn test_timing_histogram() {
         let metrics = PouwMetrics::new();
-        
-        metrics.record_sig_verification_time(Duration::from_micros(100)).await;
-        metrics.record_sig_verification_time(Duration::from_micros(200)).await;
-        metrics.record_sig_verification_time(Duration::from_micros(300)).await;
+
+        metrics
+            .record_sig_verification_time(Duration::from_micros(100))
+            .await;
+        metrics
+            .record_sig_verification_time(Duration::from_micros(200))
+            .await;
+        metrics
+            .record_sig_verification_time(Duration::from_micros(300))
+            .await;
 
         let snapshot = metrics.snapshot().await;
         let hist = snapshot.sig_verification_histogram.unwrap();

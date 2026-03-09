@@ -160,7 +160,10 @@ async fn test_sled_backend_throughput_variable_payloads() -> Result<()> {
         for i in 0..iterations_per_size {
             let key = format!("throughput:{}:{}", size, i);
             let start = Instant::now();
-            backend.put(key.as_bytes(), &payload).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+            backend
+                .put(key.as_bytes(), &payload)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             write_metrics.record(start.elapsed());
         }
         let write_elapsed = write_start.elapsed();
@@ -170,7 +173,10 @@ async fn test_sled_backend_throughput_variable_payloads() -> Result<()> {
         for i in 0..iterations_per_size {
             let key = format!("throughput:{}:{}", size, i);
             let start = Instant::now();
-            let _ = backend.get(key.as_bytes()).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+            let _ = backend
+                .get(key.as_bytes())
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             read_metrics.record(start.elapsed());
         }
         let read_elapsed = read_start.elapsed();
@@ -178,10 +184,7 @@ async fn test_sled_backend_throughput_variable_payloads() -> Result<()> {
         let write_throughput = iterations_per_size as f64 / write_elapsed.as_secs_f64();
         let read_throughput = iterations_per_size as f64 / read_elapsed.as_secs_f64();
 
-        println!(
-            "\nPayload size: {} bytes",
-            size
-        );
+        println!("\nPayload size: {} bytes", size);
         println!(
             "  Write: {:.2} ops/sec | p50: {:?} | p99: {:?}",
             write_throughput,
@@ -240,7 +243,10 @@ async fn test_sled_backend_concurrent_access_100_workers() -> Result<()> {
     let read_metrics = Arc::new(LatencyMetrics::new());
 
     println!("\n=== Concurrent Access Test ===");
-    println!("Workers: {}, Operations per worker: {}", WORKER_COUNT, OPS_PER_WORKER);
+    println!(
+        "Workers: {}, Operations per worker: {}",
+        WORKER_COUNT, OPS_PER_WORKER
+    );
 
     let start = Instant::now();
 
@@ -347,15 +353,24 @@ async fn test_sled_backend_memory_bounded_growth() -> Result<()> {
     let memory_tracker = MemoryTracker::new();
 
     println!("\n=== Memory Bounded Growth Test ===");
-    println!("Entries: {}, Payload size: {} bytes", ENTRY_COUNT, PAYLOAD_SIZE);
-    println!("Expected data size: {:.2} MB", (ENTRY_COUNT * PAYLOAD_SIZE) as f64 / (1024.0 * 1024.0));
+    println!(
+        "Entries: {}, Payload size: {} bytes",
+        ENTRY_COUNT, PAYLOAD_SIZE
+    );
+    println!(
+        "Expected data size: {:.2} MB",
+        (ENTRY_COUNT * PAYLOAD_SIZE) as f64 / (1024.0 * 1024.0)
+    );
 
     let payload = vec![0xEFu8; PAYLOAD_SIZE];
 
     let start = Instant::now();
     for i in 0..ENTRY_COUNT {
         let key = format!("memory:{:08}", i);
-        backend.put(key.as_bytes(), &payload).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        backend
+            .put(key.as_bytes(), &payload)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Log progress every 10k entries
         if (i + 1) % 10_000 == 0 {
@@ -374,7 +389,10 @@ async fn test_sled_backend_memory_bounded_growth() -> Result<()> {
 
     println!("\nResults:");
     println!("  Write time: {:?}", elapsed);
-    println!("  Throughput: {:.2} entries/sec", ENTRY_COUNT as f64 / elapsed.as_secs_f64());
+    println!(
+        "  Throughput: {:.2} entries/sec",
+        ENTRY_COUNT as f64 / elapsed.as_secs_f64()
+    );
     println!("  Expected data size: {:.2} MB", expected_data_mb);
     println!("  Actual memory delta: {:.2} MB", memory_delta_mb);
 
@@ -437,7 +455,10 @@ async fn test_sled_backend_batch_operations_throughput() -> Result<()> {
             })
             .collect();
 
-        backend.write_batch(&ops).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        backend
+            .write_batch(&ops)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         batch_metrics.record(batch_start.elapsed());
     }
@@ -494,7 +515,10 @@ async fn test_sled_backend_mixed_workload_sustained() -> Result<()> {
         // Write operation
         let key = format!("mixed:{}", write_count);
         let write_start = Instant::now();
-        backend.put(key.as_bytes(), &payload).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        backend
+            .put(key.as_bytes(), &payload)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         write_metrics.record(write_start.elapsed());
         write_count += 1;
 
@@ -512,8 +536,16 @@ async fn test_sled_backend_mixed_workload_sustained() -> Result<()> {
 
     println!("\nResults:");
     println!("  Total time: {:?}", elapsed);
-    println!("  Writes: {} ({:.2}/sec)", write_count, write_count as f64 / elapsed.as_secs_f64());
-    println!("  Reads: {} ({:.2}/sec)", read_count, read_count as f64 / elapsed.as_secs_f64());
+    println!(
+        "  Writes: {} ({:.2}/sec)",
+        write_count,
+        write_count as f64 / elapsed.as_secs_f64()
+    );
+    println!(
+        "  Reads: {} ({:.2}/sec)",
+        read_count,
+        read_count as f64 / elapsed.as_secs_f64()
+    );
     println!(
         "  Write latency - p50: {:?}, p99: {:?}",
         write_metrics.p50(),
@@ -564,7 +596,10 @@ async fn test_generate_performance_baseline() -> Result<()> {
     println!("======================================================================");
     println!("          SLED STORAGE PERFORMANCE BASELINE REPORT                    ");
     println!("======================================================================");
-    println!(" Date: {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
+    println!(
+        " Date: {}",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    );
     println!(" Iterations per test: {}", ITERATIONS);
     println!("======================================================================");
 
@@ -576,22 +611,38 @@ async fn test_generate_performance_baseline() -> Result<()> {
     for i in 0..ITERATIONS {
         let key = format!("baseline:small:{}", i);
         let start = Instant::now();
-        backend.put(key.as_bytes(), &small_payload).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        backend
+            .put(key.as_bytes(), &small_payload)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         small_write.record(start.elapsed());
     }
 
     for i in 0..ITERATIONS {
         let key = format!("baseline:small:{}", i);
         let start = Instant::now();
-        let _ = backend.get(key.as_bytes()).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        let _ = backend
+            .get(key.as_bytes())
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         small_read.record(start.elapsed());
     }
 
     println!("\n----------------------------------------------------------------------");
     println!(" 100-byte Payload Performance");
     println!("----------------------------------------------------------------------");
-    println!(" Write: p50={:>10?}  p99={:>10?}  mean={:>10?}", small_write.p50(), small_write.p99(), small_write.mean());
-    println!(" Read:  p50={:>10?}  p99={:>10?}  mean={:>10?}", small_read.p50(), small_read.p99(), small_read.mean());
+    println!(
+        " Write: p50={:>10?}  p99={:>10?}  mean={:>10?}",
+        small_write.p50(),
+        small_write.p99(),
+        small_write.mean()
+    );
+    println!(
+        " Read:  p50={:>10?}  p99={:>10?}  mean={:>10?}",
+        small_read.p50(),
+        small_read.p99(),
+        small_read.mean()
+    );
 
     // Medium payload (1KB)
     let medium_payload = vec![0u8; 1024];
@@ -601,22 +652,38 @@ async fn test_generate_performance_baseline() -> Result<()> {
     for i in 0..ITERATIONS {
         let key = format!("baseline:medium:{}", i);
         let start = Instant::now();
-        backend.put(key.as_bytes(), &medium_payload).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        backend
+            .put(key.as_bytes(), &medium_payload)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         medium_write.record(start.elapsed());
     }
 
     for i in 0..ITERATIONS {
         let key = format!("baseline:medium:{}", i);
         let start = Instant::now();
-        let _ = backend.get(key.as_bytes()).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        let _ = backend
+            .get(key.as_bytes())
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         medium_read.record(start.elapsed());
     }
 
     println!("\n----------------------------------------------------------------------");
     println!(" 1KB Payload Performance");
     println!("----------------------------------------------------------------------");
-    println!(" Write: p50={:>10?}  p99={:>10?}  mean={:>10?}", medium_write.p50(), medium_write.p99(), medium_write.mean());
-    println!(" Read:  p50={:>10?}  p99={:>10?}  mean={:>10?}", medium_read.p50(), medium_read.p99(), medium_read.mean());
+    println!(
+        " Write: p50={:>10?}  p99={:>10?}  mean={:>10?}",
+        medium_write.p50(),
+        medium_write.p99(),
+        medium_write.mean()
+    );
+    println!(
+        " Read:  p50={:>10?}  p99={:>10?}  mean={:>10?}",
+        medium_read.p50(),
+        medium_read.p99(),
+        medium_read.mean()
+    );
 
     // Large payload (10KB)
     let large_payload = vec![0u8; 10240];
@@ -627,22 +694,38 @@ async fn test_generate_performance_baseline() -> Result<()> {
     for i in 0..large_iterations {
         let key = format!("baseline:large:{}", i);
         let start = Instant::now();
-        backend.put(key.as_bytes(), &large_payload).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        backend
+            .put(key.as_bytes(), &large_payload)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         large_write.record(start.elapsed());
     }
 
     for i in 0..large_iterations {
         let key = format!("baseline:large:{}", i);
         let start = Instant::now();
-        let _ = backend.get(key.as_bytes()).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        let _ = backend
+            .get(key.as_bytes())
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         large_read.record(start.elapsed());
     }
 
     println!("\n----------------------------------------------------------------------");
     println!(" 10KB Payload Performance");
     println!("----------------------------------------------------------------------");
-    println!(" Write: p50={:>10?}  p99={:>10?}  mean={:>10?}", large_write.p50(), large_write.p99(), large_write.mean());
-    println!(" Read:  p50={:>10?}  p99={:>10?}  mean={:>10?}", large_read.p50(), large_read.p99(), large_read.mean());
+    println!(
+        " Write: p50={:>10?}  p99={:>10?}  mean={:>10?}",
+        large_write.p50(),
+        large_write.p99(),
+        large_write.mean()
+    );
+    println!(
+        " Read:  p50={:>10?}  p99={:>10?}  mean={:>10?}",
+        large_read.p50(),
+        large_read.p99(),
+        large_read.mean()
+    );
 
     // Throughput summary
     println!("\n----------------------------------------------------------------------");

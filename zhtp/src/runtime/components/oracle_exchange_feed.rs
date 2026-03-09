@@ -87,10 +87,7 @@ impl ExchangePriceFeed {
 
         // Source 2: Order book mid price
         if let Some(mid_price) = bc.exchange_state.order_book_mid_sov_usdc() {
-            debug!(
-                price = mid_price,
-                "ExchangePriceFeed: order_book_mid price"
-            );
+            debug!(price = mid_price, "ExchangePriceFeed: order_book_mid price");
             samples.push(PriceSample {
                 price_atomic: mid_price,
                 timestamp: current_timestamp,
@@ -105,7 +102,10 @@ impl ExchangePriceFeed {
         const VWAP_WINDOW_SECS: u64 = 3600;
         let vwap_since = current_timestamp.saturating_sub(VWAP_WINDOW_SECS);
 
-        if let Some(vwap) = bc.exchange_state.vwap_sov_usdc(vwap_since, current_timestamp) {
+        if let Some(vwap) = bc
+            .exchange_state
+            .vwap_sov_usdc(vwap_since, current_timestamp)
+        {
             debug!(
                 price = vwap,
                 window_secs = VWAP_WINDOW_SECS,

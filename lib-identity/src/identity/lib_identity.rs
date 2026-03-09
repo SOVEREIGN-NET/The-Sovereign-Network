@@ -1,22 +1,28 @@
 //! ZHTP Identity implementation from the original identity.rs
 
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize, Serializer};
-use std::collections::HashMap;
-use lib_crypto::{Hash, PublicKey, PrivateKey};
-use lib_proofs::ZeroKnowledgeProof;
+use anyhow::{anyhow, Result};
+use lib_crypto::{Hash, PrivateKey, PublicKey};
 use lib_identity_core::{did_from_root_signing_public_key, RootSecret64, RootSigningKeypair};
+use lib_proofs::ZeroKnowledgeProof;
+use serde::{Deserialize, Serialize, Serializer};
+use std::collections::HashMap;
 
-use crate::types::{IdentityId, IdentityType, CredentialType, IdentityProofParams, IdentityVerification, AccessLevel, NodeId};
-use crate::credentials::ZkCredential;
-use crate::credentials::IdentityAttestation;
 use crate::constants::{SOV_ATOMIC_UNITS, SOV_WELCOME_BONUS_SOV};
+use crate::credentials::IdentityAttestation;
+use crate::credentials::ZkCredential;
+use crate::types::{
+    AccessLevel, CredentialType, IdentityId, IdentityProofParams, IdentityType,
+    IdentityVerification, NodeId,
+};
 
 // Custom serialization for HashMap<CredentialType, ZkCredential> to use string keys
 mod credentials_serde {
     use super::*;
 
-    pub fn serialize<S>(map: &HashMap<CredentialType, ZkCredential>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(
+        map: &HashMap<CredentialType, ZkCredential>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -29,7 +35,6 @@ mod credentials_serde {
         }
         ser_map.end()
     }
-
 }
 
 /// ZHTP Identity with zero-knowledge privacy and integrated quantum wallet management
@@ -172,7 +177,7 @@ impl ZhtpIdentity {
     pub fn new(
         identity_type: IdentityType,
         public_key: PublicKey,
-        private_key: PrivateKey,  // Required for proper derivation
+        private_key: PrivateKey, // Required for proper derivation
         primary_device: String,
         age: Option<u64>,
         jurisdiction: Option<String>,
@@ -197,8 +202,12 @@ impl ZhtpIdentity {
         // Age and jurisdiction are REQUIRED for Human identities only
         let zk_identity_secret = Self::derive_zk_secret(&private_key.dilithium_sk)?;
         let zk_credential_hash = if identity_type == IdentityType::Human {
-            let age_val = age.ok_or_else(|| anyhow!("Age is required for Human identity credential derivation"))?;
-            let juris_val = jurisdiction.as_deref().ok_or_else(|| anyhow!("Jurisdiction is required for Human identity credential derivation"))?;
+            let age_val = age.ok_or_else(|| {
+                anyhow!("Age is required for Human identity credential derivation")
+            })?;
+            let juris_val = jurisdiction.as_deref().ok_or_else(|| {
+                anyhow!("Jurisdiction is required for Human identity credential derivation")
+            })?;
             Self::derive_credential_hash(&zk_identity_secret, age_val, juris_val)?
         } else {
             // For non-Human identities (Device, Organization, etc.), use default credential hash
@@ -297,7 +306,8 @@ impl ZhtpIdentity {
             .as_secs();
 
         // Extract identity ID from DID (DID format: "did:zhtp:{id_hex}")
-        let id_hex = did.strip_prefix("did:zhtp:")
+        let id_hex = did
+            .strip_prefix("did:zhtp:")
             .ok_or_else(|| anyhow!("Invalid DID format: must start with 'did:zhtp:'"))?;
         let id = Hash::from_hex(id_hex)
             .map_err(|e| anyhow!("Invalid DID hex in new_observed: {}", e))?;
@@ -335,7 +345,9 @@ impl ZhtpIdentity {
             total_storage_used: 0,
             total_content_value: 0,
         };
-        wallet_manager.wallets.insert(primary_wallet.id.clone(), primary_wallet);
+        wallet_manager
+            .wallets
+            .insert(primary_wallet.id.clone(), primary_wallet);
 
         tracing::info!(
             "🎁 Created Primary wallet with {} SOV welcome bonus for observed identity {}",
@@ -439,7 +451,8 @@ impl ZhtpIdentity {
         let did = did_from_root_signing_public_key(&rsk.public_key);
 
         // Step 3: Extract IdentityId from DID (DID format: "did:zhtp:{id_hex}")
-        let id_hex = did.strip_prefix("did:zhtp:")
+        let id_hex = did
+            .strip_prefix("did:zhtp:")
             .ok_or_else(|| anyhow!("Invalid DID format from root signing public key"))?;
         let id = Hash::from_hex(id_hex)
             .map_err(|e| anyhow!("Invalid DID hex in new_from_seed: {}", e))?;
@@ -453,8 +466,12 @@ impl ZhtpIdentity {
         // Step 6: Derive zk_credential_hash from zk_secret + age + jurisdiction
         // Age and jurisdiction are REQUIRED for Human identities only
         let zk_credential_hash = if identity_type == IdentityType::Human {
-            let age_val = age.ok_or_else(|| anyhow!("Age is required for Human identity credential derivation"))?;
-            let juris_val = jurisdiction.as_deref().ok_or_else(|| anyhow!("Jurisdiction is required for Human identity credential derivation"))?;
+            let age_val = age.ok_or_else(|| {
+                anyhow!("Age is required for Human identity credential derivation")
+            })?;
+            let juris_val = jurisdiction.as_deref().ok_or_else(|| {
+                anyhow!("Jurisdiction is required for Human identity credential derivation")
+            })?;
             Self::derive_credential_hash(&zk_identity_secret, age_val, juris_val)?
         } else {
             // For non-Human identities (Device, Organization, etc.), use default credential hash
@@ -473,7 +490,8 @@ impl ZhtpIdentity {
         // Construct canonical lib-crypto key types:
         // - Dilithium keys are the ROOT signing keys (anchor identity)
         // - Kyber keys are OPERATIONAL (transport/KEM) keys
-        let key_id = lib_crypto::hash_blake3(&[rsk.public_key.as_slice(), kyber_pk.as_slice()].concat());
+        let key_id =
+            lib_crypto::hash_blake3(&[rsk.public_key.as_slice(), kyber_pk.as_slice()].concat());
         let public_key = PublicKey {
             dilithium_pk: rsk.public_key.clone(),
             kyber_pk: kyber_pk.clone(),
@@ -487,7 +505,8 @@ impl ZhtpIdentity {
         };
 
         // Step 10: Initialize WalletManager (seeded for deterministic recovery)
-        let wallet_manager = crate::wallets::WalletManager::from_master_seed(id.clone(), wallet_master_seed);
+        let wallet_manager =
+            crate::wallets::WalletManager::from_master_seed(id.clone(), wallet_master_seed);
 
         // Step 11: Initialize device_node_ids HashMap with primary device
         let mut device_node_ids = HashMap::new();
@@ -568,18 +587,17 @@ impl ZhtpIdentity {
     /// Per Issue #9 spec: Blake3("ZHTP_CREDENTIAL_V1:" + secret + age + jurisdiction_code)
     /// - age: Required age value (no default)
     /// - jurisdiction: Required jurisdiction code (no default)
-    fn derive_credential_hash(
-        secret: &[u8; 32],
-        age: u64,
-        jurisdiction: &str,
-    ) -> Result<[u8; 32]> {
+    fn derive_credential_hash(secret: &[u8; 32], age: u64, jurisdiction: &str) -> Result<[u8; 32]> {
         let juris_code = Self::jurisdiction_to_code(jurisdiction);
-        let hash = lib_crypto::hash_blake3(&[
-            b"ZHTP_CREDENTIAL_V1:",
-            secret.as_slice(),
-            &age.to_le_bytes(),
-            &juris_code.to_le_bytes(),
-        ].concat());
+        let hash = lib_crypto::hash_blake3(
+            &[
+                b"ZHTP_CREDENTIAL_V1:",
+                secret.as_slice(),
+                &age.to_le_bytes(),
+                &juris_code.to_le_bytes(),
+            ]
+            .concat(),
+        );
         Ok(hash)
     }
 
@@ -634,10 +652,10 @@ impl ZhtpIdentity {
             "GB" => 826,
             "DE" => 276,
             "FR" => 250,
-            _ => 840,  // Default to US
+            _ => 840, // Default to US
         }
     }
-    
+
     /// Create identity from legacy Vec<u8> public_key (for migration)
     /// Now properly derives all fields from keypair per architecture spec
     pub fn from_legacy_fields(
@@ -729,7 +747,8 @@ impl ZhtpIdentity {
         created_at: u64,
     ) -> Result<Self> {
         // Extract ID from DID (DID format: "did:zhtp:{id_hex}")
-        let id_hex = did.strip_prefix("did:zhtp:")
+        let id_hex = did
+            .strip_prefix("did:zhtp:")
             .ok_or_else(|| anyhow!("Invalid DID format: must start with 'did:zhtp:'"))?;
         let id = Hash::from_hex(id_hex)
             .map_err(|e| anyhow!("Invalid DID hex in new_external: {}", e))?;
@@ -768,7 +787,11 @@ impl ZhtpIdentity {
             primary_device: device_id,
             ownership_proof,
             credentials: HashMap::new(),
-            reputation: if identity_type == IdentityType::Human { 500 } else { 100 },
+            reputation: if identity_type == IdentityType::Human {
+                500
+            } else {
+                100
+            },
             age: None,
             access_level: if identity_type == IdentityType::Human {
                 AccessLevel::FullCitizen
@@ -789,11 +812,15 @@ impl ZhtpIdentity {
             next_wallet_index: 0,
             password_hash: None,
             master_seed_phrase: None,
-            zk_identity_secret: [0u8; 32],  // Client computes this locally
-            zk_credential_hash: [0u8; 32],  // Client computes this locally
-            wallet_master_seed: [0u8; 64],  // Client manages wallets locally
+            zk_identity_secret: [0u8; 32], // Client computes this locally
+            zk_credential_hash: [0u8; 32], // Client computes this locally
+            wallet_master_seed: [0u8; 64], // Client manages wallets locally
             dao_member_id,
-            dao_voting_power: if identity_type == IdentityType::Human { 10 } else { 0 },
+            dao_voting_power: if identity_type == IdentityType::Human {
+                10
+            } else {
+                0
+            },
             citizenship_verified: identity_type == IdentityType::Human,
             jurisdiction: None,
         })
@@ -843,7 +870,7 @@ impl ZhtpIdentity {
         self.zk_credential_hash = Self::derive_credential_hash(
             &self.zk_identity_secret,
             self.age.unwrap_or(25),
-            self.jurisdiction.as_deref().unwrap_or("US")
+            self.jurisdiction.as_deref().unwrap_or("US"),
         )?;
         self.wallet_master_seed = Self::derive_wallet_seed(&private_key.dilithium_sk)?;
         self.validate_secrets_derived()?; // Validate after re-derivation
@@ -877,9 +904,11 @@ impl ZhtpIdentity {
             raw.get("id")
                 .cloned()
                 .ok_or_else(|| anyhow!("Missing id"))?,
-        ).map_err(|e| anyhow!("Invalid id: {}", e))?;
+        )
+        .map_err(|e| anyhow!("Invalid id: {}", e))?;
 
-        let did = raw.get("did")
+        let did = raw
+            .get("did")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing did"))?
             .to_string();
@@ -887,15 +916,18 @@ impl ZhtpIdentity {
         // CRITICAL: Validate that ID matches the hex portion of DID
         // DID format: "did:zhtp:{identity_id_hex}" where identity_id = Blake3(public_key)
         // The ID is embedded IN the DID, not derived FROM the DID
-        let expected_id_hex = did.strip_prefix("did:zhtp:")
+        let expected_id_hex = did
+            .strip_prefix("did:zhtp:")
             .ok_or_else(|| anyhow!("Invalid DID format: must start with 'did:zhtp:'"))?;
-        let expected_id = Hash::from_hex(expected_id_hex)
-            .map_err(|e| anyhow!("Invalid DID hex: {}", e))?;
+        let expected_id =
+            Hash::from_hex(expected_id_hex).map_err(|e| anyhow!("Invalid DID hex: {}", e))?;
         if id != expected_id {
             return Err(anyhow!(
                 "Identity corruption detected: ID '{}' does not match DID. \
                 DID: '{}', Expected ID: '{}'. The keystore file may be corrupted.",
-                hex::encode(id.as_bytes()), did, hex::encode(expected_id.as_bytes())
+                hex::encode(id.as_bytes()),
+                did,
+                hex::encode(expected_id.as_bytes())
             ));
         }
 
@@ -903,95 +935,132 @@ impl ZhtpIdentity {
             raw.get("identity_type")
                 .cloned()
                 .ok_or_else(|| anyhow!("Missing identity_type"))?,
-        ).map_err(|e| anyhow!("Invalid identity_type: {}", e))?;
+        )
+        .map_err(|e| anyhow!("Invalid identity_type: {}", e))?;
 
         let public_key: PublicKey = serde_json::from_value(
             raw.get("public_key")
                 .cloned()
                 .ok_or_else(|| anyhow!("Missing public_key"))?,
-        ).map_err(|e| anyhow!("Invalid public_key: {}", e))?;
+        )
+        .map_err(|e| anyhow!("Invalid public_key: {}", e))?;
 
         let node_id: NodeId = serde_json::from_value(
             raw.get("node_id")
                 .cloned()
                 .ok_or_else(|| anyhow!("Missing node_id"))?,
-        ).map_err(|e| anyhow!("Invalid node_id: {}", e))?;
+        )
+        .map_err(|e| anyhow!("Invalid node_id: {}", e))?;
 
         let device_node_ids: HashMap<String, NodeId> = serde_json::from_value(
-            raw.get("device_node_ids").cloned().unwrap_or_else(|| serde_json::json!({}))
-        ).unwrap_or_default();
+            raw.get("device_node_ids")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        )
+        .unwrap_or_default();
 
-        let primary_device = raw.get("primary_device")
+        let primary_device = raw
+            .get("primary_device")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing primary_device"))?
             .to_string();
 
         let age = raw.get("age").and_then(|v| v.as_u64());
-        let jurisdiction = raw.get("jurisdiction").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let citizenship_verified = raw.get("citizenship_verified").and_then(|v| v.as_bool()).unwrap_or(false);
+        let jurisdiction = raw
+            .get("jurisdiction")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let citizenship_verified = raw
+            .get("citizenship_verified")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
-        let dao_member_id = raw.get("dao_member_id")
+        let dao_member_id = raw
+            .get("dao_member_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing dao_member_id"))?
             .to_string();
 
-        let dao_voting_power = raw.get("dao_voting_power").and_then(|v| v.as_u64()).unwrap_or(0);
+        let dao_voting_power = raw
+            .get("dao_voting_power")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
 
         // Restore ownership_proof with proper byte handling
         let ownership_proof: ZeroKnowledgeProof = serde_json::from_value(
             raw.get("ownership_proof")
                 .cloned()
                 .ok_or_else(|| anyhow!("Missing ownership_proof"))?,
-        ).map_err(|e| anyhow!("Invalid ownership_proof: {}", e))?;
+        )
+        .map_err(|e| anyhow!("Invalid ownership_proof: {}", e))?;
 
         // Optional fields
         let credentials: HashMap<CredentialType, ZkCredential> = serde_json::from_value(
-            raw.get("credentials").cloned().unwrap_or_else(|| serde_json::json!({}))
-        ).unwrap_or_default();
+            raw.get("credentials")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        )
+        .unwrap_or_default();
 
         let metadata: HashMap<String, String> = serde_json::from_value(
-            raw.get("metadata").cloned().unwrap_or_else(|| serde_json::json!({}))
-        ).unwrap_or_default();
+            raw.get("metadata")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        )
+        .unwrap_or_default();
 
         let attestations: Vec<IdentityAttestation> = serde_json::from_value(
-            raw.get("attestations").cloned().unwrap_or_else(|| serde_json::json!([]))
-        ).unwrap_or_default();
+            raw.get("attestations")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+        )
+        .unwrap_or_default();
 
         let reputation = raw.get("reputation").and_then(|v| v.as_u64()).unwrap_or(0);
 
-        let access_level: AccessLevel = raw.get("access_level")
+        let access_level: AccessLevel = raw
+            .get("access_level")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        let private_data_id: Option<IdentityId> = raw.get("private_data_id")
+        let private_data_id: Option<IdentityId> = raw
+            .get("private_data_id")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-        let wallet_manager: crate::wallets::WalletManager = raw.get("wallet_manager")
+        let wallet_manager: crate::wallets::WalletManager = raw
+            .get("wallet_manager")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_else(|| crate::wallets::WalletManager::new(id.clone()));
 
         let created_at = raw.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
         let last_active = raw.get("last_active").and_then(|v| v.as_u64()).unwrap_or(0);
 
-        let recovery_keys: Vec<Vec<u8>> = raw.get("recovery_keys")
+        let recovery_keys: Vec<Vec<u8>> = raw
+            .get("recovery_keys")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        let did_document_hash: Option<Hash> = raw.get("did_document_hash")
+        let did_document_hash: Option<Hash> = raw
+            .get("did_document_hash")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-        let owner_identity_id: Option<IdentityId> = raw.get("owner_identity_id")
+        let owner_identity_id: Option<IdentityId> = raw
+            .get("owner_identity_id")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-        let reward_wallet_id: Option<crate::wallets::WalletId> = raw.get("reward_wallet_id")
+        let reward_wallet_id: Option<crate::wallets::WalletId> = raw
+            .get("reward_wallet_id")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
         // SECURITY: Re-derive all cryptographic secrets from private_key
         // Age and jurisdiction are REQUIRED for Human identities only
         let zk_identity_secret = Self::derive_zk_secret(&private_key.dilithium_sk)?;
         let zk_credential_hash = if identity_type == IdentityType::Human {
-            let age_val = age.ok_or_else(|| anyhow!("Age is required for Human identity secret derivation"))?;
-            let juris_val = jurisdiction.as_deref().ok_or_else(|| anyhow!("Jurisdiction is required for Human identity secret derivation"))?;
+            let age_val =
+                age.ok_or_else(|| anyhow!("Age is required for Human identity secret derivation"))?;
+            let juris_val = jurisdiction.as_deref().ok_or_else(|| {
+                anyhow!("Jurisdiction is required for Human identity secret derivation")
+            })?;
             Self::derive_credential_hash(&zk_identity_secret, age_val, juris_val)?
         } else {
             // For non-Human identities (Device, Organization, etc.), use default credential hash
@@ -1024,10 +1093,10 @@ impl ZhtpIdentity {
             did_document_hash,
             owner_identity_id,
             reward_wallet_id,
-            encrypted_master_seed: None,  // Never serialized
-            next_wallet_index: 0,         // Reset on load
-            password_hash: None,          // Never serialized
-            master_seed_phrase: None,     // Never serialized
+            encrypted_master_seed: None, // Never serialized
+            next_wallet_index: 0,        // Reset on load
+            password_hash: None,         // Never serialized
+            master_seed_phrase: None,    // Never serialized
             zk_identity_secret,
             zk_credential_hash,
             wallet_master_seed,
@@ -1045,12 +1114,12 @@ impl ZhtpIdentity {
     pub fn get_wallet(&self, alias: &str) -> Option<&crate::wallets::QuantumWallet> {
         self.wallet_manager.get_wallet_by_alias(alias)
     }
-    
+
     /// Get total balance across all wallets
     pub fn get_total_balance(&self) -> u64 {
         self.wallet_manager.total_balance
     }
-    
+
     /// Transfer funds between this identity's wallets
     pub fn transfer_between_wallets(
         &mut self,
@@ -1060,47 +1129,49 @@ impl ZhtpIdentity {
         purpose: String,
     ) -> Result<Hash> {
         self.update_activity();
-        self.wallet_manager.transfer_between_wallets(from_wallet, to_wallet, amount, purpose)
+        self.wallet_manager
+            .transfer_between_wallets(from_wallet, to_wallet, amount, purpose)
     }
-    
+
     /// List all wallets for this identity
     pub fn list_wallets(&self) -> Vec<crate::wallets::WalletSummary> {
         self.wallet_manager.list_wallets()
     }
-    
+
     /// Add a credential to this identity
     pub fn add_credential(&mut self, credential: ZkCredential) -> Result<()> {
         if credential.subject != self.id {
             return Err(anyhow!("Credential subject does not match identity"));
         }
-        
+
         // Verify credential proof (simplified)
         if !self.verify_credential_proof(&credential)? {
             return Err(anyhow!("Invalid credential proof"));
         }
-        
-        self.credentials.insert(credential.credential_type.clone(), credential);
+
+        self.credentials
+            .insert(credential.credential_type.clone(), credential);
         self.update_activity();
         Ok(())
     }
-    
+
     /// Add an attestation to this identity
     pub fn add_attestation(&mut self, attestation: IdentityAttestation) -> Result<()> {
         // Verify attestation proof (simplified)
         if !self.verify_attestation_proof(&attestation)? {
             return Err(anyhow!("Invalid attestation proof"));
         }
-        
+
         self.attestations.push(attestation);
         self.update_activity();
         Ok(())
     }
-    
+
     /// Verify this identity meets specific requirements
     pub fn verify_requirements(&self, requirements: &IdentityProofParams) -> IdentityVerification {
         let mut requirements_met = Vec::new();
         let mut requirements_failed = Vec::new();
-        
+
         // Check required credentials
         for req_cred in &requirements.required_credentials {
             if self.credentials.contains_key(req_cred) {
@@ -1109,10 +1180,10 @@ impl ZhtpIdentity {
                 requirements_failed.push(req_cred.clone());
             }
         }
-        
+
         let verified = requirements_failed.is_empty();
         let privacy_score = std::cmp::min(requirements.privacy_level, 100);
-        
+
         IdentityVerification {
             identity_id: self.id.clone(),
             verified,
@@ -1125,14 +1196,14 @@ impl ZhtpIdentity {
                 .as_secs(),
         }
     }
-    
+
     /// Generate a W3C-compliant DID document for this identity
     /// Delegates to the proper DID module for consistent formatting
     pub fn generate_did_document(&self, base_url: Option<&str>) -> Result<crate::did::DidDocument> {
         crate::did::generate_did_document(self, base_url)
             .map_err(|e| anyhow!("Failed to generate DID document: {}", e))
     }
-    
+
     /// Update last activity timestamp
     pub fn update_activity(&mut self) {
         self.last_active = std::time::SystemTime::now()
@@ -1140,64 +1211,70 @@ impl ZhtpIdentity {
             .unwrap()
             .as_secs();
     }
-    
+
     /// Verify credential proof (simplified implementation)
     fn verify_credential_proof(&self, credential: &ZkCredential) -> Result<bool> {
         // Verify credential proof using actual cryptographic verification
         // Check if proof matches the credential data and issuer
         let proof_data = &credential.proof.proof_data;
         let public_inputs = &credential.proof.public_inputs;
-        
+
         // Verify the ZK proof structure is valid
         if proof_data.is_empty() || public_inputs.is_empty() {
             return Ok(false);
         }
-        
+
         // Verify issuer signature on credential (simplified)
         let _credential_hash = lib_crypto::hash_blake3(&serde_json::to_vec(credential)?);
-        let _expected_proof = lib_crypto::hash_blake3(&[
-            credential.issuer.0.as_slice(),
-            credential.subject.0.as_slice(),
-            &credential.issued_at.to_le_bytes(),
-            &serde_json::to_vec(&credential.credential_type)?
-        ].concat());
-        
+        let _expected_proof = lib_crypto::hash_blake3(
+            &[
+                credential.issuer.0.as_slice(),
+                credential.subject.0.as_slice(),
+                &credential.issued_at.to_le_bytes(),
+                &serde_json::to_vec(&credential.credential_type)?,
+            ]
+            .concat(),
+        );
+
         // For now, verify that the proof contains expected elements
-        let proof_valid = proof_data.len() >= 32 && 
-                         public_inputs.len() >= 32 &&
-                         credential.expires_at.map_or(true, |exp| {
-                             exp > std::time::SystemTime::now()
-                                 .duration_since(std::time::UNIX_EPOCH)
-                                 .unwrap()
-                                 .as_secs()
-                         });
-        
+        let proof_valid = proof_data.len() >= 32
+            && public_inputs.len() >= 32
+            && credential.expires_at.map_or(true, |exp| {
+                exp > std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            });
+
         Ok(proof_valid)
     }
-    
+
     /// Verify attestation proof (simplified implementation)
     fn verify_attestation_proof(&self, attestation: &IdentityAttestation) -> Result<bool> {
         // Verify attestation proof using actual cryptographic verification
         let proof_data = &attestation.proof.proof_data;
         let public_inputs = &attestation.proof.public_inputs;
-        
+
         // Verify the ZK proof structure is valid
         if proof_data.is_empty() || public_inputs.is_empty() {
             return Ok(false);
         }
-        
+
         // Verify attester has authority to make this attestation
-        let _attestation_hash = lib_crypto::hash_blake3(&[
-            attestation.attester.0.as_slice(),
-            &attestation.created_at.to_le_bytes(),
-            &serde_json::to_vec(&attestation.attestation_type)?
-        ].concat());
-        
+        let _attestation_hash = lib_crypto::hash_blake3(
+            &[
+                attestation.attester.0.as_slice(),
+                &attestation.created_at.to_le_bytes(),
+                &serde_json::to_vec(&attestation.attestation_type)?,
+            ]
+            .concat(),
+        );
+
         // Verify confidence score is reasonable (0-100)
         if attestation.confidence > 100 {
             return Ok(false);
         }
-        
+
         // Check if attestation has expired
         if let Some(expires_at) = attestation.expires_at {
             let now = std::time::SystemTime::now()
@@ -1208,15 +1285,14 @@ impl ZhtpIdentity {
                 return Ok(false);
             }
         }
-        
+
         // For now, verify that the proof contains expected elements
-        let proof_valid = proof_data.len() >= 32 && 
-                         public_inputs.len() >= 32 &&
-                         attestation.confidence >= 50; // Minimum confidence threshold
-        
+        let proof_valid =
+            proof_data.len() >= 32 && public_inputs.len() >= 32 && attestation.confidence >= 50; // Minimum confidence threshold
+
         Ok(proof_valid)
     }
-    
+
     /// Set the reward wallet for a device/node identity
     /// Can only be called by the owner, and wallet must belong to owner
     pub fn set_reward_wallet(&mut self, wallet_id: crate::wallets::WalletId) -> Result<()> {
@@ -1224,35 +1300,34 @@ impl ZhtpIdentity {
         if self.identity_type != IdentityType::Device {
             return Err(anyhow!("Only device identities can have reward wallets"));
         }
-        
+
         // Device must have an owner
         if self.owner_identity_id.is_none() {
             return Err(anyhow!("Device identity must have an owner"));
         }
-        
+
         // Note: Validation that wallet belongs to owner must be done externally
         // since we don't have access to the owner's identity here
-        
+
         self.reward_wallet_id = Some(wallet_id);
         self.update_activity();
         Ok(())
     }
-    
+
     /// Get the reward wallet ID for this device/node
     pub fn get_reward_wallet(&self) -> Option<crate::wallets::WalletId> {
         self.reward_wallet_id.clone()
     }
-    
+
     /// Check if this identity is owned by another identity
     pub fn is_owned(&self) -> bool {
         self.owner_identity_id.is_some()
     }
-    
+
     /// Get the owner identity ID
     pub fn get_owner(&self) -> Option<IdentityId> {
         self.owner_identity_id.clone()
     }
-
 
     /// Add a new device to this identity with deterministic NodeId derivation
     ///
@@ -1276,10 +1351,10 @@ impl ZhtpIdentity {
     /// ```ignore
     /// // Add first device
     // let laptop_node = identity.add_device("laptop-macos")?;
-    /// 
+    ///
     /// // Add second device
     // let phone_node = identity.add_device("phone-android")?;
-    /// 
+    ///
     /// // Idempotent - returns existing NodeId
     // let laptop_node_again = identity.add_device("laptop-macos")?;
     // assert_eq!(laptop_node, laptop_node_again);
@@ -1301,7 +1376,8 @@ impl ZhtpIdentity {
         let node_id = NodeId::from_did_device(&self.did, device_name)?;
 
         // Insert into device mapping
-        self.device_node_ids.insert(device_name.to_string(), node_id);
+        self.device_node_ids
+            .insert(device_name.to_string(), node_id);
 
         // Update last activity timestamp
         self.update_activity();
@@ -1382,7 +1458,8 @@ impl ZhtpIdentity {
     /// * `Err` - If device doesn't exist
     pub fn set_primary_device(&mut self, new_primary: &str) -> Result<()> {
         // Verify device exists
-        let new_node_id = self.device_node_ids
+        let new_node_id = self
+            .device_node_ids
             .get(new_primary)
             .ok_or_else(|| anyhow!("Device not registered: {}", new_primary))?;
 
@@ -1464,7 +1541,9 @@ impl ZhtpIdentity {
         }
 
         // Calculate commitment using same method as recovery module
-        Some(crate::recovery::calculate_seed_commitment(&self.wallet_master_seed))
+        Some(crate::recovery::calculate_seed_commitment(
+            &self.wallet_master_seed,
+        ))
     }
 
     /// Verify that this identity matches a given seed commitment
@@ -1537,16 +1616,18 @@ impl ZhtpIdentity {
             None => {
                 // Generate a new 24-word seed phrase
                 let mut manager = crate::recovery::RecoveryPhraseManager::new();
-                manager.generate_recovery_phrase(
-                    &self.did,
-                    crate::recovery::PhraseGenerationOptions {
-                        word_count: 24,
-                        language: "english".to_string(),
-                        entropy_source: crate::recovery::EntropySource::SystemRandom,
-                        include_checksum: true,
-                        custom_wordlist: None,
-                    },
-                ).await?
+                manager
+                    .generate_recovery_phrase(
+                        &self.did,
+                        crate::recovery::PhraseGenerationOptions {
+                            word_count: 24,
+                            language: "english".to_string(),
+                            entropy_source: crate::recovery::EntropySource::SystemRandom,
+                            include_checksum: true,
+                            custom_wordlist: None,
+                        },
+                    )
+                    .await?
             }
         };
 
@@ -1554,7 +1635,8 @@ impl ZhtpIdentity {
         self.master_seed_phrase = Some(phrase.clone());
 
         // Calculate the seed commitment
-        let seed_commitment = self.get_seed_commitment()
+        let seed_commitment = self
+            .get_seed_commitment()
             .ok_or_else(|| anyhow!("Failed to calculate seed commitment after migration"))?;
 
         let migrated_at = std::time::SystemTime::now()
@@ -1611,7 +1693,10 @@ mod tests {
 
         assert_eq!(identity.device_count(), initial_count + 1);
         assert!(identity.device_node_ids.contains_key("phone-android"));
-        assert_eq!(identity.get_device_node_id("phone-android"), Some(phone_node));
+        assert_eq!(
+            identity.get_device_node_id("phone-android"),
+            Some(phone_node)
+        );
 
         Ok(())
     }
@@ -1668,12 +1753,12 @@ mod tests {
         )?;
 
         let initial_activity = identity.last_active;
-        
+
         // Force a delay to ensure timestamp changes
         std::thread::sleep(std::time::Duration::from_secs(1));
-        
+
         identity.add_device("phone")?;
-        
+
         assert!(
             identity.last_active > initial_activity,
             "Expected last_active ({}) to be greater than initial ({})",
@@ -1695,13 +1780,13 @@ mod tests {
         )?;
 
         let devices = vec!["phone-android", "tablet-ios", "desktop-windows"];
-        
+
         for device in &devices {
             identity.add_device(device)?;
         }
 
         assert_eq!(identity.device_count(), devices.len() + 1); // +1 for primary
-        
+
         for device in &devices {
             assert!(identity.device_node_ids.contains_key(*device));
         }
@@ -1725,7 +1810,7 @@ mod tests {
         identity.add_device("beta-device")?;
 
         let devices = identity.list_devices();
-        
+
         // Should be sorted alphabetically
         assert!(devices.windows(2).all(|w| w[0] <= w[1]));
         assert!(devices.contains(&"laptop".to_string())); // primary device
@@ -1814,7 +1899,7 @@ mod tests {
     /// ```
     /// use lib_identity::identity::ZhtpIdentity;
     /// use lib_identity::types::IdentityType;
-    /// 
+    ///
     /// # fn main() -> anyhow::Result<()> {
     /// let mut identity = ZhtpIdentity::new_unified(
     ///     IdentityType::Human,
@@ -1823,17 +1908,17 @@ mod tests {
     ///     "laptop-macos",
     ///     None,
     /// )?;
-    /// 
+    ///
     /// // Add first device
     /// let laptop_node = identity.add_device("laptop-macos")?;
-    /// 
+    ///
     /// // Add second device
     /// let phone_node = identity.add_device("phone-android")?;
-    /// 
+    ///
     /// // Idempotent - returns existing NodeId
     /// let laptop_node_again = identity.add_device("laptop-macos")?;
     /// assert_eq!(laptop_node, laptop_node_again);
-    /// 
+    ///
     /// // List all devices
     /// let devices = identity.list_devices();
     /// assert!(devices.contains(&"laptop-macos".to_string()));
@@ -1846,7 +1931,7 @@ mod tests {
         // Doctest in function documentation above
     }
 
- #[test]
+    #[test]
     fn test_device_node_id_stability_across_serialization() -> Result<()> {
         let mut identity = ZhtpIdentity::new_unified(
             IdentityType::Human,
@@ -1861,11 +1946,13 @@ mod tests {
 
         // Serialize and deserialize
         let json = serde_json::to_string(&identity)?;
-        
+
         // For deserialization, we need the private key
-        let private_key = identity.private_key.clone()
+        let private_key = identity
+            .private_key
+            .clone()
             .ok_or_else(|| anyhow!("Private key missing"))?;
-        
+
         let mut restored = ZhtpIdentity::from_serialized(&json, &private_key)?;
 
         // NodeId should be preserved from serialization
@@ -1902,8 +1989,15 @@ mod tests {
         }
 
         // All NodeIds should be unique
-        let unique_count = node_ids.iter().collect::<std::collections::HashSet<_>>().len();
-        assert_eq!(unique_count, devices.len(), "All device NodeIds must be unique");
+        let unique_count = node_ids
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert_eq!(
+            unique_count,
+            devices.len(),
+            "All device NodeIds must be unique"
+        );
 
         Ok(())
     }
@@ -1929,7 +2023,7 @@ mod tests {
         Ok(())
     }
 
-     /// Test: Device removal updates last_active
+    /// Test: Device removal updates last_active
     #[test]
     fn test_remove_device_updates_activity() -> Result<()> {
         let mut identity = ZhtpIdentity::new_unified(
@@ -1942,7 +2036,7 @@ mod tests {
 
         identity.add_device("temp-device")?;
         let activity_before = identity.last_active;
-        
+
         // Force a delay to ensure timestamp changes
         std::thread::sleep(std::time::Duration::from_secs(1));
         identity.remove_device("temp-device")?;
@@ -1970,7 +2064,7 @@ mod tests {
 
         let new_device = "phone-new-primary";
         let new_node_id = identity.add_device(new_device)?;
-        
+
         identity.set_primary_device(new_device)?;
 
         assert_eq!(identity.primary_device, new_device);
@@ -1993,7 +2087,7 @@ mod tests {
 
         // Add device with lowercase name
         let node_id_lower = identity.add_device("phone")?;
-        
+
         // Try to add device with different case - HashMap key is case-sensitive
         // but NodeId derivation normalizes case
         let node_id_upper = identity.add_device("Phone")?;
@@ -2001,17 +2095,27 @@ mod tests {
         // Verify NodeId derivation is case-insensitive (normalized to lowercase)
         let expected_lower = NodeId::from_did_device(&identity.did, "phone")?;
         let expected_upper = NodeId::from_did_device(&identity.did, "Phone")?;
-        assert_eq!(expected_lower, expected_upper, "NodeId::from_did_device normalizes case");
+        assert_eq!(
+            expected_lower, expected_upper,
+            "NodeId::from_did_device normalizes case"
+        );
 
         // HashMap keys ARE case-sensitive, so "phone" and "Phone" are different entries
-        assert_eq!(identity.device_count(), 3, "laptop + phone + Phone (case-sensitive HashMap keys)");
-        
+        assert_eq!(
+            identity.device_count(),
+            3,
+            "laptop + phone + Phone (case-sensitive HashMap keys)"
+        );
+
         // Both device names should exist in the HashMap
         assert!(identity.device_node_ids.contains_key("phone"));
         assert!(identity.device_node_ids.contains_key("Phone"));
-        
+
         // But both map to the SAME NodeId (because NodeId derivation normalizes case)
-        assert_eq!(node_id_lower, node_id_upper, "Both should have same NodeId due to case normalization");
+        assert_eq!(
+            node_id_lower, node_id_upper,
+            "Both should have same NodeId due to case normalization"
+        );
         assert_eq!(node_id_lower, expected_lower);
 
         Ok(())
@@ -2030,15 +2134,18 @@ mod tests {
 
         // First call
         let node_id_1 = identity.add_device("test-device")?;
-        
+
         // Second call - should return same NodeId (deterministic)
         let node_id_2 = identity.add_device("test-device")?;
-        
+
         assert_eq!(node_id_1, node_id_2, "add_device should be idempotent");
-        
+
         // Verify it matches manual derivation
         let expected = NodeId::from_did_device(&identity.did, "test-device")?;
-        assert_eq!(node_id_1, expected, "NodeId should match deterministic derivation");
+        assert_eq!(
+            node_id_1, expected,
+            "NodeId should match deterministic derivation"
+        );
 
         Ok(())
     }
@@ -2085,7 +2192,7 @@ mod tests {
 
         assert_eq!(identity.device_count(), 3);
         assert!(identity.get_device_node_id("server-backup").is_some());
-        
+
         identity.set_primary_device("server-backup")?;
         assert_eq!(identity.node_id, node1);
 
@@ -2109,13 +2216,13 @@ mod tests {
         }
 
         assert_eq!(identity.device_count(), device_count + 1); // +1 for primary
-        
+
         let devices = identity.list_devices();
         assert_eq!(devices.len(), device_count + 1);
 
         Ok(())
     }
-     #[test]
+    #[test]
     fn test_node_id_derivation_case_behavior() -> Result<()> {
         let identity = ZhtpIdentity::new_unified(
             IdentityType::Human,

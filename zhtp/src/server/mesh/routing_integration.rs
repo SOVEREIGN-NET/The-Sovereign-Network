@@ -1,5 +1,5 @@
 //! ✅ PHASE 7: Routing Integration with lib-network
-//! 
+//!
 //! Integrates lib-network's sophisticated routing capabilities:
 //! - Multi-hop routing (A → B → C message traversal)
 //! - Relay node support (intermediate nodes forward messages)
@@ -7,23 +7,23 @@
 //! - Automatic path finding and optimization
 //! - Fallback strategies when direct connections unavailable
 
-use anyhow::{Result, Context};
-use tracing::{info, warn, debug, error};
-use lib_crypto::PublicKey;
-use lib_network::types::mesh_message::ZhtpMeshMessage;
-use lib_network::identity::unified_peer::UnifiedPeerId;
 use super::identity_verification::VerificationResult;
+use anyhow::{Context, Result};
+use lib_crypto::PublicKey;
+use lib_network::identity::unified_peer::UnifiedPeerId;
+use lib_network::types::mesh_message::ZhtpMeshMessage;
+use tracing::{debug, error, info, warn};
 
 use super::core::MeshRouter;
 
 impl MeshRouter {
     /// Initialize advanced routing capabilities from lib-network
-    /// 
+    ///
     /// Enables:
     /// - Multi-hop routing (messages traverse multiple nodes)
     /// - Relay node functionality (this node can forward messages)
     /// - Long-range transport support (LoRaWAN, Satellite)
-    /// 
+    ///
     /// # Example
     /// ```rust
     /// mesh_router.initialize_advanced_routing().await?;
@@ -31,18 +31,18 @@ impl MeshRouter {
     /// ```
     pub async fn initialize_advanced_routing(&self) -> Result<()> {
         info!("🔀 Initializing lib-network advanced routing capabilities...");
-        
+
         // lib-network's MeshMessageRouter is already initialized in MeshRouter::new()
         // It uses self.connections and self.dht_storage
-        
+
         info!("✅ Advanced routing ready: multi-hop, relay, and long-range supported");
         debug!("   - Multi-hop: Messages can traverse up to 5 nodes");
         debug!("   - Relay mode: Node can forward messages for others");
         debug!("   - Long-range: LoRaWAN and Satellite transports available");
-        
+
         Ok(())
     }
-    
+
     /// Send message with automatic routing (multi-hop/relay/long-range)
     ///
     /// Uses lib-network's MessageRouter for sophisticated path finding:
@@ -77,16 +77,19 @@ impl MeshRouter {
         destination: &PublicKey,
         sender: &PublicKey,
     ) -> Result<u64, super::routing_errors::RoutingError> {
-        debug!("🔀 Routing message to {} (type: {:?})",
-               hex::encode(&destination.key_id[..8]),
-               std::mem::discriminant(&message));
+        debug!(
+            "🔀 Routing message to {} (type: {:?})",
+            hex::encode(&destination.key_id[..8]),
+            std::mem::discriminant(&message)
+        );
 
         // MEDIUM-3 FIX: Verify sender identity before routing
         #[allow(deprecated)]
         let sender_peer = UnifiedPeerId::from_public_key_legacy(sender.clone());
 
         // Perform identity verification with blockchain lookup
-        let verification_result = self.identity_verification_cache
+        let verification_result = self
+            .identity_verification_cache
             .verify_identity(&sender_peer, |did| {
                 // Blockchain lookup callback
                 // For now, return None to trigger bootstrap mode behavior
@@ -110,30 +113,46 @@ impl MeshRouter {
         // Check verification result
         match &verification_result {
             VerificationResult::Verified => {
-                info!("✅ Sender {} verified - full routing access", sender_peer.did());
+                info!(
+                    "✅ Sender {} verified - full routing access",
+                    sender_peer.did()
+                );
             }
             VerificationResult::Bootstrap => {
-                warn!("⚠️ Sender {} in bootstrap mode - limited routing", sender_peer.did());
+                warn!(
+                    "⚠️ Sender {} in bootstrap mode - limited routing",
+                    sender_peer.did()
+                );
                 // Allow routing but log for monitoring
             }
             VerificationResult::NotFound => {
-                error!("❌ Sender {} identity not found on blockchain - routing denied",
-                       sender_peer.did());
+                error!(
+                    "❌ Sender {} identity not found on blockchain - routing denied",
+                    sender_peer.did()
+                );
                 return Err(super::routing_errors::RoutingError::identity_violation(
-                    format!("Sender identity {} not verified on blockchain", sender_peer.did())
+                    format!(
+                        "Sender identity {} not verified on blockchain",
+                        sender_peer.did()
+                    ),
                 ));
             }
             VerificationResult::InsufficientTrust => {
-                error!("❌ Sender {} has insufficient trust score - routing denied",
-                       sender_peer.did());
+                error!(
+                    "❌ Sender {} has insufficient trust score - routing denied",
+                    sender_peer.did()
+                );
                 return Err(super::routing_errors::RoutingError::identity_violation(
-                    format!("Sender {} has insufficient trust score", sender_peer.did())
+                    format!("Sender {} has insufficient trust score", sender_peer.did()),
                 ));
             }
             VerificationResult::Blocked => {
-                error!("🚫 Sender {} is blocked - routing denied", sender_peer.did());
+                error!(
+                    "🚫 Sender {} is blocked - routing denied",
+                    sender_peer.did()
+                );
                 return Err(super::routing_errors::RoutingError::identity_violation(
-                    format!("Sender {} is blocked", sender_peer.did())
+                    format!("Sender {} is blocked", sender_peer.did()),
                 ));
             }
         }
@@ -141,22 +160,31 @@ impl MeshRouter {
         // Identity verified - proceed with routing
         let router = self.mesh_message_router.read().await;
 
-        match router.route_message(message, destination.clone(), sender.clone()).await {
+        match router
+            .route_message(message, destination.clone(), sender.clone())
+            .await
+        {
             Ok(message_id) => {
-                info!("✅ Message routed successfully (ID: {}, verification: {:?})",
-                      message_id, verification_result);
+                info!(
+                    "✅ Message routed successfully (ID: {}, verification: {:?})",
+                    message_id, verification_result
+                );
                 Ok(message_id)
             }
             Err(e) => {
-                warn!("❌ All routing attempts failed for {}: {}",
-                      hex::encode(&destination.key_id[..8]), e);
-                Err(super::routing_errors::RoutingError::transient(
-                    format!("Message routing failed: {}", e)
-                ))
+                warn!(
+                    "❌ All routing attempts failed for {}: {}",
+                    hex::encode(&destination.key_id[..8]),
+                    e
+                );
+                Err(super::routing_errors::RoutingError::transient(format!(
+                    "Message routing failed: {}",
+                    e
+                )))
             }
         }
     }
-    
+
     /// Find optimal route to a destination
     ///
     /// Uses lib-network's path finding to discover available routes
@@ -171,7 +199,10 @@ impl MeshRouter {
         destination: &PublicKey,
         sender: &PublicKey,
     ) -> Result<Vec<lib_network::routing::message_routing::RouteHop>> {
-        debug!("🔍 Discovering route to {}...", hex::encode(&destination.key_id[..8]));
+        debug!(
+            "🔍 Discovering route to {}...",
+            hex::encode(&destination.key_id[..8])
+        );
 
         // Ticket #146: Convert PublicKey to UnifiedPeerId for routing
         #[allow(deprecated)]
@@ -180,12 +211,13 @@ impl MeshRouter {
         let sender_unified = UnifiedPeerId::from_public_key_legacy(sender.clone());
 
         let router = self.mesh_message_router.read().await;
-        let route = router.find_optimal_route(&dest_unified, &sender_unified).await
+        let route = router
+            .find_optimal_route(&dest_unified, &sender_unified)
+            .await
             .context("No route found to destination")?;
 
         info!("✅ Route found: {} hops", route.len());
 
         Ok(route)
     }
-    
 }

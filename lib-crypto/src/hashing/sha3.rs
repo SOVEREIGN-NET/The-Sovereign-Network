@@ -1,5 +1,5 @@
 //! SHA-3 hashing - preserving ZHTP secure hashing
-//! 
+//!
 //! implementation from crypto.rs, lines 646-655
 
 use sha3::{Digest, Sha3_256};

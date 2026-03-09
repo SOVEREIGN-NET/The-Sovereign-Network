@@ -5,8 +5,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::time;
     use crate::utils::hash;
+    use crate::utils::time;
 
     #[test]
     fn test_time_guard_inactive_by_default() {

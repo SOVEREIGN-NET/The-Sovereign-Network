@@ -3,13 +3,13 @@
 //! Every token balance mutation flows through these methods.
 //! Authorization: only `governance_authority` or `kernel_address` may invoke.
 
+use super::interface::{
+    BurnAuthorization, CreditReason, DebitReason, KernelOpError, LockReason, MintAuthorization,
+    ReleaseReason,
+};
+use super::TreasuryKernel;
 use crate::contracts::tokens::core::TokenContract;
 use crate::integration::crypto_integration::PublicKey;
-use super::TreasuryKernel;
-use super::interface::{
-    KernelOpError, CreditReason, DebitReason, LockReason, ReleaseReason,
-    MintAuthorization, BurnAuthorization,
-};
 
 impl TreasuryKernel {
     /// Verify that the caller is authorized (kernel address or governance authority)
@@ -39,24 +39,20 @@ impl TreasuryKernel {
         self.verify_caller(caller)?;
 
         match reason {
-            CreditReason::Mint | CreditReason::UbiDistribution => {
-                token
-                    .mint_kernel_only(self.kernel_address(), to, amount)
-                    .map_err(|e| {
-                        if e.contains("exceed maximum supply") {
-                            KernelOpError::ExceedsMaxSupply
-                        } else if e.contains("disabled") {
-                            KernelOpError::MintingDisabled
-                        } else {
-                            KernelOpError::Unauthorized
-                        }
-                    })
-            }
-            CreditReason::FeeDistribution | CreditReason::Reward | CreditReason::Transfer => {
-                token
-                    .credit_balance(to, amount)
-                    .map_err(|_| KernelOpError::Overflow)
-            }
+            CreditReason::Mint | CreditReason::UbiDistribution => token
+                .mint_kernel_only(self.kernel_address(), to, amount)
+                .map_err(|e| {
+                    if e.contains("exceed maximum supply") {
+                        KernelOpError::ExceedsMaxSupply
+                    } else if e.contains("disabled") {
+                        KernelOpError::MintingDisabled
+                    } else {
+                        KernelOpError::Unauthorized
+                    }
+                }),
+            CreditReason::FeeDistribution | CreditReason::Reward | CreditReason::Transfer => token
+                .credit_balance(to, amount)
+                .map_err(|_| KernelOpError::Overflow),
         }
     }
 
@@ -85,11 +81,9 @@ impl TreasuryKernel {
                 token.total_supply = token.total_supply.saturating_sub(amount);
                 Ok(())
             }
-            DebitReason::FeeCollection | DebitReason::Slash | DebitReason::Transfer => {
-                token
-                    .debit_balance(from, amount)
-                    .map_err(|_| KernelOpError::InsufficientBalance)
-            }
+            DebitReason::FeeCollection | DebitReason::Slash | DebitReason::Transfer => token
+                .debit_balance(from, amount)
+                .map_err(|_| KernelOpError::InsufficientBalance),
         }
     }
 
@@ -185,11 +179,14 @@ impl TreasuryKernel {
         }
         // Validate that executable_after_epoch respects the configured delay
         // Use saturating_add to handle overflow gracefully: if overflow occurs, executable_after_epoch must equal u64::MAX
-        let minimum_executable_epoch = auth.authorized_at_epoch.saturating_add(self.mint_delay_epochs);
+        let minimum_executable_epoch = auth
+            .authorized_at_epoch
+            .saturating_add(self.mint_delay_epochs);
         if auth.executable_after_epoch < minimum_executable_epoch {
             return Err(KernelOpError::DelayNotElapsed);
         }
-        self.pending_mint_authorizations.insert(auth.proposal_id, auth);
+        self.pending_mint_authorizations
+            .insert(auth.proposal_id, auth);
         Ok(())
     }
 
@@ -208,7 +205,9 @@ impl TreasuryKernel {
         if self.consumed_authorizations.contains(proposal_id) {
             return Err(KernelOpError::AuthorizationConsumed);
         }
-        let auth = self.pending_mint_authorizations.get(proposal_id)
+        let auth = self
+            .pending_mint_authorizations
+            .get(proposal_id)
             .ok_or(KernelOpError::MissingAuthorization)?
             .clone();
         if auth.consumed {
@@ -227,7 +226,13 @@ impl TreasuryKernel {
 
         // Execute mint through the existing kernel credit path
         let kernel_addr = self.kernel_address.clone();
-        self.credit(token, &kernel_addr, &recipient, auth.authorized_amount, CreditReason::Mint)?;
+        self.credit(
+            token,
+            &kernel_addr,
+            &recipient,
+            auth.authorized_amount,
+            CreditReason::Mint,
+        )?;
 
         // Mark consumed
         self.consumed_authorizations.insert(*proposal_id);
@@ -248,11 +253,14 @@ impl TreasuryKernel {
         // Validate that executable_after_epoch respects the configured delay
         // Note: burn operations use the same delay configuration as mint operations (mint_delay_epochs)
         // Use saturating_add to handle overflow gracefully: if overflow occurs, executable_after_epoch must equal u64::MAX
-        let minimum_executable_epoch = auth.authorized_at_epoch.saturating_add(self.mint_delay_epochs);
+        let minimum_executable_epoch = auth
+            .authorized_at_epoch
+            .saturating_add(self.mint_delay_epochs);
         if auth.executable_after_epoch < minimum_executable_epoch {
             return Err(KernelOpError::DelayNotElapsed);
         }
-        self.pending_burn_authorizations.insert(auth.proposal_id, auth);
+        self.pending_burn_authorizations
+            .insert(auth.proposal_id, auth);
         Ok(())
     }
 
@@ -269,7 +277,9 @@ impl TreasuryKernel {
         if self.consumed_authorizations.contains(proposal_id) {
             return Err(KernelOpError::AuthorizationConsumed);
         }
-        let auth = self.pending_burn_authorizations.get(proposal_id)
+        let auth = self
+            .pending_burn_authorizations
+            .get(proposal_id)
             .ok_or(KernelOpError::MissingAuthorization)?
             .clone();
         if auth.consumed {
@@ -288,7 +298,13 @@ impl TreasuryKernel {
 
         // Execute burn through the existing kernel debit path
         let kernel_addr = self.kernel_address.clone();
-        self.debit(token, &kernel_addr, &from, auth.authorized_amount, DebitReason::Burn)?;
+        self.debit(
+            token,
+            &kernel_addr,
+            &from,
+            auth.authorized_amount,
+            DebitReason::Burn,
+        )?;
 
         // Mark consumed
         self.consumed_authorizations.insert(*proposal_id);
@@ -317,12 +333,16 @@ impl TreasuryKernel {
     }
 
     /// Get pending mint authorizations (read-only)
-    pub fn pending_mint_authorizations(&self) -> &std::collections::BTreeMap<[u8; 32], MintAuthorization> {
+    pub fn pending_mint_authorizations(
+        &self,
+    ) -> &std::collections::BTreeMap<[u8; 32], MintAuthorization> {
         &self.pending_mint_authorizations
     }
 
     /// Get pending burn authorizations (read-only)
-    pub fn pending_burn_authorizations(&self) -> &std::collections::BTreeMap<[u8; 32], BurnAuthorization> {
+    pub fn pending_burn_authorizations(
+        &self,
+    ) -> &std::collections::BTreeMap<[u8; 32], BurnAuthorization> {
         &self.pending_burn_authorizations
     }
 }
@@ -399,7 +419,13 @@ mod tests {
         let caller = test_kernel_address();
         let citizen = test_user();
 
-        let result = kernel.credit(&mut token, &caller, &citizen, 500, CreditReason::UbiDistribution);
+        let result = kernel.credit(
+            &mut token,
+            &caller,
+            &citizen,
+            500,
+            CreditReason::UbiDistribution,
+        );
         assert!(result.is_ok());
         assert_eq!(token.balance_of(&citizen), 500);
     }
@@ -411,7 +437,9 @@ mod tests {
         let recipient = test_recipient();
 
         // Pre-mint some tokens
-        token.mint_kernel_only(kernel.kernel_address(), &recipient, 1000).unwrap();
+        token
+            .mint_kernel_only(kernel.kernel_address(), &recipient, 1000)
+            .unwrap();
         let supply_before = token.total_supply;
 
         // Credit via Transfer reason — no supply change
@@ -427,7 +455,13 @@ mod tests {
         let bad_caller = unauthorized_caller();
         let recipient = test_recipient();
 
-        let result = kernel.credit(&mut token, &bad_caller, &recipient, 1000, CreditReason::Mint);
+        let result = kernel.credit(
+            &mut token,
+            &bad_caller,
+            &recipient,
+            1000,
+            CreditReason::Mint,
+        );
         assert_eq!(result, Err(KernelOpError::Unauthorized));
         assert_eq!(token.balance_of(&recipient), 0);
     }
@@ -467,7 +501,9 @@ mod tests {
         let user = test_user();
 
         // Pre-fund user
-        token.mint_kernel_only(kernel.kernel_address(), &user, 1000).unwrap();
+        token
+            .mint_kernel_only(kernel.kernel_address(), &user, 1000)
+            .unwrap();
 
         let result = kernel.debit(&mut token, &caller, &user, 300, DebitReason::Transfer);
         assert!(result.is_ok());
@@ -480,7 +516,9 @@ mod tests {
         let caller = test_kernel_address();
         let user = test_user();
 
-        token.mint_kernel_only(kernel.kernel_address(), &user, 1000).unwrap();
+        token
+            .mint_kernel_only(kernel.kernel_address(), &user, 1000)
+            .unwrap();
         let supply_before = token.total_supply;
 
         let result = kernel.debit(&mut token, &caller, &user, 400, DebitReason::Burn);
@@ -519,7 +557,9 @@ mod tests {
         let user = test_user();
 
         // Pre-fund
-        token.mint_kernel_only(kernel.kernel_address(), &user, 1000).unwrap();
+        token
+            .mint_kernel_only(kernel.kernel_address(), &user, 1000)
+            .unwrap();
 
         // Lock 600
         let result = kernel.lock(&mut token, &caller, &user, 600, LockReason::Staking);
@@ -544,7 +584,9 @@ mod tests {
         let caller = test_kernel_address();
         let user = test_user();
 
-        token.mint_kernel_only(kernel.kernel_address(), &user, 500).unwrap();
+        token
+            .mint_kernel_only(kernel.kernel_address(), &user, 500)
+            .unwrap();
 
         let result = kernel.lock(&mut token, &caller, &user, 600, LockReason::Staking);
         assert_eq!(result, Err(KernelOpError::InsufficientBalance));
@@ -556,10 +598,20 @@ mod tests {
         let caller = test_kernel_address();
         let user = test_user();
 
-        token.mint_kernel_only(kernel.kernel_address(), &user, 1000).unwrap();
-        kernel.lock(&mut token, &caller, &user, 400, LockReason::Vesting).unwrap();
+        token
+            .mint_kernel_only(kernel.kernel_address(), &user, 1000)
+            .unwrap();
+        kernel
+            .lock(&mut token, &caller, &user, 400, LockReason::Vesting)
+            .unwrap();
 
-        let result = kernel.release(&mut token, &caller, &user, 500, ReleaseReason::VestingRelease);
+        let result = kernel.release(
+            &mut token,
+            &caller,
+            &user,
+            500,
+            ReleaseReason::VestingRelease,
+        );
         assert_eq!(result, Err(KernelOpError::InsufficientLockedBalance));
     }
 
@@ -569,8 +621,12 @@ mod tests {
         let caller = test_kernel_address();
         let user = test_user();
 
-        token.mint_kernel_only(kernel.kernel_address(), &user, 1000).unwrap();
-        kernel.lock(&mut token, &caller, &user, 800, LockReason::Staking).unwrap();
+        token
+            .mint_kernel_only(kernel.kernel_address(), &user, 1000)
+            .unwrap();
+        kernel
+            .lock(&mut token, &caller, &user, 800, LockReason::Staking)
+            .unwrap();
 
         // Only 200 available — debit 300 should fail
         let result = kernel.debit(&mut token, &caller, &user, 300, DebitReason::Transfer);
@@ -634,8 +690,12 @@ mod tests {
 
         // Unpause and verify ops work again
         kernel.unpause(&gov).unwrap();
-        token.mint_kernel_only(kernel.kernel_address(), &user, 1000).unwrap();
-        assert!(kernel.debit(&mut token, &caller, &user, 100, DebitReason::Transfer).is_ok());
+        token
+            .mint_kernel_only(kernel.kernel_address(), &user, 1000)
+            .unwrap();
+        assert!(kernel
+            .debit(&mut token, &caller, &user, 100, DebitReason::Transfer)
+            .is_ok());
     }
 
     // ─── Transfer tests ─────────────────────────────────────────────────
@@ -647,7 +707,9 @@ mod tests {
         let alice = test_user();
         let bob = test_recipient();
 
-        token.mint_kernel_only(kernel.kernel_address(), &alice, 1000).unwrap();
+        token
+            .mint_kernel_only(kernel.kernel_address(), &alice, 1000)
+            .unwrap();
 
         let result = kernel.transfer(&mut token, &caller, &alice, &bob, 400);
         assert!(result.is_ok());
@@ -664,8 +726,12 @@ mod tests {
         let alice = test_user();
         let bob = test_recipient();
 
-        token.mint_kernel_only(kernel.kernel_address(), &alice, 1000).unwrap();
-        kernel.lock(&mut token, &caller, &alice, 800, LockReason::Staking).unwrap();
+        token
+            .mint_kernel_only(kernel.kernel_address(), &alice, 1000)
+            .unwrap();
+        kernel
+            .lock(&mut token, &caller, &alice, 800, LockReason::Staking)
+            .unwrap();
 
         // Only 200 available — transfer 300 should fail
         let result = kernel.transfer(&mut token, &caller, &alice, &bob, 300);
@@ -678,7 +744,7 @@ mod tests {
 
     // ─── M2: Governance-Gated Authorization Tests ───────────────────────
 
-    use super::super::interface::{MintAuthorization, BurnAuthorization, MintReason};
+    use super::super::interface::{BurnAuthorization, MintAuthorization, MintReason};
 
     fn test_mint_auth(epoch: u64) -> MintAuthorization {
         MintAuthorization {
@@ -785,7 +851,9 @@ mod tests {
         kernel.register_mint_authorization(auth).unwrap();
 
         // Execute once — succeeds
-        kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1).unwrap();
+        kernel
+            .execute_authorized_mint(&mut token, &[1u8; 32], 1)
+            .unwrap();
 
         // Execute again — consumed
         let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 2);
@@ -797,7 +865,9 @@ mod tests {
         let (mut kernel, mut token) = setup();
         let kernel_addr = test_kernel_address();
         let user = test_user();
-        token.mint_kernel_only(&kernel_addr, &user, token.max_supply - 100).unwrap();
+        token
+            .mint_kernel_only(&kernel_addr, &user, token.max_supply - 100)
+            .unwrap();
 
         // Now register authorization for 500 (exceeds remaining 100)
         let auth = test_mint_auth(0);
@@ -863,7 +933,9 @@ mod tests {
         let auth = test_burn_auth(0);
         kernel.register_burn_authorization(auth).unwrap();
 
-        kernel.execute_authorized_burn(&mut token, &[2u8; 32], 1).unwrap();
+        kernel
+            .execute_authorized_burn(&mut token, &[2u8; 32], 1)
+            .unwrap();
         let result = kernel.execute_authorized_burn(&mut token, &[2u8; 32], 2);
         assert_eq!(result, Err(KernelOpError::AuthorizationConsumed));
     }
@@ -894,17 +966,17 @@ mod tests {
     #[test]
     fn test_register_mint_authorization_enforces_delay() {
         let (mut kernel, _) = setup();
-        
+
         // Default delay is 1 epoch
         assert_eq!(kernel.mint_delay_epochs(), 1);
-        
+
         // Try to register authorization with executable_after_epoch < authorized_at_epoch + delay
         let mut auth = test_mint_auth(10); // authorized_at_epoch = 10
         auth.executable_after_epoch = 10; // Should be at least 11
-        
+
         let result = kernel.register_mint_authorization(auth);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
-        
+
         // Verify authorization was not registered
         assert_eq!(kernel.pending_mint_authorizations().len(), 0);
     }
@@ -912,17 +984,17 @@ mod tests {
     #[test]
     fn test_register_mint_authorization_respects_delay() {
         let (mut kernel, _) = setup();
-        
+
         // Default delay is 1 epoch
         assert_eq!(kernel.mint_delay_epochs(), 1);
-        
+
         // Register authorization with correct delay
         let mut auth = test_mint_auth(10); // authorized_at_epoch = 10
         auth.executable_after_epoch = 11; // authorized_at_epoch + delay
-        
+
         let result = kernel.register_mint_authorization(auth);
         assert!(result.is_ok());
-        
+
         // Verify authorization was registered
         assert_eq!(kernel.pending_mint_authorizations().len(), 1);
     }
@@ -930,17 +1002,17 @@ mod tests {
     #[test]
     fn test_register_burn_authorization_enforces_delay() {
         let (mut kernel, _) = setup();
-        
+
         // Default delay is 1 epoch
         assert_eq!(kernel.mint_delay_epochs(), 1);
-        
+
         // Try to register authorization with executable_after_epoch < authorized_at_epoch + delay
         let mut auth = test_burn_auth(10); // authorized_at_epoch = 10
         auth.executable_after_epoch = 10; // Should be at least 11
-        
+
         let result = kernel.register_burn_authorization(auth);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
-        
+
         // Verify authorization was not registered
         assert_eq!(kernel.pending_burn_authorizations().len(), 0);
     }
@@ -948,17 +1020,17 @@ mod tests {
     #[test]
     fn test_register_burn_authorization_respects_delay() {
         let (mut kernel, _) = setup();
-        
+
         // Default delay is 1 epoch
         assert_eq!(kernel.mint_delay_epochs(), 1);
-        
+
         // Register authorization with correct delay
         let mut auth = test_burn_auth(10); // authorized_at_epoch = 10
         auth.executable_after_epoch = 11; // authorized_at_epoch + delay
-        
+
         let result = kernel.register_burn_authorization(auth);
         assert!(result.is_ok());
-        
+
         // Verify authorization was registered
         assert_eq!(kernel.pending_burn_authorizations().len(), 1);
     }
@@ -967,38 +1039,38 @@ mod tests {
     fn test_mint_delay_configuration_affects_registration() {
         let (mut kernel, _) = setup();
         let gov = test_governance();
-        
+
         // Set delay to 3 epochs
         kernel.set_mint_delay_epochs(&gov, 3).unwrap();
         assert_eq!(kernel.mint_delay_epochs(), 3);
-        
+
         // Try to register with 1-epoch delay (should fail)
         let mut auth1 = test_mint_auth(10); // authorized_at_epoch = 10
         auth1.executable_after_epoch = 11; // Only 1 epoch delay
         let result = kernel.register_mint_authorization(auth1);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
-        
+
         // Try to register with 2-epoch delay (should fail)
         let mut auth2 = test_mint_auth(10);
         auth2.proposal_id = [2u8; 32]; // Different proposal ID
         auth2.executable_after_epoch = 12; // Only 2 epoch delay
         let result = kernel.register_mint_authorization(auth2);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
-        
+
         // Register with 3-epoch delay (should succeed)
         let mut auth3 = test_mint_auth(10);
         auth3.proposal_id = [3u8; 32]; // Different proposal ID
         auth3.executable_after_epoch = 13; // Exactly 3 epoch delay
         let result = kernel.register_mint_authorization(auth3);
         assert!(result.is_ok());
-        
+
         // Register with > 3-epoch delay (should succeed)
         let mut auth4 = test_mint_auth(10);
         auth4.proposal_id = [4u8; 32]; // Different proposal ID
         auth4.executable_after_epoch = 15; // 5 epoch delay (more than required)
         let result = kernel.register_mint_authorization(auth4);
         assert!(result.is_ok());
-        
+
         // Should have 2 authorizations registered
         assert_eq!(kernel.pending_mint_authorizations().len(), 2);
     }
@@ -1007,24 +1079,24 @@ mod tests {
     fn test_burn_delay_configuration_affects_registration() {
         let (mut kernel, _) = setup();
         let gov = test_governance();
-        
+
         // Set delay to 2 epochs
         kernel.set_mint_delay_epochs(&gov, 2).unwrap();
         assert_eq!(kernel.mint_delay_epochs(), 2);
-        
+
         // Try to register with insufficient delay (should fail)
         let mut auth1 = test_burn_auth(5); // authorized_at_epoch = 5
         auth1.executable_after_epoch = 6; // Only 1 epoch delay, needs 2
         let result = kernel.register_burn_authorization(auth1);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
-        
+
         // Register with correct delay (should succeed)
         let mut auth2 = test_burn_auth(5);
         auth2.proposal_id = [3u8; 32]; // Different proposal ID
         auth2.executable_after_epoch = 7; // Exactly 2 epoch delay
         let result = kernel.register_burn_authorization(auth2);
         assert!(result.is_ok());
-        
+
         assert_eq!(kernel.pending_burn_authorizations().len(), 1);
     }
 
@@ -1032,15 +1104,15 @@ mod tests {
     fn test_zero_epoch_delay_allowed() {
         let (mut kernel, _) = setup();
         let gov = test_governance();
-        
+
         // Set delay to 0 epochs (immediate execution allowed)
         kernel.set_mint_delay_epochs(&gov, 0).unwrap();
         assert_eq!(kernel.mint_delay_epochs(), 0);
-        
+
         // Register authorization with same epoch for authorization and execution
         let mut auth = test_mint_auth(10); // authorized_at_epoch = 10
         auth.executable_after_epoch = 10; // Same epoch (0 delay)
-        
+
         let result = kernel.register_mint_authorization(auth);
         assert!(result.is_ok());
     }
@@ -1049,22 +1121,22 @@ mod tests {
     fn test_delay_validation_with_large_epochs() {
         let (mut kernel, _) = setup();
         let gov = test_governance();
-        
+
         // Set a large delay
         kernel.set_mint_delay_epochs(&gov, 100).unwrap();
-        
+
         // Register authorization at a large epoch number
         let mut auth = test_mint_auth(1000); // authorized_at_epoch = 1000
         auth.executable_after_epoch = 1100; // authorized_at_epoch + 100
-        
+
         let result = kernel.register_mint_authorization(auth);
         assert!(result.is_ok());
-        
+
         // Try with insufficient delay
         let mut auth2 = test_mint_auth(1000);
         auth2.proposal_id = [5u8; 32];
         auth2.executable_after_epoch = 1099; // Only 99 epochs delay
-        
+
         let result = kernel.register_mint_authorization(auth2);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
     }

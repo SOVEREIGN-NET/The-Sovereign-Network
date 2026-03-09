@@ -2,12 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{
-    IdentityMessageKind,
-    DeliveryReceipt,
-    ReadReceipt,
-    GroupStateUpdate,
-};
+use super::{DeliveryReceipt, GroupStateUpdate, IdentityMessageKind, ReadReceipt};
 
 /// Opaque payload embedded inside encrypted device payloads
 #[derive(Debug, Clone, Serialize, Deserialize)]

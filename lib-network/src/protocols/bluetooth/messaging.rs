@@ -75,7 +75,11 @@ impl BluetoothMeshProtocol {
     /// macOS GATT transmission
     #[cfg(target_os = "macos")]
     async fn macos_transmit_gatt(&self, data: &[u8], address: &str) -> Result<()> {
-        info!(" macOS: Transmitting {} bytes via GATT to {}", data.len(), address);
+        info!(
+            " macOS: Transmitting {} bytes via GATT to {}",
+            data.len(),
+            address
+        );
 
         let core_bt = self.core_bluetooth.read().await;
         let manager = core_bt
@@ -90,7 +94,10 @@ impl BluetoothMeshProtocol {
         let is_connected_central = manager.is_connected_central(identifier).await;
 
         if is_connected_central {
-            info!(" macOS: Sending notification to connected central {}", identifier);
+            info!(
+                " macOS: Sending notification to connected central {}",
+                identifier
+            );
             manager.send_notification(mesh_data_char, data).await?;
         } else {
             info!(" macOS: Writing to discovered peripheral {}", identifier);
@@ -99,7 +106,11 @@ impl BluetoothMeshProtocol {
                 .await?;
         }
 
-        info!(" macOS: Successfully transmitted {} bytes to {}", data.len(), address);
+        info!(
+            " macOS: Successfully transmitted {} bytes to {}",
+            data.len(),
+            address
+        );
         Ok(())
     }
 
@@ -107,10 +118,21 @@ impl BluetoothMeshProtocol {
     async fn linux_transmit_gatt(&self, data: &[u8], address: &str) -> Result<()> {
         use std::process::Command;
 
-        let hex_data = data.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let hex_data = data
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
 
         let output = Command::new("gatttool")
-            .args(&["-b", address, "--char-write-req", "-a", "0x0012", "-n", &hex_data])
+            .args(&[
+                "-b",
+                address,
+                "--char-write-req",
+                "-a",
+                "0x0012",
+                "-n",
+                &hex_data,
+            ])
             .output();
 
         if let Ok(result) = output {
@@ -125,14 +147,17 @@ impl BluetoothMeshProtocol {
 
     #[cfg(target_os = "windows")]
     async fn windows_transmit_ble(&self, data: &[u8], address: &str) -> Result<()> {
-        info!("Windows: Transmitting {} bytes via BLE to {}", data.len(), address);
+        info!(
+            "Windows: Transmitting {} bytes via BLE to {}",
+            data.len(),
+            address
+        );
 
         #[cfg(feature = "windows-gatt")]
         {
             use windows::{
                 Devices::Bluetooth::BluetoothLEDevice,
-                Devices::Bluetooth::GenericAttributeProfile::*,
-                Storage::Streams::*,
+                Devices::Bluetooth::GenericAttributeProfile::*, Storage::Streams::*,
             };
 
             let bluetooth_address = self.parse_windows_bluetooth_address(address)?;
@@ -193,7 +218,8 @@ impl BluetoothMeshProtocol {
                 }
             }
 
-            let mesh_char = mesh_char.ok_or_else(|| anyhow!("Mesh data characteristic not found"))?;
+            let mesh_char =
+                mesh_char.ok_or_else(|| anyhow!("Mesh data characteristic not found"))?;
 
             let mut writer = DataWriter::new()?;
             writer.WriteBytes(data)?;

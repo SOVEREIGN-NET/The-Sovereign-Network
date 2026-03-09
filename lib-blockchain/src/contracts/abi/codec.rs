@@ -3,8 +3,8 @@
 //! Provides canonical serialization of ABI schemas to ensure consistent
 //! representations across different implementations and languages.
 
-use serde_json::{Value};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use serde_json::Value;
 
 use super::schema::*;
 
@@ -34,15 +34,16 @@ impl AbiEncoder {
     /// - Omitting None values
     pub fn encode_abi(abi: &ContractAbi) -> Result<String> {
         // Serialize to serde_json Value for manipulation
-        let json = serde_json::to_value(abi)
-            .map_err(|e| anyhow!("Failed to encode ABI: {}", e))?;
+        let json = serde_json::to_value(abi).map_err(|e| anyhow!("Failed to encode ABI: {}", e))?;
 
         // Canonicalize (sort keys, remove nulls)
         let canonical = Self::canonicalize_value(&json);
 
         // Format deterministically
-        Ok(serde_json::to_string(&canonical)
-            .map_err(|e| anyhow!("Failed to format ABI: {}", e))?)
+        Ok(
+            serde_json::to_string(&canonical)
+                .map_err(|e| anyhow!("Failed to format ABI: {}", e))?,
+        )
     }
 
     /// Canonicalize a JSON value (sort keys, remove null values)
@@ -91,8 +92,7 @@ pub struct AbiDecoder;
 impl AbiDecoder {
     /// Decode contract ABI from JSON string
     pub fn decode_abi(json: &str) -> Result<ContractAbi> {
-        serde_json::from_str(json)
-            .map_err(|e| anyhow!("Failed to decode ABI: {}", e))
+        serde_json::from_str(json).map_err(|e| anyhow!("Failed to decode ABI: {}", e))
     }
 
     /// Decode from compact binary

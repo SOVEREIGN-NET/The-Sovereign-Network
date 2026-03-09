@@ -2,11 +2,13 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use lib_blockchain::block::{Block, BlockHeader};
-use lib_blockchain::contracts::TokenContract;
 use lib_blockchain::contracts::utils::generate_lib_token_id;
+use lib_blockchain::contracts::TokenContract;
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::storage::{BlockchainStore, SledStore, TokenStateSnapshot};
-use lib_blockchain::transaction::{TokenTransferData, Transaction, TransactionInput, TransactionOutput, WalletTransactionData};
+use lib_blockchain::transaction::{
+    TokenTransferData, Transaction, TransactionInput, TransactionOutput, WalletTransactionData,
+};
 use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
@@ -56,14 +58,14 @@ fn wallet_registration_tx(wallet_id: [u8; 32], owner_pubkey: &PublicKey) -> Tran
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
@@ -110,14 +112,14 @@ fn token_transfer_tx(
         }),
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
@@ -264,10 +266,9 @@ fn test_cross_node_loads_converge_to_identical_token_state() -> Result<()> {
     ))?;
     store.commit_block()?;
 
-    let node_a = lib_blockchain::Blockchain::load_from_store(store.clone())?
-        .expect("node A should load");
-    let node_b = lib_blockchain::Blockchain::load_from_store(store)?
-        .expect("node B should load");
+    let node_a =
+        lib_blockchain::Blockchain::load_from_store(store.clone())?.expect("node A should load");
+    let node_b = lib_blockchain::Blockchain::load_from_store(store)?.expect("node B should load");
 
     let token_a = node_a
         .token_contracts
@@ -301,7 +302,9 @@ fn test_uncommitted_block_does_not_leak_token_state_after_restart() -> Result<()
 
     let committed_store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(&db_path)?);
     let mut committed_token = TokenContract::new_sov_native();
-    committed_token.mint(&wallet_key(&sender_wallet), 9_000).unwrap();
+    committed_token
+        .mint(&wallet_key(&sender_wallet), 9_000)
+        .unwrap();
 
     let mut committed_snapshot = TokenStateSnapshot::default();
     committed_snapshot
@@ -319,7 +322,9 @@ fn test_uncommitted_block_does_not_leak_token_state_after_restart() -> Result<()
 
     let crashing_store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(&db_path)?);
     let mut uncommitted_token = TokenContract::new_sov_native();
-    uncommitted_token.mint(&wallet_key(&sender_wallet), 9_000).unwrap();
+    uncommitted_token
+        .mint(&wallet_key(&sender_wallet), 9_000)
+        .unwrap();
     uncommitted_token
         .transfer(
             &lib_blockchain::contracts::executor::ExecutionContext::new(

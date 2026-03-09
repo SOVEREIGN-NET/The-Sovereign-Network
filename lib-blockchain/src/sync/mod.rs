@@ -32,15 +32,13 @@
 
 pub mod snapshot;
 
-pub use snapshot::{
-    SnapshotError, SnapshotId, SnapshotInfo, SnapshotManager, SnapshotResult,
-};
+pub use snapshot::{SnapshotError, SnapshotId, SnapshotInfo, SnapshotManager, SnapshotResult};
 
 use std::sync::Arc;
 use thiserror::Error;
 
 use crate::block::Block;
-use crate::execution::{BlockExecutor, ExecutorConfig, BlockApplyError};
+use crate::execution::{BlockApplyError, BlockExecutor, ExecutorConfig};
 use crate::storage::{BlockchainStore, StorageError};
 use crate::types::TransactionType;
 
@@ -53,10 +51,7 @@ pub enum SyncError {
 
     /// Block application failed
     #[error("Block apply failed at height {height}: {error}")]
-    BlockApplyFailed {
-        height: u64,
-        error: BlockApplyError,
-    },
+    BlockApplyFailed { height: u64, error: BlockApplyError },
 
     /// Invalid height range
     #[error("Invalid height range: from={from}, to={to}")]
@@ -107,7 +102,10 @@ impl ChainSync {
     }
 
     /// Create with custom protocol params
-    pub fn with_protocol_params(store: Arc<dyn BlockchainStore>, protocol_params: crate::protocol::ProtocolParams) -> Self {
+    pub fn with_protocol_params(
+        store: Arc<dyn BlockchainStore>,
+        protocol_params: crate::protocol::ProtocolParams,
+    ) -> Self {
         let mut config = ExecutorConfig::default();
         config.protocol_params = protocol_params;
         Self {
@@ -150,7 +148,8 @@ impl ChainSync {
         let mut blocks = Vec::with_capacity((to_height - from_height + 1) as usize);
 
         for height in from_height..=to_height {
-            let block = self.store
+            let block = self
+                .store
                 .get_block_by_height(height)?
                 .ok_or(SyncError::BlockNotFound(height))?;
             blocks.push(block);
@@ -168,12 +167,10 @@ impl ChainSync {
     /// - `NotInitialized` if chain has no blocks
     /// - `Storage` for underlying storage errors
     pub fn export_all_blocks(&self) -> SyncResult<Vec<Block>> {
-        let latest_height = self.store
-            .latest_height()
-            .map_err(|e| match e {
-                StorageError::NotInitialized => SyncError::NotInitialized,
-                other => SyncError::Storage(other),
-            })?;
+        let latest_height = self.store.latest_height().map_err(|e| match e {
+            StorageError::NotInitialized => SyncError::NotInitialized,
+            other => SyncError::Storage(other),
+        })?;
 
         self.export_blocks(0, latest_height)
     }
@@ -211,7 +208,10 @@ impl ChainSync {
             return self.import_blocks_via_canonical_runtime(blocks, None);
         }
 
-        let executor = BlockExecutor::from_config_trusted_replay(Arc::clone(&self.store), self.executor_config.clone());
+        let executor = BlockExecutor::from_config_trusted_replay(
+            Arc::clone(&self.store),
+            self.executor_config.clone(),
+        );
 
         // Determine expected starting height
         let expected_start = match self.store.latest_height() {
@@ -238,10 +238,9 @@ impl ChainSync {
             // Apply block through executor
             // This handles: prechecks, begin_block, apply txs, append_block, commit_block
             // On error: automatic rollback, state unchanged from before begin_block
-            executor.apply_block(&block).map_err(|e| SyncError::BlockApplyFailed {
-                height,
-                error: e,
-            })?;
+            executor
+                .apply_block(&block)
+                .map_err(|e| SyncError::BlockApplyFailed { height, error: e })?;
 
             imported_count += 1;
             last_height = Some(height);
@@ -275,7 +274,10 @@ impl ChainSync {
             return self.import_blocks_via_canonical_runtime(blocks, Some(&mut on_progress));
         }
 
-        let executor = BlockExecutor::from_config_trusted_replay(Arc::clone(&self.store), self.executor_config.clone());
+        let executor = BlockExecutor::from_config_trusted_replay(
+            Arc::clone(&self.store),
+            self.executor_config.clone(),
+        );
 
         // Determine expected starting height
         let expected_start = match self.store.latest_height() {
@@ -299,10 +301,9 @@ impl ChainSync {
         for block in blocks {
             let height = block.header.height;
 
-            executor.apply_block(&block).map_err(|e| SyncError::BlockApplyFailed {
-                height,
-                error: e,
-            })?;
+            executor
+                .apply_block(&block)
+                .map_err(|e| SyncError::BlockApplyFailed { height, error: e })?;
 
             imported_count += 1;
             last_height = Some(height);
@@ -359,10 +360,9 @@ impl ChainSync {
 
                 for block in prefix {
                     let height = block.header.height;
-                    executor.apply_block(&block).map_err(|e| SyncError::BlockApplyFailed {
-                        height,
-                        error: e,
-                    })?;
+                    executor
+                        .apply_block(&block)
+                        .map_err(|e| SyncError::BlockApplyFailed { height, error: e })?;
                     imported_count += 1;
                     last_height = Some(height);
                     if let Some(progress) = on_progress.as_mut() {
@@ -410,7 +410,9 @@ impl ChainSync {
             let store = Arc::clone(&self.store);
             std::thread::spawn(move || run_canonical_import_inner(store, blocks))
                 .join()
-                .map_err(|_| SyncError::RuntimeImportFailed("canonical import thread panicked".to_string()))?
+                .map_err(|_| {
+                    SyncError::RuntimeImportFailed("canonical import thread panicked".to_string())
+                })?
         } else {
             run_canonical_import_inner(Arc::clone(&self.store), blocks)
         }
@@ -497,7 +499,7 @@ mod tests {
     use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
     use crate::storage::SledStore;
     use crate::transaction::Transaction;
-    use crate::types::{Hash, Difficulty, TransactionType};
+    use crate::types::{Difficulty, Hash, TransactionType};
     use tempfile::TempDir;
 
     fn create_test_store() -> (TempDir, Arc<dyn BlockchainStore>) {
@@ -683,7 +685,10 @@ mod tests {
         assert!(result.is_ok());
 
         let result = sync.import_blocks(vec![bad_block]);
-        assert!(matches!(result, Err(SyncError::BlockApplyFailed { height: 1, .. })));
+        assert!(matches!(
+            result,
+            Err(SyncError::BlockApplyFailed { height: 1, .. })
+        ));
 
         // Verify state reflects only genesis
         let latest = store.latest_height().unwrap();
@@ -703,7 +708,13 @@ mod tests {
         let block3 = create_block_at_height(3, Hash::new([1u8; 32]));
 
         let result = sync.import_blocks(vec![block3]);
-        assert!(matches!(result, Err(SyncError::HeightMismatch { expected: 1, actual: 3 })));
+        assert!(matches!(
+            result,
+            Err(SyncError::HeightMismatch {
+                expected: 1,
+                actual: 3
+            })
+        ));
     }
 
     #[test]
@@ -725,8 +736,13 @@ mod tests {
             vec![create_test_tx(TransactionType::ContractExecution)],
         );
 
-        assert!(!ChainSync::requires_canonical_runtime_import(&[normal_block.clone()]));
-        assert!(ChainSync::requires_canonical_runtime_import(&[normal_block, canonical_block]));
+        assert!(!ChainSync::requires_canonical_runtime_import(&[
+            normal_block.clone()
+        ]));
+        assert!(ChainSync::requires_canonical_runtime_import(&[
+            normal_block,
+            canonical_block
+        ]));
     }
 
     #[test]
@@ -745,7 +761,8 @@ mod tests {
         let invalid_block2 = create_block_at_height(2, Hash::new([99u8; 32])); // Wrong prev hash
 
         // Import first two valid blocks
-        sync.import_blocks(vec![genesis.clone(), block1.clone()]).unwrap();
+        sync.import_blocks(vec![genesis.clone(), block1.clone()])
+            .unwrap();
 
         // Verify state at height 1
         let height_before = store.latest_height().unwrap();
@@ -786,7 +803,8 @@ mod tests {
 
         sync.import_blocks_with_progress(blocks, |height, count| {
             progress_calls.push((height, count));
-        }).unwrap();
+        })
+        .unwrap();
 
         assert_eq!(progress_calls.len(), 5);
         assert_eq!(progress_calls[0], (0, 1));

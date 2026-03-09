@@ -2,8 +2,8 @@
 //!
 //! Core types for UTXO-based transactions.
 
-use serde::{Deserialize, Serialize};
 use lib_types::{Address, Amount, BlockHeight, TxHash};
+use serde::{Deserialize, Serialize};
 
 /// OutPoint - Reference to a specific output in a transaction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -17,7 +17,10 @@ pub struct OutPoint {
 impl OutPoint {
     /// Create a new OutPoint
     pub const fn new(tx_hash: TxHash, output_index: u32) -> Self {
-        Self { tx_hash, output_index }
+        Self {
+            tx_hash,
+            output_index,
+        }
     }
 
     /// Convert to bytes for storage key

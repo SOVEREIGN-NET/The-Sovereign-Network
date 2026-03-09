@@ -1,12 +1,12 @@
 //! Zero-knowledge Merkle tree implementation
-//! 
+//!
 //! Implements a cryptographic Merkle tree that supports zero-knowledge
 //! inclusion proofs, allowing verification of data membership without
 //! revealing the entire tree structure.
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
 use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
 
 /// Merkle tree for ZK inclusion proofs
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,10 +75,10 @@ impl ZkMerkleTree {
         }
 
         let mut level = self.leaves.clone();
-        
+
         while level.len() > 1 {
             let mut next_level = Vec::new();
-            
+
             for chunk in level.chunks(2) {
                 let hash = if chunk.len() == 2 {
                     hash_merkle_pair(chunk[0], chunk[1])
@@ -87,10 +87,10 @@ impl ZkMerkleTree {
                 };
                 next_level.push(hash);
             }
-            
+
             level = next_level;
         }
-        
+
         self.root = level[0];
         Ok(())
     }
@@ -183,9 +183,9 @@ mod tests {
     fn test_add_single_leaf() {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"test_leaf");
-        
+
         tree.add_leaf(leaf).unwrap();
-        
+
         assert_eq!(tree.leaf_count(), 1);
         assert!(!tree.is_empty());
         assert!(tree.contains_leaf(leaf));
@@ -198,11 +198,11 @@ mod tests {
         let leaf1 = hash_blake3(b"leaf1");
         let leaf2 = hash_blake3(b"leaf2");
         let leaf3 = hash_blake3(b"leaf3");
-        
+
         tree.add_leaf(leaf1).unwrap();
         tree.add_leaf(leaf2).unwrap();
         tree.add_leaf(leaf3).unwrap();
-        
+
         assert_eq!(tree.leaf_count(), 3);
         assert_eq!(tree.get_leaf(0), Some(leaf1));
         assert_eq!(tree.get_leaf(1), Some(leaf2));
@@ -212,14 +212,14 @@ mod tests {
     #[test]
     fn test_tree_capacity() {
         let mut tree = ZkMerkleTree::new(2); // Capacity = 4
-        
+
         for i in 0..4 {
             let leaf = hash_blake3(&[i as u8]);
             tree.add_leaf(leaf).unwrap();
         }
-        
+
         assert!(tree.is_full());
-        
+
         // Adding one more should fail
         let extra_leaf = hash_blake3(b"extra");
         assert!(tree.add_leaf(extra_leaf).is_err());
@@ -230,9 +230,9 @@ mod tests {
         let leaf1 = hash_blake3(b"leaf1");
         let leaf2 = hash_blake3(b"leaf2");
         let leaves = vec![leaf1, leaf2];
-        
+
         let tree = ZkMerkleTree::with_leaves(4, leaves).unwrap();
-        
+
         assert_eq!(tree.leaf_count(), 2);
         assert!(tree.contains_leaf(leaf1));
         assert!(tree.contains_leaf(leaf2));
@@ -241,12 +241,12 @@ mod tests {
     #[test]
     fn test_tree_stats() {
         let mut tree = ZkMerkleTree::new(3); // Capacity = 8
-        
+
         for i in 0..3 {
             let leaf = hash_blake3(&[i as u8]);
             tree.add_leaf(leaf).unwrap();
         }
-        
+
         let stats = tree.stats();
         assert_eq!(stats.height, 3);
         assert_eq!(stats.leaf_count, 3);
@@ -258,13 +258,13 @@ mod tests {
     fn test_hash_merkle_pair() {
         let left = [1u8; 32];
         let right = [2u8; 32];
-        
+
         let hash1 = hash_merkle_pair(left, right);
         let hash2 = hash_merkle_pair(left, right);
-        
+
         // Should be deterministic
         assert_eq!(hash1, hash2);
-        
+
         // Should be different with different inputs
         let hash3 = hash_merkle_pair(right, left);
         assert_ne!(hash1, hash3);

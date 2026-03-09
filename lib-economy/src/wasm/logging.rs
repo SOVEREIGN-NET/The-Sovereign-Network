@@ -1,5 +1,5 @@
 //! WASM-compatible logging that compiles to no-op in browser environments
-//! 
+//!
 //! Provides logging macros that work across platforms.
 
 /// Info logging macro for WASM compatibility

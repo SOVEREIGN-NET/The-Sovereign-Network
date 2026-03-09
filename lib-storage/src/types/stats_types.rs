@@ -1,5 +1,5 @@
 //! Statistics and monitoring type definitions
-//! 
+//!
 //! Contains all types related to storage system monitoring, health checks,
 //! and statistical reporting.
 

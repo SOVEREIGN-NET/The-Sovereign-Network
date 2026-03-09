@@ -1,20 +1,23 @@
 //! CRYSTALS-Kyber wrapper functions - preserving post-quantum KEM
-//! 
+//!
 //! implementation wrappers from crypto.rs for CRYSTALS-Kyber
 
 use anyhow::Result;
-use pqc_kyber;
-use sha3::Sha3_256;
 use hkdf::Hkdf;
+use pqc_kyber;
 use rand::rngs::OsRng;
+use sha3::Sha3_256;
 
 // Re-export Kyber constants from single source of truth for backward compatibility
-pub use super::constants::{KYBER1024_CIPHERTEXT_BYTES as KYBER_CIPHERTEXTBYTES, KYBER1024_PUBLICKEY_BYTES as KYBER_PUBLICKEYBYTES, KYBER1024_SECRETKEY_BYTES as KYBER_SECRETKEYBYTES};
+pub use super::constants::{
+    KYBER1024_CIPHERTEXT_BYTES as KYBER_CIPHERTEXTBYTES,
+    KYBER1024_PUBLICKEY_BYTES as KYBER_PUBLICKEYBYTES,
+    KYBER1024_SECRETKEY_BYTES as KYBER_SECRETKEYBYTES,
+};
 
 /// Generate Kyber1024 keypair (highest security, larger keys)
 pub fn kyber1024_keypair() -> (Vec<u8>, Vec<u8>) {
-    let keys = pqc_kyber::keypair(&mut OsRng)
-        .expect("Kyber1024 keypair generation failed");
+    let keys = pqc_kyber::keypair(&mut OsRng).expect("Kyber1024 keypair generation failed");
     (keys.public.to_vec(), keys.secret.to_vec())
 }
 
@@ -41,7 +44,11 @@ pub fn kyber1024_encapsulate(public_key: &[u8], kdf_info: &[u8]) -> Result<(Vec<
 }
 
 /// ✅ FIX: Decapsulate shared secret with Kyber1024 with consistent KDF info
-pub fn kyber1024_decapsulate(ciphertext: &[u8], secret_key: &[u8], kdf_info: &[u8]) -> Result<[u8; 32]> {
+pub fn kyber1024_decapsulate(
+    ciphertext: &[u8],
+    secret_key: &[u8],
+    kdf_info: &[u8],
+) -> Result<[u8; 32]> {
     let sk: [u8; KYBER_SECRETKEYBYTES] = secret_key
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid Kyber1024 secret key (len={})", secret_key.len()))?;

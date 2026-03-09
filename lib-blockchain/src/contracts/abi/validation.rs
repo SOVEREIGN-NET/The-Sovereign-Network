@@ -3,7 +3,7 @@
 //! Validates ABI schemas for correctness and type safety.
 
 use super::schema::*;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 
 /// ABI validator
 pub struct AbiValidator;
@@ -46,15 +46,70 @@ impl AbiValidator {
     fn validate_methods(methods: &[MethodSchema]) -> Result<()> {
         // Rust and TypeScript reserved keywords that cannot be used as identifiers
         let reserved_keywords = std::collections::HashSet::from([
-            "abstract", "arguments", "await", "boolean", "break", "byte", "case", "catch",
-            "char", "class", "const", "continue", "debugger", "default", "delete", "do",
-            "double", "else", "enum", "eval", "export", "extends", "false", "final",
-            "finally", "float", "for", "function", "goto", "if", "implements", "import",
-            "in", "instanceof", "int", "interface", "let", "long", "native", "new",
-            "null", "package", "private", "protected", "public", "return", "short",
-            "static", "super", "switch", "synchronized", "this", "throw", "throws",
-            "transient", "true", "try", "typeof", "var", "void", "volatile", "while",
-            "with", "yield",
+            "abstract",
+            "arguments",
+            "await",
+            "boolean",
+            "break",
+            "byte",
+            "case",
+            "catch",
+            "char",
+            "class",
+            "const",
+            "continue",
+            "debugger",
+            "default",
+            "delete",
+            "do",
+            "double",
+            "else",
+            "enum",
+            "eval",
+            "export",
+            "extends",
+            "false",
+            "final",
+            "finally",
+            "float",
+            "for",
+            "function",
+            "goto",
+            "if",
+            "implements",
+            "import",
+            "in",
+            "instanceof",
+            "int",
+            "interface",
+            "let",
+            "long",
+            "native",
+            "new",
+            "null",
+            "package",
+            "private",
+            "protected",
+            "public",
+            "return",
+            "short",
+            "static",
+            "super",
+            "switch",
+            "synchronized",
+            "this",
+            "throw",
+            "throws",
+            "transient",
+            "true",
+            "try",
+            "typeof",
+            "var",
+            "void",
+            "volatile",
+            "while",
+            "with",
+            "yield",
         ]);
 
         // Check for duplicate method names
@@ -141,7 +196,10 @@ impl AbiValidator {
         Ok(())
     }
 
-    fn validate_types(types: &std::collections::HashMap<String, TypeDefinition>, abi: &ContractAbi) -> Result<()> {
+    fn validate_types(
+        types: &std::collections::HashMap<String, TypeDefinition>,
+        abi: &ContractAbi,
+    ) -> Result<()> {
         // First validate the type definitions themselves
         for (name, typedef) in types {
             match typedef {
@@ -156,7 +214,11 @@ impl AbiValidator {
                     }
                     // Validate field types in struct
                     for (_field_name, field_type) in fields {
-                        Self::validate_parameter_type_references(field_type, types, "struct field")?;
+                        Self::validate_parameter_type_references(
+                            field_type,
+                            types,
+                            "struct field",
+                        )?;
                     }
                 }
             }

@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 // CRITICAL: These MUST be imported, not redefined locally, for bincode serialization to match
 use lib_blockchain::contracts::utils::generate_lib_token_id;
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature};
-use lib_blockchain::transaction::{TokenCreationPayloadV1, TokenMintData, TokenTransferData};
+use lib_blockchain::transaction::{
+    TokenCreationPayloadV1, TokenMintData, TokenTransferData, DEFAULT_TOKEN_CREATION_FEE,
+};
 use lib_blockchain::types::{CallPermissions, ContractCall, ContractType};
 use lib_blockchain::{Transaction, TransactionType};
 use lib_crypto::types::SignatureAlgorithm;
@@ -27,6 +29,7 @@ const DEFAULT_WITNESS_CAP: u32 = 500;
 static TX_FEE_BASE_FEE: AtomicU64 = AtomicU64::new(DEFAULT_BASE_FEE);
 static TX_FEE_BYTES_PER_SOV: AtomicU64 = AtomicU64::new(DEFAULT_BYTES_PER_SOV);
 static TX_FEE_WITNESS_CAP: AtomicU32 = AtomicU32::new(DEFAULT_WITNESS_CAP);
+static TX_TOKEN_CREATION_FEE: AtomicU64 = AtomicU64::new(DEFAULT_TOKEN_CREATION_FEE);
 
 // ============================================================================
 // Helper functions
@@ -45,16 +48,16 @@ pub fn create_public_key(dilithium_pk: Vec<u8>) -> PublicKey {
 }
 
 /// Override fee parameters at runtime (set via governance-fed config).
-pub fn set_fee_config(base_fee: u64, bytes_per_sov: u64, witness_cap: u32) {
-    if base_fee > 0 {
-        TX_FEE_BASE_FEE.store(base_fee, Ordering::SeqCst);
-    }
-    if bytes_per_sov > 0 {
-        TX_FEE_BYTES_PER_SOV.store(bytes_per_sov, Ordering::SeqCst);
-    }
-    if witness_cap > 0 {
-        TX_FEE_WITNESS_CAP.store(witness_cap, Ordering::SeqCst);
-    }
+pub fn set_fee_config(
+    base_fee: u64,
+    bytes_per_sov: u64,
+    witness_cap: u32,
+    token_creation_fee: u64,
+) {
+    TX_FEE_BASE_FEE.store(base_fee, Ordering::SeqCst);
+    TX_FEE_BYTES_PER_SOV.store(bytes_per_sov, Ordering::SeqCst);
+    TX_FEE_WITNESS_CAP.store(witness_cap, Ordering::SeqCst);
+    TX_TOKEN_CREATION_FEE.store(token_creation_fee, Ordering::SeqCst);
 }
 
 /// Parse fee config JSON from /api/v1/blockchain/fee-config and apply locally.
@@ -64,6 +67,7 @@ pub fn set_fee_config_from_json(json: &str) -> Result<(), String> {
         base_fee: u64,
         bytes_per_sov: u64,
         witness_cap: u32,
+        token_creation_fee: u64,
         #[allow(dead_code)]
         updated_at_height: Option<u64>,
         #[allow(dead_code)]
@@ -72,7 +76,12 @@ pub fn set_fee_config_from_json(json: &str) -> Result<(), String> {
 
     let payload: FeeConfigPayload =
         serde_json::from_str(json).map_err(|e| format!("Invalid fee config JSON: {}", e))?;
-    set_fee_config(payload.base_fee, payload.bytes_per_sov, payload.witness_cap);
+    set_fee_config(
+        payload.base_fee,
+        payload.bytes_per_sov,
+        payload.witness_cap,
+        payload.token_creation_fee,
+    );
     Ok(())
 }
 
@@ -88,13 +97,19 @@ pub fn set_fee_config_from_json_with_meta(json: &str) -> Result<FeeConfigMeta, S
         base_fee: u64,
         bytes_per_sov: u64,
         witness_cap: u32,
+        token_creation_fee: u64,
         updated_at_height: Option<u64>,
         chain_height: Option<u64>,
     }
 
     let payload: FeeConfigPayload =
         serde_json::from_str(json).map_err(|e| format!("Invalid fee config JSON: {}", e))?;
-    set_fee_config(payload.base_fee, payload.bytes_per_sov, payload.witness_cap);
+    set_fee_config(
+        payload.base_fee,
+        payload.bytes_per_sov,
+        payload.witness_cap,
+        payload.token_creation_fee,
+    );
     Ok(FeeConfigMeta {
         updated_at_height: payload.updated_at_height.unwrap_or(0),
         chain_height: payload.chain_height.unwrap_or(0),
@@ -523,6 +538,16 @@ pub fn calculate_min_fee_for_tx_hex(tx_hex: &str) -> Result<u64, String> {
     let mut tx: Transaction =
         bincode::deserialize(&raw).map_err(|e| format!("Failed to deserialize tx: {}", e))?;
 
+    match tx.transaction_type {
+        TransactionType::TokenCreation => {
+            return Ok(TX_TOKEN_CREATION_FEE.load(Ordering::SeqCst));
+        }
+        TransactionType::TokenTransfer | TransactionType::TokenMint | TransactionType::Coinbase => {
+            return Ok(0);
+        }
+        _ => {}
+    }
+
     let sig_len = tx.signature.signature.len();
     let pk_len = tx.signature.public_key.dilithium_pk.len();
     if sig_len == 0 || pk_len == 0 {
@@ -645,21 +670,7 @@ pub fn build_create_token_tx(
         memo,
     );
 
-    // Estimate fee from serialized size. Serialize with empty signature (sig bytes = vec![]),
-    // then pad for the Dilithium5 signature bytes (4595) that will be appended after signing.
-    // The pubkey is already present in the Signature struct so its size is already accounted for.
-    tx.fee = 0;
-    let unsigned_bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize tx for fee estimation: {}", e))?;
-    const D5_SIG_BYTES: usize = 4595;
-    let estimated_size = unsigned_bytes.len() + D5_SIG_BYTES;
-    tx.fee = calculate_min_fee_from_size(
-        estimated_size,
-        TX_FEE_BASE_FEE.load(Ordering::SeqCst),
-        TX_FEE_BYTES_PER_SOV.load(Ordering::SeqCst),
-        TX_FEE_WITNESS_CAP.load(Ordering::SeqCst),
-    );
-
+    tx.fee = TX_TOKEN_CREATION_FEE.load(Ordering::SeqCst);
 
     let tx_hash = tx.signing_hash();
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
@@ -677,6 +688,61 @@ pub fn build_create_token_tx(
     let final_tx_bytes =
         bincode::serialize(&tx).map_err(|e| format!("Failed to serialize final tx: {}", e))?;
     Ok(hex::encode(final_tx_bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_signature() -> Signature {
+        Signature {
+            signature: vec![],
+            public_key: PublicKey::new(vec![7u8; 2592]),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        }
+    }
+
+    fn token_creation_tx_hex() -> String {
+        let payload = TokenCreationPayloadV1 {
+            name: "Test".to_string(),
+            symbol: "TST".to_string(),
+            initial_supply: 1_000,
+            decimals: 8,
+            treasury_allocation_bps: 2_000,
+            treasury_recipient: [9u8; 32],
+        };
+        let memo = payload.encode_memo().unwrap();
+        let tx = Transaction::new_token_creation_with_chain_id(0x03, test_signature(), memo);
+        hex::encode(bincode::serialize(&tx).unwrap())
+    }
+
+    #[test]
+    fn fee_config_json_requires_token_creation_fee() {
+        let json = r#"{
+            "base_fee": 123,
+            "bytes_per_sov": 45,
+            "witness_cap": 67,
+            "token_creation_fee": 1000,
+            "updated_at_height": 8,
+            "chain_height": 9
+        }"#;
+
+        let meta = set_fee_config_from_json_with_meta(json).unwrap();
+
+        assert_eq!(meta.updated_at_height, 8);
+        assert_eq!(meta.chain_height, 9);
+        assert_eq!(TX_TOKEN_CREATION_FEE.load(Ordering::SeqCst), 1000);
+    }
+
+    #[test]
+    fn quote_fee_for_token_creation_uses_canonical_fixed_fee() {
+        set_fee_config(100, 100, 500, 4321);
+
+        let fee = calculate_min_fee_for_tx_hex(&token_creation_tx_hex()).unwrap();
+
+        assert_eq!(fee, 4321);
+    }
 }
 
 /// Build a signed token burn transaction

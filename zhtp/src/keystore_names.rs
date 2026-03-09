@@ -9,7 +9,7 @@
 //! let path = keystore_path.join(NODE_IDENTITY_FILENAME);
 //! ```
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Private key storage format for keystore files
 ///
@@ -19,7 +19,7 @@ use serde::{Serialize, Deserialize};
 pub struct KeystorePrivateKey {
     pub dilithium_sk: Vec<u8>,
     #[serde(default)]
-    pub dilithium_pk: Vec<u8>,  // Optional for backward compatibility with old keystores
+    pub dilithium_pk: Vec<u8>, // Optional for backward compatibility with old keystores
     pub kyber_sk: Vec<u8>,
     pub master_seed: Vec<u8>,
 }

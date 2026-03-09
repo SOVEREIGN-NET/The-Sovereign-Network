@@ -1,20 +1,21 @@
 //! Cryptographic Integration Module
-//! 
+//!
 //! Provides cryptographic functions and utilities specifically for ZHTP protocols.
 //! Integrates with the lib-crypto package for post-quantum cryptography.
 
-use lib_crypto::{
-    Hash, PostQuantumSignature, KeyPair,
-    hash_blake3, verify_signature,
-    // Note: generate_keypair might not be available, using KeyPair::generate instead
-};
 use crate::{ProtocolError, Result};
+use lib_crypto::{
+    hash_blake3,
+    verify_signature,
+    // Note: generate_keypair might not be available, using KeyPair::generate instead
+    Hash,
+    KeyPair,
+    PostQuantumSignature,
+};
 use serde::{Deserialize, Serialize};
 
 // Use proper ZK types from lib-proofs module
-use lib_proofs::{
-    ZkProof, ZkTransactionProof, TransactionVerifier, initialize_zk_system
-};
+use lib_proofs::{initialize_zk_system, TransactionVerifier, ZkProof, ZkTransactionProof};
 
 /// ZHTP cryptographic context
 #[derive(Debug, Clone)]
@@ -52,8 +53,8 @@ impl Default for CryptoConfig {
 impl ZhtpCrypto {
     /// Create a new ZHTP crypto context
     pub fn new() -> Result<Self> {
-        let keypair = KeyPair::generate()
-            .map_err(|e| ProtocolError::IdentityError(e.to_string()))?;
+        let keypair =
+            KeyPair::generate().map_err(|e| ProtocolError::IdentityError(e.to_string()))?;
         Ok(Self {
             server_keypair: Some(keypair),
             config: CryptoConfig::default(),
@@ -62,8 +63,8 @@ impl ZhtpCrypto {
 
     /// Initialize with server keypair
     pub async fn with_keypair(config: CryptoConfig) -> Result<Self> {
-        let keypair = KeyPair::generate()
-            .map_err(|e| ProtocolError::IdentityError(e.to_string()))?;
+        let keypair =
+            KeyPair::generate().map_err(|e| ProtocolError::IdentityError(e.to_string()))?;
         Ok(Self {
             server_keypair: Some(keypair),
             config,
@@ -71,8 +72,7 @@ impl ZhtpCrypto {
     }
 
     pub fn generate_keypair() -> Result<KeyPair> {
-        KeyPair::generate()
-            .map_err(|e| ProtocolError::IdentityError(e.to_string()))
+        KeyPair::generate().map_err(|e| ProtocolError::IdentityError(e.to_string()))
     }
 
     /// Generate a content hash for ZHTP protocol
@@ -89,8 +89,9 @@ impl ZhtpCrypto {
     ) -> Result<bool> {
         // Convert signature to bytes if needed
         let signature_bytes = &signature.signature; // Access signature field directly
-        verify_signature(data, signature_bytes, public_key)
-            .map_err(|e| ProtocolError::ZkProofError(format!("Signature verification failed: {}", e)))
+        verify_signature(data, signature_bytes, public_key).map_err(|e| {
+            ProtocolError::ZkProofError(format!("Signature verification failed: {}", e))
+        })
     }
 
     /// Validate a zero-knowledge proof using lib-proofs
@@ -101,7 +102,9 @@ impl ZhtpCrypto {
         }
 
         if proof_data.len() < 32 {
-            return Err(ProtocolError::ZkProofError("Proof data too short".to_string()));
+            return Err(ProtocolError::ZkProofError(
+                "Proof data too short".to_string(),
+            ));
         }
 
         // Try to use the lib-proofs verification system
@@ -113,17 +116,25 @@ impl ZhtpCrypto {
                 if cfg!(debug_assertions) {
                     self.verify_zk_proof_fallback(proof_data, public_inputs)
                 } else {
-                    Err(ProtocolError::ZkProofError(format!("ZK verification failed: {}", e)))
+                    Err(ProtocolError::ZkProofError(format!(
+                        "ZK verification failed: {}",
+                        e
+                    )))
                 }
             }
         }
     }
 
     /// ZK proof verification using lib-proofs package
-    fn verify_zk_proof_with_lib_proofs(&self, proof_data: &[u8], public_inputs: &[u8]) -> Result<bool> {
+    fn verify_zk_proof_with_lib_proofs(
+        &self,
+        proof_data: &[u8],
+        public_inputs: &[u8],
+    ) -> Result<bool> {
         // Initialize the ZK proof system from lib-proofs
-        let zk_system = initialize_zk_system()
-            .map_err(|e| ProtocolError::ZkProofError(format!("Failed to initialize ZK system: {}", e)))?;
+        let zk_system = initialize_zk_system().map_err(|e| {
+            ProtocolError::ZkProofError(format!("Failed to initialize ZK system: {}", e))
+        })?;
 
         // Try to deserialize as ZkProof from lib-proofs
         let zk_proof = if let Ok(proof) = serde_json::from_slice::<ZkProof>(proof_data) {
@@ -171,32 +182,38 @@ impl ZhtpCrypto {
     fn verify_zk_proof_internal(&self, proof_data: &[u8], public_inputs: &[u8]) -> Result<bool> {
         // This would integrate with the lib-proofs package
         // For now, implement basic proof structure validation
-        
+
         // Check proof has correct format (simplified PLONK-style proof)
         if proof_data.len() % 32 != 0 {
-            return Err(ProtocolError::ZkProofError("Invalid proof format".to_string()));
+            return Err(ProtocolError::ZkProofError(
+                "Invalid proof format".to_string(),
+            ));
         }
 
         // Verify proof elements are valid field elements
         for chunk in proof_data.chunks(32) {
             if chunk.iter().all(|&b| b == 0) {
-                return Err(ProtocolError::ZkProofError("Invalid proof element".to_string()));
+                return Err(ProtocolError::ZkProofError(
+                    "Invalid proof element".to_string(),
+                ));
             }
         }
 
         // Verify public inputs format
         if !public_inputs.is_empty() && public_inputs.len() % 32 != 0 {
-            return Err(ProtocolError::ZkProofError("Invalid public inputs format".to_string()));
+            return Err(ProtocolError::ZkProofError(
+                "Invalid public inputs format".to_string(),
+            ));
         }
 
         // Hash-based verification for development
         let proof_hash = hash_blake3(proof_data);
         let inputs_hash = hash_blake3(public_inputs);
-        
+
         // Simple consistency check
         let combined = [proof_hash, inputs_hash].concat();
         let verification_hash = hash_blake3(&combined);
-        
+
         // Check if proof and inputs are consistent (simplified)
         Ok(verification_hash[0] != 0) // Non-trivial verification
     }
@@ -204,28 +221,35 @@ impl ZhtpCrypto {
     /// Fallback ZK proof verification for development
     fn verify_zk_proof_fallback(&self, proof_data: &[u8], public_inputs: &[u8]) -> Result<bool> {
         tracing::warn!("Using fallback ZK proof verification - not secure for production");
-        
+
         // Basic structural validation
-        if proof_data.len() < 96 { // Minimum size for a valid proof
+        if proof_data.len() < 96 {
+            // Minimum size for a valid proof
             return Ok(false);
         }
 
         // Check proof entropy
-        let unique_bytes = proof_data.iter().collect::<std::collections::HashSet<_>>().len();
-        if unique_bytes < 16 { // Proof should have sufficient entropy
+        let unique_bytes = proof_data
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        if unique_bytes < 16 {
+            // Proof should have sufficient entropy
             return Ok(false);
         }
 
         // Verify proof includes some commitment to public inputs
         if !public_inputs.is_empty() {
             let inputs_hash = hash_blake3(public_inputs);
-            let proof_contains_commitment = proof_data.windows(32)
-                .any(|window| {
-                    window.iter().zip(inputs_hash.iter())
-                        .filter(|(a, b)| a == b)
-                        .count() > 8 // At least 8 bytes match
-                });
-            
+            let proof_contains_commitment = proof_data.windows(32).any(|window| {
+                window
+                    .iter()
+                    .zip(inputs_hash.iter())
+                    .filter(|(a, b)| a == b)
+                    .count()
+                    > 8 // At least 8 bytes match
+            });
+
             if !proof_contains_commitment {
                 return Ok(false);
             }
@@ -290,7 +314,7 @@ pub mod utils {
     /// Validate timestamp freshness (prevent replay attacks)
     pub fn validate_timestamp_freshness(timestamp: u64, max_age_seconds: u64) -> Result<()> {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| ProtocolError::InternalError(format!("Time error: {}", e)))?
@@ -301,7 +325,9 @@ pub mod utils {
         }
 
         if timestamp > current_time + 60 {
-            return Err(ProtocolError::ZkProofError("Timestamp from future".to_string()));
+            return Err(ProtocolError::ZkProofError(
+                "Timestamp from future".to_string(),
+            ));
         }
 
         Ok(())
@@ -326,7 +352,7 @@ mod tests {
         let data = b"test data";
         let hash1 = crypto.hash_content(data);
         let hash2 = crypto.hash_content(data);
-        
+
         // Same data should produce same hash
         assert_eq!(hash1, hash2);
     }
@@ -335,10 +361,10 @@ mod tests {
     fn test_session_id_generation() {
         let id1 = utils::generate_session_id();
         let id2 = utils::generate_session_id();
-        
+
         // Should be different
         assert_ne!(id1, id2);
-        
+
         // Should be valid UUIDs
         assert!(uuid::Uuid::parse_str(&id1).is_ok());
         assert!(uuid::Uuid::parse_str(&id2).is_ok());
@@ -347,18 +373,18 @@ mod tests {
     #[test]
     fn test_timestamp_validation() {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         // Current timestamp should be valid
         assert!(utils::validate_timestamp_freshness(current_time, 300).is_ok());
-        
+
         // Old timestamp should be invalid
         assert!(utils::validate_timestamp_freshness(current_time - 400, 300).is_err());
-        
+
         // Future timestamp should be invalid
         assert!(utils::validate_timestamp_freshness(current_time + 120, 300).is_err());
     }

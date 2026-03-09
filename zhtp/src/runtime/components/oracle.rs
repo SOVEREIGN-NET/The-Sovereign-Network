@@ -51,10 +51,15 @@ impl OracleComponent {
         let (oracle_tx, oracle_rx) = mpsc::channel::<Vec<u8>>(256);
 
         // Wire the sender into the QUIC message handler.
-        if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+        if let Ok(mesh_router) =
+            crate::runtime::mesh_router_provider::get_global_mesh_router().await
+        {
             if let Some(quic_protocol) = mesh_router.quic_protocol.read().await.as_ref() {
                 if let Some(handler) = quic_protocol.message_handler.as_ref() {
-                    handler.write().await.set_oracle_attestation_sender(oracle_tx);
+                    handler
+                        .write()
+                        .await
+                        .set_oracle_attestation_sender(oracle_tx);
                     info!("🔗 Oracle attestation sender wired to mesh message handler");
                 } else {
                     warn!("Oracle: QUIC message handler not available — attestations won't be received from peers");
@@ -107,23 +112,30 @@ impl OracleComponent {
             });
         }
 
-        info!("🔮 Oracle runtime started (mock_price={:?})", mock_sov_usd_price);
+        info!(
+            "🔮 Oracle runtime started (mock_price={:?})",
+            mock_sov_usd_price
+        );
         Ok(())
     }
 
     // ── Consumer task ───────────────────────────────────────────────────────
 
-    async fn run_consumer(
-        mut rx: mpsc::Receiver<Vec<u8>>,
-        blockchain: Arc<RwLock<Blockchain>>,
-    ) {
+    async fn run_consumer(mut rx: mpsc::Receiver<Vec<u8>>, blockchain: Arc<RwLock<Blockchain>>) {
         info!("🔮 Oracle attestation consumer started");
         while let Some(payload) = rx.recv().await {
-            debug!("🔮 Oracle: received attestation payload ({} bytes) via gossip", payload.len());
+            debug!(
+                "🔮 Oracle: received attestation payload ({} bytes) via gossip",
+                payload.len()
+            );
             let attestation: OraclePriceAttestation = match bincode::deserialize(&payload) {
                 Ok(a) => a,
                 Err(e) => {
-                    warn!("Oracle: failed to deserialize attestation ({} bytes): {}", payload.len(), e);
+                    warn!(
+                        "Oracle: failed to deserialize attestation ({} bytes): {}",
+                        payload.len(),
+                        e
+                    );
                     continue;
                 }
             };
@@ -191,9 +203,10 @@ impl OracleComponent {
             );
 
             use lib_blockchain::oracle::{
-                OracleAttestationAdmissionError, OracleAttestationValidationError, OracleSlashReason,
+                OracleAttestationAdmissionError, OracleAttestationValidationError,
+                OracleSlashReason,
             };
-            
+
             match result {
                 Ok(admission) => {
                     info!(
@@ -259,7 +272,10 @@ impl OracleComponent {
                     }
                 }
                 Err(e) => {
-                    warn!("🔮 Oracle attestation rejected (epoch={}): {:?}", attestation.epoch_id, e);
+                    warn!(
+                        "🔮 Oracle attestation rejected (epoch={}): {:?}",
+                        attestation.epoch_id, e
+                    );
                 }
             }
         }
@@ -282,7 +298,13 @@ impl OracleComponent {
             // ORACLE-R8: Single snapshot of all on-chain state needed for this epoch.
             // Taking one lock avoids inconsistencies if a block commits between reads
             // (e.g. config/committee updated by one epoch while current_epoch is from another).
-            let (on_chain_config, epoch_duration_secs, committee_members, current_epoch, is_strict_spec) = {
+            let (
+                on_chain_config,
+                epoch_duration_secs,
+                committee_members,
+                current_epoch,
+                is_strict_spec,
+            ) = {
                 let bc = blockchain.read().await;
                 let config = bc.oracle_state.config.clone();
                 let epoch_duration = config.epoch_duration_secs.max(60);
@@ -302,9 +324,13 @@ impl OracleComponent {
 
             // Fetch prices from on-chain exchange state (Oracle Spec v1 §5).
             // Uses 3 independent sources: last trade, order book mid, VWAP.
-            let prices = Self::gather_prices(blockchain.clone(), mock_sov_usd_price, unix_now()).await;
+            let prices =
+                Self::gather_prices(blockchain.clone(), mock_sov_usd_price, unix_now()).await;
             if prices.is_empty() {
-                warn!("Oracle producer: no price sources available, skipping epoch {}", current_epoch);
+                warn!(
+                    "Oracle producer: no price sources available, skipping epoch {}",
+                    current_epoch
+                );
                 tokio::time::sleep(tokio::time::Duration::from_secs(epoch_duration_secs)).await;
                 continue;
             }
@@ -347,7 +373,9 @@ impl OracleComponent {
                         // ORACLE-R3: In strict spec mode, create and submit a transaction
                         // instead of processing directly. The transaction will be included
                         // in a block and processed through the canonical path.
-                        debug!("🔮 Oracle: strict spec mode - submitting attestation as transaction");
+                        debug!(
+                            "🔮 Oracle: strict spec mode - submitting attestation as transaction"
+                        );
                         Self::submit_attestation_transaction(&attestation).await;
                     } else {
                         // Legacy mode: Gossip and process directly
@@ -376,7 +404,10 @@ impl OracleComponent {
                                         return Some(pk.clone());
                                     }
                                 }
-                                key_map.iter().find(|(kid, _)| *kid == key_id).map(|(_, pk)| pk.clone())
+                                key_map
+                                    .iter()
+                                    .find(|(kid, _)| *kid == key_id)
+                                    .map(|(_, pk)| pk.clone())
                             },
                         ) {
                             Ok(r) => info!("🔮 Oracle: self-attestation local result: {:?}", r),
@@ -385,10 +416,16 @@ impl OracleComponent {
                     }
                 }
                 Ok(None) => {
-                    debug!("Oracle producer: abstaining epoch {} (not enough valid sources)", current_epoch);
+                    debug!(
+                        "Oracle producer: abstaining epoch {} (not enough valid sources)",
+                        current_epoch
+                    );
                 }
                 Err(e) => {
-                    warn!("Oracle producer: build_attestation failed (epoch={}): {:?}", current_epoch, e);
+                    warn!(
+                        "Oracle producer: build_attestation failed (epoch={}): {:?}",
+                        current_epoch, e
+                    );
                 }
             }
 
@@ -414,9 +451,21 @@ impl OracleComponent {
             // Three synthetic sources (identical values, different source IDs) so the
             // producer's min_sources_required = 3 check passes.
             return vec![
-                OracleFetchedPrice { source_id: "mock_a".into(), sov_usd_price: price as u128, timestamp: now },
-                OracleFetchedPrice { source_id: "mock_b".into(), sov_usd_price: price as u128, timestamp: now },
-                OracleFetchedPrice { source_id: "mock_c".into(), sov_usd_price: price as u128, timestamp: now },
+                OracleFetchedPrice {
+                    source_id: "mock_a".into(),
+                    sov_usd_price: price as u128,
+                    timestamp: now,
+                },
+                OracleFetchedPrice {
+                    source_id: "mock_b".into(),
+                    sov_usd_price: price as u128,
+                    timestamp: now,
+                },
+                OracleFetchedPrice {
+                    source_id: "mock_c".into(),
+                    sov_usd_price: price as u128,
+                    timestamp: now,
+                },
             ];
         }
 
@@ -455,7 +504,9 @@ impl OracleComponent {
             }
         };
 
-        if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+        if let Ok(mesh_router) =
+            crate::runtime::mesh_router_provider::get_global_mesh_router().await
+        {
             if let Some(qp) = mesh_router.quic_protocol.read().await.as_ref() {
                 match qp.broadcast_message(&bytes).await {
                     Ok(count) => info!("🔮 Oracle attestation gossiped to {} peer(s)", count),

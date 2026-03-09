@@ -1,6 +1,6 @@
 //! Network statistics and status types for the ZHTP mesh network
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Network statistics from the mesh network

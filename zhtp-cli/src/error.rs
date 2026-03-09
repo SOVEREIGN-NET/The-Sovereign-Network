@@ -59,7 +59,11 @@ pub enum CliError {
     ConnectionFailed { addr: String, reason: String },
 
     #[error("API call to {endpoint} failed: {status} - {reason}")]
-    ApiCallFailed { endpoint: String, status: u16, reason: String },
+    ApiCallFailed {
+        endpoint: String,
+        status: u16,
+        reason: String,
+    },
 
     // Configuration
     #[error("Configuration error: {0}")]

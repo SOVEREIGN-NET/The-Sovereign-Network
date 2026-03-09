@@ -175,16 +175,14 @@ impl TypeSpec {
         // Check structural compatibility
         match (self, other) {
             // Vec<T> compatible with Vec<U> if T compatible with U
-            (
-                TypeSpec::Vec { element_type: t1 },
-                TypeSpec::Vec { element_type: t2 },
-            ) => t1.is_compatible_with(t2),
+            (TypeSpec::Vec { element_type: t1 }, TypeSpec::Vec { element_type: t2 }) => {
+                t1.is_compatible_with(t2)
+            }
 
             // Option<T> compatible with Option<U> if T compatible with U
-            (
-                TypeSpec::Option { inner_type: t1 },
-                TypeSpec::Option { inner_type: t2 },
-            ) => t1.is_compatible_with(t2),
+            (TypeSpec::Option { inner_type: t1 }, TypeSpec::Option { inner_type: t2 }) => {
+                t1.is_compatible_with(t2)
+            }
 
             // Result<T, E1> compatible with Result<U, E2> if T compatible with U, E1 compatible with E2
             (
@@ -212,18 +210,14 @@ impl TypeSpec {
 
             // Unsigned integers have implicit promotion rules
             // u8 → u16 → u32 → u64 → u128
-            (TypeSpec::U8, TypeSpec::U16 | TypeSpec::U32 | TypeSpec::U64 | TypeSpec::U128) => {
-                true
-            }
+            (TypeSpec::U8, TypeSpec::U16 | TypeSpec::U32 | TypeSpec::U64 | TypeSpec::U128) => true,
             (TypeSpec::U16, TypeSpec::U32 | TypeSpec::U64 | TypeSpec::U128) => true,
             (TypeSpec::U32, TypeSpec::U64 | TypeSpec::U128) => true,
             (TypeSpec::U64, TypeSpec::U128) => true,
 
             // Signed integers have implicit promotion rules
             // i8 → i16 → i32 → i64 → i128
-            (TypeSpec::I8, TypeSpec::I16 | TypeSpec::I32 | TypeSpec::I64 | TypeSpec::I128) => {
-                true
-            }
+            (TypeSpec::I8, TypeSpec::I16 | TypeSpec::I32 | TypeSpec::I64 | TypeSpec::I128) => true,
             (TypeSpec::I16, TypeSpec::I32 | TypeSpec::I64 | TypeSpec::I128) => true,
             (TypeSpec::I32, TypeSpec::I64 | TypeSpec::I128) => true,
             (TypeSpec::I64, TypeSpec::I128) => true,
@@ -276,10 +270,7 @@ pub struct TypeValidator;
 
 impl TypeValidator {
     /// Validate that provided argument matches expected parameter type
-    pub fn validate_argument_type(
-        arg_type: &str,
-        param_type: &str,
-    ) -> Result<()> {
+    pub fn validate_argument_type(arg_type: &str, param_type: &str) -> Result<()> {
         let arg_spec = TypeSpec::parse(arg_type)?;
         let param_spec = TypeSpec::parse(param_type)?;
 
@@ -295,10 +286,7 @@ impl TypeValidator {
     }
 
     /// Validate multiple arguments against parameter types
-    pub fn validate_arguments(
-        arg_types: &[&str],
-        param_types: &[&str],
-    ) -> Result<()> {
+    pub fn validate_arguments(arg_types: &[&str], param_types: &[&str]) -> Result<()> {
         if arg_types.len() != param_types.len() {
             return Err(anyhow!(
                 "Argument count mismatch: {} provided, {} expected",
@@ -308,9 +296,8 @@ impl TypeValidator {
         }
 
         for (i, (arg_type, param_type)) in arg_types.iter().zip(param_types.iter()).enumerate() {
-            Self::validate_argument_type(arg_type, param_type).map_err(|e| {
-                anyhow!("Argument {} type error: {}", i, e)
-            })?;
+            Self::validate_argument_type(arg_type, param_type)
+                .map_err(|e| anyhow!("Argument {} type error: {}", i, e))?;
         }
 
         Ok(())
@@ -374,7 +361,7 @@ mod tests {
         match vec_vec_u8 {
             TypeSpec::Vec { element_type } => {
                 match *element_type {
-                    TypeSpec::Vec { .. } => {}, // correct
+                    TypeSpec::Vec { .. } => {} // correct
                     _ => panic!("Expected nested Vec"),
                 }
             }
@@ -386,10 +373,7 @@ mod tests {
     fn test_parse_array() {
         let arr = TypeSpec::parse("[u8; 32]").unwrap();
         match arr {
-            TypeSpec::Array {
-                element_type,
-                size,
-            } => {
+            TypeSpec::Array { element_type, size } => {
                 assert_eq!(*element_type, TypeSpec::U8);
                 assert_eq!(size, 32);
             }
@@ -640,7 +624,7 @@ mod tests {
     fn test_deeply_nested_types() {
         let nested = TypeSpec::parse("Vec<Option<Vec<u32>>>").unwrap();
         match nested {
-            TypeSpec::Vec { .. } => {}, // Success
+            TypeSpec::Vec { .. } => {} // Success
             _ => panic!("Failed to parse deeply nested type"),
         }
     }

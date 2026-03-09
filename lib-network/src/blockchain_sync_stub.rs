@@ -1,11 +1,11 @@
 //! Temporary blockchain sync stub to keep lib-network protocol-only.
 //! TODO (relocation pass): move real sync logic to the integration layer.
 
+use crate::protocols::bluetooth::gatt::EdgeSyncMessage;
+use crate::types::mesh_message::BlockchainRequestType;
 use anyhow::Result;
 use async_trait::async_trait;
 use lib_crypto::PublicKey;
-use crate::protocols::bluetooth::gatt::EdgeSyncMessage;
-use crate::types::mesh_message::BlockchainRequestType;
 
 pub type BlockHeader = Vec<u8>;
 
@@ -131,7 +131,13 @@ impl BlockchainEventReceiver for NullBlockchainEventReceiver {
         tracing::warn!("Block {} received but no event receiver configured", height);
         Ok(())
     }
-    async fn on_transaction_received(&self, _: Vec<u8>, _: [u8; 32], _: u64, _: Vec<u8>) -> Result<()> {
+    async fn on_transaction_received(
+        &self,
+        _: Vec<u8>,
+        _: [u8; 32],
+        _: u64,
+        _: Vec<u8>,
+    ) -> Result<()> {
         tracing::warn!("Transaction received but no event receiver configured");
         Ok(())
     }
@@ -189,11 +195,9 @@ impl SyncCoordinator {
     ) {
     }
 
-    pub async fn fail_sync(&self, _peer: &PublicKey, _request_id: u64, _sync_type: SyncType) {
-    }
+    pub async fn fail_sync(&self, _peer: &PublicKey, _request_id: u64, _sync_type: SyncType) {}
 
-    pub async fn complete_sync(&self, _peer: &PublicKey, _request_id: u64, _sync_type: SyncType) {
-    }
+    pub async fn complete_sync(&self, _peer: &PublicKey, _request_id: u64, _sync_type: SyncType) {}
 
     pub async fn find_peer_by_sync_id(&self, _request_id: u64) -> Option<(PublicKey, SyncType)> {
         None

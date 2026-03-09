@@ -1,10 +1,10 @@
 use anyhow::Result;
+use lib_blockchain::transaction::{
+    ContractDeploymentPayloadV1, DaoExecutionData, DaoProposalData, DaoVoteData, Transaction,
+    TransactionOutput, CONTRACT_DEPLOYMENT_MEMO_PREFIX,
+};
 use lib_blockchain::types::mining::get_mining_config_from_env;
 use lib_blockchain::types::{ContractCall, ContractType, Hash};
-use lib_blockchain::transaction::{
-    DaoExecutionData, DaoProposalData, DaoVoteData, Transaction,
-    TransactionOutput, CONTRACT_DEPLOYMENT_MEMO_PREFIX, ContractDeploymentPayloadV1,
-};
 use lib_blockchain::{Block, BlockHeader, Blockchain, TransactionType};
 use lib_crypto::{PublicKey, Signature, SignatureAlgorithm};
 
@@ -59,14 +59,14 @@ fn mk_contract_deploy_tx() -> Transaction {
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
@@ -101,14 +101,14 @@ fn mk_contract_call_tx() -> Transaction {
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
@@ -287,14 +287,14 @@ fn test_contract_deployment_rejection_path_invalid_memo_payload() -> Result<()> 
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     };
 
     assert!(

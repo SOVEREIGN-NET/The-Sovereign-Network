@@ -1,8 +1,8 @@
 //! DAO Treasury Execution tests (dao-2)
 
-use lib_blockchain::Blockchain;
-use lib_blockchain::dao::{GovernancePhase, CouncilBootstrapConfig, CouncilBootstrapEntry};
 use anyhow::Result;
+use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry, GovernancePhase};
+use lib_blockchain::Blockchain;
 
 fn council_config() -> CouncilBootstrapConfig {
     CouncilBootstrapConfig {
@@ -136,7 +136,10 @@ fn test_treasury_fields_survive_dat_round_trip() -> Result<()> {
     bc.save_to_file(tmp.path())?;
     let loaded = Blockchain::load_from_file(tmp.path())?;
     assert!(loaded.emergency_state);
-    assert_eq!(loaded.emergency_activated_by.as_deref(), Some("did:zhtp:alice"));
+    assert_eq!(
+        loaded.emergency_activated_by.as_deref(),
+        Some("did:zhtp:alice")
+    );
     assert!(loaded.emergency_expires_at.is_some());
 
     Ok(())

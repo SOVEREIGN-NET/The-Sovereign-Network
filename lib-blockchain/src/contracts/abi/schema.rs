@@ -232,14 +232,10 @@ pub enum FieldType {
     Address,
 
     #[serde(rename = "array")]
-    Array {
-        item: Box<FieldType>,
-    },
+    Array { item: Box<FieldType> },
 
     #[serde(rename = "type")]
-    Custom {
-        name: String,
-    },
+    Custom { name: String },
 }
 
 /// Privilege requirement for a method

@@ -9,12 +9,12 @@
 //! - Graduation is automatic when threshold met
 //! - No minting after graduation
 
-use serde::{Deserialize, Serialize};
-use crate::integration::crypto_integration::PublicKey;
 use super::{
-    types::{CurveError, CurveStats, CurveType, Phase, Threshold},
     events::BondingCurveEvent,
+    types::{CurveError, CurveStats, CurveType, Phase, Threshold},
 };
+use crate::integration::crypto_integration::PublicKey;
+use serde::{Deserialize, Serialize};
 
 /// Bonding Curve Token
 ///
@@ -90,13 +90,19 @@ impl BondingCurveToken {
     ) -> Result<Self, CurveError> {
         // Validate parameters
         if name.is_empty() {
-            return Err(CurveError::InvalidParameters("Name cannot be empty".to_string()));
+            return Err(CurveError::InvalidParameters(
+                "Name cannot be empty".to_string(),
+            ));
         }
         if symbol.is_empty() {
-            return Err(CurveError::InvalidParameters("Symbol cannot be empty".to_string()));
+            return Err(CurveError::InvalidParameters(
+                "Symbol cannot be empty".to_string(),
+            ));
         }
         if symbol.len() > 10 {
-            return Err(CurveError::InvalidParameters("Symbol too long (max 10)".to_string()));
+            return Err(CurveError::InvalidParameters(
+                "Symbol too long (max 10)".to_string(),
+            ));
         }
 
         Ok(Self {
@@ -178,7 +184,9 @@ impl BondingCurveToken {
         self.require_phase(Phase::Curve)?;
 
         if !self.sell_enabled {
-            return Err(CurveError::InvalidParameters("Selling is disabled".to_string()));
+            return Err(CurveError::InvalidParameters(
+                "Selling is disabled".to_string(),
+            ));
         }
 
         let price = self.current_price();
@@ -295,7 +303,8 @@ impl BondingCurveToken {
         }
 
         let elapsed = current_timestamp.saturating_sub(self.deployed_at_timestamp);
-        self.threshold.is_met(self.reserve_balance, self.total_supply, elapsed)
+        self.threshold
+            .is_met(self.reserve_balance, self.total_supply, elapsed)
     }
 
     /// Graduate the token to the next phase
@@ -452,7 +461,7 @@ mod tests {
             "TEST".to_string(),
             CurveType::Linear {
                 base_price: 10_000_000, // $0.10
-                slope: 0, // Constant price for simplicity
+                slope: 0,               // Constant price for simplicity
             },
             Threshold::ReserveAmount(1_000_000_000),
             true,
@@ -533,11 +542,15 @@ mod tests {
         .unwrap();
 
         // Not enough reserve
-        let _ = token.buy(test_pubkey(2), 100_000_000, 101, 1_600_000_001).unwrap();
+        let _ = token
+            .buy(test_pubkey(2), 100_000_000, 101, 1_600_000_001)
+            .unwrap();
         assert!(!token.can_graduate(1_600_000_001));
 
         // Add more to reach threshold
-        let _ = token.buy(test_pubkey(3), 900_000_000, 102, 1_600_000_002).unwrap();
+        let _ = token
+            .buy(test_pubkey(3), 900_000_000, 102, 1_600_000_002)
+            .unwrap();
         assert!(token.can_graduate(1_600_000_002));
 
         // Graduate
@@ -612,11 +625,11 @@ mod tests {
             "Lifecycle Token".to_string(),
             "LIFE".to_string(),
             CurveType::Linear {
-                base_price: 5_000_000,  // $0.05 starting price
-                slope: 1_000,           // $0.00001 per token
+                base_price: 5_000_000, // $0.05 starting price
+                slope: 1_000,          // $0.00001 per token
             },
             Threshold::ReserveAmount(5_000_000_000), // $5,000 graduation threshold
-            true, // Sell enabled
+            true,                                    // Sell enabled
             test_pubkey(1),
             String::new(),
             100,           // deployed_at_block
@@ -635,26 +648,36 @@ mod tests {
         let buyer3 = test_pubkey(30);
 
         // Buyer 1: $1000 → ~20,000 tokens at $0.05
-        let (tokens1, event1) = token.buy(buyer1.clone(), 1_000_000_000, 101, 1_700_000_100).unwrap();
+        let (tokens1, event1) = token
+            .buy(buyer1.clone(), 1_000_000_000, 101, 1_700_000_100)
+            .unwrap();
         assert!(tokens1 > 0);
         assert_eq!(token.reserve_balance, 1_000_000_000); // $1K
         assert!(!token.can_graduate(1_700_000_100)); // Not enough for graduation (need $5K)
 
         // Buyer 2: $2000 → ~39,000 tokens (price increased slightly)
-        let (tokens2, _event2) = token.buy(buyer2, 2_000_000_000, 102, 1_700_000_200).unwrap();
+        let (tokens2, _event2) = token
+            .buy(buyer2, 2_000_000_000, 102, 1_700_000_200)
+            .unwrap();
         assert!(tokens2 > 0);
         assert_eq!(token.reserve_balance, 3_000_000_000); // $3K reserve
         assert!(!token.can_graduate(1_700_000_200)); // Still not graduated (need $5K)
 
         // Buyer 3: $2500 → pushes over threshold
-        let (tokens3, _event3) = token.buy(buyer3, 2_500_000_000, 103, 1_700_000_300).unwrap();
+        let (tokens3, _event3) = token
+            .buy(buyer3, 2_500_000_000, 103, 1_700_000_300)
+            .unwrap();
         assert!(tokens3 > 0);
         assert_eq!(token.reserve_balance, 5_500_000_000); // $5.5K reserve
         assert!(token.can_graduate(1_700_000_300)); // NOW ready to graduate!
 
         // Verify events
         match event1 {
-            BondingCurveEvent::TokenPurchased { buyer, stable_amount, .. } => {
+            BondingCurveEvent::TokenPurchased {
+                buyer,
+                stable_amount,
+                ..
+            } => {
                 assert_eq!(buyer, buyer1.key_id);
                 assert_eq!(stable_amount, 1_000_000_000);
             }
@@ -718,7 +741,7 @@ mod tests {
                 slope: 0,
             },
             Threshold::ReserveAmount(10_000_000_000), // High threshold
-            true, // Sell ENABLED
+            true,                                     // Sell ENABLED
             test_pubkey(1),
             String::new(),
             100,
@@ -729,11 +752,15 @@ mod tests {
         let buyer = test_pubkey(2);
 
         // Buy 100 tokens ($10)
-        let (tokens_bought, _) = token.buy(buyer.clone(), 1_000_000_000, 101, 1_600_000_100).unwrap();
+        let (tokens_bought, _) = token
+            .buy(buyer.clone(), 1_000_000_000, 101, 1_600_000_100)
+            .unwrap();
         assert_eq!(tokens_bought, 10_000_000_000); // 100 tokens
 
         // Sell 50 tokens back
-        let (stable_received, sell_event) = token.sell(buyer.clone(), 5_000_000_000, 102, 1_600_000_200).unwrap();
+        let (stable_received, sell_event) = token
+            .sell(buyer.clone(), 5_000_000_000, 102, 1_600_000_200)
+            .unwrap();
         assert_eq!(stable_received, 500_000_000); // $0.50 (50 tokens @ $0.10)
         assert_eq!(token.total_supply, 5_000_000_000); // 50 tokens remaining
         assert_eq!(token.reserve_balance, 500_000_000); // $0.50 reserve
@@ -776,7 +803,9 @@ mod tests {
         let buyer = test_pubkey(2);
 
         // Buy tokens
-        let (tokens_bought, _) = token.buy(buyer.clone(), 1_000_000_000, 101, 1_600_000_100).unwrap();
+        let (tokens_bought, _) = token
+            .buy(buyer.clone(), 1_000_000_000, 101, 1_600_000_100)
+            .unwrap();
 
         // Try to sell - should fail
         let sell_result = token.sell(buyer, tokens_bought, 102, 1_600_000_200);

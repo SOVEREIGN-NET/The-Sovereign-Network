@@ -213,7 +213,10 @@ impl<T: Clone + Eq + std::hash::Hash> ORSet<T> {
     /// Merge with another OR-Set
     pub fn merge(&mut self, other: &ORSet<T>) {
         for (element, tags) in &other.elements {
-            let our_tags = self.elements.entry(element.clone()).or_insert_with(Vec::new);
+            let our_tags = self
+                .elements
+                .entry(element.clone())
+                .or_insert_with(Vec::new);
             for tag in tags {
                 if !our_tags.contains(tag) {
                     our_tags.push(tag.clone());

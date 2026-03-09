@@ -5,10 +5,7 @@ use lib_consensus::{ComputeResult, NetworkState, ProofOfUsefulWork, StakeProof, 
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use lib_storage::proofs::{
-    generate_storage_proof,
-    ChallengeResult,
-    ProofVerifier,
-    StorageCapacityAttestation,
+    generate_storage_proof, ChallengeResult, ProofVerifier, StorageCapacityAttestation,
     StorageChallenge,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -165,12 +162,8 @@ fn test_storage_proof_creation_and_verification() -> Result<()> {
 fn test_storage_attestation_invalid_utilization() -> Result<()> {
     let validator_hash = Hash::from_bytes(&hash_blake3(b"validator_charlie"));
     let keypair = lib_crypto::keypair::generation::KeyPair::generate()?;
-    let attestation = StorageCapacityAttestation::new(
-        validator_hash,
-        200 * 1024 * 1024 * 1024,
-        105,
-        Vec::new(),
-    );
+    let attestation =
+        StorageCapacityAttestation::new(validator_hash, 200 * 1024 * 1024 * 1024, 105, Vec::new());
 
     let result = attestation.sign(&keypair);
     assert!(result.is_err());
@@ -356,7 +349,10 @@ fn test_storage_challenge_creation() {
         3600,
     );
 
-    assert_eq!(challenge.challenge_type, lib_storage::proofs::ChallengeType::ProofOfStorage);
+    assert_eq!(
+        challenge.challenge_type,
+        lib_storage::proofs::ChallengeType::ProofOfStorage
+    );
     assert!(challenge.created_at > 0);
 }
 

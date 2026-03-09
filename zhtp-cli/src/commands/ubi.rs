@@ -7,10 +7,10 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for validation
 
-use crate::argument_parsing::{UbiArgs, UbiAction, ZhtpCli, format_output};
+use crate::argument_parsing::{format_output, UbiAction, UbiArgs, ZhtpCli};
 use crate::commands::common::validate_identity_id;
 use crate::commands::web4_utils::connect_default;
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_network::client::ZhtpClient;
 use serde_json::Value;
@@ -56,10 +56,7 @@ pub fn build_ubi_balance_endpoint(identity_id: &str) -> String {
 // ============================================================================
 
 /// Handle UBI command
-pub async fn handle_ubi_command(
-    args: UbiArgs,
-    cli: &ZhtpCli,
-) -> CliResult<()> {
+pub async fn handle_ubi_command(args: UbiArgs, cli: &ZhtpCli) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_ubi_command_impl(args, cli, &output).await
 }
@@ -76,8 +73,12 @@ async fn handle_ubi_command_impl(
                 Some(id) => fetch_personal_ubi_status(id, cli, output).await,
                 None => {
                     // Global pool status endpoint not implemented
-                    output.warning("Global UBI pool status endpoint not yet implemented on server.")?;
-                    output.info("To check your personal UBI status, use: zhtp-cli ubi status <identity_id>")?;
+                    output.warning(
+                        "Global UBI pool status endpoint not yet implemented on server.",
+                    )?;
+                    output.info(
+                        "To check your personal UBI status, use: zhtp-cli ubi status <identity_id>",
+                    )?;
                     Ok(())
                 }
             }
@@ -111,12 +112,11 @@ async fn fetch_personal_ubi_status(
             reason: e.to_string(),
         })?;
 
-    let result: Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.clone(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
+    let result: Value = ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+        endpoint: endpoint.clone(),
+        status: 0,
+        reason: format!("Failed to parse response: {}", e),
+    })?;
 
     let formatted = format_output(&result, &cli.format)?;
     output.header(UbiOperation::PersonalStatus.title())?;

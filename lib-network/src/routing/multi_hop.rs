@@ -1,14 +1,14 @@
 //! Multi-Hop Routing Algorithms
-//! 
+//!
 //! Advanced mesh network traversal and pathfinding algorithms
 
 use anyhow::{anyhow, Result};
-use std::collections::{HashMap, HashSet, BinaryHeap, VecDeque};
+use lib_crypto::PublicKey;
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::cmp::Ordering;
-use tracing::{info, debug};
-use lib_crypto::PublicKey;
+use tracing::{debug, info};
 
 use crate::identity::unified_peer::UnifiedPeerId;
 use crate::mesh::connection::MeshConnection;
@@ -246,7 +246,10 @@ impl PartialEq for PathfindingState {
 impl Ord for PathfindingState {
     fn cmp(&self, other: &Self) -> Ordering {
         // Reverse ordering for min-heap behavior
-        other.cost.partial_cmp(&self.cost).unwrap_or(Ordering::Equal)
+        other
+            .cost
+            .partial_cmp(&self.cost)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -288,7 +291,7 @@ impl MultiHopRouter {
             })),
         }
     }
-    
+
     /// Find optimal multi-hop path between source and destination
     pub async fn find_multi_hop_path(
         &self,
@@ -296,16 +299,22 @@ impl MultiHopRouter {
         destination: &PublicKey,
         message_size: u64,
     ) -> Result<Vec<RouteHop>> {
-        debug!("Finding multi-hop path: {:?} → {:?}", 
-               hex::encode(&source.key_id[0..4]), hex::encode(&destination.key_id[0..4]));
-        
+        debug!(
+            "Finding multi-hop path: {:?} → {:?}",
+            hex::encode(&source.key_id[0..4]),
+            hex::encode(&destination.key_id[0..4])
+        );
+
         // Check cache first
         if let Some(cached_path) = self.get_cached_path(source, destination).await {
-            info!("Using cached path ({} hops, quality: {:.2})", 
-                  cached_path.hops.len(), cached_path.quality_score);
+            info!(
+                "Using cached path ({} hops, quality: {:.2})",
+                cached_path.hops.len(),
+                cached_path.quality_score
+            );
             return self.convert_path_to_route_hops(&cached_path.hops).await;
         }
-        
+
         // Select routing algorithm based on configuration and network conditions
         let config = self.routing_config.read().await;
         let algorithm = if config.adaptive_routing_enabled {
@@ -313,40 +322,42 @@ impl MultiHopRouter {
         } else {
             config.algorithm_preference.clone()
         };
-        
+
         drop(config);
-        
+
         // Find path using selected algorithm
         let path = match algorithm {
-            RoutingAlgorithm::Dijkstra => {
-                self.dijkstra_pathfinding(source, destination).await?
-            },
-            RoutingAlgorithm::AStar => {
-                self.astar_pathfinding(source, destination).await?
-            },
+            RoutingAlgorithm::Dijkstra => self.dijkstra_pathfinding(source, destination).await?,
+            RoutingAlgorithm::AStar => self.astar_pathfinding(source, destination).await?,
             RoutingAlgorithm::BreadthFirst => {
                 self.breadth_first_pathfinding(source, destination).await?
-            },
+            }
             RoutingAlgorithm::LoadAware => {
-                self.load_aware_pathfinding(source, destination, message_size).await?
-            },
+                self.load_aware_pathfinding(source, destination, message_size)
+                    .await?
+            }
             RoutingAlgorithm::Adaptive => {
-                self.adaptive_pathfinding(source, destination, message_size).await?
-            },
+                self.adaptive_pathfinding(source, destination, message_size)
+                    .await?
+            }
         };
-        
+
         // Cache the path for future use
-        self.cache_path(source.clone(), destination.clone(), &path).await;
-        
+        self.cache_path(source.clone(), destination.clone(), &path)
+            .await;
+
         // Convert to route hops
         let route_hops = self.convert_path_to_route_hops(&path).await?;
-        
-        info!("Found multi-hop path: {} hops using {:?} algorithm", 
-              route_hops.len(), algorithm);
-        
+
+        info!(
+            "Found multi-hop path: {} hops using {:?} algorithm",
+            route_hops.len(),
+            algorithm
+        );
+
         Ok(route_hops)
     }
-    
+
     /// Dijkstra's shortest path algorithm
     async fn dijkstra_pathfinding(
         &self,
@@ -354,50 +365,50 @@ impl MultiHopRouter {
         destination: &PublicKey,
     ) -> Result<Vec<PublicKey>> {
         debug!("Using Dijkstra's algorithm for pathfinding");
-        
+
         let graph = self.topology_graph.read().await;
         let mut distances: HashMap<PublicKey, f64> = HashMap::new();
         let mut previous: HashMap<PublicKey, Option<PublicKey>> = HashMap::new();
         let mut heap = BinaryHeap::new();
-        
+
         // Initialize distances
         for node_id in graph.nodes.keys() {
             distances.insert(node_id.clone(), f64::INFINITY);
             previous.insert(node_id.clone(), None);
         }
         distances.insert(source.clone(), 0.0);
-        
+
         heap.push(PathfindingState {
             node: source.clone(),
             cost: 0.0,
             hops: 0,
             path: vec![source.clone()],
         });
-        
+
         while let Some(current_state) = heap.pop() {
             let current_node = &current_state.node;
-            
+
             if current_node == destination {
                 return Ok(current_state.path);
             }
-            
+
             if current_state.cost > *distances.get(current_node).unwrap_or(&f64::INFINITY) {
                 continue;
             }
-            
+
             // Check neighbors
             if let Some(neighbors) = graph.adjacency_list.get(current_node) {
                 for neighbor in neighbors {
                     if let Some(edge) = graph.edges.get(&(current_node.clone(), neighbor.clone())) {
                         let alt_cost = current_state.cost + edge.weight;
-                        
+
                         if alt_cost < *distances.get(neighbor).unwrap_or(&f64::INFINITY) {
                             distances.insert(neighbor.clone(), alt_cost);
                             previous.insert(neighbor.clone(), Some(current_node.clone()));
-                            
+
                             let mut new_path = current_state.path.clone();
                             new_path.push(neighbor.clone());
-                            
+
                             heap.push(PathfindingState {
                                 node: neighbor.clone(),
                                 cost: alt_cost,
@@ -409,10 +420,10 @@ impl MultiHopRouter {
                 }
             }
         }
-        
+
         Err(anyhow!("No path found using Dijkstra's algorithm"))
     }
-    
+
     /// A* search algorithm with heuristics
     async fn astar_pathfinding(
         &self,
@@ -420,42 +431,46 @@ impl MultiHopRouter {
         destination: &PublicKey,
     ) -> Result<Vec<PublicKey>> {
         debug!("⭐ Using A* algorithm for pathfinding");
-        
+
         let graph = self.topology_graph.read().await;
         let mut g_score: HashMap<PublicKey, f64> = HashMap::new();
         let mut f_score: HashMap<PublicKey, f64> = HashMap::new();
         let mut heap = BinaryHeap::new();
-        
+
         g_score.insert(source.clone(), 0.0);
-        f_score.insert(source.clone(), self.heuristic_cost(source, destination, &graph).await);
-        
+        f_score.insert(
+            source.clone(),
+            self.heuristic_cost(source, destination, &graph).await,
+        );
+
         heap.push(PathfindingState {
             node: source.clone(),
             cost: f_score[source],
             hops: 0,
             path: vec![source.clone()],
         });
-        
+
         while let Some(current_state) = heap.pop() {
             let current_node = &current_state.node;
-            
+
             if current_node == destination {
                 return Ok(current_state.path);
             }
-            
+
             if let Some(neighbors) = graph.adjacency_list.get(current_node) {
                 for neighbor in neighbors {
                     if let Some(edge) = graph.edges.get(&(current_node.clone(), neighbor.clone())) {
-                        let tentative_g_score = g_score.get(current_node).unwrap_or(&f64::INFINITY) + edge.weight;
-                        
+                        let tentative_g_score =
+                            g_score.get(current_node).unwrap_or(&f64::INFINITY) + edge.weight;
+
                         if tentative_g_score < *g_score.get(neighbor).unwrap_or(&f64::INFINITY) {
                             g_score.insert(neighbor.clone(), tentative_g_score);
                             let h_score = self.heuristic_cost(neighbor, destination, &graph).await;
                             f_score.insert(neighbor.clone(), tentative_g_score + h_score);
-                            
+
                             let mut new_path = current_state.path.clone();
                             new_path.push(neighbor.clone());
-                            
+
                             heap.push(PathfindingState {
                                 node: neighbor.clone(),
                                 cost: f_score[neighbor],
@@ -467,10 +482,10 @@ impl MultiHopRouter {
                 }
             }
         }
-        
+
         Err(anyhow!("No path found using A* algorithm"))
     }
-    
+
     /// Breadth-first search for minimum hop count
     async fn breadth_first_pathfinding(
         &self,
@@ -478,21 +493,21 @@ impl MultiHopRouter {
         destination: &PublicKey,
     ) -> Result<Vec<PublicKey>> {
         debug!("🌊 Using BFS for minimum hop pathfinding");
-        
+
         let graph = self.topology_graph.read().await;
         let mut queue = VecDeque::new();
         let mut visited = HashSet::new();
-        
+
         queue.push_back(vec![source.clone()]);
         visited.insert(source.clone());
-        
+
         while let Some(path) = queue.pop_front() {
             let current_node = path.last().unwrap();
-            
+
             if current_node == destination {
                 return Ok(path);
             }
-            
+
             if let Some(neighbors) = graph.adjacency_list.get(current_node) {
                 for neighbor in neighbors {
                     if !visited.contains(neighbor) {
@@ -504,10 +519,10 @@ impl MultiHopRouter {
                 }
             }
         }
-        
+
         Err(anyhow!("No path found using BFS"))
     }
-    
+
     /// Load-aware pathfinding that considers node and edge congestion
     async fn load_aware_pathfinding(
         &self,
@@ -515,55 +530,60 @@ impl MultiHopRouter {
         destination: &PublicKey,
         message_size: u64,
     ) -> Result<Vec<PublicKey>> {
-        debug!("⚖️ Using load-aware pathfinding (message size: {} bytes)", message_size);
-        
+        debug!(
+            "⚖️ Using load-aware pathfinding (message size: {} bytes)",
+            message_size
+        );
+
         let graph = self.topology_graph.read().await;
         let traffic_stats = self.traffic_stats.read().await;
-        
+
         let mut distances: HashMap<PublicKey, f64> = HashMap::new();
         let mut heap = BinaryHeap::new();
-        
+
         // Initialize with load-adjusted costs
         for node_id in graph.nodes.keys() {
             distances.insert(node_id.clone(), f64::INFINITY);
         }
         distances.insert(source.clone(), 0.0);
-        
+
         heap.push(PathfindingState {
             node: source.clone(),
             cost: 0.0,
             hops: 0,
             path: vec![source.clone()],
         });
-        
+
         while let Some(current_state) = heap.pop() {
             let current_node = &current_state.node;
-            
+
             if current_node == destination {
                 return Ok(current_state.path);
             }
-            
+
             if let Some(neighbors) = graph.adjacency_list.get(current_node) {
                 for neighbor in neighbors {
                     if let Some(edge) = graph.edges.get(&(current_node.clone(), neighbor.clone())) {
                         // Calculate load-adjusted edge weight
                         let base_weight = edge.weight;
-                        let load_multiplier = self.calculate_load_multiplier(
-                            neighbor, 
-                            &(current_node.clone(), neighbor.clone()),
-                            &traffic_stats,
-                            message_size,
-                        ).await;
-                        
+                        let load_multiplier = self
+                            .calculate_load_multiplier(
+                                neighbor,
+                                &(current_node.clone(), neighbor.clone()),
+                                &traffic_stats,
+                                message_size,
+                            )
+                            .await;
+
                         let adjusted_weight = base_weight * load_multiplier;
                         let alt_cost = current_state.cost + adjusted_weight;
-                        
+
                         if alt_cost < *distances.get(neighbor).unwrap_or(&f64::INFINITY) {
                             distances.insert(neighbor.clone(), alt_cost);
-                            
+
                             let mut new_path = current_state.path.clone();
                             new_path.push(neighbor.clone());
-                            
+
                             heap.push(PathfindingState {
                                 node: neighbor.clone(),
                                 cost: alt_cost,
@@ -575,10 +595,10 @@ impl MultiHopRouter {
                 }
             }
         }
-        
+
         Err(anyhow!("No path found using load-aware algorithm"))
     }
-    
+
     /// Adaptive pathfinding that selects best algorithm based on conditions
     async fn adaptive_pathfinding(
         &self,
@@ -587,10 +607,10 @@ impl MultiHopRouter {
         message_size: u64,
     ) -> Result<Vec<PublicKey>> {
         debug!("🧠 Using adaptive pathfinding");
-        
+
         // Analyze network conditions to select best algorithm
         let network_conditions = self.analyze_network_conditions().await;
-        
+
         let selected_algorithm = if network_conditions.high_congestion {
             RoutingAlgorithm::LoadAware
         } else if network_conditions.low_connectivity {
@@ -600,44 +620,44 @@ impl MultiHopRouter {
         } else {
             RoutingAlgorithm::AStar
         };
-        
+
         debug!("Adaptive algorithm selected: {:?}", selected_algorithm);
-        
+
         match selected_algorithm {
-            RoutingAlgorithm::LoadAware => self.load_aware_pathfinding(source, destination, message_size).await,
+            RoutingAlgorithm::LoadAware => {
+                self.load_aware_pathfinding(source, destination, message_size)
+                    .await
+            }
             RoutingAlgorithm::Dijkstra => self.dijkstra_pathfinding(source, destination).await,
-            RoutingAlgorithm::BreadthFirst => self.breadth_first_pathfinding(source, destination).await,
+            RoutingAlgorithm::BreadthFirst => {
+                self.breadth_first_pathfinding(source, destination).await
+            }
             RoutingAlgorithm::AStar => self.astar_pathfinding(source, destination).await,
             _ => self.dijkstra_pathfinding(source, destination).await, // Fallback
         }
     }
-    
+
     /// Calculate heuristic cost for A* algorithm
-    async fn heuristic_cost(
-        &self,
-        from: &PublicKey,
-        to: &PublicKey,
-        graph: &TopologyGraph,
-    ) -> f64 {
+    async fn heuristic_cost(&self, from: &PublicKey, to: &PublicKey, graph: &TopologyGraph) -> f64 {
         // Simple heuristic based on direct connection if available
         if let Some(edge) = graph.edges.get(&(from.clone(), to.clone())) {
             return edge.weight * 0.8; // Optimistic estimate
         }
-        
+
         // Fallback heuristic based on node capabilities
         let from_node = graph.nodes.get(from);
         let to_node = graph.nodes.get(to);
-        
+
         match (from_node, to_node) {
             (Some(from_n), Some(to_n)) => {
                 // Estimate based on node capabilities and locations
                 let capability_factor = (from_n.reliability_score + to_n.reliability_score) / 2.0;
                 1.0 / capability_factor // Lower cost for more reliable nodes
-            },
+            }
             _ => 10.0, // Default heuristic for unknown nodes
         }
     }
-    
+
     /// Calculate load multiplier for edge weight adjustment
     async fn calculate_load_multiplier(
         &self,
@@ -647,42 +667,48 @@ impl MultiHopRouter {
         _message_size: u64,
     ) -> f64 {
         let mut multiplier = 1.0;
-        
+
         // Adjust for node congestion
         if let Some(node_traffic) = traffic_stats.node_traffic.get(node) {
             multiplier *= 1.0 + node_traffic.congestion_level;
         }
-        
+
         // Adjust for edge utilization
         if let Some(edge_traffic) = traffic_stats.edge_traffic.get(edge) {
             multiplier *= 1.0 + (edge_traffic.utilization_percent / 100.0) as f64;
         }
-        
+
         multiplier
     }
-    
+
     /// Analyze current network conditions for adaptive routing
     async fn analyze_network_conditions(&self) -> NetworkConditions {
         let traffic_stats = self.traffic_stats.read().await;
         let graph = self.topology_graph.read().await;
-        
+
         // Calculate network metrics
         let avg_congestion = if !traffic_stats.node_traffic.is_empty() {
-            traffic_stats.node_traffic.values()
+            traffic_stats
+                .node_traffic
+                .values()
                 .map(|n| n.congestion_level)
-                .sum::<f64>() / traffic_stats.node_traffic.len() as f64
+                .sum::<f64>()
+                / traffic_stats.node_traffic.len() as f64
         } else {
             0.0
         };
-        
+
         let avg_connectivity = if !graph.adjacency_list.is_empty() {
-            graph.adjacency_list.values()
+            graph
+                .adjacency_list
+                .values()
                 .map(|neighbors| neighbors.len())
-                .sum::<usize>() as f64 / graph.adjacency_list.len() as f64
+                .sum::<usize>() as f64
+                / graph.adjacency_list.len() as f64
         } else {
             0.0
         };
-        
+
         NetworkConditions {
             high_congestion: avg_congestion > 0.7,
             low_connectivity: avg_connectivity < 3.0,
@@ -690,7 +716,7 @@ impl MultiHopRouter {
             network_stability: traffic_stats.global_metrics.overall_delivery_success_rate,
         }
     }
-    
+
     /// Select adaptive algorithm based on source and destination
     async fn select_adaptive_algorithm(
         &self,
@@ -700,7 +726,7 @@ impl MultiHopRouter {
         // For now, use load-aware as default adaptive choice
         RoutingAlgorithm::LoadAware
     }
-    
+
     /// Convert path to route hops
     async fn convert_path_to_route_hops(&self, path: &[PublicKey]) -> Result<Vec<RouteHop>> {
         let graph = self.topology_graph.read().await;
@@ -721,38 +747,44 @@ impl MultiHopRouter {
                     latency_ms: edge.quality_metrics.latency_ms,
                 });
             } else {
-                return Err(anyhow!("Missing edge in path: {:?} → {:?}",
-                                   hex::encode(&from.key_id[0..4]),
-                                   hex::encode(&to.key_id[0..4])));
+                return Err(anyhow!(
+                    "Missing edge in path: {:?} → {:?}",
+                    hex::encode(&from.key_id[0..4]),
+                    hex::encode(&to.key_id[0..4])
+                ));
             }
         }
 
         Ok(route_hops)
     }
-    
+
     /// Get cached path if available and valid
-    async fn get_cached_path(&self, source: &PublicKey, destination: &PublicKey) -> Option<CachedPath> {
+    async fn get_cached_path(
+        &self,
+        source: &PublicKey,
+        destination: &PublicKey,
+    ) -> Option<CachedPath> {
         let cache = self.path_cache.read().await;
         let key = (source.clone(), destination.clone());
-        
+
         if let Some(cached_path) = cache.get(&key) {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            
+
             if current_time - cached_path.cached_at < cached_path.validity_seconds {
                 return Some(cached_path.clone());
             }
         }
-        
+
         None
     }
-    
+
     /// Cache path for future use
     async fn cache_path(&self, source: PublicKey, destination: PublicKey, path: &[PublicKey]) {
         let quality_score = self.calculate_path_quality(path).await;
-        
+
         let cached_path = CachedPath {
             hops: path.to_vec(),
             quality_score,
@@ -765,69 +797,76 @@ impl MultiHopRouter {
             validity_seconds: 300, // 5 minutes
             usage_count: 0,
         };
-        
+
         let mut cache = self.path_cache.write().await;
         cache.insert((source, destination), cached_path);
     }
-    
+
     /// Calculate path quality score
     async fn calculate_path_quality(&self, path: &[PublicKey]) -> f64 {
         let graph = self.topology_graph.read().await;
         let mut total_quality = 0.0;
         let mut edge_count = 0;
-        
+
         for i in 1..path.len() {
-            if let Some(edge) = graph.edges.get(&(path[i-1].clone(), path[i].clone())) {
+            if let Some(edge) = graph.edges.get(&(path[i - 1].clone(), path[i].clone())) {
                 total_quality += edge.quality_metrics.stability;
                 edge_count += 1;
             }
         }
-        
+
         if edge_count > 0 {
             total_quality / edge_count as f64
         } else {
             0.0
         }
     }
-    
+
     /// Calculate total path latency
     async fn calculate_path_latency(&self, path: &[PublicKey]) -> u32 {
         let graph = self.topology_graph.read().await;
         let mut total_latency = 0u32;
-        
+
         for i in 1..path.len() {
-            if let Some(edge) = graph.edges.get(&(path[i-1].clone(), path[i].clone())) {
+            if let Some(edge) = graph.edges.get(&(path[i - 1].clone(), path[i].clone())) {
                 total_latency += edge.quality_metrics.latency_ms;
             }
         }
-        
+
         total_latency
     }
-    
+
     /// Calculate path bandwidth (bottleneck)
     async fn calculate_path_bandwidth(&self, path: &[PublicKey]) -> u64 {
         let graph = self.topology_graph.read().await;
         let mut min_bandwidth = u64::MAX;
-        
+
         for i in 1..path.len() {
-            if let Some(edge) = graph.edges.get(&(path[i-1].clone(), path[i].clone())) {
+            if let Some(edge) = graph.edges.get(&(path[i - 1].clone(), path[i].clone())) {
                 min_bandwidth = min_bandwidth.min(edge.quality_metrics.bandwidth);
             }
         }
-        
-        if min_bandwidth == u64::MAX { 0 } else { min_bandwidth }
+
+        if min_bandwidth == u64::MAX {
+            0
+        } else {
+            min_bandwidth
+        }
     }
-    
+
     /// Update topology graph with new connections
-    pub async fn update_topology(&self, connections: &HashMap<PublicKey, MeshConnection>) -> Result<()> {
+    pub async fn update_topology(
+        &self,
+        connections: &HashMap<PublicKey, MeshConnection>,
+    ) -> Result<()> {
         let mut graph = self.topology_graph.write().await;
         graph.version += 1;
-        
+
         // Clear existing graph
         graph.nodes.clear();
         graph.edges.clear();
         graph.adjacency_list.clear();
-        
+
         // Add nodes from connections
         for (peer_id, connection) in connections {
             let node = NetworkNode {
@@ -844,10 +883,10 @@ impl MultiHopRouter {
                 traffic_routed: connection.data_transferred,
                 availability_percent: 95.0, // Default availability
             };
-            
+
             graph.nodes.insert(peer_id.clone(), node);
         }
-        
+
         // Add edges and adjacency relationships
         for (peer_id, connection) in connections {
             // Create bidirectional edges
@@ -868,37 +907,43 @@ impl MultiHopRouter {
                 last_updated: connection.connected_at,
             };
 
-            graph.edges.insert((peer_id.clone(), dest_pub_key.clone()), edge.clone());
+            graph
+                .edges
+                .insert((peer_id.clone(), dest_pub_key.clone()), edge.clone());
 
             // Add to adjacency list
-            graph.adjacency_list
+            graph
+                .adjacency_list
                 .entry(peer_id.clone())
                 .or_insert_with(HashSet::new)
                 .insert(dest_pub_key);
         }
-        
-        info!(" Updated topology graph: {} nodes, {} edges", 
-              graph.nodes.len(), graph.edges.len());
-        
+
+        info!(
+            " Updated topology graph: {} nodes, {} edges",
+            graph.nodes.len(),
+            graph.edges.len()
+        );
+
         Ok(())
     }
-    
+
     /// Calculate edge weight for routing
     fn calculate_edge_weight(&self, connection: &MeshConnection) -> f64 {
         // Combine multiple factors into edge weight
         let latency_factor = connection.latency_ms as f64 / 1000.0; // Convert to seconds
         let stability_factor = 1.0 - connection.stability_score; // Lower stability = higher weight
         let bandwidth_factor = 1.0 / (connection.bandwidth_capacity as f64 / 1_000_000.0); // Favor higher bandwidth
-        
+
         latency_factor + stability_factor + bandwidth_factor
     }
-    
+
     /// Get routing statistics
     pub async fn get_routing_statistics(&self) -> RoutingStatistics {
         let traffic_stats = self.traffic_stats.read().await;
         let graph = self.topology_graph.read().await;
         let cache = self.path_cache.read().await;
-        
+
         RoutingStatistics {
             total_nodes: graph.nodes.len(),
             total_edges: graph.edges.len(),
@@ -936,7 +981,7 @@ pub struct RoutingStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_multi_hop_router_creation() {
         let router = MultiHopRouter::new();
@@ -944,16 +989,18 @@ mod tests {
         assert_eq!(stats.total_nodes, 0);
         assert_eq!(stats.total_edges, 0);
     }
-    
+
     #[tokio::test]
     async fn test_path_caching() {
         let router = MultiHopRouter::new();
         let source = PublicKey::new(vec![1, 2, 3]);
         let destination = PublicKey::new(vec![4, 5, 6]);
         let path = vec![source.clone(), destination.clone()];
-        
-        router.cache_path(source.clone(), destination.clone(), &path).await;
-        
+
+        router
+            .cache_path(source.clone(), destination.clone(), &path)
+            .await;
+
         let cached = router.get_cached_path(&source, &destination).await;
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().hops.len(), 2);

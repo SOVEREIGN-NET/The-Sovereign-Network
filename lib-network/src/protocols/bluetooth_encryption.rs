@@ -33,9 +33,9 @@
 //! - **Authentication**: Poly1305 AEAD tag
 //! - **Versioning**: Wire format version field for future compatibility
 
-use crate::encryption::{ProtocolEncryption, EncryptionStats};
+use crate::encryption::{EncryptionStats, ProtocolEncryption};
 use anyhow::{anyhow, Result};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
@@ -78,7 +78,11 @@ impl BluetoothFrame {
     /// Deserialize frame from wire format
     pub fn deserialize(data: &[u8]) -> Result<Self> {
         if data.len() < HEADER_SIZE + TAG_SIZE {
-            return Err(anyhow!("Frame too short: {} bytes (min: {})", data.len(), HEADER_SIZE + TAG_SIZE));
+            return Err(anyhow!(
+                "Frame too short: {} bytes (min: {})",
+                data.len(),
+                HEADER_SIZE + TAG_SIZE
+            ));
         }
 
         let version = data[0];
@@ -114,7 +118,11 @@ mod core {
     ///
     /// Uses HKDF-SHA256 to derive a unique nonce per message.
     /// Same (session_id, sequence, direction) always produces same nonce.
-    pub fn derive_nonce(session_id: &[u8; 32], sequence: u64, direction: u8) -> Result<[u8; NONCE_SIZE]> {
+    pub fn derive_nonce(
+        session_id: &[u8; 32],
+        sequence: u64,
+        direction: u8,
+    ) -> Result<[u8; NONCE_SIZE]> {
         let mut hasher = Sha256::new();
         hasher.update(b"bluetooth-nonce-v1");
         hasher.update(session_id);
@@ -130,12 +138,12 @@ mod core {
     /// Build AAD (Associated Authenticated Data) for domain separation
     pub fn build_aad(session_id: &[u8; 32], sequence: u64) -> Vec<u8> {
         let mut aad = Vec::new();
-        aad.extend_from_slice(b"bluetooth");       // protocol_id
-        aad.push(0x00);                            // separator
-        aad.extend_from_slice(b"v1");              // version
-        aad.push(0x00);                            // separator
-        aad.extend_from_slice(session_id);         // session_id
-        aad.push(0x00);                            // separator
+        aad.extend_from_slice(b"bluetooth"); // protocol_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(b"v1"); // version
+        aad.push(0x00); // separator
+        aad.extend_from_slice(session_id); // session_id
+        aad.push(0x00); // separator
         aad.extend_from_slice(&sequence.to_be_bytes()); // sequence
         aad
     }
@@ -249,9 +257,10 @@ mod shell {
 
             // SHELL: Replay protection - check sequence number
             {
-                let mut recv_seqs = self.recv_sequences.write().map_err(|e| {
-                    anyhow!("Failed to acquire recv_sequences lock: {}", e)
-                })?;
+                let mut recv_seqs = self
+                    .recv_sequences
+                    .write()
+                    .map_err(|e| anyhow!("Failed to acquire recv_sequences lock: {}", e))?;
                 let last_seen_opt = recv_seqs.entry(*peer_id).or_insert(None);
 
                 if let Some(last_seen) = last_seen_opt {
@@ -349,7 +358,10 @@ mod tests {
         assert_eq!(nonce1, nonce2, "Same inputs should produce same nonce");
 
         let nonce3 = core::derive_nonce(&session_id, 101, 0x00).unwrap();
-        assert_ne!(nonce1, nonce3, "Different sequence should produce different nonce");
+        assert_ne!(
+            nonce1, nonce3,
+            "Different sequence should produce different nonce"
+        );
     }
 
     #[test]
@@ -366,7 +378,10 @@ mod tests {
         assert_eq!(serialized[0], 0x01); // version
         assert_eq!(serialized[1], 0x00); // flags
         assert_eq!(&serialized[2..14], &[0x42u8; 12]); // nonce
-        assert_eq!(&serialized[14..22], &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]); // sequence
+        assert_eq!(
+            &serialized[14..22],
+            &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+        ); // sequence
         assert_eq!(&serialized[22..], &[0xAA, 0xBB, 0xCC]); // ciphertext
     }
 
@@ -396,7 +411,10 @@ mod tests {
         let mut data = vec![0xFF; HEADER_SIZE + TAG_SIZE]; // version 0xFF (invalid)
         let result = BluetoothFrame::deserialize(&data);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported protocol version"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported protocol version"));
     }
 
     // ========== SHELL TESTS ==========
@@ -457,7 +475,10 @@ mod tests {
 
         // Same session_id + sequence (both start at 0) should produce same nonce
         assert_eq!(parsed1.nonce, parsed2.nonce, "Nonce determinism failed");
-        assert_eq!(parsed1.sequence, parsed2.sequence, "Sequence should start at 0");
+        assert_eq!(
+            parsed1.sequence, parsed2.sequence,
+            "Sequence should start at 0"
+        );
     }
 
     #[test]
@@ -499,7 +520,10 @@ mod tests {
 
         // Decrypt same frame from peer2 (should succeed, different peer)
         let result2 = enc.decrypt_message(&frame1, &peer_id2);
-        assert!(result2.is_ok(), "Same frame from different peer should be accepted");
+        assert!(
+            result2.is_ok(),
+            "Same frame from different peer should be accepted"
+        );
 
         // Replay from peer1 should fail
         let result3 = enc.decrypt_message(&frame1, &peer_id1);

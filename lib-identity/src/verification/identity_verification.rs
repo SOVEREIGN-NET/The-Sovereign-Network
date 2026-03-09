@@ -1,10 +1,10 @@
 //! Advanced identity verification system with quantum-resistant cryptography
 
-use crate::types::*;
 use crate::identity::ZhtpIdentity;
 use crate::integration::CrossPackageIntegration;
-use std::collections::HashMap;
+use crate::types::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Comprehensive identity verification system
@@ -182,11 +182,21 @@ impl IdentityVerifier {
         let mut verification_result = VerificationResult {
             verified: false,
             verification_level: match verification_level {
-                VerificationLevel::BasicExistence => crate::types::verification_result::VerificationLevel::Basic,
-                VerificationLevel::Ownership => crate::types::verification_result::VerificationLevel::Standard,
-                VerificationLevel::Citizenship => crate::types::verification_result::VerificationLevel::HighSecurity,
-                VerificationLevel::PrivacyPreserving => crate::types::verification_result::VerificationLevel::PrivacyPreserving,
-                VerificationLevel::Complete => crate::types::verification_result::VerificationLevel::Complete,
+                VerificationLevel::BasicExistence => {
+                    crate::types::verification_result::VerificationLevel::Basic
+                }
+                VerificationLevel::Ownership => {
+                    crate::types::verification_result::VerificationLevel::Standard
+                }
+                VerificationLevel::Citizenship => {
+                    crate::types::verification_result::VerificationLevel::HighSecurity
+                }
+                VerificationLevel::PrivacyPreserving => {
+                    crate::types::verification_result::VerificationLevel::PrivacyPreserving
+                }
+                VerificationLevel::Complete => {
+                    crate::types::verification_result::VerificationLevel::Complete
+                }
             },
             trust_score: 0.0,
             verification_methods: Vec::new(),
@@ -200,54 +210,73 @@ impl IdentityVerifier {
             expires_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() + 3600, // 1 hour validity
+                .as_secs()
+                + 3600, // 1 hour validity
         };
 
         // 1. Verify cryptographic identity
         match self.verify_cryptographic_identity(identity).await {
             Ok(crypto_result) => {
-                verification_result.verification_methods.push("cryptographic".to_string());
+                verification_result
+                    .verification_methods
+                    .push("cryptographic".to_string());
                 verification_result.trust_score += 0.3;
                 verification_result.metadata.insert(
                     "crypto_verification".to_string(),
-                    serde_json::to_value(crypto_result)?
+                    serde_json::to_value(crypto_result)?,
                 );
-            },
+            }
             Err(e) => {
-                verification_result.errors.push(format!("Cryptographic verification failed: {}", e));
+                verification_result
+                    .errors
+                    .push(format!("Cryptographic verification failed: {}", e));
             }
         }
 
         // 2. Verify zero-knowledge proofs
-        if matches!(verification_level, VerificationLevel::PrivacyPreserving | VerificationLevel::Complete) {
+        if matches!(
+            verification_level,
+            VerificationLevel::PrivacyPreserving | VerificationLevel::Complete
+        ) {
             match self.verify_zk_proofs(identity, challenge.as_ref()).await {
                 Ok(zk_result) => {
-                    verification_result.verification_methods.push("zero_knowledge".to_string());
+                    verification_result
+                        .verification_methods
+                        .push("zero_knowledge".to_string());
                     verification_result.trust_score += 0.25;
                     verification_result.metadata.insert(
                         "zk_verification".to_string(),
-                        serde_json::to_value(zk_result)?
+                        serde_json::to_value(zk_result)?,
                     );
-                },
+                }
                 Err(e) => {
-                    verification_result.warnings.push(format!("ZK proof verification failed: {}", e));
+                    verification_result
+                        .warnings
+                        .push(format!("ZK proof verification failed: {}", e));
                 }
             }
         }
 
         // 3. Verify citizenship status
-        if matches!(verification_level, VerificationLevel::Citizenship | VerificationLevel::Complete) {
+        if matches!(
+            verification_level,
+            VerificationLevel::Citizenship | VerificationLevel::Complete
+        ) {
             match self.verify_citizenship_status(identity).await {
                 Ok(citizenship_result) => {
-                    verification_result.verification_methods.push("citizenship".to_string());
+                    verification_result
+                        .verification_methods
+                        .push("citizenship".to_string());
                     verification_result.trust_score += 0.2;
                     verification_result.metadata.insert(
                         "citizenship_verification".to_string(),
-                        serde_json::to_value(citizenship_result)?
+                        serde_json::to_value(citizenship_result)?,
                     );
-                },
+                }
                 Err(e) => {
-                    verification_result.warnings.push(format!("Citizenship verification failed: {}", e));
+                    verification_result
+                        .warnings
+                        .push(format!("Citizenship verification failed: {}", e));
                 }
             }
         }
@@ -255,35 +284,44 @@ impl IdentityVerifier {
         // 4. Verify against trust anchors
         match self.verify_against_trust_anchors(identity).await {
             Ok(trust_result) => {
-                verification_result.verification_methods.push("trust_anchor".to_string());
+                verification_result
+                    .verification_methods
+                    .push("trust_anchor".to_string());
                 verification_result.trust_score += 0.15;
                 verification_result.metadata.insert(
                     "trust_verification".to_string(),
-                    serde_json::to_value(trust_result)?
+                    serde_json::to_value(trust_result)?,
                 );
-            },
+            }
             Err(e) => {
-                verification_result.warnings.push(format!("Trust anchor verification failed: {}", e));
+                verification_result
+                    .warnings
+                    .push(format!("Trust anchor verification failed: {}", e));
             }
         }
 
         // 5. Verify network reputation
         match self.verify_network_reputation(identity).await {
             Ok(reputation_result) => {
-                verification_result.verification_methods.push("network_reputation".to_string());
+                verification_result
+                    .verification_methods
+                    .push("network_reputation".to_string());
                 verification_result.trust_score += 0.1;
                 verification_result.metadata.insert(
                     "reputation_verification".to_string(),
-                    serde_json::to_value(reputation_result)?
+                    serde_json::to_value(reputation_result)?,
                 );
-            },
+            }
             Err(e) => {
-                verification_result.warnings.push(format!("Network reputation verification failed: {}", e));
+                verification_result
+                    .warnings
+                    .push(format!("Network reputation verification failed: {}", e));
             }
         }
 
         // Determine final verification status
-        verification_result.verified = verification_result.trust_score >= self.get_minimum_trust_score(&verification_level);
+        verification_result.verified =
+            verification_result.trust_score >= self.get_minimum_trust_score(&verification_level);
 
         // Update metrics
         let verification_time = start_time.elapsed().as_millis() as f64;
@@ -308,15 +346,17 @@ impl IdentityVerifier {
     /// - Dilithium public key format (1312 bytes for Dilithium2, 2592 bytes for Dilithium5)
     /// - Challenge response: identity must sign the challenge with its Dilithium key
     /// - Quantum resistance: verifies the key is a valid post-quantum algorithm (Dilithium)
-    async fn verify_cryptographic_identity(&mut self, identity: &ZhtpIdentity) -> Result<CryptoVerificationResult, Box<dyn std::error::Error>> {
-
+    async fn verify_cryptographic_identity(
+        &mut self,
+        identity: &ZhtpIdentity,
+    ) -> Result<CryptoVerificationResult, Box<dyn std::error::Error>> {
         // Generate challenge for signature verification
         let challenge = self.generate_verification_challenge().await?;
 
         // Verify public key format (must be valid Dilithium2 or Dilithium5)
         let pub_key_bytes = identity.public_key.as_bytes();
-        let is_dilithium2 = pub_key_bytes.len() == 1312;  // Dilithium2 public key
-        let is_dilithium5 = pub_key_bytes.len() == 2592;  // Dilithium5 public key
+        let is_dilithium2 = pub_key_bytes.len() == 1312; // Dilithium2 public key
+        let is_dilithium5 = pub_key_bytes.len() == 2592; // Dilithium5 public key
 
         if !is_dilithium2 && !is_dilithium5 {
             return Ok(CryptoVerificationResult {
@@ -328,7 +368,7 @@ impl IdentityVerifier {
         }
 
         let key_format_valid = is_dilithium2 || is_dilithium5;
-        let quantum_resistant = key_format_valid;  // Dilithium is post-quantum resistant
+        let quantum_resistant = key_format_valid; // Dilithium is post-quantum resistant
 
         // Note: In production, the identity holder would provide a signature
         // For now, we verify the key format and mark signature as requiring out-of-band verification
@@ -338,8 +378,8 @@ impl IdentityVerifier {
         // 3. Signature verified here with public key
         //
         // For this security-critical path, we mark signature as unverified if no signature provided
-        let signature_valid = false;  // ✅ CRITICAL FIX: Changed from always-true to false
-                                       // In production, requires actual signature verification
+        let signature_valid = false; // ✅ CRITICAL FIX: Changed from always-true to false
+                                     // In production, requires actual signature verification
 
         Ok(CryptoVerificationResult {
             signature_valid,
@@ -353,7 +393,11 @@ impl IdentityVerifier {
     ///
     /// Validates ZK proofs with proper cryptographic hash (SHA3-256, not MD5).
     /// ZK proofs demonstrate knowledge of a secret without revealing it.
-    async fn verify_zk_proofs(&mut self, identity: &ZhtpIdentity, challenge: Option<&VerificationChallenge>) -> Result<ZkVerificationResult, Box<dyn std::error::Error>> {
+    async fn verify_zk_proofs(
+        &mut self,
+        identity: &ZhtpIdentity,
+        challenge: Option<&VerificationChallenge>,
+    ) -> Result<ZkVerificationResult, Box<dyn std::error::Error>> {
         use lib_crypto::hash_sha3_256;
 
         let challenge_data = if let Some(challenge) = challenge {
@@ -363,7 +407,10 @@ impl IdentityVerifier {
         };
 
         // Generate identity proof using ZK package
-        let proof = self.integration.generate_identity_proof(identity, &challenge_data).await?;
+        let proof = self
+            .integration
+            .generate_identity_proof(identity, &challenge_data)
+            .await?;
 
         // Verify the proof structure
         // A valid ZK proof should:
@@ -384,13 +431,23 @@ impl IdentityVerifier {
     }
 
     /// Verify citizenship status
-    async fn verify_citizenship_status(&mut self, identity: &ZhtpIdentity) -> Result<CitizenshipVerificationResult, Box<dyn std::error::Error>> {
+    async fn verify_citizenship_status(
+        &mut self,
+        identity: &ZhtpIdentity,
+    ) -> Result<CitizenshipVerificationResult, Box<dyn std::error::Error>> {
         // Check UBI eligibility as citizenship indicator
-        let ubi_eligible = self.integration.verify_ubi_eligibility(&hex::encode(&identity.id.0)).await?;
-        
+        let ubi_eligible = self
+            .integration
+            .verify_ubi_eligibility(&hex::encode(&identity.id.0))
+            .await?;
+
         // In implementation, would check against citizenship registry
         let citizenship_registry_confirmed = ubi_eligible;
-        let citizenship_level = if ubi_eligible { "full_citizen".to_string() } else { "non_citizen".to_string() };
+        let citizenship_level = if ubi_eligible {
+            "full_citizen".to_string()
+        } else {
+            "non_citizen".to_string()
+        };
 
         Ok(CitizenshipVerificationResult {
             ubi_eligible,
@@ -404,7 +461,10 @@ impl IdentityVerifier {
     ///
     /// Trust anchors must have valid cryptographic signatures and be within their validity period.
     /// Only anchors with non-zero public keys are considered valid (all-zero keys are rejected).
-    async fn verify_against_trust_anchors(&self, _identity: &ZhtpIdentity) -> Result<TrustAnchorVerificationResult, Box<dyn std::error::Error>> {
+    async fn verify_against_trust_anchors(
+        &self,
+        _identity: &ZhtpIdentity,
+    ) -> Result<TrustAnchorVerificationResult, Box<dyn std::error::Error>> {
         use lib_crypto::post_quantum::dilithium::dilithium_verify;
 
         let mut verified_anchors = Vec::new();
@@ -425,7 +485,7 @@ impl IdentityVerifier {
             // All-zero keys are not valid trust anchors (this rejects hardcoded placeholders)
             let is_all_zeros = anchor.public_key.iter().all(|&b| b == 0);
             if is_all_zeros || anchor.public_key.is_empty() {
-                continue;  // Skip invalid (all-zeros) trust anchors
+                continue; // Skip invalid (all-zeros) trust anchors
             }
 
             // ✅ FIX: Verify anchor's self-signature
@@ -438,12 +498,12 @@ impl IdentityVerifier {
 
             // Verify the anchor's signature (if signature exists and key is valid)
             let anchor_verifies = if anchor.issuer_signature.is_empty() {
-                false  // Empty signature is invalid
+                false // Empty signature is invalid
             } else {
                 // Attempt to verify with Dilithium5
                 match dilithium_verify(&anchor_data, &anchor.issuer_signature, &anchor.public_key) {
                     Ok(valid) => valid,
-                    Err(_) => false,  // Signature verification failed
+                    Err(_) => false, // Signature verification failed
                 }
             };
 
@@ -463,7 +523,10 @@ impl IdentityVerifier {
     }
 
     /// Verify network reputation
-    async fn verify_network_reputation(&mut self, _identity: &ZhtpIdentity) -> Result<ReputationVerificationResult, Box<dyn std::error::Error>> {
+    async fn verify_network_reputation(
+        &mut self,
+        _identity: &ZhtpIdentity,
+    ) -> Result<ReputationVerificationResult, Box<dyn std::error::Error>> {
         // In implementation, would query network package for reputation data
         let reputation_score = 0.75; // Simulated reputation score
         let peer_confirmations = 12; // Number of peers that confirm identity
@@ -507,9 +570,11 @@ impl IdentityVerifier {
 
         // Update average verification time
         let total_verifications = self.metrics.total_verifications as f64;
-        self.metrics.average_verification_time_ms = 
-            (self.metrics.average_verification_time_ms * (total_verifications - 1.0) + verification_time_ms) / total_verifications;
-        
+        self.metrics.average_verification_time_ms = (self.metrics.average_verification_time_ms
+            * (total_verifications - 1.0)
+            + verification_time_ms)
+            / total_verifications;
+
         self.metrics.last_updated = Instant::now();
     }
 
@@ -545,23 +610,26 @@ impl IdentityVerifier {
             TrustAnchor {
                 id: "lib_foundation".to_string(),
                 name: "ZHTP Foundation".to_string(),
-                public_key: vec![0; 32],  // ❌ INVALID: Would need real Dilithium5 pubkey (2592 bytes)
-                verification_methods: vec!["quantum_signature".to_string(), "multi_sig".to_string()],
+                public_key: vec![0; 32], // ❌ INVALID: Would need real Dilithium5 pubkey (2592 bytes)
+                verification_methods: vec![
+                    "quantum_signature".to_string(),
+                    "multi_sig".to_string(),
+                ],
                 trust_level: TrustLevel::Maximum,
                 valid_from: 0,
                 valid_until: u64::MAX,
-                issuer_signature: vec![0; 64],  // ❌ INVALID: Empty signature
+                issuer_signature: vec![0; 64], // ❌ INVALID: Empty signature
             },
             // ❌ PLACEHOLDER: All-zero keys will be rejected during verification
             TrustAnchor {
                 id: "citizen_registry".to_string(),
                 name: "ZHTP Citizen Registry".to_string(),
-                public_key: vec![0; 32],  // ❌ INVALID: Would need real Dilithium5 pubkey (2592 bytes)
+                public_key: vec![0; 32], // ❌ INVALID: Would need real Dilithium5 pubkey (2592 bytes)
                 verification_methods: vec!["citizenship_proof".to_string()],
                 trust_level: TrustLevel::High,
                 valid_from: 0,
                 valid_until: u64::MAX,
-                issuer_signature: vec![0; 64],  // ❌ INVALID: Empty signature
+                issuer_signature: vec![0; 64], // ❌ INVALID: Empty signature
             },
         ]
     }
@@ -584,8 +652,12 @@ impl IdentityVerifier {
         } else {
             0.0
         };
-        
-        (self.verification_cache.len(), total_cache_operations as usize, hit_rate)
+
+        (
+            self.verification_cache.len(),
+            total_cache_operations as usize,
+            hit_rate,
+        )
     }
 }
 
@@ -654,7 +726,7 @@ impl Ord for TrustLevel {
             TrustLevel::High => 3,
             TrustLevel::Maximum => 4,
         };
-        
+
         let other_value = match other {
             TrustLevel::Minimal => 0,
             TrustLevel::Basic => 1,
@@ -662,7 +734,7 @@ impl Ord for TrustLevel {
             TrustLevel::High => 3,
             TrustLevel::Maximum => 4,
         };
-        
+
         self_value.cmp(&other_value)
     }
 }
@@ -671,19 +743,19 @@ impl Ord for TrustLevel {
 mod tests {
     use super::*;
     use crate::identity::ZhtpIdentity;
-    use crate::types::{IdentityType};
+    use crate::types::IdentityType;
     use lib_proofs::ZeroKnowledgeProof;
 
     fn create_test_identity() -> ZhtpIdentity {
         // Use realistic Dilithium2 key sizes for testing
         // Dilithium2: PK = 1312 bytes, SK = 2560 bytes
         let public_key = lib_crypto::PublicKey {
-            dilithium_pk: vec![42u8; 1312],  // Real Dilithium2 public key size
+            dilithium_pk: vec![42u8; 1312], // Real Dilithium2 public key size
             kyber_pk: vec![],
             key_id: [42u8; 32],
         };
         let private_key = lib_crypto::PrivateKey {
-            dilithium_sk: vec![1u8; 2560],   // Real Dilithium2 secret key size
+            dilithium_sk: vec![1u8; 2560], // Real Dilithium2 secret key size
             dilithium_pk: vec![],
             kyber_sk: vec![],
             master_seed: vec![],
@@ -704,9 +776,10 @@ mod tests {
             "test_device".to_string(),
             Some(30),
             Some("US".to_string()),
-            false,  // Not a verified citizen in test
+            false, // Not a verified citizen in test
             ownership_proof,
-        ).expect("Failed to create test identity")
+        )
+        .expect("Failed to create test identity")
     }
 
     #[tokio::test]
@@ -714,7 +787,7 @@ mod tests {
         let mut verifier = IdentityVerifier::new();
         assert_eq!(verifier.trust_anchors.len(), 2); // Default trust anchors
         assert_eq!(verifier.metrics.total_verifications, 0);
-        
+
         verifier.initialize().await.expect("Failed to initialize");
     }
 
@@ -722,13 +795,12 @@ mod tests {
     async fn test_basic_verification() {
         let mut verifier = IdentityVerifier::new();
         let identity = create_test_identity();
-        
-        let result = verifier.verify_identity_complete(
-            &identity,
-            VerificationLevel::BasicExistence,
-            None,
-        ).await.expect("Failed to verify identity");
-        
+
+        let result = verifier
+            .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
+            .await
+            .expect("Failed to verify identity");
+
         assert!(result.verified);
         assert!(result.trust_score > 0.0);
         assert!(!result.verification_methods.is_empty());
@@ -742,16 +814,19 @@ mod tests {
         // Initialize connections (may fail in test environment, that's ok)
         let _ = verifier.initialize().await;
         let identity = create_test_identity();
-        
-        let result = verifier.verify_identity_complete(
-            &identity,
-            VerificationLevel::PrivacyPreserving,
-            None,
-        ).await.expect("Failed to verify identity");
-        
+
+        let result = verifier
+            .verify_identity_complete(&identity, VerificationLevel::PrivacyPreserving, None)
+            .await
+            .expect("Failed to verify identity");
+
         assert!(result.verified);
-        assert!(result.verification_methods.contains(&"zero_knowledge".to_string()));
-        assert!(result.verification_methods.contains(&"cryptographic".to_string()));
+        assert!(result
+            .verification_methods
+            .contains(&"zero_knowledge".to_string()));
+        assert!(result
+            .verification_methods
+            .contains(&"cryptographic".to_string()));
     }
 
     #[tokio::test]
@@ -760,44 +835,47 @@ mod tests {
         // Initialize connections (may fail in test environment, that's ok)
         let _ = verifier.initialize().await;
         let identity = create_test_identity();
-        
-        let result = verifier.verify_identity_complete(
-            &identity,
-            VerificationLevel::Complete,
-            None,
-        ).await.expect("Failed to verify identity");
-        
+
+        let result = verifier
+            .verify_identity_complete(&identity, VerificationLevel::Complete, None)
+            .await
+            .expect("Failed to verify identity");
+
         assert!(result.verified);
         assert!(result.trust_score >= 0.8);
         assert!(result.verification_methods.len() >= 3);
-        assert!(result.verification_methods.contains(&"cryptographic".to_string()));
-        assert!(result.verification_methods.contains(&"zero_knowledge".to_string()));
-        assert!(result.verification_methods.contains(&"citizenship".to_string()));
+        assert!(result
+            .verification_methods
+            .contains(&"cryptographic".to_string()));
+        assert!(result
+            .verification_methods
+            .contains(&"zero_knowledge".to_string()));
+        assert!(result
+            .verification_methods
+            .contains(&"citizenship".to_string()));
     }
 
     #[tokio::test]
     async fn test_verification_cache() {
         let mut verifier = IdentityVerifier::new();
         let identity = create_test_identity();
-        
+
         // First verification
-        let result1 = verifier.verify_identity_complete(
-            &identity,
-            VerificationLevel::BasicExistence,
-            None,
-        ).await.expect("Failed to verify identity");
-        
+        let result1 = verifier
+            .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
+            .await
+            .expect("Failed to verify identity");
+
         // Second verification should use cache
-        let result2 = verifier.verify_identity_complete(
-            &identity,
-            VerificationLevel::BasicExistence,
-            None,
-        ).await.expect("Failed to verify identity");
-        
+        let result2 = verifier
+            .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
+            .await
+            .expect("Failed to verify identity");
+
         assert_eq!(result1.verified, result2.verified);
         assert_eq!(verifier.metrics.cache_hits, 1);
         assert_eq!(verifier.metrics.cache_misses, 1);
-        
+
         let (cache_size, cache_ops, hit_rate) = verifier.get_cache_stats();
         assert_eq!(cache_size, 1);
         assert_eq!(cache_ops, 2);
@@ -815,10 +893,16 @@ mod tests {
     #[tokio::test]
     async fn test_verification_challenge_generation() {
         let verifier = IdentityVerifier::new();
-        
-        let challenge1 = verifier.generate_verification_challenge().await.expect("Failed to generate challenge");
-        let challenge2 = verifier.generate_verification_challenge().await.expect("Failed to generate challenge");
-        
+
+        let challenge1 = verifier
+            .generate_verification_challenge()
+            .await
+            .expect("Failed to generate challenge");
+        let challenge2 = verifier
+            .generate_verification_challenge()
+            .await
+            .expect("Failed to generate challenge");
+
         assert_eq!(challenge1.len(), 32);
         assert_eq!(challenge2.len(), 32);
         assert_ne!(challenge1, challenge2); // Should be different
@@ -827,35 +911,49 @@ mod tests {
     #[tokio::test]
     async fn test_minimum_trust_scores() {
         let verifier = IdentityVerifier::new();
-        
-        assert_eq!(verifier.get_minimum_trust_score(&VerificationLevel::BasicExistence), 0.3);
-        assert_eq!(verifier.get_minimum_trust_score(&VerificationLevel::Ownership), 0.5);
-        assert_eq!(verifier.get_minimum_trust_score(&VerificationLevel::Citizenship), 0.7);
-        assert_eq!(verifier.get_minimum_trust_score(&VerificationLevel::PrivacyPreserving), 0.6);
-        assert_eq!(verifier.get_minimum_trust_score(&VerificationLevel::Complete), 0.8);
+
+        assert_eq!(
+            verifier.get_minimum_trust_score(&VerificationLevel::BasicExistence),
+            0.3
+        );
+        assert_eq!(
+            verifier.get_minimum_trust_score(&VerificationLevel::Ownership),
+            0.5
+        );
+        assert_eq!(
+            verifier.get_minimum_trust_score(&VerificationLevel::Citizenship),
+            0.7
+        );
+        assert_eq!(
+            verifier.get_minimum_trust_score(&VerificationLevel::PrivacyPreserving),
+            0.6
+        );
+        assert_eq!(
+            verifier.get_minimum_trust_score(&VerificationLevel::Complete),
+            0.8
+        );
     }
 
     #[tokio::test]
     async fn test_metrics_tracking() {
         let mut verifier = IdentityVerifier::new();
         verifier.initialize().await.unwrap();
-        
+
         // Clear cache to ensure all verifications are counted
         verifier.verification_cache.clear();
-        
+
         // Perform several verifications with the same identity but clear cache each time
         for _i in 0..5 {
             // Clear cache before each verification to ensure it's counted
             verifier.verification_cache.clear();
-            
+
             let identity = create_test_identity();
-            let _result = verifier.verify_identity_complete(
-                &identity,
-                VerificationLevel::BasicExistence,
-                None,
-            ).await.expect("Failed to verify identity");
+            let _result = verifier
+                .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
+                .await
+                .expect("Failed to verify identity");
         }
-        
+
         let metrics = verifier.get_metrics();
         assert_eq!(metrics.total_verifications, 5);
         assert_eq!(metrics.successful_verifications, 5);
@@ -868,17 +966,16 @@ mod tests {
     async fn test_cache_clearing() {
         let mut verifier = IdentityVerifier::new();
         let identity = create_test_identity();
-        
+
         // Add some cache entries
-        let _result = verifier.verify_identity_complete(
-            &identity,
-            VerificationLevel::BasicExistence,
-            None,
-        ).await.expect("Failed to verify identity");
-        
+        let _result = verifier
+            .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
+            .await
+            .expect("Failed to verify identity");
+
         let (cache_size_before, _, _) = verifier.get_cache_stats();
         assert!(cache_size_before > 0);
-        
+
         verifier.clear_cache();
         let (cache_size_after, _, _) = verifier.get_cache_stats();
         assert_eq!(cache_size_after, 0);

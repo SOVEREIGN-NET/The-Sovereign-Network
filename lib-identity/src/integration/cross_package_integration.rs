@@ -1,9 +1,8 @@
 //! Cross-package integration with ZHTP crypto, ZK, and economics packages
 
-
 use crate::identity::ZhtpIdentity;
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Integration layer for coordinating between ZHTP packages
@@ -115,16 +114,16 @@ impl CrossPackageIntegration {
     pub async fn initialize_connections(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Initialize crypto connection
         self.initialize_crypto_connection().await?;
-        
+
         // Initialize ZK connection
         self.initialize_zk_connection().await?;
-        
+
         // Initialize economics connection
         self.initialize_economics_connection().await?;
-        
+
         // Initialize network connection
         self.initialize_network_connection().await?;
-        
+
         Ok(())
     }
 
@@ -148,17 +147,18 @@ impl CrossPackageIntegration {
                 if response.success {
                     self.crypto_connection.authenticated = true;
                     self.crypto_connection.last_ping = Some(Instant::now());
-                    
+
                     // Check quantum readiness
                     if let Some(quantum_ready) = response.data.get("quantum_ready") {
-                        self.crypto_connection.quantum_ready = quantum_ready.as_bool().unwrap_or(false);
+                        self.crypto_connection.quantum_ready =
+                            quantum_ready.as_bool().unwrap_or(false);
                     }
-                    
+
                     println!("✓ Crypto package connection established");
                 } else {
                     return Err("Failed to authenticate with crypto package".into());
                 }
-            },
+            }
             Err(e) => return Err(format!("Crypto connection failed: {}", e).into()),
         }
 
@@ -185,16 +185,17 @@ impl CrossPackageIntegration {
                 if response.success {
                     self.zk_connection.authenticated = true;
                     self.zk_connection.circuit_loaded = true;
-                    
+
                     if let Some(cache_size) = response.data.get("proof_cache_size") {
-                        self.zk_connection.proof_cache_size = cache_size.as_u64().unwrap_or(0) as usize;
+                        self.zk_connection.proof_cache_size =
+                            cache_size.as_u64().unwrap_or(0) as usize;
                     }
-                    
+
                     println!("✓ ZK package connection established");
                 } else {
                     return Err("Failed to load ZK circuits".into());
                 }
-            },
+            }
             Err(e) => return Err(format!("ZK connection failed: {}", e).into()),
         }
 
@@ -220,20 +221,22 @@ impl CrossPackageIntegration {
             Ok(response) => {
                 if response.success {
                     self.economics_connection.authenticated = true;
-                    
+
                     if let Some(ubi_active) = response.data.get("ubi_system_active") {
-                        self.economics_connection.ubi_system_active = ubi_active.as_bool().unwrap_or(false);
+                        self.economics_connection.ubi_system_active =
+                            ubi_active.as_bool().unwrap_or(false);
                     }
-                    
+
                     if let Some(market_fresh) = response.data.get("market_data_fresh") {
-                        self.economics_connection.market_data_fresh = market_fresh.as_bool().unwrap_or(false);
+                        self.economics_connection.market_data_fresh =
+                            market_fresh.as_bool().unwrap_or(false);
                     }
-                    
+
                     println!("✓ Economics package connection established");
                 } else {
                     return Err("Failed to connect to economics system".into());
                 }
-            },
+            }
             Err(e) => return Err(format!("Economics connection failed: {}", e).into()),
         }
 
@@ -260,20 +263,22 @@ impl CrossPackageIntegration {
             Ok(response) => {
                 if response.success {
                     self.network_connection.authenticated = true;
-                    
+
                     if let Some(peer_count) = response.data.get("peer_count") {
-                        self.network_connection.peer_count = peer_count.as_u64().unwrap_or(0) as usize;
+                        self.network_connection.peer_count =
+                            peer_count.as_u64().unwrap_or(0) as usize;
                     }
-                    
+
                     if let Some(mesh_health) = response.data.get("mesh_health") {
-                        self.network_connection.mesh_health = mesh_health.as_f64().unwrap_or(0.0) as f32;
+                        self.network_connection.mesh_health =
+                            mesh_health.as_f64().unwrap_or(0.0) as f32;
                     }
-                    
+
                     println!("✓ Network package connection established");
                 } else {
                     return Err("Failed to register with network service".into());
                 }
-            },
+            }
             Err(e) => return Err(format!("Network connection failed: {}", e).into()),
         }
 
@@ -281,17 +286,24 @@ impl CrossPackageIntegration {
     }
 
     /// Send request to another package
-    pub async fn send_package_request(&mut self, request: CrossPackageRequest) -> Result<IntegrationResponse, Box<dyn std::error::Error>> {
+    pub async fn send_package_request(
+        &mut self,
+        request: CrossPackageRequest,
+    ) -> Result<IntegrationResponse, Box<dyn std::error::Error>> {
         // Check cache first
-        let cache_key = format!("{}:{}:{}", request.target_package, request.operation, 
-                               serde_json::to_string(&request.parameters)?);
-        
+        let cache_key = format!(
+            "{}:{}:{}",
+            request.target_package,
+            request.operation,
+            serde_json::to_string(&request.parameters)?
+        );
+
         if let Some(cached_response) = self.integration_cache.get(&cache_key) {
             // Check if cache is still valid (5 minutes)
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs();
-            
+
             if now - cached_response.timestamp < 300 {
                 return Ok(cached_response.clone());
             }
@@ -299,17 +311,21 @@ impl CrossPackageIntegration {
 
         // Simulate package communication
         let response = self.simulate_package_communication(request).await?;
-        
+
         // Cache successful responses
         if response.success {
             self.integration_cache.insert(cache_key, response.clone());
         }
-        
+
         Ok(response)
     }
 
     /// Generate identity proof using ZK package
-    pub async fn generate_identity_proof(&mut self, identity: &ZhtpIdentity, challenge: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub async fn generate_identity_proof(
+        &mut self,
+        identity: &ZhtpIdentity,
+        challenge: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         if !self.zk_connection.authenticated || !self.zk_connection.circuit_loaded {
             return Err("ZK package not ready".into());
         }
@@ -329,20 +345,22 @@ impl CrossPackageIntegration {
         };
 
         let response = self.send_package_request(proof_request).await?;
-        
+
         if response.success {
             if let Some(proof_data) = response.data.get("proof") {
-                let proof_hex = proof_data.as_str()
-                    .ok_or("Invalid proof format")?;
+                let proof_hex = proof_data.as_str().ok_or("Invalid proof format")?;
                 return Ok(hex::decode(proof_hex)?);
             }
         }
-        
+
         Err("Failed to generate identity proof".into())
     }
 
     /// Verify economic eligibility for UBI
-    pub async fn verify_ubi_eligibility(&mut self, identity_id: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    pub async fn verify_ubi_eligibility(
+        &mut self,
+        identity_id: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
         if !self.economics_connection.authenticated {
             return Err("Economics package not connected".into());
         }
@@ -360,19 +378,24 @@ impl CrossPackageIntegration {
         };
 
         let response = self.send_package_request(eligibility_request).await?;
-        
+
         if response.success {
             if let Some(eligible) = response.data.get("eligible") {
                 return Ok(eligible.as_bool().unwrap_or(false));
             }
         }
-        
+
         Ok(false)
     }
 
     /// Distribute UBI payment
-    pub async fn distribute_ubi_payment(&mut self, identity_id: &str, amount: u64) -> Result<String, Box<dyn std::error::Error>> {
-        if !self.economics_connection.authenticated || !self.economics_connection.ubi_system_active {
+    pub async fn distribute_ubi_payment(
+        &mut self,
+        identity_id: &str,
+        amount: u64,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        if !self.economics_connection.authenticated || !self.economics_connection.ubi_system_active
+        {
             return Err("UBI system not available".into());
         }
 
@@ -391,86 +414,121 @@ impl CrossPackageIntegration {
         };
 
         let response = self.send_package_request(payment_request).await?;
-        
+
         if response.success {
             if let Some(transaction_id) = response.data.get("transaction_id") {
                 return Ok(transaction_id.as_str().unwrap_or("").to_string());
             }
         }
-        
+
         Err("Failed to distribute UBI payment".into())
     }
 
     /// Health check for all connections
     pub async fn health_check(&mut self) -> HashMap<String, bool> {
         let mut health_status = HashMap::new();
-        
+
         // Check crypto connection
-        health_status.insert("crypto".to_string(), 
-            self.crypto_connection.authenticated && self.crypto_connection.quantum_ready);
-        
+        health_status.insert(
+            "crypto".to_string(),
+            self.crypto_connection.authenticated && self.crypto_connection.quantum_ready,
+        );
+
         // Check ZK connection
-        health_status.insert("zk".to_string(), 
-            self.zk_connection.authenticated && self.zk_connection.circuit_loaded);
-        
+        health_status.insert(
+            "zk".to_string(),
+            self.zk_connection.authenticated && self.zk_connection.circuit_loaded,
+        );
+
         // Check economics connection
-        health_status.insert("economics".to_string(), 
-            self.economics_connection.authenticated && self.economics_connection.ubi_system_active);
-        
+        health_status.insert(
+            "economics".to_string(),
+            self.economics_connection.authenticated && self.economics_connection.ubi_system_active,
+        );
+
         // Check network connection
-        health_status.insert("network".to_string(), 
-            self.network_connection.authenticated && self.network_connection.mesh_health > 0.5);
-        
+        health_status.insert(
+            "network".to_string(),
+            self.network_connection.authenticated && self.network_connection.mesh_health > 0.5,
+        );
+
         health_status
     }
 
     /// Simulate package communication (in implementation, this would use actual IPC/RPC)
-    async fn simulate_package_communication(&self, request: CrossPackageRequest) -> Result<IntegrationResponse, Box<dyn std::error::Error>> {
+    async fn simulate_package_communication(
+        &self,
+        request: CrossPackageRequest,
+    ) -> Result<IntegrationResponse, Box<dyn std::error::Error>> {
         // Simulate network delay
         tokio::time::sleep(Duration::from_millis(50)).await;
-        
+
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
         // Simulate successful responses based on operation
         let (success, data) = match (request.target_package.as_str(), request.operation.as_str()) {
-            ("lib-crypto", "authenticate") => (true, serde_json::json!({
-                "authenticated": true,
-                "quantum_ready": true,
-                "capabilities": ["post_quantum", "signing", "verification"]
-            })),
-            ("lib-proofs", "load_circuits") => (true, serde_json::json!({
-                "circuits_loaded": 3,
-                "proof_cache_size": 1000,
-                "ready": true
-            })),
-            ("lib-economy", "connect_ubi_system") => (true, serde_json::json!({
-                "ubi_system_active": true,
-                "market_data_fresh": true,
-                "monthly_ubi_amount": 1000
-            })),
-            ("lib-network", "register_service") => (true, serde_json::json!({
-                "registered": true,
-                "peer_count": 1247,
-                "mesh_health": 0.87
-            })),
-            ("lib-proofs", "generate_identity_proof") => (true, serde_json::json!({
-                "proof": "deadbeef1234567890abcdef",
-                "verification_key": "abcdef1234567890deadbeef"
-            })),
-            ("lib-economy", "check_ubi_eligibility") => (true, serde_json::json!({
-                "eligible": true,
-                "next_payment": timestamp + 86400
-            })),
-            ("lib-economy", "distribute_ubi") => (true, serde_json::json!({
-                "transaction_id": format!("ubi_tx_{}", timestamp),
-                "amount": 1000,
-                "confirmed": true
-            })),
-            _ => (false, serde_json::json!({
-                "error": "Operation not supported"
-            }))
+            ("lib-crypto", "authenticate") => (
+                true,
+                serde_json::json!({
+                    "authenticated": true,
+                    "quantum_ready": true,
+                    "capabilities": ["post_quantum", "signing", "verification"]
+                }),
+            ),
+            ("lib-proofs", "load_circuits") => (
+                true,
+                serde_json::json!({
+                    "circuits_loaded": 3,
+                    "proof_cache_size": 1000,
+                    "ready": true
+                }),
+            ),
+            ("lib-economy", "connect_ubi_system") => (
+                true,
+                serde_json::json!({
+                    "ubi_system_active": true,
+                    "market_data_fresh": true,
+                    "monthly_ubi_amount": 1000
+                }),
+            ),
+            ("lib-network", "register_service") => (
+                true,
+                serde_json::json!({
+                    "registered": true,
+                    "peer_count": 1247,
+                    "mesh_health": 0.87
+                }),
+            ),
+            ("lib-proofs", "generate_identity_proof") => (
+                true,
+                serde_json::json!({
+                    "proof": "deadbeef1234567890abcdef",
+                    "verification_key": "abcdef1234567890deadbeef"
+                }),
+            ),
+            ("lib-economy", "check_ubi_eligibility") => (
+                true,
+                serde_json::json!({
+                    "eligible": true,
+                    "next_payment": timestamp + 86400
+                }),
+            ),
+            ("lib-economy", "distribute_ubi") => (
+                true,
+                serde_json::json!({
+                    "transaction_id": format!("ubi_tx_{}", timestamp),
+                    "amount": 1000,
+                    "confirmed": true
+                }),
+            ),
+            _ => (
+                false,
+                serde_json::json!({
+                    "error": "Operation not supported"
+                }),
+            ),
         };
 
         Ok(IntegrationResponse {

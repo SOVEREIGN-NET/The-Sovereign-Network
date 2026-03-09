@@ -17,7 +17,7 @@ use super::types::KernelState;
 /// State management for crash recovery
 impl KernelState {
     /// Get current state for persistence
-    /// 
+    ///
     /// # Returns
     /// Reference to kernel state (for serialization)
     pub fn state(&self) -> &KernelState {
@@ -25,7 +25,7 @@ impl KernelState {
     }
 
     /// Get mutable state for updates
-    /// 
+    ///
     /// # Returns
     /// Mutable reference to kernel state
     pub fn state_mut(&mut self) -> &mut KernelState {
@@ -52,7 +52,8 @@ impl KernelState {
     /// * `cutoff_epoch` - Remove data for epochs < cutoff_epoch
     pub fn prune_old_epochs(&mut self, cutoff_epoch: u64) {
         // Remove old distribution data
-        self.total_distributed.retain(|epoch, _| *epoch >= cutoff_epoch);
+        self.total_distributed
+            .retain(|epoch, _| *epoch >= cutoff_epoch);
 
         // Remove old dedup entries (safe because citizens can't claim in past epochs)
         self.already_claimed.retain(|_citizen_id, epoch_map| {
@@ -83,8 +84,7 @@ impl KernelState {
     /// # Returns
     /// Vec<u8> containing serialized state
     pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
-        bincode::serialize(self)
-            .map_err(|e| format!("Failed to serialize KernelState: {}", e))
+        bincode::serialize(self).map_err(|e| format!("Failed to serialize KernelState: {}", e))
     }
 
     /// Deserialize state from bytes after crash
@@ -101,8 +101,7 @@ impl KernelState {
     /// # Returns
     /// Restored KernelState or error if data is corrupted
     pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
-        bincode::deserialize(data)
-            .map_err(|e| format!("Failed to deserialize KernelState: {}", e))
+        bincode::deserialize(data).map_err(|e| format!("Failed to deserialize KernelState: {}", e))
     }
 
     /// Check if state is valid (internal consistency check)
@@ -172,15 +171,15 @@ mod tests {
     #[test]
     fn test_state_methods() {
         let mut state = KernelState::new();
-        
+
         // Test state() accessor
         let ref_state = state.state();
         assert_eq!(ref_state.stats.total_claims_processed, 0);
-        
+
         // Test state_mut() accessor
         let mut_state = state.state_mut();
         mut_state.record_success();
-        
+
         assert_eq!(state.stats.total_claims_processed, 1);
     }
 

@@ -8,13 +8,13 @@
 //!
 //! This is the bridge between policy (runtime) and execution (server).
 
-use std::sync::Arc;
 use std::collections::HashSet;
-use tokio::sync::{RwLock, mpsc};
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
-use tracing::{info, debug, error};
+use tracing::{debug, error, info};
 
-use super::node_runtime::{NodeRuntime, NodeAction, Tick, PeerStateChange, PeerState};
+use super::node_runtime::{NodeAction, NodeRuntime, PeerState, PeerStateChange, Tick};
 
 /// Queue of pending actions for the server to execute
 /// SECURITY: Bounded queue with deduplication to prevent DoS

@@ -36,26 +36,15 @@
 //! 2. **Purity**: No side effects, no global state access
 //! 3. **Overflow safety**: Uses u128 internally for all arithmetic
 
-pub mod types;
-pub mod model_v2;
 pub mod classifiers;
+pub mod model_v2;
+pub mod types;
 
 // Re-exports for convenience
-pub use types::{
-    FeeInput,
-    FeeParamsV2,
-    SigScheme,
-    TxKind,
-};
+pub use types::{FeeInput, FeeParamsV2, SigScheme, TxKind};
 
-pub use model_v2::{
-    compute_fee_v2,
-    validate_block_limits,
-};
+pub use model_v2::{compute_fee_v2, validate_block_limits};
 
 pub use classifiers::{
-    classify_transaction,
-    classify_transfer,
-    classify_token_transfer,
-    classify_coinbase,
+    classify_coinbase, classify_token_transfer, classify_transaction, classify_transfer,
 };

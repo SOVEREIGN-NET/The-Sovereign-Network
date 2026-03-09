@@ -6,8 +6,5 @@
 
 // Re-export all NodeId-related items from the canonical lib-types definition
 pub use lib_types::node_id::{
-    NodeId,
-    set_network_genesis,
-    try_set_network_genesis,
-    get_network_genesis,
+    get_network_genesis, set_network_genesis, try_set_network_genesis, NodeId,
 };

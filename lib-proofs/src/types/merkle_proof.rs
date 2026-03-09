@@ -1,9 +1,9 @@
 //! Merkle proof structures and verification types
-//! 
+//!
 //! Provides types for Merkle tree inclusion proofs, enabling zero-knowledge
 //! verification of data membership without revealing the entire tree structure.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Merkle inclusion proof
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,7 +19,11 @@ pub struct MerkleProof {
 impl MerkleProof {
     /// Create a new Merkle proof
     pub fn new(leaf: [u8; 32], path: Vec<[u8; 32]>, indices: Vec<bool>) -> Self {
-        Self { leaf, path, indices }
+        Self {
+            leaf,
+            path,
+            indices,
+        }
     }
 
     /// Get the depth of this proof (number of levels)
@@ -56,9 +60,9 @@ mod tests {
         let leaf = [1u8; 32];
         let path = vec![[2u8; 32], [3u8; 32]];
         let indices = vec![false, true];
-        
+
         let proof = MerkleProof::new(leaf, path, indices);
-        
+
         assert_eq!(proof.leaf, [1u8; 32]);
         assert_eq!(proof.depth(), 2);
         assert!(proof.is_valid_structure());
@@ -70,7 +74,7 @@ mod tests {
         let leaf = [1u8; 32];
         let path = vec![[2u8; 32], [3u8; 32]];
         let indices = vec![false]; // Wrong length
-        
+
         let proof = MerkleProof::new(leaf, path, indices);
         assert!(!proof.is_valid_structure());
     }

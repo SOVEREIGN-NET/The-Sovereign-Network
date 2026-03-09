@@ -1,5 +1,5 @@
-use zhtp::config::{NodeConfig, RuntimeRole};
 use zhtp::config::validation::validate_complete_configuration;
+use zhtp::config::{NodeConfig, RuntimeRole};
 
 #[tokio::test]
 async fn rejects_validator_on_non_validator_runtime_roles() {

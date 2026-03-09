@@ -14,13 +14,13 @@ use lib_crypto::{
 use lib_identity::IdentityId;
 use lib_proofs::{initialize_zk_system, ZkProof, ZkProofSystem};
 
-use crate::ConsensusError;
 use crate::byzantine::ByzantineFaultDetector;
 use crate::types::{
     ConsensusConfig, ConsensusProof, ConsensusProposal, ConsensusRound, ConsensusStep,
     ConsensusVote, VoteType,
 };
 use crate::validators::ValidatorManager;
+use crate::ConsensusError;
 
 const VOTE_DOMAIN_TAG: &[u8] = b"ZHTP/CONSENSUS/VOTE/v1\0";
 
@@ -118,15 +118,12 @@ impl EnhancedBftEngine {
 
     /// Initialize validator with keypair
     pub fn initialize_validator(&mut self, keypair: KeyPair) -> Result<()> {
-        let identity = self
-            .validator_identity
-            .as_ref()
-            .ok_or_else(|| {
-                ConsensusError::ValidatorError(
-                    "Cannot load validator signing keypair: local validator identity is not configured"
-                        .to_string(),
-                )
-            })?;
+        let identity = self.validator_identity.as_ref().ok_or_else(|| {
+            ConsensusError::ValidatorError(
+                "Cannot load validator signing keypair: local validator identity is not configured"
+                    .to_string(),
+            )
+        })?;
 
         let validator = self
             .validator_manager
@@ -946,6 +943,7 @@ pub mod testing {
         )?;
 
         let proof = ZkProof::from_plonky2(plonky2_proof);
-        bincode::serialize(&proof).map_err(|e| anyhow::anyhow!("ZK proof serialization failed: {e}"))
+        bincode::serialize(&proof)
+            .map_err(|e| anyhow::anyhow!("ZK proof serialization failed: {e}"))
     }
 }

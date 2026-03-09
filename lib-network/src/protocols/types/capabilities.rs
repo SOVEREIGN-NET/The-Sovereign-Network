@@ -1,7 +1,7 @@
 //! Protocol capabilities and power profiles
 
-use serde::{Deserialize, Serialize};
 use super::security::{AuthScheme, CipherSuite, PqcMode};
+use serde::{Deserialize, Serialize};
 
 /// Capability structure version
 pub const CAPABILITY_VERSION: u8 = 2;

@@ -4,7 +4,7 @@
 //! infinite recursion and stack overflow scenarios.
 
 use lib_blockchain::contracts::executor::{
-    ExecutionContext, ContractExecutor, MemoryStorage, DEFAULT_MAX_CALL_DEPTH,
+    ContractExecutor, ExecutionContext, MemoryStorage, DEFAULT_MAX_CALL_DEPTH,
 };
 use lib_blockchain::integration::crypto_integration::PublicKey;
 
@@ -22,10 +22,9 @@ fn test_public_key(id: u8) -> PublicKey {
 fn test_call_depth_initialization() {
     let caller = test_public_key(1);
     let context = ExecutionContext::new(
-        caller,
-        100,      // block_number
-        1000,     // timestamp
-        100_000,  // gas_limit
+        caller, 100,     // block_number
+        1000,    // timestamp
+        100_000, // gas_limit
         [0u8; 32],
     );
 
@@ -51,10 +50,16 @@ fn test_call_depth_increments() {
 
     // Create nested context using with_incremented_depth
     let nested = context.with_incremented_depth();
-    assert!(nested.is_ok(), "Should create nested context when below max depth");
+    assert!(
+        nested.is_ok(),
+        "Should create nested context when below max depth"
+    );
 
     let nested_context = nested.unwrap();
-    assert_eq!(nested_context.call_depth, 2, "Nested context should have depth 2");
+    assert_eq!(
+        nested_context.call_depth, 2,
+        "Nested context should have depth 2"
+    );
     assert_eq!(
         nested_context.max_call_depth, DEFAULT_MAX_CALL_DEPTH,
         "Max depth should be preserved"
@@ -113,7 +118,10 @@ fn test_single_contract_call_succeeds() {
         context.tx_hash,
     );
 
-    assert_eq!(contract_context.call_depth, 0, "with_contract starts at depth 0");
+    assert_eq!(
+        contract_context.call_depth, 0,
+        "with_contract starts at depth 0"
+    );
 
     // Manually increment for nested call simulation
     let mut nested = contract_context.clone();
@@ -207,7 +215,10 @@ fn test_call_depth_does_not_accumulate() {
 
     // Second top-level call (independent from first)
     let context_b = ExecutionContext::new(caller, 100, 1000, 100_000, [0u8; 32]);
-    assert_eq!(context_b.call_depth, 0, "Second call also starts at depth 0");
+    assert_eq!(
+        context_b.call_depth, 0,
+        "Second call also starts at depth 0"
+    );
 
     // Each maintains independent depth
     assert_eq!(context_a.call_depth, context_b.call_depth);
@@ -255,5 +266,8 @@ fn test_executor_context_initialization() {
 /// Test 10: Default max call depth is 10
 #[test]
 fn test_default_max_call_depth_value() {
-    assert_eq!(DEFAULT_MAX_CALL_DEPTH, 10, "DEFAULT_MAX_CALL_DEPTH should be 10");
+    assert_eq!(
+        DEFAULT_MAX_CALL_DEPTH, 10,
+        "DEFAULT_MAX_CALL_DEPTH should be 10"
+    );
 }

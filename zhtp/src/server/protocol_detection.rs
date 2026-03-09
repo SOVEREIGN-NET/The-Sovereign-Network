@@ -9,7 +9,6 @@
 //!
 //! NOTE: TCP/UDP mesh protocols removed - using QUIC only
 
-
 /// Protocol detection for incoming connections
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IncomingProtocol {
@@ -34,7 +33,7 @@ impl IncomingProtocol {
         if data.starts_with("ZHTP/1.0 MESH") || data.starts_with("ZHTP/2.0") {
             return IncomingProtocol::QuicMesh;
         }
-        
+
         // Try to deserialize as QUIC mesh message
         if buffer.len() >= 20 && buffer.len() < 4096 {
             use lib_network::types::mesh_message::ZhtpMeshMessage;
@@ -42,32 +41,38 @@ impl IncomingProtocol {
                 return IncomingProtocol::QuicMesh;
             }
         }
-        
+
         // WiFi Direct detection (for WiFi Direct over QUIC)
         if data.contains("WIFI-DIRECT") || data.contains("P2P-DEVICE") {
             return IncomingProtocol::WiFiDirect;
         }
-        
+
         // Bluetooth detection (for BLE/Classic bridge over QUIC)
-        if data.contains("BLUETOOTH") || data.contains("BT-") || 
-           data.contains("ZHTP-PHONE") || data.contains("RFCOMM") {
+        if data.contains("BLUETOOTH")
+            || data.contains("BT-")
+            || data.contains("ZHTP-PHONE")
+            || data.contains("RFCOMM")
+        {
             return IncomingProtocol::Bluetooth;
         }
-        
+
         // Default to bootstrap for unknown connections
         IncomingProtocol::Bootstrap
     }
-    
+
     /// Check if protocol is mesh-related
     pub fn is_mesh(&self) -> bool {
         matches!(self, IncomingProtocol::QuicMesh)
     }
-    
+
     /// Check if protocol is wireless
     pub fn is_wireless(&self) -> bool {
-        matches!(self, IncomingProtocol::WiFiDirect | IncomingProtocol::Bluetooth)
+        matches!(
+            self,
+            IncomingProtocol::WiFiDirect | IncomingProtocol::Bluetooth
+        )
     }
-    
+
     /// Get protocol name for logging
     pub fn name(&self) -> &'static str {
         match self {
@@ -87,12 +92,18 @@ mod tests {
     #[test]
     fn test_mesh_detection() {
         let buffer = b"ZHTP/1.0 MESH ANNOUNCE";
-        assert_eq!(IncomingProtocol::detect_quic(buffer), IncomingProtocol::QuicMesh);
-        
+        assert_eq!(
+            IncomingProtocol::detect_quic(buffer),
+            IncomingProtocol::QuicMesh
+        );
+
         let buffer = b"ZHTP/2.0 HANDSHAKE";
-        assert_eq!(IncomingProtocol::detect_quic(buffer), IncomingProtocol::QuicMesh);
+        assert_eq!(
+            IncomingProtocol::detect_quic(buffer),
+            IncomingProtocol::QuicMesh
+        );
     }
-    
+
     #[test]
     fn test_protocol_helpers() {
         assert!(IncomingProtocol::QuicMesh.is_mesh());

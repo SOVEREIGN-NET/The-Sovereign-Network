@@ -7,7 +7,7 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Traits for client and output injection
 
-use crate::argument_parsing::{MonitorArgs, MonitorAction, ZhtpCli};
+use crate::argument_parsing::{MonitorAction, MonitorArgs, ZhtpCli};
 use crate::error::CliResult;
 use crate::output::Output;
 
@@ -124,20 +124,32 @@ mod tests {
 
     #[test]
     fn test_monitoring_endpoint_path() {
-        assert_eq!(MonitoringEndpoint::System.endpoint_path(), "/api/v1/monitor/system");
-        assert_eq!(MonitoringEndpoint::Health.endpoint_path(), "/api/v1/monitor/health");
+        assert_eq!(
+            MonitoringEndpoint::System.endpoint_path(),
+            "/api/v1/monitor/system"
+        );
+        assert_eq!(
+            MonitoringEndpoint::Health.endpoint_path(),
+            "/api/v1/monitor/health"
+        );
         assert_eq!(
             MonitoringEndpoint::Performance.endpoint_path(),
             "/api/v1/monitor/performance"
         );
-        assert_eq!(MonitoringEndpoint::Logs.endpoint_path(), "/api/v1/monitor/logs");
+        assert_eq!(
+            MonitoringEndpoint::Logs.endpoint_path(),
+            "/api/v1/monitor/logs"
+        );
     }
 
     #[test]
     fn test_monitoring_endpoint_title() {
         assert_eq!(MonitoringEndpoint::System.title(), "System Status");
         assert_eq!(MonitoringEndpoint::Health.title(), "Component Health");
-        assert_eq!(MonitoringEndpoint::Performance.title(), "Performance Metrics");
+        assert_eq!(
+            MonitoringEndpoint::Performance.title(),
+            "Performance Metrics"
+        );
         assert_eq!(MonitoringEndpoint::Logs.title(), "System Logs");
     }
 

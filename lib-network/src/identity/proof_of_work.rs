@@ -29,7 +29,7 @@
 //! assert!(pow.verify(&node_id, timestamp));
 //! ```
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use blake3;
 use lib_identity::NodeId;
 use serde::{Deserialize, Serialize};
@@ -79,14 +79,13 @@ impl ProofOfWork {
     ///
     /// - `Ok(ProofOfWork)` if valid nonce found
     /// - `Err(...)` if nonce overflows (difficulty too high)
-    pub fn generate(
-        node_id: &NodeId,
-        timestamp: u64,
-        difficulty: u32,
-    ) -> Result<Self> {
+    pub fn generate(node_id: &NodeId, timestamp: u64, difficulty: u32) -> Result<Self> {
         // Sanity check: difficulty must be reasonable
         if difficulty > 32 {
-            return Err(anyhow!("Difficulty too high: {} bits (max: 32)", difficulty));
+            return Err(anyhow!(
+                "Difficulty too high: {} bits (max: 32)",
+                difficulty
+            ));
         }
 
         let mut nonce = 0u64;
@@ -103,11 +102,12 @@ impl ProofOfWork {
             }
 
             // Prevent infinite loop on unreasonable difficulty
-            nonce = nonce.checked_add(1)
-                .ok_or_else(|| anyhow!(
+            nonce = nonce.checked_add(1).ok_or_else(|| {
+                anyhow!(
                     "Nonce overflow - difficulty {} too high (tried 2^64 hashes)",
                     difficulty
-                ))?;
+                )
+            })?;
         }
     }
 
@@ -277,7 +277,7 @@ mod tests {
     fn test_proof_of_work_prevents_timestamp_manipulation() {
         let node_id = NodeId::from_bytes([0xAAu8; 32]);
         let timestamp1 = 1234567890;
-        let timestamp2 = 1234567891;  // Different by 1 second
+        let timestamp2 = 1234567891; // Different by 1 second
         let difficulty = 16;
 
         // Generate PoW for timestamp1
@@ -313,7 +313,7 @@ mod tests {
         let mut hash = [0u8; 32];
         hash[0] = 0x00;
         hash[1] = 0x00;
-        hash[2] = 0xFF;  // First non-zero bit at position 16
+        hash[2] = 0xFF; // First non-zero bit at position 16
 
         assert!(ProofOfWork::verify_difficulty(&hash, 16));
         assert!(!ProofOfWork::verify_difficulty(&hash, 17));
@@ -346,7 +346,10 @@ mod tests {
         let high_load = calculate_adaptive_difficulty(1.0);
 
         assert_eq!(low_load, 16, "Low load should use minimum difficulty");
-        assert_eq!(mid_load, 20, "Medium load should use intermediate difficulty");
+        assert_eq!(
+            mid_load, 20,
+            "Medium load should use intermediate difficulty"
+        );
         assert_eq!(high_load, 24, "High load should use maximum difficulty");
 
         // Verify monotonic increase
@@ -383,7 +386,7 @@ mod tests {
     fn test_difficulty_too_high_rejected() {
         let node_id = NodeId::from_bytes([0xAAu8; 32]);
         let timestamp = 1234567890;
-        let difficulty = 33;  // > 32 bits
+        let difficulty = 33; // > 32 bits
 
         let result = ProofOfWork::generate(&node_id, timestamp, difficulty);
         assert!(result.is_err());
@@ -409,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]  // Expensive test - run with --ignored
+    #[ignore] // Expensive test - run with --ignored
     fn test_proof_of_work_timing_difficulty_16() {
         use std::time::Instant;
 
@@ -424,11 +427,15 @@ mod tests {
         println!("Difficulty 16: {:?}", elapsed);
 
         // Should complete in under 100ms on modern hardware
-        assert!(elapsed.as_millis() < 100, "Difficulty 16 too slow: {:?}", elapsed);
+        assert!(
+            elapsed.as_millis() < 100,
+            "Difficulty 16 too slow: {:?}",
+            elapsed
+        );
     }
 
     #[test]
-    #[ignore]  // Expensive test - run with --ignored
+    #[ignore] // Expensive test - run with --ignored
     fn test_proof_of_work_timing_difficulty_20() {
         use std::time::Instant;
 
@@ -443,6 +450,10 @@ mod tests {
         println!("Difficulty 20: {:?}", elapsed);
 
         // Should complete in under 1 second on modern hardware
-        assert!(elapsed.as_secs() < 1, "Difficulty 20 too slow: {:?}", elapsed);
+        assert!(
+            elapsed.as_secs() < 1,
+            "Difficulty 20 too slow: {:?}",
+            elapsed
+        );
     }
 }

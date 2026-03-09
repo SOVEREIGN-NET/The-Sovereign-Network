@@ -45,8 +45,8 @@ impl EconomicPeriod {
             // 8,600 = 86 epochs of 100 blocks each (~23.89 hours, aligned to epoch boundaries)
             // Changed from 8,640 to enforce Invariant A2 (epoch alignment)
             // Represents daily treasury accounting aligned to validator set transitions
-            EconomicPeriod::Daily => 8_600,       // 86,000 seconds / 10 = 8,600 blocks
-            EconomicPeriod::Monthly => 259_200,   // 2,592,000 seconds / 10 = 259,200 blocks
+            EconomicPeriod::Daily => 8_600, // 86,000 seconds / 10 = 8,600 blocks
+            EconomicPeriod::Monthly => 259_200, // 2,592,000 seconds / 10 = 259,200 blocks
             EconomicPeriod::Quarterly => 777_600, // 7,776,000 seconds / 10 = 777,600 blocks
         }
     }
@@ -587,7 +587,8 @@ mod tests {
     #[test]
     fn dao_metadata_validation_and_serialization() {
         let allocation = TreasuryAllocation::new(50, Some(6)).unwrap();
-        let metadata = DAOMetadata::new(DAOType::NP, TokenClass::DaoNp, allocation.clone()).unwrap();
+        let metadata =
+            DAOMetadata::new(DAOType::NP, TokenClass::DaoNp, allocation.clone()).unwrap();
         metadata.validate().unwrap();
 
         let serialized = bincode::serialize(&metadata).expect("serialize metadata");
@@ -610,10 +611,10 @@ mod tests {
         // Invariant A1: Same input always yields same output
         assert_eq!(EconomicPeriod::Daily.block_height(), 8_600);
         assert_eq!(EconomicPeriod::Daily.block_height(), 8_600);
-        
+
         assert_eq!(EconomicPeriod::Monthly.block_height(), 259_200);
         assert_eq!(EconomicPeriod::Monthly.block_height(), 259_200);
-        
+
         assert_eq!(EconomicPeriod::Quarterly.block_height(), 777_600);
         assert_eq!(EconomicPeriod::Quarterly.block_height(), 777_600);
     }
@@ -626,11 +627,11 @@ mod tests {
         assert!(!EconomicPeriod::Daily.is_boundary(8_641));
         // Height 0 is not a boundary
         assert!(!EconomicPeriod::Daily.is_boundary(0));
-        
+
         // Monthly: 259,200 is boundary
         assert!(EconomicPeriod::Monthly.is_boundary(259_200));
         assert!(!EconomicPeriod::Monthly.is_boundary(259_201));
-        
+
         // Quarterly: 777,600 is boundary
         assert!(EconomicPeriod::Quarterly.is_boundary(777_600));
         assert!(!EconomicPeriod::Quarterly.is_boundary(777_601));
@@ -644,11 +645,11 @@ mod tests {
         assert_eq!(EconomicPeriod::Daily.next_boundary(8_600), 17_200);
         // Next Daily boundary after 8,639 is 8,640
         assert_eq!(EconomicPeriod::Daily.next_boundary(8_599), 8_600);
-        
+
         // Monthly boundaries
         assert_eq!(EconomicPeriod::Monthly.next_boundary(1), 259_200);
         assert_eq!(EconomicPeriod::Monthly.next_boundary(259_200), 518_400);
-        
+
         // Quarterly boundaries
         assert_eq!(EconomicPeriod::Quarterly.next_boundary(1), 777_600);
         assert_eq!(EconomicPeriod::Quarterly.next_boundary(777_600), 1_555_200);
@@ -658,24 +659,24 @@ mod tests {
     fn test_economic_period_id_monotonic() {
         // Period IDs must increase monotonically
         let period = EconomicPeriod::Daily;
-        
+
         let id_at_0 = period.period_id_for_height(0);
         let id_at_1 = period.period_id_for_height(1);
         let id_at_8600 = period.period_id_for_height(8_600);
         let id_at_8641 = period.period_id_for_height(8_641);
         let id_at_17200 = period.period_id_for_height(17_200);
-        
+
         // All in first period (0)
         assert_eq!(id_at_0, 0);
         assert_eq!(id_at_1, 0);
-        
+
         // Boundary: moves to period 1
         assert_eq!(id_at_8600, 1);
         assert_eq!(id_at_8641, 1);
-        
+
         // Next boundary: moves to period 2
         assert_eq!(id_at_17200, 2);
-        
+
         // Verify monotonicity
         assert!(id_at_0 <= id_at_1);
         assert!(id_at_1 <= id_at_8600);
@@ -685,15 +686,27 @@ mod tests {
 
     #[test]
     fn test_economic_period_round_trip() {
-        assert_eq!(EconomicPeriod::from_str("daily"), Some(EconomicPeriod::Daily));
-        assert_eq!(EconomicPeriod::from_str("DAILY"), Some(EconomicPeriod::Daily));
-        assert_eq!(EconomicPeriod::from_str("monthly"), Some(EconomicPeriod::Monthly));
-        assert_eq!(EconomicPeriod::from_str("QUARTERLY"), Some(EconomicPeriod::Quarterly));
-        
+        assert_eq!(
+            EconomicPeriod::from_str("daily"),
+            Some(EconomicPeriod::Daily)
+        );
+        assert_eq!(
+            EconomicPeriod::from_str("DAILY"),
+            Some(EconomicPeriod::Daily)
+        );
+        assert_eq!(
+            EconomicPeriod::from_str("monthly"),
+            Some(EconomicPeriod::Monthly)
+        );
+        assert_eq!(
+            EconomicPeriod::from_str("QUARTERLY"),
+            Some(EconomicPeriod::Quarterly)
+        );
+
         assert_eq!(EconomicPeriod::Daily.as_str(), "daily");
         assert_eq!(EconomicPeriod::Monthly.as_str(), "monthly");
         assert_eq!(EconomicPeriod::Quarterly.as_str(), "quarterly");
-        
+
         assert!(EconomicPeriod::from_str("invalid").is_none());
     }
 
@@ -704,7 +717,7 @@ mod tests {
         // to prevent straddle across validator changes.
         // Assuming epoch_length = 100 blocks (standard validator epoch length)
         let epoch_length = 100u64;
-        
+
         // All period heights must be exact multiples of epoch_length
         // This enforces alignment to validator set transitions
         assert_eq!(
@@ -722,9 +735,13 @@ mod tests {
             0,
             "Quarterly period must align to epoch boundaries (invariant A2)"
         );
-        
+
         // Verify that all boundaries are exact multiples of epoch_length
-        for period in [EconomicPeriod::Daily, EconomicPeriod::Monthly, EconomicPeriod::Quarterly] {
+        for period in [
+            EconomicPeriod::Daily,
+            EconomicPeriod::Monthly,
+            EconomicPeriod::Quarterly,
+        ] {
             let period_height = period.block_height();
             assert_eq!(
                 period_height % epoch_length,
@@ -734,7 +751,7 @@ mod tests {
                 period_height,
                 epoch_length
             );
-            
+
             // Verify that all calculated boundaries respect the alignment invariant
             for multiple in 1..=3 {
                 let boundary = period_height * multiple;
@@ -765,8 +782,9 @@ mod tests {
         // Create with required fields only
         let update = DifficultyParameterUpdateData::new(
             14 * 24 * 60 * 60, // 2 weeks in seconds
-            2016,             // blocks between adjustments (like Bitcoin)
-        ).expect("valid parameters");
+            2016,              // blocks between adjustments (like Bitcoin)
+        )
+        .expect("valid parameters");
 
         assert_eq!(update.target_timespan, 14 * 24 * 60 * 60);
         assert_eq!(update.adjustment_interval, 2016);
@@ -777,11 +795,12 @@ mod tests {
     #[test]
     fn test_difficulty_parameter_update_with_factors() {
         let update = DifficultyParameterUpdateData::new_with_factors(
-            604800,   // 1 week in seconds
-            1008,     // blocks
-            Some(25), // min factor 25%
+            604800,    // 1 week in seconds
+            1008,      // blocks
+            Some(25),  // min factor 25%
             Some(400), // max factor 400%
-        ).expect("valid parameters");
+        )
+        .expect("valid parameters");
 
         assert_eq!(update.target_timespan, 604800);
         assert_eq!(update.adjustment_interval, 1008);
@@ -793,14 +812,20 @@ mod tests {
     fn test_difficulty_parameter_update_validation_zero_timespan() {
         let result = DifficultyParameterUpdateData::new(0, 2016);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "target_timespan must be greater than 0");
+        assert_eq!(
+            result.unwrap_err(),
+            "target_timespan must be greater than 0"
+        );
     }
 
     #[test]
     fn test_difficulty_parameter_update_validation_zero_interval() {
         let result = DifficultyParameterUpdateData::new(604800, 0);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "adjustment_interval must be greater than 0");
+        assert_eq!(
+            result.unwrap_err(),
+            "adjustment_interval must be greater than 0"
+        );
     }
 
     #[test]
@@ -836,35 +861,28 @@ mod tests {
             Some(25),  // max = 25 (invalid: less than min)
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "max_adjustment_factor must be >= min_adjustment_factor");
+        assert_eq!(
+            result.unwrap_err(),
+            "max_adjustment_factor must be >= min_adjustment_factor"
+        );
     }
 
     #[test]
     fn test_difficulty_parameter_update_validation_equal_factors() {
         // Edge case: min == max should be valid
-        let result = DifficultyParameterUpdateData::new_with_factors(
-            604800,
-            2016,
-            Some(100),
-            Some(100),
-        );
+        let result =
+            DifficultyParameterUpdateData::new_with_factors(604800, 2016, Some(100), Some(100));
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_difficulty_parameter_update_target_block_time() {
         // Bitcoin-like: 2 weeks / 2016 blocks = 600 seconds (10 minutes)
-        let bitcoin_like = DifficultyParameterUpdateData::new(
-            14 * 24 * 60 * 60,
-            2016,
-        ).unwrap();
+        let bitcoin_like = DifficultyParameterUpdateData::new(14 * 24 * 60 * 60, 2016).unwrap();
         assert_eq!(bitcoin_like.target_block_time_secs(), 600);
 
         // SOV-like: 1 day / 8640 blocks = 10 seconds
-        let zhtp_like = DifficultyParameterUpdateData::new(
-            24 * 60 * 60,
-            8640,
-        ).unwrap();
+        let zhtp_like = DifficultyParameterUpdateData::new(24 * 60 * 60, 8640).unwrap();
         assert_eq!(zhtp_like.target_block_time_secs(), 10);
     }
 
@@ -881,15 +899,12 @@ mod tests {
 
     #[test]
     fn test_difficulty_parameter_update_serialization() {
-        let update = DifficultyParameterUpdateData::new_with_factors(
-            604800,
-            2016,
-            Some(25),
-            Some(400),
-        ).unwrap();
+        let update =
+            DifficultyParameterUpdateData::new_with_factors(604800, 2016, Some(25), Some(400))
+                .unwrap();
 
         let serialized = bincode::serialize(&update).expect("serialize update");
-        let deserialized: DifficultyParameterUpdateData = 
+        let deserialized: DifficultyParameterUpdateData =
             bincode::deserialize(&serialized).expect("deserialize update");
 
         assert_eq!(update, deserialized);

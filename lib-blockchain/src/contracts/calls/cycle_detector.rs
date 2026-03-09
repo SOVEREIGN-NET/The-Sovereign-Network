@@ -145,9 +145,7 @@ impl CycleDetector {
                 } else if !visited.contains(neighbor) {
                     // Not visited yet - add the real call edge to stack and recurse
                     rec_stack.push((node, *neighbor, method.clone()));
-                    Self::dfs_find_cycles(
-                        *neighbor, graph, visited, visiting, rec_stack, cycles,
-                    );
+                    Self::dfs_find_cycles(*neighbor, graph, visited, visiting, rec_stack, cycles);
                     rec_stack.pop();
                 }
             }
@@ -160,11 +158,10 @@ impl CycleDetector {
     ///
     /// Given a call chain and a new call, determine if the new call
     /// would complete a cycle
-    pub fn path_creates_cycle(
-        call_chain: &[(ContractId, String)],
-        new_callee: ContractId,
-    ) -> bool {
-        call_chain.iter().any(|(contract, _)| *contract == new_callee)
+    pub fn path_creates_cycle(call_chain: &[(ContractId, String)], new_callee: ContractId) -> bool {
+        call_chain
+            .iter()
+            .any(|(contract, _)| *contract == new_callee)
     }
 
     /// Get all contracts involved in a cycle
@@ -243,25 +240,16 @@ mod tests {
         ];
 
         // New call to contract 1 would create cycle
-        assert!(CycleDetector::would_create_cycle(
-            &call_stack,
-            [1u8; 32]
-        ));
+        assert!(CycleDetector::would_create_cycle(&call_stack, [1u8; 32]));
 
         // New call to contract 3 would not create cycle
-        assert!(!CycleDetector::would_create_cycle(
-            &call_stack,
-            [3u8; 32]
-        ));
+        assert!(!CycleDetector::would_create_cycle(&call_stack, [3u8; 32]));
     }
 
     #[test]
     fn test_would_create_cycle_empty_stack() {
         let call_stack = vec![];
-        assert!(!CycleDetector::would_create_cycle(
-            &call_stack,
-            [1u8; 32]
-        ));
+        assert!(!CycleDetector::would_create_cycle(&call_stack, [1u8; 32]));
     }
 
     #[test]
@@ -306,10 +294,7 @@ mod tests {
     fn test_shortest_cycle() {
         let cycles = vec![
             CallCycle {
-                cycle_path: vec![
-                    ([1u8; 32], "m".to_string()),
-                    ([2u8; 32], "m".to_string()),
-                ],
+                cycle_path: vec![([1u8; 32], "m".to_string()), ([2u8; 32], "m".to_string())],
                 cycle_length: 2,
             },
             CallCycle {

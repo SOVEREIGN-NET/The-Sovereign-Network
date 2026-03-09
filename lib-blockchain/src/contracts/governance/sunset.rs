@@ -82,26 +82,18 @@ pub enum SunsetError {
 impl std::fmt::Display for SunsetError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SunsetError::NotInitialized =>
-                write!(f, "Sunset contract not yet initialized"),
-            SunsetError::AlreadyInitialized =>
-                write!(f, "Sunset contract already initialized"),
-            SunsetError::Unauthorized =>
-                write!(f, "Unauthorized operation"),
-            SunsetError::InvalidStateTransition =>
-                write!(f, "Invalid state transition"),
-            SunsetError::MinimumDurationNotMet =>
-                write!(f, "Minimum duration not met for this transition"),
-            SunsetError::TimelockNotExpired =>
-                write!(f, "Timelock has not expired"),
-            SunsetError::InsufficientVotingPower =>
-                write!(f, "Insufficient voting power"),
-            SunsetError::ProposalNotFound =>
-                write!(f, "Proposal not found"),
-            SunsetError::InvalidState =>
-                write!(f, "Invalid state"),
-            SunsetError::Overflow =>
-                write!(f, "Arithmetic overflow"),
+            SunsetError::NotInitialized => write!(f, "Sunset contract not yet initialized"),
+            SunsetError::AlreadyInitialized => write!(f, "Sunset contract already initialized"),
+            SunsetError::Unauthorized => write!(f, "Unauthorized operation"),
+            SunsetError::InvalidStateTransition => write!(f, "Invalid state transition"),
+            SunsetError::MinimumDurationNotMet => {
+                write!(f, "Minimum duration not met for this transition")
+            }
+            SunsetError::TimelockNotExpired => write!(f, "Timelock has not expired"),
+            SunsetError::InsufficientVotingPower => write!(f, "Insufficient voting power"),
+            SunsetError::ProposalNotFound => write!(f, "Proposal not found"),
+            SunsetError::InvalidState => write!(f, "Invalid state"),
+            SunsetError::Overflow => write!(f, "Arithmetic overflow"),
         }
     }
 }
@@ -336,7 +328,9 @@ impl Sunset {
         }
 
         let proposal_id = self.next_proposal_id;
-        let execution_at = self.current_timestamp.checked_add(SUNSET_STATE_TRANSITION_TIMELOCK)
+        let execution_at = self
+            .current_timestamp
+            .checked_add(SUNSET_STATE_TRANSITION_TIMELOCK)
             .ok_or(SunsetError::Overflow)?;
 
         let proposal = StateTransitionProposal {
@@ -351,7 +345,9 @@ impl Sunset {
         };
 
         self.proposals.insert(proposal_id, proposal);
-        self.next_proposal_id = self.next_proposal_id.checked_add(1)
+        self.next_proposal_id = self
+            .next_proposal_id
+            .checked_add(1)
             .ok_or(SunsetError::Overflow)?;
 
         Ok(proposal_id)
@@ -380,14 +376,20 @@ impl Sunset {
             return Err(SunsetError::NotInitialized);
         }
 
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or(SunsetError::ProposalNotFound)?;
 
         if vote_for {
-            proposal.votes_for = proposal.votes_for.checked_add(voting_power)
+            proposal.votes_for = proposal
+                .votes_for
+                .checked_add(voting_power)
                 .ok_or(SunsetError::Overflow)?;
         } else {
-            proposal.votes_against = proposal.votes_against.checked_add(voting_power)
+            proposal.votes_against = proposal
+                .votes_against
+                .checked_add(voting_power)
                 .ok_or(SunsetError::Overflow)?;
         }
 
@@ -411,7 +413,9 @@ impl Sunset {
             return Err(SunsetError::NotInitialized);
         }
 
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or(SunsetError::ProposalNotFound)?;
 
         if self.current_timestamp < proposal.execution_at {

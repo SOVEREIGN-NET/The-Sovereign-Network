@@ -16,10 +16,7 @@ fn committee_update_through_governance_path_activates_at_epoch_boundary() {
     let mut state = OracleState::default();
 
     // Simulate genesis bootstrap: set initial committee via constructor
-    state.committee = OracleCommitteeState::new(
-        vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        None,
-    );
+    state.committee = OracleCommitteeState::new(vec![[1u8; 32], [2u8; 32], [3u8; 32]], None);
     assert_eq!(state.committee.members().len(), 3);
     assert_eq!(state.committee.threshold(), 3); // floor(2*3/3) + 1 = 3
 
@@ -69,16 +66,11 @@ fn schedule_committee_update_for_test_validates_input() {
 #[test]
 fn committee_members_are_normalized() {
     // Add members in unsorted order with duplicates
-    let committee = OracleCommitteeState::new(
-        vec![[3u8; 32], [1u8; 32], [2u8; 32], [1u8; 32]],
-        None,
-    );
+    let committee =
+        OracleCommitteeState::new(vec![[3u8; 32], [1u8; 32], [2u8; 32], [1u8; 32]], None);
 
     // Should be normalized to sorted, deduplicated
-    assert_eq!(
-        committee.members(),
-        &[[1u8; 32], [2u8; 32], [3u8; 32]]
-    );
+    assert_eq!(committee.members(), &[[1u8; 32], [2u8; 32], [3u8; 32]]);
     assert_eq!(committee.members().len(), 3);
 }
 
@@ -97,10 +89,8 @@ fn committee_threshold_calculation() {
     ];
 
     for (num_members, expected_threshold) in test_cases.iter() {
-        let members: Vec<[u8; 32]> = (0..*num_members)
-            .map(|i| [i as u8; 32])
-            .collect();
-        
+        let members: Vec<[u8; 32]> = (0..*num_members).map(|i| [i as u8; 32]).collect();
+
         let committee = OracleCommitteeState::new(members, None);
         assert_eq!(
             committee.threshold(),
@@ -122,7 +112,7 @@ fn pending_committee_update_members_are_normalized() {
 
     let committee = OracleCommitteeState::new(vec![], Some(pending));
     let pending_ref = committee.pending_update().expect("pending must exist");
-    
+
     // Should be normalized
     assert_eq!(pending_ref.members, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
 }
@@ -136,7 +126,7 @@ fn subsequent_schedule_replaces_pending_update() {
     state
         .schedule_committee_update_for_test(vec![[1u8; 32], [2u8; 32]], 11)
         .expect("schedule must succeed");
-    
+
     assert_eq!(
         state.committee.pending_update().unwrap().members,
         vec![[1u8; 32], [2u8; 32]]
@@ -146,7 +136,7 @@ fn subsequent_schedule_replaces_pending_update() {
     state
         .schedule_committee_update_for_test(vec![[3u8; 32], [4u8; 32], [5u8; 32]], 11)
         .expect("schedule must succeed");
-    
+
     assert_eq!(
         state.committee.pending_update().unwrap().members,
         vec![[3u8; 32], [4u8; 32], [5u8; 32]]
@@ -179,9 +169,9 @@ fn genesis_bootstrap_creates_initial_committee() {
     state
         .schedule_committee_update_for_test(
             vec![[0x01; 32], [0x02; 32], [0x05; 32]], // Add validator 5, remove 3 and 4
-            1, // Activate at epoch 1
-            0, // Current epoch
-            None, // No source proposal
+            1,                                        // Activate at epoch 1
+            0,                                        // Current epoch
+            None,                                     // No source proposal
         )
         .expect("schedule must succeed");
 
@@ -204,7 +194,7 @@ fn empty_committee_threshold_is_one() {
 /// Test that committee changes after genesis use the governance path.
 ///
 /// This verifies runtime behavior: post-genesis, committee updates must go through
-/// `schedule_committee_update_for_test()` → `apply_pending_updates()`. 
+/// `schedule_committee_update_for_test()` → `apply_pending_updates()`.
 ///
 /// For compile-time verification that `set_members_genesis_only` is unreachable from
 /// external crates, see the `compile_fail` doctest on `OracleCommitteeState::set_members_genesis_only`.
@@ -218,12 +208,12 @@ fn committee_changes_require_governance_path() {
 
     // Post-genesis: committee changes must go through schedule_committee_update
     // (The pub(crate) visibility enforces this at compile time for production code)
-    
+
     // Verify the governance path works
     state
         .schedule_committee_update_for_test(vec![[3u8; 32]], 6)
         .expect("governance schedule must succeed");
-    
+
     state.apply_pending_updates(6);
     assert_eq!(state.committee.members().len(), 1);
     assert_eq!(state.committee.members(), &[[3u8; 32]]);
@@ -233,32 +223,30 @@ fn committee_changes_require_governance_path() {
 #[test]
 fn test_oracle_updates_activate_once_at_epoch_boundary() {
     let mut state = OracleState::default();
-    
+
     // Set up initial committee
-    state.committee = OracleCommitteeState::new(
-        vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        None,
-    );
+    state.committee = OracleCommitteeState::new(vec![[1u8; 32], [2u8; 32], [3u8; 32]], None);
     let initial_committee = state.committee.members().to_vec();
-    
+
     // Schedule committee update for epoch 2 (members get sorted)
     let new_committee = vec![[8u8; 32], [9u8; 32]];
-    state.schedule_committee_update(new_committee.clone(), 2, 0, None)
+    state
+        .schedule_committee_update(new_committee.clone(), 2, 0, None)
         .expect("schedule must succeed");
-    
+
     // Verify update is pending but not active
     assert!(state.committee.pending_update().is_some());
-    
+
     // Apply at epoch 1 - should NOT activate (scheduled for epoch 2)
     state.apply_pending_updates(1);
     assert_eq!(state.committee.members().to_vec(), initial_committee);
     assert!(state.committee.pending_update().is_some());
-    
+
     // Apply at epoch 2 - SHOULD activate
     state.apply_pending_updates(2);
     assert_eq!(state.committee.members().to_vec(), new_committee);
     assert!(state.committee.pending_update().is_none());
-    
+
     // Apply again at epoch 2 - should NOT re-activate
     let committee_before = state.committee.members().to_vec();
     state.apply_pending_updates(2);
@@ -270,53 +258,75 @@ fn test_oracle_updates_activate_once_at_epoch_boundary() {
 #[test]
 fn test_epoch_tracking_prevents_double_application() {
     let mut state = OracleState::default();
-    
+
     // Set up initial committee
     state.committee = OracleCommitteeState::new(vec![[1u8; 32]], None);
-    
+
     // Schedule update for epoch 2
-    state.schedule_committee_update(vec![[2u8; 32], [3u8; 32]], 2, 0, None)
+    state
+        .schedule_committee_update(vec![[2u8; 32], [3u8; 32]], 2, 0, None)
         .expect("schedule must succeed");
-    
+
     let epoch_duration_secs = 300u64; // Default epoch duration
     let mut last_processed_timestamp = 0u64;
-    
+
     // Block at epoch 1 - update should NOT apply (scheduled for epoch 2)
     let block_timestamp_epoch1 = 1 * epoch_duration_secs;
-    
+
     // Verify epoch calculation
     assert_eq!(state.epoch_id(block_timestamp_epoch1), 1);
     let block_epoch = state.epoch_id(block_timestamp_epoch1);
     let last_processed_epoch = state.epoch_id(last_processed_timestamp);
-    
+
     if block_epoch > last_processed_epoch {
         state.apply_pending_updates(block_epoch);
         last_processed_timestamp = block_timestamp_epoch1;
     }
-    assert_eq!(state.committee.members().len(), 1, "Update should not apply before scheduled epoch");
-    assert!(state.committee.pending_update().is_some(), "Update should still be pending");
-    
+    assert_eq!(
+        state.committee.members().len(),
+        1,
+        "Update should not apply before scheduled epoch"
+    );
+    assert!(
+        state.committee.pending_update().is_some(),
+        "Update should still be pending"
+    );
+
     // Block at epoch 2 - should apply update
     let block_timestamp_epoch2 = 2 * epoch_duration_secs;
     let block_epoch = state.epoch_id(block_timestamp_epoch2);
     let last_processed_epoch = state.epoch_id(last_processed_timestamp);
-    
+
     if block_epoch > last_processed_epoch {
         state.apply_pending_updates(block_epoch);
         last_processed_timestamp = block_timestamp_epoch2;
     }
-    assert_eq!(state.committee.members().len(), 2, "Update should apply at scheduled epoch");
-    assert!(state.committee.pending_update().is_none(), "Pending update should be cleared");
-    
+    assert_eq!(
+        state.committee.members().len(),
+        2,
+        "Update should apply at scheduled epoch"
+    );
+    assert!(
+        state.committee.pending_update().is_none(),
+        "Pending update should be cleared"
+    );
+
     // Another block in same epoch 2 - should NOT re-apply
     let block_timestamp_epoch2_later = 2 * epoch_duration_secs + 100;
     let block_epoch = state.epoch_id(block_timestamp_epoch2_later);
     let last_processed_epoch = state.epoch_id(last_processed_timestamp);
-    
-    assert_eq!(block_epoch, last_processed_epoch, "Both blocks should be in same epoch");
-    
+
+    assert_eq!(
+        block_epoch, last_processed_epoch,
+        "Both blocks should be in same epoch"
+    );
+
     if block_epoch > last_processed_epoch {
         state.apply_pending_updates(block_epoch);
     }
-    assert_eq!(state.committee.members().len(), 2, "No double-application within same epoch");
+    assert_eq!(
+        state.committee.members().len(),
+        2,
+        "No double-application within same epoch"
+    );
 }

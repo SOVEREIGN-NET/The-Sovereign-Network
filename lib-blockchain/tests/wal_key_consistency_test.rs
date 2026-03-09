@@ -8,9 +8,9 @@
 
 #![cfg(feature = "persistent-contracts")]
 
+use anyhow::Result;
 use lib_blockchain::contracts::executor::storage::{PersistentStorage, WalRecoveryManager};
 use tempfile::TempDir;
-use anyhow::Result;
 
 /// Test that WAL keys written by executor can be read by recovery manager
 #[test]
@@ -60,7 +60,7 @@ fn test_height_extraction_from_executor_keys() -> Result<()> {
             "Recovery manager should detect incomplete block at height {}",
             height
         );
-        
+
         // Clean up for next iteration
         storage.set(&wal_key, &[])?;
     }

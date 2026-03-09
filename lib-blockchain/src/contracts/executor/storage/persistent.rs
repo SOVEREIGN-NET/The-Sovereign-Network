@@ -30,8 +30,7 @@ impl PersistentStorage {
     pub fn new(db_path: &str, tree_name: Option<&str>) -> StorageResult<Self> {
         let tree_name = tree_name.unwrap_or("contracts");
 
-        let db = sled::open(db_path)
-            .map_err(|e| StorageError::BackendError(e.to_string()))?;
+        let db = sled::open(db_path).map_err(|e| StorageError::BackendError(e.to_string()))?;
 
         Ok(PersistentStorage {
             db: Arc::new(db),
@@ -52,14 +51,16 @@ impl PersistentStorage {
 
     /// Get the underlying Sled tree reference
     fn get_tree(&self) -> StorageResult<sled::Tree> {
-        self.db.open_tree(self.tree_name.as_bytes())
+        self.db
+            .open_tree(self.tree_name.as_bytes())
             .map_err(|e| StorageError::BackendError(e.to_string()))
     }
 
     /// Flush all pending writes to disk
     pub fn flush(&self) -> StorageResult<()> {
         let tree = self.get_tree()?;
-        let _bytes_written = tree.flush()
+        let _bytes_written = tree
+            .flush()
             .map_err(|e| StorageError::WriteFailed(e.to_string()))?;
         Ok(())
     }
@@ -151,32 +152,28 @@ impl PersistentStorage {
 
 impl ContractStorage for PersistentStorage {
     fn get(&self, key: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
-        let tree = self.get_tree()
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let tree = self.get_tree().map_err(|e| anyhow::anyhow!(e))?;
         tree.get(key)
             .map_err(|e| anyhow::anyhow!(e.to_string()))
             .map(|opt| opt.map(|val| val.to_vec()))
     }
 
     fn set(&self, key: &[u8], value: &[u8]) -> anyhow::Result<()> {
-        let tree = self.get_tree()
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let tree = self.get_tree().map_err(|e| anyhow::anyhow!(e))?;
         tree.insert(key, value)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(())
     }
 
     fn delete(&self, key: &[u8]) -> anyhow::Result<()> {
-        let tree = self.get_tree()
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let tree = self.get_tree().map_err(|e| anyhow::anyhow!(e))?;
         tree.remove(key)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(())
     }
 
     fn exists(&self, key: &[u8]) -> anyhow::Result<bool> {
-        let tree = self.get_tree()
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let tree = self.get_tree().map_err(|e| anyhow::anyhow!(e))?;
         tree.contains_key(key)
             .map_err(|e| anyhow::anyhow!(e.to_string()))
     }

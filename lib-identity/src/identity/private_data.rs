@@ -5,8 +5,8 @@
 //! - This struct contains only recovery material (UX data, not crypto root)
 //! - No "seed" field is allowed to exist (it created collisions)
 
-use lib_crypto::Hash;
 use crate::guardian::GuardianConfig;
+use lib_crypto::Hash;
 
 /// Identity recovery data (never transmitted, never used for signing)
 ///

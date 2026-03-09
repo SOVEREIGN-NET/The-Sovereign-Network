@@ -8,13 +8,13 @@ use crate::dao::{
     DaoTreasury, DaoVote, DaoVoteChoice, DaoVoteTally, GovernanceParameterUpdate,
     GovernanceParameterValue, PrivacyLevel,
 };
+use crate::types::ConsensusConfig;
 use crate::validators::validator_manager::{MAX_VALIDATORS_HARD_CAP, MIN_VALIDATORS};
 use anyhow::Result;
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::types::ConsensusConfig;
 
 /// DAO governance engine (blockchain-backed)
 #[derive(Debug, Clone)]
@@ -118,7 +118,7 @@ impl DaoEngine {
             DaoProposalType::ProtocolUpgrade => 30,    // 30% quorum for protocol changes
             DaoProposalType::UbiDistribution => 20,    // 20% quorum for UBI changes
             DaoProposalType::DifficultyParameterUpdate => 30, // 30% quorum for difficulty changes (affects consensus)
-            _ => 10,                                   // 10% quorum for general governance
+            _ => 10,                                          // 10% quorum for general governance
         };
 
         // Create proposal with validation
@@ -136,10 +136,11 @@ impl DaoEngine {
             current_time,
             self.get_current_block_height(),
             None,
-            None, // Can be set later when proposal details are finalized
-            None, // Will be calculated based on proposal type
+            None,                 // Can be set later when proposal details are finalized
+            None,                 // Will be calculated based on proposal type
             PrivacyLevel::Public, // Default to public visibility
-        ).map_err(|e| anyhow::anyhow!("Failed to create proposal: {}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to create proposal: {}", e))?;
 
         // NOTE: Proposal storage happens on blockchain via DaoProposal transaction
         // This method only validates and returns the proposal ID for transaction creation
@@ -155,7 +156,7 @@ impl DaoEngine {
     }
 
     /// Create a difficulty parameter update proposal
-    /// 
+    ///
     /// This is a convenience method for creating proposals to update the blockchain's
     /// difficulty adjustment parameters through DAO governance.
     ///
@@ -178,7 +179,7 @@ impl DaoEngine {
     /// # Example
     /// ```ignore
     /// use lib_consensus::DaoEngine;
-    /// 
+    ///
     /// let mut engine = DaoEngine::new();
     /// let proposal_id = engine.create_difficulty_update_proposal(
     ///     proposer_id,
@@ -203,7 +204,9 @@ impl DaoEngine {
             return Err(anyhow::anyhow!("target_timespan must be greater than 0"));
         }
         if adjustment_interval == 0 {
-            return Err(anyhow::anyhow!("adjustment_interval must be greater than 0"));
+            return Err(anyhow::anyhow!(
+                "adjustment_interval must be greater than 0"
+            ));
         }
         if let Some(min_factor) = min_adjustment_factor {
             if min_factor < 1 {
@@ -215,9 +218,12 @@ impl DaoEngine {
                 return Err(anyhow::anyhow!("max_adjustment_factor must be >= 1"));
             }
         }
-        if let (Some(min_factor), Some(max_factor)) = (min_adjustment_factor, max_adjustment_factor) {
+        if let (Some(min_factor), Some(max_factor)) = (min_adjustment_factor, max_adjustment_factor)
+        {
             if max_factor < min_factor {
-                return Err(anyhow::anyhow!("max_adjustment_factor must be >= min_adjustment_factor"));
+                return Err(anyhow::anyhow!(
+                    "max_adjustment_factor must be >= min_adjustment_factor"
+                ));
             }
         }
 
@@ -241,7 +247,10 @@ impl DaoEngine {
 
         // Calculate and include target block time
         let target_block_time_secs = target_timespan / adjustment_interval;
-        description.push_str(&format!("\n\nTarget Block Time: {} seconds", target_block_time_secs));
+        description.push_str(&format!(
+            "\n\nTarget Block Time: {} seconds",
+            target_block_time_secs
+        ));
 
         // Build execution parameters
         let updates = vec![
@@ -395,8 +404,9 @@ impl DaoEngine {
             }
             // Mint/burn authorizations don't modify ConsensusConfig —
             // they are forwarded to the Treasury Kernel for execution.
-            DaoExecutionAction::MintAuthorization(_)
-            | DaoExecutionAction::BurnAuthorization(_) => Ok(()),
+            DaoExecutionAction::MintAuthorization(_) | DaoExecutionAction::BurnAuthorization(_) => {
+                Ok(())
+            }
         }
     }
 
@@ -425,20 +435,28 @@ impl DaoEngine {
                 }
                 GovernanceParameterValue::ProposeTimeout(value) => config.propose_timeout = *value,
                 GovernanceParameterValue::PrevoteTimeout(value) => config.prevote_timeout = *value,
-                GovernanceParameterValue::PrecommitTimeout(value) => config.precommit_timeout = *value,
+                GovernanceParameterValue::PrecommitTimeout(value) => {
+                    config.precommit_timeout = *value
+                }
                 GovernanceParameterValue::MaxTransactionsPerBlock(value) => {
                     config.max_transactions_per_block = *value;
                 }
                 GovernanceParameterValue::MaxDifficulty(value) => config.max_difficulty = *value,
-                GovernanceParameterValue::TargetDifficulty(value) => config.target_difficulty = *value,
+                GovernanceParameterValue::TargetDifficulty(value) => {
+                    config.target_difficulty = *value
+                }
                 GovernanceParameterValue::ByzantineThreshold(value) => {
                     config.byzantine_threshold = *value;
                 }
-                GovernanceParameterValue::SlashDoubleSign(value) => config.slash_double_sign = *value,
+                GovernanceParameterValue::SlashDoubleSign(value) => {
+                    config.slash_double_sign = *value
+                }
                 GovernanceParameterValue::SlashLiveness(value) => config.slash_liveness = *value,
-                GovernanceParameterValue::DevelopmentMode(value) => config.development_mode = *value,
+                GovernanceParameterValue::DevelopmentMode(value) => {
+                    config.development_mode = *value
+                }
                 // Blockchain difficulty parameters are handled by DifficultyManager,
-                // not ConsensusConfig. These parameters are validated here but applied 
+                // not ConsensusConfig. These parameters are validated here but applied
                 // separately through the following flow:
                 //
                 // 1. DAO proposal with BlockchainInitialDifficulty/AdjustmentInterval/TargetTimespan
@@ -457,6 +475,7 @@ impl DaoEngine {
                 | GovernanceParameterValue::TxFeeBase(_)
                 | GovernanceParameterValue::TxFeeBytesPerSov(_)
                 | GovernanceParameterValue::TxFeeWitnessCap(_)
+                | GovernanceParameterValue::TokenCreationFee(_)
                 | GovernanceParameterValue::OracleCommitteeMembers(_)
                 | GovernanceParameterValue::OracleEpochDurationSecs(_)
                 | GovernanceParameterValue::OracleMaxSourceAgeSecs(_)
@@ -474,7 +493,9 @@ impl DaoEngine {
     /// Validate governance parameter updates before application
     pub fn validate_governance_update(&self, update: &GovernanceParameterUpdate) -> Result<()> {
         if update.updates.is_empty() {
-            return Err(anyhow::anyhow!("Governance update must include at least one change"));
+            return Err(anyhow::anyhow!(
+                "Governance update must include at least one change"
+            ));
         }
 
         for param in &update.updates {
@@ -550,14 +571,14 @@ impl DaoEngine {
                 }
                 GovernanceParameterValue::TargetDifficulty(value) => {
                     if *value == 0 {
-                        return Err(anyhow::anyhow!("Target difficulty must be greater than zero"));
+                        return Err(anyhow::anyhow!(
+                            "Target difficulty must be greater than zero"
+                        ));
                     }
                 }
                 GovernanceParameterValue::ByzantineThreshold(value) => {
                     if *value <= 0.0 || *value > 0.5 {
-                        return Err(anyhow::anyhow!(
-                            "Byzantine threshold must be in (0.0, 0.5]"
-                        ));
+                        return Err(anyhow::anyhow!("Byzantine threshold must be in (0.0, 0.5]"));
                     }
                 }
                 GovernanceParameterValue::SlashDoubleSign(value)
@@ -570,12 +591,16 @@ impl DaoEngine {
                 // Blockchain difficulty parameters validation
                 GovernanceParameterValue::BlockchainInitialDifficulty(value) => {
                     if *value == 0 {
-                        return Err(anyhow::anyhow!("Initial difficulty must be greater than zero"));
+                        return Err(anyhow::anyhow!(
+                            "Initial difficulty must be greater than zero"
+                        ));
                     }
                 }
                 GovernanceParameterValue::BlockchainAdjustmentInterval(value) => {
                     if *value == 0 {
-                        return Err(anyhow::anyhow!("Adjustment interval must be greater than zero"));
+                        return Err(anyhow::anyhow!(
+                            "Adjustment interval must be greater than zero"
+                        ));
                     }
                 }
                 GovernanceParameterValue::BlockchainTargetTimespan(value) => {
@@ -590,12 +615,21 @@ impl DaoEngine {
                 }
                 GovernanceParameterValue::TxFeeBytesPerSov(value) => {
                     if *value == 0 {
-                        return Err(anyhow::anyhow!("Tx bytes_per_sov must be greater than zero"));
+                        return Err(anyhow::anyhow!(
+                            "Tx bytes_per_sov must be greater than zero"
+                        ));
                     }
                 }
                 GovernanceParameterValue::TxFeeWitnessCap(value) => {
                     if *value == 0 {
                         return Err(anyhow::anyhow!("Tx witness cap must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::TokenCreationFee(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!(
+                            "Token creation fee must be greater than zero"
+                        ));
                     }
                 }
                 GovernanceParameterValue::OracleCommitteeMembers(members) => {
@@ -610,23 +644,21 @@ impl DaoEngine {
                         .collect::<std::collections::BTreeSet<_>>()
                         .len();
                     if unique_count != members.len() {
-                        return Err(anyhow::anyhow!(
-                            "Oracle committee members must be unique"
-                        ));
+                        return Err(anyhow::anyhow!("Oracle committee members must be unique"));
                     }
                 }
                 GovernanceParameterValue::OracleEpochDurationSecs(value)
                 | GovernanceParameterValue::OracleMaxSourceAgeSecs(value)
                 | GovernanceParameterValue::OracleMaxPriceStalenessEpochs(value) => {
                     if *value == 0 {
-                        return Err(anyhow::anyhow!("Oracle parameter must be greater than zero"));
+                        return Err(anyhow::anyhow!(
+                            "Oracle parameter must be greater than zero"
+                        ));
                     }
                 }
                 GovernanceParameterValue::OracleMaxDeviationBps(value) => {
                     if *value > 10_000 {
-                        return Err(anyhow::anyhow!(
-                            "Oracle max deviation bps must be <= 10000"
-                        ));
+                        return Err(anyhow::anyhow!("Oracle max deviation bps must be <= 10000"));
                     }
                 }
             }
@@ -666,8 +698,9 @@ impl DaoEngine {
             }
             // Mint/burn authorizations don't modify ConsensusConfig —
             // they are forwarded to the Treasury Kernel for execution.
-            DaoExecutionAction::MintAuthorization(_)
-            | DaoExecutionAction::BurnAuthorization(_) => Ok(()),
+            DaoExecutionAction::MintAuthorization(_) | DaoExecutionAction::BurnAuthorization(_) => {
+                Ok(())
+            }
         }
     }
 

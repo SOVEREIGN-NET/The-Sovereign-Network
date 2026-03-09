@@ -5,9 +5,5 @@
 pub mod sov_dao_staking;
 
 pub use sov_dao_staking::{
-    SovDaoStaking,
-    GlobalStakingGuardrails,
-    PendingDao,
-    StakingPosition,
-    LaunchedDao,
+    GlobalStakingGuardrails, LaunchedDao, PendingDao, SovDaoStaking, StakingPosition,
 };

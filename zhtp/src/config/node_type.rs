@@ -115,7 +115,10 @@ mod tests {
 
     #[test]
     fn test_nodetype_parsing() {
-        assert_eq!(NodeType::from_config(Some("validator")), NodeType::Validator);
+        assert_eq!(
+            NodeType::from_config(Some("validator")),
+            NodeType::Validator
+        );
         assert_eq!(NodeType::from_config(Some("edge")), NodeType::EdgeNode);
         assert_eq!(NodeType::from_config(Some("relay")), NodeType::Relay);
         assert_eq!(NodeType::from_config(Some("full")), NodeType::FullNode);

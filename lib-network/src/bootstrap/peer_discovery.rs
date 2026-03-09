@@ -1,20 +1,19 @@
 //! Peer discovery implementation for bootstrap
 
-use anyhow::{Result, anyhow};
 use crate::types::node_address::NodeAddress;
+use anyhow::{anyhow, Result};
 use lib_crypto::PublicKey;
 use lib_identity::{NodeId, ZhtpIdentity};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
-use crate::peer_registry::{
-    SharedPeerRegistry, PeerEntry, PeerEndpoint, ConnectionMetrics, 
-    NodeCapabilities, DiscoveryMethod, PeerTier
-};
 use crate::identity::unified_peer::UnifiedPeerId;
-
+use crate::peer_registry::{
+    ConnectionMetrics, DiscoveryMethod, NodeCapabilities, PeerEndpoint, PeerEntry, PeerTier,
+    SharedPeerRegistry,
+};
 
 // SECURITY FIX: Bootstrap connection rate limiter
 // Prevents DoS attacks via rapid connection attempts
@@ -32,15 +31,15 @@ impl BootstrapRateLimiter {
             time_window_secs,
         }
     }
-    
+
     fn check_rate_limit(&mut self, ip_address: &str) -> Result<()> {
         let now = std::time::Instant::now();
-        
+
         // Clean up old entries
         self.connection_attempts.retain(|_, (_, first_time)| {
             now.duration_since(*first_time).as_secs() < self.time_window_secs * 2
         });
-        
+
         // Check current IP's attempt count
         if let Some((count, first_time)) = self.connection_attempts.get_mut(ip_address) {
             if now.duration_since(*first_time).as_secs() < self.time_window_secs {
@@ -48,7 +47,9 @@ impl BootstrapRateLimiter {
                 if *count >= self.max_attempts {
                     return Err(anyhow!(
                         "Rate limit exceeded: {} attempts from {} in {} seconds",
-                        count, ip_address, self.time_window_secs
+                        count,
+                        ip_address,
+                        self.time_window_secs
                     ));
                 }
                 *count += 1;
@@ -59,25 +60,26 @@ impl BootstrapRateLimiter {
             }
         } else {
             // First attempt from this IP
-            self.connection_attempts.insert(ip_address.to_string(), (1, now));
+            self.connection_attempts
+                .insert(ip_address.to_string(), (1, now));
         }
-        
+
         Ok(())
     }
 }
 
 /// Discover peers through bootstrap process
-/// 
+///
 /// **MIGRATION (Ticket #150):** Now adds discovered peers directly to unified peer_registry
-/// 
+///
 /// # Arguments
 /// * `bootstrap_addresses` - List of bootstrap peer addresses to connect to
 /// * `local_identity` - Local identity for deriving NodeId and authentication
 /// * `peer_registry` - Unified peer registry to add discovered peers
-/// 
+///
 /// # Returns
 /// Number of successfully discovered peers
-/// 
+///
 /// # Security
 /// - Implements rate limiting to prevent DoS attacks
 /// - Validates all input addresses before connection attempts
@@ -94,7 +96,10 @@ pub async fn discover_bootstrap_peers(
     // Prevents DoS attacks via rapid connection attempts
     let rate_limiter = Arc::new(Mutex::new(BootstrapRateLimiter::new(5, 60))); // 5 attempts per minute per IP
 
-    tracing::info!("Attempting to discover {} bootstrap peers", bootstrap_addresses.len());
+    tracing::info!(
+        "Attempting to discover {} bootstrap peers",
+        bootstrap_addresses.len()
+    );
 
     for address in bootstrap_addresses {
         let normalized_address = normalize_bootstrap_address(address);
@@ -106,7 +111,7 @@ pub async fn discover_bootstrap_peers(
             // If we can't parse the address yet, use the full address string
             normalized_address.to_string()
         };
-        
+
         // SECURITY FIX: Check rate limit before attempting connection
         {
             let mut limiter = rate_limiter.lock().await;
@@ -116,13 +121,17 @@ pub async fn discover_bootstrap_peers(
                 continue; // Skip this connection attempt
             }
         }
-        
+
         match build_bootstrap_peer_info(address, local_identity).await {
             Ok(peer_info) => {
                 tracing::info!(
                     "✅ Successfully connected to bootstrap peer {} - NodeId: {}",
                     address,
-                    peer_info.node_id.as_ref().map(|n| n.to_hex()).unwrap_or_else(|| "none".to_string())
+                    peer_info
+                        .node_id
+                        .as_ref()
+                        .map(|n| n.to_hex())
+                        .unwrap_or_else(|| "none".to_string())
                 );
                 // Ticket #150: Add peer directly to registry instead of collecting in Vec
                 if let Err(e) = add_peer_to_registry(&peer_info, peer_registry.clone()).await {
@@ -157,19 +166,19 @@ pub async fn discover_bootstrap_peers(
 }
 
 /// Add a discovered peer to the unified peer registry
-/// 
+///
 /// Converts PeerInfo from bootstrap discovery into PeerEntry format
 /// and adds it to the registry with appropriate metadata.
-/// 
+///
 /// **MIGRATION (Ticket #150):** Replaces the old pattern of accumulating
 /// peers in a local Vec and returning them to callers. Now peers are
 /// directly added to the registry so they're immediately visible to
 /// DHT and mesh components.
-/// 
+///
 /// # Arguments
 /// * `peer_info` - Peer information from bootstrap handshake
 /// * `peer_registry` - Shared registry to add the peer to
-/// 
+///
 /// # Returns
 /// Ok(()) if peer was successfully added to registry
 async fn add_peer_to_registry(
@@ -190,7 +199,7 @@ async fn add_peer_to_registry(
             address: NodeAddress::Domain(address.clone()),
             protocol: protocol.clone(),
             signal_strength: 1.0, // Bootstrap peers assumed to have good connectivity
-            latency_ms: 50, // Default reasonable latency for bootstrap
+            latency_ms: 50,       // Default reasonable latency for bootstrap
         })
         .collect();
 
@@ -206,7 +215,7 @@ async fn add_peer_to_registry(
     let connection_metrics = ConnectionMetrics {
         signal_strength: 0.8, // Conservative estimate (was 1.0)
         bandwidth_capacity: peer_info.bandwidth_capacity,
-        latency_ms: 100, // Conservative estimate (was 50)
+        latency_ms: 100,      // Conservative estimate (was 50)
         stability_score: 0.6, // Conservative estimate (was 0.8)
         connected_at: now,
     };
@@ -217,7 +226,7 @@ async fn add_peer_to_registry(
         protocols: peer_info.protocols.clone(),
         max_bandwidth: peer_info.bandwidth_capacity,
         available_bandwidth: (peer_info.bandwidth_capacity * 8) / 10, // 80% of max (conservative)
-        routing_capacity: peer_info.compute_capacity as u32, // Convert u64 to u32
+        routing_capacity: peer_info.compute_capacity as u32,          // Convert u64 to u32
         energy_level: None, // Bootstrap nodes typically not battery-powered
         availability_percent: 85.0, // Conservative estimate (was 99.0)
     };
@@ -226,34 +235,34 @@ async fn add_peer_to_registry(
     // Bootstrap peers should start with lower trust and be verified
     let initial_trust_score = 0.5; // Start with neutral trust, not 1.0
     let is_authenticated = false; // Require explicit authentication, don't assume
-    
+
     // Create PeerEntry using constructor (struct has private fields)
     // **FIXED:** Use PeerEntry::new() instead of struct literal
     let peer_entry = PeerEntry::new(
-        peer_id.clone(),               // peer_id
-        endpoints,                      // endpoints
-        peer_info.protocols.clone(),   // active_protocols
-        connection_metrics,             // connection_metrics
-        is_authenticated,               // authenticated (SECURITY FIX: false until verified)
-        false,                          // quantum_secure (default for now)
-        None,                           // next_hop (direct connection)
-        1,                              // hop_count (direct connection)
-        0.7,                            // route_quality (conservative estimate)
-        capabilities,                   // capabilities
-        None,                           // location (not typically known during bootstrap)
-        0.7,                            // reliability_score (conservative estimate)
-        None,                           // dht_info (will be populated later by DHT component)
-        DiscoveryMethod::Bootstrap,     // discovery_method
-        peer_info.last_seen,           // first_seen
-        peer_info.last_seen,           // last_seen
-        PeerTier::Tier3,               // tier (SECURITY FIX: Tier3 until verified, not Tier2)
-        initial_trust_score,           // trust_score (SECURITY FIX: 0.5 until verified, not 1.0)
+        peer_id.clone(),             // peer_id
+        endpoints,                   // endpoints
+        peer_info.protocols.clone(), // active_protocols
+        connection_metrics,          // connection_metrics
+        is_authenticated,            // authenticated (SECURITY FIX: false until verified)
+        false,                       // quantum_secure (default for now)
+        None,                        // next_hop (direct connection)
+        1,                           // hop_count (direct connection)
+        0.7,                         // route_quality (conservative estimate)
+        capabilities,                // capabilities
+        None,                        // location (not typically known during bootstrap)
+        0.7,                         // reliability_score (conservative estimate)
+        None,                        // dht_info (will be populated later by DHT component)
+        DiscoveryMethod::Bootstrap,  // discovery_method
+        peer_info.last_seen,         // first_seen
+        peer_info.last_seen,         // last_seen
+        PeerTier::Tier3,             // tier (SECURITY FIX: Tier3 until verified, not Tier2)
+        initial_trust_score,         // trust_score (SECURITY FIX: 0.5 until verified, not 1.0)
     );
 
     // Add to registry (upsert will update if already exists)
     let mut registry = peer_registry.write().await;
     registry.upsert(peer_entry).await?;
-    
+
     tracing::debug!(
         "Added bootstrap peer {:?} to registry (DID: {}, device: {})",
         peer_id,
@@ -268,7 +277,7 @@ async fn add_peer_to_registry(
 mod tests {
     use super::*;
     use tokio::net::TcpListener;
-    
+
     /// Helper: Create test identity
     fn create_test_identity(device_name: &str) -> ZhtpIdentity {
         lib_identity::ZhtpIdentity::new_unified(
@@ -277,68 +286,77 @@ mod tests {
             Some("US".to_string()),
             device_name,
             None,
-        ).unwrap()
+        )
+        .unwrap()
     }
-    
+
     /// Test bootstrap address validation
     #[tokio::test]
     async fn test_bootstrap_address_validation() {
         let identity = create_test_identity("test-device");
-        
+
         // Test empty address
         let result = build_bootstrap_peer_info("", &identity).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be empty"));
-        
+
         // Test address with null byte
         let result = build_bootstrap_peer_info("127.0.0.1\0:9333", &identity).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("null byte"));
-        
+
         // Test address with invalid characters
         let result = build_bootstrap_peer_info("127.0.0.1;rm -rf /:9333", &identity).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid characters"));
-        
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid characters"));
+
         // Test address too long
         let long_address = "a".repeat(300);
         let result = build_bootstrap_peer_info(&long_address, &identity).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("too long"));
     }
-    
+
     /// Test rate limiting
     #[tokio::test]
     async fn test_bootstrap_rate_limiting() {
         // This test would normally require mocking, but we can test the limiter directly
         let mut limiter = BootstrapRateLimiter::new(3, 60); // 3 attempts per 60 seconds
-        
+
         // First 3 attempts should succeed
         assert!(limiter.check_rate_limit("192.168.1.1").is_ok());
         assert!(limiter.check_rate_limit("192.168.1.1").is_ok());
         assert!(limiter.check_rate_limit("192.168.1.1").is_ok());
-        
+
         // 4th attempt should be rate limited
         let result = limiter.check_rate_limit("192.168.1.1");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Rate limit exceeded"));
-        
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Rate limit exceeded"));
+
         // Different IP should not be rate limited
         assert!(limiter.check_rate_limit("192.168.1.2").is_ok());
     }
-    
+
     /// Test peer registry integration with conservative trust
     #[tokio::test]
     async fn test_conservative_trust_scores() {
         let identity = create_test_identity("test-device");
-        let registry = Arc::new(tokio::sync::RwLock::new(crate::peer_registry::PeerRegistry::new()));
-        
+        let registry = Arc::new(tokio::sync::RwLock::new(
+            crate::peer_registry::PeerRegistry::new(),
+        ));
+
         // Mock a peer info (this would normally come from a real connection)
         // Generate a keypair and use its public key
         let keypair = lib_crypto::KeyPair::generate().unwrap();
         let peer_public_key = keypair.public_key;
         let peer_node_id = NodeId::from_did_device("did:zhtp:test123", "test-device").unwrap();
-        
+
         let peer_info = PeerInfo {
             id: peer_public_key,
             node_id: Some(peer_node_id),
@@ -359,28 +377,30 @@ mod tests {
             compute_capacity: 100,
             connection_type: crate::protocols::NetworkProtocol::QUIC,
         };
-        
+
         // Add peer to registry
-        add_peer_to_registry(&peer_info, registry.clone()).await.unwrap();
+        add_peer_to_registry(&peer_info, registry.clone())
+            .await
+            .unwrap();
 
         // Verify conservative trust settings
         // Note: from_public_key_legacy creates a derived DID, not the original peer_info.did,
         // so we look up by public key instead
         let registry_read = registry.read().await;
         let peer_entry = registry_read.find_by_public_key(&peer_info.id);
-        
+
         assert!(peer_entry.is_some());
         let entry = peer_entry.unwrap();
-        
+
         // Verify conservative trust score (should be 0.5, not the peer_info.reputation of 1.0)
         assert_eq!(entry.trust_score, 0.5);
-        
+
         // Verify not authenticated by default
         assert!(!entry.authenticated);
-        
+
         // Verify conservative tier (should be Tier3, not Tier2)
         assert_eq!(entry.tier, crate::peer_registry::PeerTier::Tier3);
-        
+
         // Verify conservative metrics
         assert_eq!(entry.connection_metrics.signal_strength, 0.8);
         assert_eq!(entry.connection_metrics.latency_ms, 100);
@@ -389,19 +409,22 @@ mod tests {
 }
 
 /// Build conservative bootstrap peer metadata from a configured address.
-/// 
+///
 /// # Arguments
 /// * `address` - Bootstrap peer address to connect to
 /// * `local_identity` - Local identity for deriving NodeId
-/// 
+///
 /// # Returns
 /// `PeerInfo` entry suitable for registry insertion
-/// 
+///
 /// # Security
 /// - Validates address format before parsing
 /// - Rejects addresses with null bytes or dangerous characters
 /// - Validates IP/port format
-async fn build_bootstrap_peer_info(address: &str, _local_identity: &ZhtpIdentity) -> Result<PeerInfo> {
+async fn build_bootstrap_peer_info(
+    address: &str,
+    _local_identity: &ZhtpIdentity,
+) -> Result<PeerInfo> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // SECURITY FIX: Input validation for bootstrap address
@@ -409,25 +432,29 @@ async fn build_bootstrap_peer_info(address: &str, _local_identity: &ZhtpIdentity
     if address.is_empty() {
         return Err(anyhow!("Bootstrap address cannot be empty"));
     }
-    
+
     // Reject null bytes (security: prevent injection attacks)
     if address.contains('\0') {
         return Err(anyhow!("Bootstrap address contains null byte"));
     }
-    
+
     // Reject potentially dangerous characters that could be used for injection
     // Allow only reasonable address characters: alphanumeric, . : [ ] - _
-    if address.chars().any(|c| !c.is_ascii_alphanumeric() && !".:[]-_ ".contains(c)) {
+    if address
+        .chars()
+        .any(|c| !c.is_ascii_alphanumeric() && !".:[]-_ ".contains(c))
+    {
         return Err(anyhow!("Bootstrap address contains invalid characters"));
     }
-    
+
     // Maximum length check to prevent buffer overflows
     if address.len() > 256 {
         return Err(anyhow!("Bootstrap address too long (max 256 chars)"));
     }
 
     let normalized_address = normalize_bootstrap_address(address);
-    let addr: std::net::SocketAddr = normalized_address.parse()
+    let addr: std::net::SocketAddr = normalized_address
+        .parse()
         .map_err(|e| anyhow!("Invalid bootstrap address '{}': {}", address, e))?;
     let synthetic_pubkey = PublicKey {
         dilithium_pk: Vec::new(),
@@ -450,7 +477,10 @@ async fn build_bootstrap_peer_info(address: &str, _local_identity: &ZhtpIdentity
         device_name: "bootstrap".to_string(),
         protocols: vec![crate::protocols::NetworkProtocol::QUIC],
         addresses,
-        last_seen: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        last_seen: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
         reputation: 0.5,
         bandwidth_capacity: 1_000_000,
         storage_capacity: 1_000_000_000,
@@ -467,7 +497,7 @@ fn normalize_bootstrap_address(address: &str) -> &str {
 }
 
 /// Peer information structure with identity-based NodeId
-/// 
+///
 /// Each peer is identified by:
 /// - `id`: Cryptographic public key for verification
 /// - `node_id`: Deterministically derived from DID + device name
@@ -477,8 +507,8 @@ fn normalize_bootstrap_address(address: &str) -> &str {
 pub struct PeerInfo {
     pub id: PublicKey,
     pub node_id: Option<NodeId>, // Identity-derived deterministic NodeId
-    pub did: String, // Decentralized identifier
-    pub device_name: String, // Device name for NodeId derivation
+    pub did: String,             // Decentralized identifier
+    pub device_name: String,     // Device name for NodeId derivation
     pub protocols: Vec<crate::protocols::NetworkProtocol>,
     pub addresses: HashMap<crate::protocols::NetworkProtocol, String>,
     pub last_seen: u64,
@@ -490,13 +520,13 @@ pub struct PeerInfo {
 }
 
 /// Validate that a peer's NodeId matches their DID + device derivation
-/// 
+///
 /// # Arguments
 /// * `peer_info` - Peer information to validate
-/// 
+///
 /// # Returns
 /// Ok(()) if NodeId is valid, Err if validation fails
-/// 
+///
 /// # Example
 /// ```ignore
 /// let peer = discover_peer().await?;
@@ -507,7 +537,7 @@ pub fn validate_peer_node_id(peer_info: &PeerInfo) -> Result<()> {
         // Derive expected NodeId from DID + device
         let expected_node_id = NodeId::from_did_device(&peer_info.did, &peer_info.device_name)
             .map_err(|e| anyhow!("Failed to derive NodeId: {}", e))?;
-        
+
         // Verify claimed NodeId matches derivation
         if claimed_node_id != &expected_node_id {
             return Err(anyhow!(
@@ -519,7 +549,7 @@ pub fn validate_peer_node_id(peer_info: &PeerInfo) -> Result<()> {
                 peer_info.device_name
             ));
         }
-        
+
         tracing::debug!(
             "✓ Validated NodeId {} for peer {} (DID: {}, device: {})",
             claimed_node_id.to_hex(),
@@ -528,8 +558,11 @@ pub fn validate_peer_node_id(peer_info: &PeerInfo) -> Result<()> {
             peer_info.device_name
         );
     } else {
-        return Err(anyhow!("Peer {} has no NodeId", hex::encode(&peer_info.id.as_bytes()[..8])));
+        return Err(anyhow!(
+            "Peer {} has no NodeId",
+            hex::encode(&peer_info.id.as_bytes()[..8])
+        ));
     }
-    
+
     Ok(())
 }

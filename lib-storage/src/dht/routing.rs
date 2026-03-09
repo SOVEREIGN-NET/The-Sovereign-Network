@@ -1,23 +1,22 @@
 //! Kademlia-based DHT Routing
-//! 
+//!
 //! Implements the Kademlia routing algorithm with K-buckets for efficient
 //! peer discovery and routing in the DHT network.
 //!
 //! **MIGRATED (Ticket #148):** Now uses internal DhtPeerRegistry for unified
 //! peer storage instead of maintaining separate Vec<KBucket> arrays.
 
-use crate::types::dht_types::DhtNode;
-use crate::types::NodeId;
 use crate::dht::peer_registry::{
-    DhtPeerRegistry, DhtPeerEntry,
-    MAX_BUCKET_INDEX, DEFAULT_MAX_FAILED_ATTEMPTS
+    DhtPeerEntry, DhtPeerRegistry, DEFAULT_MAX_FAILED_ATTEMPTS, MAX_BUCKET_INDEX,
 };
 use crate::dht::registry_trait::DhtPeerRegistryTrait;
-use anyhow::{Result, anyhow};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::types::dht_types::DhtNode;
+use crate::types::NodeId;
+use anyhow::{anyhow, Result};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{trace, debug, warn};
+use tracing::{debug, trace, warn};
 
 // ========== CRIT-3: NodeId Verification Constants ==========
 
@@ -96,7 +95,7 @@ impl KademliaRouter {
             external_registry: None,
         }
     }
-    
+
     /// Set external unified registry reference (Ticket #1.14)
     ///
     /// Allows injecting a shared registry that implements `DhtPeerRegistryTrait`.
@@ -115,7 +114,7 @@ impl KademliaRouter {
     pub fn set_external_registry(&mut self, registry: Arc<RwLock<dyn DhtPeerRegistryTrait>>) {
         self.external_registry = Some(registry);
     }
-    
+
     /// Get reference to external unified registry (if set)
     ///
     /// **TICKET #1.14:** Returns the unified registry reference for direct access.
@@ -123,7 +122,7 @@ impl KademliaRouter {
     pub fn get_external_registry(&self) -> Option<Arc<RwLock<dyn DhtPeerRegistryTrait>>> {
         self.external_registry.clone()
     }
-    
+
     /// Check if using external unified registry
     ///
     /// **TICKET #1.14:** Returns true if external registry reference is stored.
@@ -132,19 +131,19 @@ impl KademliaRouter {
     pub fn uses_external_registry(&self) -> bool {
         self.external_registry.is_some()
     }
-    
+
     /// Calculate XOR distance between two node IDs
     pub fn calculate_distance(&self, a: &NodeId, b: &NodeId) -> u32 {
         a.kademlia_distance(b)
     }
-    
+
     /// Get bucket index for a given distance
     ///
     /// Uses MAX_BUCKET_INDEX constant (159) to cap bucket index
     fn get_bucket_index(&self, distance: u32) -> usize {
         std::cmp::min(distance as usize, MAX_BUCKET_INDEX)
     }
-    
+
     /// Add a node to the routing table
     ///
     /// **TICKET #1.14 NOTE:** This method uses internal registry only.
@@ -176,9 +175,11 @@ impl KademliaRouter {
         // See: verify_node_id_ownership() for the complete verification protocol.
         if node.peer.public_key().dilithium_pk.is_empty() {
             warn!(node_id = %node_id_short, "Rejected node with empty public key");
-            return Err(anyhow!("Cannot add node with empty public key to routing table"));
+            return Err(anyhow!(
+                "Cannot add node with empty public key to routing table"
+            ));
         }
-        
+
         let distance = self.calculate_distance(&self.local_id, node_id);
         let bucket_index = self.get_bucket_index(distance);
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -198,7 +199,9 @@ impl KademliaRouter {
         if self.registry.is_bucket_full(bucket_index) {
             // Bucket full - try to replace least recently seen node with excessive failed attempts
             // Uses configurable DEFAULT_MAX_FAILED_ATTEMPTS constant
-            let lrs_failed = self.registry.peers_in_bucket(bucket_index)
+            let lrs_failed = self
+                .registry
+                .peers_in_bucket(bucket_index)
                 .iter()
                 .filter(|entry| entry.failed_attempts > DEFAULT_MAX_FAILED_ATTEMPTS)
                 .min_by_key(|entry| entry.last_contact)
@@ -229,7 +232,7 @@ impl KademliaRouter {
         debug!(node_id = %node_id_short, bucket = bucket_index, "Added node to routing table");
         Ok(())
     }
-    
+
     /// Find the K closest nodes to a target ID (uses k-bucket parameter)
     ///
     /// **TICKET #1.14 NOTE:** This method uses internal registry only.
@@ -243,17 +246,18 @@ impl KademliaRouter {
     pub fn find_closest_nodes(&self, target: &NodeId, count: usize) -> Vec<DhtNode> {
         self.registry.find_closest(target, count)
     }
-    
+
     /// Get all nodes in a specific bucket
     ///
     /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.peers_in_bucket()
     pub fn get_bucket_nodes(&self, bucket_index: usize) -> Vec<&DhtNode> {
-        self.registry.peers_in_bucket(bucket_index)
+        self.registry
+            .peers_in_bucket(bucket_index)
             .into_iter()
             .map(|entry| &entry.node)
             .collect()
     }
-    
+
     /// Mark a node as failed (increment failed attempts)
     ///
     /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.mark_failed()
@@ -263,7 +267,7 @@ impl KademliaRouter {
         trace!(node_id = %hex::encode(&node_id.as_bytes()[..4]), "Marking node as failed");
         self.registry.mark_failed(node_id);
     }
-    
+
     /// Mark a node as responsive (reset failed attempts)
     ///
     /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.mark_responsive()
@@ -285,10 +289,14 @@ impl KademliaRouter {
     }
 
     /// Validate and record per-peer sequence number for replay protection
-    pub fn check_and_update_sequence(&mut self, node_id: &NodeId, sequence: u64) -> Result<(), crate::dht::peer_registry::SequenceError> {
+    pub fn check_and_update_sequence(
+        &mut self,
+        node_id: &NodeId,
+        sequence: u64,
+    ) -> Result<(), crate::dht::peer_registry::SequenceError> {
         self.registry.check_and_update_sequence(node_id, sequence)
     }
-    
+
     /// Remove a node from the routing table
     ///
     /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.remove()
@@ -297,7 +305,7 @@ impl KademliaRouter {
     pub fn remove_node(&mut self, node_id: &NodeId) {
         self.registry.remove(node_id);
     }
-    
+
     /// Get routing table statistics
     ///
     /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.stats()
@@ -352,16 +360,16 @@ impl KademliaRouter {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let mut buckets_to_refresh = std::collections::HashSet::new();
-        
+
         // Check all peers and find buckets with stale contacts
         for entry in self.registry.all_peers() {
             if current_time - entry.last_contact > refresh_interval_secs {
                 buckets_to_refresh.insert(entry.bucket_index);
             }
         }
-        
+
         buckets_to_refresh.into_iter().collect()
     }
 
@@ -369,32 +377,33 @@ impl KademliaRouter {
     ///
     /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.cleanup_failed_peers_with_threshold()
     pub fn perform_bucket_maintenance(&mut self, max_failed_attempts: u32) -> usize {
-        self.registry.cleanup_failed_peers_with_threshold(max_failed_attempts)
+        self.registry
+            .cleanup_failed_peers_with_threshold(max_failed_attempts)
     }
 
     /// Generate random node ID for bucket refresh
     pub fn generate_random_id_for_bucket(&self, bucket_index: usize) -> NodeId {
         use lib_crypto::hashing::hash_blake3;
-        
+
         // Generate a random ID that falls in the specified bucket's range
         let mut id_bytes = self.local_id.as_bytes().to_vec();
-        
+
         // Flip bits to create distance in the target bucket range
         if bucket_index < 160 {
             let byte_index = bucket_index / 8;
             let bit_index = bucket_index % 8;
-            
+
             if byte_index < 32 {
                 id_bytes[byte_index] ^= 1 << (7 - bit_index);
             }
         }
-        
+
         // Add some randomness to the lower bits
         let random_suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
-        
+
         let suffix_bytes = random_suffix.to_le_bytes();
         for (i, &byte) in suffix_bytes.iter().enumerate() {
             if i + 24 < 32 {
@@ -411,7 +420,7 @@ impl KademliaRouter {
         // Only split if this is the bucket containing our local node ID
         let local_distance = self.calculate_distance(&self.local_id, &self.local_id);
         let local_bucket_index = self.get_bucket_index(local_distance);
-        
+
         bucket_index == local_bucket_index && self.is_bucket_full(bucket_index)
     }
 }
@@ -527,9 +536,8 @@ impl NodeIdChallenge {
     ///
     /// Format: DOMAIN_PREFIX || nonce || timestamp || claimed_node_id
     pub fn get_sign_message(&self) -> Vec<u8> {
-        let mut message = Vec::with_capacity(
-            CHALLENGE_DOMAIN_PREFIX.len() + CHALLENGE_NONCE_SIZE + 8 + 32
-        );
+        let mut message =
+            Vec::with_capacity(CHALLENGE_DOMAIN_PREFIX.len() + CHALLENGE_NONCE_SIZE + 8 + 32);
 
         message.extend_from_slice(CHALLENGE_DOMAIN_PREFIX);
         message.extend_from_slice(&self.nonce);
@@ -596,7 +604,10 @@ pub fn verify_node_id_ownership(
     max_timestamp_age_secs: u64,
 ) -> VerificationResult {
     // Check timestamp validity
-    if !response.challenge.is_timestamp_valid(max_timestamp_age_secs) {
+    if !response
+        .challenge
+        .is_timestamp_valid(max_timestamp_age_secs)
+    {
         return VerificationResult::TimestampOutOfRange;
     }
 
@@ -617,7 +628,8 @@ pub fn verify_node_id_ownership(
         &message,
         &response.signature.signature,
         &response.signature.public_key.dilithium_pk,
-    ).unwrap_or(false);
+    )
+    .unwrap_or(false);
 
     if !signature_valid {
         return VerificationResult::InvalidSignature;
@@ -661,7 +673,9 @@ pub fn verify_node_id_ownership_full(
     }
 
     // Verify NodeId derivation matches the provided identity components
-    let derivation_valid = response.challenge.claimed_node_id
+    let derivation_valid = response
+        .challenge
+        .claimed_node_id
         .verify_derivation(did, device_id, creation_timestamp)
         .unwrap_or(false);
 
@@ -675,18 +689,14 @@ pub fn verify_node_id_ownership_full(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_identity::{ZhtpIdentity, IdentityType};
-    use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
-    
+    use crate::types::dht_types::{build_peer_identity, DhtPeerIdentity};
+    use lib_identity::{IdentityType, ZhtpIdentity};
+
     fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
-        let identity = ZhtpIdentity::new_unified(
-            IdentityType::Device,
-            None,
-            None,
-            device_name,
-            None,
-        ).expect("Failed to create test identity");
-        
+        let identity =
+            ZhtpIdentity::new_unified(IdentityType::Device, None, None, device_name, None)
+                .expect("Failed to create test identity");
+
         build_peer_identity(
             identity.node_id.clone(),
             identity.public_key.clone(),
@@ -694,7 +704,7 @@ mod tests {
             device_name.to_string(),
         )
     }
-    
+
     fn build_test_node(peer: DhtPeerIdentity, port: u16) -> DhtNode {
         DhtNode {
             peer,
@@ -720,25 +730,25 @@ mod tests {
     fn test_router_creation() {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let router = KademliaRouter::new(local_id, 20);
-        
+
         // Verify K value
         assert_eq!(router.k, 20);
-        
+
         // Verify registry initialized
         assert_eq!(router.registry.len(), 0);
     }
-    
+
     #[test]
     fn test_distance_calculation() {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let router = KademliaRouter::new(local_id, 20);
-        
+
         let node_a = NodeId::from_bytes([1u8; 32]);
         let node_b = NodeId::from_bytes([2u8; 32]);
-        
+
         let distance = router.calculate_distance(&node_a, &node_b);
         assert!(distance > 0);
-        
+
         // Distance to self should be 0
         let self_distance = router.calculate_distance(&node_a, &node_a);
         assert_eq!(self_distance, 0);
@@ -757,7 +767,7 @@ mod tests {
 
         assert_eq!(distance, expected);
     }
-    
+
     #[test]
     fn test_bucket_index() {
         let local_id = NodeId::from_bytes([1u8; 32]);
@@ -765,22 +775,22 @@ mod tests {
         let distance_0 = 0;
         let distance_10 = 10;
         let distance_200 = 200;
-        
+
         assert_eq!(router.get_bucket_index(distance_0), 0);
         assert_eq!(router.get_bucket_index(distance_10), 10);
         assert_eq!(router.get_bucket_index(distance_200), 159); // Capped at 159
     }
-    
+
     #[tokio::test]
     async fn test_add_node() {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut router = KademliaRouter::new(local_id, 20);
-        
+
         let test_peer = create_test_peer("test-device");
         let test_node = build_test_node(test_peer, 33442);
-        
+
         router.add_node(test_node).await.unwrap();
-        
+
         let stats = router.get_stats();
         assert_eq!(stats.total_nodes, 1);
         assert_eq!(stats.non_empty_buckets, 1);
@@ -793,12 +803,12 @@ mod tests {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let k_value = 15;
         let router = KademliaRouter::new(local_id, k_value);
-        
+
         assert_eq!(router.get_k_value(), k_value);
-        
+
         // Test bucket full check
         assert!(!router.is_bucket_full(0)); // Empty bucket
-        
+
         // Test utilization
         let utilization = router.get_bucket_utilization();
         assert_eq!(utilization, 0.0); // No nodes yet
@@ -809,23 +819,29 @@ mod tests {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let k_value = 3; // Small k for testing
         let mut router = KademliaRouter::new(local_id, k_value);
-        
+
         // Add k+1 nodes to same bucket by creating similar NodeIds
         // that will hash to the same bucket distance
-        for i in 2..6 { // 4 nodes total, trying to exceed k=3
+        for i in 2..6 {
+            // 4 nodes total, trying to exceed k=3
             let device_name = format!("test-device-{}", i);
             let test_peer = create_test_peer(&device_name);
             let test_node = build_test_node(test_peer, 33440 + i as u16);
-            
+
             let _ = router.add_node(test_node).await; // May fail if bucket full
         }
-        
+
         let _stats = router.get_stats();
         // Verify no individual bucket exceeds k
         for bucket_idx in 0..160 {
             let bucket_nodes = router.get_bucket_nodes(bucket_idx);
-            assert!(bucket_nodes.len() <= k_value, 
-                "Bucket {} has {} nodes, exceeds k={}", bucket_idx, bucket_nodes.len(), k_value);
+            assert!(
+                bucket_nodes.len() <= k_value,
+                "Bucket {} has {} nodes, exceeds k={}",
+                bucket_idx,
+                bucket_nodes.len(),
+                k_value
+            );
         }
     }
 
@@ -834,9 +850,9 @@ mod tests {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let k_value = 5;
         let router = KademliaRouter::new(local_id, k_value);
-        
+
         let target = NodeId::from_bytes([2u8; 32]);
-        
+
         // Request more nodes than k allows
         let closest = router.find_closest_nodes(&target, 20);
         assert!(closest.len() <= k_value); // Should be limited by k
@@ -846,22 +862,22 @@ mod tests {
     async fn test_bucket_maintenance() {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut router = KademliaRouter::new(local_id, 20);
-        
+
         // Add a node
         let test_peer = create_test_peer("test-device");
         let test_node = build_test_node(test_peer.clone(), 33442);
-        
+
         router.add_node(test_node.clone()).await.unwrap();
-        
+
         // Mark node as failed multiple times
         for _ in 0..5 {
             router.mark_node_failed(test_peer.node_id());
         }
-        
+
         // Perform maintenance
         let removed = router.perform_bucket_maintenance(3);
         assert_eq!(removed, 1); // Should remove the failed node
-        
+
         let stats = router.get_stats();
         assert_eq!(stats.total_nodes, 0);
     }
@@ -870,40 +886,40 @@ mod tests {
     fn test_random_id_generation() {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let router = KademliaRouter::new(local_id.clone(), 20);
-        
+
         // Generate random IDs for different buckets
         let id_bucket_0 = router.generate_random_id_for_bucket(0);
         let id_bucket_10 = router.generate_random_id_for_bucket(10);
-        
+
         // IDs should be different
         assert_ne!(id_bucket_0, id_bucket_10);
-        
+
         // Distance should roughly correspond to bucket
         let distance_0 = router.calculate_distance(&local_id, &id_bucket_0);
         let distance_10 = router.calculate_distance(&local_id, &id_bucket_10);
-        
+
         // These might not be exact due to randomness, but generally bucket 10 should be further
-        trace!(distance_0 = distance_0, distance_10 = distance_10, "Distance comparison");
+        trace!(
+            distance_0 = distance_0,
+            distance_10 = distance_10,
+            "Distance comparison"
+        );
     }
 
     #[tokio::test]
     async fn test_bucket_refresh() {
-        use lib_identity::ZhtpIdentity;
-        use lib_identity::types::IdentityType;
         use crate::types::dht_types::build_peer_identity;
-        
+        use lib_identity::types::IdentityType;
+        use lib_identity::ZhtpIdentity;
+
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut router = KademliaRouter::new(local_id.clone(), 20);
-        
+
         // Helper to create test node
         let create_node = |device_name: &str, port: u16| {
-            let identity = ZhtpIdentity::new_unified(
-                IdentityType::Device,
-                None,
-                None,
-                device_name,
-                None,
-            ).expect("Failed to create test identity");
+            let identity =
+                ZhtpIdentity::new_unified(IdentityType::Device, None, None, device_name, None)
+                    .expect("Failed to create test identity");
 
             let peer = build_peer_identity(
                 identity.node_id.clone(),
@@ -930,31 +946,47 @@ mod tests {
                 storage_info: None,
             }
         };
-        
+
         // Add some test nodes to different buckets
         for i in 0..10 {
             let node = create_node(&format!("device-{}", i), 8080 + i);
             router.add_node(node).await.unwrap();
         }
-        
+
         // Test basic functionality - new router should not need refresh with long interval
         let long_interval_check = router.get_buckets_needing_refresh(3600); // 1 hour
-        assert_eq!(long_interval_check.len(), 0, "Newly added peers should not need refresh with 1-hour interval");
-        
+        assert_eq!(
+            long_interval_check.len(),
+            0,
+            "Newly added peers should not need refresh with 1-hour interval"
+        );
+
         // Wait to ensure timestamp difference and test with 1 second interval
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         let one_second_check = router.get_buckets_needing_refresh(1);
-        
+
         // Since we waited 2 seconds, buckets with peers should need refresh with 1-second interval
-        trace!(bucket_count = one_second_check.len(), "Buckets needing refresh after 2 seconds with 1-second interval");
-        assert!(one_second_check.len() > 0, "After 2 seconds, buckets with peers should need refresh with 1-second interval");
-        
+        trace!(
+            bucket_count = one_second_check.len(),
+            "Buckets needing refresh after 2 seconds with 1-second interval"
+        );
+        assert!(
+            one_second_check.len() > 0,
+            "After 2 seconds, buckets with peers should need refresh with 1-second interval"
+        );
+
         // We added 10 nodes to potentially different buckets
-        assert!(one_second_check.len() <= 10, "Should refresh at most 10 buckets (one per added node)");
-        
+        assert!(
+            one_second_check.len() <= 10,
+            "Should refresh at most 10 buckets (one per added node)"
+        );
+
         // Test that the method returns valid bucket indices
         for &bucket_index in &one_second_check {
-            assert!(bucket_index < 160, "Bucket index should be within valid range");
+            assert!(
+                bucket_index < 160,
+                "Bucket index should be within valid range"
+            );
         }
     }
 

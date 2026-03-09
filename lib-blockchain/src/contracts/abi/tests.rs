@@ -6,9 +6,7 @@
 #[cfg(test)]
 mod abi_tests {
     use crate::contracts::abi::schema::*;
-    use crate::contracts::abi::{
-        codec, registry, validation, privilege, codegen
-    };
+    use crate::contracts::abi::{codec, codegen, privilege, registry, validation};
 
     /// Test complete UBI contract ABI
     #[test]
@@ -69,11 +67,9 @@ mod abi_tests {
         let original = ContractAbi::new("TestContract", "2.0.0")
             .with_method(MethodSchema::new("test", ReturnType::Void));
 
-        let json = codec::AbiEncoder::encode_abi(&original)
-            .expect("Should encode ABI");
+        let json = codec::AbiEncoder::encode_abi(&original).expect("Should encode ABI");
 
-        let decoded = codec::AbiDecoder::decode_abi(&json)
-            .expect("Should decode ABI");
+        let decoded = codec::AbiDecoder::decode_abi(&json).expect("Should decode ABI");
 
         assert_eq!(decoded.contract, "TestContract");
         assert_eq!(decoded.version, "2.0.0");
@@ -85,10 +81,8 @@ mod abi_tests {
     fn test_abi_hash_consistency() {
         let abi = ContractAbi::new("Immutable", "1.0.0");
 
-        let hash1 = codec::AbiEncoder::abi_hash(&abi)
-            .expect("Should hash");
-        let hash2 = codec::AbiEncoder::abi_hash(&abi)
-            .expect("Should hash");
+        let hash1 = codec::AbiEncoder::abi_hash(&abi).expect("Should hash");
+        let hash2 = codec::AbiEncoder::abi_hash(&abi).expect("Should hash");
 
         assert_eq!(hash1, hash2, "Hashes should be deterministic");
     }
@@ -149,13 +143,12 @@ mod abi_tests {
     #[test]
     fn test_kernel_only_enforcement() {
         let abi = ContractAbi::new("TreasuryTest", "1.0.0").with_method(
-            MethodSchema::new("mint", ReturnType::Void)
-                .with_privilege(PrivilegeRequirement {
-                    kernel_only: true,
-                    governance_gated: false,
-                    require_role: None,
-                    custom_check: None,
-                })
+            MethodSchema::new("mint", ReturnType::Void).with_privilege(PrivilegeRequirement {
+                kernel_only: true,
+                governance_gated: false,
+                require_role: None,
+                custom_check: None,
+            }),
         );
 
         // Verify kernel_only flag is set
@@ -165,14 +158,15 @@ mod abi_tests {
     /// Test Rust code generation
     #[test]
     fn test_rust_codegen() {
-        let abi = ContractAbi::new("UBI", "1.0.0").with_method(
-            MethodSchema::new("claim", ReturnType::Value {
+        let abi = ContractAbi::new("UBI", "1.0.0").with_method(MethodSchema::new(
+            "claim",
+            ReturnType::Value {
                 r#type: Box::new(ParameterType::U64),
-            })
-        );
+            },
+        ));
 
-        let rust_code = codegen::AbiCodegen::generate_rust(&abi)
-            .expect("Should generate Rust code");
+        let rust_code =
+            codegen::AbiCodegen::generate_rust(&abi).expect("Should generate Rust code");
 
         assert!(rust_code.contains("struct CallClaim"));
         assert!(rust_code.contains("pub fn new("));
@@ -182,11 +176,12 @@ mod abi_tests {
     /// Test TypeScript code generation
     #[test]
     fn test_ts_codegen() {
-        let abi = ContractAbi::new("UBI", "1.0.0").with_method(
-            MethodSchema::new("claim", ReturnType::Value {
+        let abi = ContractAbi::new("UBI", "1.0.0").with_method(MethodSchema::new(
+            "claim",
+            ReturnType::Value {
                 r#type: Box::new(ParameterType::U64),
-            })
-        );
+            },
+        ));
 
         let ts_code = codegen::AbiCodegen::generate_typescript(&abi)
             .expect("Should generate TypeScript code");
@@ -212,18 +207,17 @@ mod abi_tests {
                     r#type: ParameterType::Bytes32,
                     description: None,
                     optional: None,
-                })
+                }),
         );
 
-        let rust_code = codegen::AbiCodegen::generate_rust(&abi)
-            .expect("Should generate Rust");
+        let rust_code = codegen::AbiCodegen::generate_rust(&abi).expect("Should generate Rust");
 
         // Verify Rust type mappings
         assert!(rust_code.contains("amount: u64"));
         assert!(rust_code.contains("data: [u8; 32]"));
 
-        let ts_code = codegen::AbiCodegen::generate_typescript(&abi)
-            .expect("Should generate TypeScript");
+        let ts_code =
+            codegen::AbiCodegen::generate_typescript(&abi).expect("Should generate TypeScript");
 
         // Verify TypeScript type mappings
         assert!(ts_code.contains("amount: bigint"));

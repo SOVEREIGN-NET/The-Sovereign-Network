@@ -1,11 +1,11 @@
 //! Recursive Proof System for ZHTP
-//! 
+//!
 //! Implementation of recursive zero-knowledge proofs using Plonky2
 //! Based on the original implementation without simplifications
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
 use crate::plonky2::{Plonky2Proof, ZkProofSystem};
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Recursive proof configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,7 +85,7 @@ impl RecursiveProofBuilder {
         let mut depth = 0;
         while current_layer.len() > 1 && depth < self.config.max_depth {
             let mut next_layer = Vec::new();
-            
+
             // Process pairs of proofs
             for chunk in current_layer.chunks(2) {
                 let aggregated = if chunk.len() == 2 {
@@ -95,7 +95,7 @@ impl RecursiveProofBuilder {
                 };
                 next_layer.push(aggregated);
             }
-            
+
             if next_layer.len() < current_layer.len() {
                 recursive_layers.extend(next_layer.clone());
                 current_layer = next_layer;
@@ -121,7 +121,11 @@ impl RecursiveProofBuilder {
     }
 
     /// Aggregate a pair of proofs
-    fn aggregate_proof_pair(&self, proof1: &Plonky2Proof, proof2: &Plonky2Proof) -> Result<Plonky2Proof> {
+    fn aggregate_proof_pair(
+        &self,
+        proof1: &Plonky2Proof,
+        proof2: &Plonky2Proof,
+    ) -> Result<Plonky2Proof> {
         // Create aggregated proof data
         let mut aggregated_data = Vec::new();
         aggregated_data.extend_from_slice(&proof1.proof);
@@ -144,10 +148,13 @@ impl RecursiveProofBuilder {
                 .unwrap()
                 .as_secs(),
             circuit_id: format!("recursive_{}", proof1.circuit_id),
-            private_input_commitment: lib_crypto::hash_blake3(&[
-                &proof1.private_input_commitment[..],
-                &proof2.private_input_commitment[..]
-            ].concat()),
+            private_input_commitment: lib_crypto::hash_blake3(
+                &[
+                    &proof1.private_input_commitment[..],
+                    &proof2.private_input_commitment[..],
+                ]
+                .concat(),
+            ),
         })
     }
 }
@@ -210,19 +217,16 @@ impl RecursiveVerifier {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         if proof.generated_at > current_time {
             return Ok(false);
         }
 
         // For recursive proofs, accept both transaction and recursive proof systems
-        let valid_systems = [
-            "ZHTP-Optimized-Transaction",
-            "Plonky2",
-        ];
-        
-        let is_valid_system = valid_systems.iter().any(|&sys| proof.proof_system == sys) ||
-                            proof.proof_system.starts_with("ZHTP-Recursive-");
+        let valid_systems = ["ZHTP-Optimized-Transaction", "Plonky2"];
+
+        let is_valid_system = valid_systems.iter().any(|&sys| proof.proof_system == sys)
+            || proof.proof_system.starts_with("ZHTP-Recursive-");
 
         Ok(is_valid_system)
     }
@@ -250,11 +254,11 @@ pub fn generate_batch_recursive_proof(
     config: RecursiveConfig,
 ) -> Result<RecursiveProof> {
     let mut builder = RecursiveProofBuilder::new(config)?;
-    
+
     for proof in proofs {
         builder.add_proof(proof)?;
     }
-    
+
     builder.build()
 }
 
@@ -280,19 +284,19 @@ mod tests {
     fn test_recursive_proof_builder() -> Result<()> {
         let config = RecursiveConfig::default();
         let mut builder = RecursiveProofBuilder::new(config)?;
-        
+
         // Create mock proofs
         let system = ZkProofSystem::new()?;
         let proof1 = system.prove_transaction(1000, 100, 10, 12345, 67890)?;
         let proof2 = system.prove_transaction(2000, 200, 20, 54321, 98765)?;
-        
+
         builder.add_proof(proof1)?;
         builder.add_proof(proof2)?;
-        
+
         let recursive_proof = builder.build()?;
         assert!(recursive_proof.depth > 0);
         assert!(!recursive_proof.aggregated_inputs.is_empty());
-        
+
         Ok(())
     }
 
@@ -300,18 +304,18 @@ mod tests {
     fn test_recursive_verification() -> Result<()> {
         let config = RecursiveConfig::default();
         let mut builder = RecursiveProofBuilder::new(config)?;
-        
+
         // Create and add proofs
         let system = ZkProofSystem::new()?;
         let proof = system.prove_transaction(1000, 100, 10, 12345, 67890)?;
         builder.add_proof(proof)?;
-        
+
         let recursive_proof = builder.build()?;
-        
+
         // Verify the recursive proof
         let verifier = RecursiveVerifier::new()?;
         assert!(verifier.verify(&recursive_proof)?);
-        
+
         Ok(())
     }
 
@@ -323,12 +327,12 @@ mod tests {
             system.prove_transaction(2000, 200, 20, 54321, 98765)?,
             system.prove_transaction(3000, 300, 30, 11111, 22222)?,
         ];
-        
+
         let config = RecursiveConfig::default();
         let recursive_proof = generate_batch_recursive_proof(proofs, config)?;
-        
+
         assert!(verify_batch_recursive_proof(&recursive_proof)?);
-        
+
         Ok(())
     }
 }

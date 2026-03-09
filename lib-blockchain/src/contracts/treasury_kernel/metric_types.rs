@@ -136,12 +136,7 @@ pub struct MetricRecord {
 
 impl MetricRecord {
     /// Create a new metric record
-    pub fn new(
-        key: MetricKey,
-        value: u64,
-        recorded_at_epoch: u64,
-        recorded_by: [u8; 32],
-    ) -> Self {
+    pub fn new(key: MetricKey, value: u64, recorded_at_epoch: u64, recorded_by: [u8; 32]) -> Self {
         let unit = key.metric_type.default_unit();
         Self {
             key,
@@ -362,10 +357,7 @@ impl EpochState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MetricError {
     /// Metric already recorded (append-only violation)
-    MetricAlreadyRecorded {
-        key: MetricKey,
-        existing_value: u64,
-    },
+    MetricAlreadyRecorded { key: MetricKey, existing_value: u64 },
     /// Metric not found
     MetricNotFound(MetricKey),
     /// Epoch is closed, cannot record
@@ -390,21 +382,18 @@ pub enum MetricError {
         missing_role: AttesterRole,
     },
     /// Duplicate attestation from same attester
-    DuplicateAttestation {
-        key: MetricKey,
-        attester: [u8; 32],
-    },
+    DuplicateAttestation { key: MetricKey, attester: [u8; 32] },
     /// Attestation timeout expired (reserved for future use, not yet enforced)
-    AttestationTimeout {
-        key: MetricKey,
-        timeout_epoch: u64,
-    },
+    AttestationTimeout { key: MetricKey, timeout_epoch: u64 },
 }
 
 impl fmt::Display for MetricError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MetricAlreadyRecorded { key, existing_value } => {
+            Self::MetricAlreadyRecorded {
+                key,
+                existing_value,
+            } => {
                 write!(
                     f,
                     "Metric already recorded: epoch={}, type={}, value={}",
@@ -412,18 +401,30 @@ impl fmt::Display for MetricError {
                 )
             }
             Self::MetricNotFound(key) => {
-                write!(f, "Metric not found: epoch={}, type={}", key.epoch, key.metric_type)
+                write!(
+                    f,
+                    "Metric not found: epoch={}, type={}",
+                    key.epoch, key.metric_type
+                )
             }
             Self::EpochClosed(epoch) => write!(f, "Epoch {} is closed", epoch),
             Self::EpochClosing(epoch) => write!(f, "Epoch {} is closing, no new metrics", epoch),
             Self::EpochNotRegistered(epoch) => {
-                write!(f, "Epoch {} not registered - must be explicitly opened via EpochClock", epoch)
+                write!(
+                    f,
+                    "Epoch {} not registered - must be explicitly opened via EpochClock",
+                    epoch
+                )
             }
             Self::AlreadyFinalized(key) => {
                 write!(f, "Metric already finalized: epoch={}", key.epoch)
             }
             Self::OverwriteForbidden => write!(f, "Metric overwrite is forbidden"),
-            Self::InsufficientAttestations { key, required, actual } => {
+            Self::InsufficientAttestations {
+                key,
+                required,
+                actual,
+            } => {
                 write!(
                     f,
                     "Insufficient attestations for epoch={}: required={}, actual={}",
@@ -441,7 +442,8 @@ impl fmt::Display for MetricError {
                 write!(
                     f,
                     "Duplicate attestation for epoch={} from {:?}",
-                    key.epoch, &attester[..4]
+                    key.epoch,
+                    &attester[..4]
                 )
             }
             Self::AttestationTimeout { key, timeout_epoch } => {

@@ -39,21 +39,21 @@
 //! - Exposes node to potentially malicious services
 //! - Multicast discovery is the proper protocol-aware method
 
-use anyhow::{Result, anyhow, Context};
+use anyhow::{anyhow, Context, Result};
 use lib_crypto::PublicKey;
 use lib_identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::identity::unified_peer::UnifiedPeerId;
 use super::local_network::NodeAnnouncement;
+use crate::identity::unified_peer::UnifiedPeerId;
 
 /// Maximum addresses to store per peer (DoS protection)
 const MAX_ADDRESSES_PER_PEER: usize = 10;
@@ -147,11 +147,7 @@ impl NonceTracker {
         // Enforce max nonces limit (DoS protection)
         if nonces.len() >= self.max_nonces {
             // Remove oldest nonce
-            if let Some(oldest_nonce) = nonces
-                .iter()
-                .min_by_key(|(_, &ts)| ts)
-                .map(|(n, _)| *n)
-            {
+            if let Some(oldest_nonce) = nonces.iter().min_by_key(|(_, &ts)| ts).map(|(n, _)| *n) {
                 nonces.remove(&oldest_nonce);
             }
         }
@@ -363,7 +359,10 @@ impl PeerReputation {
                 self.banned = false;
                 self.ban_expires = None;
                 self.score = 20; // Give them a second chance with low score
-                info!("Peer {} ban expired, reputation reset to {}", self.peer_id, self.score);
+                info!(
+                    "Peer {} ban expired, reputation reset to {}",
+                    self.peer_id, self.score
+                );
                 return true;
             }
         }
@@ -412,11 +411,7 @@ impl ReputationTracker {
         // Enforce limit
         if reps.len() >= self.max_peers {
             // Remove peer with lowest score
-            if let Some(lowest_id) = reps
-                .iter()
-                .min_by_key(|(_, r)| r.score)
-                .map(|(id, _)| *id)
-            {
+            if let Some(lowest_id) = reps.iter().min_by_key(|(_, r)| r.score).map(|(id, _)| *id) {
                 reps.remove(&lowest_id);
             }
         }
@@ -470,7 +465,8 @@ pub fn validate_public_key(public_key: &PublicKey) -> Result<()> {
     if dilithium_len != DILITHIUM_PK_SIZE {
         return Err(anyhow!(
             "Invalid Dilithium public key size: expected {}, got {}",
-            DILITHIUM_PK_SIZE, dilithium_len
+            DILITHIUM_PK_SIZE,
+            dilithium_len
         ));
     }
 
@@ -479,21 +475,36 @@ pub fn validate_public_key(public_key: &PublicKey) -> Result<()> {
     if kyber_len != KYBER_PK_SIZE {
         return Err(anyhow!(
             "Invalid Kyber public key size: expected {}, got {}",
-            KYBER_PK_SIZE, kyber_len
+            KYBER_PK_SIZE,
+            kyber_len
         ));
     }
 
     // Validate key_id is not all zeros (indicates uninitialized key)
     if public_key.key_id.iter().all(|&b| b == 0) {
-        return Err(anyhow!("Invalid key_id: all zeros indicates uninitialized key"));
+        return Err(anyhow!(
+            "Invalid key_id: all zeros indicates uninitialized key"
+        ));
     }
 
     // Basic entropy check - keys should not be all same value
-    if public_key.dilithium_pk.iter().all(|&b| b == public_key.dilithium_pk[0]) {
-        return Err(anyhow!("Invalid Dilithium key: no entropy (all bytes identical)"));
+    if public_key
+        .dilithium_pk
+        .iter()
+        .all(|&b| b == public_key.dilithium_pk[0])
+    {
+        return Err(anyhow!(
+            "Invalid Dilithium key: no entropy (all bytes identical)"
+        ));
     }
-    if public_key.kyber_pk.iter().all(|&b| b == public_key.kyber_pk[0]) {
-        return Err(anyhow!("Invalid Kyber key: no entropy (all bytes identical)"));
+    if public_key
+        .kyber_pk
+        .iter()
+        .all(|&b| b == public_key.kyber_pk[0])
+    {
+        return Err(anyhow!(
+            "Invalid Kyber key: no entropy (all bytes identical)"
+        ));
     }
 
     Ok(())
@@ -662,8 +673,7 @@ pub struct UnifiedDiscoveryService {
     /// Discovered peers (deduplicated by peer_id)
     discovered_peers: Arc<RwLock<HashMap<Uuid, DiscoveryResult>>>,
     /// Optional callback for new peer discoveries
-    peer_discovered_callback:
-        Option<Arc<dyn Fn(DiscoveryResult) + Send + Sync>>,
+    peer_discovered_callback: Option<Arc<dyn Fn(DiscoveryResult) + Send + Sync>>,
     /// Whether the service is running
     running: Arc<RwLock<bool>>,
     /// Signing context for TLS certificate pinning (Issue #739)
@@ -679,11 +689,7 @@ impl UnifiedDiscoveryService {
     ///
     /// # Panics
     /// Panics if `mesh_port` is 0 (invalid)
-    pub fn new(
-        node_id: Uuid,
-        mesh_port: u16,
-        public_key: PublicKey,
-    ) -> Self {
+    pub fn new(node_id: Uuid, mesh_port: u16, public_key: PublicKey) -> Self {
         // Validate port is not zero
         if mesh_port == 0 {
             panic!("Invalid mesh_port: 0 is not a valid port number");
@@ -691,7 +697,10 @@ impl UnifiedDiscoveryService {
 
         // Log warning for privileged ports (< 1024)
         if mesh_port < MIN_PORT {
-            warn!("Using privileged port {} - may require elevated permissions", mesh_port);
+            warn!(
+                "Using privileged port {} - may require elevated permissions",
+                mesh_port
+            );
         }
 
         // Validate port is in valid range
@@ -799,7 +808,11 @@ impl UnifiedDiscoveryService {
 
         tokio::spawn(async move {
             let peer_callback = Arc::new(move |addr: String, pk: PublicKey| {
-                debug!("Multicast discovered peer: {} (key: {})", addr, hex::encode(&pk.as_bytes()[..8]));
+                debug!(
+                    "Multicast discovered peer: {} (key: {})",
+                    addr,
+                    hex::encode(&pk.as_bytes()[..8])
+                );
             });
 
             if let Err(e) = super::local_network::start_local_discovery(
@@ -859,13 +872,18 @@ impl UnifiedDiscoveryService {
                     .min_by_key(|(_, r)| r.discovered_at)
                     .map(|(id, _)| *id)
                 {
-                    warn!("Peer limit reached ({}), evicting oldest peer: {}",
-                          MAX_DISCOVERED_PEERS, oldest_id);
+                    warn!(
+                        "Peer limit reached ({}), evicting oldest peer: {}",
+                        MAX_DISCOVERED_PEERS, oldest_id
+                    );
                     peers.remove(&oldest_id);
                 }
             }
 
-            info!("📡 New peer discovered: {} via {:?}", peer_id, result.protocol);
+            info!(
+                "📡 New peer discovered: {} via {:?}",
+                peer_id, result.protocol
+            );
             peers.insert(peer_id, result.clone());
 
             if let Some(ref callback) = self.peer_discovered_callback {
@@ -1013,8 +1031,8 @@ mod tests {
     fn test_validate_public_key_zero_key_id() {
         let invalid_key = PublicKey {
             dilithium_pk: vec![1u8; 1312],
-            kyber_pk: vec![2u8; 1568],     // Kyber1024
-            key_id: [0u8; 32], // All zeros
+            kyber_pk: vec![2u8; 1568], // Kyber1024
+            key_id: [0u8; 32],         // All zeros
         };
 
         let result = validate_public_key(&invalid_key);

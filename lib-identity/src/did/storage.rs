@@ -23,19 +23,25 @@ enum DidStore {
 
 pub fn store_did_document(document: DidDocument) -> Result<(), String> {
     let store = did_store();
-    let mut store = store.write().map_err(|_| "DID store poisoned".to_string())?;
+    let mut store = store
+        .write()
+        .map_err(|_| "DID store poisoned".to_string())?;
     store.store(document)
 }
 
 pub fn resolve_did_document(did: &str) -> Result<DidDocument, String> {
     let store = did_store();
-    let mut store = store.write().map_err(|_| "DID store poisoned".to_string())?;
+    let mut store = store
+        .write()
+        .map_err(|_| "DID store poisoned".to_string())?;
     store.resolve(did)
 }
 
 pub fn set_did_store_dir(dir: &str) -> Result<(), String> {
     let store = did_store();
-    let mut store = store.write().map_err(|_| "DID store poisoned".to_string())?;
+    let mut store = store
+        .write()
+        .map_err(|_| "DID store poisoned".to_string())?;
     let dir_path = PathBuf::from(dir);
     fs::create_dir_all(&dir_path).map_err(|e| format!("Failed to create DID store dir: {}", e))?;
     *store = DidStore::FileSystem {
@@ -48,7 +54,9 @@ pub fn set_did_store_dir(dir: &str) -> Result<(), String> {
 
 pub fn set_did_store_memory() -> Result<(), String> {
     let store = did_store();
-    let mut store = store.write().map_err(|_| "DID store poisoned".to_string())?;
+    let mut store = store
+        .write()
+        .map_err(|_| "DID store poisoned".to_string())?;
     *store = DidStore::Memory {
         docs: HashMap::new(),
     };
@@ -135,4 +143,3 @@ fn did_store() -> &'static RwLock<DidStore> {
         })
     })
 }
-

@@ -12,7 +12,7 @@
 //! # Fee Multiplier Rationale (FEES-7, FEES-8, FEES-9)
 //!
 //! ## Witness Caps (basis points, 10000 = 1.0x)
-//! 
+//!
 //! Witness data is capped to prevent DoS attacks where transactions include
 //! excessive witness data. Caps are set based on typical use cases:
 //!
@@ -77,15 +77,15 @@ impl TxKindExt for TxKind {
     /// where transactions include excessive witness data.
     fn witness_cap(self) -> u32 {
         match self {
-            TxKind::NativeTransfer => 1_024,      // 1KB - simple signatures
-            TxKind::TokenTransfer => 2_048,       // 2KB - token proofs
-            TxKind::ContractCall => 65_536,       // 64KB - contract proofs
-            TxKind::DataUpload => 131_072,        // 128KB - data proofs
-            TxKind::Governance => 4_096,          // 4KB - governance proofs
-            TxKind::Staking => 2_048,             // 2KB - staking proofs
-            TxKind::Unstaking => 2_048,           // 2KB - unstaking proofs
+            TxKind::NativeTransfer => 1_024,        // 1KB - simple signatures
+            TxKind::TokenTransfer => 2_048,         // 2KB - token proofs
+            TxKind::ContractCall => 65_536,         // 64KB - contract proofs
+            TxKind::DataUpload => 131_072,          // 128KB - data proofs
+            TxKind::Governance => 4_096,            // 4KB - governance proofs
+            TxKind::Staking => 2_048,               // 2KB - staking proofs
+            TxKind::Unstaking => 2_048,             // 2KB - unstaking proofs
             TxKind::ValidatorRegistration => 4_096, // 4KB - validator key material
-            TxKind::ValidatorExit => 2_048,       // 2KB - exit proofs
+            TxKind::ValidatorExit => 2_048,         // 2KB - exit proofs
         }
     }
 
@@ -94,15 +94,15 @@ impl TxKindExt for TxKind {
     /// 10000 = 1.0x, 15000 = 1.5x, etc.
     fn base_multiplier_bps(self) -> u32 {
         match self {
-            TxKind::NativeTransfer => 10_000,   // 1.0x - standard
-            TxKind::TokenTransfer => 12_000,    // 1.2x - slightly higher
-            TxKind::ContractCall => 15_000,     // 1.5x - computation cost
-            TxKind::DataUpload => 20_000,       // 2.0x - storage cost
-            TxKind::Governance => 5_000,        // 0.5x - subsidized
-            TxKind::Staking => 12_000,          // 1.2x - similar to token transfer
-            TxKind::Unstaking => 12_000,        // 1.2x - similar to staking
+            TxKind::NativeTransfer => 10_000,        // 1.0x - standard
+            TxKind::TokenTransfer => 12_000,         // 1.2x - slightly higher
+            TxKind::ContractCall => 15_000,          // 1.5x - computation cost
+            TxKind::DataUpload => 20_000,            // 2.0x - storage cost
+            TxKind::Governance => 5_000,             // 0.5x - subsidized
+            TxKind::Staking => 12_000,               // 1.2x - similar to token transfer
+            TxKind::Unstaking => 12_000,             // 1.2x - similar to staking
             TxKind::ValidatorRegistration => 13_000, // 1.3x - key validation
-            TxKind::ValidatorExit => 12_000,    // 1.2x - registry cleanup
+            TxKind::ValidatorExit => 12_000,         // 1.2x - registry cleanup
         }
     }
 }
@@ -125,9 +125,9 @@ impl SigSchemeExt for SigScheme {
     /// Larger signatures cost more to verify and store.
     fn size_multiplier_bps(self) -> u32 {
         match self {
-            SigScheme::Ed25519 => 10_000,     // 1.0x baseline
-            SigScheme::Dilithium5 => 50_000,  // 5.0x (much larger)
-            SigScheme::Hybrid => 55_000,      // 5.5x (both, with parallelization discount)
+            SigScheme::Ed25519 => 10_000,    // 1.0x baseline
+            SigScheme::Dilithium5 => 50_000, // 5.0x (much larger)
+            SigScheme::Hybrid => 55_000,     // 5.5x (both, with parallelization discount)
         }
     }
 
@@ -136,7 +136,7 @@ impl SigSchemeExt for SigScheme {
         match self {
             SigScheme::Ed25519 => 64,
             SigScheme::Dilithium5 => 4_627,
-            SigScheme::Hybrid => 4_691,  // 64 + 4627
+            SigScheme::Hybrid => 4_691, // 64 + 4627
         }
     }
 }
@@ -163,12 +163,12 @@ impl FeeInputExt for FeeInput {
             sig_scheme,
             sig_count: 1,
             envelope_bytes,
-            payload_bytes: 32,  // recipient + amount
+            payload_bytes: 32, // recipient + amount
             witness_bytes: sig_scheme.signature_size(),
             exec_units: 0,
-            state_reads: 2,     // sender + recipient balance
-            state_writes: 2,    // sender + recipient balance
-            state_write_bytes: 32,  // two u128 balances
+            state_reads: 2,        // sender + recipient balance
+            state_writes: 2,       // sender + recipient balance
+            state_write_bytes: 32, // two u128 balances
         }
     }
 
@@ -233,23 +233,23 @@ pub fn compute_fee_v2(input: &FeeInput, params: &FeeParams) -> u64 {
     let byte_fee: u128 = total_bytes.saturating_mul(params.base_fee_per_byte as u128);
 
     // 3. Execution fee
-    let exec_fee: u128 = (input.exec_units as u128)
-        .saturating_mul(params.fee_per_exec_unit as u128);
+    let exec_fee: u128 =
+        (input.exec_units as u128).saturating_mul(params.fee_per_exec_unit as u128);
 
     // 4. State access fee
-    let state_read_fee: u128 = (input.state_reads as u128)
-        .saturating_mul(params.fee_per_state_read as u128);
-    let state_write_fee: u128 = (input.state_writes as u128)
-        .saturating_mul(params.fee_per_state_write as u128);
-    let state_write_byte_fee: u128 = (input.state_write_bytes as u128)
-        .saturating_mul(params.fee_per_state_write_byte as u128);
+    let state_read_fee: u128 =
+        (input.state_reads as u128).saturating_mul(params.fee_per_state_read as u128);
+    let state_write_fee: u128 =
+        (input.state_writes as u128).saturating_mul(params.fee_per_state_write as u128);
+    let state_write_byte_fee: u128 =
+        (input.state_write_bytes as u128).saturating_mul(params.fee_per_state_write_byte as u128);
     let state_fee: u128 = state_read_fee
         .saturating_add(state_write_fee)
         .saturating_add(state_write_byte_fee);
 
     // 5. Signature fee (includes scheme multiplier)
-    let sig_base_fee: u128 = (input.sig_count as u128)
-        .saturating_mul(params.fee_per_signature as u128);
+    let sig_base_fee: u128 =
+        (input.sig_count as u128).saturating_mul(params.fee_per_signature as u128);
     let sig_multiplier: u128 = input.sig_scheme.size_multiplier_bps() as u128;
     // sig_fee = sig_base_fee * multiplier / 10000
     let sig_fee: u128 = sig_base_fee.saturating_mul(sig_multiplier) / 10_000;
@@ -354,11 +354,7 @@ pub fn estimate_contract_call_fee(
 /// * `kind` - Transaction kind
 /// * `sig_scheme` - Signature scheme to use
 /// * `params` - Fee parameters
-pub fn estimate_fee_range(
-    kind: TxKind,
-    sig_scheme: SigScheme,
-    params: &FeeParams,
-) -> (u64, u64) {
+pub fn estimate_fee_range(kind: TxKind, sig_scheme: SigScheme, params: &FeeParams) -> (u64, u64) {
     let min_input = FeeInput {
         kind,
         sig_scheme,
@@ -893,7 +889,8 @@ mod tests {
     #[test]
     fn test_estimate_fee_range() {
         let params = FeeParams::for_testing();
-        let (min_fee, max_fee) = estimate_fee_range(TxKind::ContractCall, SigScheme::Ed25519, &params);
+        let (min_fee, max_fee) =
+            estimate_fee_range(TxKind::ContractCall, SigScheme::Ed25519, &params);
         assert!(min_fee <= max_fee);
         assert!(min_fee >= params.minimum_fee);
         assert!(max_fee <= params.maximum_fee);

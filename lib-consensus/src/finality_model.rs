@@ -46,17 +46,28 @@ pub fn is_final(votes: u64, n: u64) -> bool {
 /// Panics if the invariants are violated.
 pub fn assert_finality_invariants(votes: u64, n: u64) {
     let threshold = finality_threshold(n);
-    assert!(n >= 4,
-        "BFT invariant: minimum 4 validators required (got {})", n);
-    assert!(threshold > 2 * n / 3,
+    assert!(
+        n >= 4,
+        "BFT invariant: minimum 4 validators required (got {})",
+        n
+    );
+    assert!(
+        threshold > 2 * n / 3,
         "BFT invariant: finality threshold {} must be strictly greater than 2n/3 = {}",
-        threshold, 2 * n / 3);
-    assert!(threshold <= n,
-        "BFT invariant: finality threshold {} must not exceed n={}", threshold, n);
+        threshold,
+        2 * n / 3
+    );
+    assert!(
+        threshold <= n,
+        "BFT invariant: finality threshold {} must not exceed n={}",
+        threshold,
+        n
+    );
     assert!(
         votes >= threshold,
         "Finality invariant violated: votes {} < threshold {}",
-        votes, threshold
+        votes,
+        threshold
     );
 }
 

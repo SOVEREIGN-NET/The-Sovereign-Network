@@ -48,16 +48,14 @@ mod key_rotation_policy_tests {
     }
 }
 
+use crate::types::{PrivateKey, PublicKey};
 use anyhow::Result;
 use blake3::Hasher as Blake3Hasher;
-use rand::{RngCore};
-use rand::rngs::OsRng;
-use pqcrypto_dilithium::dilithium5;
-use pqcrypto_traits::{
-    sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey},
-};
-use crate::types::{PublicKey, PrivateKey};
 use pqc_kyber;
+use pqcrypto_dilithium::dilithium5;
+use pqcrypto_traits::sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey};
+use rand::rngs::OsRng;
+use rand::RngCore;
 
 /// quantum-resistant key pair with secure memory management
 #[derive(Debug, Clone)]
@@ -71,18 +69,18 @@ impl KeyPair {
     /// This is production-ready cryptography with proper entropy sources
     pub fn generate() -> Result<Self> {
         let mut rng = OsRng;
-        
+
         // Generate cryptographically secure master seed
         let mut master_seed = vec![0u8; 64];
         rng.fill_bytes(&mut master_seed);
 
         // Generate CRYSTALS-Dilithium5 key pair (NIST post-quantum standard, highest security)
         let (dilithium_pk, dilithium_sk) = dilithium5::keypair();
-        
+
         // Generate CRYSTALS-Kyber key pair (NIST post-quantum standard)
         let kyber_keys = pqc_kyber::keypair(&mut rng)
             .map_err(|e| anyhow::anyhow!("Kyber1024 keypair generation failed: {:?}", e))?;
-        
+
         // Calculate unique key ID from post-quantum public keys only
         let mut hasher = Blake3Hasher::new();
         hasher.update(dilithium_pk.as_bytes());
@@ -103,35 +101,37 @@ impl KeyPair {
                 master_seed,
             },
         };
-        
+
         // Validate the generated keypair
         keypair.validate()?;
-        
+
         Ok(keypair)
     }
-    
+
     /// Validate that the keypair is properly formed and secure
     pub fn validate(&self) -> Result<()> {
         // Check that keys are not all zeros (weak keys)
         if self.private_key.dilithium_sk.iter().all(|&x| x == 0) {
             return Err(anyhow::anyhow!("Weak Dilithium private key detected"));
         }
-        
+
         if self.private_key.kyber_sk.iter().all(|&x| x == 0) {
             return Err(anyhow::anyhow!("Weak Kyber private key detected"));
         }
-        
+
         // Ed25519 validation removed - pure post-quantum only
-        
+
         // Verify that public key matches private key by doing a test signature
         let test_message = b"ZHTP-KeyPair-Validation-Test";
         let signature = self.sign(test_message)?;
         let verification_result = self.public_key.verify(test_message, &signature)?;
-        
+
         if !verification_result {
-            return Err(anyhow::anyhow!("Keypair validation failed: signature verification failed"));
+            return Err(anyhow::anyhow!(
+                "Keypair validation failed: signature verification failed"
+            ));
         }
-        
+
         Ok(())
     }
 }

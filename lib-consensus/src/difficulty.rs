@@ -75,9 +75,9 @@ pub struct DifficultyConfig {
 impl Default for DifficultyConfig {
     fn default() -> Self {
         Self {
-            initial_difficulty: 0x1d00ffff,          // Bitcoin's initial difficulty
-            adjustment_interval: 2016,                // 2016 blocks
-            target_timespan: 14 * 24 * 60 * 60,      // 2 weeks in seconds
+            initial_difficulty: 0x1d00ffff,     // Bitcoin's initial difficulty
+            adjustment_interval: 2016,          // 2016 blocks
+            target_timespan: 14 * 24 * 60 * 60, // 2 weeks in seconds
             min_difficulty: 1,
             max_difficulty: 0xFFFFFFFF,
             max_adjustment_factor: 4,
@@ -194,8 +194,7 @@ impl DifficultyManager {
     pub fn should_adjust(&self, height: u64) -> bool {
         // Note: height >= adjustment_interval implies height > 0
         // since adjustment_interval is validated to be > 0
-        height >= self.config.adjustment_interval 
-            && height % self.config.adjustment_interval == 0
+        height >= self.config.adjustment_interval && height % self.config.adjustment_interval == 0
     }
 
     /// Calculate the new difficulty based on actual vs target timespan.
@@ -244,7 +243,9 @@ impl DifficultyManager {
             .saturating_mul(self.config.target_timespan)
             .checked_div(clamped_timespan)
             .ok_or_else(|| {
-                DifficultyError::CalculationError("Division by zero in difficulty calculation".to_string())
+                DifficultyError::CalculationError(
+                    "Division by zero in difficulty calculation".to_string(),
+                )
             })?;
 
         // Clamp to valid range and convert back to u32
@@ -438,7 +439,7 @@ mod tests {
     fn test_calculate_new_difficulty_faster_blocks() {
         let manager = DifficultyManager::default();
         let current_difficulty = 0x1d00ffff;
-        
+
         // Blocks came in twice as fast as expected
         let target = manager.target_timespan();
         let actual = target / 2;
@@ -455,7 +456,7 @@ mod tests {
     fn test_calculate_new_difficulty_slower_blocks() {
         let manager = DifficultyManager::default();
         let current_difficulty = 0x1d00ffff;
-        
+
         // Blocks came in twice as slow as expected
         let target = manager.target_timespan();
         let actual = target * 2;
@@ -479,7 +480,7 @@ mod tests {
         let new_difficulty = manager
             .calculate_new_difficulty(current_difficulty, actual)
             .unwrap();
-        
+
         // Should be at most 4x increase due to clamping
         assert!(new_difficulty <= current_difficulty * 4);
 
@@ -488,7 +489,7 @@ mod tests {
         let new_difficulty = manager
             .calculate_new_difficulty(current_difficulty, actual)
             .unwrap();
-        
+
         // Should be at least 1/4 due to clamping
         assert!(new_difficulty >= current_difficulty / 4);
     }
@@ -504,7 +505,7 @@ mod tests {
         let result = manager
             .adjust_difficulty(interval, current_difficulty, 0, target)
             .unwrap();
-        
+
         assert!(result.is_some());
         let new_difficulty = result.unwrap();
         // Should be approximately the same (might have minor rounding)
@@ -541,14 +542,16 @@ mod tests {
 
         // Invalid update should fail and not change anything
         let current_interval = manager.adjustment_interval();
-        assert!(manager.apply_governance_update(None, Some(0), None).is_err());
+        assert!(manager
+            .apply_governance_update(None, Some(0), None)
+            .is_err());
         assert_eq!(manager.adjustment_interval(), current_interval);
     }
 
     #[test]
     fn test_difficulty_bounds() {
         let mut manager = DifficultyManager::default();
-        
+
         // Set custom bounds
         manager.set_min_difficulty(100).unwrap();
         manager.set_max_difficulty(1000000).unwrap();
@@ -564,11 +567,11 @@ mod tests {
     #[test]
     fn test_set_min_difficulty_validation() {
         let mut manager = DifficultyManager::default();
-        
+
         // Valid: set min below current max
         assert!(manager.set_min_difficulty(100).is_ok());
         assert_eq!(manager.config().min_difficulty, 100);
-        
+
         // Test min > max scenario
         manager.set_max_difficulty(500).unwrap();
         let result = manager.set_min_difficulty(600);
@@ -578,14 +581,14 @@ mod tests {
     #[test]
     fn test_set_max_difficulty_validation() {
         let mut manager = DifficultyManager::default();
-        
+
         // Set a min first
         manager.set_min_difficulty(100).unwrap();
-        
+
         // Valid: set max above current min
         assert!(manager.set_max_difficulty(1000).is_ok());
         assert_eq!(manager.config().max_difficulty, 1000);
-        
+
         // Invalid: set max below current min
         let result = manager.set_max_difficulty(50);
         assert!(result.is_err());
@@ -594,14 +597,14 @@ mod tests {
     #[test]
     fn test_set_max_adjustment_factor_validation() {
         let mut manager = DifficultyManager::default();
-        
+
         // Valid: set factor to a positive value
         assert!(manager.set_max_adjustment_factor(8).is_ok());
         assert_eq!(manager.config().max_adjustment_factor, 8);
-        
+
         // Valid: set factor to 1
         assert!(manager.set_max_adjustment_factor(1).is_ok());
-        
+
         // Invalid: set factor to zero
         let result = manager.set_max_adjustment_factor(0);
         assert!(result.is_err());
@@ -620,7 +623,7 @@ mod tests {
             max_adjustment_factor: 10, // Larger than target_timespan
         };
         let manager = DifficultyManager::new(config);
-        
+
         // This should not panic or return division by zero error
         // Even though 3 / 10 = 0 in integer division, we protect against this
         let result = manager.calculate_new_difficulty(1000, 1);

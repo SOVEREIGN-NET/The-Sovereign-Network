@@ -35,7 +35,7 @@
 //! - **Multi-tenant**: Session ID ensures per-tenant isolation
 //! - **Application domains**: Message types prevent cross-domain attacks
 
-use crate::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption, EncryptionStats};
+use crate::encryption::{ChaCha20Poly1305Encryption, EncryptionStats, ProtocolEncryption};
 use anyhow::Result;
 use tracing::debug;
 
@@ -49,13 +49,13 @@ mod core {
     /// Format: `quic\0v1\0<message_type>\0<session_id>`
     pub fn build_aad(message_type: &str, session_id: &[u8]) -> Vec<u8> {
         let mut aad = Vec::new();
-        aad.extend_from_slice(b"quic");              // protocol_id
-        aad.push(0x00);                              // separator
-        aad.extend_from_slice(b"v1");                // version
-        aad.push(0x00);                              // separator
+        aad.extend_from_slice(b"quic"); // protocol_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(b"v1"); // version
+        aad.push(0x00); // separator
         aad.extend_from_slice(message_type.as_bytes()); // message_type
-        aad.push(0x00);                              // separator
-        aad.extend_from_slice(session_id);           // session_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(session_id); // session_id
         aad
     }
 }
@@ -207,7 +207,10 @@ mod tests {
         assert!(aad.contains(&b'\0'));
 
         let aad2 = core::build_aad("data", &session_id);
-        assert_ne!(aad, aad2, "Different message types must produce different AAD");
+        assert_ne!(
+            aad, aad2,
+            "Different message types must produce different AAD"
+        );
     }
 
     #[test]
@@ -259,7 +262,10 @@ mod tests {
 
         // Try to decrypt with different message type
         let result = enc.decrypt_message(&ciphertext, "data");
-        assert!(result.is_err(), "Different message type should fail decryption");
+        assert!(
+            result.is_err(),
+            "Different message type should fail decryption"
+        );
     }
 
     #[test]
@@ -308,7 +314,10 @@ mod tests {
 
         // Encrypt empty message
         let ciphertext = enc.encrypt_message(b"", "data").unwrap();
-        assert!(!ciphertext.is_empty(), "Even empty message produces ciphertext (tag)");
+        assert!(
+            !ciphertext.is_empty(),
+            "Even empty message produces ciphertext (tag)"
+        );
 
         let decrypted = enc.decrypt_message(&ciphertext, "data").unwrap();
         assert_eq!(decrypted.len(), 0, "Empty message should decrypt to empty");
@@ -420,7 +429,12 @@ mod tests {
             for (j, other_ciphertext) in ciphertexts.iter().enumerate() {
                 if i != j {
                     let result = session.decrypt_message(other_ciphertext, "data");
-                    assert!(result.is_err(), "Session {} should not decrypt session {} ciphertext", i, j);
+                    assert!(
+                        result.is_err(),
+                        "Session {} should not decrypt session {} ciphertext",
+                        i,
+                        j
+                    );
                 }
             }
         }
@@ -443,10 +457,10 @@ mod tests {
             "ack",
             "control",
             "crypto",
-            "dataa",     // typo
-            "dat",       // prefix
-            "",          // empty
-            "DATA",      // case-sensitive
+            "dataa", // typo
+            "dat",   // prefix
+            "",      // empty
+            "DATA",  // case-sensitive
         ];
 
         for wrong_type in wrong_types {
@@ -477,7 +491,11 @@ mod tests {
 
         let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
 
-        assert_eq!(enc.session_id(), session_id, "Session ID should be preserved");
+        assert_eq!(
+            enc.session_id(),
+            session_id,
+            "Session ID should be preserved"
+        );
 
         // Encrypt and decrypt
         let message = b"Test";
@@ -485,6 +503,10 @@ mod tests {
         let decrypted = enc.decrypt_message(&ciphertext, "data").unwrap();
 
         assert_eq!(message, &decrypted[..]);
-        assert_eq!(enc.session_id(), session_id, "Session ID should remain unchanged after operations");
+        assert_eq!(
+            enc.session_id(),
+            session_id,
+            "Session ID should remain unchanged after operations"
+        );
     }
 }

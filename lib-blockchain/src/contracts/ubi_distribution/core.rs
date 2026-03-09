@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
-use serde::{Deserialize, Serialize};
-use crate::integration::crypto_integration::PublicKey;
+use super::types::*;
 use crate::contracts::tokens::core::TokenContract;
 use crate::contracts::treasury_kernel::TreasuryKernel;
-use super::types::*;
+use crate::integration::crypto_integration::PublicKey;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 /// Universal Basic Income Distribution Contract
 ///
@@ -164,13 +164,12 @@ impl UbiDistributor {
             return Err(Error::ZeroAmount);
         }
 
-        self.total_received = self.total_received
+        self.total_received = self
+            .total_received
             .checked_add(amount)
             .ok_or(Error::Overflow)?;
 
-        self.balance = self.balance
-            .checked_add(amount)
-            .ok_or(Error::Overflow)?;
+        self.balance = self.balance.checked_add(amount).ok_or(Error::Overflow)?;
 
         Ok(())
     }
@@ -371,14 +370,10 @@ impl UbiDistributor {
         // ====================================================================
 
         // Update balance
-        self.balance = self.balance
-            .checked_sub(amount)
-            .ok_or(Error::Overflow)?;
+        self.balance = self.balance.checked_sub(amount).ok_or(Error::Overflow)?;
 
         // Update total paid
-        self.total_paid = self.total_paid
-            .checked_add(amount)
-            .ok_or(Error::Overflow)?;
+        self.total_paid = self.total_paid.checked_add(amount).ok_or(Error::Overflow)?;
 
         // Mark as paid this month (Invariant P1)
         month_set.insert(id);
@@ -466,7 +461,10 @@ impl UbiDistributor {
     pub fn has_claimed_this_month(&self, citizen: &PublicKey, current_height: u64) -> bool {
         let id = Self::key_id(citizen);
         let month = self.month_index(current_height);
-        self.paid.get(&month).map(|s| s.contains(&id)).unwrap_or(false)
+        self.paid
+            .get(&month)
+            .map(|s| s.contains(&id))
+            .unwrap_or(false)
     }
 
     /// Initialize UBI pool with funding
@@ -669,7 +667,7 @@ impl UbiDistributor {
         // let total = kernel.state.get_distributed(epoch);
         // UbiPoolStatus::new(epoch, eligible, total)
 
-        UbiPoolStatus::new(epoch, 0, 0)  // Placeholder
+        UbiPoolStatus::new(epoch, 0, 0) // Placeholder
     }
 
     /// Query all UBI claims recorded for an epoch (Phase C - NEW)
@@ -689,10 +687,7 @@ impl UbiDistributor {
     pub fn query_ubi_claims(&self, epoch: u64) -> Vec<UbiClaimRecorded> {
         // Phase C: Retrieve UbiClaimRecorded events from local storage
         // Treasury Kernel uses this to get all claims for processing
-        self.claim_events
-            .get(&epoch)
-            .cloned()
-            .unwrap_or_default()
+        self.claim_events.get(&epoch).cloned().unwrap_or_default()
     }
 }
 
@@ -724,7 +719,7 @@ impl UbiDistributor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::executor::{ExecutionContext, CallOrigin};
+    use crate::contracts::executor::{CallOrigin, ExecutionContext};
 
     fn test_public_key(id: u8) -> PublicKey {
         PublicKey {
@@ -744,12 +739,12 @@ mod tests {
 
     fn test_execution_context_for_contract(contract_address: &PublicKey) -> ExecutionContext {
         ExecutionContext::with_contract(
-            test_governance().clone(),  // caller
-            contract_address.clone(),   // contract address
-            1,                          // block_number
-            1000,                       // timestamp
-            100000,                     // gas_limit
-            [1u8; 32],                  // tx_hash
+            test_governance().clone(), // caller
+            contract_address.clone(),  // contract address
+            1,                         // block_number
+            1000,                      // timestamp
+            100000,                    // gas_limit
+            [1u8; 32],                 // tx_hash
         )
     }
 
@@ -883,7 +878,8 @@ mod tests {
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
         ubi.receive_funds(&gov, 1000).expect("fund failed");
-        ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
+        ubi.set_month_amount(&gov, 0, 100)
+            .expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
@@ -919,7 +915,8 @@ mod tests {
 
         ubi.register(&citizen).expect("register failed");
         ubi.receive_funds(&gov, 1000).expect("fund failed");
-        ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
+        ubi.set_month_amount(&gov, 0, 100)
+            .expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
@@ -939,7 +936,8 @@ mod tests {
 
         ubi.register(&citizen).expect("register failed");
         ubi.receive_funds(&gov, 2000).expect("fund failed");
-        ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
+        ubi.set_month_amount(&gov, 0, 100)
+            .expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
@@ -963,7 +961,8 @@ mod tests {
 
         ubi.register(&citizen).expect("register failed");
         ubi.receive_funds(&gov, 2000).expect("fund failed");
-        ubi.set_amount_range(&gov, 0, 2, 100).expect("set_amount_range failed");
+        ubi.set_amount_range(&gov, 0, 2, 100)
+            .expect("set_amount_range failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
@@ -988,7 +987,8 @@ mod tests {
 
         ubi.register(&citizen).expect("register failed");
         ubi.receive_funds(&gov, 50).expect("fund failed"); // Only 50, but trying to pay 100
-        ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
+        ubi.set_month_amount(&gov, 0, 100)
+            .expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
@@ -1006,7 +1006,8 @@ mod tests {
 
         ubi.register(&citizen).expect("register failed");
         ubi.receive_funds(&gov, 1000).expect("fund failed");
-        ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
+        ubi.set_month_amount(&gov, 0, 100)
+            .expect("set_month failed");
 
         // Use a token with insufficient balance to simulate transfer failure
         let mut mock_token = create_mock_token_with_insufficient_balance(&gov);
@@ -1029,8 +1030,8 @@ mod tests {
         let ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
         // blocks_per_month = 1000
-        assert_eq!(ubi.month_index(0), 0);    // height 0
-        assert_eq!(ubi.month_index(999), 0);  // height 999
+        assert_eq!(ubi.month_index(0), 0); // height 0
+        assert_eq!(ubi.month_index(999), 0); // height 999
         assert_eq!(ubi.month_index(1000), 1); // height 1000 (start of month 1)
         assert_eq!(ubi.month_index(1999), 1); // height 1999
         assert_eq!(ubi.month_index(2000), 2); // height 2000 (start of month 2)
@@ -1046,7 +1047,8 @@ mod tests {
         ubi.register(&citizen1).expect("register citizen1 failed");
         ubi.register(&citizen2).expect("register citizen2 failed");
         ubi.receive_funds(&gov, 2000).expect("fund failed");
-        ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
+        ubi.set_month_amount(&gov, 0, 100)
+            .expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
@@ -1068,7 +1070,8 @@ mod tests {
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
         // Simulate large amount close to u64::MAX
-        ubi.receive_funds(&gov, u64::MAX - 100).expect("first receive failed");
+        ubi.receive_funds(&gov, u64::MAX - 100)
+            .expect("first receive failed");
 
         // Try to add 200 more (should overflow)
         let result = ubi.receive_funds(&gov, 200);
@@ -1085,11 +1088,12 @@ mod tests {
         ubi.register(&citizen).expect("register failed");
 
         // Simulate very large balance and total_paid
-        ubi.balance = 200;  // Enough for one transfer
+        ubi.balance = 200; // Enough for one transfer
         ubi.total_received = 200;
-        ubi.total_paid = u64::MAX - 100;  // Already very large
+        ubi.total_paid = u64::MAX - 100; // Already very large
 
-        ubi.set_month_amount(&gov, 0, 200).expect("set_month failed");
+        ubi.set_month_amount(&gov, 0, 200)
+            .expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
         let ctx = test_execution_context_for_contract(&gov);
@@ -1559,7 +1563,10 @@ mod tests {
 
         // Verify first and last claims
         assert_eq!(claims[0].amount, 1000);
-        assert_eq!(claims[num_claims - 1].amount, 1000 + (num_claims - 1) as u64);
+        assert_eq!(
+            claims[num_claims - 1].amount,
+            1000 + (num_claims - 1) as u64
+        );
     }
 
     #[test]

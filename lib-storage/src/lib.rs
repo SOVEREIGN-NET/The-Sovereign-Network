@@ -1,5 +1,5 @@
 //! ZHTP Unified Storage System
-//! 
+//!
 //! A sophisticated multi-layer storage system combining DHT networking with economic storage.
 //! The DHT provides the foundation for peer discovery, routing, and basic key-value operations,
 //! while the storage layer adds economics, contracts, erasure coding, and tiered storage on top.
@@ -48,37 +48,38 @@ pub mod optimization;
 pub mod consistency;
 
 // Re-export core types (avoiding conflicts)
-pub use types::{
-    dht_types::*, storage_types::*, stats_types::*
-};
+pub use types::{dht_types::*, stats_types::*, storage_types::*};
 
-// Re-export economic types explicitly to avoid conflicts  
+// Re-export economic types explicitly to avoid conflicts
 pub use types::economic_types::{
-    EconomicManagerConfig, EconomicStats, EconomicStorageRequest, EconomicQuote,
-    StorageRequirements, PaymentPreferences, QualityRequirements, BudgetConstraints
+    BudgetConstraints, EconomicManagerConfig, EconomicQuote, EconomicStats, EconomicStorageRequest,
+    PaymentPreferences, QualityRequirements, StorageRequirements,
 };
 
 // Re-export DHT and content management
+pub use backend::{BackendStats, BatchOp, SledBackend, SledTree, StorageBackend, StorageKey};
+pub use cache::{CacheEntry, CacheManager, CacheStats, EvictionPolicy};
+pub use content::{
+    AccessControlSettings, ContentManager, ContentStorageRequirements, DownloadRequest,
+    SearchQuery, UploadRequest,
+};
 pub use dht::*;
 pub use economic::{
-    pricing::*, market::*, reputation::*, payments::*, incentives::*, 
-    quality::*, penalties::*, rewards::*, manager::*
+    incentives::*, manager::*, market::*, payments::*, penalties::*, pricing::*, quality::*,
+    reputation::*, rewards::*,
 };
-pub use content::{ContentManager, UploadRequest, DownloadRequest, SearchQuery, AccessControlSettings, ContentStorageRequirements};
-pub use wallet_content_integration::{WalletContentManager, WalletContentStatistics};
-pub use backend::{BackendStats, BatchOp, StorageBackend, StorageKey, SledBackend, SledTree};
 pub use erasure::*;
-pub use proofs::{StorageProof, RetrievalProof, generate_storage_proof, generate_retrieval_proof};
-pub use integrity::{IntegrityManager, IntegrityMetadata, IntegrityStatus, ChecksumAlgorithm};
-pub use cache::{CacheManager, CacheEntry, EvictionPolicy, CacheStats};
+pub use integrity::{ChecksumAlgorithm, IntegrityManager, IntegrityMetadata, IntegrityStatus};
+pub use proofs::{generate_retrieval_proof, generate_storage_proof, RetrievalProof, StorageProof};
+pub use wallet_content_integration::{WalletContentManager, WalletContentStatistics};
 
-use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
+use anyhow::{anyhow, Result};
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_identity::ZhtpIdentity;
+use serde::{Deserialize, Serialize};
 
 // Import specific types from our own modules
-use crate::types::{NodeId, ContentHash};
+use crate::types::{ContentHash, NodeId};
 use std::path::Path;
 
 /// Unified storage system that integrates all components
@@ -201,16 +202,12 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         // In production, this would come from ZhtpIdentity
         let peer_identity = types::dht_types::placeholder_peer_identity(node_id.clone());
         // Initialize DHT components
-        let dht_manager = dht::node::DhtNodeManager::new(
-            peer_identity.clone(),
-            config.addresses.clone(),
-        )?;
+        let dht_manager =
+            dht::node::DhtNodeManager::new(peer_identity.clone(), config.addresses.clone())?;
 
         // Initialize DHT storage with in-memory backend (HashMapBackend)
-        let dht_storage = dht::storage::DhtStorage::new(
-            node_id.clone(),
-            config.storage_config.max_storage_size,
-        );
+        let dht_storage =
+            dht::storage::DhtStorage::new(node_id.clone(), config.storage_config.max_storage_size);
 
         if let Some(path) = &config.storage_config.dht_persist_path {
             tracing::warn!(
@@ -227,19 +224,14 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         }
 
         // Initialize economic manager
-        let economic_manager = economic::manager::EconomicStorageManager::new(
-            config.economic_config.clone(),
-        );
+        let economic_manager =
+            economic::manager::EconomicStorageManager::new(config.economic_config.clone());
 
         // Initialize content manager with in-memory storage
-        let content_dht_storage = dht::storage::DhtStorage::new(
-            node_id.clone(),
-            config.storage_config.max_storage_size,
-        );
-        let content_manager = content::ContentManager::new(
-            content_dht_storage,
-            config.economic_config.clone(),
-        )?;
+        let content_dht_storage =
+            dht::storage::DhtStorage::new(node_id.clone(), config.storage_config.max_storage_size);
+        let content_manager =
+            content::ContentManager::new(content_dht_storage, config.economic_config.clone())?;
 
         // Initialize erasure coding
         let erasure_coding = erasure::ErasureCoding::new(
@@ -298,7 +290,10 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         uploader: ZhtpIdentity,
     ) -> Result<ContentHash> {
         // Upload through content manager
-        let content_hash = self.content_manager.upload_content(request, uploader).await?;
+        let content_hash = self
+            .content_manager
+            .upload_content(request, uploader)
+            .await?;
 
         // Update statistics
         self.stats.storage_stats.total_uploads += 1;
@@ -308,10 +303,7 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
     }
 
     /// Download content with access control
-    pub async fn download_content(
-        &mut self,
-        request: DownloadRequest,
-    ) -> Result<Vec<u8>> {
+    pub async fn download_content(&mut self, request: DownloadRequest) -> Result<Vec<u8>> {
         // Download through content manager
         let content = self.content_manager.download_content(request).await?;
 
@@ -332,7 +324,10 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
     }
 
     /// Get storage quote for economic planning
-    pub async fn get_storage_quote(&mut self, request: EconomicStorageRequest) -> Result<EconomicQuote> {
+    pub async fn get_storage_quote(
+        &mut self,
+        request: EconomicStorageRequest,
+    ) -> Result<EconomicQuote> {
         self.economic_manager.process_storage_request(request).await
     }
 
@@ -342,7 +337,7 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
     pub async fn add_peer(&mut self, peer_address: String, node_id: NodeId) -> Result<()> {
         // Create DhtPeerIdentity from NodeId
         let peer_identity = types::dht_types::placeholder_peer_identity(node_id.clone());
-        
+
         // Parse peer info and add to DHT
         let node_info = DhtNode {
             peer: peer_identity,
@@ -359,8 +354,8 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
             },
             storage_info: Some(StorageCapabilities {
                 available_space: 1_000_000_000, // 1GB available
-                total_capacity: 1_000_000_000, // 1GB total capacity
-                price_per_gb_day: 100, // 100 tokens per GB per day
+                total_capacity: 1_000_000_000,  // 1GB total capacity
+                price_per_gb_day: 100,          // 100 tokens per GB per day
                 supported_tiers: vec![StorageTier::Hot, StorageTier::Warm, StorageTier::Cold],
                 region: "unknown".to_string(),
                 uptime: 0.99, // 99% uptime
@@ -379,11 +374,18 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
     /// Perform system maintenance
     pub async fn perform_maintenance(&mut self) -> Result<()> {
         // Monitor contracts for performance
-        let active_contracts = self.economic_manager.get_statistics().await?.total_contracts;
-        
+        let active_contracts = self
+            .economic_manager
+            .get_statistics()
+            .await?
+            .total_contracts;
+
         for i in 0..active_contracts {
             let contract_id = Hash::from_bytes(&[i as u8; 32]); // Simplified for demo
-            let _ = self.economic_manager.monitor_contract_performance(contract_id).await;
+            let _ = self
+                .economic_manager
+                .monitor_contract_performance(contract_id)
+                .await;
         }
 
         // Cleanup expired data
@@ -437,7 +439,9 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         credentials: &lib_identity::ZhtpIdentity,
         passphrase: &str,
     ) -> Result<()> {
-        self.content_manager.store_identity_credentials(identity_id, credentials, passphrase).await
+        self.content_manager
+            .store_identity_credentials(identity_id, credentials, passphrase)
+            .await
     }
 
     /// Retrieve identity credentials from unified storage
@@ -446,11 +450,16 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         identity_id: &lib_identity::IdentityId,
         passphrase: &str,
     ) -> Result<lib_identity::ZhtpIdentity> {
-        self.content_manager.retrieve_identity_credentials(identity_id, passphrase).await
+        self.content_manager
+            .retrieve_identity_credentials(identity_id, passphrase)
+            .await
     }
 
     /// Check if identity exists in storage
-    pub async fn identity_exists(&mut self, identity_id: &lib_identity::IdentityId) -> Result<bool> {
+    pub async fn identity_exists(
+        &mut self,
+        identity_id: &lib_identity::IdentityId,
+    ) -> Result<bool> {
         self.content_manager.identity_exists(identity_id).await
     }
 
@@ -461,7 +470,9 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         lib_identity: &lib_identity::ZhtpIdentity,
         passphrase: &str,
     ) -> Result<()> {
-        self.content_manager.migrate_identity_from_blockchain(identity_id, lib_identity, passphrase).await
+        self.content_manager
+            .migrate_identity_from_blockchain(identity_id, lib_identity, passphrase)
+            .await
     }
 }
 
@@ -510,10 +521,8 @@ impl UnifiedStorageSystem<dht::backend::SledBackend> {
         };
 
         // Initialize DHT components
-        let dht_manager = dht::node::DhtNodeManager::new(
-            peer_identity.clone(),
-            config.addresses.clone(),
-        )?;
+        let dht_manager =
+            dht::node::DhtNodeManager::new(peer_identity.clone(), config.addresses.clone())?;
 
         // Initialize DHT storage with persistent SledBackend
         let dht_storage = dht::storage::DhtStorage::new_persistent(
@@ -527,20 +536,15 @@ impl UnifiedStorageSystem<dht::backend::SledBackend> {
         );
 
         // Initialize economic manager
-        let economic_manager = economic::manager::EconomicStorageManager::new(
-            config.economic_config.clone(),
-        );
+        let economic_manager =
+            economic::manager::EconomicStorageManager::new(config.economic_config.clone());
 
         // Initialize content manager with in-memory storage (content metadata layer)
         // Note: Content storage is separate and can be made persistent in future phases
-        let content_dht_storage = dht::storage::DhtStorage::new(
-            node_id.clone(),
-            config.storage_config.max_storage_size,
-        );
-        let content_manager = content::ContentManager::new(
-            content_dht_storage,
-            config.economic_config.clone(),
-        )?;
+        let content_dht_storage =
+            dht::storage::DhtStorage::new(node_id.clone(), config.storage_config.max_storage_size);
+        let content_manager =
+            content::ContentManager::new(content_dht_storage, config.economic_config.clone())?;
 
         // Initialize erasure coding
         let erasure_coding = erasure::ErasureCoding::new(
@@ -610,8 +614,14 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
         }
 
         let key = format!("web4/domain/{}", domain);
-        tracing::info!("Storing domain record for {} ({} bytes)", domain, record_data.len());
-        self.dht_storage.store(key, record_data.to_vec(), None).await
+        tracing::info!(
+            "Storing domain record for {} ({} bytes)",
+            domain,
+            record_data.len()
+        );
+        self.dht_storage
+            .store(key, record_data.to_vec(), None)
+            .await
     }
 
     /// Retrieve a Web4 domain record from DHT storage (works with any backend)
@@ -656,7 +666,11 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
     /// Uses key format: `identity/{identity_id}`
     /// Payload is versioned: { "v": 1, "data": {...} }
     /// Also writes to backup file ~/.zhtp/backup/identities.json
-    pub async fn store_identity_record(&mut self, identity_id: &str, record_data: &[u8]) -> Result<()> {
+    pub async fn store_identity_record(
+        &mut self,
+        identity_id: &str,
+        record_data: &[u8],
+    ) -> Result<()> {
         let key = format!("identity/{}", identity_id);
 
         // Wrap in versioned envelope for future compatibility
@@ -668,10 +682,17 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
         let versioned_data = serde_json::to_vec(&versioned)
             .map_err(|e| anyhow::anyhow!("Failed to serialize versioned identity: {}", e))?;
 
-        tracing::info!("Storing identity record {} ({} bytes, v1)", identity_id, versioned_data.len());
+        tracing::info!(
+            "Storing identity record {} ({} bytes, v1)",
+            identity_id,
+            versioned_data.len()
+        );
 
         // Write to backup file (shadow copy for safety)
-        if let Err(e) = self.append_to_identity_backup(identity_id, &versioned).await {
+        if let Err(e) = self
+            .append_to_identity_backup(identity_id, &versioned)
+            .await
+        {
             tracing::warn!("Failed to write identity backup (non-fatal): {}", e);
         }
 
@@ -681,7 +702,11 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
     /// Append identity to backup JSON file (~/.zhtp/backup/identities.json)
     /// This is a shadow copy for safety - not referenced by application code
     /// Uses spawn_blocking to avoid blocking the async executor during file I/O
-    async fn append_to_identity_backup(&self, identity_id: &str, data: &serde_json::Value) -> Result<()> {
+    async fn append_to_identity_backup(
+        &self,
+        identity_id: &str,
+        data: &serde_json::Value,
+    ) -> Result<()> {
         let identity_id = identity_id.to_string();
         let data = data.clone();
 
@@ -751,7 +776,10 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
 
                 let version = envelope.get("v").and_then(|v| v.as_u64()).unwrap_or(0);
                 if version != 1 {
-                    tracing::warn!("Unknown identity record version {}, attempting to parse", version);
+                    tracing::warn!(
+                        "Unknown identity record version {}, attempting to parse",
+                        version
+                    );
                 }
 
                 // Extract data field
@@ -764,7 +792,7 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
                     Ok(Some(versioned_data))
                 }
             }
-            None => Ok(None)
+            None => Ok(None),
         }
     }
 
@@ -823,8 +851,14 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
             let vec: Vec<String> = ids.into_iter().collect();
             let data = serde_json::to_vec(&vec)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize identity index: {}", e))?;
-            self.dht_storage.store(index_key.to_string(), data, None).await?;
-            tracing::debug!("Added identity {} to index (total: {})", identity_id, vec.len());
+            self.dht_storage
+                .store(index_key.to_string(), data, None)
+                .await?;
+            tracing::debug!(
+                "Added identity {} to index (total: {})",
+                identity_id,
+                vec.len()
+            );
         }
 
         Ok(())
@@ -860,7 +894,9 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
             } else {
                 let vec: Vec<String> = ids.into_iter().collect();
                 let data = serde_json::to_vec(&vec)?;
-                self.dht_storage.store(index_key.to_string(), data, None).await?;
+                self.dht_storage
+                    .store(index_key.to_string(), data, None)
+                    .await?;
                 tracing::debug!("Removed identity {} from index", identity_id);
             }
         }
@@ -916,14 +952,22 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
         }
 
         let count = identity_ids.len() as u32;
-        tracing::info!("🔄 Migration: Found {} identities in DHT storage, rebuilding index...", count);
+        tracing::info!(
+            "🔄 Migration: Found {} identities in DHT storage, rebuilding index...",
+            count
+        );
 
         // Store as JSON array
         let ids_vec: Vec<String> = identity_ids.into_iter().collect();
         let data = serde_json::to_vec(&ids_vec)?;
-        self.dht_storage.store("idx/identities".to_string(), data, None).await?;
+        self.dht_storage
+            .store("idx/identities".to_string(), data, None)
+            .await?;
 
-        tracing::info!("✅ Migration complete: Indexed {} identities from DHT storage", count);
+        tracing::info!(
+            "✅ Migration complete: Indexed {} identities from DHT storage",
+            count
+        );
         Ok(count)
     }
 
@@ -939,8 +983,9 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
 
         let mut wallet_ids: HashSet<String> = match self.dht_storage.get(&index_key).await? {
             Some(data) => {
-                let vec: Vec<String> = serde_json::from_slice(&data)
-                    .map_err(|e| anyhow::anyhow!("Corrupted wallet index for {}: {}", identity_id, e))?;
+                let vec: Vec<String> = serde_json::from_slice(&data).map_err(|e| {
+                    anyhow::anyhow!("Corrupted wallet index for {}: {}", identity_id, e)
+                })?;
                 vec.into_iter().collect()
             }
             None => HashSet::new(),
@@ -950,7 +995,11 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
             let vec: Vec<String> = wallet_ids.into_iter().collect();
             let data = serde_json::to_vec(&vec)?;
             self.dht_storage.store(index_key, data, None).await?;
-            tracing::debug!("Added wallet {} to identity {} index", wallet_id, identity_id);
+            tracing::debug!(
+                "Added wallet {} to identity {} index",
+                wallet_id,
+                identity_id
+            );
         }
 
         Ok(())
@@ -973,8 +1022,9 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
 
         match self.dht_storage.get(&index_key).await? {
             Some(data) => {
-                let ids: Vec<String> = serde_json::from_slice(&data)
-                    .map_err(|e| anyhow::anyhow!("Corrupted wallet index for {}: {}", identity_id, e))?;
+                let ids: Vec<String> = serde_json::from_slice(&data).map_err(|e| {
+                    anyhow::anyhow!("Corrupted wallet index for {}: {}", identity_id, e)
+                })?;
                 Ok(ids)
             }
             None => Ok(Vec::new()),
@@ -982,7 +1032,12 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
     }
 
     /// Store wallet metadata record (public info, not private data)
-    pub async fn store_wallet_record(&mut self, identity_id: &str, wallet_id: &str, data: &[u8]) -> Result<()> {
+    pub async fn store_wallet_record(
+        &mut self,
+        identity_id: &str,
+        wallet_id: &str,
+        data: &[u8],
+    ) -> Result<()> {
         let key = format!("wallet/{}/{}", identity_id, wallet_id);
 
         // Wrap in versioned envelope
@@ -993,12 +1048,21 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
         });
         let versioned_data = serde_json::to_vec(&versioned)?;
 
-        tracing::info!("Storing wallet record {}/{} ({} bytes, v1)", identity_id, wallet_id, versioned_data.len());
+        tracing::info!(
+            "Storing wallet record {}/{} ({} bytes, v1)",
+            identity_id,
+            wallet_id,
+            versioned_data.len()
+        );
         self.dht_storage.store(key, versioned_data, None).await
     }
 
     /// Retrieve wallet metadata record
-    pub async fn get_wallet_record(&mut self, identity_id: &str, wallet_id: &str) -> Result<Option<Vec<u8>>> {
+    pub async fn get_wallet_record(
+        &mut self,
+        identity_id: &str,
+        wallet_id: &str,
+    ) -> Result<Option<Vec<u8>>> {
         let key = format!("wallet/{}/{}", identity_id, wallet_id);
 
         match self.dht_storage.get(&key).await? {
@@ -1019,14 +1083,28 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
     }
 
     /// Store wallet private data (encrypted) - convenience wrapper
-    pub async fn store_wallet_private_record(&mut self, identity_id: &str, wallet_id: &str, data: &[u8]) -> Result<()> {
+    pub async fn store_wallet_private_record(
+        &mut self,
+        identity_id: &str,
+        wallet_id: &str,
+        data: &[u8],
+    ) -> Result<()> {
         let key = format!("wallet_private/{}/{}", identity_id, wallet_id);
-        tracing::info!("Storing wallet private data {}/{} ({} bytes)", identity_id, wallet_id, data.len());
+        tracing::info!(
+            "Storing wallet private data {}/{} ({} bytes)",
+            identity_id,
+            wallet_id,
+            data.len()
+        );
         self.dht_storage.store(key, data.to_vec(), None).await
     }
 
     /// Retrieve wallet private data (encrypted)
-    pub async fn get_wallet_private_record(&mut self, identity_id: &str, wallet_id: &str) -> Result<Option<Vec<u8>>> {
+    pub async fn get_wallet_private_record(
+        &mut self,
+        identity_id: &str,
+        wallet_id: &str,
+    ) -> Result<Option<Vec<u8>>> {
         let key = format!("wallet_private/{}/{}", identity_id, wallet_id);
         self.dht_storage.get(&key).await
     }
@@ -1037,10 +1115,15 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
 
     /// Get DHT content by hex hash string (works with any backend)
     /// CRITICAL FIX: Content is stored in content_manager's dht_storage, not self.dht_storage!
-    pub async fn get_dht_content_by_hex(&mut self, content_hash_hex: &str) -> Result<Option<Vec<u8>>> {
+    pub async fn get_dht_content_by_hex(
+        &mut self,
+        content_hash_hex: &str,
+    ) -> Result<Option<Vec<u8>>> {
         // FIXED: Query the SAME dht_storage instance that upload_content() stores to
         // Content is stored via content_manager.dht_storage, so we must query from there
-        self.content_manager.get_from_dht_storage(content_hash_hex).await
+        self.content_manager
+            .get_from_dht_storage(content_hash_hex)
+            .await
     }
 
     // ========================================================================
@@ -1080,13 +1163,18 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
         };
 
         // Upload content via content_manager
-        let content_hash = self.content_manager.upload_content(upload_request, uploader).await?;
+        let content_hash = self
+            .content_manager
+            .upload_content(upload_request, uploader)
+            .await?;
 
         // Store encoded shards separately for redundancy
         let shards_data = bincode::serialize(&encoded_shards)?;
         let shards_hash = Hash::from_bytes(&blake3::hash(&shards_data).as_bytes()[..32]);
 
-        self.dht_storage.store_data(shards_hash, shards_data).await?;
+        self.dht_storage
+            .store_data(shards_hash, shards_data)
+            .await?;
 
         Ok(content_hash)
     }
@@ -1136,10 +1224,10 @@ pub type PersistentStorageSystem = UnifiedStorageSystem<dht::backend::SledBacken
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
+    use crate::types::{PenaltyType, MAX_REPLICATION, MIN_REPLICATION, STORAGE_PRICE_PER_GB_DAY};
     use lib_identity::IdentityId;
-    use crate::types::{PenaltyType, STORAGE_PRICE_PER_GB_DAY, MIN_REPLICATION, MAX_REPLICATION};
-    
+
     #[test]
     fn test_type_definitions() {
         // Test basic type instantiation to ensure all types are properly exported
@@ -1148,14 +1236,17 @@ mod tests {
         let encryption_level = EncryptionLevel::QuantumResistant;
         let access_pattern = AccessPattern::Frequent;
         let penalty_type = PenaltyType::DataLoss;
-        
+
         // Verify enums work correctly
         assert_eq!(storage_tier, StorageTier::Hot);
         assert_eq!(access_level, AccessLevel::Private);
-        assert!(matches!(encryption_level, EncryptionLevel::QuantumResistant));
+        assert!(matches!(
+            encryption_level,
+            EncryptionLevel::QuantumResistant
+        ));
         assert!(matches!(access_pattern, AccessPattern::Frequent));
         assert!(matches!(penalty_type, PenaltyType::DataLoss));
-        
+
         // Test type constants
         assert_eq!(STORAGE_PRICE_PER_GB_DAY, 100);
         assert_eq!(MIN_REPLICATION, 3);
@@ -1166,7 +1257,7 @@ mod tests {
     async fn test_unified_storage_system_creation() {
         let config = UnifiedStorageConfig::default();
         let system = UnifiedStorageSystem::new(config).await;
-        
+
         assert!(system.is_ok());
         let system = system.unwrap();
         assert_eq!(system.get_config().erasure_config.data_shards, 4);
@@ -1207,24 +1298,24 @@ mod tests {
         assert_eq!(config.base_price_per_gb_day, 100);
         assert!(config.enable_escrow);
     }
-    
+
     #[test]
     fn test_config_creation() {
         let config = UnifiedStorageConfig::default();
-        
+
         assert_eq!(config.erasure_config.data_shards, 4);
         assert_eq!(config.erasure_config.parity_shards, 2);
         assert!(config.addresses.contains(&"127.0.0.1:33445".to_string()));
     }
-    
+
     #[test]
     fn test_stats_creation() {
         let stats = StorageStats::default();
-        
+
         assert_eq!(stats.total_content_count, 0);
         assert_eq!(stats.total_storage_used, 0);
     }
-    
+
     #[test]
     fn test_health_creation() {
         let stats = UnifiedStorageStats {
@@ -1241,7 +1332,7 @@ mod tests {
             economic_stats: EconomicStats::default(),
             storage_stats: StorageStats::default(),
         };
-        
+
         assert_eq!(stats.dht_stats.total_nodes, 1);
         assert_eq!(stats.storage_stats.total_content_count, 0);
     }
@@ -1252,24 +1343,34 @@ mod tests {
     async fn test_unified_storage_identity_integration() {
         let config = UnifiedStorageConfig::default();
         let mut system = UnifiedStorageSystem::new(config).await.unwrap();
-        
+
         // Create test identity using helper
         let identity_id = IdentityId::from_bytes(&[3u8; 32]);
         let test_identity = create_test_identity_for_lib(identity_id.clone(), 1122334455);
         let passphrase = "unified_system_test";
 
         // Test storage through unified system
-        let store_result = system.store_identity_credentials(&identity_id, &test_identity, passphrase).await;
-        assert!(store_result.is_ok(), "Unified system should store identity successfully");
+        let store_result = system
+            .store_identity_credentials(&identity_id, &test_identity, passphrase)
+            .await;
+        assert!(
+            store_result.is_ok(),
+            "Unified system should store identity successfully"
+        );
 
         // Test existence check
         let exists = system.identity_exists(&identity_id).await.unwrap();
         assert!(exists, "Identity should exist in unified system");
 
         // Test retrieval
-        let retrieved = system.retrieve_identity_credentials(&identity_id, passphrase).await;
-        assert!(retrieved.is_ok(), "Should retrieve identity from unified system");
-        
+        let retrieved = system
+            .retrieve_identity_credentials(&identity_id, passphrase)
+            .await;
+        assert!(
+            retrieved.is_ok(),
+            "Should retrieve identity from unified system"
+        );
+
         let retrieved_identity = retrieved.unwrap();
         assert_eq!(retrieved_identity.id, test_identity.id);
     }
@@ -1291,13 +1392,8 @@ mod tests {
             kyber_sk: vec![],
             master_seed: vec![7, 8, 9],
         };
-        let ownership_proof = ZeroKnowledgeProof::new(
-            "test".to_string(),
-            vec![],
-            vec![],
-            vec![],
-            None,
-        );
+        let ownership_proof =
+            ZeroKnowledgeProof::new("test".to_string(), vec![], vec![], vec![], None);
 
         let mut identity = ZhtpIdentity::new(
             IdentityType::Human,

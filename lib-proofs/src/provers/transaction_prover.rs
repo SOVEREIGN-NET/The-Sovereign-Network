@@ -1,13 +1,13 @@
 //! Transaction proof generation
-//! 
+//!
 //! High-level interface for generating transaction proofs with
 //! performance optimizations and batch processing capabilities.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use crate::circuits::{TransactionCircuit, TransactionWitness, TransactionProof};
-use crate::types::VerificationResult;
+use crate::circuits::{TransactionCircuit, TransactionProof, TransactionWitness};
 use crate::plonky2::CircuitConfig;
+use crate::types::VerificationResult;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Transaction prover for generating zero-knowledge transaction proofs
 #[derive(Debug)]
@@ -23,7 +23,7 @@ impl TransactionProver {
     pub fn new() -> Result<Self> {
         let mut circuit = TransactionCircuit::standard();
         circuit.build()?;
-        
+
         Ok(Self {
             circuit,
             stats: ProverStats::new(),
@@ -34,7 +34,7 @@ impl TransactionProver {
     pub fn with_config(config: CircuitConfig) -> Result<Self> {
         let mut circuit = TransactionCircuit::new(config);
         circuit.build()?;
-        
+
         Ok(Self {
             circuit,
             stats: ProverStats::new(),
@@ -53,7 +53,7 @@ impl TransactionProver {
         nullifier: [u8; 32],
     ) -> Result<TransactionProof> {
         let start_time = std::time::Instant::now();
-        
+
         let witness = TransactionWitness::new(
             sender_balance,
             receiver_balance,
@@ -65,34 +65,37 @@ impl TransactionProver {
         );
 
         let proof = self.circuit.prove(&witness)?;
-        
+
         let proof_time = start_time.elapsed().as_millis() as u64;
         // Ensure minimum 1ms recorded for testing purposes
         let proof_time = if proof_time == 0 { 1 } else { proof_time };
-        
+
         self.stats.add_proof_time(proof_time);
         self.stats.increment_proofs_generated();
-        
+
         Ok(proof)
     }
 
     /// Verify a transaction proof
     pub fn verify_transaction(&mut self, proof: &TransactionProof) -> Result<bool> {
         let start_time = std::time::Instant::now();
-        
+
         let is_valid = self.circuit.verify(proof)?;
-        
+
         let verify_time = start_time.elapsed().as_millis() as u64;
         self.stats.add_verification_time(verify_time);
         self.stats.increment_verifications();
-        
+
         Ok(is_valid)
     }
 
     /// Verify transaction proof with detailed result
-    pub fn verify_transaction_detailed(&mut self, proof: &TransactionProof) -> Result<VerificationResult> {
+    pub fn verify_transaction_detailed(
+        &mut self,
+        proof: &TransactionProof,
+    ) -> Result<VerificationResult> {
         let start_time = std::time::Instant::now();
-        
+
         let is_valid = match self.circuit.verify(proof) {
             Ok(valid) => valid,
             Err(e) => {
@@ -103,7 +106,7 @@ impl TransactionProver {
         let verify_time = start_time.elapsed().as_millis() as u64;
         // Ensure minimum 1ms recorded for testing purposes
         let verify_time = if verify_time == 0 { 1 } else { verify_time };
-        
+
         self.stats.add_verification_time(verify_time);
         self.stats.increment_verifications();
 
@@ -114,7 +117,9 @@ impl TransactionProver {
                 public_inputs: vec![proof.amount, proof.fee],
             })
         } else {
-            Ok(VerificationResult::Invalid("Transaction proof validation failed".to_string()))
+            Ok(VerificationResult::Invalid(
+                "Transaction proof validation failed".to_string(),
+            ))
         }
     }
 
@@ -124,8 +129,17 @@ impl TransactionProver {
         transactions: Vec<(u64, u64, u64, u64, [u8; 32], [u8; 32], [u8; 32])>,
     ) -> Result<Vec<TransactionProof>> {
         let mut proofs = Vec::with_capacity(transactions.len());
-        
-        for (sender_balance, receiver_balance, amount, fee, sender_blinding, receiver_blinding, nullifier) in transactions {
+
+        for (
+            sender_balance,
+            receiver_balance,
+            amount,
+            fee,
+            sender_blinding,
+            receiver_blinding,
+            nullifier,
+        ) in transactions
+        {
             let proof = self.prove_transaction(
                 sender_balance,
                 receiver_balance,
@@ -137,19 +151,19 @@ impl TransactionProver {
             )?;
             proofs.push(proof);
         }
-        
+
         Ok(proofs)
     }
 
     /// Verify batch of transaction proofs
     pub fn verify_transaction_batch(&mut self, proofs: &[TransactionProof]) -> Result<Vec<bool>> {
         let mut results = Vec::with_capacity(proofs.len());
-        
+
         for proof in proofs {
             let is_valid = self.verify_transaction(proof)?;
             results.push(is_valid);
         }
-        
+
         Ok(results)
     }
 
@@ -232,11 +246,13 @@ impl ProverStats {
     /// Update average times
     fn update_averages(&mut self) {
         if self.proofs_generated > 0 {
-            self.average_proof_time_ms = self.total_proof_time_ms as f64 / self.proofs_generated as f64;
+            self.average_proof_time_ms =
+                self.total_proof_time_ms as f64 / self.proofs_generated as f64;
         }
-        
+
         if self.verifications_performed > 0 {
-            self.average_verification_time_ms = self.total_verification_time_ms as f64 / self.verifications_performed as f64;
+            self.average_verification_time_ms =
+                self.total_verification_time_ms as f64 / self.verifications_performed as f64;
         }
     }
 
@@ -289,24 +305,24 @@ impl BatchTransactionProver {
         transactions: Vec<(u64, u64, u64, u64, [u8; 32], [u8; 32], [u8; 32])>,
     ) -> Result<Vec<TransactionProof>> {
         let mut all_proofs = Vec::with_capacity(transactions.len());
-        
+
         for chunk in transactions.chunks(self.batch_size) {
             let chunk_proofs = self.prover.prove_transaction_batch(chunk.to_vec())?;
             all_proofs.extend(chunk_proofs);
         }
-        
+
         Ok(all_proofs)
     }
 
     /// Verify transaction batch with automatic chunking
     pub fn verify_transaction_batch(&mut self, proofs: &[TransactionProof]) -> Result<Vec<bool>> {
         let mut all_results = Vec::with_capacity(proofs.len());
-        
+
         for chunk in proofs.chunks(self.batch_size) {
             let chunk_results = self.prover.verify_transaction_batch(chunk)?;
             all_results.extend(chunk_results);
         }
-        
+
         Ok(all_results)
     }
 
@@ -337,17 +353,17 @@ mod tests {
     #[test]
     fn test_transaction_proof_generation() {
         let mut prover = TransactionProver::new().unwrap();
-        
+
         let proof = prover.prove_transaction(
-            1000, // sender_balance
-            500,  // receiver_balance
-            100,  // amount
-            10,   // fee
+            1000,      // sender_balance
+            500,       // receiver_balance
+            100,       // amount
+            10,        // fee
             [1u8; 32], // sender_blinding
             [2u8; 32], // receiver_blinding
             [3u8; 32], // nullifier
         );
-        
+
         assert!(proof.is_ok());
         let proof = proof.unwrap();
         assert_eq!(proof.amount, 100);
@@ -357,12 +373,11 @@ mod tests {
     #[test]
     fn test_transaction_verification() {
         let mut prover = TransactionProver::new().unwrap();
-        
-        let proof = prover.prove_transaction(
-            1000, 500, 100, 10,
-            [1u8; 32], [2u8; 32], [3u8; 32]
-        ).unwrap();
-        
+
+        let proof = prover
+            .prove_transaction(1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32])
+            .unwrap();
+
         let is_valid = prover.verify_transaction(&proof).unwrap();
         assert!(is_valid);
     }
@@ -370,12 +385,11 @@ mod tests {
     #[test]
     fn test_detailed_verification() {
         let mut prover = TransactionProver::new().unwrap();
-        
-        let proof = prover.prove_transaction(
-            1000, 500, 100, 10,
-            [1u8; 32], [2u8; 32], [3u8; 32]
-        ).unwrap();
-        
+
+        let proof = prover
+            .prove_transaction(1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32])
+            .unwrap();
+
         let result = prover.verify_transaction_detailed(&proof).unwrap();
         assert!(result.is_valid());
         assert!(result.error_message().is_none());
@@ -385,16 +399,16 @@ mod tests {
     #[test]
     fn test_batch_processing() {
         let mut prover = TransactionProver::new().unwrap();
-        
+
         let transactions = vec![
             (1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32]),
             (2000, 600, 200, 15, [4u8; 32], [5u8; 32], [6u8; 32]),
             (1500, 700, 150, 12, [7u8; 32], [8u8; 32], [9u8; 32]),
         ];
-        
+
         let proofs = prover.prove_transaction_batch(transactions).unwrap();
         assert_eq!(proofs.len(), 3);
-        
+
         let results = prover.verify_transaction_batch(&proofs).unwrap();
         assert_eq!(results.len(), 3);
         assert!(results.iter().all(|&r| r));
@@ -403,15 +417,22 @@ mod tests {
     #[test]
     fn test_prover_stats() {
         let mut prover = TransactionProver::new().unwrap();
-        
+
         // Generate some proofs
         for i in 0..5 {
-            let _proof = prover.prove_transaction(
-                1000 + i * 100, 500, 100, 10,
-                [i as u8; 32], [2u8; 32], [3u8; 32]
-            ).unwrap();
+            let _proof = prover
+                .prove_transaction(
+                    1000 + i * 100,
+                    500,
+                    100,
+                    10,
+                    [i as u8; 32],
+                    [2u8; 32],
+                    [3u8; 32],
+                )
+                .unwrap();
         }
-        
+
         let stats = prover.get_stats();
         assert_eq!(stats.proofs_generated, 5);
         assert!(stats.total_proof_time_ms > 0);
@@ -422,17 +443,19 @@ mod tests {
     #[test]
     fn test_batch_transaction_prover() {
         let mut batch_prover = BatchTransactionProver::new(2).unwrap();
-        
+
         let transactions = vec![
             (1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32]),
             (2000, 600, 200, 15, [4u8; 32], [5u8; 32], [6u8; 32]),
             (1500, 700, 150, 12, [7u8; 32], [8u8; 32], [9u8; 32]),
             (1200, 800, 120, 8, [10u8; 32], [11u8; 32], [12u8; 32]),
         ];
-        
-        let proofs = batch_prover.process_transaction_batch(transactions).unwrap();
+
+        let proofs = batch_prover
+            .process_transaction_batch(transactions)
+            .unwrap();
         assert_eq!(proofs.len(), 4);
-        
+
         let results = batch_prover.verify_transaction_batch(&proofs).unwrap();
         assert_eq!(results.len(), 4);
         assert!(results.iter().all(|&r| r));
@@ -441,16 +464,16 @@ mod tests {
     #[test]
     fn test_insufficient_balance_proof() {
         let mut prover = TransactionProver::new().unwrap();
-        
+
         // Try to prove transaction with insufficient balance
         let result = prover.prove_transaction(
             100, // sender_balance (insufficient)
             500, // receiver_balance
             150, // amount (too large)
             10,  // fee
-            [1u8; 32], [2u8; 32], [3u8; 32]
+            [1u8; 32], [2u8; 32], [3u8; 32],
         );
-        
+
         assert!(result.is_err());
     }
 

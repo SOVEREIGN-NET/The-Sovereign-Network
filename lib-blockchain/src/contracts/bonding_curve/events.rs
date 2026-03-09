@@ -113,7 +113,6 @@ pub enum BondingCurveEvent {
     // ============================================================================
     // AMM Events (Phase 2 - Post-Graduation)
     // ============================================================================
-
     /// Liquidity added to AMM pool
     LiquidityAdded {
         /// Token identifier
@@ -315,8 +314,7 @@ impl EventIndexer for InMemoryEventIndexer {
         self.events
             .iter()
             .filter(|e| {
-                e.token_id() == &token_id
-                    && matches!(e, BondingCurveEvent::TokenPurchased { .. })
+                e.token_id() == &token_id && matches!(e, BondingCurveEvent::TokenPurchased { .. })
             })
             .collect()
     }
@@ -325,8 +323,7 @@ impl EventIndexer for InMemoryEventIndexer {
         self.events
             .iter()
             .filter(|e| {
-                e.token_id() == &token_id
-                    && matches!(e, BondingCurveEvent::TokenSold { .. })
+                e.token_id() == &token_id && matches!(e, BondingCurveEvent::TokenSold { .. })
             })
             .collect()
     }
@@ -335,8 +332,7 @@ impl EventIndexer for InMemoryEventIndexer {
         self.events
             .iter()
             .filter(|e| {
-                e.token_id() == &token_id
-                    && matches!(e, BondingCurveEvent::SwapExecuted { .. })
+                e.token_id() == &token_id && matches!(e, BondingCurveEvent::SwapExecuted { .. })
             })
             .collect()
     }

@@ -1,9 +1,9 @@
-use std::fmt;
-use std::fmt::Formatter;
 use crate::messages::inter::rr_classes::RRClasses;
 use crate::messages::inter::rr_types::RRTypes;
 use crate::messages::wire::{FromWire, FromWireContext, ToWire, ToWireContext, WireError};
 use crate::rr_data::inter::rr_data::RRData;
+use std::fmt;
+use std::fmt::Formatter;
 
 #[derive(Debug, Clone)]
 pub struct Record {
@@ -11,18 +11,23 @@ pub struct Record {
     class: RRClasses,
     rtype: RRTypes,
     ttl: u32,
-    data: Option<Box<dyn RRData>>
+    data: Option<Box<dyn RRData>>,
 }
 
 impl Record {
-
-    pub fn new(fqdn: &str, class: RRClasses, rtype: RRTypes, ttl: u32, data: Option<Box<dyn RRData>>) -> Self {
+    pub fn new(
+        fqdn: &str,
+        class: RRClasses,
+        rtype: RRTypes,
+        ttl: u32,
+        data: Option<Box<dyn RRData>>,
+    ) -> Self {
         Self {
             fqdn: fqdn.to_string(),
             class,
             rtype,
             ttl,
-            data
+            data,
         }
     }
 
@@ -68,11 +73,11 @@ impl Record {
 }
 
 impl FromWire for Record {
-
     fn from_wire(context: &mut FromWireContext) -> Result<Self, WireError> {
         let fqdn = context.name()?;
 
-        let rtype = RRTypes::try_from(u16::from_wire(context)?).map_err(|e| WireError::Format(e.to_string()))?;
+        let rtype = RRTypes::try_from(u16::from_wire(context)?)
+            .map_err(|e| WireError::Format(e.to_string()))?;
 
         let class = u16::from_wire(context)?;
         let cache_flush = (class & 0x8000) != 0;
@@ -82,7 +87,7 @@ impl FromWire for Record {
         let len = u16::from_wire(context)?;
         let data = match len {
             0 => None,
-            _ => Some(<dyn RRData>::from_wire(context, len, &rtype, &class)?)
+            _ => Some(<dyn RRData>::from_wire(context, len, &rtype, &class)?),
         };
 
         Ok(Self {
@@ -90,13 +95,12 @@ impl FromWire for Record {
             class,
             rtype,
             ttl,
-            data
+            data,
         })
     }
 }
 
 impl ToWire for Record {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
         context.write_name(&self.fqdn, true)?;
 
@@ -112,7 +116,10 @@ impl ToWire for Record {
 
                 data.to_wire(context)?;
 
-                context.patch(checkpoint..checkpoint+2, &((context.pos()-checkpoint-2) as u16).to_be_bytes())?;
+                context.patch(
+                    checkpoint..checkpoint + 2,
+                    &((context.pos() - checkpoint - 2) as u16).to_be_bytes(),
+                )?;
             }
             None => {
                 self.rtype.code().to_wire(context)?;
@@ -129,13 +136,18 @@ impl ToWire for Record {
 }
 
 impl fmt::Display for Record {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:<24}{:<8}{:<8}{:<8}{}",
-                 format!("{}.", self.fqdn),
-                 self.ttl,
-                 self.rtype.to_string(),
-                 self.class.to_string(),
-                 self.data.as_ref().map(|d| d.to_string()).unwrap_or(String::new()))
+        write!(
+            f,
+            "{:<24}{:<8}{:<8}{:<8}{}",
+            format!("{}.", self.fqdn),
+            self.ttl,
+            self.rtype.to_string(),
+            self.class.to_string(),
+            self.data
+                .as_ref()
+                .map(|d| d.to_string())
+                .unwrap_or(String::new())
+        )
     }
 }

@@ -21,8 +21,9 @@ impl ConsensusEngine {
     /// - BFT Mode (>= 4 validators): Full consensus participation
     /// - Bootstrap Mode (< 4 validators): Passive monitoring, no proposals
     pub async fn run_consensus_loop(&mut self) -> ConsensusResult<()> {
-        let mut message_rx = self.message_rx.take()
-            .ok_or_else(|| ConsensusError::ValidatorError("Message receiver not set".to_string()))?;
+        let mut message_rx = self.message_rx.take().ok_or_else(|| {
+            ConsensusError::ValidatorError("Message receiver not set".to_string())
+        })?;
 
         // Sync consensus height with blockchain before starting
         // This ensures we start at the correct height after bootstrap mode
@@ -104,9 +105,7 @@ impl ConsensusEngine {
                 crate::types::MIN_BFT_VALIDATORS,
                 self.current_round.height
             );
-            tracing::info!(
-                "   Consensus loop will monitor for BFT mode activation"
-            );
+            tracing::info!("   Consensus loop will monitor for BFT mode activation");
         }
 
         loop {
@@ -460,9 +459,10 @@ impl ConsensusEngine {
             }
             ValidatorMessage::Vote { vote } => {
                 // NEW: Compute payload hash for replay detection
-                let payload_bytes = bincode::serialize(&vote)
-                    .expect("Vote serialization cannot fail");
-                let payload_hash = lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&payload_bytes));
+                let payload_bytes =
+                    bincode::serialize(&vote).expect("Vote serialization cannot fail");
+                let payload_hash =
+                    lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&payload_bytes));
 
                 let current_time = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -477,7 +477,8 @@ impl ConsensusEngine {
                 ) {
                     tracing::warn!(
                         "⚠️  REPLAY: Validator {} sent duplicate message {} times",
-                        vote.voter, replay_evidence.replay_count
+                        vote.voter,
+                        replay_evidence.replay_count
                     );
                     // Continue processing (replay is advisory, not blocking)
                 }
@@ -522,7 +523,8 @@ impl ConsensusEngine {
             ValidatorMessage::Heartbeat { message } => {
                 // Process heartbeat (advisory only, never affects consensus)
                 let is_validator = |vid: &IdentityId| {
-                    self.validator_manager.get_active_validators()
+                    self.validator_manager
+                        .get_active_validators()
                         .iter()
                         .any(|v| v.identity == *vid)
                 };

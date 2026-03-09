@@ -12,8 +12,8 @@
 //! - Verifies timestamp freshness (rejects messages > 5 min old)
 //! - Verifies sender public key matches claimed sender_id
 
-use lib_crypto::{KeyPair, Signature, PublicKey};
 use crate::types::dht_types::{DhtMessage, MAX_MESSAGE_AGE_SECS};
+use lib_crypto::{KeyPair, PublicKey, Signature};
 use tracing::{debug, warn};
 
 /// Maximum allowed clock skew for future timestamps (60 seconds)
@@ -60,7 +60,9 @@ impl MessageSigner {
         let signable_data = message.signable_data();
 
         // Sign with Dilithium
-        let signature = self.keypair.sign(&signable_data)
+        let signature = self
+            .keypair
+            .sign(&signable_data)
             .map_err(|e| SigningError::SigningFailed(e.to_string()))?;
 
         // Store signature bytes in message
@@ -137,7 +139,7 @@ pub fn verify_message_signature(
                 std::time::Duration::from_secs(0)
             })
             .as_secs();
-        
+
         if message.timestamp > now {
             let delta_secs = message.timestamp - now;
             warn!(
@@ -284,14 +286,9 @@ mod tests {
     }
 
     fn create_test_node() -> DhtNode {
-        let identity = ZhtpIdentity::new_unified(
-            IdentityType::Device,
-            None,
-            None,
-            "test-device",
-            None,
-        )
-        .expect("Failed to create test identity");
+        let identity =
+            ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-device", None)
+                .expect("Failed to create test identity");
 
         let peer = build_peer_identity(
             identity.node_id.clone(),
@@ -342,7 +339,9 @@ mod tests {
         let mut message = create_test_message();
 
         // Sign the message
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         // Verify signature is present
         assert!(message.signature.is_some());
@@ -359,7 +358,9 @@ mod tests {
         let signer = MessageSigner::new(keypair.clone());
 
         let mut message = create_test_message();
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         // Tamper with the message
         message.sequence_number = 9999;
@@ -377,7 +378,9 @@ mod tests {
         let signer = MessageSigner::new(keypair1);
 
         let mut message = create_test_message();
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         // Verify with wrong key should fail
         let result = verify_message_signature(&message, &keypair2.public_key)
@@ -394,7 +397,7 @@ mod tests {
         let result = verify_message_signature(&message, &keypair.public_key);
         assert!(result.is_err(), "Unsigned message should return error");
         match result {
-            Err(VerificationError::NoSignature) => {},
+            Err(VerificationError::NoSignature) => {}
             _ => panic!("Expected NoSignature error"),
         }
     }
@@ -412,13 +415,15 @@ mod tests {
             .as_secs()
             .saturating_sub(600);
 
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         // Stale message should return MessageTooOld error
         let result = verify_message_signature(&message, &keypair.public_key);
         assert!(result.is_err(), "Stale message should return error");
         match result {
-            Err(VerificationError::MessageTooOld { .. }) => {},
+            Err(VerificationError::MessageTooOld { .. }) => {}
             _ => panic!("Expected MessageTooOld error"),
         }
     }
@@ -436,13 +441,18 @@ mod tests {
             .as_secs()
             + 120;
 
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         // Future message should return FutureTimestamp error
         let result = verify_message_signature(&message, &keypair.public_key);
-        assert!(result.is_err(), "Future timestamp message should return error");
+        assert!(
+            result.is_err(),
+            "Future timestamp message should return error"
+        );
         match result {
-            Err(VerificationError::FutureTimestamp { .. }) => {},
+            Err(VerificationError::FutureTimestamp { .. }) => {}
             _ => panic!("Expected FutureTimestamp error"),
         }
     }
@@ -455,13 +465,15 @@ mod tests {
         let mut message = create_test_message();
         message.nonce = [0u8; 32]; // Invalid zero nonce
 
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         // Zero nonce should return InvalidNonce error
         let result = verify_message_signature(&message, &keypair.public_key);
         assert!(result.is_err(), "Zero nonce message should return error");
         match result {
-            Err(VerificationError::InvalidNonce) => {},
+            Err(VerificationError::InvalidNonce) => {}
             _ => panic!("Expected InvalidNonce error"),
         }
     }
@@ -502,7 +514,9 @@ mod tests {
             .as_secs()
             .saturating_sub(299);
 
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         // Should pass - just under the limit
         let result = verify_message_signature(&message, &keypair.public_key)
@@ -524,13 +538,18 @@ mod tests {
             .as_secs()
             .saturating_sub(301);
 
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
-        // Should fail - over the limit  
+        // Should fail - over the limit
         let result = verify_message_signature(&message, &keypair.public_key);
-        assert!(result.is_err(), "Message at 301 seconds should return error");
+        assert!(
+            result.is_err(),
+            "Message at 301 seconds should return error"
+        );
         match result {
-            Err(VerificationError::MessageTooOld { .. }) => {},
+            Err(VerificationError::MessageTooOld { .. }) => {}
             _ => panic!("Expected MessageTooOld error"),
         }
     }
@@ -548,12 +567,17 @@ mod tests {
             .as_secs()
             + 59;
 
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         // Should pass - just under the limit
         let result = verify_message_signature(&message, &keypair.public_key)
             .expect("Verification should not error");
-        assert!(result, "Message at 59 seconds in future should pass verification");
+        assert!(
+            result,
+            "Message at 59 seconds in future should pass verification"
+        );
     }
 
     #[test]
@@ -562,18 +586,26 @@ mod tests {
         let signer = MessageSigner::new(keypair.clone());
 
         let mut message = create_test_message();
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         // Verify using raw bytes function
         let result = verify_message_signature_bytes(&message, &keypair.public_key.dilithium_pk)
             .expect("Verification should not error");
-        assert!(result, "verify_message_signature_bytes should work correctly");
+        assert!(
+            result,
+            "verify_message_signature_bytes should work correctly"
+        );
     }
 
     #[test]
     fn test_requires_signature_returns_true() {
         let message = create_test_message();
-        assert!(requires_signature(&message), "requires_signature should always return true");
+        assert!(
+            requires_signature(&message),
+            "requires_signature should always return true"
+        );
     }
 
     #[test]
@@ -595,7 +627,9 @@ mod tests {
         let signer = MessageSigner::new(keypair.clone());
 
         let mut message = create_test_message();
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         // Corrupt the signature
         if let Some(ref mut sig) = message.signature {
@@ -616,7 +650,9 @@ mod tests {
         let signer = MessageSigner::new(keypair.clone());
 
         let mut message = create_test_message();
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         if let Some(ref mut sig) = message.signature {
             sig.truncate(8);
@@ -633,7 +669,9 @@ mod tests {
         let signer = MessageSigner::new(keypair.clone());
 
         let mut message = create_message_with_all_fields();
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         let mut variants: Vec<Box<dyn Fn(DhtMessage) -> DhtMessage>> = Vec::new();
         variants.push(Box::new(|mut msg| {
@@ -697,7 +735,9 @@ mod tests {
         let signer = MessageSigner::new(keypair.clone());
 
         let mut message = create_message_with_all_fields();
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         let bytes = bincode::serialize(&message).expect("Failed to serialize message");
         let roundtrip: DhtMessage = bincode::deserialize(&bytes).expect("Failed to deserialize");
@@ -716,7 +756,9 @@ mod tests {
         message.key = Some("large".to_string());
         message.value = Some(vec![0u8; 64 * 1024]);
 
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         let result = verify_message_signature(&message, &keypair.public_key)
             .expect("Verification should not error");
@@ -729,7 +771,9 @@ mod tests {
         let signer = MessageSigner::new(keypair.clone());
 
         let mut message = create_message_with_all_fields();
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
 
         let mut handles = Vec::new();
         for _ in 0..16 {
@@ -741,7 +785,9 @@ mod tests {
         }
 
         for handle in handles {
-            let result = handle.await.expect("Task join failed")
+            let result = handle
+                .await
+                .expect("Task join failed")
                 .expect("Verification should not error");
             assert!(result, "Concurrent verification should succeed");
         }
@@ -753,16 +799,21 @@ mod tests {
         let signer = MessageSigner::new(keypair.clone());
 
         let mut message = create_test_message();
-        
+
         // Sign the message once
-        signer.sign_message(&mut message).expect("Failed to sign message");
+        signer
+            .sign_message(&mut message)
+            .expect("Failed to sign message");
         assert!(message.signature.is_some());
 
         // Try to sign again - should return AlreadySigned error
         let result = signer.sign_message(&mut message);
-        assert!(result.is_err(), "Signing already-signed message should return error");
+        assert!(
+            result.is_err(),
+            "Signing already-signed message should return error"
+        );
         match result {
-            Err(SigningError::AlreadySigned) => {},
+            Err(SigningError::AlreadySigned) => {}
             _ => panic!("Expected AlreadySigned error"),
         }
     }

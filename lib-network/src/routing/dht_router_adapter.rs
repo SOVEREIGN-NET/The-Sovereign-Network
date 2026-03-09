@@ -8,13 +8,13 @@
 #[cfg(feature = "storage-integration")]
 compile_error!("Mesh DHT adapter moved to integration layer (zhtp). Do not enable storage-integration in lib-network.");
 
-use anyhow::{Result, anyhow};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use lib_crypto::{KeyPair, PublicKey};
-use lib_storage::dht::transport::{DhtTransport, PeerId};
 use crate::routing::message_routing::MeshMessageRouter;
 use crate::types::mesh_message::ZhtpMeshMessage;
+use anyhow::{anyhow, Result};
+use lib_crypto::{KeyPair, PublicKey};
+use lib_storage::dht::transport::{DhtTransport, PeerId};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Mesh-based DHT transport implementation
 ///
@@ -80,7 +80,7 @@ impl MeshDhtTransport {
     }
 
     /// Extract PublicKey from mesh PeerId
-    /// 
+    ///
     /// # Security
     /// - Validates public key length (must be 32 bytes for ED25519)
     /// - Prevents malformed public keys from being used
@@ -95,17 +95,18 @@ impl MeshDhtTransport {
                         key_bytes.len()
                     ));
                 }
-                
+
                 // Additional validation: Check for null bytes (should not be present in valid keys)
                 if key_bytes.iter().any(|&byte| byte == 0) {
-                    return Err(anyhow!(
-                        "Invalid public key: contains null bytes"
-                    ));
+                    return Err(anyhow!("Invalid public key: contains null bytes"));
                 }
-                
+
                 Ok(PublicKey::new(key_bytes.clone()))
             }
-            _ => Err(anyhow!("MeshDhtTransport only accepts Mesh peer IDs, got: {:?}", peer_id)),
+            _ => Err(anyhow!(
+                "MeshDhtTransport only accepts Mesh peer IDs, got: {:?}",
+                peer_id
+            )),
         }
     }
 }
@@ -120,7 +121,13 @@ impl DhtTransport for MeshDhtTransport {
 
         // Route through mesh network
         let router = self.mesh_router.read().await;
-        router.route_message(mesh_message, destination, self.local_keypair.public_key.clone()).await?;
+        router
+            .route_message(
+                mesh_message,
+                destination,
+                self.local_keypair.public_key.clone(),
+            )
+            .await?;
 
         Ok(())
     }
@@ -178,7 +185,7 @@ mod tests {
         let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
         assert!(result.is_err());
     }
-    
+
     /// Test public key validation - correct length
     #[test]
     fn test_valid_public_key() {
@@ -192,7 +199,7 @@ mod tests {
         // key_id should be the blake3 hash of valid_key
         assert_eq!(pubkey.key_id, lib_crypto::hash_blake3(&valid_key));
     }
-    
+
     /// Test public key validation - wrong length (too short)
     #[test]
     fn test_invalid_public_key_too_short() {
@@ -200,9 +207,12 @@ mod tests {
         let peer_id = PeerId::Mesh(short_key);
         let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid ED25519 public key length"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid ED25519 public key length"));
     }
-    
+
     /// Test public key validation - wrong length (too long)
     #[test]
     fn test_invalid_public_key_too_long() {
@@ -210,9 +220,12 @@ mod tests {
         let peer_id = PeerId::Mesh(long_key);
         let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid ED25519 public key length"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid ED25519 public key length"));
     }
-    
+
     /// Test public key validation - contains null bytes
     #[test]
     fn test_invalid_public_key_with_null_bytes() {
@@ -221,6 +234,9 @@ mod tests {
         let peer_id = PeerId::Mesh(key_with_nulls);
         let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("contains null bytes"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("contains null bytes"));
     }
 }

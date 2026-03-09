@@ -6,18 +6,24 @@ use tracing::{info, warn};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::BluetoothMeshProtocol;
 use super::device::{BleDevice, MeshPeer};
 use super::macos_core::CoreBluetoothManager;
+use super::BluetoothMeshProtocol;
 
 impl BluetoothMeshProtocol {
     pub(crate) async fn macos_broadcast_mesh_adv(&self, adv_data: &[u8]) -> Result<()> {
-        info!("macOS: Starting Core Bluetooth LE advertising ({} bytes)", adv_data.len());
+        info!(
+            "macOS: Starting Core Bluetooth LE advertising ({} bytes)",
+            adv_data.len()
+        );
 
         if let Some(ref manager) = *self.core_bluetooth.read().await {
             manager.start_mesh_advertising(adv_data).await?;
             info!(" macOS: BLE mesh advertising started via Core Bluetooth");
-            info!("   Service UUID: {}", crate::constants::BLE_MESH_SERVICE_UUID);
+            info!(
+                "   Service UUID: {}",
+                crate::constants::BLE_MESH_SERVICE_UUID
+            );
             info!("   Advertisement data: {} bytes", adv_data.len());
         } else {
             warn!(" macOS: Core Bluetooth manager not initialized");
@@ -74,13 +80,20 @@ impl BluetoothMeshProtocol {
         peer: &MeshPeer,
         core_bt: &Arc<RwLock<Option<Arc<CoreBluetoothManager>>>>,
     ) -> Result<super::BluetoothConnection> {
-        info!("macOS: Connecting to mesh peer {} via Core Bluetooth", peer.address);
+        info!(
+            "macOS: Connecting to mesh peer {} via Core Bluetooth",
+            peer.address
+        );
 
         let manager_guard = core_bt.read().await;
         if let Some(ref manager) = *manager_guard {
             manager.connect_to_peripheral(&peer.address).await?;
             let services = manager.discover_services(&peer.address).await?;
-            info!(" macOS: Found {} services on {}", services.len(), peer.address);
+            info!(
+                " macOS: Found {} services on {}",
+                services.len(),
+                peer.address
+            );
 
             Ok(super::BluetoothConnection {
                 peer_id: peer.peer_id.clone(),
@@ -115,7 +128,8 @@ impl BluetoothMeshProtocol {
                 let device = BleDevice {
                     encrypted_mac_hash: self.generate_encrypted_mac_hash(&mac),
                     secure_node_id: self.generate_secure_node_id(&mac),
-                    ephemeral_address: self.generate_ephemeral_address(&self.generate_secure_node_id(&mac)),
+                    ephemeral_address: self
+                        .generate_ephemeral_address(&self.generate_secure_node_id(&mac)),
                     device_name: Self::extract_device_name_macos(&output_str, address),
                     services: Vec::new(),
                     characteristics: std::collections::HashMap::new(),
@@ -168,12 +182,17 @@ impl BluetoothMeshProtocol {
         service_uuid: &str,
         characteristics: &[&str],
     ) -> Result<()> {
-        info!("🍎 macOS: Registering GATT service {} with Core Bluetooth", service_uuid);
+        info!(
+            "🍎 macOS: Registering GATT service {} with Core Bluetooth",
+            service_uuid
+        );
 
         let manager_guard = self.core_bluetooth.read().await;
         if let Some(ref manager) = *manager_guard {
-            let char_data: Vec<(&str, &[u8])> =
-                characteristics.iter().map(|uuid| (*uuid, &b""[..])).collect();
+            let char_data: Vec<(&str, &[u8])> = characteristics
+                .iter()
+                .map(|uuid| (*uuid, &b""[..]))
+                .collect();
 
             manager.start_advertising(service_uuid, &char_data).await?;
 
@@ -193,7 +212,10 @@ impl BluetoothMeshProtocol {
         let core_bt = self.core_bluetooth.read().await;
 
         if let Some(manager) = core_bt.as_ref() {
-            info!("📖 macOS: Using Core Bluetooth to read characteristic {}", char_uuid);
+            info!(
+                "📖 macOS: Using Core Bluetooth to read characteristic {}",
+                char_uuid
+            );
 
             let _ = manager.connect_to_peripheral(device_address).await;
             let _ = manager.discover_services(device_address).await;
@@ -213,7 +235,9 @@ impl BluetoothMeshProtocol {
 
             use std::process::Command;
 
-            let char_handle = self.get_macos_characteristic_handle(device_address, char_uuid).await?;
+            let char_handle = self
+                .get_macos_characteristic_handle(device_address, char_uuid)
+                .await?;
 
             let connect_output = Command::new("blueutil")
                 .args(&["--connect", device_address])
@@ -249,7 +273,10 @@ impl BluetoothMeshProtocol {
         let core_bt = self.core_bluetooth.read().await;
 
         if let Some(manager) = core_bt.as_ref() {
-            info!("✍️ macOS: Using Core Bluetooth to write characteristic {}", char_uuid);
+            info!(
+                "✍️ macOS: Using Core Bluetooth to write characteristic {}",
+                char_uuid
+            );
 
             let _ = manager.connect_to_peripheral(device_address).await;
             let _ = manager.discover_services(device_address).await;
@@ -270,7 +297,9 @@ impl BluetoothMeshProtocol {
 
             use std::process::Command;
 
-            let char_handle = self.get_macos_characteristic_handle(device_address, char_uuid).await?;
+            let char_handle = self
+                .get_macos_characteristic_handle(device_address, char_uuid)
+                .await?;
 
             let connect_output = Command::new("blueutil")
                 .args(&["--connect", device_address])
@@ -279,13 +308,12 @@ impl BluetoothMeshProtocol {
             if connect_output.is_ok() {
                 tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
-                let hex_data = data.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                let hex_data = data
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
                 let output = Command::new("blueutil")
-                    .args(&[
-                        "--char-write",
-                        &format!("0x{:x}", char_handle),
-                        &hex_data,
-                    ])
+                    .args(&["--char-write", &format!("0x{:x}", char_handle), &hex_data])
                     .output();
 
                 if output.is_ok() {
@@ -380,7 +408,11 @@ impl BluetoothMeshProtocol {
             if output.status.success() {
                 let output_str = String::from_utf8_lossy(&output.stdout);
                 let services = self.extract_macos_services(&output_str, device_address);
-                info!("macOS: Discovered {} services for {}", services.len(), device_address);
+                info!(
+                    "macOS: Discovered {} services for {}",
+                    services.len(),
+                    device_address
+                );
                 Ok(services)
             } else {
                 Err(anyhow!(
@@ -407,7 +439,9 @@ impl BluetoothMeshProtocol {
             let _ = manager.connect_to_peripheral(device_address).await;
             let _ = manager.discover_services(device_address).await;
 
-            manager.enable_notifications(device_address, char_uuid).await?;
+            manager
+                .enable_notifications(device_address, char_uuid)
+                .await?;
 
             info!(" macOS: Notifications enabled via Core Bluetooth");
             Ok(())
@@ -447,7 +481,10 @@ impl BluetoothMeshProtocol {
                 if let Ok(result) = script_output {
                     let success = String::from_utf8_lossy(&result.stdout).trim() == "true";
                     if success {
-                        info!(" macOS: Notifications enabled for characteristic {}", char_uuid);
+                        info!(
+                            " macOS: Notifications enabled for characteristic {}",
+                            char_uuid
+                        );
                         return Ok(());
                     }
                 }
@@ -480,7 +517,10 @@ impl BluetoothMeshProtocol {
             .args(&["-e", &applescript])
             .output();
 
-        info!("macOS: Notifications disabled for characteristic {}", char_uuid);
+        info!(
+            "macOS: Notifications disabled for characteristic {}",
+            char_uuid
+        );
         Ok(())
     }
 
@@ -522,7 +562,10 @@ impl BluetoothMeshProtocol {
                         self.parse_macos_gatt_data(&output_str, device_address, char_uuid)
                     {
                         if !data.is_empty() {
-                            info!("📥 macOS: Received notification data ({} bytes)", data.len());
+                            info!(
+                                "📥 macOS: Received notification data ({} bytes)",
+                                data.len()
+                            );
                             return Ok(data);
                         }
                     }

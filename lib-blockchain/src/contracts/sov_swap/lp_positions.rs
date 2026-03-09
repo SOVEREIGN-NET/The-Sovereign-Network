@@ -3,10 +3,10 @@
 //! Handles liquidity provider positions, LP token minting, reward distribution,
 //! and APY calculations for the SOV Swap AMM.
 
+use crate::contracts::utils::integer_sqrt;
+use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::integration::crypto_integration::PublicKey;
-use crate::contracts::utils::integer_sqrt;
 
 /// A liquidity provider position in a pool
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -91,7 +91,7 @@ impl LpPositionsManager {
             volatility_factor: 100, // Default 100 = no penalty
             twap_sov_per_token: 0,
             twap_window_blocks: 30 * 60 / 10, // ~30 minutes at 10s blocks (for FP default)
-            dao_health_score: 75, // Default moderate health
+            dao_health_score: 75,             // Default moderate health
         }
     }
 
@@ -172,13 +172,16 @@ impl LpPositionsManager {
 
         // Create or update position
         let position_key = provider.key_id;
-        let position = self.positions.entry(position_key).or_insert_with(|| LiquidityPosition {
-            provider: provider.clone(),
-            lp_tokens: 0,
-            provided_at_height: current_height,
-            time_weighted_stake: 0,
-            last_reward_claim_height: current_height,
-        });
+        let position = self
+            .positions
+            .entry(position_key)
+            .or_insert_with(|| LiquidityPosition {
+                provider: provider.clone(),
+                lp_tokens: 0,
+                provided_at_height: current_height,
+                time_weighted_stake: 0,
+                last_reward_claim_height: current_height,
+            });
 
         // Update position (use saturating_add to prevent panics in tests)
         position.lp_tokens = position.lp_tokens.saturating_add(lp_tokens_to_mint);
@@ -203,7 +206,8 @@ impl LpPositionsManager {
         provider: &PublicKey,
     ) -> Result<(u64, u64), String> {
         let position_key = provider.key_id;
-        let position = self.positions
+        let position = self
+            .positions
             .get_mut(&position_key)
             .ok_or("No LP position found")?;
 
@@ -224,15 +228,13 @@ impl LpPositionsManager {
             .checked_mul(sov_reserve as u128)
             .ok_or("Overflow in SOV calculation")?
             .checked_div(self.total_lp_supply as u128)
-            .ok_or("Division error")?
-            as u64;
+            .ok_or("Division error")? as u64;
 
         let token_out = (lp_tokens as u128)
             .checked_mul(token_reserve as u128)
             .ok_or("Overflow in token calculation")?
             .checked_div(self.total_lp_supply as u128)
-            .ok_or("Division error")?
-            as u64;
+            .ok_or("Division error")? as u64;
 
         // Check slippage protection
         if sov_out < min_sov_out {
@@ -250,11 +252,13 @@ impl LpPositionsManager {
         }
 
         // Burn LP tokens
-        position.lp_tokens = position.lp_tokens
+        position.lp_tokens = position
+            .lp_tokens
             .checked_sub(lp_tokens)
             .ok_or("LP token underflow")?;
 
-        self.total_lp_supply = self.total_lp_supply
+        self.total_lp_supply = self
+            .total_lp_supply
             .checked_sub(lp_tokens)
             .ok_or("Total supply underflow")?;
 
@@ -273,13 +277,15 @@ impl LpPositionsManager {
         current_height: u64,
     ) -> Result<LpRewardBreakdown, String> {
         let position_key = provider.key_id;
-        let position = self.positions
+        let position = self
+            .positions
             .get_mut(&position_key)
             .ok_or("No LP position found")?;
 
         // Calculate time-weighted stake (prevent short-term capital extraction)
         let blocks_since_provision = current_height.saturating_sub(position.provided_at_height);
-        let blocks_since_last_claim = current_height.saturating_sub(position.last_reward_claim_height);
+        let blocks_since_last_claim =
+            current_height.saturating_sub(position.last_reward_claim_height);
 
         if blocks_since_last_claim == 0 {
             return Err("Must wait at least one block before claiming again".to_string());
@@ -297,7 +303,8 @@ impl LpPositionsManager {
         }
 
         // Share as basis points (provider_lp_tokens / total_lp_supply) * 10000
-        let provider_share_basis = ((position.lp_tokens as u128 * 10_000) / (self.total_lp_supply as u128)) as u64;
+        let provider_share_basis =
+            ((position.lp_tokens as u128 * 10_000) / (self.total_lp_supply as u128)) as u64;
 
         // Stream 1: Base LP Yield (60% of fees)
         let base_yield = (self.base_lp_pool as u128 * provider_share_basis as u128 / 10_000) as u64;
@@ -309,7 +316,8 @@ impl LpPositionsManager {
             / (10_000 * 100)) as u64;
 
         // Stream 3: UBI Feedback (15% of fees) - auto-routed, but tracked for accounting
-        let ubi_contribution = (self.ubi_routing_pool as u128 * provider_share_basis as u128 / 10_000) as u64;
+        let ubi_contribution =
+            (self.ubi_routing_pool as u128 * provider_share_basis as u128 / 10_000) as u64;
 
         let total_sov = base_yield
             .saturating_add(alignment_bonus)
@@ -320,7 +328,9 @@ impl LpPositionsManager {
 
         // Deduct from pools
         self.base_lp_pool = self.base_lp_pool.saturating_sub(base_yield);
-        self.alignment_multiplier_pool = self.alignment_multiplier_pool.saturating_sub(alignment_bonus);
+        self.alignment_multiplier_pool = self
+            .alignment_multiplier_pool
+            .saturating_sub(alignment_bonus);
         self.ubi_routing_pool = self.ubi_routing_pool.saturating_sub(ubi_contribution);
 
         Ok(LpRewardBreakdown {
@@ -383,8 +393,7 @@ impl LpPositionsManager {
 
         // Divide by (total_liquidity * 10000) to normalize basis points and return as u64
         // Note: basis points divide by 10_000, not 100
-        let apy = daily_fees
-            .saturating_div(total_liquidity.saturating_mul(10_000)) as u64;
+        let apy = daily_fees.saturating_div(total_liquidity.saturating_mul(10_000)) as u64;
 
         apy
     }
@@ -435,7 +444,11 @@ mod tests {
 
         // For larger numbers: approximation within ±5% for production use
         let sqrt_10k = integer_sqrt(10_000);
-        assert_eq!(sqrt_10k, 100, "sqrt(10000) should be exact, got {}", sqrt_10k);
+        assert_eq!(
+            sqrt_10k, 100,
+            "sqrt(10000) should be exact, got {}",
+            sqrt_10k
+        );
     }
 
     #[test]
@@ -464,14 +477,16 @@ mod tests {
         let provider2 = test_public_key(2);
 
         // First LP
-        lp_mgr.add_liquidity(
-            10_000_00000000,
-            5_000_00000000,
-            0,
-            0,
-            provider1.clone(),
-            100,
-        ).unwrap();
+        lp_mgr
+            .add_liquidity(
+                10_000_00000000,
+                5_000_00000000,
+                0,
+                0,
+                provider1.clone(),
+                100,
+            )
+            .unwrap();
 
         // Second LP (same ratio)
         let lp_tokens2 = lp_mgr.add_liquidity(
@@ -492,14 +507,9 @@ mod tests {
         let provider = test_public_key(1);
 
         // Add liquidity
-        let lp_tokens = lp_mgr.add_liquidity(
-            10_000_00000000,
-            5_000_00000000,
-            0,
-            0,
-            provider.clone(),
-            100,
-        ).unwrap();
+        let lp_tokens = lp_mgr
+            .add_liquidity(10_000_00000000, 5_000_00000000, 0, 0, provider.clone(), 100)
+            .unwrap();
 
         // Remove half
         let result = lp_mgr.remove_liquidity(
@@ -523,19 +533,14 @@ mod tests {
         let provider = test_public_key(1);
 
         // Add liquidity
-        lp_mgr.add_liquidity(
-            10_000_00000000,
-            5_000_00000000,
-            0,
-            0,
-            provider.clone(),
-            100,
-        ).unwrap();
+        lp_mgr
+            .add_liquidity(10_000_00000000, 5_000_00000000, 0, 0, provider.clone(), 100)
+            .unwrap();
 
         // Fund reward pools
-        lp_mgr.base_lp_pool = 1_000_00000000;      // 1,000 SOV
+        lp_mgr.base_lp_pool = 1_000_00000000; // 1,000 SOV
         lp_mgr.alignment_multiplier_pool = 500_00000000; // 500 SOV
-        lp_mgr.ubi_routing_pool = 300_00000000;   // 300 SOV
+        lp_mgr.ubi_routing_pool = 300_00000000; // 300 SOV
 
         // Claim rewards
         let rewards = lp_mgr.claim_lp_rewards(&provider, 200).unwrap();
@@ -549,10 +554,10 @@ mod tests {
         lp_mgr.volume_24h = 100_00000000; // 100 SOV volume
 
         let apy = lp_mgr.get_current_apy(
-            30, // 0.3% fee
-            1_000_00000000,  // 1,000 SOV reserve
-            500_00000000,    // 500 token reserve
-            1_00000000, // 1 SOV per token
+            30,             // 0.3% fee
+            1_000_00000000, // 1,000 SOV reserve
+            500_00000000,   // 500 token reserve
+            1_00000000,     // 1 SOV per token
         );
 
         // With 100 SOV volume, 0.3% fee, and 1500 SOV equivalent liquidity,

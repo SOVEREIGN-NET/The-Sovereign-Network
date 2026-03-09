@@ -7,15 +7,14 @@ const MAX_STALE_COUNT: u32 = 1;
 pub struct MBucket {
     pub(crate) nodes: Vec<Node>,
     #[allow(dead_code)]
-    pub(crate) cache: Vec<Node>
+    pub(crate) cache: Vec<Node>,
 }
 
 impl MBucket {
-
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            cache: Vec::new()
+            cache: Vec::new(),
         }
     }
 

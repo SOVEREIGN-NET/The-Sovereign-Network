@@ -2,11 +2,11 @@
 //!
 //! Provides secure isolation of WASM contracts from the host platform.
 
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
-use crate::contracts::runtime::{SandboxConfig};
 use crate::contracts::runtime::sandbox::SecurityLevel;
+use crate::contracts::runtime::SandboxConfig;
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Platform isolation manager for WASM contracts
 #[derive(Debug)]
@@ -78,7 +78,7 @@ impl PlatformIsolationManager {
         security_level: SecurityLevel,
     ) -> Result<()> {
         let sandbox_config = SandboxConfig::for_security_level(security_level);
-        
+
         let context = IsolationContext {
             contract_id: contract_id.clone(),
             sandbox_config,
@@ -87,7 +87,7 @@ impl PlatformIsolationManager {
         };
 
         self.isolation_contexts.insert(contract_id.clone(), context);
-        
+
         log::info!("Created isolation context for contract: {}", contract_id);
         Ok(())
     }
@@ -99,11 +99,13 @@ impl PlatformIsolationManager {
     {
         // Pre-execution checks
         {
-            let context = self.isolation_contexts.get(contract_id)
+            let context = self
+                .isolation_contexts
+                .get(contract_id)
                 .ok_or_else(|| anyhow!("Isolation context not found: {}", contract_id))?;
             self.validate_resource_limits(context)?;
         }
-        
+
         // Execute with monitoring
         let start = std::time::Instant::now();
         let result = execution_fn()?;
@@ -111,22 +113,29 @@ impl PlatformIsolationManager {
 
         // Update resource usage and post-execution validation
         {
-            let context = self.isolation_contexts.get_mut(contract_id)
+            let context = self
+                .isolation_contexts
+                .get_mut(contract_id)
                 .ok_or_else(|| anyhow!("Isolation context not found: {}", contract_id))?;
-            
+
             context.resource_usage.cpu_time_ms += execution_time.as_millis() as u64;
         }
-        
+
         // Validate post-execution state (separate borrow)
         {
-            let context = self.isolation_contexts.get(contract_id)
+            let context = self
+                .isolation_contexts
+                .get(contract_id)
                 .ok_or_else(|| anyhow!("Isolation context not found: {}", contract_id))?;
             self.validate_post_execution(context)?;
         }
 
-        log::debug!("Isolated execution completed for contract: {} in {:?}", 
-                   contract_id, execution_time);
-        
+        log::debug!(
+            "Isolated execution completed for contract: {} in {:?}",
+            contract_id,
+            execution_time
+        );
+
         Ok(result)
     }
 
@@ -134,16 +143,20 @@ impl PlatformIsolationManager {
     fn validate_resource_limits(&self, context: &IsolationContext) -> Result<()> {
         // Check memory limits
         if context.resource_usage.memory_allocated > self.global_config.max_memory_per_contract {
-            return Err(anyhow!("Memory limit exceeded: {} > {}", 
-                context.resource_usage.memory_allocated, 
-                self.global_config.max_memory_per_contract));
+            return Err(anyhow!(
+                "Memory limit exceeded: {} > {}",
+                context.resource_usage.memory_allocated,
+                self.global_config.max_memory_per_contract
+            ));
         }
 
         // Check CPU time limits
         if context.resource_usage.cpu_time_ms > self.global_config.max_cpu_time_ms {
-            return Err(anyhow!("CPU time limit exceeded: {} > {}", 
-                context.resource_usage.cpu_time_ms, 
-                self.global_config.max_cpu_time_ms));
+            return Err(anyhow!(
+                "CPU time limit exceeded: {} > {}",
+                context.resource_usage.cpu_time_ms,
+                self.global_config.max_cpu_time_ms
+            ));
         }
 
         Ok(())
@@ -152,12 +165,14 @@ impl PlatformIsolationManager {
     /// Validate state after execution
     fn validate_post_execution(&self, context: &IsolationContext) -> Result<()> {
         let execution_time = context.start_time.elapsed();
-        
+
         // Check if execution time is reasonable
         if execution_time > context.sandbox_config.execution_limits.max_execution_time {
-            return Err(anyhow!("Execution timeout: {:?} > {:?}", 
-                execution_time, 
-                context.sandbox_config.execution_limits.max_execution_time));
+            return Err(anyhow!(
+                "Execution timeout: {:?} > {:?}",
+                execution_time,
+                context.sandbox_config.execution_limits.max_execution_time
+            ));
         }
 
         Ok(())
@@ -167,9 +182,10 @@ impl PlatformIsolationManager {
     pub fn track_memory_allocation(&mut self, contract_id: &str, bytes: u64) -> Result<()> {
         if let Some(context) = self.isolation_contexts.get_mut(contract_id) {
             context.resource_usage.memory_allocated += bytes;
-            
+
             // Check limits
-            if context.resource_usage.memory_allocated > self.global_config.max_memory_per_contract {
+            if context.resource_usage.memory_allocated > self.global_config.max_memory_per_contract
+            {
                 return Err(anyhow!("Memory allocation would exceed limit"));
             }
         }
@@ -179,14 +195,18 @@ impl PlatformIsolationManager {
     /// Track system call
     pub fn track_syscall(&mut self, contract_id: &str, syscall_name: &str) -> Result<()> {
         // Check if syscall is allowed
-        if !self.global_config.allowed_syscalls.contains(&syscall_name.to_string()) {
+        if !self
+            .global_config
+            .allowed_syscalls
+            .contains(&syscall_name.to_string())
+        {
             return Err(anyhow!("System call not allowed: {}", syscall_name));
         }
 
         if let Some(context) = self.isolation_contexts.get_mut(contract_id) {
             context.resource_usage.syscall_count += 1;
         }
-        
+
         Ok(())
     }
 
@@ -199,7 +219,7 @@ impl PlatformIsolationManager {
         if let Some(context) = self.isolation_contexts.get_mut(contract_id) {
             context.resource_usage.file_operations += 1;
         }
-        
+
         Ok(())
     }
 
@@ -212,7 +232,7 @@ impl PlatformIsolationManager {
         if let Some(context) = self.isolation_contexts.get_mut(contract_id) {
             context.resource_usage.network_operations += 1;
         }
-        
+
         Ok(())
     }
 
@@ -220,7 +240,7 @@ impl PlatformIsolationManager {
     pub fn remove_context(&mut self, contract_id: &str) -> Option<IsolationReport> {
         if let Some(context) = self.isolation_contexts.remove(contract_id) {
             let total_time = context.start_time.elapsed();
-            
+
             Some(IsolationReport {
                 contract_id: context.contract_id,
                 total_execution_time: total_time,
@@ -237,7 +257,9 @@ impl PlatformIsolationManager {
 
     /// Get resource usage for a contract
     pub fn get_resource_usage(&self, contract_id: &str) -> Option<&ResourceUsage> {
-        self.isolation_contexts.get(contract_id).map(|ctx| &ctx.resource_usage)
+        self.isolation_contexts
+            .get(contract_id)
+            .map(|ctx| &ctx.resource_usage)
     }
 }
 
@@ -260,7 +282,7 @@ impl Default for PlatformIsolationConfig {
             enable_network_isolation: true,
             enable_process_isolation: true,
             max_memory_per_contract: 16 * 1024 * 1024, // 16MB
-            max_cpu_time_ms: 5000, // 5 seconds
+            max_cpu_time_ms: 5000,                     // 5 seconds
             allowed_syscalls: vec![
                 "read".to_string(),
                 "write".to_string(),
@@ -277,13 +299,13 @@ pub fn create_isolation_manager(security_level: SecurityLevel) -> PlatformIsolat
     let config = match security_level {
         SecurityLevel::Minimal => PlatformIsolationConfig {
             max_memory_per_contract: 64 * 1024 * 1024, // 64MB
-            max_cpu_time_ms: 30000, // 30 seconds
+            max_cpu_time_ms: 30000,                    // 30 seconds
             ..Default::default()
         },
         SecurityLevel::Standard => PlatformIsolationConfig::default(),
         SecurityLevel::Maximum => PlatformIsolationConfig {
             max_memory_per_contract: 8 * 1024 * 1024, // 8MB
-            max_cpu_time_ms: 1000, // 1 second
+            max_cpu_time_ms: 1000,                    // 1 second
             allowed_syscalls: vec!["read".to_string(), "write".to_string()], // Minimal syscalls
             ..Default::default()
         },
@@ -305,7 +327,8 @@ mod tests {
     #[test]
     fn test_create_isolation_context() {
         let mut manager = create_isolation_manager(SecurityLevel::Standard);
-        let result = manager.create_isolation_context("test_contract".to_string(), SecurityLevel::Standard);
+        let result =
+            manager.create_isolation_context("test_contract".to_string(), SecurityLevel::Standard);
         assert!(result.is_ok());
         assert_eq!(manager.isolation_contexts.len(), 1);
     }
@@ -313,11 +336,13 @@ mod tests {
     #[test]
     fn test_resource_tracking() {
         let mut manager = create_isolation_manager(SecurityLevel::Standard);
-        manager.create_isolation_context("test_contract".to_string(), SecurityLevel::Standard).unwrap();
-        
+        manager
+            .create_isolation_context("test_contract".to_string(), SecurityLevel::Standard)
+            .unwrap();
+
         let result = manager.track_memory_allocation("test_contract", 1024);
         assert!(result.is_ok());
-        
+
         let usage = manager.get_resource_usage("test_contract").unwrap();
         assert_eq!(usage.memory_allocated, 1024);
     }

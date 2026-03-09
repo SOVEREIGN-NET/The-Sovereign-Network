@@ -1,18 +1,18 @@
 //! DAO Full DAO tests (dao-6)
 
-use lib_blockchain::Blockchain;
-use lib_blockchain::dao::{GovernancePhase, CouncilBootstrapConfig, CouncilBootstrapEntry, PhaseTransitionConfig};
 use anyhow::Result;
+use lib_blockchain::dao::{
+    CouncilBootstrapConfig, CouncilBootstrapEntry, GovernancePhase, PhaseTransitionConfig,
+};
+use lib_blockchain::Blockchain;
 
 fn council_config() -> CouncilBootstrapConfig {
     CouncilBootstrapConfig {
-        members: vec![
-            CouncilBootstrapEntry {
-                identity_id: "did:zhtp:alice".to_string(),
-                wallet_id: "aaaa".to_string(),
-                stake_amount: 1_000_000,
-            },
-        ],
+        members: vec![CouncilBootstrapEntry {
+            identity_id: "did:zhtp:alice".to_string(),
+            wallet_id: "aaaa".to_string(),
+            stake_amount: 1_000_000,
+        }],
         threshold: 1,
     }
 }
@@ -38,7 +38,11 @@ fn test_council_dissolves_on_phase2_entry() {
     // Bootstrap → Hybrid
     bc.try_advance_governance_phase();
     assert_eq!(bc.governance_phase, GovernancePhase::Hybrid);
-    assert_eq!(bc.council_members.len(), 1, "council still active in Hybrid");
+    assert_eq!(
+        bc.council_members.len(),
+        1,
+        "council still active in Hybrid"
+    );
 
     // Hybrid → FullDao
     bc.try_advance_governance_phase();
@@ -66,7 +70,10 @@ fn test_is_council_member_returns_false_after_dissolution() {
     };
     bc.try_advance_governance_phase(); // → Hybrid
     bc.try_advance_governance_phase(); // → FullDao + dissolve
-    assert!(!bc.is_council_member("did:zhtp:alice"), "alice is no longer a council member");
+    assert!(
+        !bc.is_council_member("did:zhtp:alice"),
+        "alice is no longer a council member"
+    );
 }
 
 // ── auto-execution only fires in FullDao phase ────────────────────────────────

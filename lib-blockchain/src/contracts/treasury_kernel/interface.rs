@@ -50,7 +50,10 @@ pub enum KernelOpError {
 impl fmt::Display for KernelOpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unauthorized => write!(f, "Unauthorized: caller is not Treasury Kernel or governance"),
+            Self::Unauthorized => write!(
+                f,
+                "Unauthorized: caller is not Treasury Kernel or governance"
+            ),
             Self::Paused => write!(f, "Treasury Kernel is paused"),
             Self::InsufficientBalance => write!(f, "Insufficient available balance"),
             Self::InsufficientLockedBalance => write!(f, "Insufficient locked balance"),

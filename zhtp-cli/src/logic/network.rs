@@ -127,7 +127,8 @@ fn is_valid_hostname(host: &str) -> bool {
     }
 
     // Allow alphanumeric, dots, hyphens, and underscores
-    host.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
+    host.chars()
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
         && !host.starts_with('-')
         && !host.starts_with('.')
         && !host.ends_with('-')
@@ -157,9 +158,8 @@ pub fn validate_ping_count(count: u32) -> CliResult<()> {
 
 /// Validate IP address
 pub fn validate_ip_address(ip: &str) -> CliResult<IpAddr> {
-    IpAddr::from_str(ip).map_err(|_| {
-        CliError::NetworkError(format!("Invalid IP address: '{}'", ip))
-    })
+    IpAddr::from_str(ip)
+        .map_err(|_| CliError::NetworkError(format!("Invalid IP address: '{}'", ip)))
 }
 
 /// Check if address is localhost

@@ -21,11 +21,8 @@ pub trait GattBackend: Send + Sync {
     async fn discover_services(&self, device_address: &str) -> Result<Vec<String>>;
     async fn enable_notifications(&self, device_address: &str, char_uuid: &str) -> Result<()>;
     async fn disable_notifications(&self, device_address: &str, char_uuid: &str) -> Result<()>;
-    async fn wait_for_notification(
-        &self,
-        device_address: &str,
-        char_uuid: &str,
-    ) -> Result<Vec<u8>>;
+    async fn wait_for_notification(&self, device_address: &str, char_uuid: &str)
+        -> Result<Vec<u8>>;
 }
 
 #[cfg(any(test, feature = "ble-mock"))]

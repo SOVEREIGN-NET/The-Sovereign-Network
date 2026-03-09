@@ -141,8 +141,7 @@ impl ZhtpRequestWire {
     /// requests over UHP-authenticated connections.
     pub fn new(request: ZhtpRequest) -> Self {
         let mut request_id = [0u8; 16];
-        getrandom::getrandom(&mut request_id)
-            .expect("Failed to generate secure request_id");
+        getrandom::getrandom(&mut request_id).expect("Failed to generate secure request_id");
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -176,8 +175,7 @@ impl ZhtpRequestWire {
         use sha3::Sha3_256;
 
         let mut request_id = [0u8; 16];
-        getrandom::getrandom(&mut request_id)
-            .expect("Failed to generate secure request_id");
+        getrandom::getrandom(&mut request_id).expect("Failed to generate secure request_id");
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -200,7 +198,8 @@ impl ZhtpRequestWire {
         let path_len = request.uri.len() as u16;
         let body_len = request.body.len() as u32;
 
-        let mut canonical_bytes = Vec::with_capacity(1 + 2 + request.uri.len() + 4 + body_len as usize);
+        let mut canonical_bytes =
+            Vec::with_capacity(1 + 2 + request.uri.len() + 4 + body_len as usize);
         canonical_bytes.push(method_byte);
         canonical_bytes.extend_from_slice(&path_len.to_be_bytes());
         canonical_bytes.extend_from_slice(request.uri.as_bytes());
@@ -209,8 +208,7 @@ impl ZhtpRequestWire {
 
         // Compute V2 MAC: HMAC-SHA3-256(mac_key, canonical_bytes || counter_BE || session_id)
         type HmacSha3 = Hmac<Sha3_256>;
-        let mut mac = HmacSha3::new_from_slice(session_key)
-            .expect("HMAC can take key of any size");
+        let mut mac = HmacSha3::new_from_slice(session_key).expect("HMAC can take key of any size");
         mac.update(&canonical_bytes);
         mac.update(&sequence.to_be_bytes());
         mac.update(&session_id);
@@ -239,7 +237,11 @@ impl ZhtpRequestWire {
     ///
     /// This creates a deterministic hash by including all request fields
     /// in a fixed order with CBOR serialization.
-    pub fn compute_canonical_request_hash(request: &ZhtpRequest, request_id: &[u8; 16], timestamp_ms: u64) -> [u8; 32] {
+    pub fn compute_canonical_request_hash(
+        request: &ZhtpRequest,
+        request_id: &[u8; 16],
+        timestamp_ms: u64,
+    ) -> [u8; 32] {
         // Build canonical input: version || request_id || timestamp || method || uri || body
         // Using CBOR ensures deterministic byte representation
         let mut hasher = blake3::Hasher::new();
@@ -345,8 +347,7 @@ impl ZhtpRequestWire {
 
     /// Deserialize from CBOR bytes
     pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
-        ciborium::from_reader(bytes)
-            .map_err(|e| anyhow!("CBOR deserialization failed: {}", e))
+        ciborium::from_reader(bytes).map_err(|e| anyhow!("CBOR deserialization failed: {}", e))
     }
 
     /// Encode with length prefix for framing
@@ -355,7 +356,11 @@ impl ZhtpRequestWire {
         let len = payload.len() as u32;
 
         if len > MAX_MESSAGE_SIZE {
-            return Err(anyhow!("Message too large: {} bytes (max {})", len, MAX_MESSAGE_SIZE));
+            return Err(anyhow!(
+                "Message too large: {} bytes (max {})",
+                len,
+                MAX_MESSAGE_SIZE
+            ));
         }
 
         let mut framed = Vec::with_capacity(4 + payload.len());
@@ -419,8 +424,7 @@ impl ZhtpResponseWire {
 
     /// Deserialize from CBOR bytes
     pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
-        ciborium::from_reader(bytes)
-            .map_err(|e| anyhow!("CBOR deserialization failed: {}", e))
+        ciborium::from_reader(bytes).map_err(|e| anyhow!("CBOR deserialization failed: {}", e))
     }
 
     /// Encode with length prefix for framing
@@ -429,7 +433,11 @@ impl ZhtpResponseWire {
         let len = payload.len() as u32;
 
         if len > MAX_MESSAGE_SIZE {
-            return Err(anyhow!("Message too large: {} bytes (max {})", len, MAX_MESSAGE_SIZE));
+            return Err(anyhow!(
+                "Message too large: {} bytes (max {})",
+                len,
+                MAX_MESSAGE_SIZE
+            ));
         }
 
         let mut framed = Vec::with_capacity(4 + payload.len());
@@ -453,18 +461,26 @@ impl ZhtpResponseWire {
 pub async fn read_framed_message<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
     // Read length prefix (4 bytes, big-endian)
     let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf).await
+    reader
+        .read_exact(&mut len_buf)
+        .await
         .map_err(|e| anyhow!("Failed to read message length: {}", e))?;
 
     let len = u32::from_be_bytes(len_buf);
 
     if len > MAX_MESSAGE_SIZE {
-        return Err(anyhow!("Message too large: {} bytes (max {})", len, MAX_MESSAGE_SIZE));
+        return Err(anyhow!(
+            "Message too large: {} bytes (max {})",
+            len,
+            MAX_MESSAGE_SIZE
+        ));
     }
 
     // Read payload
     let mut payload = vec![0u8; len as usize];
-    reader.read_exact(&mut payload).await
+    reader
+        .read_exact(&mut payload)
+        .await
         .map_err(|e| anyhow!("Failed to read message payload: {}", e))?;
 
     Ok(payload)
@@ -478,18 +494,28 @@ pub async fn write_framed_message<W: AsyncWriteExt + Unpin>(
     let len = payload.len() as u32;
 
     if len > MAX_MESSAGE_SIZE {
-        return Err(anyhow!("Message too large: {} bytes (max {})", len, MAX_MESSAGE_SIZE));
+        return Err(anyhow!(
+            "Message too large: {} bytes (max {})",
+            len,
+            MAX_MESSAGE_SIZE
+        ));
     }
 
     // Write length prefix
-    writer.write_all(&len.to_be_bytes()).await
+    writer
+        .write_all(&len.to_be_bytes())
+        .await
         .map_err(|e| anyhow!("Failed to write message length: {}", e))?;
 
     // Write payload
-    writer.write_all(payload).await
+    writer
+        .write_all(payload)
+        .await
         .map_err(|e| anyhow!("Failed to write message payload: {}", e))?;
 
-    writer.flush().await
+    writer
+        .flush()
+        .await
         .map_err(|e| anyhow!("Failed to flush: {}", e))?;
 
     Ok(())

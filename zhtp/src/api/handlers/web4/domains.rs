@@ -1,15 +1,20 @@
 //! Web4 Domain Management API Endpoints
 
-use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
-use lib_protocols::zhtp::ZhtpResult;
-use lib_network::web4::{DomainRegistrationRequest, DomainMetadata, DomainEconomicSettings, DomainLookupResponse, PublicOwnerInfo};
-use lib_identity::ZhtpIdentity;
-use lib_proofs::ZeroKnowledgeProof;
-use serde::{Deserialize, Serialize};
-use tracing::{info, error, warn};
+use crate::web4_manifest::{
+    compute_root_hash, ensure_canonical_file_list, manifest_unsigned_bytes, DeployManifest,
+};
 use anyhow::anyhow;
-use base64::{Engine as _, engine::general_purpose};
-use crate::web4_manifest::{DeployManifest, ensure_canonical_file_list, compute_root_hash, manifest_unsigned_bytes};
+use base64::{engine::general_purpose, Engine as _};
+use lib_identity::ZhtpIdentity;
+use lib_network::web4::{
+    DomainEconomicSettings, DomainLookupResponse, DomainMetadata, DomainRegistrationRequest,
+    PublicOwnerInfo,
+};
+use lib_proofs::ZeroKnowledgeProof;
+use lib_protocols::zhtp::ZhtpResult;
+use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use serde::{Deserialize, Serialize};
+use tracing::{error, info, warn};
 
 use super::Web4Handler;
 use std::collections::HashMap;
@@ -48,7 +53,7 @@ pub struct ManifestDomainRegistrationRequest {
     pub domain: String,
     /// CANONICAL: CID of the uploaded DeployManifest
     /// This will be converted to web4_manifest_cid during registration
-    #[serde(alias = "manifest_cid")]  // Backwards compatibility
+    #[serde(alias = "manifest_cid")] // Backwards compatibility
     pub deploy_manifest_cid: String,
     /// Owner DID (did:zhtp:hex format)
     pub owner: String,
@@ -124,7 +129,9 @@ impl Web4Handler {
         info!("Processing Web4 domain registration request");
 
         // Try manifest-based request first (simpler format from CLI deploy)
-        if let Ok(manifest_request) = serde_json::from_slice::<ManifestDomainRegistrationRequest>(&request_body) {
+        if let Ok(manifest_request) =
+            serde_json::from_slice::<ManifestDomainRegistrationRequest>(&request_body)
+        {
             return self.register_domain_from_manifest(manifest_request).await;
         }
 
@@ -160,15 +167,27 @@ impl Web4Handler {
 
         // DEBUG: Check wallet state right after retrieval
         info!("  WALLET DEBUG (after IdentityManager retrieval):");
-        info!("    Wallet count: {}", owner_identity.wallet_manager.wallets.len());
+        info!(
+            "    Wallet count: {}",
+            owner_identity.wallet_manager.wallets.len()
+        );
         for (id, w) in &owner_identity.wallet_manager.wallets {
-            info!("    - Wallet: {} (type: {:?})", hex::encode(&id.0[..8]), w.wallet_type);
+            info!(
+                "    - Wallet: {} (type: {:?})",
+                hex::encode(&id.0[..8]),
+                w.wallet_type
+            );
         }
 
         drop(identity_mgr);
-        info!(" Using identity: {} (Display name: {})",
+        info!(
+            " Using identity: {} (Display name: {})",
             owner_did,
-            owner_identity.metadata.get("display_name").map(|s| s.as_str()).unwrap_or("no name")
+            owner_identity
+                .metadata
+                .get("display_name")
+                .map(|s| s.as_str())
+                .unwrap_or("no name")
         );
 
         // Domain registration fee: fixed 10 SOV
@@ -179,78 +198,91 @@ impl Web4Handler {
         if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV {
             return Err(anyhow!(
                 "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
-                user_provided_fee, DOMAIN_REGISTRATION_FEE_SOV
+                user_provided_fee,
+                DOMAIN_REGISTRATION_FEE_SOV
             ));
         }
 
-        info!(" Domain registration fee: {} SOV", DOMAIN_REGISTRATION_FEE_SOV);
+        info!(
+            " Domain registration fee: {} SOV",
+            DOMAIN_REGISTRATION_FEE_SOV
+        );
 
         let registration_fee_sov = DOMAIN_REGISTRATION_FEE_SOV;
 
         // ========== SECURITY: SIGNATURE VERIFICATION ==========
         // Verify that the request was signed by the owner's private key
         info!(" Verifying signature for authorization...");
-        
+
         // Check timestamp is recent (within 5 minutes)
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| anyhow!("System time error: {}", e))?
             .as_secs();
-        
+
         let time_diff = if current_time > simple_request.timestamp {
             current_time - simple_request.timestamp
         } else {
             simple_request.timestamp - current_time
         };
-        
-        if time_diff > 300 { // 5 minutes = 300 seconds
+
+        if time_diff > 300 {
+            // 5 minutes = 300 seconds
             return Err(anyhow!(
                 "Request expired. Timestamp difference: {} seconds (max 300). Current: {}, Request: {}",
                 time_diff, current_time, simple_request.timestamp
             ));
         }
-        
+
         // Create the message that should have been signed
         // Format: domain|timestamp|fee_amount (fee in SOV)
-        let signed_message = format!("{}|{}|{}",
-            simple_request.domain,
-            simple_request.timestamp,
-            user_provided_fee
+        let signed_message = format!(
+            "{}|{}|{}",
+            simple_request.domain, simple_request.timestamp, user_provided_fee
         );
-        
+
         // Decode the signature from hex
         let signature_bytes = hex::decode(&simple_request.signature)
             .map_err(|e| anyhow!("Invalid signature hex encoding: {}", e))?;
-        
+
         // DEBUG: Log verification inputs
         info!(" DEBUG SIGNATURE VERIFICATION:");
         info!("   Message: {}", signed_message);
         info!("   Signature length: {} bytes", signature_bytes.len());
-        info!("   Public key length: {} bytes", owner_identity.public_key.size());
+        info!(
+            "   Public key length: {} bytes",
+            owner_identity.public_key.size()
+        );
         info!("   Expected public key length: 1312 (Dilithium2)");
-        
+
         // Verify signature using owner's public key
         let is_valid = lib_crypto::verify_signature(
             signed_message.as_bytes(),
             &signature_bytes,
-            &owner_identity.public_key.as_bytes()
-        ).map_err(|e| anyhow!("Signature verification error: {}", e))?;
-        
+            &owner_identity.public_key.as_bytes(),
+        )
+        .map_err(|e| anyhow!("Signature verification error: {}", e))?;
+
         info!(" DEBUG: Signature verification result: {}", is_valid);
-        
+
         if !is_valid {
-            error!(" AUTHORIZATION DENIED: Invalid signature for identity {}", owner_did);
+            error!(
+                " AUTHORIZATION DENIED: Invalid signature for identity {}",
+                owner_did
+            );
             return Err(anyhow!(
                 "Authorization denied: Invalid signature. You must sign the request with the private key for identity {}",
                 owner_did
             ));
         }
-        
+
         info!(" Signature verified successfully - owner authenticated");
         // ========== END SIGNATURE VERIFICATION ==========
-        
-        info!(" Registration fee: {} SOV (domain: {})",
-            registration_fee_sov, simple_request.domain);
+
+        info!(
+            " Registration fee: {} SOV (domain: {})",
+            registration_fee_sov, simple_request.domain
+        );
 
         // ========================================================================
         // SOV TOKEN PAYMENT FOR DOMAIN REGISTRATION
@@ -258,7 +290,10 @@ impl Web4Handler {
         // Domain registration costs 10 SOV, paid via SOV token contract transfer
         // to the network treasury
 
-        info!("💳 Processing SOV token payment for domain registration ({} SOV)", registration_fee_sov);
+        info!(
+            "💳 Processing SOV token payment for domain registration ({} SOV)",
+            registration_fee_sov
+        );
 
         // Resolve owner's Primary wallet for SOV balance lookup
         let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
@@ -280,8 +315,13 @@ impl Web4Handler {
         {
             let blockchain = self.blockchain.read().await;
 
-            let owner_wallet_id = blockchain.wallet_registry.values()
-                .find(|wallet| wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash) && wallet.wallet_type == "Primary")
+            let owner_wallet_id = blockchain
+                .wallet_registry
+                .values()
+                .find(|wallet| {
+                    wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash)
+                        && wallet.wallet_type == "Primary"
+                })
                 .map(|wallet| wallet.wallet_id)
                 .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
 
@@ -292,33 +332,46 @@ impl Web4Handler {
             };
 
             // Check if SOV token contract exists
-            let sov_token = blockchain.token_contracts.get(&sov_token_id)
-                .ok_or_else(|| anyhow!("SOV token contract not initialized. Network may still be bootstrapping."))?;
+            let sov_token = blockchain
+                .token_contracts
+                .get(&sov_token_id)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "SOV token contract not initialized. Network may still be bootstrapping."
+                    )
+                })?;
 
             // Check user's SOV balance
             let user_sov_balance = sov_token.balance_of(&owner_wallet_key);
 
-            info!(" User SOV balance: {} SOV (need {} SOV)", user_sov_balance, registration_fee_sov);
+            info!(
+                " User SOV balance: {} SOV (need {} SOV)",
+                user_sov_balance, registration_fee_sov
+            );
 
             if user_sov_balance < registration_fee_sov {
                 return Err(anyhow!(
                     "Insufficient SOV balance. Required: {} SOV, Available: {} SOV. \
                     You need SOV tokens to register domains.",
-                    registration_fee_sov, user_sov_balance
+                    registration_fee_sov,
+                    user_sov_balance
                 ));
             }
         }
 
-        let fee_payment_tx_raw = simple_request
-            .fee_payment_tx
-            .as_deref()
-            .ok_or_else(|| anyhow!(
+        let fee_payment_tx_raw = simple_request.fee_payment_tx.as_deref().ok_or_else(|| {
+            anyhow!(
                 "fee_payment_tx is required. Submit a signed canonical TokenTransfer \
                  from owner Primary wallet to DAO treasury wallet for {} SOV.",
                 registration_fee_sov
-            ))?;
+            )
+        })?;
         let fee_tx_hash_hex = self
-            .validate_and_submit_domain_fee_tx(&owner_identity, registration_fee_sov, fee_payment_tx_raw)
+            .validate_and_submit_domain_fee_tx(
+                &owner_identity,
+                registration_fee_sov,
+                fee_payment_tx_raw,
+            )
             .await?;
 
         info!(" Domain registration payment complete!");
@@ -328,10 +381,10 @@ impl Web4Handler {
         // Prepare content mappings WITH RICH METADATA for storage
         let mut initial_content = HashMap::new();
         let mut content_hash_map = HashMap::new();
-        let mut content_metadata_map = HashMap::new();  // NEW: Store rich metadata per route
-        
+        let mut content_metadata_map = HashMap::new(); // NEW: Store rich metadata per route
+
         let current_time = chrono::Utc::now().timestamp() as u64;
-        
+
         for (path, mapping) in simple_request.content_mappings {
             // Decode base64 content to raw bytes for DHT storage
             let content_bytes = match general_purpose::STANDARD.decode(&mapping.content) {
@@ -340,7 +393,10 @@ impl Web4Handler {
                     decoded
                 }
                 Err(e) => {
-                    error!("   Failed to decode base64 content for path {}: {}", path, e);
+                    error!(
+                        "   Failed to decode base64 content for path {}: {}",
+                        path, e
+                    );
                     // Fallback to treating as literal string (for backward compatibility)
                     mapping.content.as_bytes().to_vec()
                 }
@@ -348,11 +404,11 @@ impl Web4Handler {
             let content_hash = lib_crypto::hash_blake3(&content_bytes);
             let content_hash_hex = hex::encode(&content_hash[..8]); // Use first 8 bytes for shorter hash
             let content_hash_full = lib_crypto::Hash::from_bytes(&content_hash[..32]);
-            
+
             info!("   Path: {} ({} bytes)", path, content_bytes.len());
             info!("     Hash: {}", content_hash_hex);
             info!("     Type: {}", mapping.content_type);
-            
+
             // CREATE RICH METADATA for each content item
             let content_metadata = lib_storage::ContentMetadata {
                 hash: content_hash_full.clone(),
@@ -363,16 +419,16 @@ impl Web4Handler {
                 filename: path.clone(),
                 description: format!("Content for {}{}", simple_request.domain, path),
                 checksum: content_hash_full.clone(),
-                
+
                 // Storage config optimized for Web4 content
-                tier: lib_storage::StorageTier::Hot,  // Fast access for websites
-                encryption: lib_storage::EncryptionLevel::None,  // Public by default
+                tier: lib_storage::StorageTier::Hot, // Fast access for websites
+                encryption: lib_storage::EncryptionLevel::None, // Public by default
                 access_pattern: lib_storage::AccessPattern::Frequent,
-                replication_factor: 5,  // High availability for websites
+                replication_factor: 5, // High availability for websites
                 total_chunks: (content_bytes.len() / 65536 + 1) as u32,
                 is_encrypted: false,
                 is_compressed: false,
-                
+
                 // Public access for Web4 content
                 access_control: vec![lib_storage::AccessLevel::Public],
                 tags: vec![
@@ -380,37 +436,47 @@ impl Web4Handler {
                     simple_request.domain.clone(),
                     path.clone(),
                 ],
-                
+
                 // Economics: 1 year Web4 hosting
-                cost_per_day: 10,  // 10 SOV per day for web content
+                cost_per_day: 10, // 10 SOV per day for web content
                 created_at: current_time,
                 last_accessed: current_time,
                 access_count: 0,
                 expires_at: Some(current_time + (365 * 86400)), // 1 year expiry
             };
-            
+
             initial_content.insert(path.clone(), content_bytes);
             content_hash_map.insert(path.clone(), content_hash_hex);
-            content_metadata_map.insert(path, content_metadata);  // Store metadata!
+            content_metadata_map.insert(path, content_metadata); // Store metadata!
         }
 
         // Create domain metadata
         let metadata = DomainMetadata {
-            title: simple_request.metadata.as_ref()
+            title: simple_request
+                .metadata
+                .as_ref()
                 .and_then(|m| m.get("title"))
                 .and_then(|v| v.as_str())
                 .unwrap_or(&simple_request.domain)
                 .to_string(),
-            description: simple_request.metadata.as_ref()
+            description: simple_request
+                .metadata
+                .as_ref()
                 .and_then(|m| m.get("description"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("Web4 website")
                 .to_string(),
             category: "general".to_string(),
-            tags: simple_request.metadata.as_ref()
+            tags: simple_request
+                .metadata
+                .as_ref()
                 .and_then(|m| m.get("tags"))
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             public: true,
             economic_settings: DomainEconomicSettings {
@@ -422,21 +488,28 @@ impl Web4Handler {
         };
 
         // Register domain using domain registry
-        let registration_result = self.domain_registry.register_domain_with_content(
-            simple_request.domain.clone(),
-            owner_identity.clone(),  // Clone since we need it later for wallet operations
-            initial_content,
-            metadata,
-        ).await;
+        let registration_result = self
+            .domain_registry
+            .register_domain_with_content(
+                simple_request.domain.clone(),
+                owner_identity.clone(), // Clone since we need it later for wallet operations
+                initial_content,
+                metadata,
+            )
+            .await;
 
-        let registration_response = registration_result
-            .map_err(|e| anyhow!("Domain registration failed: {}", e))?;
+        let registration_response =
+            registration_result.map_err(|e| anyhow!("Domain registration failed: {}", e))?;
 
         let total_fees = registration_response.fees_charged;
-        info!(" Domain {} registered with {} SOV fees", simple_request.domain, total_fees);
+        info!(
+            " Domain {} registered with {} SOV fees",
+            simple_request.domain, total_fees
+        );
 
         // Get the ACTUAL content mappings from domain registry (with correct DHT hashes)
-        let actual_content_mappings = match self.name_resolver.resolve(&simple_request.domain).await {
+        let actual_content_mappings = match self.name_resolver.resolve(&simple_request.domain).await
+        {
             Ok(record) => record.content_mappings,
             Err(_) => content_hash_map.clone(),
         };
@@ -451,18 +524,21 @@ impl Web4Handler {
         // Contract deployment handled separately from fee payment
         // ========================================================================
         let domain_tx_hash = Some(fee_tx_hash_hex);
-        info!(" Web4 domain registration transaction completed: {:?}", domain_tx_hash);
+        info!(
+            " Web4 domain registration transaction completed: {:?}",
+            domain_tx_hash
+        );
 
         // Register content ownership with wallet using ACTUAL owner identity
         let wallet_manager_lock = self.wallet_content_manager.write().await;
-        
+
         // Get primary wallet from owner's identity
         if let Some(primary_wallet) = owner_identity.wallet_manager.wallets.values().next() {
             let wallet_id = primary_wallet.id.clone();
             drop(wallet_manager_lock); // Release lock before async operations
-            
+
             let mut wallet_manager = self.wallet_content_manager.write().await;
-            
+
             // Register ownership for each content item in the domain
             for (path, metadata) in &content_metadata_map {
                 if let Err(e) = wallet_manager.register_content_ownership(
@@ -474,12 +550,19 @@ impl Web4Handler {
                     error!("Failed to register content ownership for {}: {}", path, e);
                 }
             }
-            
-            info!(" Registered {} content items to wallet {} for identity {}", 
-                content_metadata_map.len(), wallet_id, owner_did);
+
+            info!(
+                " Registered {} content items to wallet {} for identity {}",
+                content_metadata_map.len(),
+                wallet_id,
+                owner_did
+            );
         } else {
             drop(wallet_manager_lock);
-            error!(" No wallet found for owner identity {}, content ownership not registered", owner_did);
+            error!(
+                " No wallet found for owner identity {}, content ownership not registered",
+                owner_did
+            );
         }
 
         // Create response
@@ -505,7 +588,10 @@ impl Web4Handler {
         let response_json = serde_json::to_vec(&response)
             .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
 
-        info!(" Domain {} registered successfully with {} SOV fees", simple_request.domain, total_fees);
+        info!(
+            " Domain {} registered successfully with {} SOV fees",
+            simple_request.domain, total_fees
+        );
 
         Ok(ZhtpResponse::success_with_content_type(
             response_json,
@@ -516,7 +602,10 @@ impl Web4Handler {
 
     /// Register a domain using DeployManifest CID (from CLI deploy command)
     /// This is a simplified flow where content has already been uploaded
-    async fn register_domain_from_manifest(&self, request: ManifestDomainRegistrationRequest) -> ZhtpResult<ZhtpResponse> {
+    async fn register_domain_from_manifest(
+        &self,
+        request: ManifestDomainRegistrationRequest,
+    ) -> ZhtpResult<ZhtpResponse> {
         info!("Processing manifest-based domain registration");
         info!(" Domain: {}", request.domain);
         info!(" DeployManifest CID: {}", request.deploy_manifest_cid);
@@ -536,11 +625,14 @@ impl Web4Handler {
 
         // Look up owner identity using boundary-safe DID API
         let identity_mgr = self.identity_manager.read().await;
-        let owner_identity = identity_mgr.get_identity_by_did(&owner_did)
-            .ok_or_else(|| anyhow!(
-                "Owner identity not found: {}. Register identity first.",
-                owner_did
-            ))?
+        let owner_identity = identity_mgr
+            .get_identity_by_did(&owner_did)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Owner identity not found: {}. Register identity first.",
+                    owner_did
+                )
+            })?
             .clone();
         drop(identity_mgr);
         info!(" Verified owner identity: {}", owner_did);
@@ -558,21 +650,28 @@ impl Web4Handler {
         if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV {
             return Err(anyhow!(
                 "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
-                user_provided_fee, DOMAIN_REGISTRATION_FEE_SOV
+                user_provided_fee,
+                DOMAIN_REGISTRATION_FEE_SOV
             ));
         }
-        let fee_payment_tx_raw = request
-            .fee_payment_tx
-            .as_deref()
-            .ok_or_else(|| anyhow!(
+        let fee_payment_tx_raw = request.fee_payment_tx.as_deref().ok_or_else(|| {
+            anyhow!(
                 "fee_payment_tx is required. Submit a signed canonical TokenTransfer \
                  from owner Primary wallet to DAO treasury wallet for {} SOV.",
                 DOMAIN_REGISTRATION_FEE_SOV
-            ))?;
+            )
+        })?;
         let fee_tx_hash_hex = self
-            .validate_and_submit_domain_fee_tx(&owner_identity, DOMAIN_REGISTRATION_FEE_SOV, fee_payment_tx_raw)
+            .validate_and_submit_domain_fee_tx(
+                &owner_identity,
+                DOMAIN_REGISTRATION_FEE_SOV,
+                fee_payment_tx_raw,
+            )
             .await?;
-        info!(" Manifest domain registration fee tx accepted: {}", fee_tx_hash_hex);
+        info!(
+            " Manifest domain registration fee tx accepted: {}",
+            fee_tx_hash_hex
+        );
 
         // Register domain using manifest CID
         info!("Registering domain from manifest: {}", request.domain);
@@ -580,7 +679,10 @@ impl Web4Handler {
         // Create domain metadata
         let metadata = DomainMetadata {
             title: request.domain.clone(),
-            description: format!("Domain registered via DeployManifest {}", request.deploy_manifest_cid),
+            description: format!(
+                "Domain registered via DeployManifest {}",
+                request.deploy_manifest_cid
+            ),
             category: "website".to_string(),
             tags: vec!["web4".to_string(), "manifest".to_string()],
             public: true,
@@ -595,10 +697,10 @@ impl Web4Handler {
         // Create registration proof (simplified for manifest-based registration)
         let registration_proof = ZeroKnowledgeProof::new(
             "Plonky2".to_string(),
-            lib_crypto::hash_blake3(&[
-                owner_identity.id.0.as_slice(),
-                request.domain.as_bytes(),
-            ].concat()).to_vec(),
+            lib_crypto::hash_blake3(
+                &[owner_identity.id.0.as_slice(), request.domain.as_bytes()].concat(),
+            )
+            .to_vec(),
             owner_identity.id.0.to_vec(),
             owner_identity.id.0.to_vec(),
             None,
@@ -617,10 +719,16 @@ impl Web4Handler {
         };
 
         // Register domain
-        let registration_result = self.domain_registry.register_domain(domain_request).await
+        let registration_result = self
+            .domain_registry
+            .register_domain(domain_request)
+            .await
             .map_err(|e| anyhow!("Failed to register domain: {}", e))?;
 
-        info!(" Domain {} registered with DeployManifest {}", request.domain, request.deploy_manifest_cid);
+        info!(
+            " Domain {} registered with DeployManifest {}",
+            request.domain, request.deploy_manifest_cid
+        );
 
         let response = serde_json::json!({
             "status": "success",
@@ -693,7 +801,8 @@ impl Web4Handler {
                 fee_payment_tx.chain_id
             ));
         }
-        let is_sov = fee_transfer.token_id == lib_blockchain::contracts::utils::generate_lib_token_id()
+        let is_sov = fee_transfer.token_id
+            == lib_blockchain::contracts::utils::generate_lib_token_id()
             || fee_transfer.token_id == [0u8; 32];
         if !is_sov {
             return Err(anyhow!("fee_payment_tx must transfer SOV token"));
@@ -701,7 +810,8 @@ impl Web4Handler {
         if fee_transfer.amount != registration_fee_sov as u128 {
             return Err(anyhow!(
                 "fee_payment_tx amount mismatch: expected {} SOV, got {}",
-                registration_fee_sov, fee_transfer.amount
+                registration_fee_sov,
+                fee_transfer.amount
             ));
         }
 
@@ -711,21 +821,32 @@ impl Web4Handler {
         let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
         {
             let blockchain = self.blockchain.read().await;
-            let owner_wallet = blockchain.wallet_registry.values()
-                .find(|wallet| wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash) && wallet.wallet_type == "Primary")
+            let owner_wallet = blockchain
+                .wallet_registry
+                .values()
+                .find(|wallet| {
+                    wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash)
+                        && wallet.wallet_type == "Primary"
+                })
                 .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
             if fee_transfer.from != owner_wallet.wallet_id.as_array() {
-                return Err(anyhow!("fee_payment_tx sender wallet does not match owner Primary wallet"));
+                return Err(anyhow!(
+                    "fee_payment_tx sender wallet does not match owner Primary wallet"
+                ));
             }
 
-            let owner_wallet_pubkey = lib_blockchain::integration::crypto_integration::PublicKey::new(
-                owner_wallet.public_key.clone()
-            );
+            let owner_wallet_pubkey =
+                lib_blockchain::integration::crypto_integration::PublicKey::new(
+                    owner_wallet.public_key.clone(),
+                );
             if fee_payment_tx.signature.public_key.key_id != owner_wallet_pubkey.key_id {
-                return Err(anyhow!("fee_payment_tx signature does not match owner Primary wallet public key"));
+                return Err(anyhow!(
+                    "fee_payment_tx signature does not match owner Primary wallet public key"
+                ));
             }
 
-            let treasury_wallet_id = blockchain.get_dao_treasury_wallet_id()
+            let treasury_wallet_id = blockchain
+                .get_dao_treasury_wallet_id()
                 .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?;
             let treasury_wallet_bytes = hex::decode(treasury_wallet_id)
                 .map_err(|_| anyhow!("DAO treasury wallet id is malformed"))?;
@@ -735,18 +856,25 @@ impl Web4Handler {
             let mut treasury_wallet = [0u8; 32];
             treasury_wallet.copy_from_slice(&treasury_wallet_bytes);
             if fee_transfer.to != treasury_wallet {
-                return Err(anyhow!("fee_payment_tx recipient must be the DAO treasury wallet"));
+                return Err(anyhow!(
+                    "fee_payment_tx recipient must be the DAO treasury wallet"
+                ));
             }
 
-            let already_confirmed = blockchain.blocks.iter().any(|block| {
-                block.transactions.iter().any(|tx| tx.hash() == fee_tx_hash)
-            });
-            let already_pending = blockchain.pending_transactions.iter().any(|tx| tx.hash() == fee_tx_hash);
+            let already_confirmed = blockchain
+                .blocks
+                .iter()
+                .any(|block| block.transactions.iter().any(|tx| tx.hash() == fee_tx_hash));
+            let already_pending = blockchain
+                .pending_transactions
+                .iter()
+                .any(|tx| tx.hash() == fee_tx_hash);
 
             if !already_confirmed && !already_pending {
                 drop(blockchain);
                 let mut blockchain = self.blockchain.write().await;
-                blockchain.add_pending_transaction(fee_payment_tx)
+                blockchain
+                    .add_pending_transaction(fee_payment_tx)
                     .map_err(|e| anyhow!("Failed to submit fee_payment_tx to mempool: {}", e))?;
             }
         }
@@ -763,11 +891,13 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid domain registration request: {}", e))?;
 
         // Deserialize owner identity
-        let owner_identity = self.deserialize_identity(&api_request.owner_identity)
+        let owner_identity = self
+            .deserialize_identity(&api_request.owner_identity)
             .map_err(|e| anyhow!("Invalid owner identity: {}", e))?;
 
         // Deserialize registration proof
-        let registration_proof = self.deserialize_proof(&api_request.registration_proof)
+        let registration_proof = self
+            .deserialize_proof(&api_request.registration_proof)
             .map_err(|e| anyhow!("Invalid registration proof: {}", e))?;
 
         // Decode initial content from base64
@@ -815,14 +945,18 @@ impl Web4Handler {
         };
 
         // Process registration
-        
-        match self.domain_registry.register_domain(registration_request).await {
+
+        match self
+            .domain_registry
+            .register_domain(registration_request)
+            .await
+        {
             Ok(response) => {
                 let response_json = serde_json::to_vec(&response)
                     .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
 
                 info!(" Domain {} registered successfully", api_request.domain);
-                
+
                 Ok(ZhtpResponse::success_with_content_type(
                     response_json,
                     "application/json".to_string(),
@@ -853,7 +987,6 @@ impl Web4Handler {
         let domain = path_parts[5]; // ["", "api", "v1", "web4", "domains", "hello-world.zhtp"]
         info!(" Looking up Web4 domain: {}", domain);
 
-        
         match self.name_resolver.resolve(domain).await {
             Ok(record) => {
                 let owner_info = PublicOwnerInfo {
@@ -902,18 +1035,18 @@ impl Web4Handler {
     /// List domains for an owner
     /// GET /api/v1/web4/domains?owner={did}
     pub async fn list_domains(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let owner = request
-            .uri
-            .splitn(2, '?')
-            .nth(1)
-            .and_then(|query| {
-                query.split('&').find_map(|pair| {
-                    let mut parts = pair.splitn(2, '=');
-                    let key = parts.next()?;
-                    let value = parts.next()?;
-                    if key == "owner" { Some(value) } else { None }
-                })
-            });
+        let owner = request.uri.splitn(2, '?').nth(1).and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                let key = parts.next()?;
+                let value = parts.next()?;
+                if key == "owner" {
+                    Some(value)
+                } else {
+                    None
+                }
+            })
+        });
         let _owner = match owner {
             Some(value) if !value.is_empty() => value,
             _ => {
@@ -945,30 +1078,35 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid domain transfer request: {}", e))?;
 
         // Deserialize owner identities
-        let from_owner = self.deserialize_identity(&api_request.from_owner)
+        let from_owner = self
+            .deserialize_identity(&api_request.from_owner)
             .map_err(|e| anyhow!("Invalid from_owner identity: {}", e))?;
-        let to_owner = self.deserialize_identity(&api_request.to_owner)
+        let to_owner = self
+            .deserialize_identity(&api_request.to_owner)
             .map_err(|e| anyhow!("Invalid to_owner identity: {}", e))?;
 
         // Create transfer proof (simplified for now)
         let transfer_proof = lib_proofs::ZeroKnowledgeProof::new(
             "Plonky2".to_string(),
-            lib_crypto::hash_blake3(&[
-                from_owner.id.0.as_slice(),
-                to_owner.id.0.as_slice(),
-                api_request.domain.as_bytes(),
-            ].concat()).to_vec(),
+            lib_crypto::hash_blake3(
+                &[
+                    from_owner.id.0.as_slice(),
+                    to_owner.id.0.as_slice(),
+                    api_request.domain.as_bytes(),
+                ]
+                .concat(),
+            )
+            .to_vec(),
             from_owner.id.0.to_vec(),
             to_owner.id.0.to_vec(),
             None,
         );
 
-        match self.domain_registry.transfer_domain(
-            &api_request.domain,
-            &from_owner,
-            &to_owner,
-            transfer_proof,
-        ).await {
+        match self
+            .domain_registry
+            .transfer_domain(&api_request.domain, &from_owner, &to_owner, transfer_proof)
+            .await
+        {
             Ok(success) => {
                 let response = serde_json::json!({
                     "success": success,
@@ -1019,17 +1157,27 @@ impl Web4Handler {
         };
 
         let identity_mgr = self.identity_manager.read().await;
-        let owner_identity = identity_mgr.get_identity_by_did(&normalized_did)
-            .ok_or_else(|| anyhow!(
-                "Owner identity not found: {}. Identity must be registered first.",
-                normalized_did
-            ))?
+        let owner_identity = identity_mgr
+            .get_identity_by_did(&normalized_did)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Owner identity not found: {}. Identity must be registered first.",
+                    normalized_did
+                )
+            })?
             .clone();
         drop(identity_mgr);
 
-        info!(" Verified owner identity for domain release: {}", normalized_did);
+        info!(
+            " Verified owner identity for domain release: {}",
+            normalized_did
+        );
 
-        match self.domain_registry.release_domain(&api_request.domain, &owner_identity).await {
+        match self
+            .domain_registry
+            .release_domain(&api_request.domain, &owner_identity)
+            .await
+        {
             Ok(success) => {
                 let response = serde_json::json!({
                     "success": success,
@@ -1074,7 +1222,8 @@ impl Web4Handler {
             None,
             "placeholder-user",
             None,
-        ).map_err(|e| format!("Failed to create identity: {}", e))
+        )
+        .map_err(|e| format!("Failed to create identity: {}", e))
     }
 
     /// Deserialize zero-knowledge proof from string (simplified for now)
@@ -1092,7 +1241,7 @@ impl Web4Handler {
 
     // ============================================================================
     // deploy_web4_contract() function REMOVED
-    // 
+    //
     // This function previously created improper "system transactions" with:
     // - Empty inputs (bypasses UTXO validation)
     // - Zero fees (no economic cost = spam risk)
@@ -1131,7 +1280,6 @@ impl Web4Handler {
 
         let domain = path_parts[6];
         info!(" Getting status for domain: {}", domain);
-
 
         match self.domain_registry.get_domain_status(domain).await {
             Ok(status) => {
@@ -1181,10 +1329,14 @@ impl Web4Handler {
 
         // Extract domain and remove any query parameters
         let domain_with_query = path_parts[6];
-        let domain = domain_with_query.split('?').next().unwrap_or(domain_with_query);
+        let domain = domain_with_query
+            .split('?')
+            .next()
+            .unwrap_or(domain_with_query);
 
         // Parse optional limit from query string
-        let limit = request.uri
+        let limit = request
+            .uri
             .split("limit=")
             .nth(1)
             .and_then(|s| s.split('&').next())
@@ -1192,7 +1344,6 @@ impl Web4Handler {
             .unwrap_or(50);
 
         info!(" Getting history for domain: {} (limit: {})", domain, limit);
-
 
         match self.domain_registry.get_domain_history(domain, limit).await {
             Ok(history) => {
@@ -1228,10 +1379,12 @@ impl Web4Handler {
         info!(
             " Updating domain {} (expected CID: {}...)",
             update_request.domain,
-            &update_request.expected_previous_manifest_cid[..16.min(update_request.expected_previous_manifest_cid.len())]
+            &update_request.expected_previous_manifest_cid
+                [..16.min(update_request.expected_previous_manifest_cid.len())]
         );
 
-        let status = self.domain_registry
+        let status = self
+            .domain_registry
             .get_domain_status(&update_request.domain)
             .await
             .map_err(|e| anyhow!("Failed to fetch domain status: {}", e))?;
@@ -1265,7 +1418,7 @@ impl Web4Handler {
         // SIGNATURE VERIFICATION
         // The owner signs a message containing the DeployManifest CID (new_manifest_cid).
         // This proves the owner authorized THIS SPECIFIC deployment content.
-        // 
+        //
         // SECURITY MODEL:
         // - DeployManifest CID = signed by owner, proves content authorization
         // - Web4Manifest CID = derived deterministically from DeployManifest, used for resolution
@@ -1367,16 +1520,17 @@ impl Web4Handler {
         let mut canonical_update_request = update_request.clone();
         canonical_update_request.new_manifest_cid = canonical_web4_manifest_cid;
 
-        match self.domain_registry.update_domain(canonical_update_request).await {
+        match self
+            .domain_registry
+            .update_domain(canonical_update_request)
+            .await
+        {
             Ok(response) => {
                 if response.success {
                     let version = response.new_version;
-                    let cid_preview = &response.new_manifest_cid[..16.min(response.new_manifest_cid.len())];
-                    info!(
-                        " Domain updated to v{} (CID: {}...)",
-                        version,
-                        cid_preview
-                    );
+                    let cid_preview =
+                        &response.new_manifest_cid[..16.min(response.new_manifest_cid.len())];
+                    info!(" Domain updated to v{} (CID: {}...)", version, cid_preview);
                 } else {
                     warn!(
                         " Domain update failed: {}",
@@ -1403,8 +1557,14 @@ impl Web4Handler {
         }
     }
 
-    async fn load_and_verify_manifest(&self, domain: &str, manifest_cid: &str) -> anyhow::Result<DeployManifest> {
-        let manifest_bytes = self.domain_registry.get_content_by_cid(manifest_cid)
+    async fn load_and_verify_manifest(
+        &self,
+        domain: &str,
+        manifest_cid: &str,
+    ) -> anyhow::Result<DeployManifest> {
+        let manifest_bytes = self
+            .domain_registry
+            .get_content_by_cid(manifest_cid)
             .await
             .map_err(|e| anyhow!("Failed to fetch manifest: {}", e))?
             .ok_or_else(|| anyhow!("Manifest content not found for CID {}", manifest_cid))?;
@@ -1443,7 +1603,8 @@ impl Web4Handler {
             &unsigned_bytes,
             &signature_bytes,
             &author_identity.public_key.dilithium_pk,
-        ).map_err(|e| anyhow!("Signature verification error: {}", e))?;
+        )
+        .map_err(|e| anyhow!("Signature verification error: {}", e))?;
 
         if !is_valid {
             return Err(anyhow!("Invalid manifest signature"));
@@ -1464,17 +1625,28 @@ impl Web4Handler {
         let resolve_req: ResolveRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow!("Invalid resolve request: {}", e))?;
 
-        info!("🔍 resolve_domain_manifest: Resolving '{}' (version: {:?})", resolve_req.domain, resolve_req.version);
-
+        info!(
+            "🔍 resolve_domain_manifest: Resolving '{}' (version: {:?})",
+            resolve_req.domain, resolve_req.version
+        );
 
         // Get domain status
-        let status = self.domain_registry.get_domain_status(&resolve_req.domain).await
+        let status = self
+            .domain_registry
+            .get_domain_status(&resolve_req.domain)
+            .await
             .map_err(|e| anyhow!("Domain not found: {}", e))?;
 
-        info!("🔍 resolve_domain_manifest: status.found={} for '{}'", status.found, resolve_req.domain);
+        info!(
+            "🔍 resolve_domain_manifest: status.found={} for '{}'",
+            status.found, resolve_req.domain
+        );
 
         if !status.found {
-            warn!("❌ resolve_domain_manifest: Domain '{}' NOT FOUND in registry", resolve_req.domain);
+            warn!(
+                "❌ resolve_domain_manifest: Domain '{}' NOT FOUND in registry",
+                resolve_req.domain
+            );
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 format!("Domain not found: {}", resolve_req.domain),
@@ -1484,10 +1656,15 @@ impl Web4Handler {
         // If specific version requested, look up that manifest
         // CANONICAL: Always use web4_manifest_cid for resolution
         let web4_manifest_cid = if let Some(version) = resolve_req.version {
-            let history = self.domain_registry.get_domain_history(&resolve_req.domain, 1000).await
+            let history = self
+                .domain_registry
+                .get_domain_history(&resolve_req.domain, 1000)
+                .await
                 .map_err(|e| anyhow!("Failed to get history: {}", e))?;
 
-            history.versions.iter()
+            history
+                .versions
+                .iter()
                 .find(|v| v.version == version)
                 .map(|v| v.web4_manifest_cid.clone())
                 .unwrap_or_else(|| "manifest-not-found".to_string())
@@ -1496,7 +1673,11 @@ impl Web4Handler {
         };
 
         // Debug: load manifest details to log what will be served
-        if let Ok(Some(manifest)) = self.domain_registry.get_manifest(&resolve_req.domain, &web4_manifest_cid).await {
+        if let Ok(Some(manifest)) = self
+            .domain_registry
+            .get_manifest(&resolve_req.domain, &web4_manifest_cid)
+            .await
+        {
             let manifest_cid_computed = manifest.compute_cid();
             let files_count = manifest.files.len();
             info!(
@@ -1552,21 +1733,27 @@ impl Web4Handler {
         let rollback_req: RollbackRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow!("Invalid rollback request: {}", e))?;
 
-        info!(" Rolling back domain {} to version {}", domain, rollback_req.to_version);
+        info!(
+            " Rolling back domain {} to version {}",
+            domain, rollback_req.to_version
+        );
 
         // TODO: Verify signature matches domain owner
-        let owner_did = request.headers.get("x-owner-did")
+        let owner_did = request
+            .headers
+            .get("x-owner-did")
             .unwrap_or_else(|| "anonymous".to_string());
 
-
-        match self.domain_registry.rollback_domain(domain, rollback_req.to_version, &owner_did).await {
+        match self
+            .domain_registry
+            .rollback_domain(domain, rollback_req.to_version, &owner_did)
+            .await
+        {
             Ok(response) => {
                 if response.success {
                     info!(
                         " Domain {} rolled back to v{} (new version: v{})",
-                        domain,
-                        rollback_req.to_version,
-                        response.new_version
+                        domain, rollback_req.to_version, response.new_version
                     );
                 }
 
@@ -1624,12 +1811,15 @@ impl Web4Handler {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use lib_blockchain::contracts::TokenContract;
     use lib_blockchain::contracts::utils::generate_lib_token_id;
-    use lib_blockchain::integration::crypto_integration::{PublicKey as BcPublicKey, Signature as BcSignature, SignatureAlgorithm as BcSignatureAlgorithm};
+    use lib_blockchain::contracts::TokenContract;
+    use lib_blockchain::integration::crypto_integration::{
+        PublicKey as BcPublicKey, Signature as BcSignature,
+        SignatureAlgorithm as BcSignatureAlgorithm,
+    };
     use lib_blockchain::transaction::{TokenTransferData, Transaction, WalletTransactionData};
-    use lib_identity::IdentityManager;
     use lib_identity::types::IdentityType;
+    use lib_identity::IdentityManager;
     use lib_network::storage_stub::UnifiedStorage;
     use lib_network::web4::{ContentPublisher, DomainRegistry};
     use serde_json::json;
@@ -1646,7 +1836,10 @@ mod tests {
     #[async_trait]
     impl UnifiedStorage for TestStorage {
         async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> anyhow::Result<()> {
-            self.domains.write().unwrap().insert(domain.to_string(), data);
+            self.domains
+                .write()
+                .unwrap()
+                .insert(domain.to_string(), data);
             Ok(())
         }
 
@@ -1753,7 +1946,8 @@ mod tests {
         sign(&mut tx);
 
         // Ensure fee meets current minimum based on signed transaction size.
-        let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
+        let min_fee =
+            lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
         if tx.fee < min_fee {
             tx.fee = min_fee;
             sign(&mut tx);
@@ -1761,7 +1955,13 @@ mod tests {
         tx
     }
 
-    async fn setup_handler() -> anyhow::Result<(Web4Handler, lib_identity::ZhtpIdentity, [u8; 32], [u8; 32], lib_crypto::PrivateKey)> {
+    async fn setup_handler() -> anyhow::Result<(
+        Web4Handler,
+        lib_identity::ZhtpIdentity,
+        [u8; 32],
+        [u8; 32],
+        lib_crypto::PrivateKey,
+    )> {
         let storage: Arc<dyn UnifiedStorage> = Arc::new(TestStorage::default());
         let registry = Arc::new(DomainRegistry::new(storage.clone()).await?);
         let publisher = Arc::new(ContentPublisher::new(registry.clone(), storage.clone()));
@@ -1808,26 +2008,41 @@ mod tests {
             key_id: owner_wallet_id,
         };
         sov.mint(&owner_wallet_key, 100).unwrap();
-        blockchain.token_contracts.insert(generate_lib_token_id(), sov);
+        blockchain
+            .token_contracts
+            .insert(generate_lib_token_id(), sov);
 
         let blockchain = Arc::new(RwLock::new(blockchain));
-        let owner_private = owner_identity.private_key.clone().expect("test identity should include private key");
-        let handler = Web4Handler::new_with_registry(
-            registry,
-            publisher,
-            identity_manager,
-            blockchain,
-        )
-        .await?;
+        let owner_private = owner_identity
+            .private_key
+            .clone()
+            .expect("test identity should include private key");
+        let handler =
+            Web4Handler::new_with_registry(registry, publisher, identity_manager, blockchain)
+                .await?;
 
-        Ok((handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private))
+        Ok((
+            handler,
+            owner_identity,
+            owner_wallet_id,
+            treasury_wallet_id,
+            owner_private,
+        ))
     }
 
-    fn sign_simple_registration(identity: &lib_identity::ZhtpIdentity, domain: &str, timestamp: u64, fee: u64) -> String {
+    fn sign_simple_registration(
+        identity: &lib_identity::ZhtpIdentity,
+        domain: &str,
+        timestamp: u64,
+        fee: u64,
+    ) -> String {
         let message = format!("{}|{}|{}", domain, timestamp, fee);
         let keypair = lib_crypto::KeyPair {
             public_key: identity.public_key.clone(),
-            private_key: identity.private_key.clone().expect("test identity must have private key"),
+            private_key: identity
+                .private_key
+                .clone()
+                .expect("test identity must have private key"),
         };
         let sig = lib_crypto::sign_message(&keypair, message.as_bytes())
             .expect("signature should be generated");
@@ -1860,18 +2075,31 @@ mod tests {
     }
     #[tokio::test]
     async fn register_domain_accepts_valid_fee_payment_tx() -> anyhow::Result<()> {
-        let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) = setup_handler().await?;
+        let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) =
+            setup_handler().await?;
         let fee_signer = BcPublicKey::new(owner_identity.public_key.dilithium_pk.clone());
-        let tx = fee_payment_tx(fee_signer, owner_private, owner_wallet_id, treasury_wallet_id, 10, 0);
+        let tx = fee_payment_tx(
+            fee_signer,
+            owner_private,
+            owner_wallet_id,
+            treasury_wallet_id,
+            10,
+            0,
+        );
         let tx_hash_hex = hex::encode(tx.hash().as_bytes());
         let request =
             simple_registration_request(&owner_identity, "valid-fee.zhtp", "<html>ok</html>", &tx)?;
 
-        let response = handler.register_domain_simple(serde_json::to_vec(&request)?).await?;
+        let response = handler
+            .register_domain_simple(serde_json::to_vec(&request)?)
+            .await?;
         assert_eq!(response.status, ZhtpStatus::Ok);
         let body: serde_json::Value = serde_json::from_slice(&response.body)?;
         assert_eq!(body["success"], serde_json::Value::Bool(true));
-        assert_eq!(body["blockchain_transaction"], serde_json::Value::String(tx_hash_hex.clone()));
+        assert_eq!(
+            body["blockchain_transaction"],
+            serde_json::Value::String(tx_hash_hex.clone())
+        );
 
         let blockchain = handler.blockchain.read().await;
         let found_in_mempool = blockchain
@@ -1885,9 +2113,17 @@ mod tests {
 
     #[tokio::test]
     async fn register_domain_rejects_invalid_fee_payment_tx_amount() -> anyhow::Result<()> {
-        let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) = setup_handler().await?;
+        let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) =
+            setup_handler().await?;
         let fee_signer = BcPublicKey::new(owner_identity.public_key.dilithium_pk.clone());
-        let tx = fee_payment_tx(fee_signer, owner_private, owner_wallet_id, treasury_wallet_id, 9, 0);
+        let tx = fee_payment_tx(
+            fee_signer,
+            owner_private,
+            owner_wallet_id,
+            treasury_wallet_id,
+            9,
+            0,
+        );
         let request = simple_registration_request(
             &owner_identity,
             "invalid-fee.zhtp",
@@ -1895,7 +2131,9 @@ mod tests {
             &tx,
         )?;
 
-        let result = handler.register_domain_simple(serde_json::to_vec(&request)?).await;
+        let result = handler
+            .register_domain_simple(serde_json::to_vec(&request)?)
+            .await;
         assert!(result.is_err(), "invalid fee tx amount should be rejected");
         let err = format!("{}", result.err().unwrap());
         assert!(err.contains("amount mismatch"), "unexpected error: {}", err);

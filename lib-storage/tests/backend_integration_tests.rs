@@ -10,9 +10,7 @@
 //! These tests complement the unit tests in each backend module by testing
 //! cross-cutting concerns and real-world usage patterns.
 
-use lib_storage::backend::{
-    BatchOp, SledBackend, SledTree, StorageBackend, StorageError,
-};
+use lib_storage::backend::{BatchOp, SledBackend, SledTree, StorageBackend, StorageError};
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
@@ -56,8 +54,14 @@ mod trait_compliance {
         backend.put(b"key2", b"value2").await.unwrap();
 
         // Get
-        assert_eq!(backend.get(b"key1").await.unwrap(), Some(b"value1".to_vec()));
-        assert_eq!(backend.get(b"key2").await.unwrap(), Some(b"value2".to_vec()));
+        assert_eq!(
+            backend.get(b"key1").await.unwrap(),
+            Some(b"value1".to_vec())
+        );
+        assert_eq!(
+            backend.get(b"key2").await.unwrap(),
+            Some(b"value2".to_vec())
+        );
         assert_eq!(backend.get(b"nonexistent").await.unwrap(), None);
 
         // Contains
@@ -66,7 +70,10 @@ mod trait_compliance {
 
         // Overwrite
         backend.put(b"key1", b"updated").await.unwrap();
-        assert_eq!(backend.get(b"key1").await.unwrap(), Some(b"updated".to_vec()));
+        assert_eq!(
+            backend.get(b"key1").await.unwrap(),
+            Some(b"updated".to_vec())
+        );
 
         // Delete
         backend.delete(b"key1").await.unwrap();
@@ -108,7 +115,10 @@ mod trait_compliance {
         assert_eq!(all.len(), 30);
 
         // Scan non-matching prefix
-        let empty = backend.scan_prefix(b"nonexistent:", Some(100)).await.unwrap();
+        let empty = backend
+            .scan_prefix(b"nonexistent:", Some(100))
+            .await
+            .unwrap();
         assert!(empty.is_empty());
     }
 
@@ -138,34 +148,68 @@ mod trait_compliance {
         backend.write_batch(&ops).await.unwrap();
 
         // Verify all operations applied
-        assert_eq!(backend.get(b"batch:1").await.unwrap(), Some(b"value1".to_vec()));
-        assert_eq!(backend.get(b"batch:2").await.unwrap(), Some(b"value2".to_vec()));
-        assert_eq!(backend.get(b"batch:3").await.unwrap(), Some(b"value3".to_vec()));
+        assert_eq!(
+            backend.get(b"batch:1").await.unwrap(),
+            Some(b"value1".to_vec())
+        );
+        assert_eq!(
+            backend.get(b"batch:2").await.unwrap(),
+            Some(b"value2".to_vec())
+        );
+        assert_eq!(
+            backend.get(b"batch:3").await.unwrap(),
+            Some(b"value3".to_vec())
+        );
         assert_eq!(backend.get(b"to_delete").await.unwrap(), None);
     }
 
     /// Test compare-and-swap operations
     async fn test_compare_and_swap<B: StorageBackend>(backend: &B) {
         // Insert if absent (None -> Some)
-        backend.compare_and_swap(b"cas_key", None, Some(b"initial")).await.unwrap();
-        assert_eq!(backend.get(b"cas_key").await.unwrap(), Some(b"initial".to_vec()));
+        backend
+            .compare_and_swap(b"cas_key", None, Some(b"initial"))
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.get(b"cas_key").await.unwrap(),
+            Some(b"initial".to_vec())
+        );
 
         // Try insert again (should fail - key exists)
-        let result = backend.compare_and_swap(b"cas_key", None, Some(b"second")).await;
+        let result = backend
+            .compare_and_swap(b"cas_key", None, Some(b"second"))
+            .await;
         assert!(matches!(result, Err(StorageError::CasConflict)));
-        assert_eq!(backend.get(b"cas_key").await.unwrap(), Some(b"initial".to_vec()));
+        assert_eq!(
+            backend.get(b"cas_key").await.unwrap(),
+            Some(b"initial".to_vec())
+        );
 
         // Update with correct expected value
-        backend.compare_and_swap(b"cas_key", Some(b"initial"), Some(b"updated")).await.unwrap();
-        assert_eq!(backend.get(b"cas_key").await.unwrap(), Some(b"updated".to_vec()));
+        backend
+            .compare_and_swap(b"cas_key", Some(b"initial"), Some(b"updated"))
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.get(b"cas_key").await.unwrap(),
+            Some(b"updated".to_vec())
+        );
 
         // Update with wrong expected value (should fail)
-        let result = backend.compare_and_swap(b"cas_key", Some(b"wrong"), Some(b"new")).await;
+        let result = backend
+            .compare_and_swap(b"cas_key", Some(b"wrong"), Some(b"new"))
+            .await;
         assert!(matches!(result, Err(StorageError::CasConflict)));
-        assert_eq!(backend.get(b"cas_key").await.unwrap(), Some(b"updated".to_vec()));
+        assert_eq!(
+            backend.get(b"cas_key").await.unwrap(),
+            Some(b"updated".to_vec())
+        );
 
         // Delete with CAS (Some -> None)
-        backend.compare_and_swap(b"cas_key", Some(b"updated"), None).await.unwrap();
+        backend
+            .compare_and_swap(b"cas_key", Some(b"updated"), None)
+            .await
+            .unwrap();
         assert_eq!(backend.get(b"cas_key").await.unwrap(), None);
     }
 
@@ -348,18 +392,23 @@ mod concurrent_access {
 
                 for _ in 0..iterations {
                     // Read current value
-                    let current = backend.get(b"counter").await.unwrap()
+                    let current = backend
+                        .get(b"counter")
+                        .await
+                        .unwrap()
                         .map(|v| String::from_utf8(v).unwrap())
                         .unwrap_or_else(|| "0".to_string());
                     let current_val: i32 = current.parse().unwrap();
                     let new_val = current_val + 1;
 
                     // Try to update
-                    let result = backend.compare_and_swap(
-                        b"counter",
-                        Some(current.as_bytes()),
-                        Some(new_val.to_string().as_bytes()),
-                    ).await;
+                    let result = backend
+                        .compare_and_swap(
+                            b"counter",
+                            Some(current.as_bytes()),
+                            Some(new_val.to_string().as_bytes()),
+                        )
+                        .await;
 
                     if result.is_ok() {
                         successful_updates += 1;
@@ -378,7 +427,10 @@ mod concurrent_access {
         }
 
         // Final value should equal total successful updates
-        let final_value = backend.get(b"counter").await.unwrap()
+        let final_value = backend
+            .get(b"counter")
+            .await
+            .unwrap()
             .map(|v| String::from_utf8(v).unwrap())
             .unwrap();
         let final_int: i32 = final_value.parse().unwrap();
@@ -449,7 +501,10 @@ mod concurrent_access {
                 for i in 0..100 {
                     let key = format!("preload:{}", i);
                     let value = format!("round{}", round);
-                    backend_w.put(key.as_bytes(), value.as_bytes()).await.unwrap();
+                    backend_w
+                        .put(key.as_bytes(), value.as_bytes())
+                        .await
+                        .unwrap();
                 }
             }
         }));
@@ -518,8 +573,14 @@ mod concurrent_access {
         // Verify isolation
         for i in 0..100 {
             let key = format!("key{}", i);
-            assert_eq!(tree1.get(key.as_bytes()).await.unwrap(), Some(b"tree1_value".to_vec()));
-            assert_eq!(tree2.get(key.as_bytes()).await.unwrap(), Some(b"tree2_value".to_vec()));
+            assert_eq!(
+                tree1.get(key.as_bytes()).await.unwrap(),
+                Some(b"tree1_value".to_vec())
+            );
+            assert_eq!(
+                tree2.get(key.as_bytes()).await.unwrap(),
+                Some(b"tree2_value".to_vec())
+            );
         }
     }
 }
@@ -574,8 +635,14 @@ mod crash_recovery {
             let tree_b = backend.open_tree("tree_b").unwrap();
 
             for i in 0..50 {
-                tree_a.put(format!("a:{}", i).as_bytes(), b"from_tree_a").await.unwrap();
-                tree_b.put(format!("b:{}", i).as_bytes(), b"from_tree_b").await.unwrap();
+                tree_a
+                    .put(format!("a:{}", i).as_bytes(), b"from_tree_a")
+                    .await
+                    .unwrap();
+                tree_b
+                    .put(format!("b:{}", i).as_bytes(), b"from_tree_b")
+                    .await
+                    .unwrap();
             }
             tree_a.flush().await.unwrap();
             tree_b.flush().await.unwrap();
@@ -648,10 +715,16 @@ mod crash_recovery {
             let backend = SledBackend::open(&path).unwrap();
 
             // Insert via CAS
-            backend.compare_and_swap(b"cas_persist", None, Some(b"v1")).await.unwrap();
+            backend
+                .compare_and_swap(b"cas_persist", None, Some(b"v1"))
+                .await
+                .unwrap();
 
             // Update via CAS
-            backend.compare_and_swap(b"cas_persist", Some(b"v1"), Some(b"v2")).await.unwrap();
+            backend
+                .compare_and_swap(b"cas_persist", Some(b"v1"), Some(b"v2"))
+                .await
+                .unwrap();
 
             backend.flush().await.unwrap();
         }
@@ -666,7 +739,10 @@ mod crash_recovery {
             );
 
             // Further CAS should work with persisted state
-            backend.compare_and_swap(b"cas_persist", Some(b"v2"), Some(b"v3")).await.unwrap();
+            backend
+                .compare_and_swap(b"cas_persist", Some(b"v2"), Some(b"v3"))
+                .await
+                .unwrap();
             assert_eq!(
                 backend.get(b"cas_persist").await.unwrap(),
                 Some(b"v3".to_vec())
@@ -685,12 +761,18 @@ mod crash_recovery {
             let backend = SledBackend::open(&path).unwrap();
 
             for i in 0..100 {
-                backend.put(format!("delete_test:{}", i).as_bytes(), b"value").await.unwrap();
+                backend
+                    .put(format!("delete_test:{}", i).as_bytes(), b"value")
+                    .await
+                    .unwrap();
             }
 
             // Delete odd keys
             for i in (1..100).step_by(2) {
-                backend.delete(format!("delete_test:{}", i).as_bytes()).await.unwrap();
+                backend
+                    .delete(format!("delete_test:{}", i).as_bytes())
+                    .await
+                    .unwrap();
             }
 
             backend.flush().await.unwrap();
@@ -705,7 +787,12 @@ mod crash_recovery {
                 let result = backend.get(key.as_bytes()).await.unwrap();
 
                 if i % 2 == 0 {
-                    assert_eq!(result, Some(b"value".to_vec()), "Even key {} should exist", i);
+                    assert_eq!(
+                        result,
+                        Some(b"value".to_vec()),
+                        "Even key {} should exist",
+                        i
+                    );
                 } else {
                     assert_eq!(result, None, "Odd key {} should be deleted", i);
                 }
@@ -742,8 +829,14 @@ mod batch_atomicity {
         ];
         backend.write_batch(&valid_ops).await.unwrap();
 
-        assert_eq!(backend.get(b"atomic:1").await.unwrap(), Some(b"v1".to_vec()));
-        assert_eq!(backend.get(b"atomic:2").await.unwrap(), Some(b"v2".to_vec()));
+        assert_eq!(
+            backend.get(b"atomic:1").await.unwrap(),
+            Some(b"v1".to_vec())
+        );
+        assert_eq!(
+            backend.get(b"atomic:2").await.unwrap(),
+            Some(b"v2".to_vec())
+        );
     }
 
     /// Test batch size limits
@@ -801,10 +894,22 @@ mod batch_atomicity {
         backend.write_batch(&ops).await.unwrap();
 
         // Verify final state
-        assert_eq!(backend.get(b"keep").await.unwrap(), Some(b"keep_value".to_vec()));
-        assert_eq!(backend.get(b"new1").await.unwrap(), Some(b"new_value1".to_vec()));
-        assert_eq!(backend.get(b"new2").await.unwrap(), Some(b"new_value2".to_vec()));
-        assert_eq!(backend.get(b"update").await.unwrap(), Some(b"new_value".to_vec()));
+        assert_eq!(
+            backend.get(b"keep").await.unwrap(),
+            Some(b"keep_value".to_vec())
+        );
+        assert_eq!(
+            backend.get(b"new1").await.unwrap(),
+            Some(b"new_value1".to_vec())
+        );
+        assert_eq!(
+            backend.get(b"new2").await.unwrap(),
+            Some(b"new_value2".to_vec())
+        );
+        assert_eq!(
+            backend.get(b"update").await.unwrap(),
+            Some(b"new_value".to_vec())
+        );
         assert_eq!(backend.get(b"delete1").await.unwrap(), None);
         assert_eq!(backend.get(b"delete2").await.unwrap(), None);
     }
@@ -879,7 +984,11 @@ mod performance_baseline {
         );
 
         // Sanity check: should be able to do at least 100 ops/sec
-        assert!(ops_per_sec > 100.0, "Write throughput too low: {} ops/sec", ops_per_sec);
+        assert!(
+            ops_per_sec > 100.0,
+            "Write throughput too low: {} ops/sec",
+            ops_per_sec
+        );
     }
 
     /// Measure sequential read throughput
@@ -910,7 +1019,11 @@ mod performance_baseline {
         );
 
         // Sanity check: reads should be faster than writes
-        assert!(ops_per_sec > 100.0, "Read throughput too low: {} ops/sec", ops_per_sec);
+        assert!(
+            ops_per_sec > 100.0,
+            "Read throughput too low: {} ops/sec",
+            ops_per_sec
+        );
     }
 
     /// Measure batch write throughput
@@ -941,7 +1054,11 @@ mod performance_baseline {
         );
 
         // Batch writes should be significantly faster than individual writes
-        assert!(ops_per_sec > 500.0, "Batch throughput too low: {} ops/sec", ops_per_sec);
+        assert!(
+            ops_per_sec > 500.0,
+            "Batch throughput too low: {} ops/sec",
+            ops_per_sec
+        );
     }
 
     /// Measure scan throughput
@@ -959,13 +1076,17 @@ mod performance_baseline {
         backend.flush().await.unwrap();
 
         let start = Instant::now();
-        let results = backend.scan_prefix(b"scan_perf:", Some(10000)).await.unwrap();
+        let results = backend
+            .scan_prefix(b"scan_perf:", Some(10000))
+            .await
+            .unwrap();
         let elapsed = start.elapsed();
 
         assert_eq!(results.len(), num_keys);
         println!(
             "Scan: {} keys in {:?} ({:.0} keys/sec)",
-            num_keys, elapsed,
+            num_keys,
+            elapsed,
             num_keys as f64 / elapsed.as_secs_f64()
         );
     }
@@ -991,15 +1112,22 @@ mod performance_baseline {
                 barrier.wait().await;
                 let mut successful = 0;
                 for _ in 0..ops_per_task {
-                    let current = backend.get(b"cas_counter").await.unwrap()
+                    let current = backend
+                        .get(b"cas_counter")
+                        .await
+                        .unwrap()
                         .map(|v| String::from_utf8(v).unwrap())
                         .unwrap();
                     let new_val = current.parse::<i32>().unwrap() + 1;
-                    if backend.compare_and_swap(
-                        b"cas_counter",
-                        Some(current.as_bytes()),
-                        Some(new_val.to_string().as_bytes()),
-                    ).await.is_ok() {
+                    if backend
+                        .compare_and_swap(
+                            b"cas_counter",
+                            Some(current.as_bytes()),
+                            Some(new_val.to_string().as_bytes()),
+                        )
+                        .await
+                        .is_ok()
+                    {
                         successful += 1;
                     }
                 }
@@ -1015,7 +1143,8 @@ mod performance_baseline {
 
         println!(
             "CAS: {} successful ops in {:?} ({:.0} ops/sec)",
-            total_successful, elapsed,
+            total_successful,
+            elapsed,
             total_successful as f64 / elapsed.as_secs_f64()
         );
     }
@@ -1061,7 +1190,10 @@ mod edge_cases {
         // Exactly at limit should work
         let max_key = vec![0u8; MAX_KEY_SIZE];
         backend.put(&max_key, b"value").await.unwrap();
-        assert_eq!(backend.get(&max_key).await.unwrap(), Some(b"value".to_vec()));
+        assert_eq!(
+            backend.get(&max_key).await.unwrap(),
+            Some(b"value".to_vec())
+        );
 
         // One byte over should fail
         let over_key = vec![0u8; MAX_KEY_SIZE + 1];
@@ -1132,7 +1264,10 @@ mod edge_cases {
         let (backend, _dir) = create_temp_sled().await;
 
         for i in 0..10 {
-            backend.put(format!("key{}", i).as_bytes(), b"v").await.unwrap();
+            backend
+                .put(format!("key{}", i).as_bytes(), b"v")
+                .await
+                .unwrap();
         }
 
         // Large limit should just return available data

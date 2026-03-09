@@ -1,12 +1,11 @@
-use std::io;
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
 use crate::kad::server::Server;
 use crate::refresh::refresh_handler::RefreshHandler;
 use crate::routing::inter::routing_table::RoutingTable;
+use std::io;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
 pub trait KademliaBase: Send + Sync {
-
     fn bind(&self, port: u16) -> io::Result<()>;
 
     fn join(&self, local_port: u16, addr: SocketAddr) -> io::Result<()>;
@@ -25,7 +24,6 @@ pub trait KademliaBase: Send + Sync {
 }
 
 impl Clone for Box<dyn KademliaBase> {
-
     fn clone(&self) -> Self {
         self.clone_dyn()
     }
