@@ -86,18 +86,6 @@ impl ObserverHandler {
         Self { _runtime }
     }
 
-    /// Calculate classification based on round count and patterns
-    fn classify_height(round_count: u32, has_stall: bool, has_fault: bool) -> &'static str {
-        match (round_count, has_stall, has_fault) {
-            (0, _, _) => "unknown",
-            (1, false, false) => "healthy",
-            (1, true, _) => "delayed",
-            (2..=3, _, false) => "recovering",
-            (2..=3, _, true) => "degraded",
-            (4.., _, _) => "divergence",
-            _ => "unknown",
-        }
-    }
 }
 
 #[async_trait::async_trait]
