@@ -12,6 +12,9 @@ target/
 Cargo.lock
 *.rlib
 
+# One-off admin/patch tools
+tools/remove_token.rs
+
 # Backup files
 *.bak
 *.backup
