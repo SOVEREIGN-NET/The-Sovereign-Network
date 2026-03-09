@@ -2606,6 +2606,15 @@ impl RuntimeOrchestrator {
             }
         }
 
+        // Unconditionally attempt to bootstrap the oracle committee from the validator
+        // registry if it is still empty after Sled load and the dat-restore attempt above.
+        // This must run regardless of whether bootstrap_validators is configured, because
+        // validators may be present from on-chain ValidatorRegistration transactions even
+        // when no bootstrap_validators are declared in config.
+        if let Err(e) = self.ensure_oracle_committee_bootstrapped().await {
+            warn!("⚠️ Failed to ensure oracle committee bootstrap: {}", e);
+        }
+
         info!("✅ ZHTP node started successfully");
         info!(
             "🌐 ZHTP server active on port {}",
@@ -2708,60 +2717,69 @@ impl RuntimeOrchestrator {
             );
         }
 
-        // If oracle committee state was not restored from storage, bootstrap it directly
-        // from active validator consensus keys so attestations are not rejected as
-        // NonCommitteeSigner after node restart/rejoin.
-        if blockchain.oracle_state.committee.members().is_empty() {
-            const DILITHIUM2_PK_LEN: usize = 1312;
-            const DILITHIUM5_PK_LEN: usize = 2592;
+        Ok(())
+    }
 
-            let mut committee_members_with_pubkeys: Vec<([u8; 32], Vec<u8>)> = blockchain
-                .validator_registry
-                .values()
-                .filter(|v| v.status == "active")
-                .filter_map(|v| {
-                    if v.consensus_key.is_empty() {
-                        return None;
-                    }
+    /// Bootstrap the oracle committee from active validator consensus keys if it is still empty.
+    ///
+    /// Called unconditionally during startup — after Sled load, dat-restore, and
+    /// `seed_blockchain_validator_registry` — so that nodes without `bootstrap_validators`
+    /// configured (e.g. nodes whose validators are registered purely on-chain) still get
+    /// their oracle committee populated and can validate attestations without receiving
+    /// NonCommitteeSigner errors.
+    async fn ensure_oracle_committee_bootstrapped(&self) -> anyhow::Result<()> {
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
 
-                    let key_len = v.consensus_key.len();
-                    if key_len == DILITHIUM2_PK_LEN || key_len == DILITHIUM5_PK_LEN {
-                        let key_id = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
-                        Some((key_id, v.consensus_key.clone()))
-                    } else {
-                        warn!(
-                            "Skipping validator with invalid consensus_key length (len={}, expected {} or {}) when bootstrapping oracle committee",
-                            key_len,
-                            DILITHIUM2_PK_LEN,
-                            DILITHIUM5_PK_LEN
-                        );
-                        None
-                    }
-                })
-                .collect();
-
-            committee_members_with_pubkeys.sort_by(|(a, _), (b, _)| a.cmp(b));
-            committee_members_with_pubkeys.dedup_by(|(a, _), (b, _)| a == b);
-
-            if !committee_members_with_pubkeys.is_empty() {
-                match blockchain.bootstrap_oracle_committee(committee_members_with_pubkeys) {
-                    Ok(()) => {
-                        info!(
-                            "🔮 Bootstrapped oracle committee from validator registry (members={})",
-                            blockchain.oracle_state.committee.members().len()
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            "⚠️ Failed to bootstrap oracle committee from validator registry: {}",
-                            e
-                        );
-                    }
-                }
-            } else {
-                warn!("⚠️ Oracle committee is empty and no active validator consensus keys were found");
-            }
+        if !blockchain.oracle_state.committee.members().is_empty() {
+            return Ok(()); // already populated — nothing to do
         }
+
+        const DILITHIUM2_PK_LEN: usize = 1312;
+        const DILITHIUM5_PK_LEN: usize = 2592;
+
+        let mut committee_members_with_pubkeys: Vec<([u8; 32], Vec<u8>)> = blockchain
+            .validator_registry
+            .values()
+            .filter(|v| v.status == "active")
+            .filter_map(|v| {
+                if v.consensus_key.is_empty() {
+                    return None;
+                }
+                let key_len = v.consensus_key.len();
+                if key_len == DILITHIUM2_PK_LEN || key_len == DILITHIUM5_PK_LEN {
+                    let key_id = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
+                    Some((key_id, v.consensus_key.clone()))
+                } else {
+                    warn!(
+                        "Skipping validator with invalid consensus_key length \
+                         (len={}, expected {} or {}) when bootstrapping oracle committee",
+                        key_len, DILITHIUM2_PK_LEN, DILITHIUM5_PK_LEN
+                    );
+                    None
+                }
+            })
+            .collect();
+
+        committee_members_with_pubkeys.sort_by(|(a, _), (b, _)| a.cmp(b));
+        committee_members_with_pubkeys.dedup_by(|(a, _), (b, _)| a == b);
+
+        if !committee_members_with_pubkeys.is_empty() {
+            match blockchain.bootstrap_oracle_committee(committee_members_with_pubkeys) {
+                Ok(()) => {
+                    info!(
+                        "🔮 Bootstrapped oracle committee from validator registry (members={})",
+                        blockchain.oracle_state.committee.members().len()
+                    );
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to bootstrap oracle committee from validator registry: {}", e);
+                }
+            }
+        } else {
+            warn!("⚠️ Oracle committee is empty and no active validator consensus keys were found");
+        }
+
         Ok(())
     }
 
@@ -4702,7 +4720,7 @@ mod oracle_startup_tests {
     }
 
     // ------------------------------------------------------------------
-    // Fallback bootstrap from validator registry
+    // Bootstrap from validator registry (ensure_oracle_committee_bootstrapped logic)
     // ------------------------------------------------------------------
 
     #[test]
