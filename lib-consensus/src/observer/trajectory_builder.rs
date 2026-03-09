@@ -286,7 +286,9 @@ fn phase_for_event(event_type: ConsensusBehaviorEventType) -> ConsensusPhaseType
 }
 
 fn event_time(event: &ConsensusNormalizedEvent) -> Option<u64> {
-    event.logical_time.or(event.wallclock_time)
+    // Only use logical_time for deterministic scoring.
+    // Wallclock time is not used to ensure reproducibility across nodes.
+    event.logical_time
 }
 
 fn inferred_from(
